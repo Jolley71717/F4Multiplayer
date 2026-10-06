@@ -95,7 +95,10 @@
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
-  stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health).
+  stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
+  NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
+  from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
+  their game (`UI::menuMode`; `Main::freezeTime` stays false).
 - Shots are shared too (see Weapon fire).
 
 ## Weapon fire (src/game/WeaponFire.cpp)
@@ -225,7 +228,8 @@ Protocol VERSION 20.
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
   `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
-  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one).
+  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `menu <name>
+  [hide|force]` (open or close a menu), `paused`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session

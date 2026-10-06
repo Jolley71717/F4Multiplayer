@@ -860,6 +860,29 @@ namespace DevCommands
 				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->soundHandle[0].soundID);
 		}
 
+		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
+		std::string Menu(std::string_view a_args)
+		{
+			const auto space = a_args.find(' ');
+			const std::string name{ a_args.substr(0, space) };
+			const auto how = space != std::string_view::npos ? a_args.substr(space + 1) : std::string_view{};
+			const auto queue = RE::UIMessageQueue::GetSingleton();
+			if (name.empty() || !queue) {
+				return "error: usage: menu <name> [hide|force]";
+			}
+			queue->AddMessage(name, how == "force" ? RE::UI_MESSAGE_TYPE::kForceHide : how == "hide" ? RE::UI_MESSAGE_TYPE::kHide : RE::UI_MESSAGE_TYPE::kShow);
+			return "queued";
+		}
+
+		// paused: whether the game is paused, and by what.
+		std::string Paused(std::string_view)
+		{
+			const auto main = RE::Main::GetSingleton();
+			const auto ui = RE::UI::GetSingleton();
+			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={}", main ? main->freezeTime : false, main ? main->gameActive : false,
+				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv));
+		}
+
 		// dialogue: the conversation the player is in, and whether the speaker is saying something.
 		std::string Dialogue(std::string_view)
 		{
@@ -974,6 +997,8 @@ namespace DevCommands
 			Entry{ "topics", Topics },
 			Entry{ "say", Say },
 			Entry{ "npcvoice", NpcVoice },
+			Entry{ "menu", Menu },
+			Entry{ "paused", Paused },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },
