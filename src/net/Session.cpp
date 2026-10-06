@@ -10,6 +10,8 @@
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
 #include "net/NetClient.h"
+#include "steam/Steam.h"
+#include "steam/SteamTransport.h"
 
 namespace Session
 {
@@ -23,7 +25,14 @@ namespace Session
 
 		std::uint32_t           contentHash = 0;
 		std::unique_ptr<Server> hostedServer;
-		NetClient               client;
+		bool                    steamMode = false;  // friends connect through Steam
+
+		// The connection in use: UDP for "ip[:port]" addresses (and the host's own game), Steam for
+		// "steam:<id>".
+		NetClient         udpClient;
+		SteamClient       steamClient;
+		ClientConnection* client = &udpClient;
+		std::string       serverAddress;
 
 		bool              welcomed = false;
 		std::uint32_t     localId = 0;
@@ -70,13 +79,14 @@ namespace Session
 			return hash;
 		}
 
-		const std::string& ServerAddress()
+		std::string PlayerName()
 		{
-			static const std::string address = [] {
-				const auto& settings = Config::Get();
-				return settings.host ? std::format("127.0.0.1:{}", settings.port) : settings.serverAddress;
-			}();
-			return address;
+			const auto& name = Config::Get().playerName;
+			if (!name.empty()) {
+				return name;
+			}
+			auto steamName = Steam::PersonaName();
+			return steamName.empty() ? "Vault Dweller" : steamName;
 		}
 
 		bool InGame()
@@ -268,6 +278,60 @@ namespace Session
 		bool                    echo = false;
 		float                   echoOffsetX = 0.0f;
 		float                   echoOffsetY = 0.0f;
+
+		void OnDisconnected()
+		{
+			if (welcomed) {
+				Notify("Multiplayer: disconnected");
+			}
+			welcomed = false;
+			localId = 0;
+			RemotePlayers::RemoveAll();
+			WorldSync::Reset();
+			NpcSync::Reset();
+			if (echo) {
+				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
+				sentEquipment.reset();
+			}
+		}
+
+		ClientConnection& ConnectionFor(const std::string& a_address)
+		{
+			if (SteamTransport::ParseAddress(a_address)) {
+				return steamClient;
+			}
+			return udpClient;
+		}
+
+		// Leaves the current session (if any) and joins another.
+		void SwitchServer(std::string a_address)
+		{
+			client->Disconnect();
+			client->Poll();
+			OnDisconnected();
+			serverAddress = std::move(a_address);
+			client = &ConnectionFor(serverAddress);
+			nextConnectAttempt = {};
+			lastRejectReason.clear();
+		}
+
+		// A Steam invite or "Join Game" was accepted.
+		void HandleSteamJoin()
+		{
+			const auto target = Steam::TakeJoinTarget();
+			if (!target) {
+				return;
+			}
+			if (hostedServer) {
+				Notify("Multiplayer: you're hosting. Set bHost = false to join friends.");
+				return;
+			}
+			const auto address = SteamTransport::FormatAddress(*target);
+			if (address != serverAddress) {
+				Notify("Multiplayer: joining your friend's game");
+				SwitchServer(address);
+			}
+		}
 	}
 
 	void Initialize()
@@ -277,6 +341,16 @@ namespace Session
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
+		const bool  wantSteam = settings.transport == "steam" || settings.transport == "auto";
+		steamMode = wantSteam && Steam::Available();
+		if (settings.transport == "steam" && !steamMode) {
+			Notify("Multiplayer: Steam isn't available");
+		}
+		REX::INFO("Session: transport '{}' -> {}", settings.transport, steamMode ? "steam" : "udp");
+
+		serverAddress = settings.host ? std::format("127.0.0.1:{}", settings.port) : settings.serverAddress;
+		client = &ConnectionFor(serverAddress);
+
 		if (settings.host) {
 			hostedServer = std::make_unique<Server>([](std::string_view a_line) {
 				REX::INFO("{}", a_line);
@@ -285,7 +359,17 @@ namespace Session
 			options.port = settings.port;
 			options.maxPlayers = settings.maxPlayers;
 			options.password = settings.password;
-			if (!hostedServer->Start(options)) {
+			// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
+			options.udpLoopbackOnly = steamMode;
+			std::vector<std::unique_ptr<ServerTransport>> extra;
+			if (steamMode) {
+				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
+			}
+			if (hostedServer->Start(options, std::move(extra))) {
+				if (steamMode) {
+					Steam::StartHosting(settings.maxPlayers);
+				}
+			} else {
 				Notify(std::format("Multiplayer: could not host on port {}", settings.port));
 				hostedServer.reset();
 			}
@@ -294,54 +378,47 @@ namespace Session
 
 	void Frame()
 	{
-		const auto  now = Clock::now();
-		const auto& address = ServerAddress();
+		const auto now = Clock::now();
+
+		if (steamMode) {
+			Steam::Frame();
+			HandleSteamJoin();
+		}
 
 		// Events first: reconnecting must not happen before a disconnect has been handled.
-		for (auto& event : client.Poll()) {
+		for (auto& event : client->Poll()) {
 			switch (event.type) {
-			case NetClient::Event::Type::kConnected:
+			case ClientConnection::Event::Type::kConnected:
 				{
 					const auto& settings = Config::Get();
 					Protocol::Hello hello;
 					hello.contentHash = contentHash;
-					hello.name = settings.playerName;
+					hello.name = PlayerName();
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = WorldSync::ResyncPoint();
-					client.Send(Protocol::Encode(hello), true);
+					client->Send(Protocol::Encode(hello), true);
 				}
 				break;
-			case NetClient::Event::Type::kDisconnected:
-				if (welcomed) {
-					Notify("Multiplayer: disconnected");
-				}
-				welcomed = false;
-				localId = 0;
-				RemotePlayers::RemoveAll();
-				WorldSync::Reset();
-				NpcSync::Reset();
-				if (echo) {
-					RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
-					sentEquipment.reset();
-				}
+			case ClientConnection::Event::Type::kDisconnected:
+				OnDisconnected();
 				break;
-			case NetClient::Event::Type::kPacket:
+			case ClientConnection::Event::Type::kPacket:
 				HandlePacket(event.data);
 				break;
 			}
 		}
 
-		if (!address.empty() && client.GetStatus() == NetClient::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {
+		if (!serverAddress.empty() && client->GetStatus() == ClientConnection::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {
 			nextConnectAttempt = now + RECONNECT_DELAY;
-			client.Connect(address, Config::Get().port);
+			client->Connect(serverAddress, Config::Get().port);
 		}
 
 		if ((welcomed || echo) && now >= nextSend) {
 			nextSend = now + SEND_INTERVAL;
 			if (auto state = SampleLocalState(now)) {
 				if (welcomed) {
-					client.Send(Protocol::Encode(*state), false);
+					client->Send(Protocol::Encode(*state), false);
 				}
 				if (echo) {
 					state->x += echoOffsetX;
@@ -356,7 +433,7 @@ namespace Session
 			auto items = Equipment::Read(RE::PlayerCharacter::GetSingleton());
 			if (!sentEquipment || *sentEquipment != items) {
 				if (welcomed) {
-					client.Send(Protocol::Encode(Protocol::Equipment{ 0, items }, Protocol::MessageType::kEquipment), true);
+					client->Send(Protocol::Encode(Protocol::Equipment{ 0, items }, Protocol::MessageType::kEquipment), true);
 				}
 				if (echo) {
 					RemotePlayers::SetEquipment(ECHO_ID, items);
@@ -368,7 +445,7 @@ namespace Session
 		// Events from our world go to the server only while we're in a session.
 		for (auto& packet : WorldSync::TakeOutgoing()) {
 			if (welcomed) {
-				client.Send(std::move(packet), true);
+				client->Send(std::move(packet), true);
 			}
 		}
 		WorldSync::Frame();
@@ -379,12 +456,12 @@ namespace Session
 		QuestSync::Frame();
 		for (auto& packet : QuestSync::TakeOutgoing()) {
 			if (welcomed) {
-				client.Send(std::move(packet), true);
+				client->Send(std::move(packet), true);
 			}
 		}
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {
-				client.Send(std::move(packet.data), packet.reliable);
+				client->Send(std::move(packet.data), packet.reliable);
 			}
 		}
 
@@ -404,7 +481,7 @@ namespace Session
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
 		if (welcomed) {
-			client.Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
+			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
 		}
 	}
@@ -412,19 +489,25 @@ namespace Session
 	std::string Describe()
 	{
 		const char* status = "disconnected";
-		switch (client.GetStatus()) {
-		case NetClient::Status::kConnecting:
+		switch (client->GetStatus()) {
+		case ClientConnection::Status::kConnecting:
 			status = "connecting";
 			break;
-		case NetClient::Status::kConnected:
+		case ClientConnection::Status::kConnected:
 			status = welcomed ? "joined" : "connected";
 			break;
 		default:
 			break;
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
-			status, localId, hostedServer && hostedServer->Running(), ServerAddress(), contentHash,
-			lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe(), RemotePlayers::Describe());
+			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe(), RemotePlayers::Describe()) +
+		       " " + (steamMode ? Steam::Describe() : "steam=off");
+	}
+
+	void ConnectTo(std::string a_address)
+	{
+		SwitchServer(std::move(a_address));
 	}
 
 	void SetEcho(bool a_enabled, float a_offsetX, float a_offsetY)

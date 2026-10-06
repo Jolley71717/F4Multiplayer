@@ -115,7 +115,7 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 
 	// Allow a couple of extra connections so full servers can still send a rejection.
 	std::string error;
-	auto        enet = EnetServerTransport::Create(options.port, options.maxPlayers + 2, error);
+	auto        enet = EnetServerTransport::Create(options.port, options.maxPlayers + 2, options.udpLoopbackOnly, error);
 	if (!enet) {
 		log("server: " + error);
 		return false;
@@ -129,7 +129,8 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	stopRequested = false;
 	running = true;
 	thread = std::thread([this] { Run(); });
-	log(std::format("server: listening on UDP port {} (max {} players)", options.port, options.maxPlayers));
+	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports)", options.port,
+		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size()));
 	return true;
 }
 

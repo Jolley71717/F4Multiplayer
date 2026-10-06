@@ -12,8 +12,8 @@ struct _ENetPeer;
 class EnetServerTransport final : public ServerTransport
 {
 public:
-	// Binds the port. Returns nullptr (with a reason in a_error) if it can't.
-	static std::unique_ptr<EnetServerTransport> Create(std::uint16_t a_port, std::size_t a_maxPeers, std::string& a_error);
+	// Binds the port (on 127.0.0.1 only if a_loopbackOnly). Returns nullptr (with a reason in a_error) if it can't.
+	static std::unique_ptr<EnetServerTransport> Create(std::uint16_t a_port, std::size_t a_maxPeers, bool a_loopbackOnly, std::string& a_error);
 
 	~EnetServerTransport() override;
 

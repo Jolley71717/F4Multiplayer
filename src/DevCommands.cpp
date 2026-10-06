@@ -4,6 +4,7 @@
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "net/Session.h"
+#include "steam/Steam.h"
 
 namespace DevCommands
 {
@@ -622,9 +623,37 @@ namespace DevCommands
 			return holder->NotifyAnimationGraphImpl(RE::BSFixedString{ args[1] }) ? "ok" : "rejected";
 		}
 
-		std::string Net(std::string_view)
+		// net [connect <address>]
+		std::string Net(std::string_view a_args)
 		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "connect") {
+				Session::ConnectTo(std::string(args[1]));
+				return "ok";
+			}
 			return Session::Describe();
+		}
+
+		// steam [invite | join <lobby or Steam ID> | selftest send|recv]
+		std::string SteamCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return Steam::Describe();
+			}
+			if (args[0] == "invite") {
+				return Steam::OpenInviteDialog() ? "ok" : "error: no lobby";
+			}
+			if (args[0] == "join" && args.size() > 1) {
+				std::uint64_t id = 0;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), id);
+				Steam::Join(id);
+				return "ok";
+			}
+			if (args[0] == "selftest" && args.size() > 1) {
+				return Steam::SelfTest(args[1] == "send");
+			}
+			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
 		// echo on|off [dx dy]: a puppet mirrors the local player, offset by (dx, dy).
@@ -670,6 +699,7 @@ namespace DevCommands
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "echo", Echo },
+			Entry{ "steam", SteamCommand },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },

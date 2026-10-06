@@ -64,6 +64,8 @@ namespace Config
 				settings.playerName = value;
 			} else if (key == "bHost") {
 				settings.host = ParseBool(value);
+			} else if (key == "sTransport") {
+				settings.transport = value;
 			} else if (key == "sServerAddress") {
 				settings.serverAddress = value;
 			} else if (key == "iPort") {
