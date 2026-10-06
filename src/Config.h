@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Settings read from Data/F4SE/Plugins/F4Multiplayer.ini (simple "key = value" lines,
 // '#' or ';' start a comment). Missing keys keep their defaults.
@@ -20,7 +20,7 @@ namespace Config
 		std::string   password;
 
 		// NPC base form used for other players' characters.
-		std::uint32_t puppetBaseForm = 0x0024A037;  // Settler
+		std::uint32_t puppetBaseForm = 0x0002268A;  // Magnolia
 
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;

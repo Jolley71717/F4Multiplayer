@@ -56,6 +56,21 @@ namespace DevCommands
 			return player ? player->GetParentCell() : nullptr;
 		}
 
+		std::string DescribeMovement(RE::TESObjectREFR* a_ref)
+		{
+			const auto actor = a_ref->As<RE::Actor>();
+			if (!actor) {
+				return {};
+			}
+			RE::NiPoint3 velocity;
+			actor->GetLinearVelocity(velocity);
+			const auto root = actor->Get3D();
+			const auto w = root ? root->world.translate : RE::NiPoint3{};
+			const auto l = root ? root->local.translate : RE::NiPoint3{};
+			return std::format(" vel=({:.0f},{:.0f},{:.0f}) 3dWorld=({:.0f},{:.0f},{:.0f}) 3dLocal=({:.0f},{:.0f},{:.0f})",
+				velocity.x, velocity.y, velocity.z, w.x, w.y, w.z, l.x, l.y, l.z);
+		}
+
 		std::string DescribeRef(RE::TESObjectREFR* a_ref)
 		{
 			const auto& loc = a_ref->data.location;
@@ -63,7 +78,7 @@ namespace DevCommands
 			return std::format(
 				"ref={:08X} x={:.1f} y={:.1f} z={:.1f} rz={:.1f} cell={:08X} 3d={}",
 				a_ref->GetFormID(), loc.x, loc.y, loc.z, a_ref->data.angle.z * TO_DEGREES,
-				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr);
+				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr) + DescribeMovement(a_ref);
 		}
 
 		std::string Status(std::string_view)
