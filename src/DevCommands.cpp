@@ -937,6 +937,42 @@ namespace DevCommands
 			return std::format("handle={:X} played={}", handle.soundID, played);
 		}
 
+		// gs <text>: game settings whose name contains the text (case-sensitive), with their values.
+		std::string GameSettings(std::string_view a_args)
+		{
+			const auto collection = RE::GameSettingCollection::GetSingleton();
+			if (!collection || a_args.empty()) {
+				return "error: usage: gs <text>";
+			}
+			std::vector<std::string> found;
+			for (const auto& [key, setting] : collection->settings) {
+				const auto name = setting ? setting->GetKey() : ""sv;
+				if (name.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				switch (setting->GetType()) {
+				case RE::Setting::SETTING_TYPE::kFloat:
+					found.push_back(std::format("{}={}", name, setting->GetFloat()));
+					break;
+				case RE::Setting::SETTING_TYPE::kInt:
+					found.push_back(std::format("{}={}", name, setting->GetInt()));
+					break;
+				case RE::Setting::SETTING_TYPE::kBinary:
+					found.push_back(std::format("{}={}", name, setting->GetBinary()));
+					break;
+				default:
+					found.push_back(std::string(name));
+					break;
+				}
+			}
+			std::ranges::sort(found);
+			std::string out;
+			for (const auto& entry : found | std::views::take(60)) {
+				out += entry + "; ";
+			}
+			return out.empty() ? "none" : out;
+		}
+
 		// idles <text>: idle animations whose editor ID, event or file contains the text.
 		std::string Idles(std::string_view a_args)
 		{
@@ -1224,6 +1260,7 @@ namespace DevCommands
 			Entry{ "gfxset", GfxSet },
 			Entry{ "weapsound", WeapSound },
 			Entry{ "playsound", PlaySoundCmd },
+			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
