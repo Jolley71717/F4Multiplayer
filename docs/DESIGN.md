@@ -16,9 +16,22 @@
  +------------------+           +------------------------+          +------------------+
 ```
 
-- **Transports:** the server talks to players through `ServerTransport` (`common/Transport.h`). ENet
-  (UDP, `common/EnetTransport.cpp`) is always on; channel 0 is reliable, channel 1 unreliable
-  (player state at 20 Hz, NPC states at 10 Hz). More transports (Steam) plug in beside it.
+- **Transports:** the server talks to players through `ServerTransport` (`common/Transport.h`), the
+  client through `ClientConnection` (`src/net/ClientConnection.h`). Reliable messages are ordered;
+  unreliable ones carry player state (20 Hz) and NPC states (10 Hz).
+  - ENet (UDP, `common/EnetTransport.cpp`) is always on. With Steam it listens on 127.0.0.1 only, for
+    the host's own game.
+  - Steam (`src/steam/`): `ISteamNetworkingMessages` through Valve's relays, addressed by Steam ID
+    ("steam:<id>"). Data and control (1-byte keepalive/goodbye) use separate channels per
+    direction (0/2 to the server, 1/3 to players). The first keepalive opens a connection, silence
+    for 20 s closes it.
+- **Steam:** the flat API is resolved at runtime from the game's own `steam_api64.dll` (no SDK files
+  in the repo, nothing extra shipped). The host keeps a friends-only lobby and sets rich presence
+  `connect`, so friends get "Invite to Game" / "Join Game". Accepting either fires
+  `GameLobbyJoinRequested` / `GameRichPresenceJoinRequested`; the player joins the lobby and connects
+  to its owner. The host accepts Steam sessions only from lobby members and Steam friends. Callbacks
+  are registered with `SteamAPI_RegisterCallback` and dispatched by the game's own
+  `SteamAPI_RunCallbacks`.
 - **Server:** `common/Server.cpp`, one thread. Joining is checked for protocol version, max players
   (default 4), an optional password and a load-order hash that must match the players already in.
   Connections that don't say Hello within 5 s are dropped. Each player has rate budgets (60 states/s,

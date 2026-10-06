@@ -18,40 +18,39 @@ Always start the game with F4SE (`f4se_loader.exe`, or your mod manager's F4SE l
 Edit `Data\F4SE\Plugins\F4Multiplayer.ini` (in Vortex: the mod's staging folder, or use
 "Open in File Manager").
 
-### The host (one player)
+One player hosts. Only the host changes a setting:
 
 ```ini
-sPlayerName = YourName
 bHost = true
 ```
 
-The host's game runs the server. Friends connect to the host's IP address on UDP port 7779:
+Everyone else keeps the defaults. Players are named after their Steam names (set `sPlayerName` to
+use another name).
 
-- **Same house / LAN:** give friends your local IP (run `ipconfig`, look for IPv4 Address).
-- **Over the internet, easiest:** everyone installs [Tailscale](https://tailscale.com) (free) and
-  signs into the same network; give friends your Tailscale IP (100.x.x.x).
-- **Over the internet, port forwarding:** forward UDP 7779 on your router to your PC and give
-  friends your public IP.
-
-When Windows Firewall asks about Fallout 4, allow it on private networks (and public, if you use
-port forwarding).
-
-### Everyone else
-
-```ini
-sPlayerName = YourName
-bHost = false
-sServerAddress = 100.101.102.103
-```
-
-Optionally set the same `sPassword` for everyone.
+Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through Steam's relays,
+so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
+can join. Optionally set the same `sPassword` for everyone.
 
 ## Playing
 
-1. The host loads a save. Then friends load theirs.
-2. Once you're in the world you connect automatically; you'll see "Multiplayer: connected" and
-   "<name> joined" messages.
-3. Players appear to each other when they are in the same interior, or near each other outside.
+1. Everyone starts the game **with F4SE** and loads a save.
+2. The host invites friends: open the Steam overlay (Shift+Tab), go to Friends, right-click a
+   friend and pick **Invite to Game**. The friend accepts the invite in their Steam overlay.
+
+   Or the friend joins on their own: in the Steam overlay or friends list, right-click the host
+   and pick **Join Game**.
+3. You'll see "Multiplayer: connected" and "<name> joined" messages.
+4. Players appear to each other when they are in the same interior, or near each other outside.
+
+Accept invites and use Join Game **while the game is already running with F4SE**. If Steam starts
+Fallout 4 for you from an invite, it starts without F4SE and the mod doesn't load: close it, start
+the game with F4SE, then join again.
+
+### Without Steam (LAN or VPN)
+
+Everyone sets `sTransport = enet`. Friends set `sServerAddress` to the host's IP address. The
+host's game listens on UDP port 7779; allow it when Windows Firewall asks. Over the internet the
+host also forwards UDP 7779 on their router.
 
 Each player keeps their own save, character and inventory. Meet up by travelling to the same place.
 
@@ -81,7 +80,8 @@ want to keep your solo playthrough untouched.
 ## Dedicated server (optional)
 
 `F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X]` runs a server
-without playing. Everyone (including you) then joins with `sServerAddress`.
+without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
+`sServerAddress`.
 
 ## Known limitations (early version)
 
@@ -97,3 +97,6 @@ without playing. Everyone (including you) then joins with `sServerAddress`.
 - Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`
 - "load order is different": compare your mod lists; the order must match exactly.
 - "Version mismatch": everyone needs the same version of this mod.
+- No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
+  `bHost = true`; check the host's log for a "Steam: hosting lobby" line.
+- "you're hosting": only the host sets `bHost = true`.

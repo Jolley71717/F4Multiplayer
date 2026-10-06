@@ -6,13 +6,19 @@ namespace Config
 {
 	struct Settings
 	{
-		// Name shown to other players.
-		std::string playerName = "Vault Dweller";
+		// Name shown to other players. Empty = your Steam name.
+		std::string playerName;
 
-		// Host a session on this machine. The host also plays; friends connect to the host's IP.
+		// Host a session on this machine. The host also plays; friends join through Steam
+		// (invite, or "Join Game" in the friends list) or connect to the host's IP.
 		bool host = false;
 
-		// Address of the host to join ("ip" or "ip:port"). Ignored when hosting.
+		// How friends connect: "steam" (Steam invites and relays; no ports to open), "enet" (direct
+		// UDP to the host's IP and port) or "auto" (Steam when it's available, else UDP).
+		std::string transport = "auto";
+
+		// Address of the host to join: "ip", "ip:port" or "steam:<host's Steam ID>". Empty = wait for
+		// a Steam invite. Ignored when hosting.
 		std::string serverAddress;
 
 		std::uint16_t port = 7779;
