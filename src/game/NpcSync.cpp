@@ -1,6 +1,7 @@
 #include "game/NpcSync.h"
 
 #include "game/Puppets.h"
+#include "game/WeaponFire.h"
 
 namespace NpcSync
 {
@@ -133,6 +134,7 @@ namespace NpcSync
 					if (!IsCandidate(actor)) {
 						continue;
 					}
+					WeaponFire::InstallForNpcs(actor);  // no-op once hooked
 					const auto id = actor->GetFormID();
 					loaded.insert(id);
 
@@ -341,6 +343,20 @@ namespace NpcSync
 			while (snaps.size() > MAX_SNAPSHOTS) {
 				snaps.pop_front();
 			}
+		}
+	}
+
+	bool RunsLocally(std::uint32_t a_refId)
+	{
+		return owned.contains(a_refId);
+	}
+
+	void ApplyShot(std::uint32_t a_refId)
+	{
+		const auto it = mirrors.find(a_refId);
+		const auto actor = it != mirrors.end() ? LoadedActor(a_refId) : nullptr;
+		if (actor && it->second.registered == actor) {
+			WeaponFire::PlayShot(actor);
 		}
 	}
 

@@ -2,6 +2,7 @@
 //
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
+//           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -45,6 +46,7 @@ int main(int argc, char* argv[])
 	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
+	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
@@ -131,6 +133,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, killRef, 16);
 		} else if (key == "--jump") {
 			jump = value == "1";
+		} else if (key == "--shoot") {
+			ok = ParseNumber(value, shootWeapon, 16);
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
 		} else {
@@ -184,6 +188,9 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << '\n';
 							welcomed = true;
+							if (shootWeapon) {
+								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
+							}
 							if (questStage.quest) {
 								std::cout << "reporting quest stage\n";
 								Net::Send(peer, Protocol::Encode(questStage, Protocol::MessageType::kReportQuestStage), true);
@@ -252,6 +259,11 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kQuestStage:
 						if (const auto msg = Protocol::DecodeQuestStage(data)) {
 							std::cout << "quest stage: " << std::hex << msg->quest << std::dec << " " << msg->stage << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kShotFired:
+						if (const auto msg = Protocol::DecodeShot(data)) {
+							std::cout << "shot: player " << msg->playerId << " ref " << std::hex << msg->refId << std::dec << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorOwners:
@@ -355,6 +367,13 @@ int main(int argc, char* argv[])
 			state.speed = walking ? walkSpeed : 0.0f;
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
+			const bool shoot = shootWeapon && !walking && sequence % 10 == 0;
+			if (shootWeapon) {
+				state.flags |= Protocol::kWeaponDrawn;
+			}
+			if (shoot) {
+				Net::Send(peer, Protocol::Encode(Protocol::Shot{ 0, ownRef }, Protocol::MessageType::kReportShot), false);
+			}
 			if (ownRef) {
 				// We walk the NPC instead; our own player stays put far away.
 				Protocol::ActorState npc;
@@ -367,6 +386,7 @@ int main(int argc, char* argv[])
 				npc.heading = state.heading;
 				npc.speed = state.speed;
 				npc.moveMode = state.moveMode;
+				npc.flags = state.flags & Protocol::kWeaponDrawn;
 				if (sequence % 2 == 0) {  // 10 Hz like the game
 					Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorState>{ npc }, Protocol::MessageType::kActorStates), false);
 				}

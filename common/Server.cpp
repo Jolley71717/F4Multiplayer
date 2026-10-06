@@ -18,6 +18,8 @@ namespace
 	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states, and NPC state batches
 	// "Take all" from a big container reports one event per item type.
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
+	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
+	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
@@ -37,12 +39,13 @@ namespace
 		int               states = 0;
 		int               actorStates = 0;
 		int               events = 0;
+		int               shots = 0;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = 0;
+				states = actorStates = events = shots = 0;
 			}
 		}
 	};
@@ -542,6 +545,28 @@ void Server::Run()
 		}
 	};
 
+	// Shots by the player, or by an NPC they run (anyone else's view of that NPC doesn't count).
+	const auto handleShot = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		if (++a_player.rate.shots > MAX_SHOTS_PER_SECOND) {
+			return;
+		}
+		const auto shot = Protocol::DecodeShot(a_data);
+		if (!shot) {
+			return;
+		}
+		if (shot->refId != 0) {
+			const auto it = actorOwners.find(shot->refId);
+			if (it == actorOwners.end() || it->second.playerId != a_player.id) {
+				return;
+			}
+		}
+		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId }, Protocol::MessageType::kShotFired), false, a_player.key);
+	};
+
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -623,6 +648,9 @@ void Server::Run()
 			break;
 		case MessageType::kRequestWorldState:
 			handleWorldRequest(a_player, a_data);
+			break;
+		case MessageType::kReportShot:
+			handleShot(a_player, a_data);
 			break;
 		default:
 			break;

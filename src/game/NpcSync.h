@@ -18,6 +18,12 @@ namespace NpcSync
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyStates(const std::vector<Protocol::ActorState>& a_states);
 
+	// Whether our game runs this NPC.
+	[[nodiscard]] bool RunsLocally(std::uint32_t a_refId);
+
+	// The NPC fired in its owner's world: play the firing animation on our copy.
+	void ApplyShot(std::uint32_t a_refId);
+
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 

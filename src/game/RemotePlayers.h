@@ -17,6 +17,9 @@ namespace RemotePlayers
 	// What the player is wearing and holding (base forms); copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
 
+	// The player fired: their stand-in plays the firing animation.
+	void PlayShot(std::uint32_t a_id);
+
 	// The player a stand-in actor belongs to, or 0.
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId);
 
