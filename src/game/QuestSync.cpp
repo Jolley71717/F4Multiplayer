@@ -22,7 +22,8 @@ namespace QuestSync
 			return a_type > 0 && a_type != 6;
 		}
 
-		// QUEST_DATA::flags bit set when a quest is completed.
+		// QUEST_DATA::flags bits: the quest is running, the quest is completed.
+		constexpr std::uint16_t QUEST_RUNNING = 0x0001;
 		constexpr std::uint16_t QUEST_COMPLETED = 0x0002;
 		// A quest that completes this soon after a stage from another player was completed by them.
 		constexpr auto REMOTE_COMPLETION_WINDOW = 10s;
@@ -30,12 +31,13 @@ namespace QuestSync
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last stage seen per quest
 		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
 		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
-		std::vector<Protocol::QuestStage>                waiting;  // from other players, until we're in the world
+		std::unordered_map<std::uint32_t, std::uint16_t> pending;  // highest stage from other players per quest, until it can be set here
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		std::vector<std::vector<std::uint8_t>>           outgoing;
 		Clock::time_point                                nextPoll{};
 		std::uint32_t                                    reported = 0;
 		std::uint32_t                                    applied = 0;
+		std::uint32_t                                    caughtUp = 0;  // ... after waiting for the quest to start here
 		std::uint32_t                                    completed = 0;
 		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
 		Clock::time_point                                lastStageChange{};
@@ -45,6 +47,51 @@ namespace QuestSync
 			auto& quests = RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>();
 			return { quests.data(), quests.size() };
 		}
+
+		// A stage set in the middle of a conversation or scene can break it; wait until it's over.
+		bool PlayerBusy()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return (ui && ui->GetMenuOpen("DialogueMenu"sv)) || (player && player->GetCurrentScene());
+		}
+
+		enum class Outcome
+		{
+			kDone,     // set, or nothing to do
+			kWait,     // try again later
+		};
+
+		// Sets another player's stage here if the quest is running here. A quest that isn't running
+		// yet waits until this player starts it: setting a stage starts a quest from wherever the
+		// player is, skips the stages before it, and can pull a new character out of the prologue.
+		Outcome TrySet(std::uint32_t a_quest, std::uint16_t a_stage, bool a_waited)
+		{
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			// Stages only move forward: never undo progress a player already has.
+			if (!quest || !IsSharedType(quest->data.questType) || (quest->data.flags & QUEST_COMPLETED) || a_stage <= quest->currentStage) {
+				return Outcome::kDone;
+			}
+			// Quest scripts must not run at the main menu or during a loading screen.
+			if (!WorldSync::InWorld() || !(quest->data.flags & QUEST_RUNNING) || PlayerBusy()) {
+				return Outcome::kWait;
+			}
+			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", a_quest, a_stage).c_str());
+			const char* name = quest->GetFullName();
+			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {})", a_quest, name ? name : "", a_stage, quest->currentStage);
+			// That stage came from another player; don't report it back. (The console sets it a moment later.)
+			knownStages[a_quest] = std::max(quest->currentStage, a_stage);
+			remoteStageAt[a_quest] = Clock::now();
+			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
+			++applied;
+			if (a_waited) {
+				++caughtUp;
+				if (name && *name) {
+					Hud::Notify(std::format("Caught up with your friends: {}", name));
+				}
+			}
+			return Outcome::kDone;
+		}
 	}
 
 	void Apply(const Protocol::QuestStage& a_stage)
@@ -52,26 +99,10 @@ namespace QuestSync
 		if (!Config::Get().syncQuests) {
 			return;
 		}
-		// Quest scripts must not run at the main menu or during a loading screen.
-		if (!WorldSync::InWorld()) {
-			if (std::ranges::find(waiting, a_stage) == waiting.end()) {
-				waiting.push_back(a_stage);
-			}
-			return;
+		if (TrySet(a_stage.quest, a_stage.stage, false) == Outcome::kWait) {
+			auto& stage = pending[a_stage.quest];
+			stage = std::max(stage, a_stage.stage);
 		}
-		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
-		// Stages only move forward: never undo progress a player already has.
-		if (!quest || !IsSharedType(quest->data.questType) || a_stage.stage <= quest->currentStage) {
-			return;
-		}
-		// The console command also starts the quest if it isn't running (TESQuest::SetStage doesn't).
-		RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", a_stage.quest, a_stage.stage).c_str());
-		REX::INFO("QuestSync: set {:08X} '{}' stage {} -> now {}", a_stage.quest, quest->GetFullName() ? quest->GetFullName() : "", a_stage.stage, quest->currentStage);
-		// Whatever stage it's at now came from another player; don't report it back.
-		knownStages[a_stage.quest] = quest->currentStage;
-		remoteStageAt[a_stage.quest] = Clock::now();
-		lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
-		++applied;
 	}
 
 	void ApplyDone(const Protocol::QuestDone& a_done)
@@ -117,9 +148,7 @@ namespace QuestSync
 			}
 			return;
 		}
-		for (const auto& stage : std::exchange(waiting, {})) {
-			Apply(stage);
-		}
+		std::erase_if(pending, [](const auto& a_entry) { return TrySet(a_entry.first, a_entry.second, true) == Outcome::kDone; });
 
 		if (!reportFrom) {
 			reportFrom = now + SETTLE_TIME;
@@ -173,7 +202,7 @@ namespace QuestSync
 		knownDone.clear();
 		remoteStageAt.clear();
 		reportFrom.reset();
-		waiting.clear();
+		pending.clear();
 	}
 
 	Clock::time_point LastStageChange()
@@ -183,6 +212,6 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} applied={} completed={}", reported, applied, completed);
+		return std::format("quests: reported={} applied={} caughtUp={} waiting={} completed={}", reported, applied, caughtUp, pending.size(), completed);
 	}
 }

@@ -3,8 +3,9 @@
 #include "Protocol.h"
 
 // Quest progress: when a story, faction or side quest reaches a new stage in one player's game,
-// the others' games set the same stage. Misc quests (radiant, ambient) are not shared because their
-// targets differ per game. Main thread only.
+// the others' games set the same stage once that quest is running there too, and not in the middle
+// of a conversation or scene. Misc quests (radiant, ambient) are not shared because their targets
+// differ per game. Main thread only.
 namespace QuestSync
 {
 	void Apply(const Protocol::QuestStage& a_stage);
