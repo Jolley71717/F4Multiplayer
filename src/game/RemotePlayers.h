@@ -27,6 +27,6 @@ namespace RemotePlayers
 	// Spawns, moves and despawns puppets. Call once per frame.
 	void Update();
 
-	[[nodiscard]] std::size_t Count();
+
 	[[nodiscard]] std::string Describe();
 }

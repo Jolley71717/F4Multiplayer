@@ -20,22 +20,15 @@ bool NetClient::Connect(const std::string& a_address, std::uint16_t a_defaultPor
 		return false;
 	}
 
-	ENetAddress address{};
-	if (!Net::ResolveAddress(a_address, a_defaultPort, address)) {
-		REX::ERROR("NetClient: cannot resolve '{}'", a_address);
-		Net::Shutdown();
-		return false;
-	}
-
 	{
+		// Events of an earlier connection stay in the inbox until polled.
 		std::scoped_lock l{ queueLock };
 		outbox.clear();
-		inbox.clear();
 	}
 
 	stopRequested = false;
 	status = Status::kConnecting;
-	thread = std::thread([this, address] { Run(address.host, address.port); });
+	thread = std::thread([this, a_address, a_defaultPort] { Run(a_address, a_defaultPort); });
 	REX::INFO("NetClient: connecting to {}", a_address);
 	return true;
 }
@@ -66,24 +59,31 @@ std::vector<NetClient::Event> NetClient::Poll()
 	return std::exchange(inbox, {});
 }
 
-void NetClient::Run(std::uint32_t a_host, std::uint16_t a_port)
+void NetClient::Run(std::string a_address, std::uint16_t a_defaultPort)
 {
+	const auto fail = [this](std::string_view a_why) {
+		REX::ERROR("NetClient: {}", a_why);
+		status = Status::kDisconnected;
+		std::scoped_lock l{ queueLock };
+		inbox.push_back({ Event::Type::kDisconnected, {} });
+	};
+
 	ENetAddress address{};
-	address.host = a_host;
-	address.port = a_port;
+	if (!Net::ResolveAddress(a_address, a_defaultPort, address)) {
+		fail(std::format("cannot resolve '{}'", a_address));
+		return;
+	}
 
 	const auto host = enet_host_create(nullptr, 1, Protocol::CHANNEL_COUNT, 0, 0);
 	const auto peer = host ? enet_host_connect(host, &address, Protocol::CHANNEL_COUNT, 0) : nullptr;
 	if (!peer) {
-		REX::ERROR("NetClient: could not create connection");
 		if (host) {
 			enet_host_destroy(host);
 		}
-		status = Status::kDisconnected;
-		std::scoped_lock l{ queueLock };
-		inbox.push_back({ Event::Type::kDisconnected, {} });
+		fail("could not create connection");
 		return;
 	}
+	host->maximumPacketSize = 1024 * 1024;
 	enet_peer_timeout(peer, 0, 10000, 20000);
 
 	const auto push = [this](Event a_event) {

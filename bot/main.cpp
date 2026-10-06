@@ -57,7 +57,12 @@ int main(int argc, char* argv[])
 	std::uint32_t lootItem = 0;
 	std::int32_t  lootCount = 0;
 	float         healthValue = 0;
+	Protocol::WorldRequest world;  // what our "world" already has (--session, --from)
 
+	if (argc % 2 == 0) {
+		std::cerr << "missing value for " << argv[argc - 1] << '\n';
+		return 2;
+	}
 	for (int i = 1; i + 1 < argc; i += 2) {
 		const std::string_view key = argv[i];
 		const std::string_view value = argv[i + 1];
@@ -118,6 +123,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, healthRef, 16);
 		} else if (key == "--health") {
 			ok = ParseNumber(value, healthValue);
+		} else if (key == "--session") {
+			ok = ParseNumber(value, world.sessionId, 16);
+		} else if (key == "--from") {
+			ok = ParseNumber(value, world.containerFrom);
 		} else if (key == "--kill") {
 			ok = ParseNumber(value, killRef, 16);
 		} else if (key == "--jump") {
@@ -165,7 +174,7 @@ int main(int argc, char* argv[])
 			switch (event.type) {
 			case ENET_EVENT_TYPE_CONNECT:
 				std::cout << "connected, sending hello\n";
-				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance }), true);
+				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world }), true);
 				break;
 			case ENET_EVENT_TYPE_RECEIVE:
 				{
@@ -173,7 +182,7 @@ int main(int argc, char* argv[])
 					switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
 					case Protocol::MessageType::kWelcome:
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
-							std::cout << "welcomed as player " << msg->playerId << '\n';
+							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << '\n';
 							welcomed = true;
 							if (questStage.quest) {
 								std::cout << "reporting quest stage\n";
@@ -181,7 +190,7 @@ int main(int argc, char* argv[])
 							}
 							if (ownRef) {
 								std::cout << "claiming npc\n";
-								Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { ownRef, true } }), true);
+								Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { ownRef, Protocol::ClaimReason::kCompanion } }), true);
 							}
 							if (hitPlayer.playerId) {
 								std::cout << "reporting player hit\n";
@@ -230,8 +239,9 @@ int main(int argc, char* argv[])
 						}
 						break;
 					case Protocol::MessageType::kContainerChanged:
-						if (const auto msg = Protocol::DecodeContainerChange(data)) {
-							std::cout << "container changed: " << std::hex << msg->container << " item " << msg->item << std::dec << " count " << msg->count << std::endl;
+						if (const auto msg = Protocol::DecodeIndexedContainerChange(data)) {
+							std::cout << "container changed #" << msg->index << " by player " << msg->playerId << ": " << std::hex << msg->change.container << " item "
+									  << msg->change.item << std::dec << " count " << msg->change.count << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kRefPickedUp:
@@ -277,7 +287,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kWorldState:
 						if (const auto msg = Protocol::DecodeWorldState(data)) {
-							std::cout << "world state: " << msg->containerChanges.size() << " container changes, " << msg->pickedUp.size() << " pickups, " << msg->refStates.size() << " ref states, " << msg->questStages.size() << " quest stages, " << msg->deadActors.size() << " dead actors:";
+							std::cout << "world state: " << msg->containerChanges.size() << " container changes from #" << msg->containerFirstIndex << ", " << msg->pickedUp.size() << " pickups, " << msg->refStates.size() << " ref states, " << msg->questStages.size() << " quest stages, " << msg->deadActors.size() << " dead actors:";
 							for (const auto id : msg->deadActors) {
 								std::cout << ' ' << std::hex << id << std::dec;
 							}
@@ -349,6 +359,8 @@ int main(int argc, char* argv[])
 				// We walk the NPC instead; our own player stays put far away.
 				Protocol::ActorState npc;
 				npc.refId = ownRef;
+				npc.cell = state.cell;
+				npc.worldspace = state.worldspace;
 				npc.x = state.x;
 				npc.y = state.y;
 				npc.z = state.z;

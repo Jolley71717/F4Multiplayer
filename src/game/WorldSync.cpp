@@ -1,4 +1,4 @@
-﻿#include "game/WorldSync.h"
+#include "game/WorldSync.h"
 
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
@@ -10,6 +10,7 @@ namespace WorldSync
 	namespace
 	{
 		using Clock = std::chrono::steady_clock;
+		using Protocol::IsShareableRef;
 
 		constexpr auto APPLY_INTERVAL = 250ms;
 
@@ -50,9 +51,20 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, Watched>           watched;
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
-		// Remote loot changes for containers/items that weren't loaded yet, in arrival order.
-		std::vector<Protocol::ContainerChange> pendingContainer;
-		std::unordered_set<std::uint32_t>      pendingPickups;
+		// Container changes are numbered by the server. Everything before containerNext is in our
+		// world already or waiting in pendingContainer (its container isn't loaded). This belongs
+		// to the world rather than the connection, so it is kept in the save (see SaveResyncPoint).
+		struct PendingChange
+		{
+			std::uint32_t             index;
+			Protocol::ContainerChange change;
+		};
+		std::uint64_t              session = 0;
+		std::uint32_t              containerNext = 0;
+		std::vector<PendingChange> pendingContainer;
+		std::uint32_t              localPlayer = 0;
+
+		std::unordered_set<std::uint32_t> pendingPickups;
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -65,30 +77,41 @@ namespace WorldSync
 		std::uint32_t                          applied = 0;
 		std::uint32_t                          reported = 0;
 
-		bool IsShareable(std::uint32_t a_refId)
+		// A loaded, real (not a stand-in) actor, or nullptr.
+		RE::Actor* LoadedActor(std::uint32_t a_refId)
 		{
-			return a_refId != 0 && (a_refId >> 24) != 0xFF;
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_refId);
+			if (!actor || actor->IsDeleted() || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !actor->Get3D() || !actor->GetParentCell()) {
+				return nullptr;
+			}
+			return actor;
 		}
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
-		// (or can never be), false if it isn't loaded yet.
+		// (or can never be), false to try again later.
 		bool TryKill(std::uint32_t a_refId)
 		{
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_refId);
-			if (!actor || actor->IsDeleted()) {
-				return false;  // not in memory yet; try again when its cell loads
+			if (!InWorld()) {
+				return false;
 			}
-			if (actor->IsDead(false)) {
+			const auto form = RE::TESForm::GetFormByID(a_refId);
+			if (form && !form->As<RE::Actor>()) {
+				return true;  // not an actor: nothing to kill
+			}
+			const auto actor = form ? form->As<RE::Actor>() : nullptr;
+			if (actor && (actor->IsPlayerRef() || Puppets::IsPuppet(actor))) {
 				return true;
 			}
-			if (!actor->Get3D() || !actor->GetParentCell()) {
-				return false;
+			if (actor && actor->IsDead(false)) {
+				return true;
+			}
+			if (!LoadedActor(a_refId)) {
+				return false;  // not loaded yet; try again when its cell loads
 			}
 
 			// The console kill goes through the engine's normal death path (death animation,
 			// ragdoll, quest/script death events), exactly as if it happened here.
-			const auto command = std::format("{:08X}.kill", a_refId);
-			RE::Console::ExecuteCommand(command.c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
 			++applied;
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
@@ -107,7 +130,7 @@ namespace WorldSync
 
 				const auto id = ref->GetFormID();
 				const auto actor = ref->As<RE::Actor>();
-				if (!IsShareable(id) || ref->IsPlayerRef() || (actor && Puppets::IsPuppet(actor))) {
+				if (!IsShareableRef(id) || (actor && Puppets::IsPuppet(actor))) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				std::scoped_lock l{ inboxLock };
@@ -124,12 +147,12 @@ namespace WorldSync
 			return values ? values->health : nullptr;
 		}
 
-		// Sets a loaded actor's current health to a fraction of its maximum. Returns false if it isn't loaded.
+		// Sets a loaded actor's current health to a fraction of its maximum. Returns false to try again later.
 		bool TrySetHealth(std::uint32_t a_refId, float a_fraction)
 		{
 			const auto info = HealthInfo();
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_refId);
-			if (!info || !actor || actor->IsDeleted() || !actor->Get3D()) {
+			const auto actor = InWorld() ? LoadedActor(a_refId) : nullptr;
+			if (!info || !actor) {
 				return false;
 			}
 			if (actor->IsDead(false)) {
@@ -170,9 +193,9 @@ namespace WorldSync
 					}
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				// Only damage we dealt; each player reports their own hits.
+				// Only damage we dealt to others (not ourselves); each player reports their own hits.
 				const auto actor = target->As<RE::Actor>();
-				if (actor && IsShareable(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
+				if (actor && IsShareableRef(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
 					hitInbox.push_back(target->GetFormID());
 				}
@@ -182,8 +205,6 @@ namespace WorldSync
 
 		HitWatcher hitWatcher;
 
-		constexpr std::uint32_t PLAYER_REF = 0x14;
-
 		class ContainerWatcher :
 			public RE::BSTEventSink<RE::TESContainerChangedEvent>
 		{
@@ -192,18 +213,22 @@ namespace WorldSync
 			{
 				// Only moves the local player makes. Changes we apply for other players go between a
 				// container and nothing, so they never match and never echo back.
+				using Protocol::PLAYER_REF_ID;
 				std::optional<std::vector<std::uint8_t>> packet;
 				const auto count = a_event.itemCount;
-				if (a_event.newContainerFormID == PLAYER_REF && a_event.oldContainerFormID == 0) {
+				if (a_event.newContainerFormID == PLAYER_REF_ID && a_event.oldContainerFormID == 0) {
 					// Picked up from the world. The event doesn't say which reference (referenceFormID is 0),
 					// so Frame() pairs it with the item the player just activated.
 					std::scoped_lock l{ inboxLock };
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				if (a_event.newContainerFormID == PLAYER_REF && IsShareable(a_event.oldContainerFormID) && count > 0) {
+				if (count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (a_event.newContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.oldContainerFormID)) {
 					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count }, Protocol::MessageType::kReportContainer);
-				} else if (a_event.oldContainerFormID == PLAYER_REF && IsShareable(a_event.newContainerFormID) && count > 0) {
+				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.newContainerFormID)) {
 					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.newContainerFormID, a_event.baseObjectFormID, count }, Protocol::MessageType::kReportContainer);
 				}
 				if (packet) {
@@ -224,7 +249,7 @@ namespace WorldSync
 			{
 				const auto& target = a_event.objectActivated;
 				const auto& by = a_event.actionRef;
-				if (!target || !by || !by->IsPlayerRef() || !IsShareable(target->GetFormID())) {
+				if (!target || !by || !by->IsPlayerRef() || !IsShareableRef(target->GetFormID())) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				const auto base = target->GetObjectReference();
@@ -236,21 +261,91 @@ namespace WorldSync
 
 		ActivateWatcher activateWatcher;
 
-		// Applies another player's container change. Returns false if the container isn't loaded.
-		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
+		// Things that can sit in an inventory.
+		bool IsInventoryForm(const RE::TESForm* a_form)
 		{
-			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
-			if (!container || container->IsDeleted()) {
+			using Type = RE::ENUM_FORM_ID;
+			if (!a_form) {
 				return false;
 			}
-			if (!RE::TESForm::GetFormByID(a_change.item)) {
-				return true;  // unknown item; nothing sensible to do
+			switch (a_form->GetFormType()) {
+			case Type::kARMO:
+			case Type::kBOOK:
+			case Type::kMISC:
+			case Type::kWEAP:
+			case Type::kAMMO:
+			case Type::kKEYM:
+			case Type::kALCH:
+			case Type::kNOTE:
+			case Type::kINGR:
+			case Type::kCMPO:
+			case Type::kOMOD:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		// Containers, and NPCs (corpses, merchants): what another player can take from or put into.
+		bool IsItemHolder(RE::TESObjectREFR* a_ref)
+		{
+			if (const auto actor = a_ref->As<RE::Actor>()) {
+				return !actor->IsPlayerRef() && !Puppets::IsPuppet(actor);
+			}
+			const auto base = a_ref->GetObjectReference();
+			return base && base->GetFormType() == RE::ENUM_FORM_ID::kCONT;
+		}
+
+		// Applies another player's container change. Returns false to try again later.
+		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
+		{
+			if (!InWorld()) {
+				return false;
+			}
+			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
+			if (!container || container->IsDeleted()) {
+				return false;  // not loaded yet
+			}
+			if (!IsItemHolder(container) || !IsInventoryForm(RE::TESForm::GetFormByID(a_change.item))) {
+				return true;  // nothing sensible to do
 			}
 			const auto command = a_change.count < 0 ?
-				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -a_change.count) :
+				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 				std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
 			RE::Console::ExecuteCommand(command.c_str());
 			return true;
+		}
+
+		// A session container change reached us (live or in a WorldState).
+		void OfferContainerChange(std::uint32_t a_index, const Protocol::ContainerChange& a_change, bool a_alreadyInWorld)
+		{
+			if (a_index < containerNext) {
+				return;  // already have it
+			}
+			containerNext = a_index + 1;
+			if (a_alreadyInWorld || !Protocol::IsValid(a_change)) {
+				return;
+			}
+			// Changes to one container stay in order; different containers don't wait for each other.
+			const bool waiting = std::ranges::any_of(pendingContainer, [&](const PendingChange& a_pending) { return a_pending.change.container == a_change.container; });
+			if (waiting || !TryApplyContainer(a_change)) {
+				pendingContainer.push_back({ a_index, a_change });
+			}
+		}
+
+		void RetryPendingContainers()
+		{
+			std::unordered_set<std::uint32_t> blocked;
+			std::erase_if(pendingContainer, [&](const PendingChange& a_pending) {
+				if (blocked.contains(a_pending.change.container)) {
+					return false;
+				}
+				if (TryApplyContainer(a_pending.change)) {
+					return true;
+				}
+				blocked.insert(a_pending.change.container);
+				return false;
+			});
 		}
 
 		// Pairs world pickups with the reference the player activated, and reports them.
@@ -306,10 +401,16 @@ namespace WorldSync
 			return state;
 		}
 
-		// Applies another player's door/lock state. Returns false if the reference isn't loaded.
+		// Applies another player's door/lock state. Returns false to try again later.
 		bool TryApplyRefState(const Protocol::RefState& a_state)
 		{
+			if (!InWorld()) {
+				return false;
+			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
+			if (ref && ref->As<RE::Actor>()) {
+				return true;
+			}
 			const auto current = ReadRefState(ref);
 			if (!current) {
 				return ref && ref->IsDeleted();  // gone for good: drop it
@@ -346,17 +447,39 @@ namespace WorldSync
 			}
 		}
 
+		// Removes an item another player picked up. Returns false to try again later.
 		bool TryApplyPickup(std::uint32_t a_refId)
 		{
+			if (!InWorld()) {
+				return false;
+			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
 			if (!ref) {
 				return false;
+			}
+			// Only loose items. Quest items stay so every player can still pick up their own copy.
+			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference()) ||
+				(ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
 				ref->Disable();
 			}
 			return true;
 		}
+
+		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
+		constexpr std::uint32_t RESYNC_VERSION = 1;
+	}
+
+	bool InWorld()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !player->GetParentCell()) {
+			return false;
+		}
+		const auto ui = RE::UI::GetSingleton();
+		return !ui || !ui->GetMenuOpen("LoadingMenu"sv);
 	}
 
 	void Install()
@@ -378,9 +501,25 @@ namespace WorldSync
 		}
 	}
 
+	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId)
+	{
+		localPlayer = a_localPlayerId;
+		if (a_sessionId != session) {
+			// A different session: none of its changes are in our world yet.
+			session = a_sessionId;
+			containerNext = 0;
+			pendingContainer.clear();
+		}
+	}
+
+	Protocol::WorldRequest ResyncPoint()
+	{
+		return { session, containerNext };
+	}
+
 	void ApplyRemoteDeath(std::uint32_t a_refId)
 	{
-		if (!IsShareable(a_refId) || !dead.insert(a_refId).second) {
+		if (!IsShareableRef(a_refId) || !dead.insert(a_refId).second) {
 			return;
 		}
 		if (!TryKill(a_refId)) {
@@ -393,8 +532,9 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
-		for (const auto& change : a_state.containerChanges) {
-			ApplyRemoteContainerChange(change);
+		// Our own changes too: the server only sends those our world doesn't have.
+		for (std::size_t i = 0; i < a_state.containerChanges.size(); ++i) {
+			OfferContainerChange(a_state.containerFirstIndex + static_cast<std::uint32_t>(i), a_state.containerChanges[i], false);
 		}
 		for (const auto id : a_state.pickedUp) {
 			ApplyRemotePickup(id);
@@ -405,12 +545,14 @@ namespace WorldSync
 		for (const auto& stage : a_state.questStages) {
 			QuestSync::Apply(stage);
 		}
-		REX::INFO("WorldSync: session state has {} dead actors", a_state.deadActors.size());
+		REX::INFO("WorldSync: session state: {} dead, {} container changes from #{}, {} pickups, {} doors, {} quest stages",
+			a_state.deadActors.size(), a_state.containerChanges.size(), a_state.containerFirstIndex, a_state.pickedUp.size(),
+			a_state.refStates.size(), a_state.questStages.size());
 	}
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		if (!IsShareable(a_refId) || dead.contains(a_refId)) {
+		if (!IsShareableRef(a_refId) || dead.contains(a_refId)) {
 			return;
 		}
 		if (TrySetHealth(a_refId, a_health)) {
@@ -420,24 +562,21 @@ namespace WorldSync
 		}
 	}
 
-	void ApplyRemoteContainerChange(const Protocol::ContainerChange& a_change)
+	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		// Keep order: if earlier changes for anything are still waiting, queue behind them.
-		if (!pendingContainer.empty() || !TryApplyContainer(a_change)) {
-			pendingContainer.push_back(a_change);
-		}
+		OfferContainerChange(a_change.index, a_change.change, a_change.playerId == localPlayer);
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)
 	{
-		if (IsShareable(a_refId) && !TryApplyPickup(a_refId)) {
+		if (IsShareableRef(a_refId) && !TryApplyPickup(a_refId)) {
 			pendingPickups.insert(a_refId);
 		}
 	}
 
 	void ApplyRemoteRefState(const Protocol::RefState& a_state)
 	{
-		if (!IsShareable(a_state.refId)) {
+		if (!IsShareableRef(a_state.refId)) {
 			return;
 		}
 		// So our own watcher doesn't report this change back.
@@ -484,7 +623,7 @@ namespace WorldSync
 		// Report the health of actors we hit last frame (damage has been applied by now).
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
 			for (const auto id : hitLastFrame) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				const auto actor = LoadedActor(id);
 				if (actor && !actor->IsDead(false) && !dead.contains(id)) {
 					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 					const float maximum = values.GetPermanentActorValue(*info);
@@ -497,8 +636,12 @@ namespace WorldSync
 		}
 		hitLastFrame.clear();
 		hitLastFrame.insert(newHits.begin(), newHits.end());
+		// Fighting or talking to an NPC another player's game runs brings it over to ours.
 		for (const auto id : newHits) {
-			NpcSync::OnLocalHit(id);
+			NpcSync::OnLocalInteraction(id);
+		}
+		for (const auto& activation : newActivations) {
+			NpcSync::OnLocalInteraction(activation.ref);
 		}
 		for (const auto& [actorId, damage] : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(actorId)) {
@@ -513,9 +656,7 @@ namespace WorldSync
 			return;
 		}
 		nextApply = now + APPLY_INTERVAL;
-
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!player || !player->GetParentCell()) {
+		if (!InWorld()) {
 			return;
 		}
 
@@ -525,7 +666,7 @@ namespace WorldSync
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
 			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
 		}
-		std::erase_if(pendingContainer, [](const Protocol::ContainerChange& a_change) { return TryApplyContainer(a_change); });
+		RetryPendingContainers();
 		std::erase_if(pendingPickups, [](std::uint32_t a_id) { return TryApplyPickup(a_id); });
 		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
 	}
@@ -540,7 +681,6 @@ namespace WorldSync
 		dead.clear();
 		pending.clear();
 		pendingHealth.clear();
-		pendingContainer.clear();
 		pendingPickups.clear();
 		hitLastFrame.clear();
 		recentActivations.clear();
@@ -557,8 +697,65 @@ namespace WorldSync
 		outgoing.clear();
 	}
 
+	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
+	{
+		if (session == 0) {
+			return;
+		}
+		const auto count = static_cast<std::uint32_t>(pendingContainer.size());
+		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
+			!a_intfc->WriteRecordData(session) || !a_intfc->WriteRecordData(containerNext) || !a_intfc->WriteRecordData(count)) {
+			REX::ERROR("WorldSync: failed to save the session record");
+			return;
+		}
+		for (const auto& entry : pendingContainer) {
+			a_intfc->WriteRecordData(entry.index);
+			a_intfc->WriteRecordData(entry.change.container);
+			a_intfc->WriteRecordData(entry.change.item);
+			a_intfc->WriteRecordData(entry.change.count);
+		}
+	}
+
+	void LoadResyncPoint(const F4SE::SerializationInterface* a_intfc, std::uint32_t a_version, std::uint32_t a_length)
+	{
+		RevertResyncPoint();
+		std::uint64_t savedSession = 0;
+		std::uint32_t savedNext = 0;
+		std::uint32_t count = 0;
+		constexpr std::uint32_t HEADER = sizeof(savedSession) + sizeof(savedNext) + sizeof(count);
+		constexpr std::uint32_t ENTRY = 4 * sizeof(std::uint32_t);
+		if (a_version != RESYNC_VERSION || a_length < HEADER ||
+			a_intfc->ReadRecordData(savedSession) != sizeof(savedSession) ||
+			a_intfc->ReadRecordData(savedNext) != sizeof(savedNext) ||
+			a_intfc->ReadRecordData(count) != sizeof(count) || count > (a_length - HEADER) / ENTRY) {
+			REX::WARN("WorldSync: ignoring an unreadable session record");
+			return;
+		}
+		std::vector<PendingChange> saved;
+		for (std::uint32_t i = 0; i < count; ++i) {
+			PendingChange entry{};
+			a_intfc->ReadRecordData(entry.index);
+			a_intfc->ReadRecordData(entry.change.container);
+			a_intfc->ReadRecordData(entry.change.item);
+			a_intfc->ReadRecordData(entry.change.count);
+			saved.push_back(entry);
+		}
+		session = savedSession;
+		containerNext = savedNext;
+		pendingContainer = std::move(saved);
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", session, containerNext, pendingContainer.size());
+	}
+
+	void RevertResyncPoint()
+	{
+		session = 0;
+		containerNext = 0;
+		pendingContainer.clear();
+	}
+
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} pendingLoot={} pendingPickups={} watched={} pendingDoors={}", dead.size(), pending.size(), reported, applied, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size());
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size());
 	}
 }

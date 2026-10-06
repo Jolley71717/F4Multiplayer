@@ -70,13 +70,13 @@ namespace Session
 			return hash;
 		}
 
-		std::string ServerAddress()
+		const std::string& ServerAddress()
 		{
-			const auto& settings = Config::Get();
-			if (settings.host) {
-				return std::format("127.0.0.1:{}", settings.port);
-			}
-			return settings.serverAddress;
+			static const std::string address = [] {
+				const auto& settings = Config::Get();
+				return settings.host ? std::format("127.0.0.1:{}", settings.port) : settings.serverAddress;
+			}();
+			return address;
 		}
 
 		bool InGame()
@@ -90,7 +90,7 @@ namespace Session
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto values = RE::ActorValue::GetSingleton();
-			if (!player || !values || !values->health || player->IsDead(false) || a_damage <= 0.0f) {
+			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_damage <= 0.0f) {
 				return;
 			}
 			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_damage, 1000.0f));
@@ -106,6 +106,7 @@ namespace Session
 					sentEquipment.reset();
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
+					WorldSync::OnWelcome(msg->sessionId, localId);
 					lastRejectReason.clear();
 					Notify("Multiplayer: connected");
 				}
@@ -140,8 +141,8 @@ namespace Session
 				}
 				break;
 			case MessageType::kContainerChanged:
-				if (const auto msg = Protocol::DecodeContainerChange(a_data)) {
-					WorldSync::ApplyRemoteContainerChange(*msg);
+				if (const auto msg = Protocol::DecodeIndexedContainerChange(a_data)) {
+					WorldSync::ApplyContainerChange(*msg);
 				}
 				break;
 			case MessageType::kRefPickedUp:
@@ -293,14 +294,10 @@ namespace Session
 
 	void Frame()
 	{
-		const auto now = Clock::now();
-		const auto address = ServerAddress();
+		const auto  now = Clock::now();
+		const auto& address = ServerAddress();
 
-		if (!address.empty() && client.GetStatus() == NetClient::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {
-			nextConnectAttempt = now + RECONNECT_DELAY;
-			client.Connect(address, Protocol::DEFAULT_PORT);
-		}
-
+		// Events first: reconnecting must not happen before a disconnect has been handled.
 		for (auto& event : client.Poll()) {
 			switch (event.type) {
 			case NetClient::Event::Type::kConnected:
@@ -311,6 +308,7 @@ namespace Session
 					hello.name = settings.playerName;
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
+					hello.world = WorldSync::ResyncPoint();
 					client.Send(Protocol::Encode(hello), true);
 				}
 				break;
@@ -332,6 +330,11 @@ namespace Session
 				HandlePacket(event.data);
 				break;
 			}
+		}
+
+		if (!address.empty() && client.GetStatus() == NetClient::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {
+			nextConnectAttempt = now + RECONNECT_DELAY;
+			client.Connect(address, Config::Get().port);
 		}
 
 		if ((welcomed || echo) && now >= nextSend) {
@@ -393,7 +396,17 @@ namespace Session
 	{
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
+	}
+
+	void OnGameLoaded()
+	{
+		// What we knew about the world described the game before the load.
+		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		if (welcomed) {
+			client.Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
+			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
+		}
 	}
 
 	std::string Describe()

@@ -72,7 +72,14 @@ namespace DevChannel
 			auto future = promise->get_future();
 
 			F4SE::GetTaskInterface()->AddTask([promise, fn = std::move(a_fn)]() {
-				promise->set_value(fn());
+				// An exception must never escape into the game's task loop.
+				try {
+					promise->set_value(fn());
+				} catch (const std::exception& e) {
+					promise->set_value(std::format("error: {}", e.what()));
+				} catch (...) {
+					promise->set_value("error: command failed");
+				}
 			});
 
 			if (future.wait_for(MAIN_THREAD_TIMEOUT) != std::future_status::ready) {
@@ -183,6 +190,7 @@ namespace DevChannel
 			for (;;) {
 				const SOCKET client = accept(listener, nullptr, nullptr);
 				if (client == INVALID_SOCKET) {
+					std::this_thread::sleep_for(100ms);  // don't spin if accept keeps failing
 					continue;
 				}
 				ServeClient(client);

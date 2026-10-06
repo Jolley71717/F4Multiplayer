@@ -1,10 +1,12 @@
-﻿#include "Server.h"
+#include "Server.h"
 
-#include "Net.h"
+#include "EnetTransport.h"
 #include "Protocol.h"
 
 #include <chrono>
 #include <format>
+#include <map>
+#include <random>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -13,23 +15,60 @@ namespace
 	using Clock = std::chrono::steady_clock;
 
 	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(33);  // ~30 Hz state broadcast
-	constexpr int  MAX_STATES_PER_SECOND = 60;
-	constexpr int  MAX_EVENTS_PER_SECOND = 100;
+	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states, and NPC state batches
+	// "Take all" from a big container reports one event per item type.
+	constexpr int  MAX_EVENTS_PER_SECOND = 500;
+	// Connections that haven't said Hello by then are dropped (they hold a slot).
+	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
+	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
+	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
+
+	// A connection: which transport, and that transport's peer ID.
+	using ConnectionKey = std::uint64_t;
+
+	ConnectionKey MakeKey(std::size_t a_transport, PeerId a_peer)
+	{
+		return (static_cast<std::uint64_t>(a_transport) << 32) | a_peer;
+	}
+
+	struct RateWindow
+	{
+		Clock::time_point start{};
+		int               states = 0;
+		int               actorStates = 0;
+		int               events = 0;
+
+		void Roll(Clock::time_point a_now)
+		{
+			if (a_now - start >= std::chrono::seconds(1)) {
+				start = a_now;
+				states = actorStates = events = 0;
+			}
+		}
+	};
 
 	struct Player
 	{
-		ENetPeer*             peer = nullptr;
-		std::uint32_t         id = 0;
-		std::string           name;
-		std::uint32_t         appearance = 0;
+		ConnectionKey              key = 0;
+		std::uint32_t              id = 0;
+		Clock::time_point          connectedAt{};
+		std::string                name;
+		std::uint32_t              appearance = 0;
 		std::vector<std::uint32_t> equipment;
-		bool                  welcomed = false;
-		bool                  hasState = false;
-		bool                  stateDirty = false;
-		Protocol::PlayerState state;
-		Clock::time_point     rateWindowStart{};
-		int                   statesInWindow = 0;
-		int                   eventsInWindow = 0;
+		bool                       welcomed = false;
+		bool                       kicked = false;
+		bool                       hasState = false;
+		bool                       stateDirty = false;
+		Protocol::PlayerState      state;
+		RateWindow                 rate;
+		bool                       floodLogged = false;
+	};
+
+	struct Ownership
+	{
+		std::uint32_t         playerId = 0;
+		Protocol::ClaimReason reason = Protocol::ClaimReason::kUnowned;
+		Clock::time_point     since{};
 	};
 
 	std::string SanitizeName(std::string_view a_name, std::uint32_t a_id)
@@ -45,6 +84,16 @@ namespace
 		}
 		return out;
 	}
+
+	std::uint64_t NewSessionId()
+	{
+		std::random_device rd;
+		std::uint64_t      id = 0;
+		while (id == 0) {
+			id = (static_cast<std::uint64_t>(rd()) << 32) | rd();
+		}
+		return id;
+	}
 }
 
 Server::Server(LogFn a_log) :
@@ -56,34 +105,30 @@ Server::~Server()
 	Stop();
 }
 
-bool Server::Start(const Options& a_options)
+bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerTransport>> a_extraTransports)
 {
 	if (running) {
 		return true;
 	}
 
-	if (!Net::Initialize()) {
-		log("server: failed to initialize networking");
-		return false;
-	}
-
 	options = a_options;
 
-	ENetAddress address{};
-	address.host = ENET_HOST_ANY;
-	address.port = options.port;
-
 	// Allow a couple of extra connections so full servers can still send a rejection.
-	const auto host = enet_host_create(&address, options.maxPlayers + 2, Protocol::CHANNEL_COUNT, 0, 0);
-	if (!host) {
-		log(std::format("server: could not bind UDP port {} (already in use?)", options.port));
-		Net::Shutdown();
+	std::string error;
+	auto        enet = EnetServerTransport::Create(options.port, options.maxPlayers + 2, error);
+	if (!enet) {
+		log("server: " + error);
 		return false;
+	}
+	transports.clear();
+	transports.push_back(std::move(enet));
+	for (auto& transport : a_extraTransports) {
+		transports.push_back(std::move(transport));
 	}
 
 	stopRequested = false;
 	running = true;
-	thread = std::thread([this, host] { Run(host); });
+	thread = std::thread([this] { Run(); });
 	log(std::format("server: listening on UDP port {} (max {} players)", options.port, options.maxPlayers));
 	return true;
 }
@@ -97,125 +142,197 @@ void Server::Stop()
 	if (thread.joinable()) {
 		thread.join();
 	}
+	transports.clear();
 	running = false;
-	Net::Shutdown();
 	log("server: stopped");
 }
 
-void Server::Run(void* a_host)
+void Server::Run()
 {
-	const auto host = static_cast<ENetHost*>(a_host);
-
-	std::unordered_map<ENetPeer*, Player> players;
-	std::uint32_t                          nextId = 1;
-	std::uint32_t                          tick = 0;
-	std::uint32_t                          sessionContentHash = 0;  // set by the first player
+	std::unordered_map<ConnectionKey, Player> players;
+	std::uint32_t                             nextId = 1;
+	std::uint32_t                             tick = 0;
+	std::uint32_t                             sessionContentHash = 0;  // set by the first player
+	std::uint64_t                             sessionId = NewSessionId();
+	// The password as clients can send it (the wire format caps its length).
+	const auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
 
 	// Shared world state for this session.
-	std::unordered_set<std::uint32_t>         deadActors;
-	std::vector<Protocol::ContainerChange>    containerChanges;
-	std::unordered_set<std::uint32_t>         pickedUp;
+	std::unordered_set<std::uint32_t>                     deadActors;
+	std::vector<Protocol::ContainerChange>                containerChanges;  // index = session index
+	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
-	// Which player's game runs each NPC's AI.
-	std::unordered_map<std::uint32_t, std::uint32_t> actorOwners;
-	std::vector<Protocol::QuestStage> questStages;  // in order, no repeats
+	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
+	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 
-	const auto shareable = [](std::uint32_t a_id) { return a_id != 0 && (a_id >> 24) != 0xFF; };
+	const auto resetWorld = [&] {
+		deadActors.clear();
+		containerChanges.clear();
+		pickedUp.clear();
+		refStates.clear();
+		actorOwners.clear();
+		questStages.clear();
+		sessionId = NewSessionId();
+	};
 
-	const auto relayToOthers = [&](const Player& a_from, const std::vector<std::uint8_t>& a_packet) {
-		for (const auto& [peer, other] : players) {
-			if (peer != a_from.peer && other.welcomed) {
-				Net::Send(peer, a_packet, true);
+	const auto send = [&](ConnectionKey a_key, const std::vector<std::uint8_t>& a_packet, bool a_reliable) {
+		const auto transport = static_cast<std::size_t>(a_key >> 32);
+		if (transport < transports.size()) {
+			transports[transport]->Send(static_cast<PeerId>(a_key), a_packet, a_reliable);
+		}
+	};
+
+	const auto disconnect = [&](Player& a_player) {
+		a_player.kicked = true;
+		const auto transport = static_cast<std::size_t>(a_player.key >> 32);
+		transports[transport]->Disconnect(static_cast<PeerId>(a_player.key));
+	};
+
+	const auto describe = [&](ConnectionKey a_key) {
+		return transports[static_cast<std::size_t>(a_key >> 32)]->Describe(static_cast<PeerId>(a_key));
+	};
+
+	// Sends to every welcomed player except a_except (0 = nobody excepted).
+	const auto broadcast = [&](const std::vector<std::uint8_t>& a_packet, bool a_reliable, ConnectionKey a_except) {
+		for (const auto& [key, other] : players) {
+			if (key != a_except && other.welcomed) {
+				send(key, a_packet, a_reliable);
 			}
 		}
 	};
-	auto                                   nextTick = Clock::now();
 
 	const auto welcomedCount = [&] {
 		std::size_t count = 0;
-		for (const auto& [peer, player] : players) {
+		for (const auto& [key, player] : players) {
 			count += player.welcomed;
 		}
 		return count;
 	};
 
-	const auto reject = [&](ENetPeer* a_peer, std::string_view a_reason) {
-		Net::Send(a_peer, Protocol::Encode(Protocol::Reject{ std::string{ a_reason } }), true);
-		enet_peer_disconnect_later(a_peer, 0);
+	const auto reject = [&](Player& a_player, std::string_view a_reason) {
+		send(a_player.key, Protocol::Encode(Protocol::Reject{ std::string{ a_reason } }), true);
+		disconnect(a_player);
+	};
+
+	// Counts an event against the player's budget. A flooding player loses the excess (logged once).
+	const auto allowEvent = [&](Player& a_player) {
+		if (!a_player.welcomed) {
+			return false;
+		}
+		a_player.rate.Roll(Clock::now());
+		if (++a_player.rate.events <= MAX_EVENTS_PER_SECOND) {
+			return true;
+		}
+		if (!a_player.floodLogged) {
+			a_player.floodLogged = true;
+			log(std::format("server: '{}' sends too many events; dropping some", a_player.name));
+		}
+		return false;
+	};
+
+	// Sends the session's world state in chunks. Container changes before a_containerFrom are
+	// already in the receiver's world.
+	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
+		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
+		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
+		std::vector<Protocol::RefState>  states;
+		for (const auto& [id, state] : refStates) {
+			states.push_back(state);
+		}
+		const std::size_t containerFrom = (std::min<std::size_t>)(a_containerFrom, containerChanges.size());
+
+		const auto slice = [](const auto& a_list, std::size_t a_offset, std::size_t a_from = 0) {
+			using T = typename std::decay_t<decltype(a_list)>::value_type;
+			const auto begin = (std::min)(a_list.size(), a_from + a_offset);
+			const auto end = (std::min)(a_list.size(), begin + Protocol::WORLD_STATE_CHUNK);
+			return std::vector<T>(a_list.begin() + begin, a_list.begin() + end);
+		};
+
+		const auto longest = (std::max)({ dead.size(), containerChanges.size() - containerFrom, picked.size(), states.size(), questStages.size() });
+		std::size_t offset = 0;
+		do {
+			Protocol::WorldState world;
+			world.deadActors = slice(dead, offset);
+			world.containerFirstIndex = static_cast<std::uint32_t>((std::min)(containerChanges.size(), containerFrom + offset));
+			world.containerChanges = slice(containerChanges, offset, containerFrom);
+			world.pickedUp = slice(picked, offset);
+			world.refStates = slice(states, offset);
+			world.questStages = slice(questStages, offset);
+			send(a_to, Protocol::Encode(world), true);
+			offset += Protocol::WORLD_STATE_CHUNK;
+		} while (offset < longest);
 	};
 
 	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto hello = Protocol::DecodeHello(a_data);
 		if (!hello || hello->magic != Protocol::MAGIC) {
-			reject(a_player.peer, "Not an F4Multiplayer client");
+			reject(a_player, "Not an F4Multiplayer client");
 			return;
 		}
 		if (hello->version != Protocol::VERSION) {
-			reject(a_player.peer, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
+			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
 			return;
 		}
 		if (welcomedCount() >= options.maxPlayers) {
-			reject(a_player.peer, "Server is full");
+			reject(a_player, "Server is full");
 			return;
 		}
-		if (!options.password.empty() && hello->password != options.password) {
-			reject(a_player.peer, "Wrong password");
+		if (!password.empty() && hello->password != password) {
+			log(std::format("server: wrong password from {}", describe(a_player.key)));
+			reject(a_player, "Wrong password");
 			return;
 		}
 		if (welcomedCount() == 0) {
+			// A different mod list makes the stored form IDs meaningless: start a fresh session.
+			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
+				log("server: load order changed; starting a new session");
+				resetWorld();
+			}
 			sessionContentHash = hello->contentHash;
 		} else if (hello->contentHash != sessionContentHash) {
-			reject(a_player.peer, "Your load order is different from the other players. Everyone needs the same mods in the same order.");
+			reject(a_player, "Your load order is different from the other players. Everyone needs the same mods in the same order.");
 			return;
 		}
 
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
-		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
-		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty() || !refStates.empty() || !questStages.empty()) {
-			Protocol::WorldState world;
-			world.deadActors.assign(deadActors.begin(), deadActors.end());
-			world.containerChanges = containerChanges;
-			world.pickedUp.assign(pickedUp.begin(), pickedUp.end());
-			for (const auto& [id, state] : refStates) {
-				world.refStates.push_back(state);
-			}
-			world.questStages = questStages;
-			Net::Send(a_player.peer, Protocol::Encode(world), true);
-		}
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId }), true);
+		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
-		for (auto& [peer, other] : players) {
-			if (!other.welcomed || peer == a_player.peer) {
+		for (auto& [key, other] : players) {
+			if (!other.welcomed || key == a_player.key) {
 				continue;
 			}
-			Net::Send(a_player.peer, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
-			Net::Send(peer, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
+			send(a_player.key, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
+			send(key, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
 			if (!other.equipment.empty()) {
-				Net::Send(a_player.peer, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
+				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
 			}
 			// Let the newcomer see players who are standing still right away.
 			other.stateDirty = other.hasState;
 		}
 
-		log(std::format("server: '{}' joined as player {} ({} online)", a_player.name, a_player.id, welcomedCount()));
+		std::vector<Protocol::ActorOwner> owners;
+		for (const auto& [ref, owner] : actorOwners) {
+			owners.push_back({ ref, owner.playerId });
+		}
+		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
+		}
+
+		log(std::format("server: '{}' joined as player {} from {} ({} online)", a_player.name, a_player.id, describe(a_player.key), welcomedCount()));
 	};
 
 	const auto handleState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!a_player.welcomed) {
 			return;
 		}
-
-		const auto now = Clock::now();
-		if (now - a_player.rateWindowStart >= std::chrono::seconds(1)) {
-			a_player.rateWindowStart = now;
-			a_player.statesInWindow = 0;
-			a_player.eventsInWindow = 0;
-		}
-		if (++a_player.statesInWindow > MAX_STATES_PER_SECOND) {
+		a_player.rate.Roll(Clock::now());
+		if (++a_player.rate.states > MAX_STATES_PER_SECOND) {
 			return;
 		}
-
 		const auto state = Protocol::DecodePlayerState(a_data);
 		if (!state) {
 			return;
@@ -223,99 +340,20 @@ void Server::Run(void* a_host)
 		if (a_player.hasState && state->sequence <= a_player.state.sequence) {
 			return;  // out of order
 		}
-
 		a_player.state = *state;
 		a_player.hasState = true;
 		a_player.stateDirty = true;
 	};
 
-	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
-			return;
-		}
-		const auto death = Protocol::DecodeActorDeath(a_data);
-		// Runtime-created references (0xFF......) differ between games and can't be shared.
-		if (!death || death->refId == 0 || (death->refId >> 24) == 0xFF) {
-			return;
-		}
-		if (deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS || !deadActors.insert(death->refId).second) {
-			return;
-		}
-		actorOwners.erase(death->refId);
-		const auto relay = Protocol::Encode(*death, Protocol::MessageType::kActorDied);
-		for (const auto& [peer, other] : players) {
-			if (peer != a_player.peer && other.welcomed) {
-				Net::Send(peer, relay, true);
-			}
-		}
-	};
-
-	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
-			return;
-		}
-		const auto health = Protocol::DecodeActorHealth(a_data);
-		if (!health || health->refId == 0 || (health->refId >> 24) == 0xFF || deadActors.contains(health->refId)) {
-			return;
-		}
-		const auto relay = Protocol::Encode(*health, Protocol::MessageType::kActorHealth);
-		for (const auto& [peer, other] : players) {
-			if (peer != a_player.peer && other.welcomed) {
-				Net::Send(peer, relay, true);
-			}
-		}
-	};
-
-	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
-			return;
-		}
-		const auto change = Protocol::DecodeContainerChange(a_data);
-		if (!change || !shareable(change->container) || change->item == 0 || change->count == 0 ||
-			containerChanges.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
-			return;
-		}
-		containerChanges.push_back(*change);
-		relayToOthers(a_player, Protocol::Encode(*change, Protocol::MessageType::kContainerChanged));
-	};
-
-	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
-			return;
-		}
-		const auto pickup = Protocol::DecodeRefPickedUp(a_data);
-		if (!pickup || !shareable(pickup->refId) || pickedUp.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
-			!pickedUp.insert(pickup->refId).second) {
-			return;
-		}
-		relayToOthers(a_player, Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp));
-	};
-
-	const auto handleRefState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
-			return;
-		}
-		const auto state = Protocol::DecodeRefState(a_data);
-		if (!state || !shareable(state->refId) || (refStates.size() >= Protocol::MAX_WORLD_STATE_ACTORS && !refStates.contains(state->refId))) {
-			return;
-		}
-		auto& stored = refStates[state->refId];
-		if (stored == *state) {
-			return;
-		}
-		stored = *state;
-		relayToOthers(a_player, Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged));
-	};
-
-	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = nullptr: everyone.
-	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ENetPeer* a_to) {
+	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
+	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
 			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
 			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
-			for (const auto& [peer, other] : players) {
-				if (other.welcomed && (!a_to || peer == a_to)) {
-					Net::Send(peer, packet, true);
-				}
+			if (a_to) {
+				send(a_to, packet, true);
+			} else {
+				broadcast(packet, true, 0);
 			}
 		}
 	};
@@ -323,47 +361,132 @@ void Server::Run(void* a_host)
 	const auto releaseAll = [&](std::uint32_t a_playerId) {
 		std::vector<Protocol::ActorOwner> released;
 		std::erase_if(actorOwners, [&](const auto& a_entry) {
-			if (a_entry.second != a_playerId) {
+			if (a_entry.second.playerId != a_playerId) {
 				return false;
 			}
 			released.push_back({ a_entry.first, 0 });
 			return true;
 		});
-		sendOwners(released, nullptr);
+		sendOwners(released, 0);
 	};
 
-	// The first player to claim an NPC runs it; a player whose companion it is takes it over.
+	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto death = Protocol::DecodeActorDeath(a_data);
+		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
+			!deadActors.insert(death->refId).second) {
+			return;
+		}
+		if (actorOwners.erase(death->refId)) {
+			sendOwners({ { death->refId, 0 } }, 0);
+		}
+		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
+	};
+
+	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto health = Protocol::DecodeActorHealth(a_data);
+		if (!health || !Protocol::IsShareableRef(health->refId) || deadActors.contains(health->refId)) {
+			return;
+		}
+		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
+	};
+
+	// Container changes are numbered and echoed to their sender too, so every player knows exactly
+	// which of them its world contains (see Protocol::WorldRequest).
+	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto change = Protocol::DecodeContainerChange(a_data);
+		if (!change || !Protocol::IsValid(*change) || containerChanges.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+			return;
+		}
+		const auto index = static_cast<std::uint32_t>(containerChanges.size());
+		containerChanges.push_back(*change);
+		broadcast(Protocol::Encode(Protocol::IndexedContainerChange{ index, a_player.id, *change }), true, 0);
+	};
+
+	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto pickup = Protocol::DecodeRefPickedUp(a_data);
+		if (!pickup || !Protocol::IsShareableRef(pickup->refId) || pickedUp.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
+			!pickedUp.insert(pickup->refId).second) {
+			return;
+		}
+		broadcast(Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp), true, a_player.key);
+	};
+
+	const auto handleRefState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto state = Protocol::DecodeRefState(a_data);
+		if (!state || !Protocol::IsShareableRef(state->refId) ||
+			(refStates.size() >= Protocol::MAX_WORLD_STATE_ACTORS && !refStates.contains(state->refId))) {
+			return;
+		}
+		auto& stored = refStates[state->refId];
+		if (stored == *state) {
+			return;
+		}
+		stored = *state;
+		broadcast(Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged), true, a_player.key);
+	};
+
+	// Who runs an NPC's AI:
+	// - nobody yet: the first player to claim it;
+	// - a companion follows its player, so that player takes it over, unless it is also another
+	//   player's companion (then the first keeps it);
+	// - a player fighting or talking to it takes it over, unless it is someone's companion or
+	//   changed hands moments ago (two players fighting it would otherwise trade it constantly).
 	const auto handleClaims = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		const auto claims = Protocol::DecodeClaims(a_data);
 		if (!claims) {
 			return;
 		}
+		using Reason = Protocol::ClaimReason;
+		const auto                        now = Clock::now();
 		std::vector<Protocol::ActorOwner> changed;
 		std::vector<Protocol::ActorOwner> current;
 		for (const auto& claim : *claims) {
-			if (!shareable(claim.refId) || deadActors.contains(claim.refId)) {
+			if (!Protocol::IsShareableRef(claim.refId) || deadActors.contains(claim.refId)) {
 				continue;
 			}
 			const auto it = actorOwners.find(claim.refId);
-			if (it == actorOwners.end() || (claim.force && it->second != a_player.id)) {
-				if (it == actorOwners.end() && actorOwners.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
-					continue;
-				}
-				actorOwners[claim.refId] = a_player.id;
+			bool       grant = false;
+			if (it == actorOwners.end()) {
+				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS;
+			} else if (it->second.playerId == a_player.id) {
+				it->second.reason = (std::max)(it->second.reason, claim.reason);
+				continue;
+			} else if (claim.reason == Reason::kCompanion) {
+				grant = it->second.reason != Reason::kCompanion;
+			} else if (claim.reason == Reason::kInteract) {
+				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= TAKEOVER_COOLDOWN;
+			}
+			if (grant) {
+				actorOwners[claim.refId] = { a_player.id, claim.reason, now };
 				changed.push_back({ claim.refId, a_player.id });
-			} else {
-				current.push_back({ claim.refId, it->second });
+			} else if (it != actorOwners.end()) {
+				current.push_back({ claim.refId, it->second.playerId });
 			}
 		}
-		sendOwners(changed, nullptr);
-		sendOwners(current, a_player.peer);
+		sendOwners(changed, 0);
+		sendOwners(current, a_player.key);
 	};
 
 	const auto handleRelease = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		const auto refs = Protocol::DecodeRelease(a_data);
@@ -372,16 +495,21 @@ void Server::Run(void* a_host)
 		}
 		std::vector<Protocol::ActorOwner> released;
 		for (const auto ref : *refs) {
-			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second == a_player.id) {
+			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				released.push_back({ ref, 0 });
 			}
 		}
-		sendOwners(released, nullptr);
+		sendOwners(released, 0);
 	};
 
 	const auto handleActorStates = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.statesInWindow > MAX_STATES_PER_SECOND) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		// Owners send one batch per 64 NPCs ten times a second.
+		if (++a_player.rate.actorStates > MAX_STATES_PER_SECOND) {
 			return;
 		}
 		auto states = Protocol::DecodeActorStates(a_data);
@@ -391,49 +519,43 @@ void Server::Run(void* a_host)
 		// Only the owner's view of an NPC counts.
 		std::erase_if(*states, [&](const Protocol::ActorState& a_state) {
 			const auto it = actorOwners.find(a_state.refId);
-			return it == actorOwners.end() || it->second != a_player.id;
+			return it == actorOwners.end() || it->second.playerId != a_player.id;
 		});
-		if (states->empty()) {
-			return;
-		}
-		const auto relay = Protocol::Encode(*states, Protocol::MessageType::kActorStatesRelay);
-		for (const auto& [peer, other] : players) {
-			if (peer != a_player.peer && other.welcomed) {
-				Net::Send(peer, relay, false);
-			}
+		if (!states->empty()) {
+			broadcast(Protocol::Encode(*states, Protocol::MessageType::kActorStatesRelay), false, a_player.key);
 		}
 	};
 
 	const auto handlePlayerHit = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		const auto hit = Protocol::DecodePlayerHit(a_data);
 		if (!hit || hit->playerId == a_player.id) {
 			return;
 		}
-		for (const auto& [peer, other] : players) {
+		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				Net::Send(peer, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage }, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
 	};
 
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		const auto stage = Protocol::DecodeQuestStage(a_data);
-		if (!stage || !shareable(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
+		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
 			std::ranges::find(questStages, *stage) != questStages.end()) {
 			return;
 		}
 		questStages.push_back(*stage);
-		relayToOthers(a_player, Protocol::Encode(*stage, Protocol::MessageType::kQuestStage));
+		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
 	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto equipment = Protocol::DecodeEquipment(a_data);
@@ -442,96 +564,106 @@ void Server::Run(void* a_host)
 		}
 		equipment->playerId = a_player.id;
 		a_player.equipment = equipment->items;
-		relayToOthers(a_player, Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment));
+		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment), true, a_player.key);
 	};
 
+	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
+			sendWorldState(a_player.key, request->sessionId == sessionId ? request->containerFrom : 0);
+		}
+	};
+
+	const auto handlePacket = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		using Protocol::MessageType;
+		switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
+		case MessageType::kHello:
+			if (!a_player.welcomed && !a_player.kicked) {
+				handleHello(a_player, a_data);
+			}
+			break;
+		case MessageType::kPlayerState:
+			handleState(a_player, a_data);
+			break;
+		case MessageType::kReportDeath:
+			handleDeath(a_player, a_data);
+			break;
+		case MessageType::kReportHealth:
+			handleHealth(a_player, a_data);
+			break;
+		case MessageType::kReportContainer:
+			handleContainer(a_player, a_data);
+			break;
+		case MessageType::kReportPickup:
+			handlePickup(a_player, a_data);
+			break;
+		case MessageType::kReportRefState:
+			handleRefState(a_player, a_data);
+			break;
+		case MessageType::kEquipment:
+			handleEquipment(a_player, a_data);
+			break;
+		case MessageType::kClaimActors:
+			handleClaims(a_player, a_data);
+			break;
+		case MessageType::kReleaseActors:
+			handleRelease(a_player, a_data);
+			break;
+		case MessageType::kActorStates:
+			handleActorStates(a_player, a_data);
+			break;
+		case MessageType::kPlayerHit:
+			handlePlayerHit(a_player, a_data);
+			break;
+		case MessageType::kReportQuestStage:
+			handleQuestStage(a_player, a_data);
+			break;
+		case MessageType::kRequestWorldState:
+			handleWorldRequest(a_player, a_data);
+			break;
+		default:
+			break;
+		}
+	};
+
+	auto                        nextTick = Clock::now();
+	std::vector<TransportEvent> events;
 	while (!stopRequested) {
-		ENetEvent event;
-		while (enet_host_service(host, &event, 2) > 0) {
-			switch (event.type) {
-			case ENET_EVENT_TYPE_CONNECT:
-				{
-					Player player;
-					player.peer = event.peer;
-					player.id = nextId++;
-					players.emplace(event.peer, std::move(player));
-					enet_peer_timeout(event.peer, 0, 10000, 20000);
-				}
-				break;
-
-			case ENET_EVENT_TYPE_RECEIVE:
-				{
-					const std::span<const std::uint8_t> data{ event.packet->data, event.packet->dataLength };
-					if (const auto it = players.find(event.peer); it != players.end()) {
-						switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
-						case Protocol::MessageType::kHello:
-							if (!it->second.welcomed) {
-								handleHello(it->second, data);
-							}
-							break;
-						case Protocol::MessageType::kPlayerState:
-							handleState(it->second, data);
-							break;
-						case Protocol::MessageType::kReportDeath:
-							handleDeath(it->second, data);
-							break;
-						case Protocol::MessageType::kReportHealth:
-							handleHealth(it->second, data);
-							break;
-						case Protocol::MessageType::kReportContainer:
-							handleContainer(it->second, data);
-							break;
-						case Protocol::MessageType::kReportPickup:
-							handlePickup(it->second, data);
-							break;
-						case Protocol::MessageType::kReportRefState:
-							handleRefState(it->second, data);
-							break;
-						case Protocol::MessageType::kEquipment:
-							handleEquipment(it->second, data);
-							break;
-						case Protocol::MessageType::kClaimActors:
-							handleClaims(it->second, data);
-							break;
-						case Protocol::MessageType::kReleaseActors:
-							handleRelease(it->second, data);
-							break;
-						case Protocol::MessageType::kActorStates:
-							handleActorStates(it->second, data);
-							break;
-						case Protocol::MessageType::kPlayerHit:
-							handlePlayerHit(it->second, data);
-							break;
-						case Protocol::MessageType::kReportQuestStage:
-							handleQuestStage(it->second, data);
-							break;
-						default:
-							break;
-						}
+		for (std::size_t t = 0; t < transports.size(); ++t) {
+			events.clear();
+			// Only the first transport waits; the rest are checked without blocking.
+			transports[t]->Poll(events, t == 0 ? 2 : 0);
+			for (auto& event : events) {
+				const auto key = MakeKey(t, event.peer);
+				switch (event.type) {
+				case TransportEvent::Type::kConnect:
+					{
+						Player player;
+						player.key = key;
+						player.id = nextId++;
+						player.connectedAt = Clock::now();
+						players.insert_or_assign(key, std::move(player));
 					}
-					enet_packet_destroy(event.packet);
-				}
-				break;
-
-			case ENET_EVENT_TYPE_DISCONNECT:
-				if (const auto it = players.find(event.peer); it != players.end()) {
-					if (it->second.welcomed) {
-						const auto left = Protocol::Encode(Protocol::PlayerLeft{ it->second.id });
-						for (const auto& [peer, other] : players) {
-							if (peer != event.peer && other.welcomed) {
-								Net::Send(peer, left, true);
-							}
-						}
-						log(std::format("server: '{}' left", it->second.name));
+					break;
+				case TransportEvent::Type::kPacket:
+					if (const auto it = players.find(key); it != players.end()) {
+						handlePacket(it->second, event.data);
 					}
-					const auto leftId = it->second.id;
-					players.erase(it);
-					releaseAll(leftId);
+					break;
+				case TransportEvent::Type::kDisconnect:
+					if (const auto it = players.find(key); it != players.end()) {
+						if (it->second.welcomed) {
+							broadcast(Protocol::Encode(Protocol::PlayerLeft{ it->second.id }), true, key);
+							log(std::format("server: '{}' left", it->second.name));
+						}
+						const auto leftId = it->second.id;
+						players.erase(it);
+						releaseAll(leftId);
+					}
+					break;
 				}
-				break;
-
-			default:
-				break;
 			}
 		}
 
@@ -542,29 +674,34 @@ void Server::Run(void* a_host)
 		nextTick = now + TICK_INTERVAL;
 		++tick;
 
+		for (auto& [key, player] : players) {
+			if (!player.welcomed && !player.kicked && now - player.connectedAt > HELLO_TIMEOUT) {
+				log(std::format("server: dropping {} (no hello)", describe(key)));
+				disconnect(player);
+			}
+		}
+
 		// Relay changed player states to everyone else.
-		for (auto& [peer, receiver] : players) {
+		for (const auto& [key, receiver] : players) {
 			if (!receiver.welcomed) {
 				continue;
 			}
 			Protocol::PlayerStates batch{ tick, {} };
-			for (const auto& [otherPeer, other] : players) {
-				if (otherPeer != peer && other.welcomed && other.hasState && other.stateDirty) {
+			for (const auto& [otherKey, other] : players) {
+				if (otherKey != key && other.welcomed && other.hasState && other.stateDirty) {
 					batch.players.push_back({ other.id, other.state });
 				}
 			}
 			if (!batch.players.empty()) {
-				Net::Send(peer, Protocol::Encode(batch), false);
+				send(key, Protocol::Encode(batch), false);
 			}
 		}
-		for (auto& [peer, player] : players) {
+		for (auto& [key, player] : players) {
 			player.stateDirty = false;
 		}
 	}
 
-	for (const auto& [peer, player] : players) {
-		enet_peer_disconnect_now(peer, 0);
+	for (auto& transport : transports) {
+		transport->Close();
 	}
-	enet_host_flush(host);
-	enet_host_destroy(host);
 }

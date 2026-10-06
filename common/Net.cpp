@@ -34,6 +34,9 @@ namespace Net
 	void Send(ENetPeer* a_peer, std::span<const std::uint8_t> a_data, bool a_reliable)
 	{
 		const auto packet = enet_packet_create(a_data.data(), a_data.size(), a_reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+		if (!packet) {
+			return;
+		}
 		if (enet_peer_send(a_peer, a_reliable ? Protocol::CHANNEL_RELIABLE : Protocol::CHANNEL_STATE, packet) != 0) {
 			enet_packet_destroy(packet);
 		}

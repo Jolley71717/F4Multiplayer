@@ -35,7 +35,9 @@ namespace RemotePlayers
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
 			// if the game deletes the actor behind our back (its handle then no longer resolves).
+			// Never dereferenced; registeredId is its form ID.
 			RE::Actor*           registered = nullptr;
+			std::uint32_t        registeredId = 0;
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -140,6 +142,7 @@ namespace RemotePlayers
 			if (a_player.registered) {
 				Puppets::Unregister(a_player.registered);
 				a_player.registered = nullptr;
+				a_player.registeredId = 0;
 			}
 			if (const auto actor = GetActor(a_player)) {
 				actor->Disable();
@@ -159,7 +162,12 @@ namespace RemotePlayers
 		RE::Actor* Spawn(const RemotePlayer& a_player, const Protocol::PlayerState& a_state, RE::TESObjectCELL* a_localCell)
 		{
 			// Prefer the look the player picked; fall back to our default if it isn't a valid NPC here.
+			// Unique NPCs (companions, quest characters) would bring their scripts along, so not those.
 			auto npc = a_player.appearance ? RE::TESForm::GetFormByID<RE::TESNPC>(a_player.appearance) : nullptr;
+			if (npc && npc->IsUnique()) {
+				REX::WARN("RemotePlayers: '{}' asked to look like unique NPC {:08X}; using the default", a_player.name, a_player.appearance);
+				npc = nullptr;
+			}
 			if (!npc) {
 				const auto baseID = Config::Get().puppetBaseForm;
 				npc = RE::TESForm::GetFormByID<RE::TESNPC>(baseID);
@@ -201,6 +209,8 @@ namespace RemotePlayers
 
 	void Add(std::uint32_t a_id, std::string a_name, std::uint32_t a_appearance)
 	{
+		// A reused ID is a new player: start from scratch (old snapshots would hide their states).
+		Remove(a_id);
 		auto& player = players[a_id];
 		player.name = std::move(a_name);
 		player.appearance = a_appearance;
@@ -252,7 +262,7 @@ namespace RemotePlayers
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)
 	{
 		for (const auto& [id, remote] : players) {
-			if (remote.registered && remote.registered->GetFormID() == a_actorFormId) {
+			if (remote.registered && remote.registeredId == a_actorFormId) {
 				return id;
 			}
 		}
@@ -319,6 +329,7 @@ namespace RemotePlayers
 				}
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
+				remote.registeredId = actor->GetFormID();
 				remote.equipmentApplied = false;
 			}
 
@@ -338,10 +349,6 @@ namespace RemotePlayers
 		}
 	}
 
-	std::size_t Count()
-	{
-		return players.size();
-	}
 
 	std::string Describe()
 	{
