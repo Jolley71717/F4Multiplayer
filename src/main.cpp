@@ -1,3 +1,6 @@
+#include "Config.h"
+#include "DevChannel.h"
+
 namespace
 {
 	// Logs the player's position so we can confirm the plugin can read game state.
@@ -37,10 +40,14 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 
 	REX::INFO("F4Multiplayer loaded");
 
+	Config::Load();
+
 	if (!F4SE::GetMessagingInterface()->RegisterListener(OnF4SEMessage)) {
 		REX::ERROR("Failed to register F4SE message listener");
 		return false;
 	}
+
+	DevChannel::Start();
 
 	return true;
 }
