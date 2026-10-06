@@ -41,4 +41,7 @@ public:
 
 	// For log lines, e.g. "udp 1.2.3.4:5678" or "steam 7656...".
 	[[nodiscard]] virtual std::string Describe(PeerId a_peer) const = 0;
+
+	// The peer is on this machine (the host's own game).
+	[[nodiscard]] virtual bool IsLocal(PeerId) const { return false; }
 };

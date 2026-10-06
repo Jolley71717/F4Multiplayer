@@ -108,6 +108,17 @@ void EnetServerTransport::Close()
 	enet_host_flush(host);
 }
 
+bool EnetServerTransport::IsLocal(PeerId a_peer) const
+{
+	const auto it = peers.find(a_peer);
+	if (it == peers.end()) {
+		return false;
+	}
+	char ip[64]{};
+	enet_address_get_host_ip(&it->second->address, ip, sizeof(ip));
+	return std::string_view{ ip }.starts_with("127.") || std::string_view{ ip } == "::1";
+}
+
 std::string EnetServerTransport::Describe(PeerId a_peer) const
 {
 	const auto it = peers.find(a_peer);

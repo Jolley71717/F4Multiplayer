@@ -4,6 +4,8 @@
 #include "game/Downed.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
+#include "game/MapShare.h"
+#include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
 
@@ -19,6 +21,10 @@ namespace Party
 		constexpr auto UNSTABLE_AFTER = 4s;  // no heartbeat answer for this long
 		constexpr auto KILL_XP_WINDOW = 2s;  // XP gained this soon after a kill counts as kill XP
 		constexpr auto UNCLAIMED_XP_WINDOW = 5s;  // ... or this soon before its death event arrives
+		// Kill XP waits this long before it's reported: a quest stage or a discovery seen in the
+		// meantime means some of it was quest or discovery XP, which isn't shared (the quest
+		// reaches the others by itself).
+		constexpr auto XP_HOLD = 2500ms;
 		constexpr auto XP_NOTICE_DELAY = 3s;
 		constexpr auto TELEPORT_TIMEOUT = 30s;
 		constexpr std::uint32_t HIGH_PING_MS = 400;
@@ -59,7 +65,11 @@ namespace Party
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
 		Clock::time_point    killWindowEnd{};
 		float                unclaimedXp = 0.0f;  // XP that came before its kill was seen
+		Clock::time_point    unclaimedSince{};
 		Clock::time_point    unclaimedUntil{};
+		float                heldXp = 0.0f;  // kill XP waiting for XP_HOLD
+		Clock::time_point    heldSince{};
+		std::uint32_t        xpWithheld = 0;
 		float                xpNotice = 0.0f;
 		Clock::time_point    xpNoticeAt{};
 
@@ -229,8 +239,11 @@ namespace Party
 			}
 			// The kill (death event) and its XP can come in either order: the death event waits
 			// for the victim's next AI update.
-			const auto report = [](float a_xp) {
-				outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, (std::min)(a_xp, Protocol::MAX_XP_SHARE) }, Protocol::MessageType::kReportXp));
+			const auto hold = [&](float a_xp, Clock::time_point a_since) {
+				if (heldXp <= 0.0f) {
+					heldSince = a_since;
+				}
+				heldXp += a_xp;
 			};
 			if (a_now >= unclaimedUntil) {
 				unclaimedXp = 0.0f;
@@ -238,7 +251,7 @@ namespace Party
 			if (WorldSync::TakePlayerKills() > 0) {
 				killWindowEnd = a_now + KILL_XP_WINDOW;
 				if (unclaimedXp >= 1.0f) {
-					report(unclaimedXp);
+					hold(unclaimedXp, unclaimedSince);
 				}
 				unclaimedXp = 0.0f;
 			}
@@ -249,13 +262,27 @@ namespace Party
 				xpCredit -= credited;
 				gain -= credited;
 				if (gain >= 1.0f && a_now < killWindowEnd) {
-					report(gain);
+					hold(gain, a_now);
 				} else if (gain >= 1.0f) {
+					if (unclaimedXp <= 0.0f) {
+						unclaimedSince = a_now;
+					}
 					unclaimedXp += gain;
 					unclaimedUntil = a_now + UNCLAIMED_XP_WINDOW;
 				}
 			}
 			lastXp = xp;
+
+			if (heldXp > 0.0f && a_now - heldSince >= XP_HOLD) {
+				// The quest and map checks poll (every 0.5 s and 2 s), so look a little before too.
+				const auto from = heldSince - 1s;
+				if (QuestSync::LastStageChange() >= from || MapShare::LastDiscovery() >= from) {
+					++xpWithheld;
+				} else if (heldXp >= 1.0f) {
+					outgoing.push_back(Protocol::Encode(Protocol::XpGain{ 0, (std::min)(heldXp, Protocol::MAX_XP_SHARE) }, Protocol::MessageType::kReportXp));
+				}
+				heldXp = 0.0f;
+			}
 
 			if (xpNotice >= 1.0f && a_now >= xpNoticeAt) {
 				Hud::Notify(std::format("+{:.0f} XP from your party's kills", xpNotice));
@@ -556,6 +583,15 @@ namespace Party
 		return roundTripMs;
 	}
 
+	void OnGameLoaded()
+	{
+		// The loaded save has its own XP: the difference isn't something we earned.
+		lastXp.reset();
+		unclaimedXp = 0.0f;
+		heldXp = 0.0f;
+		killWindowEnd = {};
+	}
+
 	void Reset()
 	{
 		localId = 0;
@@ -567,7 +603,7 @@ namespace Party
 		roundTripMs = 0;
 		unstable = false;
 		slowAnswers = 0;
-		lastXp.reset();
+		OnGameLoaded();
 		xpCredit = 0.0f;
 		teleportTarget = 0;
 		pendingTeleport.reset();
@@ -576,7 +612,7 @@ namespace Party
 
 	std::string Describe()
 	{
-		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit);
+		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld);
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
 		}

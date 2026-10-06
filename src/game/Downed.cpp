@@ -1,6 +1,7 @@
 #include "game/Downed.h"
 
 #include "Config.h"
+#include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
@@ -17,11 +18,17 @@ namespace Downed
 		constexpr auto  HELP_RETRY = 3s;         // before helping the same friend again
 		constexpr float HELP_RANGE = 180.0f;     // game units (about 2.5 m)
 		constexpr float REVIVE_HEALTH = 0.3f;    // of maximum
+		constexpr auto  GET_UP_TIME = 20s;       // after being helped, the game stands the player up by then
+		constexpr auto  GIVE_UP_HOLD = 1s;
+		constexpr std::uint32_t DEFAULT_GIVE_UP_KEY = 0x76;  // F7, when the teleport key is off
 
 		bool              essential = false;  // we made the player's character essential
 		bool              down = false;
 		bool              giveUp = false;
 		bool              revived = false;  // a friend helped us; we're getting up
+		Clock::time_point revivedAt{};
+		Clock::time_point giveUpHeldSince{};
+		bool              giveUpHeld = false;
 		Clock::time_point downSince{};
 		int               reminders = 0;
 
@@ -68,16 +75,51 @@ namespace Downed
 			essential = a_on;
 		}
 
-		std::string GiveUpKey()
+		// Holding the teleport key gives up (Party sees that hold); F7 when that key is off.
+		std::uint32_t GiveUpVk()
 		{
 			const auto vk = Config::Get().keyTeleport;
+			return vk != 0 ? vk : DEFAULT_GIVE_UP_KEY;
+		}
+
+		std::string GiveUpKey()
+		{
+			const auto vk = GiveUpVk();
 			return vk >= 0x70 && vk <= 0x7B ? std::format("F{}", vk - 0x6F) : std::format("key {:X}", vk);
+		}
+
+		void SetStayDown(RE::PlayerCharacter* a_player, bool a_on)
+		{
+			if (a_on) {
+				a_player->boolFlags.set(BoolFlag::kNoBleedoutRecovery);
+			} else {
+				a_player->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
+			}
+		}
+
+		// Health for getting up; the game stands the player up once the "stay down" flag is off.
+		void GetUp(RE::PlayerCharacter* a_player)
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			SetStayDown(a_player, false);
+			if (values && values->health) {
+				auto&       owner = static_cast<RE::ActorValueOwner&>(*a_player);
+				const float target = owner.GetPermanentActorValue(*values->health) * REVIVE_HEALTH;
+				const float current = owner.GetActorValue(*values->health);
+				if (target > current) {
+					owner.RestoreActorValue(*values->health, target - current);
+				}
+			}
+			down = true;
+			revived = true;
+			revivedAt = Clock::now();
 		}
 
 		void BleedOut(RE::PlayerCharacter* a_player)
 		{
 			down = false;
-			a_player->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
+			revived = false;
+			SetStayDown(a_player, false);
 			SetEssential(a_player, false);
 			++bleedOuts;
 			RE::Console::ExecuteCommand("player.kill");
@@ -136,12 +178,12 @@ namespace Downed
 				reminders = 0;
 				++downs;
 				// The game would stand the player up again by itself after a while.
-				player->boolFlags.set(BoolFlag::kNoBleedoutRecovery);
+				SetStayDown(player, true);
 				Hud::Notify(std::format("You're down! A friend can help you up. Hold {} to give up", GiveUpKey()));
 			}
 		} else if (!InEssentialDown(player)) {
 			down = false;  // up again
-			player->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
+			SetStayDown(player, false);
 			// The game stands an essential character up with full health; being helped up
 			// leaves the player hurt.
 			if (const auto values = RE::ActorValue::GetSingleton(); revived && values && values->health) {
@@ -152,9 +194,27 @@ namespace Downed
 				}
 			}
 			revived = false;
+		} else if (revived) {
+			// Helped up: the game stands the player up on its own. If it somehow doesn't, they die.
+			if (now - revivedAt >= GET_UP_TIME) {
+				BleedOut(player);
+			}
 		} else if (giveUp || !enabled || now - downSince >= BLEEDOUT_TIME) {
 			BleedOut(player);
 		} else {
+			// A save clears both flags (OnBeforeSave); still down, so set them again.
+			SetEssential(player, true);
+			SetStayDown(player, true);
+			// With the teleport key off, Party doesn't see the hold: watch the fallback key here.
+			if (Config::Get().keyTeleport == 0) {
+				const bool held = Hotkeys::Held(DEFAULT_GIVE_UP_KEY);
+				if (held && !giveUpHeld) {
+					giveUpHeldSince = now;
+				} else if (held && now - giveUpHeldSince >= GIVE_UP_HOLD) {
+					giveUp = true;
+				}
+				giveUpHeld = held;
+			}
 			const auto left = std::chrono::duration_cast<std::chrono::seconds>(BLEEDOUT_TIME - (now - downSince)).count();
 			if ((reminders == 0 && left <= 30) || (reminders == 1 && left <= 10)) {
 				++reminders;
@@ -180,19 +240,10 @@ namespace Downed
 	void ApplyRevive(const Protocol::Revive& a_revive)
 	{
 		const auto player = Player();
-		const auto values = RE::ActorValue::GetSingleton();
-		if (!down || !player || !values || !values->health) {
+		if (!down || revived || !player) {
 			return;
 		}
-		// Enough health and no "stay down" flag: the game stands the player up.
-		player->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
-		auto&       owner = static_cast<RE::ActorValueOwner&>(*player);
-		const float target = owner.GetPermanentActorValue(*values->health) * REVIVE_HEALTH;
-		const float current = owner.GetActorValue(*values->health);
-		if (target > current) {
-			owner.RestoreActorValue(*values->health, target - current);
-		}
-		revived = true;
+		GetUp(player);
 		++revives;
 		const auto name = RemotePlayers::NameOf(a_revive.playerId);
 		Hud::Notify(std::format("{} helped you up", name.empty() ? "A friend" : name));
@@ -214,8 +265,27 @@ namespace Downed
 
 	void OnBeforeSave()
 	{
+		// Neither flag may end up in the save; while down, Frame sets both again.
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
-			SetEssential(player, false);  // set again on the next frame
+			SetEssential(player, false);
+			if (down) {
+				SetStayDown(player, false);
+			}
+		}
+	}
+
+	void OnGameLoaded()
+	{
+		down = false;
+		giveUp = false;
+		revived = false;
+		// A save made while down (the flags were cleared for it): without the essential flag the
+		// game would finish the player off. Stand them up instead, as if helped.
+		const auto player = Player();
+		if (player && InEssentialDown(player)) {
+			SetEssential(player, true);
+			GetUp(player);
+			REX::INFO("Downed: loaded a save with the player down; getting them up");
 		}
 	}
 

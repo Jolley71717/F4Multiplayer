@@ -26,6 +26,9 @@ namespace Downed
 	// The essential flag we set must never be written into a save.
 	void OnBeforeSave();
 
+	// A save was loaded: whatever state we were in belongs to the old game.
+	void OnGameLoaded();
+
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
 	// Forgets friends and pending messages (the next Frame without friends clears the rest).

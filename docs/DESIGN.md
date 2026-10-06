@@ -159,11 +159,17 @@ save's record and asks for the session's changes again.
 - Kill feed: deaths now carry who reported them and whether that player killed it
   (`TESDeathEvent::actorKiller`).
 - Kill XP: XP gained within 2 s after a player kill (or up to 5 s before its death event, which
-  waits for the victim's next AI update) is reported; others get `fXpShare` of it through
-  `player.modav experience`. Shares received are credited so they aren't reported again.
-- Time and weather: everyone reports `Calendar::gameHour` and `Sky::currentWeather` every 5 s; the
-  server passes on only the first player's. Receivers set the hour when it differs by more than
-  15 game minutes, and force the weather only outside in the same worldspace.
+  waits for the victim's next AI update) is held for 2.5 s, then reported unless a quest stage
+  changed or a location was discovered meanwhile (that XP isn't shared: the quest reaches the others
+  by itself); others get `fXpShare` of it through `player.modav experience`. Shares received are
+  credited so they aren't reported again. The server allows each player 10000 shared XP per 10 s.
+- Time and weather: everyone reports `Calendar::gameHour`, `gameDaysPassed` and
+  `Sky::currentWeather` every 5 s; the server passes on only the host's (a player on its machine,
+  else the one there longest). The game keeps GameDaysPassed at midnights passed + hour / 24, so
+  setting the hour across midnight would skip the date: receivers line their hour up once, remember
+  how their day count differs from the host's, and from then on move forward like waiting does
+  (stopping at 23:59 and letting the game roll the date over). Ahead of the host, they only go back
+  within the same day. Weather is forced only outside in the same worldspace.
 - Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
   `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
   `SetPosition` once loaded.
@@ -177,7 +183,8 @@ save's record and asks for the session's changes again.
   `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed`; a
   friend within 180 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag
   and restores health; the game stands them up a few seconds later with full health, which we cut
-  back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`.
+  back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`. Both
+  flags are cleared for a save; a save made while down stands the player up when it's loaded.
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within
@@ -195,7 +202,7 @@ save's record and asks for the session's changes again.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 18.
+Protocol VERSION 19.
 
 ## Prior art
 
@@ -213,7 +220,7 @@ Protocol VERSION 18.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
-  time (`--time`, `--weather`), complete a quest (`--quest-done`), be down or help someone up
+  time (`--time`, `--weather`, `--time-step` to move it forward), complete a quest (`--quest-done`), be down or help someone up
   (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
   valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`), and resume a session
   (`--session`, `--from`).

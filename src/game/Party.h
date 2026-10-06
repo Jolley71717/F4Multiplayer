@@ -33,6 +33,9 @@ namespace Party
 	// Round trip to the server in milliseconds (0 = not measured yet).
 	[[nodiscard]] std::uint32_t RoundTripMs();
 
+	// A save was loaded.
+	void OnGameLoaded();
+
 	void Reset();
 
 	[[nodiscard]] std::string Describe();

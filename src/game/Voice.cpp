@@ -249,6 +249,11 @@ namespace Voice
 			if (lastResult != SteamApi::VOICE_OK || available == 0) {
 				return;
 			}
+			// After a stall (a loading screen) Steam can hold more than the buffer; a short buffer
+			// would make GetVoice fail every frame without taking anything.
+			if (available > captureBuffer.size()) {
+				captureBuffer.resize((std::min)(static_cast<std::size_t>(available), std::size_t{ 1 } << 20));
+			}
 			std::uint32_t written = 0;
 			lastResult = a_api.GetVoice(a_api.user, true, captureBuffer.data(), static_cast<std::uint32_t>(captureBuffer.size()), &written, false, nullptr, 0, nullptr, 0);
 			if (lastResult != SteamApi::VOICE_OK || written == 0 || written > Protocol::MAX_VOICE_BYTES) {
