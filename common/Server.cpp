@@ -174,6 +174,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
+	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
@@ -183,6 +184,7 @@ void Server::Run()
 		actorOwners.clear();
 		questStages.clear();
 		worldTime.reset();
+		markers.clear();
 		sessionId = NewSessionId();
 	};
 
@@ -241,9 +243,24 @@ void Server::Run()
 		return false;
 	};
 
+	const auto sendMarkers = [&](ConnectionKey a_to) {
+		Protocol::MarkersFound batch;
+		for (const auto& [ref, flags] : markers) {
+			batch.markers.push_back({ ref, flags });
+			if (batch.markers.size() == Protocol::MAX_MARKERS_PER_PACKET) {
+				send(a_to, Protocol::Encode(batch, Protocol::MessageType::kMarkersFound), true);
+				batch.markers.clear();
+			}
+		}
+		if (!batch.markers.empty()) {
+			send(a_to, Protocol::Encode(batch, Protocol::MessageType::kMarkersFound), true);
+		}
+	};
+
 	// Sends the session's world state in chunks. Container changes before a_containerFrom are
 	// already in the receiver's world.
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
+		sendMarkers(a_to);
 		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
 		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
 		std::vector<Protocol::RefState>  states;
@@ -639,6 +656,32 @@ void Server::Run()
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
 	};
 
+	// Map markers: only what's new to the session is passed on.
+	const auto handleMarkers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto found = Protocol::DecodeMarkers(a_data);
+		if (!found) {
+			return;
+		}
+		Protocol::MarkersFound news{ a_player.id, {} };
+		for (const auto& marker : found->markers) {
+			const auto it = markers.find(marker.refId);
+			if (it == markers.end() && markers.size() >= Protocol::MAX_SESSION_MARKERS) {
+				continue;
+			}
+			auto& flags = markers[marker.refId];
+			if ((marker.flags & ~flags) != 0) {
+				flags |= marker.flags;
+				news.markers.push_back({ marker.refId, flags });
+			}
+		}
+		if (!news.markers.empty()) {
+			broadcast(Protocol::Encode(news, Protocol::MessageType::kMarkersFound), true, a_player.key);
+		}
+	};
+
 	// Voice goes to everyone else; each listener sets the volume by distance.
 	const auto handleVoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!a_player.welcomed) {
@@ -789,6 +832,9 @@ void Server::Run()
 			break;
 		case MessageType::kVoice:
 			handleVoice(a_player, a_data);
+			break;
+		case MessageType::kReportMarkers:
+			handleMarkers(a_player, a_data);
 			break;
 		case MessageType::kHeartbeat:
 			// Own budget: players send one a second, and the answer must not wait behind events.

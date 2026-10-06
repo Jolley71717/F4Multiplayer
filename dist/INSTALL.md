@@ -85,6 +85,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   hurt). Messages tell everyone when a player kills something, dies, completes a quest, joins or
   leaves.
 - **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
+- **Map:** a location one player discovers appears on everyone's map, ready for fast travel
+  (`bShareMap`).
 - **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
   the same raider in the same place. Enemies can attack any player, and the damage reaches that

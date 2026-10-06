@@ -6,6 +6,7 @@
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Hud.h"
+#include "game/MapShare.h"
 #include "game/Voice.h"
 #include "game/Party.h"
 #include "game/WorldClock.h"
@@ -210,6 +211,11 @@ namespace Session
 					Party::ApplyXp(*msg);
 				}
 				break;
+			case MessageType::kMarkersFound:
+				if (const auto msg = Protocol::DecodeMarkers(a_data)) {
+					MapShare::Apply(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -352,6 +358,7 @@ namespace Session
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
+			MapShare::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -564,6 +571,14 @@ namespace Session
 				client->Send(std::move(packet), false);
 			}
 		}
+		if (welcomed) {
+			MapShare::Frame();
+		}
+		for (auto& packet : MapShare::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
 			if (welcomed) {
@@ -587,6 +602,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		MapShare::Rebaseline();
 		if (welcomed) {
 			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
@@ -608,7 +624,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe(), RemotePlayers::Describe()) +
 		       " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

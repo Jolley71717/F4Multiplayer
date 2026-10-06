@@ -84,6 +84,8 @@ namespace Config
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
+			} else if (key == "bShareMap") {
+				settings.shareMap = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "bSyncTime") {
