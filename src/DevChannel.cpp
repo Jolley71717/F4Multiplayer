@@ -1,6 +1,7 @@
-#include "DevChannel.h"
+﻿#include "DevChannel.h"
 
 #include "Config.h"
+#include "DevCommands.h"
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -80,29 +81,6 @@ namespace DevChannel
 			return future.get();
 		}
 
-		std::string CmdStatus()
-		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			const auto cell = player ? player->GetParentCell() : nullptr;
-			return std::format("ingame={} cell={:08X}", cell != nullptr, cell ? cell->GetFormID() : 0);
-		}
-
-		std::string CmdPos()
-		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			const auto cell = player ? player->GetParentCell() : nullptr;
-			if (!cell) {
-				return "error: not in game";
-			}
-
-			constexpr float toDegrees = 180.0f / std::numbers::pi_v<float>;
-			const auto&     loc = player->data.location;
-			const auto&     angle = player->data.angle;
-			return std::format(
-				"x={:.1f} y={:.1f} z={:.1f} rx={:.1f} rz={:.1f} cell={:08X}",
-				loc.x, loc.y, loc.z, angle.x * toDegrees, angle.z * toDegrees, cell->GetFormID());
-		}
-
 		std::string HandleCommand(std::string_view a_line)
 		{
 			const auto split = a_line.find(' ');
@@ -113,23 +91,10 @@ namespace DevChannel
 				return "pong";
 			}
 			if (cmd == "help") {
-				return "commands: ping, status, pos, console <command>";
+				return DevCommands::Help();
 			}
-			if (cmd == "status") {
-				return RunOnMainThread(CmdStatus);
-			}
-			if (cmd == "pos") {
-				return RunOnMainThread(CmdPos);
-			}
-			if (cmd == "console") {
-				if (args.empty()) {
-					return "error: usage: console <command>";
-				}
-				return RunOnMainThread([command = std::string{ args }]() {
-					REX::INFO("DevChannel: console {}", command);
-					RE::Console::ExecuteCommand(command.c_str());
-					return std::string{ "ok" };
-				});
+			if (const auto handler = DevCommands::Find(cmd)) {
+				return RunOnMainThread([handler, args = std::string{ args }]() { return handler(args); });
 			}
 			return std::format("error: unknown command '{}' (try help)", cmd);
 		}

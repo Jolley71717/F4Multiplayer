@@ -1,0 +1,355 @@
+﻿#include "DevCommands.h"
+
+#include "game/Papyrus.h"
+#include "game/Puppets.h"
+
+namespace DevCommands
+{
+	namespace
+	{
+		constexpr float TO_DEGREES = 180.0f / std::numbers::pi_v<float>;
+		constexpr float TO_RADIANS = std::numbers::pi_v<float> / 180.0f;
+
+		std::vector<std::string_view> SplitArgs(std::string_view a_args)
+		{
+			std::vector<std::string_view> out;
+			while (!a_args.empty()) {
+				const auto start = a_args.find_first_not_of(' ');
+				if (start == std::string_view::npos) {
+					break;
+				}
+				a_args.remove_prefix(start);
+				const auto end = a_args.find(' ');
+				out.push_back(a_args.substr(0, end));
+				a_args.remove_prefix(end == std::string_view::npos ? a_args.size() : end);
+			}
+			return out;
+		}
+
+		std::optional<std::uint32_t> ParseHex(std::string_view a_str)
+		{
+			if (a_str.starts_with("0x") || a_str.starts_with("0X")) {
+				a_str.remove_prefix(2);
+			}
+			std::uint32_t value{};
+			const auto [ptr, ec] = std::from_chars(a_str.data(), a_str.data() + a_str.size(), value, 16);
+			if (ec != std::errc{} || ptr != a_str.data() + a_str.size()) {
+				return std::nullopt;
+			}
+			return value;
+		}
+
+		std::optional<float> ParseFloat(std::string_view a_str)
+		{
+			float value{};
+			const auto [ptr, ec] = std::from_chars(a_str.data(), a_str.data() + a_str.size(), value);
+			if (ec != std::errc{} || ptr != a_str.data() + a_str.size()) {
+				return std::nullopt;
+			}
+			return value;
+		}
+
+		RE::TESObjectCELL* PlayerCell()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return player ? player->GetParentCell() : nullptr;
+		}
+
+		std::string DescribeRef(RE::TESObjectREFR* a_ref)
+		{
+			const auto& loc = a_ref->data.location;
+			const auto  cell = a_ref->GetParentCell();
+			return std::format(
+				"ref={:08X} x={:.1f} y={:.1f} z={:.1f} rz={:.1f} cell={:08X} 3d={}",
+				a_ref->GetFormID(), loc.x, loc.y, loc.z, a_ref->data.angle.z * TO_DEGREES,
+				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr);
+		}
+
+		std::string Status(std::string_view)
+		{
+			const auto cell = PlayerCell();
+			return std::format("ingame={} cell={:08X}", cell != nullptr, cell ? cell->GetFormID() : 0);
+		}
+
+		std::string Pos(std::string_view)
+		{
+			if (!PlayerCell()) {
+				return "error: not in game";
+			}
+			return DescribeRef(RE::PlayerCharacter::GetSingleton());
+		}
+
+		std::string Console(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: console <command>";
+			}
+			const std::string command{ a_args };
+			REX::INFO("DevCommands: console {}", command);
+			RE::Console::ExecuteCommand(command.c_str());
+			return "ok";
+		}
+
+		// findnpc <text>: lists NPC base forms whose name contains <text> (case-insensitive).
+		std::string FindNpc(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: findnpc <text>";
+			}
+
+			const auto lower = [](std::string_view a_str) {
+				std::string out{ a_str };
+				std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return out;
+			};
+			const auto needle = lower(a_args);
+
+			std::string result;
+			int         count = 0;
+			for (const auto npc : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESNPC>()) {
+				if (!npc) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*npc);
+				if (name.empty() || lower(name).find(needle) == std::string::npos) {
+					continue;
+				}
+				result += std::format("{}{:08X} '{}'", count ? "; " : "", npc->GetFormID(), name);
+				if (++count == 15) {
+					break;
+				}
+			}
+			return count ? result : "no matches";
+		}
+
+		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
+		std::string Spawn(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto baseID = args.empty() ? std::nullopt : ParseHex(args[0]);
+			if (!baseID) {
+				return "error: usage: spawn <baseHex> [distance]";
+			}
+			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(*baseID);
+			if (!npc) {
+				return std::format("error: {:08X} is not an NPC base form", *baseID);
+			}
+			const auto cell = PlayerCell();
+			if (!cell) {
+				return "error: not in game";
+			}
+
+			const auto  player = RE::PlayerCharacter::GetSingleton();
+			const float distance = args.size() > 1 ? ParseFloat(args[1]).value_or(150.0f) : 150.0f;
+			const float heading = player->data.angle.z;
+
+			RE::NEW_REFR_DATA data;
+			data.location = player->data.location;
+			data.location.x += std::sin(heading) * distance;
+			data.location.y += std::cos(heading) * distance;
+			data.direction = { 0.0f, 0.0f, heading + std::numbers::pi_v<float> };
+			data.object = npc;
+			data.interior = cell->IsInterior() ? cell : nullptr;
+			data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+			data.clearStillLoadingFlag = true;
+
+			const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+			const auto ref = handle.get();
+			if (!ref) {
+				return "error: CreateReferenceAtLocation failed";
+			}
+			REX::INFO("DevCommands: spawned {:08X} from base {:08X}", ref->GetFormID(), *baseID);
+			return DescribeRef(ref.get());
+		}
+
+		RE::TESObjectREFR* LookupRef(std::string_view a_hex)
+		{
+			const auto id = ParseHex(a_hex);
+			return id ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(*id) : nullptr;
+		}
+
+		// refinfo <refHex>
+		std::string RefInfo(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? DescribeRef(ref) : "error: no such reference";
+		}
+
+		// setpos <refHex> <x> <y> <z> [rz degrees]
+		std::string SetPos(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 4) {
+				return "error: usage: setpos <refHex> <x> <y> <z> [rz]";
+			}
+			const auto ref = LookupRef(args[0]);
+			const auto x = ParseFloat(args[1]);
+			const auto y = ParseFloat(args[2]);
+			const auto z = ParseFloat(args[3]);
+			if (!ref || !x || !y || !z) {
+				return "error: bad reference or coordinates";
+			}
+
+			const RE::NiPoint3 pos{ *x, *y, *z };
+			const auto         actor = ref->As<RE::Actor>();
+			if (actor && Puppets::IsPuppet(actor)) {
+				const float heading = args.size() > 4 ? ParseFloat(args[4]).value_or(0.0f) * TO_RADIANS : actor->data.angle.z;
+				Puppets::SetTarget(actor, pos, heading);
+			} else if (actor) {
+				actor->SetPosition(pos, true);
+				if (args.size() > 4) {
+					if (const auto rz = ParseFloat(args[4])) {
+						actor->SetHeading(*rz * TO_RADIANS);
+					}
+				}
+			} else {
+				ref->SetLocationOnReference(pos);
+			}
+			return DescribeRef(ref);
+		}
+
+		// puppet <refHex> [0|1]: takes an actor out of AI control (or gives it back).
+		std::string Puppet(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || actor->IsPlayerRef()) {
+				return "error: usage: puppet <actorRefHex> [0|1] (not the player)";
+			}
+			if (args.size() > 1 && args[1] == "0") {
+				Puppets::Unregister(actor);
+				return "released";
+			}
+			Puppets::Register(actor);
+			Puppets::SetTarget(actor, actor->data.location, actor->data.angle.z);
+			return std::format("puppeted niFlags={:08X} boolFlags={:08X} moreFlags={:08X}",
+				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
+		}
+
+		// papyrus <refHex> <Script> <Function> [bool...]: calls a Papyrus method with bool args.
+		std::string CallPapyrus(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() < 3) {
+				return "error: usage: papyrus <refHex> <Script> <Function> [0|1 ...]";
+			}
+
+			std::vector<char> bools;
+			for (std::size_t i = 3; i < args.size(); ++i) {
+				bools.push_back(args[i] == "1" || args[i] == "true");
+			}
+
+			if (bools.size() > 2) {
+				return "error: at most 2 bool arguments";
+			}
+
+			// The handle type must match the object's real script type.
+			const auto call = [&](auto* a_object) {
+				switch (bools.size()) {
+				case 0:
+					return Papyrus::CallMethod(a_object, args[1], args[2]);
+				case 1:
+					return Papyrus::CallMethod(a_object, args[1], args[2], static_cast<bool>(bools[0]));
+				default:
+					return Papyrus::CallMethod(a_object, args[1], args[2], static_cast<bool>(bools[0]), static_cast<bool>(bools[1]));
+				}
+			};
+
+			const auto actor = ref->As<RE::Actor>();
+			const bool ok = actor ? call(actor) : call(ref);
+			return ok ? "dispatched" : "error: dispatch failed";
+		}
+
+		// flags <refHex> [ni|bool|more] [set|clear] [maskHex]: reads or edits actor flag words.
+		std::string Flags(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: flags <actorRefHex> [ni|bool|more set|clear maskHex]";
+			}
+
+			if (args.size() >= 4) {
+				const auto mask = ParseHex(args[3]);
+				if (!mask) {
+					return "error: bad mask";
+				}
+				std::uint32_t* word = nullptr;
+				if (args[1] == "ni") {
+					word = &actor->niFlags.flags;
+				} else if (args[1] == "bool") {
+					word = reinterpret_cast<std::uint32_t*>(&actor->boolFlags);
+				} else if (args[1] == "more") {
+					word = &actor->moreFlags;
+				} else {
+					return "error: field must be ni, bool or more";
+				}
+				*word = args[2] == "set" ? (*word | *mask) : (*word & ~*mask);
+			}
+
+			return std::format("niFlags={:08X} boolFlags={:08X} moreFlags={:08X}",
+				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
+		}
+
+		// remove <refHex>: disables and deletes a reference we spawned.
+		std::string Remove(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: no such reference";
+			}
+			if (!ref->IsCreated()) {
+				return "error: refusing to delete a reference from a plugin file";
+			}
+			if (const auto actor = ref->As<RE::Actor>()) {
+				Puppets::Unregister(actor);
+			}
+			ref->Disable();
+			ref->SetDelete(true);
+			return "ok";
+		}
+
+		struct Entry
+		{
+			std::string_view name;
+			Handler          handler;
+		};
+
+		constexpr std::array COMMANDS{
+			Entry{ "status", Status },
+			Entry{ "pos", Pos },
+			Entry{ "console", Console },
+			Entry{ "findnpc", FindNpc },
+			Entry{ "spawn", Spawn },
+			Entry{ "refinfo", RefInfo },
+			Entry{ "setpos", SetPos },
+			Entry{ "puppet", Puppet },
+			Entry{ "papyrus", CallPapyrus },
+			Entry{ "flags", Flags },
+			Entry{ "remove", Remove },
+		};
+	}
+
+	Handler Find(std::string_view a_name)
+	{
+		for (const auto& entry : COMMANDS) {
+			if (entry.name == a_name) {
+				return entry.handler;
+			}
+		}
+		return nullptr;
+	}
+
+	std::string Help()
+	{
+		std::string out = "commands: ping, help";
+		for (const auto& entry : COMMANDS) {
+			out += ", ";
+			out += entry.name;
+		}
+		return out;
+	}
+}

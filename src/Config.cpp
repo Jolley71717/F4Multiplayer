@@ -57,7 +57,9 @@ namespace Config
 			const auto key = Trim(view.substr(0, eq));
 			const auto value = Trim(view.substr(eq + 1));
 
-			if (key == "bDevChannel") {
+			if (key == "bFastLoading") {
+				settings.fastLoading = ParseBool(value);
+			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {
 				ParseInt(value, settings.devChannelPort);

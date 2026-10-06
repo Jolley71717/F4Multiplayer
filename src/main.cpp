@@ -1,5 +1,6 @@
-#include "Config.h"
+﻿#include "Config.h"
 #include "DevChannel.h"
+#include "game/FastLoad.h"
 
 namespace
 {
@@ -20,6 +21,9 @@ namespace
 	{
 		switch (a_msg->type) {
 		case F4SE::MessagingInterface::kGameDataReady:
+			if (Config::Get().fastLoading) {
+				FastLoad::Install();
+			}
 			REX::INFO("Game data ready");
 			break;
 		case F4SE::MessagingInterface::kPostLoadGame:

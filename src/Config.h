@@ -6,6 +6,9 @@ namespace Config
 {
 	struct Settings
 	{
+		// Turn vsync off during loading screens so they finish faster.
+		bool fastLoading = true;
+
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;

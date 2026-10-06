@@ -12,6 +12,17 @@ set_warnings("allextra")
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
 
+add_requires("enet")
+
+-- protocol, networking helpers and the relay server, shared by every target
+target("F4MPCommon")
+    set_kind("static")
+    add_files("common/**.cpp")
+    add_headerfiles("common/**.h")
+    add_includedirs("common", { public = true })
+    add_packages("enet", { public = true })
+    add_syslinks("ws2_32", "winmm", { public = true })
+
 -- client plugin, loaded into the game by F4SE
 target("F4Multiplayer")
     add_rules("commonlibf4.plugin", {
@@ -20,9 +31,23 @@ target("F4Multiplayer")
         description = "Multiplayer for Fallout 4"
     })
 
+    add_deps("F4MPCommon")
+
     -- add src files
     add_files("src/**.cpp")
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
     add_syslinks("ws2_32", "bcrypt", "shell32", "ole32")
+
+-- standalone dedicated server
+target("F4MPServer")
+    set_kind("binary")
+    add_deps("F4MPCommon")
+    add_files("server/**.cpp")
+
+-- fake player for testing without a second copy of the game
+target("F4MPBot")
+    set_kind("binary")
+    add_deps("F4MPCommon")
+    add_files("bot/**.cpp")
