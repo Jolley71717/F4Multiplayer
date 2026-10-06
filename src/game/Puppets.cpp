@@ -20,6 +20,7 @@ namespace Puppets
 			float                                 heading = 0.0f;
 			float                                 speed = 0.0f;
 			float                                 direction = 0.0f;
+			std::uint16_t                         moveMode = 0;
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
@@ -97,6 +98,7 @@ namespace Puppets
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->position, true);
 				a_this->SetHeading(puppet->heading);
+				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->moveMode;
 				DriveLocomotion(a_this, *puppet);
 			}
 			a_this->UpdateNoAI(a_delta);
@@ -216,7 +218,7 @@ namespace Puppets
 		return puppets.contains(a_actor);
 	}
 
-	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed, float a_direction)
+	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed, float a_direction, std::uint16_t a_moveMode)
 	{
 		std::scoped_lock l{ lock };
 		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
@@ -224,6 +226,7 @@ namespace Puppets
 			it->second.heading = a_heading;
 			it->second.speed = a_speed;
 			it->second.direction = a_direction;
+			it->second.moveMode = a_moveMode;
 			it->second.hasTarget = true;
 		}
 	}

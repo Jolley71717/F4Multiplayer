@@ -66,9 +66,8 @@ namespace DevCommands
 			actor->GetLinearVelocity(velocity);
 			const auto root = actor->Get3D();
 			const auto w = root ? root->world.translate : RE::NiPoint3{};
-			const auto l = root ? root->local.translate : RE::NiPoint3{};
-			return std::format(" vel=({:.0f},{:.0f},{:.0f}) 3dWorld=({:.0f},{:.0f},{:.0f}) 3dLocal=({:.0f},{:.0f},{:.0f})",
-				velocity.x, velocity.y, velocity.z, w.x, w.y, w.z, l.x, l.y, l.z);
+			return std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
+				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), w.x, w.y, w.z);
 		}
 
 		std::string DescribeRef(RE::TESObjectREFR* a_ref)

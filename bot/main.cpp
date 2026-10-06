@@ -1,7 +1,7 @@
 ﻿// Test client that pretends to be a player: connects to a server and walks in a circle.
 //
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
-//           --x -80352 --y 89600 --z 7790 [--radius 300] [--content-hash HEX] [--seconds N]
+//           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
 
 #include "Net.h"
 #include "Protocol.h"
@@ -41,7 +41,7 @@ int main(int argc, char* argv[])
 	std::uint32_t cell = 0;
 	std::uint32_t worldspace = 0x3C;  // Commonwealth
 	std::uint32_t contentHash = 0;
-	float         cx = 0, cy = 0, cz = 0, radius = 300;
+	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
 
 	for (int i = 1; i + 1 < argc; i += 2) {
@@ -68,6 +68,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, cz);
 		} else if (key == "--radius") {
 			ok = ParseNumber(value, radius);
+		} else if (key == "--speed") {
+			ok = ParseNumber(value, walkSpeed);
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
 		} else {
@@ -160,13 +162,13 @@ int main(int argc, char* argv[])
 		if (welcomed && now >= nextSend) {
 			nextSend = now + std::chrono::milliseconds(50);  // 20 Hz like the game client
 
-			// Walk around the circle at walking speed (~150 units/s) for 4 s, then stand for 3 s,
+			// Move around the circle at --speed (walk ~150, run ~370 units/s) for 4 s, then stand for 3 s,
 			// so both locomotion start and stop get exercised.
 			const float elapsed = std::chrono::duration<float>(now - start).count();
 			const float dt = std::chrono::duration<float>(now - lastStep).count();
 			lastStep = now;
 			const bool  walking = std::fmod(elapsed, 7.0f) < 4.0f;
-			const float walkSpeed = 150.0f;
+
 			if (walking) {
 				angle += dt * walkSpeed / radius;
 			}
@@ -181,6 +183,8 @@ int main(int argc, char* argv[])
 			state.z = cz;
 			state.heading = a + std::numbers::pi_v<float> / 2;  // tangent to the circle
 			state.speed = walking ? walkSpeed : 0.0f;
+			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
+			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
 			Net::Send(peer, Protocol::Encode(state), false);
 		}
 	}

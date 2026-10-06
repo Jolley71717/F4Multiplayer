@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Puppets are actors driven entirely by us (remote players). Their AI update is replaced
 // with the engine's no-AI update, and their transform is forced to a target every frame.
@@ -14,7 +14,8 @@ namespace Puppets
 	// Sets where the puppet should be and how it is moving. Applied on the actor's next update.
 	// a_speed is in units/second; a_direction is the movement direction relative to the
 	// heading as a fraction of a turn (0 = forward, 0.25 = right, 0.5 = back, 0.75 = left).
-	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed = 0.0f, float a_direction = 0.0f);
+	// a_moveMode is the remote player's ActorState::moveMode, which selects walk/run/sneak animations.
+	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed = 0.0f, float a_direction = 0.0f, std::uint16_t a_moveMode = 0);
 
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();

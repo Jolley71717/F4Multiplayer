@@ -259,7 +259,7 @@ namespace RemotePlayers
 			}
 
 			Puppets::SetTarget(actor, { state->x, state->y, state->z }, state->heading, state->speed,
-				RelativeDirection(sampled->motionAngle, state->heading));
+				RelativeDirection(sampled->motionAngle, state->heading), state->moveMode);
 		}
 	}
 

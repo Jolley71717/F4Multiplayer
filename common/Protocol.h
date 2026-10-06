@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 1;
+	inline constexpr std::uint16_t VERSION = 2;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -57,7 +57,8 @@ namespace Protocol
 		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
 		float         x = 0, y = 0, z = 0;
 		float         heading = 0;  // radians
-		float         speed = 0;    // units/second, for picking walk/run animations
+		float         speed = 0;     // units/second, for picking walk/run animations
+		std::uint16_t moveMode = 0;  // ActorState::moveMode bits (walk/run/sprint/sneak), copied to the puppet
 		std::uint8_t  flags = kNone;
 
 		[[nodiscard]] bool IsFinite() const
@@ -209,6 +210,7 @@ namespace Protocol
 		a_writer.F32(a_state.z);
 		a_writer.F32(a_state.heading);
 		a_writer.F32(a_state.speed);
+		a_writer.U16(a_state.moveMode);
 		a_writer.U8(a_state.flags);
 	}
 
@@ -223,6 +225,7 @@ namespace Protocol
 		state.z = a_reader.F32();
 		state.heading = a_reader.F32();
 		state.speed = a_reader.F32();
+		state.moveMode = a_reader.U16();
 		state.flags = a_reader.U8();
 		return state;
 	}

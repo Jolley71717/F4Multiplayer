@@ -151,6 +151,7 @@ namespace Session
 			state.z = pos.z;
 			state.heading = player->data.angle.z;
 			state.speed = speed;
+			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
 			if (player->IsSneaking()) {
 				state.flags |= Protocol::kSneaking;
 			}
