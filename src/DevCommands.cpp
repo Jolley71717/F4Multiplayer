@@ -175,6 +175,29 @@ namespace DevCommands
 			return count ? result : "no matches";
 		}
 
+		// actors [radius]: lists loaded actors near the player.
+		std::string Actors(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const float radius = ParseFloat(a_args).value_or(3000.0f);
+			std::string out;
+			int         count = 0;
+			cell->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && !actor->IsPlayerRef() && count < 30) {
+					const auto base = actor->GetObjectReference();
+					out += std::format("{}{:08X} '{}' dead={}", count ? "; " : "", actor->GetFormID(), base ? RE::TESFullName::GetFullName(*base) : ""sv, actor->IsDead(false));
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
 		std::string Spawn(std::string_view a_args)
 		{
@@ -453,6 +476,7 @@ namespace DevCommands
 			Entry{ "findnpc", FindNpc },
 			Entry{ "spawn", Spawn },
 			Entry{ "safenpc", SafeNpc },
+			Entry{ "actors", Actors },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },

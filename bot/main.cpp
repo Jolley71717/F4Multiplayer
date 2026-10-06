@@ -45,6 +45,7 @@ int main(int argc, char* argv[])
 	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
+	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 
 	for (int i = 1; i + 1 < argc; i += 2) {
 		const std::string_view key = argv[i];
@@ -74,6 +75,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--kill") {
+			ok = ParseNumber(value, killRef, 16);
 		} else if (key == "--jump") {
 			jump = value == "1";
 		} else if (key == "--seconds") {
@@ -129,6 +132,10 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (killRef) {
+								std::cout << "reporting kill of " << std::hex << killRef << std::dec << '\n';
+								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef }, Protocol::MessageType::kReportDeath), true);
+							}
 						}
 						break;
 					case Protocol::MessageType::kReject:
@@ -139,6 +146,20 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kPlayerJoined:
 						if (const auto msg = Protocol::DecodePlayerJoined(data)) {
 							std::cout << "player joined: " << msg->playerId << " " << msg->name << '\n';
+						}
+						break;
+					case Protocol::MessageType::kActorDied:
+						if (const auto msg = Protocol::DecodeActorDeath(data)) {
+							std::cout << "actor died: " << std::hex << msg->refId << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kWorldState:
+						if (const auto msg = Protocol::DecodeWorldState(data)) {
+							std::cout << "world state: " << msg->deadActors.size() << " dead actors:";
+							for (const auto id : msg->deadActors) {
+								std::cout << ' ' << std::hex << id << std::dec;
+							}
+							std::cout << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kPlayerLeft:

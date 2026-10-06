@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 4;
+	inline constexpr std::uint16_t VERSION = 5;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -31,6 +31,7 @@ namespace Protocol
 		// client -> server
 		kHello = 1,
 		kPlayerState = 2,
+		kReportDeath = 3,  // an actor died in the sender's world
 
 		// server -> client
 		kWelcome = 101,
@@ -38,6 +39,8 @@ namespace Protocol
 		kPlayerJoined = 103,
 		kPlayerLeft = 104,
 		kPlayerStates = 105,
+		kActorDied = 106,     // an actor died in another player's world
+		kWorldState = 107,    // sent on join: everything that already happened this session
 	};
 
 	enum StateFlags : std::uint8_t
@@ -101,6 +104,21 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 	};
+
+	// Actors are identified by reference form ID, which is the same for everyone because the
+	// load order must match. Only references from plugin files (not runtime-created ones,
+	// whose IDs start with 0xFF and differ per game) are synced.
+	struct ActorDeath
+	{
+		std::uint32_t refId = 0;
+	};
+
+	struct WorldState
+	{
+		std::vector<std::uint32_t> deadActors;
+	};
+
+	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
 
 	struct RemoteState
 	{
@@ -386,6 +404,54 @@ namespace Protocol
 			entry.playerId = r.U32();
 			entry.state = ReadState(r);
 			msg.players.push_back(entry);
+		}
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+	inline std::vector<std::uint8_t> Encode(const ActorDeath& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<ActorDeath> DecodeActorDeath(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ActorDeath msg;
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
+	{
+		Writer w{ MessageType::kWorldState };
+		const auto count = (std::min)(a_msg.deadActors.size(), MAX_WORLD_STATE_ACTORS);
+		w.U32(static_cast<std::uint32_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.deadActors[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<WorldState> DecodeWorldState(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorldState msg;
+		const auto count = r.U32();
+		if (count > MAX_WORLD_STATE_ACTORS) {
+			return std::nullopt;
+		}
+		msg.deadActors.reserve(count);
+		for (std::uint32_t i = 0; i < count && r.Ok(); ++i) {
+			msg.deadActors.push_back(r.U32());
 		}
 		if (!r.Ok()) {
 			return std::nullopt;

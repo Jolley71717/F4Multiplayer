@@ -6,6 +6,7 @@
 #include <chrono>
 #include <format>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace
 {
@@ -13,6 +14,7 @@ namespace
 
 	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(33);  // ~30 Hz state broadcast
 	constexpr int  MAX_STATES_PER_SECOND = 60;
+	constexpr int  MAX_EVENTS_PER_SECOND = 100;
 
 	struct Player
 	{
@@ -26,6 +28,7 @@ namespace
 		Protocol::PlayerState state;
 		Clock::time_point     rateWindowStart{};
 		int                   statesInWindow = 0;
+		int                   eventsInWindow = 0;
 	};
 
 	std::string SanitizeName(std::string_view a_name, std::uint32_t a_id)
@@ -106,6 +109,9 @@ void Server::Run(void* a_host)
 	std::uint32_t                          nextId = 1;
 	std::uint32_t                          tick = 0;
 	std::uint32_t                          sessionContentHash = 0;  // set by the first player
+
+	// Shared world state for this session.
+	std::unordered_set<std::uint32_t> deadActors;
 	auto                                   nextTick = Clock::now();
 
 	const auto welcomedCount = [&] {
@@ -150,6 +156,11 @@ void Server::Run(void* a_host)
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
+		if (!deadActors.empty()) {
+			Protocol::WorldState world;
+			world.deadActors.assign(deadActors.begin(), deadActors.end());
+			Net::Send(a_player.peer, Protocol::Encode(world), true);
+		}
 
 		for (auto& [peer, other] : players) {
 			if (!other.welcomed || peer == a_player.peer) {
@@ -173,6 +184,7 @@ void Server::Run(void* a_host)
 		if (now - a_player.rateWindowStart >= std::chrono::seconds(1)) {
 			a_player.rateWindowStart = now;
 			a_player.statesInWindow = 0;
+			a_player.eventsInWindow = 0;
 		}
 		if (++a_player.statesInWindow > MAX_STATES_PER_SECOND) {
 			return;
@@ -189,6 +201,26 @@ void Server::Run(void* a_host)
 		a_player.state = *state;
 		a_player.hasState = true;
 		a_player.stateDirty = true;
+	};
+
+	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto death = Protocol::DecodeActorDeath(a_data);
+		// Runtime-created references (0xFF......) differ between games and can't be shared.
+		if (!death || death->refId == 0 || (death->refId >> 24) == 0xFF) {
+			return;
+		}
+		if (deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS || !deadActors.insert(death->refId).second) {
+			return;
+		}
+		const auto relay = Protocol::Encode(*death, Protocol::MessageType::kActorDied);
+		for (const auto& [peer, other] : players) {
+			if (peer != a_player.peer && other.welcomed) {
+				Net::Send(peer, relay, true);
+			}
+		}
 	};
 
 	while (!stopRequested) {
@@ -217,6 +249,9 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kPlayerState:
 							handleState(it->second, data);
+							break;
+						case Protocol::MessageType::kReportDeath:
+							handleDeath(it->second, data);
 							break;
 						default:
 							break;

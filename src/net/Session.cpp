@@ -5,6 +5,7 @@
 #include "Server.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/WorldSync.h"
 #include "net/NetClient.h"
 
 namespace Session
@@ -107,6 +108,16 @@ namespace Session
 					Notify("A player left");
 				}
 				break;
+			case MessageType::kActorDied:
+				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
+					WorldSync::ApplyRemoteDeath(msg->refId);
+				}
+				break;
+			case MessageType::kWorldState:
+				if (const auto msg = Protocol::DecodeWorldState(a_data)) {
+					WorldSync::ApplyWorldState(*msg);
+				}
+				break;
 			case MessageType::kPlayerStates:
 				if (const auto msg = Protocol::DecodePlayerStates(a_data)) {
 					for (const auto& entry : msg->players) {
@@ -185,6 +196,7 @@ namespace Session
 	void Initialize()
 	{
 		contentHash = ComputeContentHash();
+		WorldSync::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -233,6 +245,7 @@ namespace Session
 				welcomed = false;
 				localId = 0;
 				RemotePlayers::RemoveAll();
+				WorldSync::Reset();
 				if (echo) {
 					RemotePlayers::Add(ECHO_ID, "Echo");
 				}
@@ -257,6 +270,14 @@ namespace Session
 			}
 		}
 
+		// Events from our world go to the server only while we're in a session.
+		for (auto& packet : WorldSync::TakeOutgoing()) {
+			if (welcomed) {
+				client.Send(std::move(packet), true);
+			}
+		}
+		WorldSync::Frame();
+
 		RemotePlayers::Update();
 		Puppets::Tick();
 	}
@@ -279,9 +300,9 @@ namespace Session
 		default:
 			break;
 		}
-		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' players: {}",
+		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			status, localId, hostedServer && hostedServer->Running(), ServerAddress(), contentHash,
-			lastRejectReason, RemotePlayers::Describe());
+			lastRejectReason, WorldSync::Describe(), RemotePlayers::Describe());
 	}
 
 	void SetEcho(bool a_enabled, float a_offsetX, float a_offsetY)
