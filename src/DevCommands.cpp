@@ -313,9 +313,79 @@ namespace DevCommands
 			return "ok";
 		}
 
+		// graph <refHex> get <var> [<var>...] | setf <var> <float> | setb <var> <0|1> | seti <var> <int>
+		std::string Graph(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref || args.size() < 3) {
+				return "error: usage: graph <refHex> get <var>... | setf|setb|seti <var> <value>";
+			}
+			const auto holder = static_cast<RE::IAnimationGraphManagerHolder*>(ref);
+
+			if (args[1] == "get") {
+				std::string out;
+				for (std::size_t i = 2; i < args.size(); ++i) {
+					const RE::BSFixedString name{ args[i] };
+					float                   f = 0.0f;
+					std::int32_t            n = 0;
+					bool                    b = false;
+					if (holder->GetGraphVariableImplFloat(name, f)) {
+						out += std::format("{}={:.3f} ", args[i], f);
+					} else if (holder->GetGraphVariableImplInt(name, n)) {
+						out += std::format("{}={}i ", args[i], n);
+					} else if (holder->GetGraphVariableImplBool(name, b)) {
+						out += std::format("{}={}b ", args[i], b);
+					} else {
+						out += std::format("{}=? ", args[i]);
+					}
+				}
+				return out;
+			}
+
+			if (args.size() < 4) {
+				return "error: missing value";
+			}
+			const RE::BSFixedString name{ args[2] };
+			bool                    ok = false;
+			if (args[1] == "setf") {
+				ok = holder->SetGraphVariableFloat(name, ParseFloat(args[3]).value_or(0.0f));
+			} else if (args[1] == "setb") {
+				ok = holder->SetGraphVariableBool(name, args[3] == "1");
+			} else if (args[1] == "seti") {
+				ok = holder->SetGraphVariableInt(name, static_cast<int>(ParseFloat(args[3]).value_or(0.0f)));
+			}
+			return ok ? "ok" : "error: set failed";
+		}
+
+		// event <refHex> <animEvent>: sends an animation graph event (e.g. a locomotion start).
+		std::string AnimEvent(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			if (!ref) {
+				return "error: usage: event <refHex> <eventName>";
+			}
+			const auto holder = static_cast<RE::IAnimationGraphManagerHolder*>(ref);
+			return holder->NotifyAnimationGraphImpl(RE::BSFixedString{ args[1] }) ? "ok" : "rejected";
+		}
+
 		std::string Net(std::string_view)
 		{
 			return Session::Describe();
+		}
+
+		// echo on|off [dx dy]: a puppet mirrors the local player, offset by (dx, dy).
+		std::string Echo(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty() || (args[0] != "on" && args[0] != "off")) {
+				return "error: usage: echo on|off [dx dy]";
+			}
+			const float dx = args.size() > 1 ? ParseFloat(args[1]).value_or(150.0f) : 150.0f;
+			const float dy = args.size() > 2 ? ParseFloat(args[2]).value_or(0.0f) : 0.0f;
+			Session::SetEcho(args[0] == "on", dx, dy);
+			return "ok";
 		}
 
 		struct Entry
@@ -336,6 +406,9 @@ namespace DevCommands
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
+			Entry{ "echo", Echo },
+			Entry{ "graph", Graph },
+			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
 		};
 	}

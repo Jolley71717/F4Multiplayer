@@ -1,4 +1,4 @@
-#include "net/Session.h"
+﻿#include "net/Session.h"
 
 #include "Config.h"
 #include "Protocol.h"
@@ -121,12 +121,12 @@ namespace Session
 			}
 		}
 
-		void SendLocalState(Clock::time_point a_now)
+		std::optional<Protocol::PlayerState> SampleLocalState(Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto cell = player ? player->GetParentCell() : nullptr;
 			if (!cell) {
-				return;
+				return std::nullopt;
 			}
 
 			const auto& pos = player->data.location;
@@ -154,9 +154,14 @@ namespace Session
 			if (player->IsSneaking()) {
 				state.flags |= Protocol::kSneaking;
 			}
-
-			client.Send(Protocol::Encode(state), false);
+			return state;
 		}
+
+		// Echo test mode (see SetEcho).
+		constexpr std::uint32_t ECHO_ID = 0xFFFFFFFF;
+		bool                    echo = false;
+		float                   echoOffsetX = 0.0f;
+		float                   echoOffsetY = 0.0f;
 	}
 
 	void Initialize()
@@ -209,6 +214,9 @@ namespace Session
 				welcomed = false;
 				localId = 0;
 				RemotePlayers::RemoveAll();
+				if (echo) {
+					RemotePlayers::Add(ECHO_ID, "Echo");
+				}
 				break;
 			case NetClient::Event::Type::kPacket:
 				HandlePacket(event.data);
@@ -216,9 +224,18 @@ namespace Session
 			}
 		}
 
-		if (welcomed && now >= nextSend) {
+		if ((welcomed || echo) && now >= nextSend) {
 			nextSend = now + SEND_INTERVAL;
-			SendLocalState(now);
+			if (auto state = SampleLocalState(now)) {
+				if (welcomed) {
+					client.Send(Protocol::Encode(*state), false);
+				}
+				if (echo) {
+					state->x += echoOffsetX;
+					state->y += echoOffsetY;
+					RemotePlayers::PushState(ECHO_ID, *state);
+				}
+			}
 		}
 
 		RemotePlayers::Update();
@@ -246,5 +263,17 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' players: {}",
 			status, localId, hostedServer && hostedServer->Running(), ServerAddress(), contentHash,
 			lastRejectReason, RemotePlayers::Describe());
+	}
+
+	void SetEcho(bool a_enabled, float a_offsetX, float a_offsetY)
+	{
+		echo = a_enabled;
+		echoOffsetX = a_offsetX;
+		echoOffsetY = a_offsetY;
+		if (a_enabled) {
+			RemotePlayers::Add(ECHO_ID, "Echo");
+		} else {
+			RemotePlayers::Remove(ECHO_ID);
+		}
 	}
 }

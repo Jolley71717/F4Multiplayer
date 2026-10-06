@@ -14,4 +14,7 @@ namespace Session
 	void OnBeforeSaveOrLoad();
 
 	[[nodiscard]] std::string Describe();
+
+	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
+	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);
 }
