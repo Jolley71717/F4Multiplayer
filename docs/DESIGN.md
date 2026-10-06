@@ -144,7 +144,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
-| Quest stages | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) |
+| Quest stages | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) once the quest is running in their game (flag 0x1; until then the stage waits, so a new character isn't pulled out of the prologue and no quest starts out of nowhere), never during dialogue or a scene |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Catching up (join, reconnect, loading a save)

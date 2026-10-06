@@ -95,7 +95,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
   ground, doors opened/closed and locks picked.
 - **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
-  the others (never backwards). Turn this off with `bSyncQuests = false` if a quest misbehaves.
+  the others (never backwards), once they have started that quest themselves. Turn this off with
+  `bSyncQuests = false` if a quest misbehaves.
 - Players who join later catch up on everything that already happened this session. So does anyone
   who loads a save or dies and reloads.
 
