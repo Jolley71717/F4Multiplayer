@@ -32,7 +32,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 
 | Idea | Feasible? | Notes |
 |---|---|---|
-| Proximity voice chat | Yes | Steam's voice API (`ISteamUser::StartVoiceRecording`/`GetVoice`/`DecompressVoice`) is in the game's own steam_api64.dll; send it over the session, play it with volume by distance. |
+| Proximity voice chat | Done (protocol 17) | Steam's voice API (`ISteamUser::StartVoiceRecording`/`GetVoice`/`DecompressVoice`) is in the game's own steam_api64.dll; send it over the session, play it with volume by distance. |
 | Downed and revive | Done (protocol 16) | The player's character is essential while friends are in the session; a lethal hit knocks them down for 45 s, and a friend who stays next to them for 2 s helps them up; otherwise the normal death. |
 | Horde mode at a settlement | Partly | Spawned enemies are runtime references with different IDs in each game, so the host's game would have to run them and send "spawn this" with its own ID mapping. A bigger change to NpcSync. |
 | Real faces for friends | Hard | Needs the player's face morphs, head parts and tints copied to the stand-in; FO4's face data is large and poorly documented. |

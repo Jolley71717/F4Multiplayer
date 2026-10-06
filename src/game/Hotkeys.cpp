@@ -80,4 +80,9 @@ namespace Hotkeys
 		teleport.down = down;
 		return actions;
 	}
+
+	bool Held(std::uint32_t a_vk)
+	{
+		return IsDown(a_vk) && GameHasFocus();
+	}
 }

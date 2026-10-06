@@ -6,6 +6,8 @@
 //           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX]  (health in the status sent after joining, an "over here", a kill XP report)
 //           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
 //           [--downed 1] [--revive PLAYERID]  (status says the bot is down; helps that player up once welcomed)
+//           [--voice-echo 1]  (sends every piece of voice it hears back as its own)
+//           [--voice-silence 1]  (talks: Steam voice packets holding 100 ms of silence, 10 a second)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -21,6 +23,36 @@
 
 namespace
 {
+	std::uint32_t Crc32(std::span<const std::uint8_t> a_data)
+	{
+		std::uint32_t crc = 0xFFFFFFFF;
+		for (const auto byte : a_data) {
+			crc ^= byte;
+			for (int i = 0; i < 8; ++i) {
+				crc = (crc >> 1) ^ (0xEDB88320 & (0u - (crc & 1)));
+			}
+		}
+		return ~crc;
+	}
+
+	// A Steam voice packet: the speaker's Steam ID, a sample rate (type 11) and a run of silent
+	// samples (type 0), then a CRC32 of all that.
+	std::vector<std::uint8_t> SilencePacket(std::uint16_t a_samples)
+	{
+		std::vector<std::uint8_t> packet;
+		const auto put = [&](const auto a_value) {
+			const auto bytes = reinterpret_cast<const std::uint8_t*>(&a_value);
+			packet.insert(packet.end(), bytes, bytes + sizeof(a_value));
+		};
+		put(std::uint64_t{ 0x0110000100000001 });
+		put(std::uint8_t{ 11 });
+		put(std::uint16_t{ 24000 });
+		put(std::uint8_t{ 0 });
+		put(a_samples);
+		put(Crc32(packet));
+		return packet;
+	}
+
 	template <class T>
 	bool ParseNumber(std::string_view a_str, T& a_out, int a_base = 10)
 	{
@@ -52,6 +84,9 @@ int main(int argc, char* argv[])
 	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
 	int           statusHealth = 100;
 	bool          statusDowned = false;
+	bool          voiceEcho = false;
+	bool          voiceSilence = false;
+	std::uint64_t voiceBytes = 0;
 	std::uint32_t reviveTarget = 0;
 	bool          sendPing = false;
 	float         xpGain = 0.0f;
@@ -153,6 +188,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, shootWeapon, 16);
 		} else if (key == "--status-health") {
 			ok = ParseNumber(value, statusHealth) && statusHealth >= 0 && statusHealth <= 100;
+		} else if (key == "--voice-echo") {
+			voiceEcho = value == "1";
+		} else if (key == "--voice-silence") {
+			voiceSilence = value == "1";
 		} else if (key == "--downed") {
 			statusDowned = value == "1";
 		} else if (key == "--revive") {
@@ -199,6 +238,7 @@ int main(int argc, char* argv[])
 	using Clock = std::chrono::steady_clock;
 	const auto start = Clock::now();
 	auto       nextSend = start;
+	auto       nextVoice = start;
 	auto       lastStep = start;
 	float      angle = 0.0f;  // position on the circle, radians
 	bool       welcomed = false;
@@ -326,6 +366,18 @@ int main(int argc, char* argv[])
 							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kVoiceRelay:
+						if (auto msg = Protocol::DecodeVoice(data)) {
+							if (voiceBytes == 0) {
+								std::cout << "voice: first piece from player " << msg->playerId << ", " << msg->data.size() << " bytes" << std::endl;
+							}
+							voiceBytes += msg->data.size();
+							if (voiceEcho) {
+								msg->playerId = 0;
+								Net::Send(peer, Protocol::Encode(*msg, Protocol::MessageType::kVoice), false);
+							}
+						}
+						break;
 					case Protocol::MessageType::kQuestDone:
 						if (const auto msg = Protocol::DecodeQuestDone(data)) {
 							std::cout << "quest done: player " << msg->playerId << " " << std::hex << msg->quest << std::dec << std::endl;
@@ -405,6 +457,11 @@ int main(int argc, char* argv[])
 			break;
 		}
 
+		if (welcomed && voiceSilence && now >= nextVoice) {
+			nextVoice = now + std::chrono::milliseconds(100);
+			Net::Send(peer, Protocol::Encode(Protocol::VoiceData{ 0, SilencePacket(2400) }, Protocol::MessageType::kVoice), false);
+		}
+
 		if (welcomed && now >= nextSend) {
 			nextSend = now + std::chrono::milliseconds(50);  // 20 Hz like the game client
 
@@ -474,6 +531,9 @@ int main(int argc, char* argv[])
 		}
 	}
 
+	if (voiceBytes) {
+		std::cout << "voice: " << voiceBytes << " bytes heard" << std::endl;
+	}
 	enet_peer_disconnect(peer, 0);
 	enet_host_flush(host);
 	enet_host_destroy(host);

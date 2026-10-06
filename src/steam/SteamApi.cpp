@@ -69,6 +69,16 @@ namespace SteamApi
 		ok &= Resolve(module, "SteamAPI_RegisterCallback", api.RegisterCallback);
 		ok &= Resolve(module, "SteamAPI_UnregisterCallback", api.UnregisterCallback);
 
+		const bool voice = Resolve(module, "SteamAPI_ISteamUser_StartVoiceRecording", api.StartVoiceRecording) &&
+		                   Resolve(module, "SteamAPI_ISteamUser_StopVoiceRecording", api.StopVoiceRecording) &&
+		                   Resolve(module, "SteamAPI_ISteamUser_GetAvailableVoice", api.GetAvailableVoice) &&
+		                   Resolve(module, "SteamAPI_ISteamUser_GetVoice", api.GetVoice) &&
+		                   Resolve(module, "SteamAPI_ISteamUser_DecompressVoice", api.DecompressVoice) &&
+		                   Resolve(module, "SteamAPI_ISteamFriends_SetInGameVoiceSpeaking", api.SetInGameVoiceSpeaking);
+		if (!voice) {
+			api.StartVoiceRecording = nullptr;  // voice chat checks this one
+		}
+
 		reportedMissing = true;
 		if (!ok) {
 			return nullptr;

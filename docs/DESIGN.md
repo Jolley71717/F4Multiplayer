@@ -178,12 +178,18 @@ save's record and asks for the session's changes again.
   friend within 180 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag
   and restores health; the game stands them up a few seconds later with full health, which we cut
   back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`.
+- Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
+  push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
+  `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within
+  8 m, silent beyond `fVoiceRange` or in another cell/worldspace) and queue them on one winmm
+  `waveOut` device per speaker, with 80 ms of silence first when it was idle.
+  `SetInGameVoiceSpeaking` tells Steam's own chat to mute the mic while we record.
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
   player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 16.
+Protocol VERSION 17.
 
 ## Prior art
 
@@ -195,11 +201,15 @@ Protocol VERSION 16.
 
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
-- Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`.
+- Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
+  `voice [talk|loop on|off]` (record without the key; hear yourself).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
-  time (`--time`, `--weather`), and resume a session (`--session`, `--from`).
+  time (`--time`, `--weather`), complete a quest (`--quest-done`), be down or help someone up
+  (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
+  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), and resume a session
+  (`--session`, `--from`).
 - `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
 - `tools/screenshot.ps1`: captures the screen for visual checks.
 - `F4MPServer.exe`: a standalone server.

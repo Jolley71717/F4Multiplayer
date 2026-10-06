@@ -94,6 +94,18 @@ namespace Config
 				if (ec == std::errc{} && std::isfinite(share)) {
 					settings.xpShare = std::clamp(share, 0.0f, 1.0f);
 				}
+			} else if (key == "bVoiceChat") {
+				settings.voiceChat = ParseBool(value);
+			} else if (key == "bVoiceOpenMic") {
+				settings.voiceOpenMic = ParseBool(value);
+			} else if (key == "iKeyVoice") {
+				ParseInt(value, settings.keyVoice, 16);
+			} else if (key == "fVoiceRange") {
+				float range = settings.voiceRange;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), range);
+				if (ec == std::errc{} && std::isfinite(range)) {
+					settings.voiceRange = std::clamp(range, 0.0f, 100000.0f);
+				}
 			} else if (key == "iKeyPlayerList") {
 				ParseInt(value, settings.keyPlayerList, 16);
 			} else if (key == "iKeyTeleport") {

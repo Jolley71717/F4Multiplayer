@@ -6,6 +6,7 @@
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Hud.h"
+#include "game/Voice.h"
 #include "game/Party.h"
 #include "game/WorldClock.h"
 #include "game/NpcSync.h"
@@ -144,6 +145,7 @@ namespace Session
 					const auto name = RemotePlayers::NameOf(msg->playerId);
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
+					Voice::OnPlayerLeft(msg->playerId);
 					Notify(name.empty() ? "A player left" : name + " left");
 				}
 				break;
@@ -206,6 +208,11 @@ namespace Session
 			case MessageType::kPartyXp:
 				if (const auto msg = Protocol::DecodeXpGain(a_data)) {
 					Party::ApplyXp(*msg);
+				}
+				break;
+			case MessageType::kVoiceRelay:
+				if (const auto msg = Protocol::DecodeVoice(a_data)) {
+					Voice::Apply(*msg);
 				}
 				break;
 			case MessageType::kRevived:
@@ -344,6 +351,7 @@ namespace Session
 			NpcSync::Reset();
 			Party::Reset();
 			WorldClock::Reset();
+			Voice::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -556,6 +564,12 @@ namespace Session
 				client->Send(std::move(packet), false);
 			}
 		}
+		Voice::Frame(welcomed);
+		for (auto& packet : Voice::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), false);
+			}
+		}
 
 		RemotePlayers::Update();
 		Puppets::Tick();
@@ -594,7 +608,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe(), RemotePlayers::Describe()) +
 		       " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

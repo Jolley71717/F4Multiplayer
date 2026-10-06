@@ -20,6 +20,7 @@ namespace
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
+	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
@@ -41,12 +42,13 @@ namespace
 		int               events = 0;
 		int               shots = 0;
 		int               heartbeats = 0;
+		int               voiceBytes = 0;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = heartbeats = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
 			}
 		}
 	};
@@ -637,6 +639,24 @@ void Server::Run()
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
 	};
 
+	// Voice goes to everyone else; each listener sets the volume by distance.
+	const auto handleVoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		a_player.rate.voiceBytes += static_cast<int>(a_data.size());
+		if (a_player.rate.voiceBytes > MAX_VOICE_BYTES_PER_SECOND) {
+			return;
+		}
+		auto voice = Protocol::DecodeVoice(a_data);
+		if (!voice) {
+			return;
+		}
+		voice->playerId = a_player.id;
+		broadcast(Protocol::Encode(*voice, Protocol::MessageType::kVoiceRelay), false, a_player.key);
+	};
+
 	const auto handleRevive = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -766,6 +786,9 @@ void Server::Run()
 			break;
 		case MessageType::kRevive:
 			handleRevive(a_player, a_data);
+			break;
+		case MessageType::kVoice:
+			handleVoice(a_player, a_data);
 			break;
 		case MessageType::kHeartbeat:
 			// Own budget: players send one a second, and the answer must not wait behind events.
