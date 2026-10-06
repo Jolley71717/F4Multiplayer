@@ -19,6 +19,8 @@ namespace Puppets
 		struct Puppet
 		{
 			Kind                                  kind = Kind::kPlayer;
+			std::uint32_t                         formId = 0;  // to tell a freed actor's address apart from a new actor
+			std::uint32_t                         originalFlags = 0;  // SUPPRESSED_BEHAVIOR bits the actor had before
 			Motion                                target;
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
@@ -128,7 +130,7 @@ namespace Puppets
 			std::optional<Puppet> puppet;
 			{
 				std::scoped_lock l{ lock };
-				if (const auto it = puppets.find(a_this); it != puppets.end()) {
+				if (const auto it = puppets.find(a_this); it != puppets.end() && it->second.formId == a_this->GetFormID()) {
 					puppet = it->second;
 				}
 			}
@@ -249,11 +251,17 @@ namespace Puppets
 		if (a_kind == Kind::kPlayer) {
 			InstallActivationHooks(a_actor);
 		}
+		const auto originalFlags = a_actor->boolFlags.underlying() & SUPPRESSED_BEHAVIOR;
 		SuppressBehavior(a_actor, a_kind);
 		a_actor->InitiateDoNothingPackage();
 
 		std::scoped_lock l{ lock };
-		puppets.try_emplace(a_actor, Puppet{ .kind = a_kind, .nextIdleRefresh = std::chrono::steady_clock::now() + IDLE_REFRESH });
+		puppets.insert_or_assign(a_actor, Puppet{
+			.kind = a_kind,
+			.formId = a_actor->GetFormID(),
+			.originalFlags = originalFlags,
+			.nextIdleRefresh = std::chrono::steady_clock::now() + IDLE_REFRESH,
+		});
 		puppetCount = puppets.size();
 	}
 
@@ -264,24 +272,26 @@ namespace Puppets
 		puppetCount = puppets.size();
 	}
 
-	void Clear()
-	{
-		std::scoped_lock l{ lock };
-		puppets.clear();
-		puppetCount = 0;
-	}
 
 	bool IsPuppet(const RE::Actor* a_actor)
 	{
 		std::scoped_lock l{ lock };
 		const auto it = puppets.find(a_actor);
-		return it != puppets.end() && it->second.kind == Kind::kPlayer;
+		return it != puppets.end() && it->second.kind == Kind::kPlayer && it->second.formId == a_actor->GetFormID();
 	}
 
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
+		std::uint32_t originalFlags = 0;
+		{
+			std::scoped_lock l{ lock };
+			if (const auto it = puppets.find(a_actor); it != puppets.end()) {
+				originalFlags = it->second.originalFlags;
+			}
+		}
 		Unregister(a_actor);
-		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
+		// Clear only what we set; a script may have blocked the NPC on purpose.
+		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
 		// Drop the do-nothing package and pick the NPC's own again.
 		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
 	}
@@ -299,19 +309,24 @@ namespace Puppets
 	{
 		const auto now = std::chrono::steady_clock::now();
 
-		std::vector<RE::Actor*> refresh;
+		std::vector<std::pair<const RE::Actor*, std::uint32_t>> due;
 		{
 			std::scoped_lock l{ lock };
 			for (auto& [actor, puppet] : puppets) {
-				if (now >= puppet.nextIdleRefresh && !actor->IsDead(false)) {
+				if (now >= puppet.nextIdleRefresh) {
 					puppet.nextIdleRefresh = now + IDLE_REFRESH;
-					refresh.push_back(const_cast<RE::Actor*>(actor));
+					due.emplace_back(actor, puppet.formId);
 				}
 			}
 		}
 
-		for (const auto actor : refresh) {
-			actor->InitiateDoNothingPackage();
+		// The owners (RemotePlayers, NpcSync) unregister actors the game deleted, but only on their
+		// next update; never touch an actor that may already be gone.
+		for (const auto& [actor, formId] : due) {
+			const auto live = RE::TESForm::GetFormByID<RE::Actor>(formId);
+			if (live == actor && !live->IsDead(false)) {
+				live->InitiateDoNothingPackage();
+			}
 		}
 	}
 }

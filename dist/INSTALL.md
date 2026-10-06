@@ -66,10 +66,17 @@ Each player keeps their own save, character and inventory. Meet up by travelling
   ground, doors opened/closed and locks picked.
 - **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
   the others (never backwards). Turn this off with `bSyncQuests = false` if a quest misbehaves.
-- Players who join later catch up on everything that already happened this session.
+- Players who join later catch up on everything that already happened this session. So does anyone
+  who loads a save or dies and reloads.
 
 For the closest shared world, start from similar saves (for example, everyone at the same point in
 the story). Things that were already different between your saves before the session stay different.
+
+Make big story choices together. Quest progress only moves forward, so if one player sides with
+one faction and another player with a rival one, both games get both results.
+
+What happens in a session is saved into your game when you save. Use a separate save for co-op if you
+want to keep your solo playthrough untouched.
 
 ## Dedicated server (optional)
 

@@ -18,8 +18,8 @@ namespace NpcSync
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyStates(const std::vector<Protocol::ActorState>& a_states);
 
-	// The local player hit this NPC: take it over so it fights back here.
-	void OnLocalHit(std::uint32_t a_refId);
+	// The local player hit or talked to this NPC: take it over so it reacts here.
+	void OnLocalInteraction(std::uint32_t a_refId);
 
 	// Claims, releases, sends owned NPCs' states and moves mirrored ones. Call every frame.
 	void Frame();

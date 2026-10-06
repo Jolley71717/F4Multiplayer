@@ -25,7 +25,6 @@ namespace Puppets
 	// Marks an actor as a puppet. Installs the hooks on first use.
 	void Register(RE::Actor* a_actor, Kind a_kind = Kind::kPlayer);
 	void Unregister(RE::Actor* a_actor);
-	void Clear();
 
 	// True for remote players' stand-ins (not mirrored NPCs).
 	[[nodiscard]] bool IsPuppet(const RE::Actor* a_actor);

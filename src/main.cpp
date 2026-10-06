@@ -1,11 +1,37 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "game/FastLoad.h"
+#include "game/WorldSync.h"
 #include "net/Session.h"
 
 namespace
 {
 	bool gameDataReady = false;
+
+	// Co-save records: which of the session's changes each save contains.
+	constexpr std::uint32_t SERIALIZATION_ID = 'F4MP';
+
+	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
+	{
+		WorldSync::SaveResyncPoint(a_intfc);
+	}
+
+	void OnGameLoaded(const F4SE::SerializationInterface* a_intfc)
+	{
+		std::uint32_t type = 0;
+		std::uint32_t version = 0;
+		std::uint32_t length = 0;
+		while (a_intfc->GetNextRecordInfo(type, version, length)) {
+			if (type == 'CONT') {
+				WorldSync::LoadResyncPoint(a_intfc, version, length);
+			}
+		}
+	}
+
+	void OnRevert(const F4SE::SerializationInterface*)
+	{
+		WorldSync::RevertResyncPoint();
+	}
 
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
 	{
@@ -22,6 +48,12 @@ namespace
 		case F4SE::MessagingInterface::kPreLoadGame:
 			// Remote players' actors must never be written into a save.
 			Session::OnBeforeSaveOrLoad();
+			break;
+		case F4SE::MessagingInterface::kPostLoadGame:
+		case F4SE::MessagingInterface::kNewGame:
+			if (gameDataReady) {
+				Session::OnGameLoaded();
+			}
 			break;
 		default:
 			break;
@@ -51,6 +83,15 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
+
+	if (const auto serialization = F4SE::GetSerializationInterface()) {
+		serialization->SetUniqueID(SERIALIZATION_ID);
+		serialization->SetSaveCallback(OnGameSaved);
+		serialization->SetLoadCallback(OnGameLoaded);
+		serialization->SetRevertCallback(OnRevert);
+	} else {
+		REX::WARN("No serialization interface: loading a save mid-session may duplicate shared loot");
+	}
 
 	DevChannel::Start();
 
