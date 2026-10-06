@@ -1,8 +1,8 @@
-# F4Multiplayer
+﻿# F4Multiplayer
 
 Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https://github.com/libxse/commonlibf4).
 
-**Status:** early development. Not playable.
+**Status:** early alpha. Up to 4 players can join a session and see each other walk, run and stand in the same areas. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
 
 ## Requirements
 
@@ -28,10 +28,12 @@ Logs are written to `Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`.
 ## Roadmap
 
 1. ~~Plugin loads and reads player state~~
-2. Two clients see each other move (proxy actors + networking)
-3. Animations, equipment, appearance
-4. Combat between players
-5. NPC / world sync
+2. ~~Players see each other move (server, puppets, interpolation)~~
+3. ~~Walk/run/stop animations, per-player appearance choice~~
+4. Jumping, sneaking, weapons drawn, equipment and real character appearance
+5. Names above players
+6. Combat between players and shared enemies
+7. NPC / world sync (containers, doors, quests)
 
 ## License
 
