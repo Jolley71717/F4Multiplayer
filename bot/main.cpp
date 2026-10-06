@@ -3,6 +3,7 @@
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
 //           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
+//           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX]  (health in the status sent after joining, an "over here", a kill XP report)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -47,6 +48,11 @@ int main(int argc, char* argv[])
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
+	int           statusHealth = 100;
+	bool          sendPing = false;
+	float         xpGain = 0.0f;
+	float         timeHour = -1.0f;  // report this time of day (and timeWeather) every 5 s
+	std::uint32_t timeWeather = 0;
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
@@ -135,6 +141,16 @@ int main(int argc, char* argv[])
 			jump = value == "1";
 		} else if (key == "--shoot") {
 			ok = ParseNumber(value, shootWeapon, 16);
+		} else if (key == "--status-health") {
+			ok = ParseNumber(value, statusHealth) && statusHealth >= 0 && statusHealth <= 100;
+		} else if (key == "--ping") {
+			sendPing = value == "1";
+		} else if (key == "--xp") {
+			ok = ParseNumber(value, xpGain);
+		} else if (key == "--time") {
+			ok = ParseNumber(value, timeHour) && timeHour >= 0.0f && timeHour < 24.0f;
+		} else if (key == "--weather") {
+			ok = ParseNumber(value, timeWeather, 16);
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
 		} else {
@@ -191,6 +207,13 @@ int main(int argc, char* argv[])
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
 							}
+							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusHealth), 7 }, Protocol::MessageType::kReportStatus), true);
+							if (sendPing) {
+								Net::Send(peer, Protocol::Encode(Protocol::Ping{ 0, cell, cell ? 0 : worldspace, cx + 2000.0f, cy, cz }, Protocol::MessageType::kPing), true);
+							}
+							if (xpGain > 0.0f) {
+								Net::Send(peer, Protocol::Encode(Protocol::XpGain{ 0, xpGain }, Protocol::MessageType::kReportXp), true);
+							}
 							if (questStage.quest) {
 								std::cout << "reporting quest stage\n";
 								Net::Send(peer, Protocol::Encode(questStage, Protocol::MessageType::kReportQuestStage), true);
@@ -221,7 +244,7 @@ int main(int argc, char* argv[])
 							}
 							if (killRef) {
 								std::cout << "reporting kill of " << std::hex << killRef << std::dec << '\n';
-								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef }, Protocol::MessageType::kReportDeath), true);
+								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef, 0, true }, Protocol::MessageType::kReportDeath), true);
 							}
 						}
 						break;
@@ -237,7 +260,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kActorDied:
 						if (const auto msg = Protocol::DecodeActorDeath(data)) {
-							std::cout << "actor died: " << std::hex << msg->refId << std::dec << std::endl;
+							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorHealth:
@@ -259,6 +282,26 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kQuestStage:
 						if (const auto msg = Protocol::DecodeQuestStage(data)) {
 							std::cout << "quest stage: " << std::hex << msg->quest << std::dec << " " << msg->stage << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kPlayerStatus:
+						if (const auto msg = Protocol::DecodePlayerStatus(data)) {
+							std::cout << "status: player " << msg->playerId << " hp " << int(msg->health) << " level " << msg->level << std::hex << " location " << msg->location << " cell " << msg->cell << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kWorldTime:
+						if (const auto msg = Protocol::DecodeWorldTime(data)) {
+							std::cout << "time: hour " << msg->gameHour << std::hex << " ws " << msg->worldspace << " weather " << msg->weather << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kPinged:
+						if (const auto msg = Protocol::DecodePing(data)) {
+							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kPartyXp:
+						if (const auto msg = Protocol::DecodeXpGain(data)) {
+							std::cout << "xp: player " << msg->playerId << " " << msg->xp << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kShotFired:
@@ -368,6 +411,9 @@ int main(int argc, char* argv[])
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
 			const bool shoot = shootWeapon && !walking && sequence % 10 == 0;
+			if (timeHour >= 0.0f && sequence % 100 == 1) {
+				Net::Send(peer, Protocol::Encode(Protocol::WorldTime{ timeHour, worldspace, timeWeather }, Protocol::MessageType::kReportTime), false);
+			}
 			if (shootWeapon) {
 				state.flags |= Protocol::kWeaponDrawn;
 			}

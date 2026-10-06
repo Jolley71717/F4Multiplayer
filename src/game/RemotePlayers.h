@@ -17,6 +17,22 @@ namespace RemotePlayers
 	// What the player is wearing and holding (base forms); copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
 
+	struct Info
+	{
+		std::uint32_t                        id = 0;
+		std::string                          name;
+		std::optional<Protocol::PlayerState> state;  // latest received
+		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
+	};
+
+	[[nodiscard]] std::vector<Info> List();
+
+	// The player's name, or "" if unknown.
+	[[nodiscard]] std::string NameOf(std::uint32_t a_id);
+
+	// Their health in percent, shown after their name when they're hurt.
+	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent);
+
 	// The player fired: their stand-in plays the firing animation.
 	void PlayShot(std::uint32_t a_id);
 

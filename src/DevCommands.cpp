@@ -3,6 +3,7 @@
 #include "game/Equipment.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/Party.h"
 #include "game/WeaponFire.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
@@ -674,6 +675,60 @@ namespace DevCommands
 			return WeaponFire::LogAnimationEvents(!args.empty() && args[0] == "on");
 		}
 
+		// party list|pick|go|ping: what the multiplayer hotkeys do.
+		std::string PartyCommand(std::string_view a_args)
+		{
+			if (a_args == "list") {
+				Party::ShowPlayerList();
+			} else if (a_args == "pick") {
+				Party::PickTeleportTarget();
+			} else if (a_args == "go") {
+				Party::TeleportToTarget();
+			} else if (a_args == "ping") {
+				Party::SendPing();
+			} else if (!a_args.empty()) {
+				return "error: usage: party [list|pick|go|ping]";
+			}
+			return Party::Describe();
+		}
+
+		// forms <typeNumber> [text]: forms of a type (ENUM_FORM_ID) whose editor ID contains the text.
+		std::string Forms(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        type = -1;
+			if (args.empty() || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
+				return "error: usage: forms <typeNumber> [text]";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				if (!form || static_cast<int>(form->GetFormType()) != type || count >= 40) {
+					continue;
+				}
+				const std::string_view editorId = form->GetFormEditorID();
+				if (args.size() > 1 && editorId.find(args[1]) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X}:{} ", id, editorId);
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// edid <formHex>: a form's editor ID (most forms have none at runtime).
+		std::string EditorId(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto form = id ? RE::TESForm::GetFormByID(*id) : nullptr;
+			return form ? std::format("'{}' type={}", form->GetFormEditorID(), static_cast<int>(form->GetFormType())) : "error: no such form";
+		}
+
 		// net [connect <address>]
 		std::string Net(std::string_view a_args)
 		{
@@ -753,6 +808,9 @@ namespace DevCommands
 			Entry{ "echo", Echo },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },
+			Entry{ "party", PartyCommand },
+			Entry{ "edid", EditorId },
+			Entry{ "forms", Forms },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },

@@ -82,6 +82,20 @@ namespace Config
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
+			} else if (key == "bSyncTime") {
+				settings.syncTime = ParseBool(value);
+			} else if (key == "fXpShare") {
+				float share = settings.xpShare;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);
+				if (ec == std::errc{} && std::isfinite(share)) {
+					settings.xpShare = std::clamp(share, 0.0f, 1.0f);
+				}
+			} else if (key == "iKeyPlayerList") {
+				ParseInt(value, settings.keyPlayerList, 16);
+			} else if (key == "iKeyTeleport") {
+				ParseInt(value, settings.keyTeleport, 16);
+			} else if (key == "iKeyPing") {
+				ParseInt(value, settings.keyPing, 16);
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {

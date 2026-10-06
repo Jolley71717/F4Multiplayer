@@ -29,6 +29,9 @@ namespace WorldSync
 	// Applies pending remote changes as references load, and collects local events. Call every frame.
 	void Frame();
 
+	// How many actors the player killed since the last call (any actor, shared or not).
+	[[nodiscard]] std::uint32_t TakePlayerKills();
+
 	// Local events to send to the server since the last call.
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 

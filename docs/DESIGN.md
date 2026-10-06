@@ -149,9 +149,29 @@ safely. Container changes can't (that would duplicate items), so:
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
 save's record and asks for the session's changes again.
 
+## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
+
+- Status (location, interior cell, health %, level): sent when it changes (at most 4/s) and every
+  2 s; the server keeps the latest for newcomers. Receivers announce deaths (health 0) and put the
+  health on the stand-in's name tag.
+- Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
+  an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
+- Kill feed: deaths now carry who reported them and whether that player killed it
+  (`TESDeathEvent::actorKiller`).
+- Kill XP: XP gained within 2 s after a player kill (or up to 5 s before its death event, which
+  waits for the victim's next AI update) is reported; others get `fXpShare` of it through
+  `player.modav experience`. Shares received are credited so they aren't reported again.
+- Time and weather: everyone reports `Calendar::gameHour` and `Sky::currentWeather` every 5 s; the
+  server passes on only the first player's. Receivers set the hour when it differs by more than
+  15 game minutes, and force the weather only outside in the same worldspace.
+- Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
+  `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
+  `SetPosition` once loaded.
+- Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
+
 ## Status (2026-10-06)
 
-Protocol VERSION 13.
+Protocol VERSION 14.
 
 ## Prior art
 
@@ -163,9 +183,11 @@ Protocol VERSION 13.
 
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
+- Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
-  NPC's), and resume a session (`--session`, `--from`).
+  NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
+  time (`--time`, `--weather`), and resume a session (`--session`, `--from`).
 - `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
 - `tools/screenshot.ps1`: captures the screen for visual checks.
 - `F4MPServer.exe`: a standalone server.

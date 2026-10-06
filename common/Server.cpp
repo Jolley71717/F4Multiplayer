@@ -40,12 +40,13 @@ namespace
 		int               actorStates = 0;
 		int               events = 0;
 		int               shots = 0;
+		int               heartbeats = 0;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = 0;
+				states = actorStates = events = shots = heartbeats = 0;
 			}
 		}
 	};
@@ -65,6 +66,8 @@ namespace
 		Protocol::PlayerState      state;
 		RateWindow                 rate;
 		bool                       floodLogged = false;
+		std::optional<Protocol::PlayerStatus> status;
+		Clock::time_point          lastPing{};
 	};
 
 	struct Ownership
@@ -168,6 +171,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
+	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
@@ -176,6 +180,7 @@ void Server::Run()
 		refStates.clear();
 		actorOwners.clear();
 		questStages.clear();
+		worldTime.reset();
 		sessionId = NewSessionId();
 	};
 
@@ -313,6 +318,9 @@ void Server::Run()
 			if (!other.equipment.empty()) {
 				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
 			}
+			if (other.status) {
+				send(a_player.key, Protocol::Encode(*other.status, Protocol::MessageType::kPlayerStatus), true);
+			}
 			// Let the newcomer see players who are standing still right away.
 			other.stateDirty = other.hasState;
 		}
@@ -324,6 +332,10 @@ void Server::Run()
 		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
 			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
 			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
+		}
+
+		if (worldTime) {
+			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
 		}
 
 		log(std::format("server: '{}' joined as player {} from {} ({} online)", a_player.name, a_player.id, describe(a_player.key), welcomedCount()));
@@ -378,7 +390,7 @@ void Server::Run()
 		if (!allowEvent(a_player)) {
 			return;
 		}
-		const auto death = Protocol::DecodeActorDeath(a_data);
+		auto death = Protocol::DecodeActorDeath(a_data);
 		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
 			!deadActors.insert(death->refId).second) {
 			return;
@@ -386,6 +398,7 @@ void Server::Run()
 		if (actorOwners.erase(death->refId)) {
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
+		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
@@ -567,6 +580,63 @@ void Server::Run()
 		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
 
+	const auto handleStatus = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto status = Protocol::DecodePlayerStatus(a_data);
+		if (!status) {
+			return;
+		}
+		status->playerId = a_player.id;
+		a_player.status = *status;
+		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
+	};
+
+	// The session's clock is the first player's (the host's, when they host from their game).
+	const auto handleTime = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.id < a_player.id) {
+				return;
+			}
+		}
+		const auto time = Protocol::DecodeWorldTime(a_data);
+		if (!time) {
+			return;
+		}
+		worldTime = *time;
+		broadcast(Protocol::Encode(*time, Protocol::MessageType::kWorldTime), false, a_player.key);
+	};
+
+	const auto handlePing = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto now = Clock::now();
+		if (!allowEvent(a_player) || now - a_player.lastPing < std::chrono::seconds(1)) {
+			return;
+		}
+		auto ping = Protocol::DecodePing(a_data);
+		if (!ping) {
+			return;
+		}
+		a_player.lastPing = now;
+		ping->playerId = a_player.id;
+		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
+	};
+
+	const auto handleXp = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto gain = Protocol::DecodeXpGain(a_data);
+		if (!gain) {
+			return;
+		}
+		gain->playerId = a_player.id;
+		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
+	};
+
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -651,6 +721,27 @@ void Server::Run()
 			break;
 		case MessageType::kReportShot:
 			handleShot(a_player, a_data);
+			break;
+		case MessageType::kReportStatus:
+			handleStatus(a_player, a_data);
+			break;
+		case MessageType::kReportTime:
+			handleTime(a_player, a_data);
+			break;
+		case MessageType::kPing:
+			handlePing(a_player, a_data);
+			break;
+		case MessageType::kReportXp:
+			handleXp(a_player, a_data);
+			break;
+		case MessageType::kHeartbeat:
+			// Own budget: players send one a second, and the answer must not wait behind events.
+			if (const auto beat = Protocol::DecodeHeartbeat(a_data); beat && a_player.welcomed) {
+				a_player.rate.Roll(Clock::now());
+				if (++a_player.rate.heartbeats <= 10) {
+					send(a_player.key, Protocol::Encode(*beat, Protocol::MessageType::kHeartbeatAck), true);
+				}
+			}
 			break;
 		default:
 			break;
