@@ -1,4 +1,4 @@
-#include "Config.h"
+﻿#include "Config.h"
 
 namespace Config
 {
@@ -24,10 +24,13 @@ namespace Config
 		}
 
 		template <class T>
-		void ParseInt(std::string_view a_value, T& a_out)
+		void ParseInt(std::string_view a_value, T& a_out, int a_base = 10)
 		{
+			if (a_base == 16 && (a_value.starts_with("0x") || a_value.starts_with("0X"))) {
+				a_value.remove_prefix(2);
+			}
 			T value{};
-			const auto [ptr, ec] = std::from_chars(a_value.data(), a_value.data() + a_value.size(), value);
+			const auto [ptr, ec] = std::from_chars(a_value.data(), a_value.data() + a_value.size(), value, a_base);
 			if (ec == std::errc{} && ptr == a_value.data() + a_value.size()) {
 				a_out = value;
 			}
@@ -57,7 +60,21 @@ namespace Config
 			const auto key = Trim(view.substr(0, eq));
 			const auto value = Trim(view.substr(eq + 1));
 
-			if (key == "bFastLoading") {
+			if (key == "sPlayerName") {
+				settings.playerName = value;
+			} else if (key == "bHost") {
+				settings.host = ParseBool(value);
+			} else if (key == "sServerAddress") {
+				settings.serverAddress = value;
+			} else if (key == "iPort") {
+				ParseInt(value, settings.port);
+			} else if (key == "iMaxPlayers") {
+				ParseInt(value, settings.maxPlayers);
+			} else if (key == "sPassword") {
+				settings.password = value;
+			} else if (key == "iPuppetBaseForm") {
+				ParseInt(value, settings.puppetBaseForm, 16);
+			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);

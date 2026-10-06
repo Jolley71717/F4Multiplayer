@@ -6,6 +6,22 @@ namespace Config
 {
 	struct Settings
 	{
+		// Name shown to other players.
+		std::string playerName = "Vault Dweller";
+
+		// Host a session on this machine. The host also plays; friends connect to the host's IP.
+		bool host = false;
+
+		// Address of the host to join ("ip" or "ip:port"). Ignored when hosting.
+		std::string serverAddress;
+
+		std::uint16_t port = 7779;
+		std::size_t   maxPlayers = 4;
+		std::string   password;
+
+		// NPC base form used for other players' characters.
+		std::uint32_t puppetBaseForm = 0x0024A037;  // Settler
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 

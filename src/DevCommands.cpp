@@ -2,6 +2,7 @@
 
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "net/Session.h"
 
 namespace DevCommands
 {
@@ -312,6 +313,11 @@ namespace DevCommands
 			return "ok";
 		}
 
+		std::string Net(std::string_view)
+		{
+			return Session::Describe();
+		}
+
 		struct Entry
 		{
 			std::string_view name;
@@ -329,6 +335,7 @@ namespace DevCommands
 			Entry{ "puppet", Puppet },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "flags", Flags },
+			Entry{ "net", Net },
 			Entry{ "remove", Remove },
 		};
 	}
