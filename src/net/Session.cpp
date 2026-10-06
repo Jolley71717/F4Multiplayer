@@ -105,6 +105,7 @@ namespace Session
 
 		std::uint32_t hitsTaken = 0;
 		std::uint32_t hitsIgnored = 0;
+		float         lastHitMult = 1.0f;  // how much the last hit was scaled (difficulty, VATS)
 
 		// Whether the NPC that hit our stand-in is there to see in our world: loaded, alive and
 		// within weapon range. Otherwise we'd take damage from nowhere (it died in our game, or
@@ -132,6 +133,35 @@ namespace Session
 		}
 
 		// Something hit our stand-in in another player's world.
+		float GameSettingFloat(const char* a_name, float a_default)
+		{
+			const auto settings = RE::GameSettingCollection::GetSingleton();
+			const auto setting = settings ? settings->GetSetting(a_name) : nullptr;
+			return setting && setting->GetType() == RE::Setting::SETTING_TYPE::kFloat ? setting->GetFloat() : a_default;
+		}
+
+		// The hit landed on our stand-in in a friend's game, where nothing knew our difficulty or
+		// that we're in VATS. Scale it the way our own game scales damage to the player.
+		float DamageTakenMult(RE::PlayerCharacter* a_player, bool a_byPlayer)
+		{
+			static constexpr std::array<const char*, 7> DIFFICULTY{ "fDiffMultHPToPCVE", "fDiffMultHPToPCE", "fDiffMultHPToPCN", "fDiffMultHPToPCH",
+				"fDiffMultHPToPCVH", "fDiffMultHPToPCSV", "fDiffMultHPToPCTSV" };
+			float mult = 1.0f;
+			// Friendly fire was already scaled by the shooter's difficulty.
+			if (!a_byPlayer) {
+				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
+				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
+			}
+			const auto ui = RE::UI::GetSingleton();
+			const auto vats = RE::VATS::GetSingleton();
+			if (ui && ui->GetMenuOpen("VATSMenu"sv)) {
+				mult *= GameSettingFloat("fVATSPlayerMenuDamageMult", 1.0f);
+			} else if (vats && vats->mode.any(RE::VATS::VATS_MODE_ENUM::kPlayback)) {
+				mult *= GameSettingFloat("fVATSPlayerDamageMult", 0.1f);
+			}
+			return mult;
+		}
+
 		void ApplyDamageToPlayer(const Protocol::PlayerHit& a_hit)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -144,7 +174,9 @@ namespace Session
 				return;
 			}
 			++hitsTaken;
-			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_hit.damage, 1000.0f));
+			lastHitMult = DamageTakenMult(player, a_hit.byPlayer);
+			const float damage = (std::min)(a_hit.damage * lastHitMult, 1000.0f);
+			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -damage);
 		}
 
 		void HandlePacket(std::span<const std::uint8_t> a_data)
@@ -676,7 +708,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} ignored={}", hitsTaken, hitsIgnored) + " " + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	void ConnectTo(std::string a_address)

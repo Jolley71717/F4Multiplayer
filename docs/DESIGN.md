@@ -105,7 +105,11 @@
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
   NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
   from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
-  their game (`UI::menuMode`; `Main::freezeTime` stays false).
+  their game (`UI::menuMode`; `Main::freezeTime` stays false). The damage was resisted by the
+  stand-in's copy of the victim's armor; the victim scales it by their own difficulty
+  (`fDiffMultHPToPC*`, NPC hits only) and VATS (`fVATSPlayerMenuDamageMult` while targeting,
+  `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
+  effects, limb damage, radiation and stagger.
 - Shots are shared too (see Weapon fire).
 
 ## Weapon fire (src/game/WeaponFire.cpp)
