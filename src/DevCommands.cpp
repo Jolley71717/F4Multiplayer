@@ -915,8 +915,10 @@ namespace DevCommands
 		{
 			const auto main = RE::Main::GetSingleton();
 			const auto ui = RE::UI::GetSingleton();
-			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={}", main ? main->freezeTime : false, main ? main->gameActive : false,
-				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv));
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
+				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
 		}
 
 		// dialogue: the conversation the player is in, and whether the speaker is saying something.
