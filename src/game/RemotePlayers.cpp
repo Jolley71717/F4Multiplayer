@@ -28,6 +28,9 @@ namespace RemotePlayers
 			std::string          name;
 			std::deque<Snapshot> snapshots;
 			RE::ObjectRefHandle  actor;
+			// The pointer registered with Puppets. Kept separately so it can be unregistered even
+			// if the game deletes the actor behind our back (its handle then no longer resolves).
+			RE::Actor*           registered = nullptr;
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -119,10 +122,19 @@ namespace RemotePlayers
 			return ref->As<RE::Actor>();
 		}
 
+		// A dead puppet (killed despite protection, e.g. by a script) is replaced by a fresh one.
+		bool IsBroken(RE::Actor* a_actor)
+		{
+			return a_actor->IsDead(false) || a_actor->IsDisabled();
+		}
+
 		void DeleteActor(RemotePlayer& a_player)
 		{
+			if (a_player.registered) {
+				Puppets::Unregister(a_player.registered);
+				a_player.registered = nullptr;
+			}
 			if (const auto actor = GetActor(a_player)) {
-				Puppets::Unregister(actor);
 				actor->Disable();
 				actor->SetDelete(true);
 			}
@@ -237,6 +249,14 @@ namespace RemotePlayers
 			}
 
 			auto actor = GetActor(remote);
+			if (!actor && remote.registered) {
+				// The game removed our puppet (e.g. cell unload); forget the stale registration.
+				DeleteActor(remote);
+			}
+			if (actor && IsBroken(actor)) {
+				DeleteActor(remote);
+				actor = nullptr;
+			}
 			if (!visible) {
 				if (actor) {
 					DeleteActor(remote);
@@ -256,6 +276,7 @@ namespace RemotePlayers
 					continue;
 				}
 				remote.actor = actor->GetHandle();
+				remote.registered = actor;
 			}
 
 			Puppets::SetTarget(actor, { state->x, state->y, state->z }, state->heading, state->speed,

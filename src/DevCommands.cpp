@@ -66,7 +66,9 @@ namespace DevCommands
 			actor->GetLinearVelocity(velocity);
 			const auto root = actor->Get3D();
 			const auto w = root ? root->world.translate : RE::NiPoint3{};
-			return std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
+			const auto values = RE::ActorValue::GetSingleton();
+			const float health = values && values->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*values->health) : -1.0f;
+			return std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
 				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), w.x, w.y, w.z);
 		}
 

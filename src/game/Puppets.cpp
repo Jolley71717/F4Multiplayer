@@ -37,11 +37,22 @@ namespace Puppets
 		constexpr auto SUPPRESSED_BEHAVIOR =
 			std::to_underlying(RE::Actor::BOOL_FLAGS::kMovementBlocked) |
 			std::to_underlying(RE::Actor::BOOL_FLAGS::kAttackingDisabled) |
-			std::to_underlying(RE::Actor::BOOL_FLAGS::kCastingDisabled);
+			std::to_underlying(RE::Actor::BOOL_FLAGS::kCastingDisabled) |
+			std::to_underlying(RE::Actor::BOOL_FLAGS::kEssential);
 
 		void SuppressBehavior(RE::Actor* a_actor)
 		{
 			a_actor->boolFlags.set(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
+		}
+
+		// Damage to a stand-in is meaningless (the real player is elsewhere), and a dying or
+		// staggered puppet fights the forced transform, so keep it at full health.
+		void KeepHealthy(RE::Actor* a_actor)
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			if (values && values->health) {
+				static_cast<RE::ActorValueOwner*>(a_actor)->RestoreActorValue(*values->health, 100000.0f);
+			}
 		}
 
 		// With AI off nothing feeds the locomotion graph, so we do: Speed/Direction every
@@ -95,6 +106,7 @@ namespace Puppets
 			}
 
 			SuppressBehavior(a_this);
+			KeepHealthy(a_this);
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->position, true);
 				a_this->SetHeading(puppet->heading);
