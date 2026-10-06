@@ -52,6 +52,10 @@ namespace Config
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
 
+		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
+		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).
+		bool revive = true;
+
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;

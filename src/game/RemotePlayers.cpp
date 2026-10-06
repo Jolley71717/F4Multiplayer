@@ -40,6 +40,7 @@ namespace RemotePlayers
 			RE::Actor*           registered = nullptr;
 			std::uint32_t        registeredId = 0;
 			std::uint8_t         health = 100;
+			bool                 downed = false;
 			std::string          shownName;  // the name tag currently on the stand-in
 		};
 
@@ -127,8 +128,11 @@ namespace RemotePlayers
 
 		std::string NameTag(const RemotePlayer& a_player)
 		{
+			if (a_player.downed) {
+				return a_player.name + " (down - help them up)";
+			}
 			if (a_player.health == 0) {
-				return a_player.name + " (down)";
+				return a_player.name + " (dead)";
 			}
 			// Rounded to tens so the tag doesn't change with every scratch.
 			const int shown = (a_player.health + 9) / 10 * 10;
@@ -287,10 +291,11 @@ namespace RemotePlayers
 		return it != players.end() ? it->second.name : std::string{};
 	}
 
-	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent)
+	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent, bool a_downed)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
 			it->second.health = a_percent;
+			it->second.downed = a_downed;
 		}
 	}
 

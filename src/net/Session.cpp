@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Hud.h"
 #include "game/Party.h"
@@ -207,6 +208,11 @@ namespace Session
 					Party::ApplyXp(*msg);
 				}
 				break;
+			case MessageType::kRevived:
+				if (const auto msg = Protocol::DecodeRevive(a_data)) {
+					Downed::ApplyRevive(*msg);
+				}
+				break;
 			case MessageType::kQuestDone:
 				if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
 					QuestSync::ApplyDone(*msg);
@@ -286,7 +292,8 @@ namespace Session
 			state.heading = player->data.angle.z;
 			state.speed = speed;
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
-			if (player->IsSneaking()) {
+			// A downed player's stand-in crouches.
+			if (player->IsSneaking() || Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;
 			}
 			if (player->GetWeaponMagicDrawn()) {
@@ -558,6 +565,7 @@ namespace Session
 	{
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
+		Downed::OnBeforeSave();
 	}
 
 	void OnGameLoaded()

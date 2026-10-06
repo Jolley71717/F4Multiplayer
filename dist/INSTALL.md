@@ -59,11 +59,18 @@ Each player keeps their own save, character and inventory.
 | Key | What it does |
 |---|---|
 | F6 | Player list: where everyone is, how far and which way, their health and level |
-| F7 | Teleport to a friend: tap to choose who, then hold for a second to go there |
+| F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | "Over here!": tells everyone where you are, with distance and direction |
 
 Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`). They don't
 work while a menu or the console is open.
+
+### Going down
+
+With friends in the session, a hit that would kill you knocks you down instead. A friend who stands
+next to you for 2 seconds helps you up (with 30% health). When a friend goes down, holding F7 takes
+you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
+`bRevive = false`.
 
 ## What is shared
 

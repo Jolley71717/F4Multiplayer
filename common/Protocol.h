@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 15;
+	inline constexpr std::uint16_t VERSION = 16;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -64,6 +64,7 @@ namespace Protocol
 		kReportXp = 19,           // the sender got XP for a kill; the others get a share
 		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
 		kReportQuestDone = 21,    // the sender completed a quest themselves
+		kRevive = 22,             // the sender helped a downed player up
 
 		// server -> client
 		kWelcome = 101,
@@ -89,6 +90,7 @@ namespace Protocol
 		kPartyXp = 121,           // another player got XP for a kill
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
+		kRevived = 124,           // another player helped you up
 	};
 
 	enum StateFlags : std::uint8_t
@@ -291,8 +293,9 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 		std::uint32_t location = 0;  // BGSLocation form ID, or 0
 		std::uint32_t cell = 0;      // interior cell form ID, or 0 when outside
-		std::uint8_t  health = 0;    // percent of maximum; 0 = dead
+		std::uint8_t  health = 0;    // percent of maximum; 0 = dead or downed
 		std::uint16_t level = 0;
+		bool          downed = false;  // knocked down, waiting for a friend to help them up
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -323,6 +326,12 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		float         xp = 0.0f;
+	};
+
+	// kRevive: playerId is the downed player. kRevived: playerId is the helper.
+	struct Revive
+	{
+		std::uint32_t playerId = 0;
 	};
 
 	// playerId is ignored client -> server.
@@ -1014,6 +1023,7 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
+		w.U8(a_msg.downed ? 1 : 0);
 		return w.Data();
 	}
 
@@ -1027,6 +1037,7 @@ namespace Protocol
 		msg.cell = r.U32();
 		msg.health = r.U8();
 		msg.level = r.U16();
+		msg.downed = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
 			return std::nullopt;
 		}
@@ -1120,6 +1131,25 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.xp = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Revive& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		return w.Data();
+	}
+
+	inline std::optional<Revive> DecodeRevive(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Revive msg;
+		msg.playerId = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

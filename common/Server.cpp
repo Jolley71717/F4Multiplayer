@@ -637,6 +637,21 @@ void Server::Run()
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
 	};
 
+	const auto handleRevive = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto revive = Protocol::DecodeRevive(a_data);
+		if (!revive || revive->playerId == a_player.id) {
+			return;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.id == revive->playerId) {
+				send(key, Protocol::Encode(Protocol::Revive{ a_player.id }, Protocol::MessageType::kRevived), true);
+			}
+		}
+	};
+
 	const auto handleQuestDone = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -748,6 +763,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportQuestDone:
 			handleQuestDone(a_player, a_data);
+			break;
+		case MessageType::kRevive:
+			handleRevive(a_player, a_data);
 			break;
 		case MessageType::kHeartbeat:
 			// Own budget: players send one a second, and the answer must not wait behind events.
