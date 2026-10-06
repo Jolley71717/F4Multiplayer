@@ -30,8 +30,8 @@ namespace RemotePlayers
 	// The player's name, or "" if unknown.
 	[[nodiscard]] std::string NameOf(std::uint32_t a_id);
 
-	// Their health in percent, shown after their name when they're hurt.
-	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent);
+	// Their health in percent, shown after their name when they're hurt or down.
+	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent, bool a_downed);
 
 	// The player fired: their stand-in plays the firing animation.
 	void PlayShot(std::uint32_t a_id);

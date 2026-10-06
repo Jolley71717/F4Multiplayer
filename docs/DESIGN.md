@@ -171,12 +171,19 @@ save's record and asks for the session's changes again.
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
   shots launch nothing, so each hit is only counted in the shooter's game.
+- Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
+  the essential flag (set directly, so it isn't recorded for the save, and cleared before every
+  save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
+  `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed`; a
+  friend within 180 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag
+  and restores health; the game stands them up a few seconds later with full health, which we cut
+  back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`.
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
   player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 15.
+Protocol VERSION 16.
 
 ## Prior art
 

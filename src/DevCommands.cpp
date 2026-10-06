@@ -584,8 +584,11 @@ namespace DevCommands
 				*word = args[2] == "set" ? (*word | *mask) : (*word & ~*mask);
 			}
 
-			return std::format("niFlags={:08X} boolFlags={:08X} moreFlags={:08X}",
-				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
+			const auto values = RE::ActorValue::GetSingleton();
+			const float health = values && values->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*values->health) : -1.0f;
+			return std::format("niFlags={:08X} boolFlags={:08X} moreFlags={:08X} lifeState={} health={:.1f} dead={}",
+				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags,
+				static_cast<std::uint32_t>(static_cast<RE::ActorState&>(*actor).lifeState), health, actor->IsDead(false));
 		}
 
 		// remove <refHex>: disables and deletes a reference we spawned.

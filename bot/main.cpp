@@ -5,6 +5,7 @@
 //           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
 //           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX]  (health in the status sent after joining, an "over here", a kill XP report)
 //           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
+//           [--downed 1] [--revive PLAYERID]  (status says the bot is down; helps that player up once welcomed)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -50,6 +51,8 @@ int main(int argc, char* argv[])
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
 	int           statusHealth = 100;
+	bool          statusDowned = false;
+	std::uint32_t reviveTarget = 0;
 	bool          sendPing = false;
 	float         xpGain = 0.0f;
 	std::uint32_t questDone = 0;
@@ -150,6 +153,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, shootWeapon, 16);
 		} else if (key == "--status-health") {
 			ok = ParseNumber(value, statusHealth) && statusHealth >= 0 && statusHealth <= 100;
+		} else if (key == "--downed") {
+			statusDowned = value == "1";
+		} else if (key == "--revive") {
+			ok = ParseNumber(value, reviveTarget);
 		} else if (key == "--ping") {
 			sendPing = value == "1";
 		} else if (key == "--xp") {
@@ -216,7 +223,10 @@ int main(int argc, char* argv[])
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
 							}
-							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusHealth), 7 }, Protocol::MessageType::kReportStatus), true);
+							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusDowned ? 0 : statusHealth), 7, statusDowned }, Protocol::MessageType::kReportStatus), true);
+							if (reviveTarget) {
+								Net::Send(peer, Protocol::Encode(Protocol::Revive{ reviveTarget }, Protocol::MessageType::kRevive), true);
+							}
 							if (sendPing) {
 								Net::Send(peer, Protocol::Encode(Protocol::Ping{ 0, cell, cell ? 0 : worldspace, cx + 2000.0f, cy, cz }, Protocol::MessageType::kPing), true);
 							}
@@ -298,7 +308,12 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kPlayerStatus:
 						if (const auto msg = Protocol::DecodePlayerStatus(data)) {
-							std::cout << "status: player " << msg->playerId << " hp " << int(msg->health) << " level " << msg->level << std::hex << " location " << msg->location << " cell " << msg->cell << std::dec << std::endl;
+							std::cout << "status: player " << msg->playerId << " hp " << int(msg->health) << " level " << msg->level << std::hex << " location " << msg->location << " cell " << msg->cell << std::dec << (msg->downed ? " downed" : "") << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kRevived:
+						if (const auto msg = Protocol::DecodeRevive(data)) {
+							std::cout << "revived by player " << msg->playerId << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kWorldTime:

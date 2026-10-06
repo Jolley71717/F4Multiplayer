@@ -1,6 +1,7 @@
 #include "game/Party.h"
 
 #include "Config.h"
+#include "game/Downed.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
@@ -134,7 +135,7 @@ namespace Party
 			const auto  it = known.find(a_player.id);
 			if (it != known.end() && it->second.hasStatus) {
 				const auto& status = it->second.status;
-				out += status.health == 0 ? " (down)" : std::format(" ({}% HP, level {})", status.health, status.level);
+				out += status.downed ? " (down)" : status.health == 0 ? " (dead)" : std::format(" ({}% HP, level {})", status.health, status.level);
 				if (auto place = PlaceName(status.location, status.cell); !place.empty()) {
 					out += " - " + place;
 				}
@@ -166,6 +167,7 @@ namespace Party
 				status.health = static_cast<std::uint8_t>(std::clamp(std::lround(current / maximum * 100.0f), 1L, 100L));
 			}
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
+			status.downed = Downed::IsDown();
 			return status;
 		}
 
@@ -284,6 +286,11 @@ namespace Party
 					Hud::Notify("Multiplayer: not in a session");
 					continue;
 				}
+				// While down, holding the teleport key gives up instead.
+				if (action == Hotkeys::Action::kTeleportGo && Downed::IsDown()) {
+					Downed::GiveUp();
+					continue;
+				}
 				switch (action) {
 				case Hotkeys::Action::kPlayerList:
 					ShowPlayerList();
@@ -327,6 +334,7 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
+		Downed::Frame(localId != 0 && !RemotePlayers::List().empty());
 		if (localId == 0) {
 			return;
 		}
@@ -337,19 +345,38 @@ namespace Party
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
-		return std::exchange(outgoing, {});
+		auto packets = std::exchange(outgoing, {});
+		for (auto& packet : Downed::TakeOutgoing()) {
+			packets.push_back(std::move(packet));
+		}
+		return packets;
 	}
 
 	void ApplyStatus(const Protocol::PlayerStatus& a_status)
 	{
 		auto&      entry = known[a_status.playerId];
-		const bool wasDown = entry.hasStatus && entry.status.health == 0;
-		if (entry.hasStatus && a_status.health == 0 && !wasDown) {
-			Hud::Notify(RemotePlayers::NameOf(a_status.playerId) + " died");
+		const auto name = RemotePlayers::NameOf(a_status.playerId);
+		if (entry.hasStatus) {
+			const auto& before = entry.status;
+			const bool  wasDead = before.health == 0 && !before.downed;
+			if (a_status.downed && !before.downed) {
+				// Holding the teleport key goes to them.
+				teleportTarget = a_status.playerId;
+				const auto target = FindPlayer(a_status.playerId);
+				const auto where = target && target->state ? DistanceTo(target->state->cell, target->state->worldspace, target->state->x, target->state->y) : std::string{};
+				Hud::Notify(where.empty() ?
+								std::format("{} is down! Hold {} to teleport to them and help them up", name, KeyName(Config::Get().keyTeleport)) :
+								std::format("{} is down! Get to them to help them up ({})", name, where));
+			} else if (a_status.health == 0 && !a_status.downed && !wasDead) {
+				Hud::Notify(name + " died");
+			} else if (before.downed && !a_status.downed && a_status.health > 0) {
+				Hud::Notify(name + " is back up");
+			}
 		}
 		entry.status = a_status;
 		entry.hasStatus = true;
-		RemotePlayers::SetHealth(a_status.playerId, a_status.health);
+		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
+		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}
 
 	void ApplyPing(const Protocol::Ping& a_ping)
@@ -427,6 +454,7 @@ namespace Party
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		known.erase(a_id);
+		Downed::OnPlayerLeft(a_id);
 		if (teleportTarget == a_id) {
 			teleportTarget = 0;
 		}
@@ -543,14 +571,15 @@ namespace Party
 		xpCredit = 0.0f;
 		teleportTarget = 0;
 		pendingTeleport.reset();
+		Downed::Reset();
 	}
 
 	std::string Describe()
 	{
 		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit);
 		for (const auto& [id, entry] : known) {
-			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell);
+			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
 		}
-		return out;
+		return out + " " + Downed::Describe();
 	}
 }

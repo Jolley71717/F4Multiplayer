@@ -82,6 +82,8 @@ namespace Config
 				ParseInt(value, settings.puppetBaseForm, 16);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
+			} else if (key == "bRevive") {
+				settings.revive = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "bSyncTime") {
