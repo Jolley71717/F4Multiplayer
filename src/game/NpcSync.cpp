@@ -393,6 +393,11 @@ namespace NpcSync
 		return owned.contains(a_refId);
 	}
 
+	std::uint32_t TalkingTo()
+	{
+		return talkingTo;
+	}
+
 	void ApplyShot(std::uint32_t a_refId)
 	{
 		const auto it = mirrors.find(a_refId);

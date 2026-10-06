@@ -10,6 +10,7 @@
 //           [--voice-silence 1]  (talks: Steam voice packets holding 100 ms of silence, 10 a second)
 //           [--marker REFHEX]  (reports discovering this map marker once welcomed)
 //           [--talk REFHEX]  (claims this NPC as if talking to it, every 2 s)
+//           [--say REFHEX]  (reports a line said by this NPC every 3 s; 0 = the bot itself)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -105,6 +106,8 @@ int main(int argc, char* argv[])
 	Protocol::QuestStage questStage;  // report this quest stage once welcomed (quest 0 = none)
 	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
 	std::uint32_t talkRef = 0;        // keeps trying to take this NPC over as if talking to it (every 2 s)
+	std::optional<std::uint32_t> sayRef;  // reports a line said by this NPC (0 = the bot) every 3 s
+	int           linesSaid = 0;
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
 	std::uint32_t actorStatesSeen = 0;
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
@@ -151,6 +154,10 @@ int main(int argc, char* argv[])
 			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), questStage.quest, 16) && ParseNumber(value.substr(colon + 1), questStage.stage);
 		} else if (key == "--talk") {
 			ok = ParseNumber(value, talkRef, 16);
+		} else if (key == "--say") {
+			std::uint32_t ref = 0;
+			ok = ParseNumber(value, ref, 16);
+			sayRef = ref;
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
@@ -377,6 +384,11 @@ int main(int argc, char* argv[])
 							std::cout << "time: player " << msg->playerId << " hour " << msg->gameHour << " days " << msg->daysPassed << std::hex << " ws " << msg->worldspace << " weather " << msg->weather << std::dec << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kLineSpoken:
+						if (const auto msg = Protocol::DecodeLine(data)) {
+							std::cout << "line: player " << msg->playerId << " speaker " << std::hex << msg->speaker << std::dec << " '" << msg->text << "'" << std::endl;
+						}
+						break;
 					case Protocol::MessageType::kPinged:
 						if (const auto msg = Protocol::DecodePing(data)) {
 							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
@@ -532,6 +544,10 @@ int main(int argc, char* argv[])
 			}
 			if (shootWeapon) {
 				state.flags |= Protocol::kWeaponDrawn;
+			}
+			if (sayRef && sequence % 60 == 5) {
+				const auto text = std::format("Test line {} - can you hear me?", ++linesSaid);
+				Net::Send(peer, Protocol::Encode(Protocol::Line{ 0, *sayRef, text }, Protocol::MessageType::kReportLine), true);
 			}
 			if (talkRef && sequence % 40 == 1) {
 				Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkRef, Protocol::ClaimReason::kInteract } }), true);

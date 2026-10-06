@@ -21,6 +21,9 @@ namespace NpcSync
 	// Whether our game runs this NPC.
 	[[nodiscard]] bool RunsLocally(std::uint32_t a_refId);
 
+	// The NPC the player is talking to (0 = none).
+	[[nodiscard]] std::uint32_t TalkingTo();
+
 	// The NPC fired in its owner's world: play the firing animation on our copy.
 	void ApplyShot(std::uint32_t a_refId);
 

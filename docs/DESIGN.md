@@ -199,10 +199,17 @@ save's record and asks for the session's changes again.
   state (on join and after loading a save).
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
   player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
+- Conversations (src/game/Conversations.cpp): dialogue plays in one game only. The talker re-claims
+  the NPC every 2 s, so nobody takes it over mid-conversation, and if a friend runs it, their mirror
+  is paused so our copy can talk. Lines are read from `HighProcessData::strVoiceSubtitle` (filled
+  even with subtitles off; `voiceState` stays 0) while `IsTalking()`. The player's lines, and those of
+  NPCs we run or talk to, are reported unless the speaker is in combat. Receivers show
+  "Name: line" when their copy of the speaker (or the friend's stand-in) is within 20 m, isn't saying
+  it already, and the same line wasn't shown in the last 5 s (at most 3 lines per 3 s).
 
 ## Status (2026-10-06)
 
-Protocol VERSION 19.
+Protocol VERSION 20.
 
 ## Prior art
 
@@ -216,13 +223,16 @@ Protocol VERSION 19.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
 - Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
-  markers and their flags), `idles <text>` (idle animations by editor ID, event or file).
+  markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
+  `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
+  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
   time (`--time`, `--weather`, `--time-step` to move it forward), complete a quest (`--quest-done`), be down or help someone up
   (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
-  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`), and resume a session
+  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`),
+  keep claiming an NPC as if talking to it (`--talk`), report lines said by an NPC or itself (`--say`), and resume a session
   (`--session`, `--from`).
 - `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
 - `tools/screenshot.ps1`: captures the screen for visual checks.

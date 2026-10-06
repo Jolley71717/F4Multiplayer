@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/Conversations.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Hud.h"
@@ -216,6 +217,11 @@ namespace Session
 					MapShare::Apply(*msg);
 				}
 				break;
+			case MessageType::kLineSpoken:
+				if (const auto msg = Protocol::DecodeLine(a_data)) {
+					Conversations::Apply(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -359,6 +365,7 @@ namespace Session
 			WorldClock::Reset();
 			Voice::Reset();
 			MapShare::Reset();
+			Conversations::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -579,6 +586,12 @@ namespace Session
 				client->Send(std::move(packet), true);
 			}
 		}
+		Conversations::Frame(welcomed);
+		for (auto& packet : Conversations::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
 			if (welcomed) {
@@ -627,7 +640,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe(), RemotePlayers::Describe()) +
 		       " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
