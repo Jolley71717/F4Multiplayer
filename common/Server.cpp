@@ -306,7 +306,7 @@ void Server::Run()
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId }), true);
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
 		for (auto& [key, other] : players) {
@@ -548,12 +548,12 @@ void Server::Run()
 			return;
 		}
 		const auto hit = Protocol::DecodePlayerHit(a_data);
-		if (!hit || hit->playerId == a_player.id) {
+		if (!hit || hit->playerId == a_player.id || (hit->byPlayer && !options.friendlyFire)) {
 			return;
 		}
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage, hit->byPlayer }, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
 	};
@@ -635,6 +635,18 @@ void Server::Run()
 		}
 		gain->playerId = a_player.id;
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
+	};
+
+	const auto handleQuestDone = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto done = Protocol::DecodeQuestDone(a_data);
+		if (!done) {
+			return;
+		}
+		done->playerId = a_player.id;
+		broadcast(Protocol::Encode(*done, Protocol::MessageType::kQuestDone), true, a_player.key);
 	};
 
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -733,6 +745,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);
+			break;
+		case MessageType::kReportQuestDone:
+			handleQuestDone(a_player, a_data);
 			break;
 		case MessageType::kHeartbeat:
 			// Own budget: players send one a second, and the answer must not wait behind events.

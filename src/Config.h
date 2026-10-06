@@ -25,6 +25,9 @@ namespace Config
 		std::size_t   maxPlayers = 4;
 		std::string   password;
 
+		// When hosting: players can hurt each other.
+		bool friendlyFire = false;
+
 		// NPC base form used for other players' characters. It should belong to no factions,
 		// or hitting another player can count as a crime against that faction.
 		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)

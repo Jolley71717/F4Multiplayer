@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 14;
+	inline constexpr std::uint16_t VERSION = 15;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -63,6 +63,7 @@ namespace Protocol
 		kPing = 18,               // "over here": the sender wants the others to come to them
 		kReportXp = 19,           // the sender got XP for a kill; the others get a share
 		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
+		kReportQuestDone = 21,    // the sender completed a quest themselves
 
 		// server -> client
 		kWelcome = 101,
@@ -87,6 +88,7 @@ namespace Protocol
 		kPinged = 120,            // another player pinged their position
 		kPartyXp = 121,           // another player got XP for a kill
 		kHeartbeatAck = 122,
+		kQuestDone = 123,         // another player completed a quest
 	};
 
 	enum StateFlags : std::uint8_t
@@ -142,6 +144,7 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		std::uint64_t sessionId = 0;  // random per server run
+		bool          friendlyFire = false;  // players can hurt each other
 	};
 
 	struct Reject
@@ -265,11 +268,13 @@ namespace Protocol
 		}
 	};
 
-	// kPlayerHit: playerId is the victim. kPlayerDamaged: playerId is unused.
+	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
+	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
 		float         damage = 0.0f;
+		bool          byPlayer = false;
 	};
 
 	// A weapon shot, for the firing animation. refId 0 = the player themselves, otherwise an NPC
@@ -318,6 +323,13 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		float         xp = 0.0f;
+	};
+
+	// playerId is ignored client -> server.
+	struct QuestDone
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t quest = 0;
 	};
 
 	struct QuestStage
@@ -555,6 +567,7 @@ namespace Protocol
 		Writer w{ MessageType::kWelcome };
 		w.U32(a_msg.playerId);
 		w.U64(a_msg.sessionId);
+		w.U8(a_msg.friendlyFire ? 1 : 0);
 		return w.Data();
 	}
 
@@ -565,6 +578,7 @@ namespace Protocol
 		Welcome msg;
 		msg.playerId = r.U32();
 		msg.sessionId = r.U64();
+		msg.friendlyFire = r.U8() != 0;
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -953,6 +967,7 @@ namespace Protocol
 		Writer w{ a_type };
 		w.U32(a_msg.playerId);
 		w.F32(a_msg.damage);
+		w.U8(a_msg.byPlayer ? 1 : 0);
 		return w.Data();
 	}
 
@@ -963,6 +978,7 @@ namespace Protocol
 		PlayerHit msg;
 		msg.playerId = r.U32();
 		msg.damage = r.F32();
+		msg.byPlayer = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f) {
 			return std::nullopt;
 		}
@@ -1104,6 +1120,27 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.xp = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const QuestDone& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		return w.Data();
+	}
+
+	inline std::optional<QuestDone> DecodeQuestDone(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		QuestDone msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest)) {
 			return std::nullopt;
 		}
 		return msg;

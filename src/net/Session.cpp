@@ -120,9 +120,9 @@ namespace Session
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
-					WorldSync::OnWelcome(msg->sessionId, localId);
+					WorldSync::OnWelcome(msg->sessionId, localId, msg->friendlyFire);
 					lastRejectReason.clear();
-					Notify("Multiplayer: connected");
+					Notify(msg->friendlyFire ? "Multiplayer: connected (friendly fire is on)" : "Multiplayer: connected");
 				}
 				break;
 			case MessageType::kReject:
@@ -205,6 +205,11 @@ namespace Session
 			case MessageType::kPartyXp:
 				if (const auto msg = Protocol::DecodeXpGain(a_data)) {
 					Party::ApplyXp(*msg);
+				}
+				break;
+			case MessageType::kQuestDone:
+				if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
+					QuestSync::ApplyDone(*msg);
 				}
 				break;
 			case MessageType::kHeartbeatAck:
@@ -405,6 +410,7 @@ namespace Session
 			options.password = settings.password;
 			// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
 			options.udpLoopbackOnly = steamMode;
+			options.friendlyFire = settings.friendlyFire;
 			std::vector<std::unique_ptr<ServerTransport>> extra;
 			if (steamMode) {
 				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));

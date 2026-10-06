@@ -26,6 +26,9 @@ public:
 		// Accept UDP connections only from this machine (the host's own game), e.g. when friends
 		// connect through Steam instead.
 		bool udpLoopbackOnly = false;
+
+		// Players can hurt each other (their hits on each other's stand-ins are passed on).
+		bool friendlyFire = false;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;
