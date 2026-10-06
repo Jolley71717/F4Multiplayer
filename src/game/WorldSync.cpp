@@ -670,6 +670,7 @@ namespace WorldSync
 		}
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
+			NpcSync::OnActivated(activation.ref);
 		}
 		for (const auto& hit : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {

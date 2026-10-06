@@ -515,6 +515,10 @@ void Server::Run()
 				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS;
 			} else if (it->second.playerId == a_player.id) {
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
+				// The owner talking to it: nobody takes it over mid-conversation.
+				if (claim.reason == Reason::kInteract) {
+					it->second.since = now;
+				}
 				continue;
 			} else if (claim.reason == Reason::kCompanion) {
 				grant = it->second.reason != Reason::kCompanion;

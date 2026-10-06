@@ -797,6 +797,23 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// dialogue: the conversation the player is in, and whether the speaker is saying something.
+		std::string Dialogue(std::string_view)
+		{
+			const auto topics = RE::MenuTopicManager::GetSingleton();
+			if (!topics) {
+				return "none";
+			}
+			const auto speaker = topics->speaker.get();
+			const auto actor = speaker ? speaker->As<RE::Actor>() : nullptr;
+			const auto last = topics->lastSpeaker.get();
+			const auto ui = RE::UI::GetSingleton();
+			const bool dialogueMenu = ui && ui->GetMenuOpen("DialogueMenu"sv);
+			return std::format("last={:08X} dialogueMenu={} menuOpen={} allowInput={} speaker={:08X} talking={} voiceTimer={:.2f} inScene={}",
+				last ? last->GetFormID() : 0, dialogueMenu, topics->menuOpen, topics->allowInput, speaker ? speaker->GetFormID() : 0, speaker ? speaker->IsTalking() : false,
+				actor ? actor->voiceTimer : -1.0f, topics->overSceneActor);
+		}
+
 		// markers [text]: map markers (name from their data) with the first bytes of their data.
 		std::string Markers(std::string_view a_args)
 		{
@@ -890,6 +907,7 @@ namespace DevCommands
 			Entry{ "echo", Echo },
 			Entry{ "voice", VoiceCommand },
 			Entry{ "markers", Markers },
+			Entry{ "dialogue", Dialogue },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },

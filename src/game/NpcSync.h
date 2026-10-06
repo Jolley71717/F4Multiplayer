@@ -27,6 +27,9 @@ namespace NpcSync
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 
+	// The local player activated this reference (talking to an NPC starts this way).
+	void OnActivated(std::uint32_t a_refId);
+
 	// Claims, releases, sends owned NPCs' states and moves mirrored ones. Call every frame.
 	void Frame();
 

@@ -9,6 +9,7 @@
 //           [--voice-echo 1]  (sends every piece of voice it hears back as its own)
 //           [--voice-silence 1]  (talks: Steam voice packets holding 100 ms of silence, 10 a second)
 //           [--marker REFHEX]  (reports discovering this map marker once welcomed)
+//           [--talk REFHEX]  (claims this NPC as if talking to it, every 2 s)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -103,6 +104,7 @@ int main(int argc, char* argv[])
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
 	Protocol::QuestStage questStage;  // report this quest stage once welcomed (quest 0 = none)
 	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
+	std::uint32_t talkRef = 0;        // keeps trying to take this NPC over as if talking to it (every 2 s)
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
 	std::uint32_t actorStatesSeen = 0;
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
@@ -147,6 +149,8 @@ int main(int argc, char* argv[])
 			// quest:stage, hex:decimal
 			const auto colon = value.find(':');
 			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), questStage.quest, 16) && ParseNumber(value.substr(colon + 1), questStage.stage);
+		} else if (key == "--talk") {
+			ok = ParseNumber(value, talkRef, 16);
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
@@ -528,6 +532,9 @@ int main(int argc, char* argv[])
 			}
 			if (shootWeapon) {
 				state.flags |= Protocol::kWeaponDrawn;
+			}
+			if (talkRef && sequence % 40 == 1) {
+				Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkRef, Protocol::ClaimReason::kInteract } }), true);
 			}
 			if (shoot) {
 				Net::Send(peer, Protocol::Encode(Protocol::Shot{ 0, ownRef }, Protocol::MessageType::kReportShot), false);

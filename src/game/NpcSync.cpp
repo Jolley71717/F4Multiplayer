@@ -13,6 +13,9 @@ namespace NpcSync
 		constexpr auto STATE_INTERVAL = 100ms;  // 10 Hz per owned NPC
 		constexpr auto CLAIM_RETRY = 3s;
 		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
+		// While we talk to an NPC we run, we claim it again this often so nobody takes it over
+		// mid-conversation (the server refuses takeovers within 5 s of a claim).
+		constexpr auto TALK_CLAIM_INTERVAL = 2s;
 		// States arrive at 10 Hz; render far enough in the past to have two to blend.
 		constexpr auto INTERPOLATION_DELAY = 150ms;
 		constexpr auto STALE_AFTER = 1s;
@@ -45,6 +48,38 @@ namespace NpcSync
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
 		std::unordered_map<std::uint32_t, Clock::time_point> claimedAt;  // claims awaiting an answer
 		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
+		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
+		Clock::time_point                                    nextTalkClaim{};
+		std::uint32_t                                        conversations = 0;
+		std::uint32_t                                        lastActivated = 0;
+		Clock::time_point                                    lastActivatedAt{};
+		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
+		constexpr float                                      TALK_RANGE = 400.0f;  // game units
+
+		RE::Actor* LoadedActor(std::uint32_t a_id);
+
+		// Who the player is talking to: the NPC they activated, else the nearest NPC (one who
+		// started the conversation). (MenuTopicManager::speaker isn't reliable in this version.)
+		std::uint32_t FindPartner(Clock::time_point a_now)
+		{
+			if (lastActivated && a_now - lastActivatedAt < ACTIVATION_TO_TALK && LoadedActor(lastActivated)) {
+				return lastActivated;
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			std::uint32_t nearest = 0;
+			float         best = TALK_RANGE;
+			for (const auto& [id, entry] : owners) {
+				const auto actor = LoadedActor(id);
+				if (actor && !actor->IsDead(false)) {
+					const float distance = actor->data.location.GetDistance(player->data.location);
+					if (distance < best) {
+						best = distance;
+						nearest = id;
+					}
+				}
+			}
+			return nearest;
+		}
 		std::unordered_map<std::uint32_t, Mirror>            mirrors;
 		std::unordered_map<std::uint32_t, Owned>             owned;
 
@@ -285,6 +320,13 @@ namespace NpcSync
 					it = mirrors.erase(it);
 					continue;
 				}
+				// We're talking to it: our own copy talks to us (dialogue is each game's own), so it
+				// runs its own AI here until the conversation ends.
+				if (id == talkingTo) {
+					StopMirroring(id, mirror);
+					++it;
+					continue;
+				}
 				// The owner's copy is somewhere else (e.g. a companion that followed its player through
 				// a door): ours can't follow it there, so it runs its own AI meanwhile.
 				if (mirror.snapshots.empty() || SpaceOf(actor) != std::pair{ mirror.snapshots.back().state.cell, mirror.snapshots.back().state.worldspace }) {
@@ -376,6 +418,12 @@ namespace NpcSync
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
 	}
 
+	void OnActivated(std::uint32_t a_refId)
+	{
+		lastActivated = a_refId;
+		lastActivatedAt = Clock::now();
+	}
+
 	void Frame()
 	{
 		if (localId == 0) {
@@ -393,6 +441,27 @@ namespace NpcSync
 		if (now >= nextStates) {
 			nextStates = now + STATE_INTERVAL;
 			SendOwnedStates(now);
+		}
+		// The partner is found when the conversation starts and kept until it ends.
+		const auto ui = RE::UI::GetSingleton();
+		const bool inConversation = ui && ui->GetMenuOpen("DialogueMenu"sv);
+		if (!inConversation) {
+			talkingTo = 0;
+		} else if (talkingTo == 0) {
+			talkingTo = FindPartner(now);
+			nextTalkClaim = {};
+			conversations += talkingTo != 0;
+			if (talkingTo) {
+				REX::INFO("NpcSync: talking to {:08X} (owner {})", talkingTo, OwnerOf(talkingTo));
+			}
+		}
+		if (talkingTo && now >= nextTalkClaim) {
+			nextTalkClaim = now + TALK_CLAIM_INTERVAL;
+			if (OwnerOf(talkingTo) == localId) {
+				outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkingTo, Protocol::ClaimReason::kInteract } }), true });
+			} else {
+				OnLocalInteraction(talkingTo);
+			}
 		}
 		UpdateMirrors(now);
 	}
@@ -417,12 +486,13 @@ namespace NpcSync
 		owners.clear();
 		claimedAt.clear();
 		lastTakeover.clear();
+		talkingTo = 0;
 		owned.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("npcs: owned={} mirrored={} known={}", owned.size(), mirrors.size(), owners.size());
+		return std::format("npcs: owned={} mirrored={} known={} talkingTo={:08X} conversations={}", owned.size(), mirrors.size(), owners.size(), talkingTo, conversations);
 	}
 }
