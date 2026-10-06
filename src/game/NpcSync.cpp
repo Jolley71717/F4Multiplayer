@@ -1,6 +1,7 @@
 #include "game/NpcSync.h"
 
 #include "game/Puppets.h"
+#include "game/RemotePlayers.h"
 #include "game/WeaponFire.h"
 
 namespace NpcSync
@@ -25,6 +26,12 @@ namespace NpcSync
 		// The owner's copy is this far from ours (it fast traveled or was moved by a script): ours
 		// isn't dragged across the map (where nothing may be loaded); it runs its own AI meanwhile.
 		constexpr float MAX_FOLLOW_DISTANCE = 4096.0f;  // one exterior cell
+		// An NPC we run that is this far from us, and much nearer a friend, is given to their game:
+		// our game's AI only reacts to our player, so it would ignore the friend standing next to it.
+		constexpr float HANDOFF_FROM = 6000.0f;
+		constexpr float HANDOFF_TO = 4000.0f;  // the friend must be this close (and at most half as far)
+		constexpr auto  HANDOFF_HOLD = 10s;    // we don't claim it back meanwhile
+		constexpr auto  HANDOFF_RETRY = 30s;   // between hand-offs of the same NPC
 		constexpr std::size_t MAX_SNAPSHOTS = 16;
 
 		constexpr std::uint32_t CURRENT_COMPANION_FACTION = 0x00023C01;
@@ -58,6 +65,8 @@ namespace NpcSync
 		Clock::time_point                                    nextTalkClaim{};
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
+		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
+		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -163,8 +172,37 @@ namespace NpcSync
 			}
 		}
 
+		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one fighting us.
+		bool ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (const auto last = handedOffAt.find(a_id); last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) {
+				return false;
+			}
+			if (a_id == talkingTo || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player) {
+				return false;
+			}
+			const auto& at = a_actor->data.location;
+			const float ours = at.GetDistance(player->data.location);
+			if (ours < HANDOFF_FROM) {
+				return false;
+			}
+			const auto space = SpaceOf(a_actor);
+			for (const auto& info : RemotePlayers::List()) {
+				if (!info.state || std::pair{ info.state->cell, info.state->worldspace } != space) {
+					continue;
+				}
+				const float theirs = at.GetDistance(RE::NiPoint3{ info.state->x, info.state->y, info.state->z });
+				if (theirs < HANDOFF_TO && theirs * 2.0f < ours) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		void Scan(Clock::time_point a_now)
 		{
+			std::vector<std::uint32_t> handOff;
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
 
@@ -182,10 +220,17 @@ namespace NpcSync
 
 					const auto owner = OwnerOf(id);
 					if (owner == localId) {
+						if (ShouldHandOff(actor, id, a_now)) {
+							handOff.push_back(id);
+						}
 						continue;
 					}
 					const auto claimed = claimedAt.find(id);
 					if (claimed != claimedAt.end() && a_now - claimed->second < CLAIM_RETRY) {
+						continue;
+					}
+					// Just handed to a nearer friend: give their game time to claim it.
+					if (const auto handed = handedOffAt.find(id); owner == 0 && handed != handedOffAt.end() && a_now - handed->second < HANDOFF_HOLD) {
 						continue;
 					}
 					// Companions follow their own player, so that player's game must run them.
@@ -198,9 +243,19 @@ namespace NpcSync
 			}
 			std::erase_if(claimedAt, [&](const auto& a_entry) { return a_now - a_entry.second >= CLAIM_RETRY; });
 			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
+			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
-			// NPCs we run that are no longer loaded (or died) go back to the pool.
+			// NPCs we run that are no longer loaded (or died) go back to the pool, and so do the
+			// ones a friend is much nearer to (their game claims them).
 			std::vector<std::uint32_t> released;
+			for (const auto id : handOff) {
+				owners.erase(id);
+				owned.erase(id);
+				handedOffAt[id] = a_now;
+				released.push_back(id);
+				++handOffs;
+				REX::INFO("NpcSync: handing {:08X} to a nearer player", id);
+			}
 			for (auto it = owned.begin(); it != owned.end();) {
 				if (!loaded.contains(it->first)) {
 					released.push_back(it->first);
@@ -521,6 +576,7 @@ namespace NpcSync
 		owners.clear();
 		claimedAt.clear();
 		lastTakeover.clear();
+		handedOffAt.clear();
 		talkingTo = 0;
 		owned.clear();
 		outgoing.clear();
@@ -529,7 +585,7 @@ namespace NpcSync
 	std::string Describe()
 	{
 		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });
-		return std::format("npcs: owned={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={}", owned.size(), mirrors.size(), puppeted,
-			owners.size(), talkingTo, conversations, localFallbacks);
+		return std::format("npcs: owned={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={}", owned.size(), mirrors.size(),
+			puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs);
 	}
 }

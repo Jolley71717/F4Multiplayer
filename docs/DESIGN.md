@@ -97,6 +97,10 @@
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.
+- An owner more than 6000 units from an NPC releases it when a friend in the same space is within
+  4000 units and at most half as far (not its companion, its conversation partner or an NPC
+  fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
+  it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
   NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
