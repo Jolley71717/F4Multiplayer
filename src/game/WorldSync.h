@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include "Protocol.h"
 
 // Shared world state: things that happen in one player's world are replayed in everyone's.
-// Currently: actor deaths. Main thread only.
+// Currently: actor deaths and health. Main thread only.
 namespace WorldSync
 {
 	// Registers game event sinks. Call once game data is loaded.
@@ -12,6 +12,7 @@ namespace WorldSync
 	// Deaths reported by the server (another player killed these).
 	void ApplyRemoteDeath(std::uint32_t a_refId);
 	void ApplyWorldState(const Protocol::WorldState& a_state);
+	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
 
 	// Applies pending remote changes to actors as they load. Call every frame.
 	void Frame();

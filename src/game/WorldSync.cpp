@@ -1,4 +1,4 @@
-#include "game/WorldSync.h"
+﻿#include "game/WorldSync.h"
 
 #include "game/Puppets.h"
 
@@ -14,6 +14,17 @@ namespace WorldSync
 		// (they weren't loaded when we heard about them).
 		std::unordered_set<std::uint32_t> dead;
 		std::unordered_set<std::uint32_t> pending;
+
+		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
+		std::mutex                 inboxLock;
+		std::vector<std::uint32_t> deathInbox;
+		std::vector<std::uint32_t> hitInbox;
+
+		// Actors we hit last frame; their resulting health is reported this frame, once the
+		// damage has been applied.
+		std::unordered_set<std::uint32_t> hitLastFrame;
+		// Health values from other players for actors that weren't loaded yet.
+		std::unordered_map<std::uint32_t, float> pendingHealth;
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		Clock::time_point                      nextApply{};
@@ -65,18 +76,65 @@ namespace WorldSync
 				if (!IsShareable(id) || ref->IsPlayerRef() || (actor && Puppets::IsPuppet(actor))) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-
-				// Deaths we caused because someone else reported them don't go back out.
-				if (dead.insert(id).second) {
-					outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id }, Protocol::MessageType::kReportDeath));
-					++reported;
-				}
-				pending.erase(id);
+				std::scoped_lock l{ inboxLock };
+				deathInbox.push_back(id);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
 
 		DeathWatcher deathWatcher;
+
+		const RE::ActorValueInfo* HealthInfo()
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			return values ? values->health : nullptr;
+		}
+
+		// Sets a loaded actor's current health to a fraction of its maximum. Returns false if it isn't loaded.
+		bool TrySetHealth(std::uint32_t a_refId, float a_fraction)
+		{
+			const auto info = HealthInfo();
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_refId);
+			if (!info || !actor || actor->IsDeleted() || !actor->Get3D()) {
+				return false;
+			}
+			if (actor->IsDead(false)) {
+				return true;
+			}
+			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+			const float maximum = values.GetPermanentActorValue(*info);
+			const float target = std::clamp(a_fraction, 0.0f, 1.0f) * maximum;
+			const float delta = target - values.GetActorValue(*info);
+			if (delta < 0.0f) {
+				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, delta);
+			} else if (delta > 0.0f) {
+				values.RestoreActorValue(*info, delta);
+			}
+			return true;
+		}
+
+		class HitWatcher :
+			public RE::BSTEventSink<RE::TESHitEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent& a_event, RE::BSTEventSource<RE::TESHitEvent>*) override
+			{
+				const auto target = a_event.target.get();
+				const auto cause = a_event.cause.get();
+				// Only damage we dealt; each player reports their own hits.
+				if (!target || !cause || !cause->IsPlayerRef()) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				const auto actor = target->As<RE::Actor>();
+				if (actor && IsShareable(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
+					std::scoped_lock l{ inboxLock };
+					hitInbox.push_back(target->GetFormID());
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		HitWatcher hitWatcher;
 	}
 
 	void Install()
@@ -86,6 +144,9 @@ namespace WorldSync
 			REX::INFO("WorldSync: watching deaths");
 		} else {
 			REX::ERROR("WorldSync: death event source unavailable");
+		}
+		if (const auto source = RE::TESHitEvent::GetEventSource()) {
+			source->RegisterSink(&hitWatcher);
 		}
 	}
 
@@ -107,10 +168,57 @@ namespace WorldSync
 		REX::INFO("WorldSync: session state has {} dead actors", a_state.deadActors.size());
 	}
 
+	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
+	{
+		if (!IsShareable(a_refId) || dead.contains(a_refId)) {
+			return;
+		}
+		if (TrySetHealth(a_refId, a_health)) {
+			pendingHealth.erase(a_refId);
+		} else {
+			pendingHealth[a_refId] = a_health;
+		}
+	}
+
 	void Frame()
 	{
+		std::vector<std::uint32_t> newDeaths;
+		std::vector<std::uint32_t> newHits;
+		{
+			std::scoped_lock l{ inboxLock };
+			newDeaths.swap(deathInbox);
+			newHits.swap(hitInbox);
+		}
+
+		// Deaths we caused because someone else reported them are already known and don't go back out.
+		for (const auto id : newDeaths) {
+			if (dead.insert(id).second) {
+				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id }, Protocol::MessageType::kReportDeath));
+				++reported;
+			}
+			pending.erase(id);
+			pendingHealth.erase(id);
+		}
+
+		// Report the health of actors we hit last frame (damage has been applied by now).
+		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
+			for (const auto id : hitLastFrame) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (actor && !actor->IsDead(false) && !dead.contains(id)) {
+					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
+					const float maximum = values.GetPermanentActorValue(*info);
+					if (maximum > 0.0f) {
+						const float fraction = values.GetActorValue(*info) / maximum;
+						outgoing.push_back(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
+					}
+				}
+			}
+		}
+		hitLastFrame.clear();
+		hitLastFrame.insert(newHits.begin(), newHits.end());
+
 		const auto now = Clock::now();
-		if (pending.empty() || now < nextApply) {
+		if ((pending.empty() && pendingHealth.empty()) || now < nextApply) {
 			return;
 		}
 		nextApply = now + APPLY_INTERVAL;
@@ -123,6 +231,9 @@ namespace WorldSync
 		for (auto it = pending.begin(); it != pending.end();) {
 			it = TryKill(*it) ? pending.erase(it) : std::next(it);
 		}
+		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
+			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
+		}
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -134,6 +245,11 @@ namespace WorldSync
 	{
 		dead.clear();
 		pending.clear();
+		pendingHealth.clear();
+		hitLastFrame.clear();
+		std::scoped_lock l{ inboxLock };
+		deathInbox.clear();
+		hitInbox.clear();
 		outgoing.clear();
 	}
 

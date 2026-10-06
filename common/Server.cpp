@@ -223,6 +223,22 @@ void Server::Run(void* a_host)
 		}
 	};
 
+	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto health = Protocol::DecodeActorHealth(a_data);
+		if (!health || health->refId == 0 || (health->refId >> 24) == 0xFF || deadActors.contains(health->refId)) {
+			return;
+		}
+		const auto relay = Protocol::Encode(*health, Protocol::MessageType::kActorHealth);
+		for (const auto& [peer, other] : players) {
+			if (peer != a_player.peer && other.welcomed) {
+				Net::Send(peer, relay, true);
+			}
+		}
+	};
+
 	while (!stopRequested) {
 		ENetEvent event;
 		while (enet_host_service(host, &event, 2) > 0) {
@@ -252,6 +268,9 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kReportDeath:
 							handleDeath(it->second, data);
+							break;
+						case Protocol::MessageType::kReportHealth:
+							handleHealth(it->second, data);
 							break;
 						default:
 							break;

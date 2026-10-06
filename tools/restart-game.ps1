@@ -1,4 +1,4 @@
-# Closes Fallout 4, deploys the latest build, relaunches through F4SE and (optionally)
+﻿# Closes Fallout 4, deploys the latest build, relaunches through F4SE and (optionally)
 # loads straight into a cell using the dev channel. Requires bDevChannel = true.
 #
 #   .\tools\restart-game.ps1                  # load into SanctuaryExt
@@ -7,6 +7,7 @@
 param(
 	[string]$GamePath = 'F:\SteamLibrary\steamapps\common\Fallout 4',
 	[string]$Cell = 'SanctuaryExt',
+	[bool]$GodMode = $true,
 	[int]$TimeoutSeconds = 120
 )
 
@@ -40,5 +41,8 @@ if ($Cell) {
 		Start-Sleep -Milliseconds 500
 		$status = & (Join-Path $PSScriptRoot 'devctl.ps1') status | Select-Object -Last 1
 		if ($status -like 'ingame=true*') { "$status (cell load took $([int]$loadTimer.Elapsed.TotalSeconds)s)"; break }
+	}
+	if ($GodMode) {
+		& (Join-Path $PSScriptRoot 'devctl.ps1') 'console tgm' | Out-Null
 	}
 }

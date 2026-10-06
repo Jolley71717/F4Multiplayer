@@ -113,6 +113,11 @@ namespace Session
 					WorldSync::ApplyRemoteDeath(msg->refId);
 				}
 				break;
+			case MessageType::kActorHealth:
+				if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
+					WorldSync::ApplyRemoteHealth(msg->refId, msg->health);
+				}
+				break;
 			case MessageType::kWorldState:
 				if (const auto msg = Protocol::DecodeWorldState(a_data)) {
 					WorldSync::ApplyWorldState(*msg);

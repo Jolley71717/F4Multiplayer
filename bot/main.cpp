@@ -46,6 +46,8 @@ int main(int argc, char* argv[])
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
+	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
+	float         healthValue = 0;
 
 	for (int i = 1; i + 1 < argc; i += 2) {
 		const std::string_view key = argv[i];
@@ -75,6 +77,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--health-ref") {
+			ok = ParseNumber(value, healthRef, 16);
+		} else if (key == "--health") {
+			ok = ParseNumber(value, healthValue);
 		} else if (key == "--kill") {
 			ok = ParseNumber(value, killRef, 16);
 		} else if (key == "--jump") {
@@ -132,6 +138,10 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (healthRef) {
+								std::cout << "reporting health of " << std::hex << healthRef << std::dec << " = " << healthValue << '\n';
+								Net::Send(peer, Protocol::Encode(Protocol::ActorHealth{ healthRef, healthValue }, Protocol::MessageType::kReportHealth), true);
+							}
 							if (killRef) {
 								std::cout << "reporting kill of " << std::hex << killRef << std::dec << '\n';
 								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef }, Protocol::MessageType::kReportDeath), true);
@@ -151,6 +161,11 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kActorDied:
 						if (const auto msg = Protocol::DecodeActorDeath(data)) {
 							std::cout << "actor died: " << std::hex << msg->refId << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kActorHealth:
+						if (const auto msg = Protocol::DecodeActorHealth(data)) {
+							std::cout << "actor health: " << std::hex << msg->refId << std::dec << " = " << msg->health << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kWorldState:

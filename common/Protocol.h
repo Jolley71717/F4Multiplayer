@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 5;
+	inline constexpr std::uint16_t VERSION = 6;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -32,6 +32,7 @@ namespace Protocol
 		kHello = 1,
 		kPlayerState = 2,
 		kReportDeath = 3,  // an actor died in the sender's world
+		kReportHealth = 4,  // the sender damaged an actor; this is its health now
 
 		// server -> client
 		kWelcome = 101,
@@ -41,6 +42,7 @@ namespace Protocol
 		kPlayerStates = 105,
 		kActorDied = 106,     // an actor died in another player's world
 		kWorldState = 107,    // sent on join: everything that already happened this session
+		kActorHealth = 108,   // an actor's health changed in another player's world
 	};
 
 	enum StateFlags : std::uint8_t
@@ -111,6 +113,14 @@ namespace Protocol
 	struct ActorDeath
 	{
 		std::uint32_t refId = 0;
+	};
+
+	// Health as a fraction of maximum: leveled actors can have different max health in each
+	// player's world, so absolute values don't transfer.
+	struct ActorHealth
+	{
+		std::uint32_t refId = 0;
+		float         health = 0.0f;  // 0..1
 	};
 
 	struct WorldState
@@ -424,6 +434,27 @@ namespace Protocol
 		ActorDeath msg;
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ActorHealth& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.F32(a_msg.health);
+		return w.Data();
+	}
+
+	inline std::optional<ActorHealth> DecodeActorHealth(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ActorHealth msg;
+		msg.refId = r.U32();
+		msg.health = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.health)) {
 			return std::nullopt;
 		}
 		return msg;
