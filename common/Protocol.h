@@ -279,11 +279,13 @@ namespace Protocol
 
 	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
 	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
+	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
 		float         damage = 0.0f;
 		bool          byPlayer = false;
+		std::uint32_t attacker = 0;
 	};
 
 	// A weapon shot, for the firing animation. refId 0 = the player themselves, otherwise an NPC
@@ -1040,6 +1042,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.F32(a_msg.damage);
 		w.U8(a_msg.byPlayer ? 1 : 0);
+		w.U32(a_msg.attacker);
 		return w.Data();
 	}
 
@@ -1051,7 +1054,9 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.damage = r.F32();
 		msg.byPlayer = r.U8() != 0;
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f) {
+		msg.attacker = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
+			(msg.byPlayer ? msg.attacker != 0 : !IsShareableRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;

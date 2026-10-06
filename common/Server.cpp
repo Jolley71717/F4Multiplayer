@@ -588,7 +588,7 @@ void Server::Run()
 		}
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage, hit->byPlayer }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage, hit->byPlayer, hit->attacker }, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
 	};

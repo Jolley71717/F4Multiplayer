@@ -32,6 +32,7 @@ namespace WorldSync
 			std::uint32_t actor;
 			float         damage;
 			bool          byPlayer;  // we hit them, rather than an NPC in our world
+			std::uint32_t attacker;  // the NPC that hit them (0 when byPlayer)
 		};
 		std::vector<StandInHit> standInHits;
 		std::atomic<bool>       friendlyFire{ false };
@@ -202,15 +203,18 @@ namespace WorldSync
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// An NPC in our world (or we, with friendly fire on) hit another player's stand-in:
-				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame().
+				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame(). NPCs
+				// made at runtime (random encounters, spawned enemies) exist only in our game, so
+				// their hits would come from nowhere in the victim's: not passed on.
 				const bool byPlayer = cause->IsPlayerRef();
+				const auto attacker = byPlayer ? 0 : cause->GetFormID();
 				const auto victim = target->As<RE::Actor>();
-				if (victim && Puppets::IsPuppet(victim)) {
+				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker))) {
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage, byPlayer });
+							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker });
 						}
 					}
 				}
@@ -674,7 +678,7 @@ namespace WorldSync
 		}
 		for (const auto& hit : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
-				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer }, Protocol::MessageType::kPlayerHit));
+				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 

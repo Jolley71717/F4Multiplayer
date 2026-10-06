@@ -161,14 +161,18 @@ int main(int argc, char* argv[])
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
-			// id:damage, or id:damage:p for a hit by the bot itself (friendly fire)
-			auto colon = value.find(':');
-			auto rest = colon != std::string_view::npos ? value.substr(colon + 1) : std::string_view{};
-			if (rest.ends_with(":p")) {
+			// id:damage:ATTACKERHEX (an NPC hit them), or id:damage:p for a hit by the bot itself
+			// (friendly fire)
+			const auto colon = value.find(':');
+			const auto second = colon != std::string_view::npos ? value.find(':', colon + 1) : std::string_view::npos;
+			ok = second != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) &&
+			     ParseNumber(value.substr(colon + 1, second - colon - 1), hitPlayer.damage);
+			const auto who = second != std::string_view::npos ? value.substr(second + 1) : std::string_view{};
+			if (who == "p") {
 				hitPlayer.byPlayer = true;
-				rest.remove_suffix(2);
+			} else {
+				ok = ok && ParseNumber(who, hitPlayer.attacker, 16);
 			}
-			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) && ParseNumber(rest, hitPlayer.damage);
 		} else if (key == "--door") {
 			// ref:open:locked, hex:0|1|2:0|1|2 (2 = leave alone)
 			const auto first = value.find(':');
@@ -453,7 +457,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kPlayerDamaged:
 						if (const auto msg = Protocol::DecodePlayerHit(data)) {
-							std::cout << "damaged by player " << msg->playerId << (msg->byPlayer ? " themselves: " : "'s npc: ") << msg->damage << std::endl;
+							std::cout << "damaged by player " << msg->playerId << (msg->byPlayer ? " themselves: " : "'s npc: ") << msg->damage << " (attacker " << std::hex << msg->attacker << std::dec << ")" << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kRefStateChanged:

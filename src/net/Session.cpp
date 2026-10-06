@@ -102,15 +102,48 @@ namespace Session
 			return player && player->GetParentCell();
 		}
 
-		// An NPC hit our stand-in in another player's world.
-		void ApplyDamageToPlayer(float a_damage)
+		std::uint32_t hitsTaken = 0;
+		std::uint32_t hitsIgnored = 0;
+
+		// Whether the NPC that hit our stand-in is there to see in our world: loaded, alive and
+		// within weapon range. Otherwise we'd take damage from nowhere (it died in our game, or
+		// hasn't spawned yet).
+		bool AttackerHere(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
+		{
+			constexpr float RANGE = 10000.0f;  // about 140 m: a sniper rifle's reach
+			const auto      actor = RE::TESForm::GetFormByID<RE::Actor>(a_attacker);
+			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
+				return false;
+			}
+			const auto here = a_player->GetParentCell();
+			const auto there = actor->GetParentCell();
+			if (!here || !there || (here->IsInterior() || there->IsInterior() ? here != there : here->worldSpace != there->worldSpace)) {
+				return false;
+			}
+			return actor->data.location.GetDistance(a_player->data.location) < RANGE;
+		}
+
+		// Menus that stop the game (pause menu, Pip-Boy, ...): no damage lands while it's stopped.
+		bool GamePaused()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return ui && ui->menuMode > 0;
+		}
+
+		// Something hit our stand-in in another player's world.
+		void ApplyDamageToPlayer(const Protocol::PlayerHit& a_hit)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto values = RE::ActorValue::GetSingleton();
-			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_damage <= 0.0f) {
+			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_hit.damage <= 0.0f) {
 				return;
 			}
-			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_damage, 1000.0f));
+			if (GamePaused() || (!a_hit.byPlayer && !AttackerHere(player, a_hit.attacker))) {
+				++hitsIgnored;
+				return;
+			}
+			++hitsTaken;
+			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_hit.damage, 1000.0f));
 		}
 
 		void HandlePacket(std::span<const std::uint8_t> a_data)
@@ -189,7 +222,7 @@ namespace Session
 				break;
 			case MessageType::kPlayerDamaged:
 				if (const auto msg = Protocol::DecodePlayerHit(a_data)) {
-					ApplyDamageToPlayer(msg->damage);
+					ApplyDamageToPlayer(*msg);
 				}
 				break;
 			case MessageType::kPlayerStatus:
@@ -641,7 +674,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe(), RemotePlayers::Describe()) +
-		       " " + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} ignored={}", hitsTaken, hitsIgnored) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	void ConnectTo(std::string a_address)
