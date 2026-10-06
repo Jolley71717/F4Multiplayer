@@ -177,7 +177,10 @@ namespace Puppets
 		bool ActivateTextHook(RE::TESBoundObject* a_this, RE::TESObjectREFR* a_itemActivated, RE::BSString& a_result)
 		{
 			if (IsPuppetRef(a_itemActivated)) {
-				return false;
+				const char* name = a_itemActivated->GetDisplayFullName();
+				name = name ? name : "";
+				a_result.Set(name, std::strlen(name));
+				return true;
 			}
 			return originalActivateText(a_this, a_itemActivated, a_result);
 		}

@@ -64,7 +64,6 @@ Protocol VERSION 8. Release zip 0.3.0 was sent to the user (protocol 4), so it i
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-4. Names above players (detour TESObjectREFR::GetDisplayFullName for puppets).
 5. Real look and gear: equipment sync (TESEquipEvent -> equip the same items on the puppet, weapon drawn).
 6. Shared enemy AI ownership (one client runs each NPC's AI, the others puppet it); Skyrim Together's design.
 7. Quest stage sync (opt-in).

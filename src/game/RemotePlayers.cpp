@@ -180,6 +180,10 @@ namespace RemotePlayers
 			}
 
 			Puppets::Register(actor);
+			// Shown when looking at them, instead of the NPC's name.
+			if (actor->extraList) {
+				actor->extraList->SetOverrideName(a_player.name.c_str());
+			}
 			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
 			return actor;
 		}
