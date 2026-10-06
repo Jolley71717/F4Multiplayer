@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 17;
+	inline constexpr std::uint16_t VERSION = 18;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -66,6 +66,7 @@ namespace Protocol
 		kReportQuestDone = 21,    // the sender completed a quest themselves
 		kRevive = 22,             // the sender helped a downed player up
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
+		kReportMarkers = 24,      // map markers the sender discovered
 
 		// server -> client
 		kWelcome = 101,
@@ -93,6 +94,7 @@ namespace Protocol
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
 		kVoiceRelay = 125,        // a piece of another player's voice
+		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -331,6 +333,21 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_VOICE_BYTES = 4000;
+	inline constexpr std::size_t MAX_MARKERS_PER_PACKET = 200;
+	inline constexpr std::size_t MAX_SESSION_MARKERS = 8192;
+
+	struct MapMarker
+	{
+		std::uint32_t refId = 0;
+		std::uint8_t  flags = 0;  // 1 = on the map, 2 = discovered (fast travel)
+	};
+
+	// playerId is ignored client -> server.
+	struct MarkersFound
+	{
+		std::uint32_t          playerId = 0;
+		std::vector<MapMarker> markers;
+	};
 
 	// Compressed voice as Steam produces it. playerId is ignored client -> server.
 	struct VoiceData
@@ -1162,6 +1179,43 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.xp = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const MarkersFound& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		const auto count = (std::min)(a_msg.markers.size(), MAX_MARKERS_PER_PACKET);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.markers[i].refId);
+			w.U8(a_msg.markers[i].flags);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<MarkersFound> DecodeMarkers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		MarkersFound msg;
+		msg.playerId = r.U32();
+		const auto count = r.U16();
+		if (count > MAX_MARKERS_PER_PACKET) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < count && r.Ok(); ++i) {
+			MapMarker marker;
+			marker.refId = r.U32();
+			marker.flags = r.U8() & 0x03;
+			if (IsShareableRef(marker.refId) && marker.flags != 0) {
+				msg.markers.push_back(marker);
+			}
+		}
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

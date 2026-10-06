@@ -64,6 +64,9 @@ namespace Config
 		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).
 		bool revive = true;
 
+		// Locations a friend discovers show up on your map, ready for fast travel.
+		bool shareMap = true;
+
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;

@@ -8,6 +8,7 @@
 //           [--downed 1] [--revive PLAYERID]  (status says the bot is down; helps that player up once welcomed)
 //           [--voice-echo 1]  (sends every piece of voice it hears back as its own)
 //           [--voice-silence 1]  (talks: Steam voice packets holding 100 ms of silence, 10 a second)
+//           [--marker REFHEX]  (reports discovering this map marker once welcomed)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -86,6 +87,7 @@ int main(int argc, char* argv[])
 	bool          statusDowned = false;
 	bool          voiceEcho = false;
 	bool          voiceSilence = false;
+	std::uint32_t markerRef = 0;
 	std::uint64_t voiceBytes = 0;
 	std::uint32_t reviveTarget = 0;
 	bool          sendPing = false;
@@ -192,6 +194,8 @@ int main(int argc, char* argv[])
 			voiceEcho = value == "1";
 		} else if (key == "--voice-silence") {
 			voiceSilence = value == "1";
+		} else if (key == "--marker") {
+			ok = ParseNumber(value, markerRef, 16);
 		} else if (key == "--downed") {
 			statusDowned = value == "1";
 		} else if (key == "--revive") {
@@ -272,6 +276,9 @@ int main(int argc, char* argv[])
 							}
 							if (xpGain > 0.0f) {
 								Net::Send(peer, Protocol::Encode(Protocol::XpGain{ 0, xpGain }, Protocol::MessageType::kReportXp), true);
+							}
+							if (markerRef) {
+								Net::Send(peer, Protocol::Encode(Protocol::MarkersFound{ 0, { { markerRef, 3 } } }, Protocol::MessageType::kReportMarkers), true);
 							}
 							if (questDone) {
 								Net::Send(peer, Protocol::Encode(Protocol::QuestDone{ 0, questDone }, Protocol::MessageType::kReportQuestDone), true);
@@ -364,6 +371,15 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kPinged:
 						if (const auto msg = Protocol::DecodePing(data)) {
 							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kMarkersFound:
+						if (const auto msg = Protocol::DecodeMarkers(data)) {
+							std::cout << "markers: player " << msg->playerId << " " << msg->markers.size();
+							for (std::size_t i = 0; i < msg->markers.size() && i < 5; ++i) {
+								std::cout << " " << std::hex << msg->markers[i].refId << ":" << int(msg->markers[i].flags) << std::dec;
+							}
+							std::cout << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kVoiceRelay:

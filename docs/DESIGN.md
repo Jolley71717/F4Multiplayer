@@ -184,12 +184,18 @@ save's record and asks for the session's changes again.
   8 m, silent beyond `fVoiceRange` or in another cell/worldspace) and queue them on one winmm
   `waveOut` device per speaker, with 80 ms of silence first when it was idle.
   `SetInGameVoiceSpeaking` tells Steam's own chat to mute the mic while we record.
+- Map (src/game/MapShare.cpp): map markers are persistent references with `ExtraMapMarker`. Its
+  `MapMarkerData` isn't in CommonLibF4: a TESFullName (name at +0x08), then a flags byte at +0x10
+  (1 = on the map, 2 = can fast travel). We list the markers once, poll their flags every 2 s and
+  report new bits. Receivers run `showmap <ref> 1` (the console records the change for the save;
+  writing the byte wouldn't). The server keeps the session's markers and sends them with the world
+  state (on join and after loading a save).
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
   player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 17.
+Protocol VERSION 18.
 
 ## Prior art
 
@@ -202,13 +208,14 @@ Protocol VERSION 17.
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
 - Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
-  `voice [talk|loop on|off]` (record without the key; hear yourself).
+  `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
+  markers and their flags).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
   time (`--time`, `--weather`), complete a quest (`--quest-done`), be down or help someone up
   (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
-  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), and resume a session
+  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`), and resume a session
   (`--session`, `--from`).
 - `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
 - `tools/screenshot.ps1`: captures the screen for visual checks.

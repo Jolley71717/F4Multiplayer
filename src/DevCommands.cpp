@@ -766,6 +766,41 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// markers [text]: map markers (name from their data) with the first bytes of their data.
+		std::string Markers(std::string_view a_args)
+		{
+			std::string result;
+			int         count = 0;
+			int         total = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+				const auto extra = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraMapMarker>() : nullptr;
+				if (!extra || !extra->mapMarkerData) {
+					continue;
+				}
+				++total;
+				const auto bytes = reinterpret_cast<const std::uint8_t*>(extra->mapMarkerData);
+				const std::string_view markerName = reinterpret_cast<const RE::BSFixedString*>(bytes + 8)->c_str();
+				if (!a_args.empty() && markerName.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				if (count >= 12) {
+					continue;
+				}
+				std::string hex;
+				for (int i = 0x10; i < 0x14; ++i) {
+					hex += std::format("{:02X}{}", bytes[i], (i % 4 == 3) ? " " : "");
+				}
+				result += std::format("{}{:08X} '{}' [{}]", count++ ? "; " : "", id, markerName, hex);
+			}
+			return std::format("{} markers: {}", total, result);
+		}
+
 		// voice [talk|loop on|off]: record without the key, or hear our own voice.
 		std::string VoiceCommand(std::string_view a_args)
 		{
@@ -823,6 +858,7 @@ namespace DevCommands
 			Entry{ "net", Net },
 			Entry{ "echo", Echo },
 			Entry{ "voice", VoiceCommand },
+			Entry{ "markers", Markers },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },
 			Entry{ "party", PartyCommand },
