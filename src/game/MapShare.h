@@ -18,6 +18,9 @@ namespace MapShare
 	// Forget what the map looked like; the next Frame takes a fresh baseline (after loading a save).
 	void Rebaseline();
 
+	// When this player last discovered a location (discoveries give XP).
+	[[nodiscard]] std::chrono::steady_clock::time_point LastDiscovery();
+
 	void Reset();
 
 	[[nodiscard]] std::string Describe();

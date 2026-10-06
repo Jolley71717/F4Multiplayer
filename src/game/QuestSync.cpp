@@ -37,6 +37,8 @@ namespace QuestSync
 		std::uint32_t                                    reported = 0;
 		std::uint32_t                                    applied = 0;
 		std::uint32_t                                    completed = 0;
+		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
+		Clock::time_point                                lastStageChange{};
 
 		std::span<RE::TESQuest*> AllQuests()
 		{
@@ -68,6 +70,7 @@ namespace QuestSync
 		// Whatever stage it's at now came from another player; don't report it back.
 		knownStages[a_stage.quest] = quest->currentStage;
 		remoteStageAt[a_stage.quest] = Clock::now();
+		lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
 		++applied;
 	}
 
@@ -83,9 +86,6 @@ namespace QuestSync
 
 	void Frame()
 	{
-		if (!Config::Get().syncQuests) {
-			return;
-		}
 		const auto now = Clock::now();
 		if (now < nextPoll) {
 			return;
@@ -93,6 +93,28 @@ namespace QuestSync
 		nextPoll = now + POLL_INTERVAL;
 
 		if (!WorldSync::InWorld()) {
+			return;
+		}
+		// Misc quests (radiant ones give XP too) are only watched for stage changes.
+		for (const auto quest : AllQuests()) {
+			if (quest && quest->data.questType == 6) {
+				const auto [it, inserted] = miscStages.try_emplace(quest->GetFormID(), quest->currentStage);
+				if (!inserted && it->second != quest->currentStage) {
+					it->second = quest->currentStage;
+					lastStageChange = now;
+				}
+			}
+		}
+		if (!Config::Get().syncQuests) {
+			for (const auto quest : AllQuests()) {
+				if (quest && IsSharedType(quest->data.questType)) {
+					const auto [it, inserted] = knownStages.try_emplace(quest->GetFormID(), quest->currentStage);
+					if (!inserted && it->second != quest->currentStage) {
+						it->second = quest->currentStage;
+						lastStageChange = now;
+					}
+				}
+			}
 			return;
 		}
 		for (const auto& stage : std::exchange(waiting, {})) {
@@ -130,6 +152,7 @@ namespace QuestSync
 			}
 			const bool forward = quest->currentStage > it->second;
 			it->second = quest->currentStage;
+			lastStageChange = now;
 			// Only progress is shared (a quest that restarts or resets goes back to a lower stage).
 			if (report && forward && (id >> 24) != 0xFF) {
 				outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ id, quest->currentStage }, Protocol::MessageType::kReportQuestStage));
@@ -146,10 +169,16 @@ namespace QuestSync
 	void Rebaseline()
 	{
 		knownStages.clear();
+		miscStages.clear();
 		knownDone.clear();
 		remoteStageAt.clear();
 		reportFrom.reset();
 		waiting.clear();
+	}
+
+	Clock::time_point LastStageChange()
+	{
+		return lastStageChange;
 	}
 
 	std::string Describe()

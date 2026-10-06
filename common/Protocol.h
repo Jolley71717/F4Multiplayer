@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 18;
+	inline constexpr std::uint16_t VERSION = 19;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -304,11 +304,14 @@ namespace Protocol
 		bool operator==(const PlayerStatus&) const = default;
 	};
 
+	// playerId: whose clock it is (ignored client -> server).
 	struct WorldTime
 	{
-		float         gameHour = 0.0f;  // 0..24
-		std::uint32_t worldspace = 0;   // where the weather applies (0 = inside)
-		std::uint32_t weather = 0;      // TESWeather form ID, or 0
+		std::uint32_t playerId = 0;
+		float         gameHour = 0.0f;    // 0..24
+		float         daysPassed = 0.0f;  // GameDaysPassed: tells a long sleep from a short one
+		std::uint32_t worldspace = 0;     // where the weather applies (0 = inside)
+		std::uint32_t weather = 0;        // TESWeather form ID, or 0
 	};
 
 	struct Ping
@@ -1095,7 +1098,9 @@ namespace Protocol
 	inline std::vector<std::uint8_t> Encode(const WorldTime& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
+		w.U32(a_msg.playerId);
 		w.F32(a_msg.gameHour);
+		w.F32(a_msg.daysPassed);
 		w.U32(a_msg.worldspace);
 		w.U32(a_msg.weather);
 		return w.Data();
@@ -1106,10 +1111,13 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		WorldTime msg;
+		msg.playerId = r.U32();
 		msg.gameHour = r.F32();
+		msg.daysPassed = r.F32();
 		msg.worldspace = r.U32();
 		msg.weather = r.U32();
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.gameHour) || msg.gameHour < 0.0f || msg.gameHour >= 24.0f) {
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.gameHour) || msg.gameHour < 0.0f || msg.gameHour >= 24.0f ||
+			!std::isfinite(msg.daysPassed) || msg.daysPassed < 0.0f || msg.daysPassed > 1.0e6f) {
 			return std::nullopt;
 		}
 		return msg;

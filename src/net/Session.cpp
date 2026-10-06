@@ -603,6 +603,9 @@ namespace Session
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
 		MapShare::Rebaseline();
+		Downed::OnGameLoaded();
+		Party::OnGameLoaded();
+		WorldClock::Rebaseline();
 		if (welcomed) {
 			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);

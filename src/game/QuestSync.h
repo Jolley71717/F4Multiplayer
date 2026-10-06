@@ -21,5 +21,8 @@ namespace QuestSync
 	// can move quests back; the session's stages are then applied again).
 	void Rebaseline();
 
+	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
+	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();
+
 	std::string Describe();
 }

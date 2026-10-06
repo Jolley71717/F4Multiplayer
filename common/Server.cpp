@@ -21,6 +21,11 @@ namespace
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
+	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
+	// (one more each XP_REPORT_INTERVAL).
+	constexpr auto XP_REFILL_TIME = std::chrono::seconds(10);
+	constexpr int  XP_REPORT_BURST = 10;
+	constexpr auto XP_REPORT_INTERVAL = std::chrono::milliseconds(500);
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
@@ -70,6 +75,10 @@ namespace
 		bool                       floodLogged = false;
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
+		bool                       local = false;  // on the server's machine
+		float                      xpBudget = Protocol::MAX_XP_SHARE;
+		float                      xpReports = XP_REPORT_BURST;
+		Clock::time_point          xpRefilled{};
 	};
 
 	struct Ownership
@@ -325,6 +334,8 @@ void Server::Run()
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
+		a_player.local = transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		a_player.xpRefilled = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
@@ -612,20 +623,21 @@ void Server::Run()
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
 	};
 
-	// The session's clock is the first player's (the host's, when they host from their game).
+	// The session's clock is the host's: a player on this machine, else the one here longest.
 	const auto handleTime = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		for (const auto& [key, other] : players) {
-			if (other.welcomed && other.id < a_player.id) {
+			if (other.welcomed && key != a_player.key && (other.local > a_player.local || (other.local == a_player.local && other.id < a_player.id))) {
 				return;
 			}
 		}
-		const auto time = Protocol::DecodeWorldTime(a_data);
+		auto time = Protocol::DecodeWorldTime(a_data);
 		if (!time) {
 			return;
 		}
+		time->playerId = a_player.id;
 		worldTime = *time;
 		broadcast(Protocol::Encode(*time, Protocol::MessageType::kWorldTime), false, a_player.key);
 	};
@@ -652,6 +664,17 @@ void Server::Run()
 		if (!gain) {
 			return;
 		}
+		const auto now = Clock::now();
+		const float elapsed = std::chrono::duration<float>(now - a_player.xpRefilled).count();
+		a_player.xpRefilled = now;
+		a_player.xpBudget = (std::min)(Protocol::MAX_XP_SHARE, a_player.xpBudget + elapsed * Protocol::MAX_XP_SHARE / std::chrono::duration<float>(XP_REFILL_TIME).count());
+		a_player.xpReports = (std::min)(static_cast<float>(XP_REPORT_BURST), a_player.xpReports + elapsed / std::chrono::duration<float>(XP_REPORT_INTERVAL).count());
+		gain->xp = (std::min)(gain->xp, a_player.xpBudget);
+		if (a_player.xpReports < 1.0f || gain->xp < 1.0f) {
+			return;
+		}
+		a_player.xpReports -= 1.0f;
+		a_player.xpBudget -= gain->xp;
 		gain->playerId = a_player.id;
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
 	};
@@ -883,6 +906,10 @@ void Server::Run()
 						const auto leftId = it->second.id;
 						players.erase(it);
 						releaseAll(leftId);
+						// The clock belonged to someone who's gone; the next player brings their own.
+						if (welcomedCount() == 0) {
+							worldTime.reset();
+						}
 					}
 					break;
 				}

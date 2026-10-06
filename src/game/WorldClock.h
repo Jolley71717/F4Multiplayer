@@ -13,6 +13,9 @@ namespace WorldClock
 
 	void Apply(const Protocol::WorldTime& a_time);
 
+	// A save was loaded: our calendar no longer lines up with the host's the way it did.
+	void Rebaseline();
+
 	void Reset();
 
 	[[nodiscard]] std::string Describe();

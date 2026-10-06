@@ -30,6 +30,7 @@ namespace MapShare
 		int                                              feedShown = 0;
 		std::uint32_t                                    reported = 0;
 		std::uint32_t                                    applied = 0;
+		Clock::time_point                                lastDiscovery{};
 
 		const std::uint8_t* MarkerData(std::uint32_t a_id)
 		{
@@ -82,6 +83,7 @@ namespace MapShare
 				last = *flags;
 				if (baselined && gained != 0) {
 					found.markers.push_back({ id, *flags });
+					lastDiscovery = Clock::now();
 				}
 			}
 			baselined = true;
@@ -161,6 +163,11 @@ namespace MapShare
 			return;
 		}
 		ApplyNow(a_found);
+	}
+
+	Clock::time_point LastDiscovery()
+	{
+		return lastDiscovery;
 	}
 
 	void Rebaseline()

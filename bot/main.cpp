@@ -3,7 +3,7 @@
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
 //           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
-//           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX]  (health in the status sent after joining, an "over here", a kill XP report)
+//           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX [--time-step HOURS]]  (health in the status sent after joining, an "over here", a kill XP report)
 //           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
 //           [--downed 1] [--revive PLAYERID]  (status says the bot is down; helps that player up once welcomed)
 //           [--voice-echo 1]  (sends every piece of voice it hears back as its own)
@@ -94,6 +94,8 @@ int main(int argc, char* argv[])
 	float         xpGain = 0.0f;
 	std::uint32_t questDone = 0;
 	float         timeHour = -1.0f;  // report this time of day (and timeWeather) every 5 s
+	float         timeStep = 0.0f;   // ... moving it this many hours forward each time
+	double        timeDays = 0.0;
 	std::uint32_t timeWeather = 0;
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
@@ -208,6 +210,9 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, questDone, 16);
 		} else if (key == "--time") {
 			ok = ParseNumber(value, timeHour) && timeHour >= 0.0f && timeHour < 24.0f;
+			timeDays = 10.0 + timeHour / 24.0;
+		} else if (key == "--time-step") {
+			ok = ParseNumber(value, timeStep) && timeStep >= 0.0f && timeStep <= 48.0f;
 		} else if (key == "--weather") {
 			ok = ParseNumber(value, timeWeather, 16);
 		} else if (key == "--seconds") {
@@ -365,7 +370,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kWorldTime:
 						if (const auto msg = Protocol::DecodeWorldTime(data)) {
-							std::cout << "time: hour " << msg->gameHour << std::hex << " ws " << msg->worldspace << " weather " << msg->weather << std::dec << std::endl;
+							std::cout << "time: player " << msg->playerId << " hour " << msg->gameHour << " days " << msg->daysPassed << std::hex << " ws " << msg->worldspace << " weather " << msg->weather << std::dec << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kPinged:
@@ -517,7 +522,9 @@ int main(int argc, char* argv[])
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
 			const bool shoot = shootWeapon && !walking && sequence % 10 == 0;
 			if (timeHour >= 0.0f && sequence % 100 == 1) {
-				Net::Send(peer, Protocol::Encode(Protocol::WorldTime{ timeHour, worldspace, timeWeather }, Protocol::MessageType::kReportTime), false);
+				const float hour = static_cast<float>(std::fmod(timeDays, 1.0) * 24.0);
+				Net::Send(peer, Protocol::Encode(Protocol::WorldTime{ 0, hour, static_cast<float>(timeDays), worldspace, timeWeather }, Protocol::MessageType::kReportTime), false);
+				timeDays += timeStep / 24.0;
 			}
 			if (shootWeapon) {
 				state.flags |= Protocol::kWeaponDrawn;
