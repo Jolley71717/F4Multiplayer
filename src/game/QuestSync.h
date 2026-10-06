@@ -9,6 +9,9 @@ namespace QuestSync
 {
 	void Apply(const Protocol::QuestStage& a_stage);
 
+	// Another player completed a quest: tell the player who did it.
+	void ApplyDone(const Protocol::QuestDone& a_done);
+
 	// Looks for stage changes (twice a second) and applies stages that couldn't be applied yet.
 	void Frame();
 

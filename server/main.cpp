@@ -1,4 +1,4 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire]
 
 #include "Protocol.h"
 #include "Server.h"
@@ -51,8 +51,10 @@ int main(int argc, char* argv[])
 			++i;
 		} else if (arg == "--password" && hasValue) {
 			options.password = argv[++i];
+		} else if (arg == "--friendly-fire") {
+			options.friendlyFire = true;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire]\n";
 			return 2;
 		}
 	}

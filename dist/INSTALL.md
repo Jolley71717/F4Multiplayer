@@ -69,12 +69,14 @@ work while a menu or the console is open.
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
   holstered), shooting, and your name when someone looks at you (with your health when you're
-  hurt). Messages tell everyone when a player kills something, dies, joins or leaves.
+  hurt). Messages tell everyone when a player kills something, dies, completes a quest, joins or
+  leaves.
 - **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
 - **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
   the same raider in the same place. Enemies can attack any player, and the damage reaches that
-  player. Killing or hurting an NPC counts for everyone.
+  player. Killing or hurting an NPC counts for everyone. Players can't hurt each other unless the
+  host sets `bFriendlyFire = true`.
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
   ground, doors opened/closed and locks picked.
 - **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
@@ -93,7 +95,7 @@ want to keep your solo playthrough untouched.
 
 ## Dedicated server (optional)
 
-`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X]` runs a server
+`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
 

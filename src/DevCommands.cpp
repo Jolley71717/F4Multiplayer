@@ -359,7 +359,7 @@ namespace DevCommands
 				if (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos) {
 					continue;
 				}
-				out += std::format("{}{:08X} '{}' type={} stage={}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType, quest->currentStage);
+				out += std::format("{}{:08X} '{}' type={} stage={} flags={:04X}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType, quest->currentStage, quest->data.flags);
 			}
 			return count ? out : "none";
 		}

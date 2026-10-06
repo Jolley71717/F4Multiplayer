@@ -1,6 +1,8 @@
 ﻿#include "game/QuestSync.h"
 
 #include "Config.h"
+#include "game/Hud.h"
+#include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
 
 namespace QuestSync
@@ -20,13 +22,21 @@ namespace QuestSync
 			return a_type > 0 && a_type != 6;
 		}
 
+		// QUEST_DATA::flags bit set when a quest is completed.
+		constexpr std::uint16_t QUEST_COMPLETED = 0x0002;
+		// A quest that completes this soon after a stage from another player was completed by them.
+		constexpr auto REMOTE_COMPLETION_WINDOW = 10s;
+
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last stage seen per quest
+		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
+		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
 		std::vector<Protocol::QuestStage>                waiting;  // from other players, until we're in the world
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		std::vector<std::vector<std::uint8_t>>           outgoing;
 		Clock::time_point                                nextPoll{};
 		std::uint32_t                                    reported = 0;
 		std::uint32_t                                    applied = 0;
+		std::uint32_t                                    completed = 0;
 
 		std::span<RE::TESQuest*> AllQuests()
 		{
@@ -57,7 +67,18 @@ namespace QuestSync
 		REX::INFO("QuestSync: set {:08X} '{}' stage {} -> now {}", a_stage.quest, quest->GetFullName() ? quest->GetFullName() : "", a_stage.stage, quest->currentStage);
 		// Whatever stage it's at now came from another player; don't report it back.
 		knownStages[a_stage.quest] = quest->currentStage;
+		remoteStageAt[a_stage.quest] = Clock::now();
 		++applied;
+	}
+
+	void ApplyDone(const Protocol::QuestDone& a_done)
+	{
+		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_done.quest);
+		const char* name = quest ? quest->GetFullName() : nullptr;
+		if (!quest || !IsSharedType(quest->data.questType) || !name || !*name) {
+			return;
+		}
+		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));
 	}
 
 	void Frame()
@@ -88,6 +109,21 @@ namespace QuestSync
 				continue;
 			}
 			const auto id = quest->GetFormID();
+
+			// Completed here, not because of another player's stage: tell the others who did it.
+			const bool done = (quest->data.flags & QUEST_COMPLETED) != 0;
+			const auto [doneIt, firstLook] = knownDone.try_emplace(id, done);
+			if (!firstLook && doneIt->second != done) {
+				doneIt->second = done;
+				const auto remote = remoteStageAt.find(id);
+				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
+				const char* name = quest->GetFullName();
+				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF) {
+					outgoing.push_back(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone));
+					++completed;
+				}
+			}
+
 			const auto [it, inserted] = knownStages.try_emplace(id, quest->currentStage);
 			if (inserted || it->second == quest->currentStage) {
 				continue;
@@ -110,12 +146,14 @@ namespace QuestSync
 	void Rebaseline()
 	{
 		knownStages.clear();
+		knownDone.clear();
+		remoteStageAt.clear();
 		reportFrom.reset();
 		waiting.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} applied={}", reported, applied);
+		return std::format("quests: reported={} applied={} completed={}", reported, applied, completed);
 	}
 }

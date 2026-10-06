@@ -4,6 +4,7 @@
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
 //           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
 //           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX]  (health in the status sent after joining, an "over here", a kill XP report)
+//           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -51,6 +52,7 @@ int main(int argc, char* argv[])
 	int           statusHealth = 100;
 	bool          sendPing = false;
 	float         xpGain = 0.0f;
+	std::uint32_t questDone = 0;
 	float         timeHour = -1.0f;  // report this time of day (and timeWeather) every 5 s
 	std::uint32_t timeWeather = 0;
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
@@ -106,9 +108,14 @@ int main(int argc, char* argv[])
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
-			// id:damage
-			const auto colon = value.find(':');
-			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) && ParseNumber(value.substr(colon + 1), hitPlayer.damage);
+			// id:damage, or id:damage:p for a hit by the bot itself (friendly fire)
+			auto colon = value.find(':');
+			auto rest = colon != std::string_view::npos ? value.substr(colon + 1) : std::string_view{};
+			if (rest.ends_with(":p")) {
+				hitPlayer.byPlayer = true;
+				rest.remove_suffix(2);
+			}
+			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) && ParseNumber(rest, hitPlayer.damage);
 		} else if (key == "--door") {
 			// ref:open:locked, hex:0|1|2:0|1|2 (2 = leave alone)
 			const auto first = value.find(':');
@@ -147,6 +154,8 @@ int main(int argc, char* argv[])
 			sendPing = value == "1";
 		} else if (key == "--xp") {
 			ok = ParseNumber(value, xpGain);
+		} else if (key == "--quest-done") {
+			ok = ParseNumber(value, questDone, 16);
 		} else if (key == "--time") {
 			ok = ParseNumber(value, timeHour) && timeHour >= 0.0f && timeHour < 24.0f;
 		} else if (key == "--weather") {
@@ -202,7 +211,7 @@ int main(int argc, char* argv[])
 					switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
 					case Protocol::MessageType::kWelcome:
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
-							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << '\n';
+							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << '\n';
 							welcomed = true;
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
@@ -213,6 +222,9 @@ int main(int argc, char* argv[])
 							}
 							if (xpGain > 0.0f) {
 								Net::Send(peer, Protocol::Encode(Protocol::XpGain{ 0, xpGain }, Protocol::MessageType::kReportXp), true);
+							}
+							if (questDone) {
+								Net::Send(peer, Protocol::Encode(Protocol::QuestDone{ 0, questDone }, Protocol::MessageType::kReportQuestDone), true);
 							}
 							if (questStage.quest) {
 								std::cout << "reporting quest stage\n";
@@ -299,6 +311,11 @@ int main(int argc, char* argv[])
 							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kQuestDone:
+						if (const auto msg = Protocol::DecodeQuestDone(data)) {
+							std::cout << "quest done: player " << msg->playerId << " " << std::hex << msg->quest << std::dec << std::endl;
+						}
+						break;
 					case Protocol::MessageType::kPartyXp:
 						if (const auto msg = Protocol::DecodeXpGain(data)) {
 							std::cout << "xp: player " << msg->playerId << " " << msg->xp << std::endl;
@@ -332,7 +349,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kPlayerDamaged:
 						if (const auto msg = Protocol::DecodePlayerHit(data)) {
-							std::cout << "damaged by player " << msg->playerId << "'s npc: " << msg->damage << std::endl;
+							std::cout << "damaged by player " << msg->playerId << (msg->byPlayer ? " themselves: " : "'s npc: ") << msg->damage << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kRefStateChanged:

@@ -17,12 +17,12 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 8 | Pings ("over here") | Point a friend to something without voice chat | done (protocol 14) |
 | 9 | Shared kill XP | Friends get part of the XP for your kills, so nobody falls behind | done (protocol 14) |
 | 10 | Connection warnings | "Connection to the host is unstable" instead of silent rubber-banding | done (protocol 14) |
-| 11 | Friendly fire setting | Host chooses whether players can hurt each other (off by default) | later |
+| 11 | Friendly fire setting | Host chooses whether players can hurt each other (off by default) | done (protocol 15) |
 | 12 | Emotes | Wave, point, cheer on hotkeys, played on your character for others | later |
 | 13 | Session saved on the host's disk | The shared world state survives the host quitting | later |
 | 14 | Shared map discoveries | A location one player finds shows up on everyone's map | later |
 | 15 | Waiting and sleeping together | Waiting moves time for everyone | partly: the host's waiting moves everyone's clock; others snap back |
-| 16 | Quest completion messages | "Sam completed Out of Time" | later |
+| 16 | Quest completion messages | "Sam completed Out of Time" | done (protocol 15) |
 | 17 | Gunshot sound and muzzle flash | Fights sound and look complete | later (needs reverse engineering) |
 | 18 | Player markers on the compass | Find friends without opening the list | later (needs reverse engineering) |
 | 19 | Remote players' faces | Friends look like their own character | later (hard: face morphs) |

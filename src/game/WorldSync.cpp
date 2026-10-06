@@ -27,7 +27,14 @@ namespace WorldSync
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
-		std::vector<std::pair<std::uint32_t, float>> standInHits;  // (stand-in actor, damage)
+		struct StandInHit
+		{
+			std::uint32_t actor;
+			float         damage;
+			bool          byPlayer;  // we hit them, rather than an NPC in our world
+		};
+		std::vector<StandInHit> standInHits;
+		std::atomic<bool>       friendlyFire{ false };
 
 		struct Activation
 		{
@@ -194,16 +201,20 @@ namespace WorldSync
 				if (!target || !cause) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				// An NPC in our world hit another player's stand-in: that player takes the damage.
-				if (!cause->IsPlayerRef()) {
-					const auto victim = target->As<RE::Actor>();
-					if (victim && Puppets::IsPuppet(victim) && a_event.usesHitData) {
+				// An NPC in our world (or we, with friendly fire on) hit another player's stand-in:
+				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame().
+				const bool byPlayer = cause->IsPlayerRef();
+				const auto victim = target->As<RE::Actor>();
+				if (victim && Puppets::IsPuppet(victim)) {
+					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage });
+							standInHits.push_back({ victim->GetFormID(), damage, byPlayer });
 						}
 					}
+				}
+				if (!byPlayer) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// Only damage we dealt to others (not ourselves); each player reports their own hits.
@@ -514,9 +525,10 @@ namespace WorldSync
 		}
 	}
 
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId)
+	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
 	{
 		localPlayer = a_localPlayerId;
+		friendlyFire = a_friendlyFire;
 		if (a_sessionId != session) {
 			// A different session: none of its changes are in our world yet.
 			session = a_sessionId;
@@ -609,7 +621,7 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
-		std::vector<std::pair<std::uint32_t, float>> newStandInHits;
+		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
 		{
 			std::scoped_lock l{ inboxLock };
@@ -659,9 +671,9 @@ namespace WorldSync
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
 		}
-		for (const auto& [actorId, damage] : newStandInHits) {
-			if (const auto playerId = RemotePlayers::PlayerIdFor(actorId)) {
-				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, damage }, Protocol::MessageType::kPlayerHit));
+		for (const auto& hit : newStandInHits) {
+			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
+				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 

@@ -168,10 +168,15 @@ save's record and asks for the session's changes again.
   `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
   `SetPosition` once loaded.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
+- Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
+  become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
+  shots launch nothing, so each hit is only counted in the shooter's game.
+- Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
+  player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 14.
+Protocol VERSION 15.
 
 ## Prior art
 
