@@ -128,6 +128,11 @@ namespace Session
 					WorldSync::ApplyRemotePickup(msg->refId);
 				}
 				break;
+			case MessageType::kRefStateChanged:
+				if (const auto msg = Protocol::DecodeRefState(a_data)) {
+					WorldSync::ApplyRemoteRefState(*msg);
+				}
+				break;
 			case MessageType::kWorldState:
 				if (const auto msg = Protocol::DecodeWorldState(a_data)) {
 					WorldSync::ApplyWorldState(*msg);

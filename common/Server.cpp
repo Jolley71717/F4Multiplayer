@@ -114,6 +114,7 @@ void Server::Run(void* a_host)
 	std::unordered_set<std::uint32_t>         deadActors;
 	std::vector<Protocol::ContainerChange>    containerChanges;
 	std::unordered_set<std::uint32_t>         pickedUp;
+	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 
 	const auto shareable = [](std::uint32_t a_id) { return a_id != 0 && (a_id >> 24) != 0xFF; };
 
@@ -168,11 +169,14 @@ void Server::Run(void* a_host)
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
-		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty()) {
+		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty() || !refStates.empty()) {
 			Protocol::WorldState world;
 			world.deadActors.assign(deadActors.begin(), deadActors.end());
 			world.containerChanges = containerChanges;
 			world.pickedUp.assign(pickedUp.begin(), pickedUp.end());
+			for (const auto& [id, state] : refStates) {
+				world.refStates.push_back(state);
+			}
 			Net::Send(a_player.peer, Protocol::Encode(world), true);
 		}
 
@@ -278,6 +282,22 @@ void Server::Run(void* a_host)
 		relayToOthers(a_player, Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp));
 	};
 
+	const auto handleRefState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto state = Protocol::DecodeRefState(a_data);
+		if (!state || !shareable(state->refId) || (refStates.size() >= Protocol::MAX_WORLD_STATE_ACTORS && !refStates.contains(state->refId))) {
+			return;
+		}
+		auto& stored = refStates[state->refId];
+		if (stored == *state) {
+			return;
+		}
+		stored = *state;
+		relayToOthers(a_player, Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged));
+	};
+
 	while (!stopRequested) {
 		ENetEvent event;
 		while (enet_host_service(host, &event, 2) > 0) {
@@ -316,6 +336,9 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kReportPickup:
 							handlePickup(it->second, data);
+							break;
+						case Protocol::MessageType::kReportRefState:
+							handleRefState(it->second, data);
 							break;
 						default:
 							break;

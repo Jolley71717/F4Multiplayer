@@ -15,6 +15,7 @@ namespace WorldSync
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
 	void ApplyRemoteContainerChange(const Protocol::ContainerChange& a_change);
 	void ApplyRemotePickup(std::uint32_t a_refId);
+	void ApplyRemoteRefState(const Protocol::RefState& a_state);
 
 	// Applies pending remote changes to actors as they load. Call every frame.
 	void Frame();

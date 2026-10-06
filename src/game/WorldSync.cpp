@@ -35,6 +35,17 @@ namespace WorldSync
 		std::vector<Activation> recentActivations;
 		std::vector<Activation> unmatchedPickups;  // ref unused
 
+		// Doors and lockable things the player used recently. Their open/lock state is reported
+		// whenever it changes while watched (lockpicking can take a while, hence the long window).
+		constexpr auto WATCH_TIME = 60s;
+		struct Watched
+		{
+			Protocol::RefState lastSent;
+			Clock::time_point  until;
+		};
+		std::unordered_map<std::uint32_t, Watched>           watched;
+		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
+
 		// Remote loot changes for containers/items that weren't loaded yet, in arrival order.
 		std::vector<Protocol::ContainerChange> pendingContainer;
 		std::unordered_set<std::uint32_t>      pendingPickups;
@@ -250,6 +261,75 @@ namespace WorldSync
 			std::erase_if(unmatchedPickups, expired);
 		}
 
+		// Current open/lock state of a loaded reference, or nullopt if it isn't loaded or has neither.
+		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref)
+		{
+			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D()) {
+				return std::nullopt;
+			}
+			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
+			Protocol::RefState state{ a_ref->GetFormID() };
+			switch (RE::BGSOpenCloseForm::GetOpenState(a_ref)) {
+			case Open::kOpen:
+			case Open::kOpening:
+				state.open = Protocol::RefState::kYes;
+				break;
+			case Open::kClosed:
+			case Open::kClosing:
+				state.open = Protocol::RefState::kNo;
+				break;
+			default:
+				break;
+			}
+			if (const auto lock = a_ref->GetLock()) {
+				state.locked = (lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? Protocol::RefState::kYes : Protocol::RefState::kNo;
+			}
+			if (state.open == Protocol::RefState::kUnknown && state.locked == Protocol::RefState::kUnknown) {
+				return std::nullopt;
+			}
+			return state;
+		}
+
+		// Applies another player's door/lock state. Returns false if the reference isn't loaded.
+		bool TryApplyRefState(const Protocol::RefState& a_state)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
+			const auto current = ReadRefState(ref);
+			if (!current) {
+				return ref && ref->IsDeleted();  // gone for good: drop it
+			}
+			if (a_state.locked != Protocol::RefState::kUnknown && current->locked != Protocol::RefState::kUnknown && a_state.locked != current->locked) {
+				ref->GetLock()->SetLocked(a_state.locked == Protocol::RefState::kYes);
+				ref->AddLockChange();
+			}
+			if (a_state.open != Protocol::RefState::kUnknown && current->open != Protocol::RefState::kUnknown && a_state.open != current->open) {
+				RE::BGSOpenCloseForm::SetOpenState(ref, a_state.open == Protocol::RefState::kYes, false);
+			}
+			return true;
+		}
+
+		// Starts watching references the player activated, and reports changes to watched ones.
+		void WatchRefStates(Clock::time_point a_now, const std::vector<Activation>& a_activations)
+		{
+			for (const auto& activation : a_activations) {
+				auto& entry = watched[activation.ref];
+				entry.until = a_now + WATCH_TIME;
+			}
+			for (auto it = watched.begin(); it != watched.end();) {
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(it->first);
+				const auto state = ReadRefState(ref);
+				if (!state || a_now > it->second.until) {
+					it = watched.erase(it);
+					continue;
+				}
+				if (*state != it->second.lastSent) {
+					it->second.lastSent = *state;
+					outgoing.push_back(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
+				}
+				++it;
+			}
+		}
+
 		bool TryApplyPickup(std::uint32_t a_refId)
 		{
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
@@ -303,6 +383,9 @@ namespace WorldSync
 		for (const auto id : a_state.pickedUp) {
 			ApplyRemotePickup(id);
 		}
+		for (const auto& state : a_state.refStates) {
+			ApplyRemoteRefState(state);
+		}
 		REX::INFO("WorldSync: session state has {} dead actors", a_state.deadActors.size());
 	}
 
@@ -330,6 +413,22 @@ namespace WorldSync
 	{
 		if (IsShareable(a_refId) && !TryApplyPickup(a_refId)) {
 			pendingPickups.insert(a_refId);
+		}
+	}
+
+	void ApplyRemoteRefState(const Protocol::RefState& a_state)
+	{
+		if (!IsShareable(a_state.refId)) {
+			return;
+		}
+		// So our own watcher doesn't report this change back.
+		if (const auto it = watched.find(a_state.refId); it != watched.end()) {
+			it->second.lastSent = a_state;
+		}
+		if (TryApplyRefState(a_state)) {
+			pendingRefStates.erase(a_state.refId);
+		} else {
+			pendingRefStates[a_state.refId] = a_state;
 		}
 	}
 
@@ -380,7 +479,8 @@ namespace WorldSync
 
 		const auto now = Clock::now();
 		MatchPickups(now, newActivations, newPickups);
-		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty()) || now < nextApply) {
+		WatchRefStates(now, newActivations);
+		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
 			return;
 		}
 		nextApply = now + APPLY_INTERVAL;
@@ -398,6 +498,7 @@ namespace WorldSync
 		}
 		std::erase_if(pendingContainer, [](const Protocol::ContainerChange& a_change) { return TryApplyContainer(a_change); });
 		std::erase_if(pendingPickups, [](std::uint32_t a_id) { return TryApplyPickup(a_id); });
+		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -414,6 +515,8 @@ namespace WorldSync
 		pendingPickups.clear();
 		hitLastFrame.clear();
 		recentActivations.clear();
+		watched.clear();
+		pendingRefStates.clear();
 		unmatchedPickups.clear();
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
@@ -426,6 +529,6 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} pendingLoot={} pendingPickups={}", dead.size(), pending.size(), reported, applied, pendingContainer.size(), pendingPickups.size());
+		return std::format("dead={} pending={} reported={} applied={} pendingLoot={} pendingPickups={} watched={} pendingDoors={}", dead.size(), pending.size(), reported, applied, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size());
 	}
 }

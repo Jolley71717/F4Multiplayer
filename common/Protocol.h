@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 7;
+	inline constexpr std::uint16_t VERSION = 8;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -35,6 +35,7 @@ namespace Protocol
 		kReportHealth = 4,  // the sender damaged an actor; this is its health now
 		kReportContainer = 5,  // the sender took items from / put items into a container
 		kReportPickup = 6,     // the sender picked up an item lying in the world
+		kReportRefState = 7,   // a door/container the sender used is now open/closed, locked/unlocked
 
 		// server -> client
 		kWelcome = 101,
@@ -47,6 +48,7 @@ namespace Protocol
 		kActorHealth = 108,   // an actor's health changed in another player's world
 		kContainerChanged = 109,  // another player changed a container's contents
 		kRefPickedUp = 110,       // another player picked up this world item
+		kRefStateChanged = 111,   // a door/container's open or lock state changed in another player's world
 	};
 
 	enum StateFlags : std::uint8_t
@@ -140,11 +142,29 @@ namespace Protocol
 		std::uint32_t refId = 0;
 	};
 
+	// Open and lock state of a door (or anything else that opens) or a lockable container.
+	struct RefState
+	{
+		enum Value : std::uint8_t
+		{
+			kNo = 0,
+			kYes = 1,
+			kUnknown = 2,  // the reference has no such state; leave it alone
+		};
+
+		std::uint32_t refId = 0;
+		std::uint8_t  open = kUnknown;
+		std::uint8_t  locked = kUnknown;
+
+		bool operator==(const RefState&) const = default;
+	};
+
 	struct WorldState
 	{
 		std::vector<std::uint32_t>    deadActors;
 		std::vector<ContainerChange>  containerChanges;  // in order
 		std::vector<std::uint32_t>    pickedUp;
+		std::vector<RefState>         refStates;  // latest per reference
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
@@ -521,6 +541,29 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const RefState& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		w.U8(a_msg.open);
+		w.U8(a_msg.locked);
+		return w.Data();
+	}
+
+	inline std::optional<RefState> DecodeRefState(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RefState msg;
+		msg.refId = r.U32();
+		msg.open = r.U8();
+		msg.locked = r.U8();
+		if (!r.Ok() || !r.AtEnd() || msg.open > RefState::kUnknown || msg.locked > RefState::kUnknown) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
 	{
 		Writer w{ MessageType::kWorldState };
@@ -541,6 +584,13 @@ namespace Protocol
 			w.U32(static_cast<std::uint32_t>(change.count));
 		}
 		writeIds(a_msg.pickedUp);
+		const auto states = (std::min)(a_msg.refStates.size(), MAX_WORLD_STATE_ACTORS);
+		w.U32(static_cast<std::uint32_t>(states));
+		for (std::size_t i = 0; i < states; ++i) {
+			w.U32(a_msg.refStates[i].refId);
+			w.U8(a_msg.refStates[i].open);
+			w.U8(a_msg.refStates[i].locked);
+		}
 		return w.Data();
 	}
 
@@ -575,6 +625,20 @@ namespace Protocol
 			msg.containerChanges.push_back(change);
 		}
 		if (!r.Ok() || !readIds(msg.pickedUp)) {
+			return std::nullopt;
+		}
+		const auto states = r.U32();
+		if (states > MAX_WORLD_STATE_ACTORS) {
+			return std::nullopt;
+		}
+		for (std::uint32_t i = 0; i < states && r.Ok(); ++i) {
+			RefState state;
+			state.refId = r.U32();
+			state.open = r.U8();
+			state.locked = r.U8();
+			msg.refStates.push_back(state);
+		}
+		if (!r.Ok()) {
 			return std::nullopt;
 		}
 		return msg;

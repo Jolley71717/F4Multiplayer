@@ -56,14 +56,14 @@ shared. The server keeps the session's world state and sends it to late joiners 
 | Health | done, tested (incoming) | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | done, tested (both directions + late join) | TESContainerChangedEvent player<->container -> ContainerChange; receivers `removeitem`/`additem` |
 | World item pickup | done, tested (both directions) | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
+| Doors and locks | done, tested (both directions + late join) | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ## Status and next steps (2026-10-06)
 
-Protocol VERSION 7. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+Protocol VERSION 8. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-3. Doors and locks (TESActivateEvent on doors, lock state).
 4. Names above players (detour TESObjectREFR::GetDisplayFullName for puppets).
 5. Real look and gear: equipment sync (TESEquipEvent -> equip the same items on the puppet, weapon drawn).
 6. Shared enemy AI ownership (one client runs each NPC's AI, the others puppet it); Skyrim Together's design.

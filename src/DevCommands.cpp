@@ -222,6 +222,31 @@ namespace DevCommands
 			return count ? out : "none";
 		}
 
+		// doors [radius]: lists nearby doors with open state (1 open .. 4 closing) and lock (L locked, U unlocked, - none).
+		std::string Doors(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const float radius = ParseFloat(a_args).value_or(2000.0f);
+			std::string out;
+			int         count = 0;
+			cell->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+				if (base && base->Is(RE::ENUM_FORM_ID::kDOOR) && a_ref->Get3D() && count < 30) {
+					const auto lock = a_ref->GetLock();
+					const char lockChar = !lock ? '-' : (lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? 'L' : 'U';
+					out += std::format("{}{:08X} '{}' open={} lock={}", count ? "; " : "", a_ref->GetFormID(), RE::TESFullName::GetFullName(*base),
+						std::to_underlying(RE::BGSOpenCloseForm::GetOpenState(a_ref)), lockChar);
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
 		// items [radius]: lists nearby loose items that can be picked up.
 		std::string Items(std::string_view a_args)
 		{
@@ -542,6 +567,7 @@ namespace DevCommands
 			Entry{ "containers", Containers },
 			Entry{ "count", Count },
 			Entry{ "items", Items },
+			Entry{ "doors", Doors },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
