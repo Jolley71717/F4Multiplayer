@@ -14,6 +14,9 @@ namespace RemotePlayers
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
 
+	// What the player is wearing and holding (base forms); copied onto their puppet.
+	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
+
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();

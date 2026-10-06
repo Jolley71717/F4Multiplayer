@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/Equipment.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
@@ -26,6 +27,11 @@ namespace Session
 		std::uint32_t     localId = 0;
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
+
+		// Equipment is checked once a second and sent when it changes (and after joining).
+		constexpr auto                            EQUIPMENT_INTERVAL = 1s;
+		Clock::time_point                         nextEquipmentCheck{};
+		std::optional<std::vector<std::uint32_t>> sentEquipment;
 		Clock::time_point nextConnectAttempt{};
 		std::string       lastRejectReason;
 
@@ -84,6 +90,7 @@ namespace Session
 			case MessageType::kWelcome:
 				if (const auto msg = Protocol::DecodeWelcome(a_data)) {
 					welcomed = true;
+					sentEquipment.reset();
 					localId = msg->playerId;
 					lastRejectReason.clear();
 					Notify("Multiplayer: connected");
@@ -126,6 +133,11 @@ namespace Session
 			case MessageType::kRefPickedUp:
 				if (const auto msg = Protocol::DecodeRefPickedUp(a_data)) {
 					WorldSync::ApplyRemotePickup(msg->refId);
+				}
+				break;
+			case MessageType::kPlayerEquipment:
+				if (auto msg = Protocol::DecodeEquipment(a_data)) {
+					RemotePlayers::SetEquipment(msg->playerId, std::move(msg->items));
 				}
 				break;
 			case MessageType::kRefStateChanged:
@@ -206,6 +218,16 @@ namespace Session
 			return state;
 		}
 
+		// A settler of the same sex as our character, unless the ini picks someone.
+		std::uint32_t DefaultAppearance()
+		{
+			constexpr std::uint32_t FEMALE_SETTLER = 0x0020A578;
+			constexpr std::uint32_t MALE_SETTLER = 0x0020A57B;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto npc = player ? player->GetNPC() : nullptr;
+			return npc && npc->IsFemale() ? FEMALE_SETTLER : MALE_SETTLER;
+		}
+
 		// Echo test mode (see SetEcho).
 		constexpr std::uint32_t ECHO_ID = 0xFFFFFFFF;
 		bool                    echo = false;
@@ -254,7 +276,7 @@ namespace Session
 					hello.contentHash = contentHash;
 					hello.name = settings.playerName;
 					hello.password = settings.password;
-					hello.appearance = settings.myAppearance;
+					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					client.Send(Protocol::Encode(hello), true);
 				}
 				break;
@@ -267,7 +289,8 @@ namespace Session
 				RemotePlayers::RemoveAll();
 				WorldSync::Reset();
 				if (echo) {
-					RemotePlayers::Add(ECHO_ID, "Echo");
+					RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
+					sentEquipment.reset();
 				}
 				break;
 			case NetClient::Event::Type::kPacket:
@@ -287,6 +310,20 @@ namespace Session
 					state->y += echoOffsetY;
 					RemotePlayers::PushState(ECHO_ID, *state);
 				}
+			}
+		}
+
+		if ((welcomed || echo) && now >= nextEquipmentCheck && InGame()) {
+			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
+			auto items = Equipment::Read(RE::PlayerCharacter::GetSingleton());
+			if (!sentEquipment || *sentEquipment != items) {
+				if (welcomed) {
+					client.Send(Protocol::Encode(Protocol::Equipment{ 0, items }, Protocol::MessageType::kEquipment), true);
+				}
+				if (echo) {
+					RemotePlayers::SetEquipment(ECHO_ID, items);
+				}
+				sentEquipment = std::move(items);
 			}
 		}
 
@@ -331,7 +368,8 @@ namespace Session
 		echoOffsetX = a_offsetX;
 		echoOffsetY = a_offsetY;
 		if (a_enabled) {
-			RemotePlayers::Add(ECHO_ID, "Echo");
+			RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
+			sentEquipment.reset();
 		} else {
 			RemotePlayers::Remove(ECHO_ID);
 		}

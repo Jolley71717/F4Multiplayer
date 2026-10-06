@@ -1,5 +1,6 @@
 ﻿#include "DevCommands.h"
 
+#include "game/Equipment.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "net/Session.h"
@@ -245,6 +246,64 @@ namespace DevCommands
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return count ? out : "none";
+		}
+
+		// findgear <text>: weapons and armor whose name contains text.
+		std::string FindGear(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: findgear <text>";
+			}
+			const auto lower = [](std::string_view a_str) {
+				std::string out{ a_str };
+				std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return out;
+			};
+			const auto  needle = lower(a_args);
+			std::string result;
+			int         count = 0;
+			const auto  scan = [&](auto& a_forms) {
+				for (const auto form : a_forms) {
+					const auto name = form ? RE::TESFullName::GetFullName(*form) : ""sv;
+					if (count < 15 && !name.empty() && lower(name).find(needle) != std::string::npos) {
+						result += std::format("{}{:08X} '{}'", count++ ? "; " : "", form->GetFormID(), name);
+					}
+				}
+			};
+			const auto data = RE::TESDataHandler::GetSingleton();
+			scan(data->GetFormArray<RE::TESObjectWEAP>());
+			scan(data->GetFormArray<RE::TESObjectARMO>());
+			return count ? result : "none";
+		}
+
+		// equipped [refHex]: armor and weapons an actor (default: the player) has equipped.
+		std::string Equipped(std::string_view a_args)
+		{
+			RE::Actor* actor = RE::PlayerCharacter::GetSingleton();
+			if (!a_args.empty()) {
+				const auto id = ParseHex(a_args);
+				actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			}
+			if (!actor) {
+				return "error: no such actor";
+			}
+			std::string out = std::format("drawn={}", actor->GetWeaponMagicDrawn());
+			for (const auto id : Equipment::Read(actor)) {
+				const auto form = RE::TESForm::GetFormByID(id);
+				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
+			}
+			return out;
+		}
+
+		// draw on|off: draws or holsters the player's weapon.
+		std::string Draw(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->Get3D()) {
+				return "error: not in game";
+			}
+			player->DrawWeaponMagicHands(a_args == "on");
+			return "ok";
 		}
 
 		// items [radius]: lists nearby loose items that can be picked up.
@@ -568,6 +627,9 @@ namespace DevCommands
 			Entry{ "count", Count },
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
+			Entry{ "draw", Draw },
+			Entry{ "equipped", Equipped },
+			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },

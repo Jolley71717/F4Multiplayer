@@ -1,6 +1,7 @@
 ﻿#include "game/RemotePlayers.h"
 
 #include "Config.h"
+#include "game/Equipment.h"
 #include "game/Puppets.h"
 
 namespace RemotePlayers
@@ -27,6 +28,9 @@ namespace RemotePlayers
 		{
 			std::string          name;
 			std::uint32_t        appearance = 0;
+			std::vector<std::uint32_t> equipment;
+			bool                 hasEquipment = false;
+			bool                 equipmentApplied = false;
 			std::deque<Snapshot> snapshots;
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
@@ -228,6 +232,17 @@ namespace RemotePlayers
 		}
 	}
 
+	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end()) {
+			return;
+		}
+		it->second.equipment = std::move(a_items);
+		it->second.hasEquipment = true;
+		it->second.equipmentApplied = false;
+	}
+
 	void DespawnAll()
 	{
 		for (auto& [id, player] : players) {
@@ -288,6 +303,12 @@ namespace RemotePlayers
 				}
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
+				remote.equipmentApplied = false;
+			}
+
+			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
+				Equipment::Apply(actor, remote.equipment);
+				remote.equipmentApplied = true;
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{

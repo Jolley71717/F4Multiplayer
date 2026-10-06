@@ -22,6 +22,7 @@ namespace
 		std::uint32_t         id = 0;
 		std::string           name;
 		std::uint32_t         appearance = 0;
+		std::vector<std::uint32_t> equipment;
 		bool                  welcomed = false;
 		bool                  hasState = false;
 		bool                  stateDirty = false;
@@ -186,6 +187,9 @@ void Server::Run(void* a_host)
 			}
 			Net::Send(a_player.peer, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
 			Net::Send(peer, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
+			if (!other.equipment.empty()) {
+				Net::Send(a_player.peer, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
+			}
 			// Let the newcomer see players who are standing still right away.
 			other.stateDirty = other.hasState;
 		}
@@ -298,6 +302,19 @@ void Server::Run(void* a_host)
 		relayToOthers(a_player, Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged));
 	};
 
+	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		auto equipment = Protocol::DecodeEquipment(a_data);
+		if (!equipment) {
+			return;
+		}
+		equipment->playerId = a_player.id;
+		a_player.equipment = equipment->items;
+		relayToOthers(a_player, Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment));
+	};
+
 	while (!stopRequested) {
 		ENetEvent event;
 		while (enet_host_service(host, &event, 2) > 0) {
@@ -339,6 +356,9 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kReportRefState:
 							handleRefState(it->second, data);
+							break;
+						case Protocol::MessageType::kEquipment:
+							handleEquipment(it->second, data);
 							break;
 						default:
 							break;

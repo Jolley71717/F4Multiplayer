@@ -44,6 +44,16 @@
 - Loading screens are tied to presentation. Setting `presentInterval = 0` while `LoadingMenu` is open
   cuts load times substantially.
 
+## Remote player look
+
+- Body: a settler of the player's sex (0020A578 female / 0020A57B male) unless `iMyAppearance` is set.
+- Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second).
+  The puppet gets `removeallitems` + `additem`/`equipitem` via the console. Weapon mods and
+  the player's face are not copied.
+- Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
+- Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
+  the HUD shows the name when you look at them (pressing E still does nothing).
+
 ## Shared world (src/game/WorldSync.cpp)
 
 Actors, containers and world items are identified by reference form ID, which matches across
@@ -60,11 +70,10 @@ shared. The server keeps the session's world state and sends it to late joiners 
 
 ## Status and next steps (2026-10-06)
 
-Protocol VERSION 8. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+Protocol VERSION 9. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-5. Real look and gear: equipment sync (TESEquipEvent -> equip the same items on the puppet, weapon drawn).
 6. Shared enemy AI ownership (one client runs each NPC's AI, the others puppet it); Skyrim Together's design.
 7. Quest stage sync (opt-in).
 8. Re-package a release and test with the friend.

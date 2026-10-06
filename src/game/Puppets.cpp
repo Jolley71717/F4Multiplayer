@@ -23,6 +23,7 @@ namespace Puppets
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
+			std::chrono::steady_clock::time_point nextDrawAttempt{};
 		};
 
 		std::mutex                                    lock;
@@ -51,6 +52,22 @@ namespace Puppets
 			const auto values = RE::ActorValue::GetSingleton();
 			if (values && values->health) {
 				static_cast<RE::ActorValueOwner*>(a_actor)->RestoreActorValue(*values->health, 100000.0f);
+			}
+		}
+
+		// Draws or holsters the weapon to match the remote player. Retried at most once a second,
+		// since drawing takes a moment and fails while the puppet's equipment is being changed.
+		void MatchWeaponDrawn(RE::Actor* a_actor, const Puppet& a_puppet)
+		{
+			const bool wantDrawn = (a_puppet.target.flags & Protocol::kWeaponDrawn) != 0;
+			const auto now = std::chrono::steady_clock::now();
+			if (wantDrawn == a_actor->GetWeaponMagicDrawn() || now < a_puppet.nextDrawAttempt) {
+				return;
+			}
+			a_actor->DrawWeaponMagicHands(wantDrawn);
+			std::scoped_lock l{ lock };
+			if (const auto it = puppets.find(a_actor); it != puppets.end()) {
+				it->second.nextDrawAttempt = now + 1s;
 			}
 		}
 
@@ -125,6 +142,7 @@ namespace Puppets
 				a_this->SetHeading(puppet->target.heading);
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
 				DriveAnimation(a_this, *puppet);
+				MatchWeaponDrawn(a_this, *puppet);
 			}
 			a_this->UpdateNoAI(a_delta);
 		}

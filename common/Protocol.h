@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 8;
+	inline constexpr std::uint16_t VERSION = 9;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -36,6 +36,7 @@ namespace Protocol
 		kReportContainer = 5,  // the sender took items from / put items into a container
 		kReportPickup = 6,     // the sender picked up an item lying in the world
 		kReportRefState = 7,   // a door/container the sender used is now open/closed, locked/unlocked
+		kEquipment = 8,        // what the sender is wearing and holding
 
 		// server -> client
 		kWelcome = 101,
@@ -49,6 +50,7 @@ namespace Protocol
 		kContainerChanged = 109,  // another player changed a container's contents
 		kRefPickedUp = 110,       // another player picked up this world item
 		kRefStateChanged = 111,   // a door/container's open or lock state changed in another player's world
+		kPlayerEquipment = 112,   // what another player is wearing and holding
 	};
 
 	enum StateFlags : std::uint8_t
@@ -157,6 +159,15 @@ namespace Protocol
 		std::uint8_t  locked = kUnknown;
 
 		bool operator==(const RefState&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_EQUIPMENT = 32;
+
+	// Base forms of a player's equipped armor and weapons. playerId is ignored client -> server.
+	struct Equipment
+	{
+		std::uint32_t              playerId = 0;
+		std::vector<std::uint32_t> items;
 	};
 
 	struct WorldState
@@ -559,6 +570,37 @@ namespace Protocol
 		msg.open = r.U8();
 		msg.locked = r.U8();
 		if (!r.Ok() || !r.AtEnd() || msg.open > RefState::kUnknown || msg.locked > RefState::kUnknown) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Equipment& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		const auto count = (std::min)(a_msg.items.size(), MAX_EQUIPMENT);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.items[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<Equipment> DecodeEquipment(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Equipment msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (count > MAX_EQUIPMENT) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			msg.items.push_back(r.U32());
+		}
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
