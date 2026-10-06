@@ -46,13 +46,10 @@ namespace Compass
 			bool          pinned;   // off to the side or behind: shown at the edge, dimmer
 		};
 
-		// UI thread only.
-		struct Markers
-		{
-			Scaleform::GFx::Movie*                                     movie = nullptr;
-			std::unordered_map<std::uint32_t, std::unique_ptr<GValue>> shapes;
-		};
-		Markers markers;
+		// Players we have made a marker for (UI thread only). The markers themselves are looked up
+		// by name every time: loading a save rebuilds the HUD, maybe at the same address, and a
+		// kept reference would point at a destroyed object.
+		std::set<std::uint32_t> markerIds;
 
 		std::atomic<bool>          updateQueued{ false };
 		std::atomic<std::uint32_t> shown{ 0 };
@@ -100,22 +97,41 @@ namespace Compass
 			}
 		}
 
-		// The player's marker, outlined in black so it stands out from the HUD, centered on (0, 0).
-		std::unique_ptr<GValue> MakeShape(Scaleform::GFx::Movie* a_movie, GValue& a_compass, const Marker& a_marker)
+		std::string ChildName(std::uint32_t a_playerId)
 		{
-			auto shape = std::make_unique<GValue>();
-			a_movie->CreateObject(shape.get(), "flash.display.Shape");
-			GValue graphics;
-			if (!shape->IsDisplayObject() || !shape->GetMember("graphics", &graphics)) {
-				return nullptr;
+			return std::format("f4mpMarker{}", a_playerId);
+		}
+
+		// The player's marker on the compass, if it's there.
+		std::optional<GValue> FindShape(GValue& a_compass, std::uint32_t a_playerId)
+		{
+			const auto name = ChildName(a_playerId);
+			GValue arg{ name.c_str() };
+			GValue shape;
+			if (!a_compass.Invoke("getChildByName", &shape, &arg, 1) || !shape.IsDisplayObject()) {
+				return std::nullopt;
 			}
+			return shape;
+		}
+
+		// The player's marker, outlined in black so it stands out from the HUD, centered on (0, 0).
+		std::optional<GValue> MakeShape(Scaleform::GFx::Movie* a_movie, GValue& a_compass, std::uint32_t a_playerId)
+		{
+			const auto& marker = MarkerOf(a_playerId);
+			GValue shape;
+			a_movie->CreateObject(&shape, "flash.display.Shape");
+			GValue graphics;
+			if (!shape.IsDisplayObject() || !shape.GetMember("graphics", &graphics)) {
+				return std::nullopt;
+			}
+			const auto name = ChildName(a_playerId);
+			shape.SetMember("name", GValue(name.c_str()));
 			Draw(graphics, "lineStyle", { GValue(1.5), GValue(0x101010u), GValue(0.9) });
-			Draw(graphics, "beginFill", { GValue(a_marker.color), GValue(1.0) });
-			DrawShape(graphics, a_marker.shape);
+			Draw(graphics, "beginFill", { GValue(marker.color), GValue(1.0) });
+			DrawShape(graphics, marker.shape);
 			Draw(graphics, "endFill", {});
-			GValue child{ *shape };
-			if (!a_compass.Invoke("addChild", nullptr, &child, 1)) {
-				return nullptr;
+			if (!a_compass.Invoke("addChild", nullptr, &shape, 1)) {
+				return std::nullopt;
 			}
 			++made;
 			return shape;
@@ -128,30 +144,19 @@ namespace Compass
 			const auto ui = RE::UI::GetSingleton();
 			const auto menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
 			const auto movie = menu ? menu->uiMovie.get() : nullptr;
-			if (!movie) {
-				return;
-			}
-			if (movie != markers.movie) {
-				// A new HUD: the old shapes went with the old movie (don't touch them).
-				for (auto& [id, shape] : markers.shapes) {
-					static_cast<void>(shape.release());
-				}
-				markers.shapes.clear();
-				markers.movie = movie;
-			}
-			GValue compass;
-			if (!movie->GetVariable(&compass, COMPASS_PATH) || !compass.IsDisplayObject()) {
+			GValue     compass;
+			if (!movie || !movie->GetVariable(&compass, COMPASS_PATH) || !compass.IsDisplayObject()) {
 				return;
 			}
 			std::uint32_t visible = 0;
 			for (const auto& target : a_targets) {
-				auto& shape = markers.shapes[target.id];
+				auto shape = FindShape(compass, target.id);
 				if (!shape) {
-					shape = MakeShape(movie, compass, MarkerOf(target.id));
+					shape = MakeShape(movie, compass, target.id);
 					if (!shape) {
-						markers.shapes.erase(target.id);
 						continue;
 					}
+					markerIds.insert(target.id);
 				}
 				shape->SetMember("x", GValue(static_cast<double>(target.x)));
 				shape->SetMember("y", GValue(0.0));
@@ -159,9 +164,11 @@ namespace Compass
 				shape->SetMember("visible", GValue(true));
 				++visible;
 			}
-			for (auto& [id, shape] : markers.shapes) {
+			for (const auto id : markerIds) {
 				if (std::ranges::none_of(a_targets, [&](const Target& a_target) { return a_target.id == id; })) {
-					shape->SetMember("visible", GValue(false));
+					if (auto shape = FindShape(compass, id)) {
+						shape->SetMember("visible", GValue(false));
+					}
 				}
 			}
 			shown = visible;

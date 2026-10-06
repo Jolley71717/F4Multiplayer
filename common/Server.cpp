@@ -178,7 +178,7 @@ void Server::Run()
 
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
-	std::vector<Protocol::ContainerChange>                containerChanges;  // index = session index
+	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
@@ -455,8 +455,8 @@ void Server::Run()
 			return;
 		}
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
-		containerChanges.push_back(*change);
-		broadcast(Protocol::Encode(Protocol::IndexedContainerChange{ index, a_player.id, *change }), true, 0);
+		containerChanges.push_back({ index, a_player.id, *change });
+		broadcast(Protocol::Encode(containerChanges.back()), true, 0);
 	};
 
 	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {

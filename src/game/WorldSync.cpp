@@ -76,6 +76,7 @@ namespace WorldSync
 
 		std::unordered_set<std::uint32_t> pendingPickups;
 		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
+		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -610,9 +611,13 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
-		// Our own changes too: the server only sends those our world doesn't have.
-		for (std::size_t i = 0; i < a_state.containerChanges.size(); ++i) {
-			OfferContainerChange(a_state.containerFirstIndex + static_cast<std::uint32_t>(i), a_state.containerChanges[i], false);
+		// The server sends the changes our world doesn't have: those made since our save. Our own
+		// are skipped. We loaded a save from before them, so replaying them would take loot from
+		// the container that isn't in our inventory any more (or duplicate what we put in).
+		for (const auto& change : a_state.containerChanges) {
+			const bool ours = change.playerId == localPlayer;
+			ownSkipped += ours && change.index >= containerNext;
+			OfferContainerChange(change.index, change.change, ours);
 		}
 		for (const auto id : a_state.pickedUp) {
 			ApplyRemotePickup(id);
@@ -843,7 +848,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={} personal={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size(), personalSkipped);
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size(), personalSkipped,
+			ownSkipped);
 	}
 }
