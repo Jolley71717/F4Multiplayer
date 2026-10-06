@@ -19,6 +19,11 @@ namespace RemotePlayers
 		// Exterior puppets further than this are outside the loaded area and are despawned.
 		constexpr float MAX_EXTERIOR_DISTANCE = 9000.0f;
 
+		// The game sometimes puts the NPC's own outfit back on a stand-in (when its inventory is
+		// set up late, or its 3D reloads). What it wears is checked this often and put right.
+		constexpr auto EQUIPMENT_CHECK_INTERVAL = 3s;
+		constexpr int  MAX_EQUIPMENT_FIXES = 3;  // in a row without it sticking, then give up
+
 		struct Snapshot
 		{
 			Clock::time_point     received;
@@ -32,6 +37,8 @@ namespace RemotePlayers
 			std::vector<std::uint32_t> equipment;
 			bool                 hasEquipment = false;
 			bool                 equipmentApplied = false;
+			Clock::time_point    equipmentCheckAt{};
+			int                  equipmentFixes = 0;
 			std::deque<Snapshot> snapshots;
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
@@ -45,6 +52,20 @@ namespace RemotePlayers
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
+		std::uint32_t                         equipmentFixesTotal = 0;
+
+		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
+		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto item : a_items) {
+				const auto form = RE::TESForm::GetFormByID(item);
+				if (form && form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+					out.push_back(item);
+				}
+			}
+			return out;
+		}
 
 		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
 
@@ -270,6 +291,7 @@ namespace RemotePlayers
 		it->second.equipment = std::move(a_items);
 		it->second.hasEquipment = true;
 		it->second.equipmentApplied = false;
+		it->second.equipmentFixes = 0;
 	}
 
 	std::vector<Info> List()
@@ -378,6 +400,7 @@ namespace RemotePlayers
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
 				remote.equipmentApplied = false;
+				remote.equipmentFixes = 0;
 				remote.shownName.clear();
 			}
 
@@ -391,6 +414,17 @@ namespace RemotePlayers
 				Equipment::Apply(actor, remote.equipment);
 				Puppets::RedrawWeapon(actor);
 				remote.equipmentApplied = true;
+				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
+			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
+				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
+				if (Equipment::Read(actor) == Wearable(remote.equipment)) {
+					remote.equipmentFixes = 0;
+				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
+					++remote.equipmentFixes;
+					++equipmentFixesTotal;
+					remote.equipmentApplied = false;  // applied again next frame
+					REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again", remote.name);
+				}
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{
@@ -414,6 +448,9 @@ namespace RemotePlayers
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
 				last.x, last.y, last.cell, last.worldspace);
+		}
+		if (equipmentFixesTotal) {
+			out += std::format(" gearFixes={}", equipmentFixesTotal);
 		}
 		return out.empty() ? "none" : out;
 	}
