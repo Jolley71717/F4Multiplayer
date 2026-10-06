@@ -797,6 +797,69 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// topics <npcBaseHex>: topics with lines conditioned on that speaker (for `say`).
+		std::string Topics(std::string_view a_args)
+		{
+			const auto parsed = ParseHex(a_args);
+			if (!parsed) {
+				return "error: usage: topics <npcBaseHex>";
+			}
+			const auto id = *parsed;
+			std::set<std::uint32_t> topics;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [formId, form] : *map) {
+				const auto info = form ? form->As<RE::TESTopicInfo>() : nullptr;
+				if (info && info->parentTopic && topics.size() < 20) {
+					const auto speaker = info->GetSpeaker();
+					if (speaker && speaker->GetFormID() == id) {
+						topics.insert(info->parentTopic->GetFormID());
+					}
+				}
+			}
+			std::string out;
+			for (const auto topic : topics) {
+				out += std::format("{:08X} ", topic);
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// say <refHex> <topicHex>: the actor says a line from the topic (Papyrus ObjectReference.Say).
+		std::string Say(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto topicId = args.size() == 2 ? ParseHex(args[1]) : std::nullopt;
+			const auto topic = ref && topicId ? RE::TESForm::GetFormByID<RE::TESTopic>(*topicId) : nullptr;
+			if (!topic) {
+				return "error: usage: say <refHex> <topicHex>";
+			}
+			const bool ok = Papyrus::CallMethod(ref, "ObjectReference", "Say", topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr));
+			return ok ? "dispatched" : "error: dispatch failed";
+		}
+
+		// npcvoice <actorHex>: what the game knows about the actor's current line.
+		std::string NpcVoice(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			if (!actor) {
+				return "error: usage: npcvoice <actorHex>";
+			}
+			const auto process = actor->currentProcess;
+			const auto high = process ? process->high : nullptr;
+			if (!high) {
+				return std::format("talking={} voiceTimer={:.2f} high=none", actor->IsTalking(), actor->voiceTimer);
+			}
+			const char* text = high->strVoiceSubtitle.c_str();
+			return std::format("talking={} voiceTimer={:.2f} state={} elapsed={:.2f} hpTimer={:.2f} subtitle='{}' lastGreeting={:08X} sound={:X}",
+				actor->IsTalking(), actor->voiceTimer, static_cast<int>(high->voiceState.get()), high->voiceTimeElapsed, high->voiceTimer, text ? text : "",
+				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->soundHandle[0].soundID);
+		}
+
 		// dialogue: the conversation the player is in, and whether the speaker is saying something.
 		std::string Dialogue(std::string_view)
 		{
@@ -908,6 +971,9 @@ namespace DevCommands
 			Entry{ "voice", VoiceCommand },
 			Entry{ "markers", Markers },
 			Entry{ "dialogue", Dialogue },
+			Entry{ "topics", Topics },
+			Entry{ "say", Say },
+			Entry{ "npcvoice", NpcVoice },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },

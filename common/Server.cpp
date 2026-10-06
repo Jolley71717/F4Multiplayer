@@ -75,6 +75,7 @@ namespace
 		bool                       floodLogged = false;
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
+		Clock::time_point          lastLine{};
 		bool                       local = false;  // on the server's machine
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
 		float                      xpReports = XP_REPORT_BURST;
@@ -660,6 +661,20 @@ void Server::Run()
 		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
 	};
 
+	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto now = Clock::now();
+		if (!allowEvent(a_player) || now - a_player.lastLine < std::chrono::milliseconds(250)) {
+			return;
+		}
+		auto line = Protocol::DecodeLine(a_data);
+		if (!line) {
+			return;
+		}
+		a_player.lastLine = now;
+		line->playerId = a_player.id;
+		broadcast(Protocol::Encode(*line, Protocol::MessageType::kLineSpoken), true, a_player.key);
+	};
+
 	const auto handleXp = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -847,6 +862,9 @@ void Server::Run()
 			break;
 		case MessageType::kPing:
 			handlePing(a_player, a_data);
+			break;
+		case MessageType::kReportLine:
+			handleLine(a_player, a_data);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);

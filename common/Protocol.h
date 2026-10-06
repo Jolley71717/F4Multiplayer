@@ -16,11 +16,12 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 19;
+	inline constexpr std::uint16_t VERSION = 20;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
+	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
 
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
@@ -67,6 +68,7 @@ namespace Protocol
 		kRevive = 22,             // the sender helped a downed player up
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 		kReportMarkers = 24,      // map markers the sender discovered
+		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
 		kWelcome = 101,
@@ -95,6 +97,7 @@ namespace Protocol
 		kRevived = 124,           // another player helped you up
 		kVoiceRelay = 125,        // a piece of another player's voice
 		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
+		kLineSpoken = 127,        // another player (or an NPC they run) said something
 	};
 
 	enum StateFlags : std::uint8_t
@@ -320,6 +323,15 @@ namespace Protocol
 		std::uint32_t cell = 0;
 		std::uint32_t worldspace = 0;
 		float         x = 0, y = 0, z = 0;
+	};
+
+	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
+	// playerId is ignored client -> server.
+	struct Line
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t speaker = 0;
+		std::string   text;
 	};
 
 	struct Heartbeat
@@ -1147,6 +1159,29 @@ namespace Protocol
 		msg.y = r.F32();
 		msg.z = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Line& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.speaker);
+		w.Str(a_msg.text, MAX_LINE_LENGTH);
+		return w.Data();
+	}
+
+	inline std::optional<Line> DecodeLine(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Line msg;
+		msg.playerId = r.U32();
+		msg.speaker = r.U32();
+		msg.text = r.Str(MAX_LINE_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsShareableRef(msg.speaker))) {
 			return std::nullopt;
 		}
 		return msg;
