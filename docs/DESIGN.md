@@ -85,7 +85,7 @@ shared. The server keeps the session's world state and sends it to late joiners 
 
 ## Status and next steps (2026-10-06)
 
-Protocol VERSION 11. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+Protocol VERSION 11. Release 0.4.0 (protocol 11) is the current build for players; older zips cannot join it.
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).

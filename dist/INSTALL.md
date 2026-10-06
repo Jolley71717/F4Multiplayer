@@ -53,7 +53,23 @@ Optionally set the same `sPassword` for everyone.
    "<name> joined" messages.
 3. Players appear to each other when they are in the same interior, or near each other outside.
 
-Each player keeps their own save, quests and inventory. Meet up by travelling to the same place.
+Each player keeps their own save, character and inventory. Meet up by travelling to the same place.
+
+## What is shared
+
+- **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
+  holstered), and your name when someone looks at you.
+- **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
+  the same raider in the same place. Enemies can attack any player, and the damage reaches that
+  player. Killing or hurting an NPC counts for everyone.
+- **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
+  ground, doors opened/closed and locks picked.
+- **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
+  the others (never backwards). Turn this off with `bSyncQuests = false` if a quest misbehaves.
+- Players who join later catch up on everything that already happened this session.
+
+For the closest shared world, start from similar saves (for example, everyone at the same point in
+the story). Things that were already different between your saves before the session stay different.
 
 ## Dedicated server (optional)
 
@@ -62,8 +78,12 @@ without playing. Everyone (including you) then joins with `sServerAddress`.
 
 ## Known limitations (early version)
 
-- Other players use a stand-in character model.
-- Combat, items, quests, containers and NPCs are not shared yet; each player's world is their own.
+- Other players appear as a settler of the same sex wearing their gear: their face, hair and
+  weapon mods aren't copied.
+- NPCs run by another player aim at you but don't show their firing animation in your game (their
+  damage still applies).
+- Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- Workshop building is not shared.
 
 ## Problems
 
