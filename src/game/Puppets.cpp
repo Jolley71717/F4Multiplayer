@@ -1,5 +1,7 @@
 ﻿#include "game/Puppets.h"
 
+#include "Protocol.h"
+
 namespace Puppets
 {
 	namespace
@@ -16,13 +18,10 @@ namespace Puppets
 
 		struct Puppet
 		{
-			RE::NiPoint3                          position;
-			float                                 heading = 0.0f;
-			float                                 speed = 0.0f;
-			float                                 direction = 0.0f;
-			std::uint16_t                         moveMode = 0;
+			Motion                                target;
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
+			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 		};
 
@@ -55,32 +54,46 @@ namespace Puppets
 			}
 		}
 
-		// With AI off nothing feeds the locomotion graph, so we do: Speed/Direction every
-		// frame, plus moveStart/moveStop events when the remote player starts or stops.
-		void DriveLocomotion(RE::Actor* a_actor, const Puppet& a_puppet)
+		// With AI off nothing feeds the animation graph, so we do: Speed/Direction every frame,
+		// moveStart/moveStop when the remote player starts or stops, and jump events when they
+		// leave or reach the ground.
+		void DriveAnimation(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
 			static const RE::BSFixedString speedVar{ "Speed" };
 			static const RE::BSFixedString directionVar{ "Direction" };
 			static const RE::BSFixedString moveStart{ "moveStart" };
 			static const RE::BSFixedString moveStop{ "moveStop" };
+			static const RE::BSFixedString jumpStart{ "jumpStart" };
+			static const RE::BSFixedString jumpFall{ "jumpFall" };
+			static const RE::BSFixedString jumpLand{ "jumpLand" };
 
-			const auto graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+			const auto& motion = a_puppet.target;
 
 			bool moving = a_puppet.moving;
-			if (!moving && a_puppet.speed > MOVE_START) {
+			if (!moving && motion.speed > MOVE_START) {
 				moving = graph->NotifyAnimationGraphImpl(moveStart);
-			} else if (moving && a_puppet.speed < MOVE_STOP) {
+			} else if (moving && motion.speed < MOVE_STOP) {
 				graph->NotifyAnimationGraphImpl(moveStop);
 				moving = false;
 			}
 
-			graph->SetGraphVariableFloat(speedVar, moving ? a_puppet.speed : 0.0f);
-			graph->SetGraphVariableFloat(directionVar, a_puppet.direction);
+			const bool inAir = (motion.flags & Protocol::kInAir) != 0;
+			const bool wasInAir = (a_puppet.appliedFlags & Protocol::kInAir) != 0;
+			if (inAir && !wasInAir) {
+				graph->NotifyAnimationGraphImpl((motion.flags & Protocol::kJumping) ? jumpStart : jumpFall);
+			} else if (!inAir && wasInAir) {
+				graph->NotifyAnimationGraphImpl(jumpLand);
+			}
 
-			if (moving != a_puppet.moving) {
+			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
+			graph->SetGraphVariableFloat(directionVar, motion.direction);
+
+			if (moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
 				std::scoped_lock l{ lock };
 				if (const auto it = puppets.find(a_actor); it != puppets.end()) {
 					it->second.moving = moving;
+					it->second.appliedFlags = motion.flags;
 				}
 			}
 		}
@@ -108,10 +121,10 @@ namespace Puppets
 			SuppressBehavior(a_this);
 			KeepHealthy(a_this);
 			if (puppet->hasTarget) {
-				a_this->SetPosition(puppet->position, true);
-				a_this->SetHeading(puppet->heading);
-				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->moveMode;
-				DriveLocomotion(a_this, *puppet);
+				a_this->SetPosition(puppet->target.position, true);
+				a_this->SetHeading(puppet->target.heading);
+				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
+				DriveAnimation(a_this, *puppet);
 			}
 			a_this->UpdateNoAI(a_delta);
 		}
@@ -230,15 +243,11 @@ namespace Puppets
 		return puppets.contains(a_actor);
 	}
 
-	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed, float a_direction, std::uint16_t a_moveMode)
+	void SetTarget(RE::Actor* a_actor, const Motion& a_motion)
 	{
 		std::scoped_lock l{ lock };
 		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-			it->second.position = a_position;
-			it->second.heading = a_heading;
-			it->second.speed = a_speed;
-			it->second.direction = a_direction;
-			it->second.moveMode = a_moveMode;
+			it->second.target = a_motion;
 			it->second.hasTarget = true;
 		}
 	}

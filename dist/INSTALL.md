@@ -1,4 +1,4 @@
-# F4Multiplayer: install and play
+﻿# F4Multiplayer: install and play
 
 Up to 4 players. Everyone needs:
 
@@ -7,6 +7,9 @@ Up to 4 players. Everyone needs:
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
 - This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)
 - **The same mods in the same load order** as everyone else (the server refuses mismatches)
+
+**Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
+before playing; this is an early alpha.
 
 Always start the game with F4SE (`f4se_loader.exe`, or your mod manager's F4SE launcher).
 

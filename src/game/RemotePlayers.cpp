@@ -286,8 +286,14 @@ namespace RemotePlayers
 				remote.registered = actor;
 			}
 
-			Puppets::SetTarget(actor, { state->x, state->y, state->z }, state->heading, state->speed,
-				RelativeDirection(sampled->motionAngle, state->heading), state->moveMode);
+			Puppets::SetTarget(actor, Puppets::Motion{
+				.position = { state->x, state->y, state->z },
+				.heading = state->heading,
+				.speed = state->speed,
+				.direction = RelativeDirection(sampled->motionAngle, state->heading),
+				.moveMode = state->moveMode,
+				.flags = state->flags,
+			});
 		}
 	}
 

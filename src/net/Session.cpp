@@ -155,6 +155,23 @@ namespace Session
 			if (player->IsSneaking()) {
 				state.flags |= Protocol::kSneaking;
 			}
+			if (player->GetWeaponMagicDrawn()) {
+				state.flags |= Protocol::kWeaponDrawn;
+			}
+			using CharacterState = RE::IMovementState::CHARACTER_STATE;
+			switch (static_cast<const RE::IMovementState&>(*player).DoGetCharacterState()) {
+			case CharacterState::kJumping:
+				state.flags |= Protocol::kInAir | Protocol::kJumping;
+				break;
+			case CharacterState::kInAir:
+				state.flags |= Protocol::kInAir;
+				break;
+			case CharacterState::kSwimming:
+				state.flags |= Protocol::kSwimming;
+				break;
+			default:
+				break;
+			}
 			return state;
 		}
 

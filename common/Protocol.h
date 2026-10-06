@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 3;
+	inline constexpr std::uint16_t VERSION = 4;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -46,7 +46,9 @@ namespace Protocol
 		kRunning = 1 << 0,
 		kSneaking = 1 << 1,
 		kWeaponDrawn = 1 << 2,
-		kInAir = 1 << 3,
+		kInAir = 1 << 3,      // off the ground (jumping or falling)
+		kJumping = 1 << 4,    // left the ground by jumping rather than falling
+		kSwimming = 1 << 5,
 	};
 
 	// A player's transform and movement, sampled on the owning client.

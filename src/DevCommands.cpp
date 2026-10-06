@@ -68,7 +68,10 @@ namespace DevCommands
 			const auto w = root ? root->world.translate : RE::NiPoint3{};
 			const auto values = RE::ActorValue::GetSingleton();
 			const float health = values && values->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*values->health) : -1.0f;
-			return std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
+			const auto base = actor->GetObjectReference();
+			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
+			return std::format(" base={:08X} female={} template={}", base ? base->GetFormID() : 0, npc && npc->IsFemale(), npc && npc->UsesTemplate()) +
+			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
 				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), w.x, w.y, w.z);
 		}
 
@@ -244,7 +247,7 @@ namespace DevCommands
 			const auto         actor = ref->As<RE::Actor>();
 			if (actor && Puppets::IsPuppet(actor)) {
 				const float heading = args.size() > 4 ? ParseFloat(args[4]).value_or(0.0f) * TO_RADIANS : actor->data.angle.z;
-				Puppets::SetTarget(actor, pos, heading);
+				Puppets::SetTarget(actor, Puppets::Motion{ .position = pos, .heading = heading });
 			} else if (actor) {
 				actor->SetPosition(pos, true);
 				if (args.size() > 4) {
@@ -272,7 +275,7 @@ namespace DevCommands
 				return "released";
 			}
 			Puppets::Register(actor);
-			Puppets::SetTarget(actor, actor->data.location, actor->data.angle.z);
+			Puppets::SetTarget(actor, Puppets::Motion{ .position = actor->data.location, .heading = actor->data.angle.z });
 			return std::format("puppeted niFlags={:08X} boolFlags={:08X} moreFlags={:08X}",
 				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
 		}

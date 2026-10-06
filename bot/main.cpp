@@ -44,6 +44,7 @@ int main(int argc, char* argv[])
 	std::uint32_t appearance = 0;
 	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
+	bool          jump = false;  // jump once during each standing phase
 
 	for (int i = 1; i + 1 < argc; i += 2) {
 		const std::string_view key = argv[i];
@@ -73,6 +74,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--jump") {
+			jump = value == "1";
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
 		} else {
@@ -184,6 +187,17 @@ int main(int argc, char* argv[])
 			state.x = cx + radius * std::sin(a);
 			state.y = cy + radius * std::cos(a);
 			state.z = cz;
+
+			// Optional jump 1 s into the standing phase: 0.8 s arc, 60 units high.
+			const float standTime = std::fmod(elapsed, 7.0f) - 4.0f;
+			if (jump && standTime > 1.0f && standTime < 1.8f) {
+				const float t = (standTime - 1.0f) / 0.8f;
+				state.z += 60.0f * std::sin(t * std::numbers::pi_v<float>);
+				state.flags |= Protocol::kInAir;
+				if (t < 0.5f) {
+					state.flags |= Protocol::kJumping;
+				}
+			}
 			state.heading = a + std::numbers::pi_v<float> / 2;  // tangent to the circle
 			state.speed = walking ? walkSpeed : 0.0f;
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
