@@ -868,6 +868,75 @@ namespace DevCommands
 			return "queued (see the log)";
 		}
 
+		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
+		std::string WeapSound(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			const auto process = actor ? actor->currentProcess : nullptr;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return "error: usage: weapsound <actorHex> (loaded actor)";
+			}
+			const auto sound = [](const RE::BGSSoundDescriptorForm* a_form) { return a_form ? a_form->GetFormID() : 0; };
+			std::string out;
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr;
+				if (!weapon) {
+					continue;
+				}
+				const auto instance = static_cast<RE::TESObjectWEAP::InstanceData*>(equipped.item.instanceData.get());
+				const auto& base = weapon->weaponData;
+				out += std::format("weap={:08X} base: attack={:08X} 2d={:08X} loop={:08X} fail={:08X}", weapon->GetFormID(), sound(base.attackSound), sound(base.attackSound2D),
+					sound(base.attackLoop), sound(base.attackFailSound));
+				if (const auto data = static_cast<RE::EquippedWeaponData*>(equipped.data.get())) {
+					const auto mapping = data->attackSoundData;
+					out += std::format(" equipped: kssm={:08X} descriptor={:08X} tail={:08X} vats={:08X} handle={:X}", mapping ? mapping->GetFormID() : 0,
+						sound(mapping ? mapping->descriptor : nullptr), sound(mapping ? mapping->exteriorTail : nullptr), sound(mapping ? mapping->vatsDescriptor : nullptr),
+						data->attackSound.soundID);
+				}
+				if (instance) {
+					out += std::format(" instance: attack={:08X} 2d={:08X} loop={:08X} fail={:08X} keywords:", sound(instance->attackSound), sound(instance->attackSound2D),
+						sound(instance->attackLoop), sound(instance->attackFailSound));
+					if (instance->keywords) {
+						for (std::uint32_t i = 0; i < instance->keywords->GetNumKeywords(); ++i) {
+							const auto keyword = instance->keywords->GetKeywordAt(i).value_or(nullptr);
+							out += std::format(" {:08X}", keyword ? keyword->GetFormID() : 0);
+						}
+					}
+				}
+				out += "; ";
+			}
+			return out.empty() ? "no weapon" : out;
+		}
+
+		// playsound <soundHex> [flagsHex] [refHex]: plays a sound descriptor at a reference (default
+		// the player) through the audio manager, with the given usage flags (default 10).
+		std::string PlaySoundCmd(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto soundId = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto sound = soundId ? RE::TESForm::GetFormByID<RE::BGSSoundDescriptorForm>(*soundId) : nullptr;
+			const auto flags = args.size() > 1 ? ParseHex(args[1]).value_or(0x10) : 0x10;
+			const auto refId = args.size() > 2 ? ParseHex(args[2]) : std::nullopt;
+			RE::TESObjectREFR* ref = refId ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(*refId) : RE::PlayerCharacter::GetSingleton();
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			if (!sound || !ref || !audio) {
+				return "error: usage: playsound <soundHex> [flagsHex] [refHex]";
+			}
+			RE::BSSoundHandle handle;
+			if (!audio->GetSoundHandle(handle, sound, 0.0f, flags)) {
+				return "no handle";
+			}
+			handle.SetPosition(ref->data.location);
+			if (const auto root = ref->Get3D()) {
+				handle.SetObjectToFollow(root);
+			}
+			const bool played = handle.Play();
+			return std::format("handle={:X} played={}", handle.soundID, played);
+		}
+
 		// idles <text>: idle animations whose editor ID, event or file contains the text.
 		std::string Idles(std::string_view a_args)
 		{
@@ -1153,6 +1222,8 @@ namespace DevCommands
 			Entry{ "named", Named },
 			Entry{ "gfx", Gfx },
 			Entry{ "gfxset", GfxSet },
+			Entry{ "weapsound", WeapSound },
+			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
