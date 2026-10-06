@@ -18,6 +18,7 @@ namespace Puppets
 
 		struct Puppet
 		{
+			Kind                                  kind = Kind::kPlayer;
 			Motion                                target;
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
@@ -37,12 +38,14 @@ namespace Puppets
 		constexpr auto SUPPRESSED_BEHAVIOR =
 			std::to_underlying(RE::Actor::BOOL_FLAGS::kMovementBlocked) |
 			std::to_underlying(RE::Actor::BOOL_FLAGS::kAttackingDisabled) |
-			std::to_underlying(RE::Actor::BOOL_FLAGS::kCastingDisabled) |
-			std::to_underlying(RE::Actor::BOOL_FLAGS::kEssential);
+			std::to_underlying(RE::Actor::BOOL_FLAGS::kCastingDisabled);
 
-		void SuppressBehavior(RE::Actor* a_actor)
+		void SuppressBehavior(RE::Actor* a_actor, Kind a_kind)
 		{
 			a_actor->boolFlags.set(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
+			if (a_kind == Kind::kPlayer) {
+				a_actor->boolFlags.set(RE::Actor::BOOL_FLAGS::kEssential);
+			}
 		}
 
 		// Damage to a stand-in is meaningless (the real player is elsewhere), and a dying or
@@ -135,8 +138,16 @@ namespace Puppets
 				return;
 			}
 
-			SuppressBehavior(a_this);
-			KeepHealthy(a_this);
+			// A mirrored NPC that died here ragdolls normally.
+			if (puppet->kind == Kind::kNpc && a_this->IsDead(false)) {
+				originalUpdate(a_this, a_delta);
+				return;
+			}
+
+			SuppressBehavior(a_this, puppet->kind);
+			if (puppet->kind == Kind::kPlayer) {
+				KeepHealthy(a_this);
+			}
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
@@ -229,18 +240,20 @@ namespace Puppets
 		}
 	}
 
-	void Register(RE::Actor* a_actor)
+	void Register(RE::Actor* a_actor, Kind a_kind)
 	{
 		if (!a_actor) {
 			return;
 		}
 		InstallHook(a_actor);
-		InstallActivationHooks(a_actor);
-		SuppressBehavior(a_actor);
+		if (a_kind == Kind::kPlayer) {
+			InstallActivationHooks(a_actor);
+		}
+		SuppressBehavior(a_actor, a_kind);
 		a_actor->InitiateDoNothingPackage();
 
 		std::scoped_lock l{ lock };
-		puppets.try_emplace(a_actor, Puppet{ .nextIdleRefresh = std::chrono::steady_clock::now() + IDLE_REFRESH });
+		puppets.try_emplace(a_actor, Puppet{ .kind = a_kind, .nextIdleRefresh = std::chrono::steady_clock::now() + IDLE_REFRESH });
 		puppetCount = puppets.size();
 	}
 
@@ -261,7 +274,16 @@ namespace Puppets
 	bool IsPuppet(const RE::Actor* a_actor)
 	{
 		std::scoped_lock l{ lock };
-		return puppets.contains(a_actor);
+		const auto it = puppets.find(a_actor);
+		return it != puppets.end() && it->second.kind == Kind::kPlayer;
+	}
+
+	void ReleaseNpc(RE::Actor* a_actor)
+	{
+		Unregister(a_actor);
+		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
+		// Drop the do-nothing package and pick the NPC's own again.
+		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
 	}
 
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion)
@@ -281,7 +303,7 @@ namespace Puppets
 		{
 			std::scoped_lock l{ lock };
 			for (auto& [actor, puppet] : puppets) {
-				if (now >= puppet.nextIdleRefresh) {
+				if (now >= puppet.nextIdleRefresh && !actor->IsDead(false)) {
 					puppet.nextIdleRefresh = now + IDLE_REFRESH;
 					refresh.push_back(const_cast<RE::Actor*>(actor));
 				}

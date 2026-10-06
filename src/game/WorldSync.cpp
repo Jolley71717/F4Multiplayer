@@ -1,6 +1,8 @@
 ﻿#include "game/WorldSync.h"
 
+#include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/RemotePlayers.h"
 
 namespace WorldSync
 {
@@ -21,6 +23,7 @@ namespace WorldSync
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
+		std::vector<std::pair<std::uint32_t, float>> standInHits;  // (stand-in actor, damage)
 
 		struct Activation
 		{
@@ -151,10 +154,22 @@ namespace WorldSync
 			{
 				const auto target = a_event.target.get();
 				const auto cause = a_event.cause.get();
-				// Only damage we dealt; each player reports their own hits.
-				if (!target || !cause || !cause->IsPlayerRef()) {
+				if (!target || !cause) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				// An NPC in our world hit another player's stand-in: that player takes the damage.
+				if (!cause->IsPlayerRef()) {
+					const auto victim = target->As<RE::Actor>();
+					if (victim && Puppets::IsPuppet(victim) && a_event.usesHitData) {
+						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
+						if (damage > 0.0f) {
+							std::scoped_lock l{ inboxLock };
+							standInHits.push_back({ victim->GetFormID(), damage });
+						}
+					}
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				// Only damage we dealt; each player reports their own hits.
 				const auto actor = target->As<RE::Actor>();
 				if (actor && IsShareable(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
@@ -437,12 +452,14 @@ namespace WorldSync
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
+		std::vector<std::pair<std::uint32_t, float>> newStandInHits;
 		std::vector<Activation>    newActivations;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
+			newStandInHits.swap(standInHits);
 			newActivations.swap(activateInbox);
 			for (auto& packet : lootInbox) {
 				outgoing.push_back(std::move(packet));
@@ -476,6 +493,14 @@ namespace WorldSync
 		}
 		hitLastFrame.clear();
 		hitLastFrame.insert(newHits.begin(), newHits.end());
+		for (const auto id : newHits) {
+			NpcSync::OnLocalHit(id);
+		}
+		for (const auto& [actorId, damage] : newStandInHits) {
+			if (const auto playerId = RemotePlayers::PlayerIdFor(actorId)) {
+				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, damage }, Protocol::MessageType::kPlayerHit));
+			}
+		}
 
 		const auto now = Clock::now();
 		MatchPickups(now, newActivations, newPickups);
@@ -520,6 +545,7 @@ namespace WorldSync
 		unmatchedPickups.clear();
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
+		standInHits.clear();
 		activateInbox.clear();
 		deathInbox.clear();
 		hitInbox.clear();

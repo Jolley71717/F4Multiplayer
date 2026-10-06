@@ -4,6 +4,7 @@
 #include "Protocol.h"
 #include "Server.h"
 #include "game/Equipment.h"
+#include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
@@ -83,6 +84,17 @@ namespace Session
 			return player && player->GetParentCell();
 		}
 
+		// An NPC hit our stand-in in another player's world.
+		void ApplyDamageToPlayer(float a_damage)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto values = RE::ActorValue::GetSingleton();
+			if (!player || !values || !values->health || player->IsDead(false) || a_damage <= 0.0f) {
+				return;
+			}
+			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_damage, 1000.0f));
+		}
+
 		void HandlePacket(std::span<const std::uint8_t> a_data)
 		{
 			using Protocol::MessageType;
@@ -92,6 +104,7 @@ namespace Session
 					welcomed = true;
 					sentEquipment.reset();
 					localId = msg->playerId;
+					NpcSync::SetLocalPlayer(localId);
 					lastRejectReason.clear();
 					Notify("Multiplayer: connected");
 				}
@@ -133,6 +146,21 @@ namespace Session
 			case MessageType::kRefPickedUp:
 				if (const auto msg = Protocol::DecodeRefPickedUp(a_data)) {
 					WorldSync::ApplyRemotePickup(msg->refId);
+				}
+				break;
+			case MessageType::kActorOwners:
+				if (const auto msg = Protocol::DecodeOwners(a_data)) {
+					NpcSync::ApplyOwners(*msg);
+				}
+				break;
+			case MessageType::kActorStatesRelay:
+				if (const auto msg = Protocol::DecodeActorStates(a_data)) {
+					NpcSync::ApplyStates(*msg);
+				}
+				break;
+			case MessageType::kPlayerDamaged:
+				if (const auto msg = Protocol::DecodePlayerHit(a_data)) {
+					ApplyDamageToPlayer(msg->damage);
 				}
 				break;
 			case MessageType::kPlayerEquipment:
@@ -288,6 +316,7 @@ namespace Session
 				localId = 0;
 				RemotePlayers::RemoveAll();
 				WorldSync::Reset();
+				NpcSync::Reset();
 				if (echo) {
 					RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 					sentEquipment.reset();
@@ -335,6 +364,15 @@ namespace Session
 		}
 		WorldSync::Frame();
 
+		if (welcomed) {
+			NpcSync::Frame();
+		}
+		for (auto& packet : NpcSync::TakeOutgoing()) {
+			if (welcomed) {
+				client.Send(std::move(packet.data), packet.reliable);
+			}
+		}
+
 		RemotePlayers::Update();
 		Puppets::Tick();
 	}
@@ -342,6 +380,7 @@ namespace Session
 	void OnBeforeSaveOrLoad()
 	{
 		RemotePlayers::DespawnAll();
+		NpcSync::ReleaseMirrors();
 	}
 
 	std::string Describe()
@@ -359,7 +398,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			status, localId, hostedServer && hostedServer->Running(), ServerAddress(), contentHash,
-			lastRejectReason, WorldSync::Describe(), RemotePlayers::Describe());
+			lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe(), RemotePlayers::Describe());
 	}
 
 	void SetEcho(bool a_enabled, float a_offsetX, float a_offsetY)

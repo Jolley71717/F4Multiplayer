@@ -17,6 +17,9 @@ namespace RemotePlayers
 	// What the player is wearing and holding (base forms); copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
 
+	// The player a stand-in actor belongs to, or 0.
+	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId);
+
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();

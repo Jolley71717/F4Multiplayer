@@ -295,6 +295,19 @@ namespace DevCommands
 			return out;
 		}
 
+		// combat <refHex>: whether an actor is in combat and whom it targets.
+		std::string Combat(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			if (!actor) {
+				return "error: usage: combat <actorHex>";
+			}
+			const auto target = actor->currentCombatTarget.get();
+			return std::format("inCombat={} target={:08X} dead={} hp={:.0f}", actor->IsInCombat(), target ? target->GetFormID() : 0, actor->IsDead(false),
+				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
+		}
+
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
@@ -628,6 +641,7 @@ namespace DevCommands
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
+			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },

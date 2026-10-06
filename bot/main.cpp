@@ -49,6 +49,9 @@ int main(int argc, char* argv[])
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
+	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
+	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
+	std::uint32_t actorStatesSeen = 0;
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
 	std::uint32_t lootItem = 0;
 	std::int32_t  lootCount = 0;
@@ -82,6 +85,12 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--own") {
+			ok = ParseNumber(value, ownRef, 16);
+		} else if (key == "--hit-player") {
+			// id:damage
+			const auto colon = value.find(':');
+			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) && ParseNumber(value.substr(colon + 1), hitPlayer.damage);
 		} else if (key == "--door") {
 			// ref:open:locked, hex:0|1|2:0|1|2 (2 = leave alone)
 			const auto first = value.find(':');
@@ -161,6 +170,14 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (ownRef) {
+								std::cout << "claiming npc\n";
+								Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { ownRef, true } }), true);
+							}
+							if (hitPlayer.playerId) {
+								std::cout << "reporting player hit\n";
+								Net::Send(peer, Protocol::Encode(hitPlayer, Protocol::MessageType::kPlayerHit), true);
+							}
 							if (doorState.refId) {
 								std::cout << "reporting door state\n";
 								Net::Send(peer, Protocol::Encode(doorState, Protocol::MessageType::kReportRefState), true);
@@ -211,6 +228,32 @@ int main(int argc, char* argv[])
 					case Protocol::MessageType::kRefPickedUp:
 						if (const auto msg = Protocol::DecodeRefPickedUp(data)) {
 							std::cout << "picked up: " << std::hex << msg->refId << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kActorOwners:
+						if (const auto msg = Protocol::DecodeOwners(data)) {
+							std::cout << "owners:";
+							for (const auto& o : *msg) {
+								std::cout << ' ' << std::hex << o.refId << std::dec << '=' << o.playerId;
+							}
+							std::cout << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kActorStatesRelay:
+						if (const auto msg = Protocol::DecodeActorStates(data)) {
+							// Print every 20th batch so the output stays readable.
+							if (actorStatesSeen++ % 20 == 0) {
+								std::cout << "npc states:";
+								for (const auto& s : *msg) {
+									std::cout << ' ' << std::hex << s.refId << std::dec << '@' << int(s.x) << ',' << int(s.y) << ' ' << int(s.speed);
+								}
+								std::cout << std::endl;
+							}
+						}
+						break;
+					case Protocol::MessageType::kPlayerDamaged:
+						if (const auto msg = Protocol::DecodePlayerHit(data)) {
+							std::cout << "damaged by player " << msg->playerId << "'s npc: " << msg->damage << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kRefStateChanged:
@@ -288,6 +331,21 @@ int main(int argc, char* argv[])
 			state.speed = walking ? walkSpeed : 0.0f;
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
+			if (ownRef) {
+				// We walk the NPC instead; our own player stays put far away.
+				Protocol::ActorState npc;
+				npc.refId = ownRef;
+				npc.x = state.x;
+				npc.y = state.y;
+				npc.z = state.z;
+				npc.heading = state.heading;
+				npc.speed = state.speed;
+				npc.moveMode = state.moveMode;
+				if (sequence % 2 == 0) {  // 10 Hz like the game
+					Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorState>{ npc }, Protocol::MessageType::kActorStates), false);
+				}
+				state.x = state.y = 0.0f;
+			}
 			Net::Send(peer, Protocol::Encode(state), false);
 		}
 	}

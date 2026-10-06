@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 9;
+	inline constexpr std::uint16_t VERSION = 10;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -37,6 +37,10 @@ namespace Protocol
 		kReportPickup = 6,     // the sender picked up an item lying in the world
 		kReportRefState = 7,   // a door/container the sender used is now open/closed, locked/unlocked
 		kEquipment = 8,        // what the sender is wearing and holding
+		kClaimActors = 9,      // the sender has these NPCs loaded and offers to run their AI
+		kReleaseActors = 10,   // the sender no longer runs these NPCs (unloaded or dead)
+		kActorStates = 11,     // positions of NPCs the sender runs
+		kPlayerHit = 12,       // an NPC in the sender's world hit another player's stand-in
 
 		// server -> client
 		kWelcome = 101,
@@ -51,6 +55,9 @@ namespace Protocol
 		kRefPickedUp = 110,       // another player picked up this world item
 		kRefStateChanged = 111,   // a door/container's open or lock state changed in another player's world
 		kPlayerEquipment = 112,   // what another player is wearing and holding
+		kActorOwners = 113,       // who runs these NPCs' AI (0 = nobody)
+		kActorStatesRelay = 114,  // NPC positions from their owners
+		kPlayerDamaged = 115,     // an NPC hit you in another player's world
 	};
 
 	enum StateFlags : std::uint8_t
@@ -168,6 +175,43 @@ namespace Protocol
 	{
 		std::uint32_t              playerId = 0;
 		std::vector<std::uint32_t> items;
+	};
+
+	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
+	inline constexpr std::size_t MAX_ACTORS_PER_PACKET = 64;
+
+	struct ActorClaim
+	{
+		std::uint32_t refId = 0;
+		bool          force = false;  // the NPC is the sender's companion: take it over
+	};
+
+	struct ActorOwner
+	{
+		std::uint32_t refId = 0;
+		std::uint32_t playerId = 0;  // 0 = nobody
+	};
+
+	struct ActorState
+	{
+		std::uint32_t refId = 0;
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;
+		float         speed = 0;
+		std::uint16_t moveMode = 0;
+		std::uint8_t  flags = kNone;  // StateFlags
+
+		[[nodiscard]] bool IsFinite() const
+		{
+			return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(heading) && std::isfinite(speed);
+		}
+	};
+
+	// kPlayerHit: playerId is the victim. kPlayerDamaged: playerId is unused.
+	struct PlayerHit
+	{
+		std::uint32_t playerId = 0;
+		float         damage = 0.0f;
 	};
 
 	struct WorldState
@@ -601,6 +645,126 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Generic list packets: a count byte followed by fixed-size entries.
+	template <class T, class WriteFn>
+	std::vector<std::uint8_t> EncodeList(MessageType a_type, const std::vector<T>& a_items, WriteFn a_write)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_items.size(), MAX_ACTORS_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			a_write(w, a_items[i]);
+		}
+		return w.Data();
+	}
+
+	template <class T, class ReadFn>
+	std::optional<std::vector<T>> DecodeList(std::span<const std::uint8_t> a_data, ReadFn a_read)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto count = r.U8();
+		if (count > MAX_ACTORS_PER_PACKET) {
+			return std::nullopt;
+		}
+		std::vector<T> items;
+		items.reserve(count);
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			items.push_back(a_read(r));
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return items;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const std::vector<ActorClaim>& a_msg)
+	{
+		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(a.force); });
+	}
+
+	inline auto DecodeClaims(std::span<const std::uint8_t> a_data)
+	{
+		return DecodeList<ActorClaim>(a_data, [](Reader& r) { ActorClaim a; a.refId = r.U32(); a.force = r.U8() != 0; return a; });
+	}
+
+	// kReleaseActors
+	inline std::vector<std::uint8_t> EncodeRelease(const std::vector<std::uint32_t>& a_msg)
+	{
+		return EncodeList(MessageType::kReleaseActors, a_msg, [](Writer& w, std::uint32_t a) { w.U32(a); });
+	}
+
+	inline auto DecodeRelease(std::span<const std::uint8_t> a_data)
+	{
+		return DecodeList<std::uint32_t>(a_data, [](Reader& r) { return r.U32(); });
+	}
+
+	inline std::vector<std::uint8_t> Encode(const std::vector<ActorOwner>& a_msg)
+	{
+		return EncodeList(MessageType::kActorOwners, a_msg, [](Writer& w, const ActorOwner& a) { w.U32(a.refId); w.U32(a.playerId); });
+	}
+
+	inline auto DecodeOwners(std::span<const std::uint8_t> a_data)
+	{
+		return DecodeList<ActorOwner>(a_data, [](Reader& r) { ActorOwner a; a.refId = r.U32(); a.playerId = r.U32(); return a; });
+	}
+
+	// kActorStates (client -> server) or kActorStatesRelay (server -> client).
+	inline std::vector<std::uint8_t> Encode(const std::vector<ActorState>& a_msg, MessageType a_type)
+	{
+		return EncodeList(a_type, a_msg, [](Writer& w, const ActorState& a) {
+			w.U32(a.refId);
+			w.F32(a.x);
+			w.F32(a.y);
+			w.F32(a.z);
+			w.F32(a.heading);
+			w.F32(a.speed);
+			w.U16(a.moveMode);
+			w.U8(a.flags);
+		});
+	}
+
+	inline std::optional<std::vector<ActorState>> DecodeActorStates(std::span<const std::uint8_t> a_data)
+	{
+		auto states = DecodeList<ActorState>(a_data, [](Reader& r) {
+			ActorState a;
+			a.refId = r.U32();
+			a.x = r.F32();
+			a.y = r.F32();
+			a.z = r.F32();
+			a.heading = r.F32();
+			a.speed = r.F32();
+			a.moveMode = r.U16();
+			a.flags = r.U8();
+			return a;
+		});
+		if (states && !std::ranges::all_of(*states, [](const ActorState& a) { return a.IsFinite(); })) {
+			return std::nullopt;
+		}
+		return states;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const PlayerHit& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.F32(a_msg.damage);
+		return w.Data();
+	}
+
+	inline std::optional<PlayerHit> DecodePlayerHit(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerHit msg;
+		msg.playerId = r.U32();
+		msg.damage = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f) {
 			return std::nullopt;
 		}
 		return msg;

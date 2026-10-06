@@ -1,8 +1,8 @@
-#pragma once
+﻿#pragma once
 
-// Puppets are actors driven entirely by us (remote players). Their AI update is replaced
-// with the engine's no-AI update, and their transform and animation state are forced to a
-// target every frame.
+// Puppets are actors driven entirely by us: remote players' stand-ins, and NPCs whose AI runs in
+// another player's game. Their AI update is replaced with the engine's no-AI update, and their
+// transform and animation state are forced to a target every frame.
 namespace Puppets
 {
 	// How a puppet should be positioned and animated.
@@ -16,12 +16,22 @@ namespace Puppets
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
 	};
 
+	enum class Kind
+	{
+		kPlayer,  // a remote player's stand-in: can't be hurt, activated or killed
+		kNpc,     // a world NPC mirrored from its owner: can be hurt and killed normally
+	};
+
 	// Marks an actor as a puppet. Installs the hooks on first use.
-	void Register(RE::Actor* a_actor);
+	void Register(RE::Actor* a_actor, Kind a_kind = Kind::kPlayer);
 	void Unregister(RE::Actor* a_actor);
 	void Clear();
 
+	// True for remote players' stand-ins (not mirrored NPCs).
 	[[nodiscard]] bool IsPuppet(const RE::Actor* a_actor);
+
+	// Unregisters a mirrored NPC and gives it back to its own AI.
+	void ReleaseNpc(RE::Actor* a_actor);
 
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);

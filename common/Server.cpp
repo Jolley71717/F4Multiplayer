@@ -116,6 +116,8 @@ void Server::Run(void* a_host)
 	std::vector<Protocol::ContainerChange>    containerChanges;
 	std::unordered_set<std::uint32_t>         pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
+	// Which player's game runs each NPC's AI.
+	std::unordered_map<std::uint32_t, std::uint32_t> actorOwners;
 
 	const auto shareable = [](std::uint32_t a_id) { return a_id != 0 && (a_id >> 24) != 0xFF; };
 
@@ -237,6 +239,7 @@ void Server::Run(void* a_host)
 		if (deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS || !deadActors.insert(death->refId).second) {
 			return;
 		}
+		actorOwners.erase(death->refId);
 		const auto relay = Protocol::Encode(*death, Protocol::MessageType::kActorDied);
 		for (const auto& [peer, other] : players) {
 			if (peer != a_player.peer && other.welcomed) {
@@ -302,6 +305,118 @@ void Server::Run(void* a_host)
 		relayToOthers(a_player, Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged));
 	};
 
+	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = nullptr: everyone.
+	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ENetPeer* a_to) {
+		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
+			for (const auto& [peer, other] : players) {
+				if (other.welcomed && (!a_to || peer == a_to)) {
+					Net::Send(peer, packet, true);
+				}
+			}
+		}
+	};
+
+	const auto releaseAll = [&](std::uint32_t a_playerId) {
+		std::vector<Protocol::ActorOwner> released;
+		std::erase_if(actorOwners, [&](const auto& a_entry) {
+			if (a_entry.second != a_playerId) {
+				return false;
+			}
+			released.push_back({ a_entry.first, 0 });
+			return true;
+		});
+		sendOwners(released, nullptr);
+	};
+
+	// The first player to claim an NPC runs it; a player whose companion it is takes it over.
+	const auto handleClaims = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto claims = Protocol::DecodeClaims(a_data);
+		if (!claims) {
+			return;
+		}
+		std::vector<Protocol::ActorOwner> changed;
+		std::vector<Protocol::ActorOwner> current;
+		for (const auto& claim : *claims) {
+			if (!shareable(claim.refId) || deadActors.contains(claim.refId)) {
+				continue;
+			}
+			const auto it = actorOwners.find(claim.refId);
+			if (it == actorOwners.end() || (claim.force && it->second != a_player.id)) {
+				if (it == actorOwners.end() && actorOwners.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+					continue;
+				}
+				actorOwners[claim.refId] = a_player.id;
+				changed.push_back({ claim.refId, a_player.id });
+			} else {
+				current.push_back({ claim.refId, it->second });
+			}
+		}
+		sendOwners(changed, nullptr);
+		sendOwners(current, a_player.peer);
+	};
+
+	const auto handleRelease = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto refs = Protocol::DecodeRelease(a_data);
+		if (!refs) {
+			return;
+		}
+		std::vector<Protocol::ActorOwner> released;
+		for (const auto ref : *refs) {
+			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second == a_player.id) {
+				actorOwners.erase(it);
+				released.push_back({ ref, 0 });
+			}
+		}
+		sendOwners(released, nullptr);
+	};
+
+	const auto handleActorStates = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.statesInWindow > MAX_STATES_PER_SECOND) {
+			return;
+		}
+		auto states = Protocol::DecodeActorStates(a_data);
+		if (!states) {
+			return;
+		}
+		// Only the owner's view of an NPC counts.
+		std::erase_if(*states, [&](const Protocol::ActorState& a_state) {
+			const auto it = actorOwners.find(a_state.refId);
+			return it == actorOwners.end() || it->second != a_player.id;
+		});
+		if (states->empty()) {
+			return;
+		}
+		const auto relay = Protocol::Encode(*states, Protocol::MessageType::kActorStatesRelay);
+		for (const auto& [peer, other] : players) {
+			if (peer != a_player.peer && other.welcomed) {
+				Net::Send(peer, relay, false);
+			}
+		}
+	};
+
+	const auto handlePlayerHit = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto hit = Protocol::DecodePlayerHit(a_data);
+		if (!hit || hit->playerId == a_player.id) {
+			return;
+		}
+		for (const auto& [peer, other] : players) {
+			if (other.welcomed && other.id == hit->playerId) {
+				Net::Send(peer, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage }, Protocol::MessageType::kPlayerDamaged), true);
+			}
+		}
+	};
+
 	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
 			return;
@@ -360,6 +475,18 @@ void Server::Run(void* a_host)
 						case Protocol::MessageType::kEquipment:
 							handleEquipment(it->second, data);
 							break;
+						case Protocol::MessageType::kClaimActors:
+							handleClaims(it->second, data);
+							break;
+						case Protocol::MessageType::kReleaseActors:
+							handleRelease(it->second, data);
+							break;
+						case Protocol::MessageType::kActorStates:
+							handleActorStates(it->second, data);
+							break;
+						case Protocol::MessageType::kPlayerHit:
+							handlePlayerHit(it->second, data);
+							break;
 						default:
 							break;
 						}
@@ -379,7 +506,9 @@ void Server::Run(void* a_host)
 						}
 						log(std::format("server: '{}' left", it->second.name));
 					}
+					const auto leftId = it->second.id;
 					players.erase(it);
+					releaseAll(leftId);
 				}
 				break;
 

@@ -40,6 +40,8 @@ namespace RemotePlayers
 
 		std::map<std::uint32_t, RemotePlayer> players;
 
+		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
+
 		float LerpAngle(float a_from, float a_to, float a_t)
 		{
 			constexpr float twoPi = std::numbers::pi_v<float> * 2.0f;
@@ -184,6 +186,10 @@ namespace RemotePlayers
 			}
 
 			Puppets::Register(actor);
+			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
+			// and hitting it isn't a crime.
+			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
+
 			// Shown when looking at them, instead of the NPC's name.
 			if (actor->extraList) {
 				actor->extraList->SetOverrideName(a_player.name.c_str());
@@ -241,6 +247,16 @@ namespace RemotePlayers
 		it->second.equipment = std::move(a_items);
 		it->second.hasEquipment = true;
 		it->second.equipmentApplied = false;
+	}
+
+	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)
+	{
+		for (const auto& [id, remote] : players) {
+			if (remote.registered && remote.registered->GetFormID() == a_actorFormId) {
+				return id;
+			}
+		}
+		return 0;
 	}
 
 	void DespawnAll()

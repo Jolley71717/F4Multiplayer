@@ -54,6 +54,20 @@
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).
 
+## Shared NPC AI (src/game/NpcSync.cpp)
+
+- Every loaded, living NPC from a plugin file has one owner, assigned by the server: the first player
+  to claim it. A player's current companion is always taken over by that player (force claim), and
+  hitting an NPC someone else runs takes it over too (at most every 5 s per NPC) so it fights back.
+- The owner sends its NPCs' position/heading/speed/moveMode/weapon-drawn at 10 Hz (unreliable). The
+  others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with 150 ms
+  interpolation, but it can be hurt and killed (health and deaths sync as before).
+- When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
+  claims it. Mirrored NPCs are handed back to their own AI before saving.
+- Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
+  stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health).
+- Not yet: NPC attack animations and projectiles in non-owner worlds (they aim but don't fire there).
+
 ## Shared world (src/game/WorldSync.cpp)
 
 Actors, containers and world items are identified by reference form ID, which matches across
@@ -70,11 +84,10 @@ shared. The server keeps the session's world state and sends it to late joiners 
 
 ## Status and next steps (2026-10-06)
 
-Protocol VERSION 9. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+Protocol VERSION 10. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-6. Shared enemy AI ownership (one client runs each NPC's AI, the others puppet it); Skyrim Together's design.
 7. Quest stage sync (opt-in).
 8. Re-package a release and test with the friend.
 
