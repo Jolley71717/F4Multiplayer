@@ -180,7 +180,8 @@ save's record and asks for the session's changes again.
   within the same day. Weather is forced only outside in the same worldspace.
 - Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
   `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
-  `SetPosition` once loaded.
+  `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`),
+  furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed

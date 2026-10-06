@@ -306,6 +306,27 @@ namespace Party
 			}
 		}
 
+		// Why the player can't teleport right now ("" = they can). Teleporting out of a
+		// conversation, a scene or furniture (a workbench, a vertibird seat) can leave a quest
+		// stuck, and Survival has no fast travel.
+		std::string TeleportBlocked(RE::PlayerCharacter* a_player)
+		{
+			const auto ui = RE::UI::GetSingleton();
+			if (ui && ui->GetMenuOpen("DialogueMenu"sv)) {
+				return "while talking";
+			}
+			if (a_player->GetCurrentScene()) {
+				return "during a scene";
+			}
+			if (static_cast<int>(a_player->DoGetSitSleepState()) != 0) {
+				return "while sitting or using something";
+			}
+			if (a_player->GetDifficultyLevel() >= RE::DifficultyLevel::kSurvival) {
+				return "in Survival (no fast travel)";
+			}
+			return {};
+		}
+
 		void HandleHotkeys()
 		{
 			for (const auto action : Hotkeys::Poll()) {
@@ -528,6 +549,10 @@ namespace Party
 		}
 		const auto player = Player();
 		if (!player || player->IsDead(false)) {
+			return;
+		}
+		if (const auto reason = TeleportBlocked(player); !reason.empty()) {
+			Hud::Notify(std::format("Can't teleport {}", reason));
 			return;
 		}
 		if (!target->state) {
