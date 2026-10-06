@@ -19,8 +19,9 @@ namespace Config
 		std::size_t   maxPlayers = 4;
 		std::string   password;
 
-		// NPC base form used for other players' characters.
-		std::uint32_t puppetBaseForm = 0x0002268A;  // Magnolia
+		// NPC base form used for other players' characters. It should belong to no factions,
+		// or hitting another player can count as a crime against that faction.
+		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)
 
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;

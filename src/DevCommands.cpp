@@ -137,6 +137,39 @@ namespace DevCommands
 			return count ? result : "no matches";
 		}
 
+		// safenpc [female|male]: lists named human NPC bases with no factions and no templates,
+		// i.e. candidates for remote player stand-ins that won't drag in crimes or quests.
+		std::string SafeNpc(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto playerRace = player ? player->race : nullptr;
+			const bool wantFemale = a_args == "female";
+			const bool wantMale = a_args == "male";
+
+			std::string result;
+			int         count = 0;
+			for (const auto npc : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESNPC>()) {
+				if (!npc || npc->UsesTemplate() || !npc->factions.empty() || npc->IsUnique()) {
+					continue;
+				}
+				if (playerRace && npc->GetFormRace() != playerRace) {
+					continue;
+				}
+				if ((wantFemale && !npc->IsFemale()) || (wantMale && npc->IsFemale())) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*npc);
+				if (name.empty()) {
+					continue;
+				}
+				result += std::format("{}{:08X} '{}'", count ? "; " : "", npc->GetFormID(), name);
+				if (++count == 25) {
+					break;
+				}
+			}
+			return count ? result : "no matches";
+		}
+
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
 		std::string Spawn(std::string_view a_args)
 		{
@@ -414,6 +447,7 @@ namespace DevCommands
 			Entry{ "console", Console },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "spawn", Spawn },
+			Entry{ "safenpc", SafeNpc },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
