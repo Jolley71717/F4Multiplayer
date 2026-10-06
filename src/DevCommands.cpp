@@ -308,6 +308,24 @@ namespace DevCommands
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
 		}
 
+		// quests [text]: story/faction/side quests with a stage set (or whose name contains text).
+		std::string Quests(std::string_view a_args)
+		{
+			std::string out;
+			int         count = 0;
+			for (const auto quest : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>()) {
+				if (!quest || quest->data.questType <= 0 || quest->data.questType == 6 || count >= 25) {
+					continue;
+				}
+				const std::string_view name = quest->GetFullName() ? quest->GetFullName() : "";
+				if (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{}{:08X} '{}' type={} stage={}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType, quest->currentStage);
+			}
+			return count ? out : "none";
+		}
+
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
@@ -641,6 +659,7 @@ namespace DevCommands
 			Entry{ "items", Items },
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
+			Entry{ "quests", Quests },
 			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
 			Entry{ "findgear", FindGear },

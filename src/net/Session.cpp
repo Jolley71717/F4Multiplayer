@@ -5,6 +5,7 @@
 #include "Server.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
+#include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
@@ -146,6 +147,11 @@ namespace Session
 			case MessageType::kRefPickedUp:
 				if (const auto msg = Protocol::DecodeRefPickedUp(a_data)) {
 					WorldSync::ApplyRemotePickup(msg->refId);
+				}
+				break;
+			case MessageType::kQuestStage:
+				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
+					QuestSync::Apply(*msg);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -367,6 +373,12 @@ namespace Session
 		if (welcomed) {
 			NpcSync::Frame();
 		}
+		QuestSync::Frame();
+		for (auto& packet : QuestSync::TakeOutgoing()) {
+			if (welcomed) {
+				client.Send(std::move(packet), true);
+			}
+		}
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {
 				client.Send(std::move(packet.data), packet.reliable);
@@ -381,6 +393,7 @@ namespace Session
 	{
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
+		QuestSync::Rebaseline();
 	}
 
 	std::string Describe()
@@ -398,7 +411,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			status, localId, hostedServer && hostedServer->Running(), ServerAddress(), contentHash,
-			lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe(), RemotePlayers::Describe());
+			lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe(), RemotePlayers::Describe());
 	}
 
 	void SetEcho(bool a_enabled, float a_offsetX, float a_offsetY)

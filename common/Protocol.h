@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 10;
+	inline constexpr std::uint16_t VERSION = 11;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -41,6 +41,7 @@ namespace Protocol
 		kReleaseActors = 10,   // the sender no longer runs these NPCs (unloaded or dead)
 		kActorStates = 11,     // positions of NPCs the sender runs
 		kPlayerHit = 12,       // an NPC in the sender's world hit another player's stand-in
+		kReportQuestStage = 13,  // a quest reached a new stage in the sender's game
 
 		// server -> client
 		kWelcome = 101,
@@ -58,6 +59,7 @@ namespace Protocol
 		kActorOwners = 113,       // who runs these NPCs' AI (0 = nobody)
 		kActorStatesRelay = 114,  // NPC positions from their owners
 		kPlayerDamaged = 115,     // an NPC hit you in another player's world
+		kQuestStage = 116,        // a quest reached a new stage in another player's game
 	};
 
 	enum StateFlags : std::uint8_t
@@ -214,12 +216,21 @@ namespace Protocol
 		float         damage = 0.0f;
 	};
 
+	struct QuestStage
+	{
+		std::uint32_t quest = 0;
+		std::uint16_t stage = 0;
+
+		bool operator==(const QuestStage&) const = default;
+	};
+
 	struct WorldState
 	{
 		std::vector<std::uint32_t>    deadActors;
 		std::vector<ContainerChange>  containerChanges;  // in order
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
+		std::vector<QuestStage>       questStages;  // in order
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
@@ -770,6 +781,27 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.quest);
+		w.U16(a_msg.stage);
+		return w.Data();
+	}
+
+	inline std::optional<QuestStage> DecodeQuestStage(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		QuestStage msg;
+		msg.quest = r.U32();
+		msg.stage = r.U16();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
 	{
 		Writer w{ MessageType::kWorldState };
@@ -796,6 +828,12 @@ namespace Protocol
 			w.U32(a_msg.refStates[i].refId);
 			w.U8(a_msg.refStates[i].open);
 			w.U8(a_msg.refStates[i].locked);
+		}
+		const auto quests = (std::min)(a_msg.questStages.size(), MAX_WORLD_STATE_ACTORS);
+		w.U32(static_cast<std::uint32_t>(quests));
+		for (std::size_t i = 0; i < quests; ++i) {
+			w.U32(a_msg.questStages[i].quest);
+			w.U16(a_msg.questStages[i].stage);
 		}
 		return w.Data();
 	}
@@ -843,6 +881,16 @@ namespace Protocol
 			state.open = r.U8();
 			state.locked = r.U8();
 			msg.refStates.push_back(state);
+		}
+		const auto quests = r.U32();
+		if (!r.Ok() || quests > MAX_WORLD_STATE_ACTORS) {
+			return std::nullopt;
+		}
+		for (std::uint32_t i = 0; i < quests && r.Ok(); ++i) {
+			QuestStage stage;
+			stage.quest = r.U32();
+			stage.stage = r.U16();
+			msg.questStages.push_back(stage);
 		}
 		if (!r.Ok()) {
 			return std::nullopt;

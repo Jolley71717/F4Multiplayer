@@ -76,6 +76,8 @@ namespace Config
 				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {
 				ParseInt(value, settings.puppetBaseForm, 16);
+			} else if (key == "bSyncQuests") {
+				settings.syncQuests = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "bDevChannel") {

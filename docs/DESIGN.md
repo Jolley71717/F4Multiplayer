@@ -80,15 +80,15 @@ shared. The server keeps the session's world state and sends it to late joiners 
 | Health | done, tested (incoming) | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | done, tested (both directions + late join) | TESContainerChangedEvent player<->container -> ContainerChange; receivers `removeitem`/`additem` |
 | World item pickup | done, tested (both directions) | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
+| Quest stages | done, tested (both directions + late join) | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) |
 | Doors and locks | done, tested (both directions + late join) | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ## Status and next steps (2026-10-06)
 
-Protocol VERSION 10. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+Protocol VERSION 11. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
 
 Next, in order:
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-7. Quest stage sync (opt-in).
 8. Re-package a release and test with the friend.
 
 ## Prior art

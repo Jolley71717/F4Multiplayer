@@ -118,6 +118,7 @@ void Server::Run(void* a_host)
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	// Which player's game runs each NPC's AI.
 	std::unordered_map<std::uint32_t, std::uint32_t> actorOwners;
+	std::vector<Protocol::QuestStage> questStages;  // in order, no repeats
 
 	const auto shareable = [](std::uint32_t a_id) { return a_id != 0 && (a_id >> 24) != 0xFF; };
 
@@ -172,7 +173,7 @@ void Server::Run(void* a_host)
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
-		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty() || !refStates.empty()) {
+		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty() || !refStates.empty() || !questStages.empty()) {
 			Protocol::WorldState world;
 			world.deadActors.assign(deadActors.begin(), deadActors.end());
 			world.containerChanges = containerChanges;
@@ -180,6 +181,7 @@ void Server::Run(void* a_host)
 			for (const auto& [id, state] : refStates) {
 				world.refStates.push_back(state);
 			}
+			world.questStages = questStages;
 			Net::Send(a_player.peer, Protocol::Encode(world), true);
 		}
 
@@ -417,6 +419,19 @@ void Server::Run(void* a_host)
 		}
 	};
 
+	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto stage = Protocol::DecodeQuestStage(a_data);
+		if (!stage || !shareable(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
+			std::ranges::find(questStages, *stage) != questStages.end()) {
+			return;
+		}
+		questStages.push_back(*stage);
+		relayToOthers(a_player, Protocol::Encode(*stage, Protocol::MessageType::kQuestStage));
+	};
+
 	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
 			return;
@@ -486,6 +501,9 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kPlayerHit:
 							handlePlayerHit(it->second, data);
+							break;
+						case Protocol::MessageType::kReportQuestStage:
+							handleQuestStage(it->second, data);
 							break;
 						default:
 							break;

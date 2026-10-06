@@ -49,6 +49,7 @@ int main(int argc, char* argv[])
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
+	Protocol::QuestStage questStage;  // report this quest stage once welcomed (quest 0 = none)
 	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
 	std::uint32_t actorStatesSeen = 0;
@@ -85,6 +86,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--quest") {
+			// quest:stage, hex:decimal
+			const auto colon = value.find(':');
+			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), questStage.quest, 16) && ParseNumber(value.substr(colon + 1), questStage.stage);
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
@@ -170,6 +175,10 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (questStage.quest) {
+								std::cout << "reporting quest stage\n";
+								Net::Send(peer, Protocol::Encode(questStage, Protocol::MessageType::kReportQuestStage), true);
+							}
 							if (ownRef) {
 								std::cout << "claiming npc\n";
 								Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { ownRef, true } }), true);
@@ -230,6 +239,11 @@ int main(int argc, char* argv[])
 							std::cout << "picked up: " << std::hex << msg->refId << std::dec << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kQuestStage:
+						if (const auto msg = Protocol::DecodeQuestStage(data)) {
+							std::cout << "quest stage: " << std::hex << msg->quest << std::dec << " " << msg->stage << std::endl;
+						}
+						break;
 					case Protocol::MessageType::kActorOwners:
 						if (const auto msg = Protocol::DecodeOwners(data)) {
 							std::cout << "owners:";
@@ -263,7 +277,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kWorldState:
 						if (const auto msg = Protocol::DecodeWorldState(data)) {
-							std::cout << "world state: " << msg->containerChanges.size() << " container changes, " << msg->pickedUp.size() << " pickups, " << msg->refStates.size() << " ref states, " << msg->deadActors.size() << " dead actors:";
+							std::cout << "world state: " << msg->containerChanges.size() << " container changes, " << msg->pickedUp.size() << " pickups, " << msg->refStates.size() << " ref states, " << msg->questStages.size() << " quest stages, " << msg->deadActors.size() << " dead actors:";
 							for (const auto id : msg->deadActors) {
 								std::cout << ' ' << std::hex << id << std::dec;
 							}

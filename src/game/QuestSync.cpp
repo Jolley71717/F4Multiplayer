@@ -1,0 +1,109 @@
+﻿#include "game/QuestSync.h"
+
+#include "Config.h"
+
+namespace QuestSync
+{
+	namespace
+	{
+		using Clock = std::chrono::steady_clock;
+
+		constexpr auto POLL_INTERVAL = 500ms;
+		// After loading, quest scripts settle their stages for a moment; that isn't progress.
+		constexpr auto SETTLE_TIME = 5s;
+
+		// QUEST_DATA::questType values that are shared: main quest, the four factions, side quests
+		// and DLC quests. 0 is "none" (internal quests) and 6 is "miscellaneous" (radiant/ambient).
+		bool IsSharedType(std::int8_t a_type)
+		{
+			return a_type > 0 && a_type != 6;
+		}
+
+		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last stage seen per quest
+		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
+		std::vector<std::vector<std::uint8_t>>           outgoing;
+		Clock::time_point                                nextPoll{};
+		std::uint32_t                                    reported = 0;
+		std::uint32_t                                    applied = 0;
+
+		std::span<RE::TESQuest*> AllQuests()
+		{
+			auto& quests = RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>();
+			return { quests.data(), quests.size() };
+		}
+	}
+
+	void Apply(const Protocol::QuestStage& a_stage)
+	{
+		if (!Config::Get().syncQuests) {
+			return;
+		}
+		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
+		// Stages only move forward: never undo progress a player already has.
+		if (!quest || !IsSharedType(quest->data.questType) || a_stage.stage <= quest->currentStage) {
+			return;
+		}
+		// The console command also starts the quest if it isn't running (TESQuest::SetStage doesn't).
+		RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", a_stage.quest, a_stage.stage).c_str());
+		REX::INFO("QuestSync: set {:08X} '{}' stage {} -> now {}", a_stage.quest, quest->GetFullName() ? quest->GetFullName() : "", a_stage.stage, quest->currentStage);
+		// Whatever stage it's at now came from another player; don't report it back.
+		knownStages[a_stage.quest] = quest->currentStage;
+		++applied;
+	}
+
+	void Frame()
+	{
+		if (!Config::Get().syncQuests) {
+			return;
+		}
+		const auto now = Clock::now();
+		if (now < nextPoll) {
+			return;
+		}
+		nextPoll = now + POLL_INTERVAL;
+
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !player->GetParentCell()) {
+			return;
+		}
+
+		if (!reportFrom) {
+			reportFrom = now + SETTLE_TIME;
+		}
+		const bool report = now >= *reportFrom;
+
+		for (const auto quest : AllQuests()) {
+			if (!quest || !IsSharedType(quest->data.questType)) {
+				continue;
+			}
+			const auto id = quest->GetFormID();
+			const auto [it, inserted] = knownStages.try_emplace(id, quest->currentStage);
+			if (inserted || it->second == quest->currentStage) {
+				continue;
+			}
+			const bool forward = quest->currentStage > it->second;
+			it->second = quest->currentStage;
+			// Only progress is shared (a quest that restarts or resets goes back to a lower stage).
+			if (report && forward && (id >> 24) != 0xFF) {
+				outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ id, quest->currentStage }, Protocol::MessageType::kReportQuestStage));
+				++reported;
+			}
+		}
+	}
+
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
+	{
+		return std::exchange(outgoing, {});
+	}
+
+	void Rebaseline()
+	{
+		knownStages.clear();
+		reportFrom.reset();
+	}
+
+	std::string Describe()
+	{
+		return std::format("quests: reported={} applied={}", reported, applied);
+	}
+}

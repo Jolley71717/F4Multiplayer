@@ -1,6 +1,7 @@
 ﻿#include "game/WorldSync.h"
 
 #include "game/NpcSync.h"
+#include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 
@@ -400,6 +401,9 @@ namespace WorldSync
 		}
 		for (const auto& state : a_state.refStates) {
 			ApplyRemoteRefState(state);
+		}
+		for (const auto& stage : a_state.questStages) {
+			QuestSync::Apply(stage);
 		}
 		REX::INFO("WorldSync: session state has {} dead actors", a_state.deadActors.size());
 	}
