@@ -90,7 +90,10 @@
   10 Hz (unreliable). The others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement
   copied with 150 ms interpolation, but it can be hurt and killed. If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
-  is not moved there; it runs its own AI meanwhile.
+  is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
+  a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
+  owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
+  our own current companion (two players can both have Dogmeat).
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.

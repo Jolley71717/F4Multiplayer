@@ -19,6 +19,12 @@ namespace NpcSync
 		// States arrive at 10 Hz; render far enough in the past to have two to blend.
 		constexpr auto INTERPOLATION_DELAY = 150ms;
 		constexpr auto STALE_AFTER = 1s;
+		// No states for this long (the owner's game is paused, loading or gone): our copy runs its
+		// own AI until they come back.
+		constexpr auto LOST_AFTER = 3s;
+		// The owner's copy is this far from ours (it fast traveled or was moved by a script): ours
+		// isn't dragged across the map (where nothing may be loaded); it runs its own AI meanwhile.
+		constexpr float MAX_FOLLOW_DISTANCE = 4096.0f;  // one exterior cell
 		constexpr std::size_t MAX_SNAPSHOTS = 16;
 
 		constexpr std::uint32_t CURRENT_COMPANION_FACTION = 0x00023C01;
@@ -51,6 +57,7 @@ namespace NpcSync
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		Clock::time_point                                    nextTalkClaim{};
 		std::uint32_t                                        conversations = 0;
+		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -208,8 +215,19 @@ namespace NpcSync
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
 		}
 
+		// A menu stops our game (pause menu, Pip-Boy): our NPCs stand still, so their states stop
+		// too, and the others' copies run their own AI rather than freezing with ours.
+		bool GamePaused()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return ui && ui->menuMode > 0;
+		}
+
 		void SendOwnedStates(Clock::time_point a_now)
 		{
+			if (GamePaused()) {
+				return;
+			}
 			std::vector<Protocol::ActorState> states;
 			for (auto& [id, track] : owned) {
 				const auto actor = LoadedActor(id);
@@ -327,9 +345,21 @@ namespace NpcSync
 					++it;
 					continue;
 				}
+				// Our own companion follows us here, whoever runs it elsewhere (two players can
+				// have the same companion).
+				if (IsOurCompanion(actor)) {
+					StopMirroring(id, mirror);
+					++it;
+					continue;
+				}
 				// The owner's copy is somewhere else (e.g. a companion that followed its player through
-				// a door): ours can't follow it there, so it runs its own AI meanwhile.
-				if (mirror.snapshots.empty() || SpaceOf(actor) != std::pair{ mirror.snapshots.back().state.cell, mirror.snapshots.back().state.worldspace }) {
+				// a door), far away, or hasn't been heard from: ours runs its own AI meanwhile.
+				const auto* latest = mirror.snapshots.empty() ? nullptr : &mirror.snapshots.back();
+				if (!latest || SpaceOf(actor) != std::pair{ latest->state.cell, latest->state.worldspace } || a_now - latest->received > LOST_AFTER ||
+					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
+					if (mirror.registered) {
+						++localFallbacks;
+					}
 					StopMirroring(id, mirror);
 					++it;
 					continue;
@@ -498,6 +528,8 @@ namespace NpcSync
 
 	std::string Describe()
 	{
-		return std::format("npcs: owned={} mirrored={} known={} talkingTo={:08X} conversations={}", owned.size(), mirrors.size(), owners.size(), talkingTo, conversations);
+		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });
+		return std::format("npcs: owned={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={}", owned.size(), mirrors.size(), puppeted,
+			owners.size(), talkingTo, conversations, localFallbacks);
 	}
 }
