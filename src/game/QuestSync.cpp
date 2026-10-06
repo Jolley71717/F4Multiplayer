@@ -1,6 +1,7 @@
 ﻿#include "game/QuestSync.h"
 
 #include "Config.h"
+#include "game/WorldSync.h"
 
 namespace QuestSync
 {
@@ -20,6 +21,7 @@ namespace QuestSync
 		}
 
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last stage seen per quest
+		std::vector<Protocol::QuestStage>                waiting;  // from other players, until we're in the world
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		std::vector<std::vector<std::uint8_t>>           outgoing;
 		Clock::time_point                                nextPoll{};
@@ -36,6 +38,13 @@ namespace QuestSync
 	void Apply(const Protocol::QuestStage& a_stage)
 	{
 		if (!Config::Get().syncQuests) {
+			return;
+		}
+		// Quest scripts must not run at the main menu or during a loading screen.
+		if (!WorldSync::InWorld()) {
+			if (std::ranges::find(waiting, a_stage) == waiting.end()) {
+				waiting.push_back(a_stage);
+			}
 			return;
 		}
 		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
@@ -62,9 +71,11 @@ namespace QuestSync
 		}
 		nextPoll = now + POLL_INTERVAL;
 
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!player || !player->GetParentCell()) {
+		if (!WorldSync::InWorld()) {
 			return;
+		}
+		for (const auto& stage : std::exchange(waiting, {})) {
+			Apply(stage);
 		}
 
 		if (!reportFrom) {
@@ -100,6 +111,7 @@ namespace QuestSync
 	{
 		knownStages.clear();
 		reportFrom.reset();
+		waiting.clear();
 	}
 
 	std::string Describe()

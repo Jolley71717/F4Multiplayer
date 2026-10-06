@@ -31,7 +31,8 @@ public:
 	NetClient(const NetClient&) = delete;
 	NetClient& operator=(const NetClient&) = delete;
 
-	// Starts connecting in the background. Returns false if the address can't be resolved.
+	// Starts connecting in the background (the address is resolved there too, so a slow DNS
+	// lookup never stalls the game). Returns false if networking can't start.
 	bool Connect(const std::string& a_address, std::uint16_t a_defaultPort);
 	void Disconnect();
 
@@ -49,8 +50,7 @@ private:
 		bool                      reliable;
 	};
 
-	// Host is in network byte order, as ENet stores it.
-	void Run(std::uint32_t a_host, std::uint16_t a_port);
+	void Run(std::string a_address, std::uint16_t a_defaultPort);
 
 	std::thread         thread;
 	std::atomic<bool>   stopRequested{ false };

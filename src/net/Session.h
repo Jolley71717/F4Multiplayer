@@ -13,6 +13,10 @@ namespace Session
 	// Before a save is written or another save is loaded.
 	void OnBeforeSaveOrLoad();
 
+	// A save was loaded (or a new game started): the world went back in time, so the session's
+	// changes are requested and applied again.
+	void OnGameLoaded();
+
 	[[nodiscard]] std::string Describe();
 
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.

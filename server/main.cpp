@@ -16,10 +16,16 @@
 namespace
 {
 	std::atomic<bool> quit{ false };
+	std::atomic<bool> stopped{ false };
 
 	BOOL WINAPI OnConsoleSignal(DWORD)
 	{
 		quit = true;
+		// Closing the window ends the process as soon as this returns, so give main() time to
+		// disconnect everyone cleanly (Windows allows about five seconds).
+		for (int i = 0; i < 40 && !stopped; ++i) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
 		return TRUE;
 	}
 
@@ -67,5 +73,6 @@ int main(int argc, char* argv[])
 	}
 
 	server.Stop();
+	stopped = true;
 	return 0;
 }

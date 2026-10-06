@@ -11,7 +11,7 @@ namespace NpcSync
 		constexpr auto SCAN_INTERVAL = 250ms;
 		constexpr auto STATE_INTERVAL = 100ms;  // 10 Hz per owned NPC
 		constexpr auto CLAIM_RETRY = 3s;
-		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeovers of the same NPC by hitting it
+		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
 		// States arrive at 10 Hz; render far enough in the past to have two to blend.
 		constexpr auto INTERPOLATION_DELAY = 150ms;
 		constexpr auto STALE_AFTER = 1s;
@@ -51,10 +51,6 @@ namespace NpcSync
 		Clock::time_point     nextScan{};
 		Clock::time_point     nextStates{};
 
-		bool IsShareable(std::uint32_t a_id)
-		{
-			return a_id != 0 && (a_id >> 24) != 0xFF;
-		}
 
 		RE::Actor* LoadedActor(std::uint32_t a_id)
 		{
@@ -65,7 +61,7 @@ namespace NpcSync
 		// NPCs we can share: loaded, alive, from a plugin file, and not a player or a stand-in.
 		bool IsCandidate(RE::Actor* a_actor)
 		{
-			return a_actor && !a_actor->IsPlayerRef() && IsShareable(a_actor->GetFormID()) && !Puppets::IsPuppet(a_actor) &&
+			return a_actor && !a_actor->IsPlayerRef() && Protocol::IsShareableRef(a_actor->GetFormID()) && !Puppets::IsPuppet(a_actor) &&
 			       !a_actor->IsDead(false) && !a_actor->IsDisabled() && a_actor->Get3D();
 		}
 
@@ -73,6 +69,19 @@ namespace NpcSync
 		{
 			static const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(CURRENT_COMPANION_FACTION);
 			return faction && a_actor->IsInFaction(faction);
+		}
+
+		// Where an actor is, as sent in states: (interior cell, 0) or (0, worldspace).
+		std::pair<std::uint32_t, std::uint32_t> SpaceOf(const RE::Actor* a_actor)
+		{
+			const auto cell = a_actor->GetParentCell();
+			if (!cell) {
+				return { 0, 0 };
+			}
+			if (cell->IsInterior()) {
+				return { cell->GetFormID(), 0 };
+			}
+			return { 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0 };
 		}
 
 		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror)
@@ -136,13 +145,15 @@ namespace NpcSync
 						continue;
 					}
 					// Companions follow their own player, so that player's game must run them.
-					const bool force = IsOurCompanion(actor);
-					if (owner == 0 || force) {
-						claims.push_back({ id, force });
+					const bool companion = IsOurCompanion(actor);
+					if (owner == 0 || companion) {
+						claims.push_back({ id, companion ? Protocol::ClaimReason::kCompanion : Protocol::ClaimReason::kUnowned });
 						claimedAt[id] = a_now;
 					}
 				}
 			}
+			std::erase_if(claimedAt, [&](const auto& a_entry) { return a_now - a_entry.second >= CLAIM_RETRY; });
+			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
 
 			// NPCs we run that are no longer loaded (or died) go back to the pool.
 			std::vector<std::uint32_t> released;
@@ -183,6 +194,7 @@ namespace NpcSync
 
 				Protocol::ActorState state;
 				state.refId = id;
+				std::tie(state.cell, state.worldspace) = SpaceOf(actor);
 				state.x = pos.x;
 				state.y = pos.y;
 				state.z = pos.z;
@@ -271,6 +283,13 @@ namespace NpcSync
 					it = mirrors.erase(it);
 					continue;
 				}
+				// The owner's copy is somewhere else (e.g. a companion that followed its player through
+				// a door): ours can't follow it there, so it runs its own AI meanwhile.
+				if (mirror.snapshots.empty() || SpaceOf(actor) != std::pair{ mirror.snapshots.back().state.cell, mirror.snapshots.back().state.worldspace }) {
+					StopMirroring(id, mirror);
+					++it;
+					continue;
+				}
 				if (mirror.registered != actor) {
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
@@ -314,7 +333,7 @@ namespace NpcSync
 		const auto now = Clock::now();
 		for (const auto& state : a_states) {
 			const auto owner = OwnerOf(state.refId);
-			if (owner == 0 || owner == localId) {
+			if (owner == 0 || owner == localId || !LoadedActor(state.refId)) {
 				continue;
 			}
 			auto& snaps = mirrors[state.refId].snapshots;
@@ -325,7 +344,7 @@ namespace NpcSync
 		}
 	}
 
-	void OnLocalHit(std::uint32_t a_refId)
+	void OnLocalInteraction(std::uint32_t a_refId)
 	{
 		const auto owner = OwnerOf(a_refId);
 		if (localId == 0 || owner == 0 || owner == localId) {
@@ -338,7 +357,7 @@ namespace NpcSync
 		}
 		lastTakeover[a_refId] = now;
 		claimedAt[a_refId] = now;
-		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, true } }), true });
+		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
 	}
 
 	void Frame()

@@ -1,32 +1,40 @@
-﻿# F4Multiplayer design
+# F4Multiplayer design
 
 ## Overview
 
 ```
- Player A's game                    Host (player or F4MPServer.exe)           Player B's game
- â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   UDP/ENet   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   UDP/ENet   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
- â”‚ F4SE plugin        â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¶â”‚ Relay server (30 Hz)     â”‚â—€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚ F4SE plugin        â”‚
- â”‚  Session           â”‚â—€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚  join checks, rate limit â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¶â”‚  Session           â”‚
- â”‚  RemotePlayers â”€â”€â–¶ â”‚              â”‚  relays player states    â”‚              â”‚  RemotePlayers â”€â”€â–¶ â”‚
- â”‚  Puppets (actors)  â”‚              â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜              â”‚  Puppets (actors)  â”‚
- â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                                                         â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+ Player A's game                Session server                    Player B's game
+ (F4SE plugin)                  (in the host's game, or           (F4SE plugin)
+                                 F4MPServer.exe)
+ +------------------+           +------------------------+          +------------------+
+ | Session          | --------> | join checks, rate      | <------- | Session          |
+ |  RemotePlayers   | <-------- |   limits               | -------> |  RemotePlayers   |
+ |  NpcSync         |           | relays player and NPC  |          |  NpcSync         |
+ |  WorldSync       |           |   states (30 Hz)       |          |  WorldSync       |
+ |  QuestSync       |           | keeps the session's    |          |  QuestSync       |
+ |  Puppets         |           |   world state          |          |  Puppets         |
+ +------------------+           +------------------------+          +------------------+
 ```
 
-- **Transport:** ENet. Channel 0 is reliable (join/leave, future events). Channel 1 is unreliable,
-  sequenced (player state at 20 Hz).
-- **Server:** `common/Server.cpp`, a single thread. It runs inside the host's game (`bHost = true`) or as
-  `F4MPServer.exe`. Joining is checked for protocol version, max players (default 4), an optional
-  password, and a load-order hash that must match the first player's.
-- **Client:** `src/net/NetClient.cpp` keeps ENet on its own thread, so the connection survives loading
-  screens. `src/net/Session.cpp` runs on the game's main thread every frame through an F4SE permanent
-  task.
+- **Transports:** the server talks to players through `ServerTransport` (`common/Transport.h`). ENet
+  (UDP, `common/EnetTransport.cpp`) is always on; channel 0 is reliable, channel 1 unreliable
+  (player state at 20 Hz, NPC states at 10 Hz). More transports (Steam) plug in beside it.
+- **Server:** `common/Server.cpp`, one thread. Joining is checked for protocol version, max players
+  (default 4), an optional password and a load-order hash that must match the players already in.
+  Connections that don't say Hello within 5 s are dropped. Each player has rate budgets (60 states/s,
+  60 NPC state batches/s, 500 events/s).
+- **Client:** `src/net/NetClient.cpp` keeps ENet (including DNS lookups) on its own thread, so the
+  connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
+  frame through an F4SE permanent task.
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders 100 ms in the past
   and blends between received states. Before every save and load, all puppets are deleted so they
   never end up in a save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
-  `kMovementBlocked` and the like every frame, and re-applies the do-nothing package every 2 s.
+  `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
+  re-applies the do-nothing package every 2 s. Puppets are keyed by pointer but checked against their
+  form ID before use, so a freed actor's address is never treated as a puppet.
 
 ## Findings (reverse engineering, runtime 1.11.240)
 
@@ -43,10 +51,13 @@
   Curie's 001846CB is her robot form.
 - Loading screens are tied to presentation. Setting `presentInterval = 0` while `LoadingMenu` is open
   cuts load times substantially.
+- `ModActorValue(kDamage, health, -x)` on the player kills them at 0 health (normal death and reload).
+- `TESQuest::SetStage` doesn't start a stopped quest; the console `setstage` does.
 
 ## Remote player look
 
 - Body: a settler of the player's sex (0020A578 female / 0020A57B male) unless `iMyAppearance` is set.
+  Unique NPCs (companions, quest characters) are refused as appearances; their scripts would come along.
 - Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second).
   The puppet gets `removeallitems` + `additem`/`equipitem` via the console. Weapon mods and
   the player's face are not copied.
@@ -56,40 +67,61 @@
 
 ## Shared NPC AI (src/game/NpcSync.cpp)
 
-- Every loaded, living NPC from a plugin file has one owner, assigned by the server: the first player
-  to claim it. A player's current companion is always taken over by that player (force claim), and
-  hitting an NPC someone else runs takes it over too (at most every 5 s per NPC) so it fights back.
-- The owner sends its NPCs' position/heading/speed/moveMode/weapon-drawn at 10 Hz (unreliable). The
-  others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with 150 ms
-  interpolation, but it can be hurt and killed (health and deaths sync as before).
+- Every loaded, living NPC from a plugin file has one owner, whose game runs its AI. The server decides:
+  - nobody owns it: the first player to claim it (they have it loaded);
+  - a player's current companion goes to that player, unless it is also another player's companion
+    (then the first keeps it, so two players with Dogmeat don't trade him forever);
+  - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
+    hands in the last 5 s.
+- The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
+  10 Hz (unreliable). The others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement
+  copied with 150 ms interpolation, but it can be hurt and killed. If the owner's copy is in a
+  different cell or worldspace (a companion that followed its player through a door), the local copy
+  is not moved there; it runs its own AI meanwhile.
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
-  claims it. Mirrored NPCs are handed back to their own AI before saving.
+  claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
+  owner list on join.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health).
 - Not yet: NPC attack animations and projectiles in non-owner worlds (they aim but don't fire there).
 
 ## Shared world (src/game/WorldSync.cpp)
 
-Actors, containers and world items are identified by reference form ID, which matches across
-players because the load order must match. Runtime-created references (0xFF......) are never
-shared. The server keeps the session's world state and sends it to late joiners (WorldState).
+References are identified by form ID, which matches across players because the load order must match.
+Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
+(`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
+form types before acting: kills only for actors, loot only between containers/NPCs and inventory
+items, pickups only for loose inventory items that don't fill a quest alias.
 
-| Feature | Status | How |
-|---|---|---|
-| Deaths | done, tested | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
-| Health | done, tested (incoming) | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
-| Container loot | done, tested (both directions + late join) | TESContainerChangedEvent player<->container -> ContainerChange; receivers `removeitem`/`additem` |
-| World item pickup | done, tested (both directions) | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
-| Quest stages | done, tested (both directions + late join) | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) |
-| Doors and locks | done, tested (both directions + late join) | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
+Remote changes are applied only while the player is in the world (no loading screen, not at the main
+menu) and to loaded references; everything else waits and is retried.
 
-## Status and next steps (2026-10-06)
+| Feature | How |
+|---|---|
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
+| Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
+| Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
+| World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
+| Quest stages | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) |
+| Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
-Protocol VERSION 11. Release 0.4.0 (protocol 11) is the current build for players; older zips cannot join it.
+### Catching up (join, reconnect, loading a save)
 
-Next, in order:
-2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
-8. Re-package a release and test with the friend.
+The server keeps the session's world state and sends it in chunks (`WorldState`) on join and when a
+player asks again (`RequestWorldState`). Kills, pickups, doors and quest stages can be applied twice
+safely. Container changes can't (that would duplicate items), so:
+
+- each session has a random ID, and container changes are numbered in session order;
+- each player tracks which numbers its world contains (`containerNext`, plus the changes still waiting
+  for their container to load) and stores that in the save's F4SE co-save;
+- Hello and RequestWorldState say what the world has, and the server sends only the rest.
+
+After loading a save (including the reload after dying) the client forgets what it knew, reads the
+save's record and asks for the session's changes again.
+
+## Status (2026-10-06)
+
+Protocol VERSION 12.
 
 ## Prior art
 
@@ -100,7 +132,7 @@ Next, in order:
 ## Testing tools
 
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
-- `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). Commands: `status`, `pos`, `net`,
-  `echo on|off`, `spawn`, `puppet`, `setpos`, `graph`, `flags`, `console`.
-- `F4MPBot.exe`: a fake player that walks in a circle.
+- `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
+- `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
+  quest stages and hits, take over an NPC (`--own`), and resume a session (`--session`, `--from`).
 - `F4MPServer.exe`: a standalone server.

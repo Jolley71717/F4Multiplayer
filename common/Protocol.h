@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Wire protocol shared by the game plugin, the server and test tools.
@@ -15,11 +16,24 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 11;
+	inline constexpr std::uint16_t VERSION = 12;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
+
+	// The local player's reference. Never shared: each game has its own.
+	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
+
+	// References are shared by form ID, which matches for everyone because the load order must.
+	// Runtime-created references (0xFF......) differ per game, and the player is per game.
+	[[nodiscard]] constexpr bool IsShareableRef(std::uint32_t a_id)
+	{
+		return a_id != 0 && a_id != PLAYER_REF_ID && (a_id >> 24) != 0xFF;
+	}
+
+	// Largest item count a single container change may move.
+	inline constexpr std::int32_t MAX_ITEM_COUNT = 1'000'000;
 
 	// ENet channels
 	inline constexpr std::uint8_t CHANNEL_RELIABLE = 0;
@@ -42,6 +56,7 @@ namespace Protocol
 		kActorStates = 11,     // positions of NPCs the sender runs
 		kPlayerHit = 12,       // an NPC in the sender's world hit another player's stand-in
 		kReportQuestStage = 13,  // a quest reached a new stage in the sender's game
+		kRequestWorldState = 14,  // the sender loaded a save and needs the session's changes again
 
 		// server -> client
 		kWelcome = 101,
@@ -52,7 +67,7 @@ namespace Protocol
 		kActorDied = 106,     // an actor died in another player's world
 		kWorldState = 107,    // sent on join: everything that already happened this session
 		kActorHealth = 108,   // an actor's health changed in another player's world
-		kContainerChanged = 109,  // another player changed a container's contents
+		kContainerChanged = 109,  // a player changed a container's contents (also echoed to that player)
 		kRefPickedUp = 110,       // another player picked up this world item
 		kRefStateChanged = 111,   // a door/container's open or lock state changed in another player's world
 		kPlayerEquipment = 112,   // what another player is wearing and holding
@@ -92,6 +107,14 @@ namespace Protocol
 		}
 	};
 
+	// Which of a session's container changes a player's world already contains: the changes
+	// before containerFrom, if sessionId is the server's current session (otherwise none).
+	struct WorldRequest
+	{
+		std::uint64_t sessionId = 0;
+		std::uint32_t containerFrom = 0;
+	};
+
 	struct Hello
 	{
 		std::uint32_t magic = MAGIC;
@@ -100,11 +123,13 @@ namespace Protocol
 		std::string   name;
 		std::string   password;
 		std::uint32_t appearance = 0;  // NPC base form others should use for this player (0 = their default)
+		WorldRequest  world;
 	};
 
 	struct Welcome
 	{
 		std::uint32_t playerId = 0;
+		std::uint64_t sessionId = 0;  // random per server run
 	};
 
 	struct Reject
@@ -148,6 +173,14 @@ namespace Protocol
 		std::int32_t  count = 0;
 	};
 
+	// A container change as the server relays it: numbered in session order, with who made it.
+	struct IndexedContainerChange
+	{
+		std::uint32_t   index = 0;
+		std::uint32_t   playerId = 0;
+		ContainerChange change;
+	};
+
 	struct RefPickedUp
 	{
 		std::uint32_t refId = 0;
@@ -182,10 +215,17 @@ namespace Protocol
 	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
 	inline constexpr std::size_t MAX_ACTORS_PER_PACKET = 64;
 
+	enum class ClaimReason : std::uint8_t
+	{
+		kUnowned = 0,    // the sender has it loaded; run it if nobody does
+		kInteract = 1,   // the sender is fighting or talking to it
+		kCompanion = 2,  // it follows the sender
+	};
+
 	struct ActorClaim
 	{
 		std::uint32_t refId = 0;
-		bool          force = false;  // the NPC is the sender's companion: take it over
+		ClaimReason   reason = ClaimReason::kUnowned;
 	};
 
 	struct ActorOwner
@@ -197,6 +237,8 @@ namespace Protocol
 	struct ActorState
 	{
 		std::uint32_t refId = 0;
+		std::uint32_t cell = 0;        // interior cell form ID, or 0 when outside
+		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
 		float         x = 0, y = 0, z = 0;
 		float         heading = 0;
 		float         speed = 0;
@@ -224,9 +266,12 @@ namespace Protocol
 		bool operator==(const QuestStage&) const = default;
 	};
 
+	// Everything that happened this session, sent on join and after loading a save. Large states
+	// are split over several packets; each is applied on top of the previous ones.
 	struct WorldState
 	{
 		std::vector<std::uint32_t>    deadActors;
+		std::uint32_t                 containerFirstIndex = 0;  // session index of containerChanges[0]
 		std::vector<ContainerChange>  containerChanges;  // in order
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
@@ -234,6 +279,8 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
+	// Entries per list in one WorldState packet (keeps packets well under transport limits).
+	inline constexpr std::size_t WORLD_STATE_CHUNK = 4000;
 
 	struct RemoteState
 	{
@@ -257,6 +304,7 @@ namespace Protocol
 		void U8(std::uint8_t a_value) { buffer.push_back(a_value); }
 		void U16(std::uint16_t a_value) { Raw(&a_value, sizeof(a_value)); }
 		void U32(std::uint32_t a_value) { Raw(&a_value, sizeof(a_value)); }
+		void U64(std::uint64_t a_value) { Raw(&a_value, sizeof(a_value)); }
 		void F32(float a_value) { Raw(&a_value, sizeof(a_value)); }
 
 		void Str(std::string_view a_value, std::size_t a_maxLength)
@@ -290,6 +338,7 @@ namespace Protocol
 		std::uint8_t  U8() { return Read<std::uint8_t>(); }
 		std::uint16_t U16() { return Read<std::uint16_t>(); }
 		std::uint32_t U32() { return Read<std::uint32_t>(); }
+		std::uint64_t U64() { return Read<std::uint64_t>(); }
 		float         F32() { return Read<float>(); }
 
 		std::string Str(std::size_t a_maxLength)
@@ -376,6 +425,8 @@ namespace Protocol
 		w.Str(a_msg.name, MAX_NAME_LENGTH);
 		w.Str(a_msg.password, MAX_PASSWORD_LENGTH);
 		w.U32(a_msg.appearance);
+		w.U64(a_msg.world.sessionId);
+		w.U32(a_msg.world.containerFrom);
 		return w.Data();
 	}
 
@@ -390,7 +441,30 @@ namespace Protocol
 		msg.name = r.Str(MAX_NAME_LENGTH);
 		msg.password = r.Str(MAX_PASSWORD_LENGTH);
 		msg.appearance = r.U32();
+		msg.world.sessionId = r.U64();
+		msg.world.containerFrom = r.U32();
 		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const WorldRequest& a_msg)
+	{
+		Writer w{ MessageType::kRequestWorldState };
+		w.U64(a_msg.sessionId);
+		w.U32(a_msg.containerFrom);
+		return w.Data();
+	}
+
+	inline std::optional<WorldRequest> DecodeWorldRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorldRequest msg;
+		msg.sessionId = r.U64();
+		msg.containerFrom = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
@@ -418,6 +492,7 @@ namespace Protocol
 	{
 		Writer w{ MessageType::kWelcome };
 		w.U32(a_msg.playerId);
+		w.U64(a_msg.sessionId);
 		return w.Data();
 	}
 
@@ -427,6 +502,7 @@ namespace Protocol
 		r.U8();
 		Welcome msg;
 		msg.playerId = r.U32();
+		msg.sessionId = r.U64();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -518,13 +594,17 @@ namespace Protocol
 			RemoteState entry;
 			entry.playerId = r.U32();
 			entry.state = ReadState(r);
+			if (!entry.state.IsFinite()) {
+				return std::nullopt;
+			}
 			msg.players.push_back(entry);
 		}
-		if (!r.Ok()) {
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
 	}
+
 	inline std::vector<std::uint8_t> Encode(const ActorDeath& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -583,6 +663,40 @@ namespace Protocol
 		msg.item = r.U32();
 		msg.count = static_cast<std::int32_t>(r.U32());
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	[[nodiscard]] inline bool IsValid(const ContainerChange& a_change)
+	{
+		return IsShareableRef(a_change.container) && a_change.item != 0 && a_change.count != 0 &&
+		       a_change.count >= -MAX_ITEM_COUNT && a_change.count <= MAX_ITEM_COUNT;
+	}
+
+	// kContainerChanged
+	inline std::vector<std::uint8_t> Encode(const IndexedContainerChange& a_msg)
+	{
+		Writer w{ MessageType::kContainerChanged };
+		w.U32(a_msg.index);
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.change.container);
+		w.U32(a_msg.change.item);
+		w.U32(static_cast<std::uint32_t>(a_msg.change.count));
+		return w.Data();
+	}
+
+	inline std::optional<IndexedContainerChange> DecodeIndexedContainerChange(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		IndexedContainerChange msg;
+		msg.index = r.U32();
+		msg.playerId = r.U32();
+		msg.change.container = r.U32();
+		msg.change.item = r.U32();
+		msg.change.count = static_cast<std::int32_t>(r.U32());
+		if (!r.Ok() || !r.AtEnd() || !IsValid(msg.change)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -696,12 +810,16 @@ namespace Protocol
 
 	inline std::vector<std::uint8_t> Encode(const std::vector<ActorClaim>& a_msg)
 	{
-		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(a.force); });
+		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(std::to_underlying(a.reason)); });
 	}
 
 	inline auto DecodeClaims(std::span<const std::uint8_t> a_data)
 	{
-		return DecodeList<ActorClaim>(a_data, [](Reader& r) { ActorClaim a; a.refId = r.U32(); a.force = r.U8() != 0; return a; });
+		auto claims = DecodeList<ActorClaim>(a_data, [](Reader& r) { ActorClaim a; a.refId = r.U32(); a.reason = static_cast<ClaimReason>(r.U8()); return a; });
+		if (claims && !std::ranges::all_of(*claims, [](const ActorClaim& a) { return a.reason <= ClaimReason::kCompanion; })) {
+			return decltype(claims){};
+		}
+		return claims;
 	}
 
 	// kReleaseActors
@@ -730,6 +848,8 @@ namespace Protocol
 	{
 		return EncodeList(a_type, a_msg, [](Writer& w, const ActorState& a) {
 			w.U32(a.refId);
+			w.U32(a.cell);
+			w.U32(a.worldspace);
 			w.F32(a.x);
 			w.F32(a.y);
 			w.F32(a.z);
@@ -745,6 +865,8 @@ namespace Protocol
 		auto states = DecodeList<ActorState>(a_data, [](Reader& r) {
 			ActorState a;
 			a.refId = r.U32();
+			a.cell = r.U32();
+			a.worldspace = r.U32();
 			a.x = r.F32();
 			a.y = r.F32();
 			a.z = r.F32();
@@ -813,6 +935,7 @@ namespace Protocol
 			}
 		};
 		writeIds(a_msg.deadActors);
+		w.U32(a_msg.containerFirstIndex);
 		const auto changes = (std::min)(a_msg.containerChanges.size(), MAX_WORLD_STATE_ACTORS);
 		w.U32(static_cast<std::uint32_t>(changes));
 		for (std::size_t i = 0; i < changes; ++i) {
@@ -857,6 +980,7 @@ namespace Protocol
 		if (!readIds(msg.deadActors)) {
 			return std::nullopt;
 		}
+		msg.containerFirstIndex = r.U32();
 		const auto changes = r.U32();
 		if (changes > MAX_WORLD_STATE_ACTORS) {
 			return std::nullopt;
@@ -880,6 +1004,9 @@ namespace Protocol
 			state.refId = r.U32();
 			state.open = r.U8();
 			state.locked = r.U8();
+			if (state.open > RefState::kUnknown || state.locked > RefState::kUnknown) {
+				return std::nullopt;
+			}
 			msg.refStates.push_back(state);
 		}
 		const auto quests = r.U32();
@@ -892,7 +1019,7 @@ namespace Protocol
 			stage.stage = r.U16();
 			msg.questStages.push_back(stage);
 		}
-		if (!r.Ok()) {
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

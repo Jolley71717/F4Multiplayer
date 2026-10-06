@@ -1,14 +1,19 @@
 #pragma once
 
+#include "Transport.h"
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
-// Relay server for player state. Runs on its own thread; used by the standalone
-// F4MPServer.exe and by the game plugin when a player hosts.
+// The session server: relays player state and keeps the shared world state (kills, loot, doors,
+// quests, NPC ownership). Runs on its own thread; used by the standalone F4MPServer.exe and by
+// the game plugin when a player hosts.
 class Server
 {
 public:
@@ -27,18 +32,20 @@ public:
 	Server(const Server&) = delete;
 	Server& operator=(const Server&) = delete;
 
-	// Binds the port and starts the server thread. Returns false if the port can't be bound.
-	bool Start(const Options& a_options);
+	// Binds the UDP port and starts the server thread. Players can also arrive through any extra
+	// transports (e.g. Steam). Returns false if the port can't be bound.
+	bool Start(const Options& a_options, std::vector<std::unique_ptr<ServerTransport>> a_extraTransports = {});
 	void Stop();
 
 	[[nodiscard]] bool Running() const { return running; }
 
 private:
-	void Run(void* a_host);
+	void Run();
 
-	LogFn             log;
-	Options           options;
-	std::thread       thread;
-	std::atomic<bool> running{ false };
-	std::atomic<bool> stopRequested{ false };
+	LogFn                                         log;
+	Options                                       options;
+	std::vector<std::unique_ptr<ServerTransport>> transports;
+	std::thread                                   thread;
+	std::atomic<bool>                             running{ false };
+	std::atomic<bool>                             stopRequested{ false };
 };

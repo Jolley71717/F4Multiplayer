@@ -14,7 +14,8 @@ namespace QuestSync
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// Forget the known stages; the next Frame takes a fresh baseline (after loading a save).
+	// Forget the known stages; the next Frame takes a fresh baseline (after loading a save, which
+	// can move quests back; the session's stages are then applied again).
 	void Rebaseline();
 
 	std::string Describe();
