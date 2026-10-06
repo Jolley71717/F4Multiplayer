@@ -4,6 +4,7 @@
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/Party.h"
+#include "game/Voice.h"
 #include "game/WeaponFire.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
@@ -765,6 +766,18 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// voice [talk|loop on|off]: record without the key, or hear our own voice.
+		std::string VoiceCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && (args[0] == "talk" || args[0] == "loop")) {
+				(args[0] == "talk" ? Voice::SetForceTalk : Voice::SetLoopback)(args[1] == "on");
+			} else if (!args.empty()) {
+				return "error: usage: voice [talk|loop on|off]";
+			}
+			return Voice::Describe();
+		}
+
 		// echo on|off [dx dy]: a puppet mirrors the local player, offset by (dx, dy).
 		std::string Echo(std::string_view a_args)
 		{
@@ -809,6 +822,7 @@ namespace DevCommands
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "echo", Echo },
+			Entry{ "voice", VoiceCommand },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },
 			Entry{ "party", PartyCommand },

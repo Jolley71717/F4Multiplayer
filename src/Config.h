@@ -49,6 +49,14 @@ namespace Config
 		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
 		std::uint32_t keyPing = 0x77;        // F8: "over here"
 
+		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
+		// Friends hear you at full volume within 8 m, fading out at voiceRange meters (0 = everyone
+		// always hears everyone).
+		bool          voiceChat = true;
+		bool          voiceOpenMic = false;
+		std::uint32_t keyVoice = 0x05;  // mouse side button (back)
+		float         voiceRange = 60.0f;
+
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
 

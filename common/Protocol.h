@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 16;
+	inline constexpr std::uint16_t VERSION = 17;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -65,6 +65,7 @@ namespace Protocol
 		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
 		kReportQuestDone = 21,    // the sender completed a quest themselves
 		kRevive = 22,             // the sender helped a downed player up
+		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 
 		// server -> client
 		kWelcome = 101,
@@ -91,6 +92,7 @@ namespace Protocol
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
+		kVoiceRelay = 125,        // a piece of another player's voice
 	};
 
 	enum StateFlags : std::uint8_t
@@ -328,6 +330,15 @@ namespace Protocol
 		float         xp = 0.0f;
 	};
 
+	inline constexpr std::size_t MAX_VOICE_BYTES = 4000;
+
+	// Compressed voice as Steam produces it. playerId is ignored client -> server.
+	struct VoiceData
+	{
+		std::uint32_t             playerId = 0;
+		std::vector<std::uint8_t> data;
+	};
+
 	// kRevive: playerId is the downed player. kRevived: playerId is the helper.
 	struct Revive
 	{
@@ -397,6 +408,14 @@ namespace Protocol
 			Raw(a_value.data(), length);
 		}
 
+		// A length-prefixed byte string (at most 65535 bytes).
+		void Bytes(std::span<const std::uint8_t> a_value)
+		{
+			const auto length = (std::min<std::size_t>)(a_value.size(), 0xFFFF);
+			U16(static_cast<std::uint16_t>(length));
+			Raw(a_value.data(), length);
+		}
+
 		[[nodiscard]] const std::vector<std::uint8_t>& Data() const { return buffer; }
 
 	private:
@@ -432,6 +451,18 @@ namespace Protocol
 				return {};
 			}
 			std::string out(reinterpret_cast<const char*>(data.data() + offset), length);
+			offset += length;
+			return out;
+		}
+
+		std::vector<std::uint8_t> Bytes(std::size_t a_maxLength)
+		{
+			const auto length = U16();
+			if (failed || length > a_maxLength || offset + length > data.size()) {
+				failed = true;
+				return {};
+			}
+			std::vector<std::uint8_t> out(data.begin() + offset, data.begin() + offset + length);
 			offset += length;
 			return out;
 		}
@@ -1131,6 +1162,27 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.xp = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const VoiceData& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.Bytes(a_msg.data);
+		return w.Data();
+	}
+
+	inline std::optional<VoiceData> DecodeVoice(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		VoiceData msg;
+		msg.playerId = r.U32();
+		msg.data = r.Bytes(MAX_VOICE_BYTES);
+		if (!r.Ok() || !r.AtEnd() || msg.data.empty()) {
 			return std::nullopt;
 		}
 		return msg;

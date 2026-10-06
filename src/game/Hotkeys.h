@@ -14,4 +14,7 @@ namespace Hotkeys
 
 	// Actions triggered since the last call. Call once per frame from the main thread.
 	[[nodiscard]] std::vector<Action> Poll();
+
+	// The key is down and the game window is in front (menus don't matter).
+	[[nodiscard]] bool Held(std::uint32_t a_vk);
 }

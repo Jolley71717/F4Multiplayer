@@ -65,6 +65,12 @@ Each player keeps their own save, character and inventory.
 Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`). They don't
 work while a menu or the console is open.
 
+### Voice chat
+
+Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
+a key). Friends hear you at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
+0 = everyone hears everyone). It uses the microphone chosen in Steam > Settings > Voice.
+
 ### Going down
 
 With friends in the session, a hit that would kill you knocks you down instead. A friend who stands
