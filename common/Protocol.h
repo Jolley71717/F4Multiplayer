@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 2;
+	inline constexpr std::uint16_t VERSION = 3;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -75,6 +75,7 @@ namespace Protocol
 		std::uint32_t contentHash = 0;  // hash of the client's load order; all players must match
 		std::string   name;
 		std::string   password;
+		std::uint32_t appearance = 0;  // NPC base form others should use for this player (0 = their default)
 	};
 
 	struct Welcome
@@ -91,6 +92,7 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		std::string   name;
+		std::uint32_t appearance = 0;
 	};
 
 	struct PlayerLeft
@@ -238,6 +240,7 @@ namespace Protocol
 		w.U32(a_msg.contentHash);
 		w.Str(a_msg.name, MAX_NAME_LENGTH);
 		w.Str(a_msg.password, MAX_PASSWORD_LENGTH);
+		w.U32(a_msg.appearance);
 		return w.Data();
 	}
 
@@ -251,6 +254,7 @@ namespace Protocol
 		msg.contentHash = r.U32();
 		msg.name = r.Str(MAX_NAME_LENGTH);
 		msg.password = r.Str(MAX_PASSWORD_LENGTH);
+		msg.appearance = r.U32();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -318,6 +322,7 @@ namespace Protocol
 		Writer w{ MessageType::kPlayerJoined };
 		w.U32(a_msg.playerId);
 		w.Str(a_msg.name, MAX_NAME_LENGTH);
+		w.U32(a_msg.appearance);
 		return w.Data();
 	}
 
@@ -328,6 +333,7 @@ namespace Protocol
 		PlayerJoined msg;
 		msg.playerId = r.U32();
 		msg.name = r.Str(MAX_NAME_LENGTH);
+		msg.appearance = r.U32();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}

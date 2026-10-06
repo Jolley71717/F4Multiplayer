@@ -1,4 +1,4 @@
-#include "Server.h"
+﻿#include "Server.h"
 
 #include "Net.h"
 #include "Protocol.h"
@@ -19,6 +19,7 @@ namespace
 		ENetPeer*             peer = nullptr;
 		std::uint32_t         id = 0;
 		std::string           name;
+		std::uint32_t         appearance = 0;
 		bool                  welcomed = false;
 		bool                  hasState = false;
 		bool                  stateDirty = false;
@@ -146,6 +147,7 @@ void Server::Run(void* a_host)
 		}
 
 		a_player.name = SanitizeName(hello->name, a_player.id);
+		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
 
@@ -153,8 +155,8 @@ void Server::Run(void* a_host)
 			if (!other.welcomed || peer == a_player.peer) {
 				continue;
 			}
-			Net::Send(a_player.peer, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name }), true);
-			Net::Send(peer, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name }), true);
+			Net::Send(a_player.peer, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
+			Net::Send(peer, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
 			// Let the newcomer see players who are standing still right away.
 			other.stateDirty = other.hasState;
 		}

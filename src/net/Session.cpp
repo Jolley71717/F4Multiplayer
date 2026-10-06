@@ -97,7 +97,7 @@ namespace Session
 				break;
 			case MessageType::kPlayerJoined:
 				if (const auto msg = Protocol::DecodePlayerJoined(a_data)) {
-					RemotePlayers::Add(msg->playerId, msg->name);
+					RemotePlayers::Add(msg->playerId, msg->name, msg->appearance);
 					Notify(msg->name + " joined");
 				}
 				break;
@@ -205,6 +205,7 @@ namespace Session
 					hello.contentHash = contentHash;
 					hello.name = settings.playerName;
 					hello.password = settings.password;
+					hello.appearance = settings.myAppearance;
 					client.Send(Protocol::Encode(hello), true);
 				}
 				break;

@@ -72,6 +72,8 @@ namespace Config
 				ParseInt(value, settings.maxPlayers);
 			} else if (key == "sPassword") {
 				settings.password = value;
+			} else if (key == "iMyAppearance") {
+				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {
 				ParseInt(value, settings.puppetBaseForm, 16);
 			} else if (key == "bFastLoading") {

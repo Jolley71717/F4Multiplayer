@@ -26,6 +26,7 @@ namespace RemotePlayers
 		struct RemotePlayer
 		{
 			std::string          name;
+			std::uint32_t        appearance = 0;
 			std::deque<Snapshot> snapshots;
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
@@ -151,11 +152,15 @@ namespace RemotePlayers
 
 		RE::Actor* Spawn(const RemotePlayer& a_player, const Protocol::PlayerState& a_state, RE::TESObjectCELL* a_localCell)
 		{
-			const auto baseID = Config::Get().puppetBaseForm;
-			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(baseID);
+			// Prefer the look the player picked; fall back to our default if it isn't a valid NPC here.
+			auto npc = a_player.appearance ? RE::TESForm::GetFormByID<RE::TESNPC>(a_player.appearance) : nullptr;
 			if (!npc) {
-				REX::ERROR("RemotePlayers: puppet base form {:08X} is not an NPC", baseID);
-				return nullptr;
+				const auto baseID = Config::Get().puppetBaseForm;
+				npc = RE::TESForm::GetFormByID<RE::TESNPC>(baseID);
+				if (!npc) {
+					REX::ERROR("RemotePlayers: puppet base form {:08X} is not an NPC", baseID);
+					return nullptr;
+				}
 			}
 
 			RE::NEW_REFR_DATA data;
@@ -180,9 +185,11 @@ namespace RemotePlayers
 		}
 	}
 
-	void Add(std::uint32_t a_id, std::string a_name)
+	void Add(std::uint32_t a_id, std::string a_name, std::uint32_t a_appearance)
 	{
-		players[a_id].name = std::move(a_name);
+		auto& player = players[a_id];
+		player.name = std::move(a_name);
+		player.appearance = a_appearance;
 	}
 
 	void Remove(std::uint32_t a_id)

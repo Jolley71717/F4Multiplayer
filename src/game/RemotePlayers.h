@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Protocol.h"
 
@@ -6,7 +6,8 @@
 // All functions must be called from the game's main thread.
 namespace RemotePlayers
 {
-	void Add(std::uint32_t a_id, std::string a_name);
+	// a_appearance is the NPC base form the player asked to be shown as (0 = our default).
+	void Add(std::uint32_t a_id, std::string a_name, std::uint32_t a_appearance = 0);
 	void Remove(std::uint32_t a_id);
 	void RemoveAll();
 

@@ -41,6 +41,7 @@ int main(int argc, char* argv[])
 	std::uint32_t cell = 0;
 	std::uint32_t worldspace = 0x3C;  // Commonwealth
 	std::uint32_t contentHash = 0;
+	std::uint32_t appearance = 0;
 	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
 
@@ -58,6 +59,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, cell, 16);
 		} else if (key == "--worldspace") {
 			ok = ParseNumber(value, worldspace, 16);
+		} else if (key == "--appearance") {
+			ok = ParseNumber(value, appearance, 16);
 		} else if (key == "--content-hash") {
 			ok = ParseNumber(value, contentHash, 16);
 		} else if (key == "--x") {
@@ -113,7 +116,7 @@ int main(int argc, char* argv[])
 			switch (event.type) {
 			case ENET_EVENT_TYPE_CONNECT:
 				std::cout << "connected, sending hello\n";
-				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password }), true);
+				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance }), true);
 				break;
 			case ENET_EVENT_TYPE_RECEIVE:
 				{

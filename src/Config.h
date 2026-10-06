@@ -23,6 +23,9 @@ namespace Config
 		// or hitting another player can count as a crime against that faction.
 		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)
 
+		// NPC base form other players should see for *you*. 0 = let them use their default.
+		std::uint32_t myAppearance = 0;
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
