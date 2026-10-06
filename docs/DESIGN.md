@@ -167,7 +167,10 @@ safely. Container changes can't (that would duplicate items), so:
 - Hello and RequestWorldState say what the world has, and the server sends only the rest.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
-save's record and asks for the session's changes again.
+save's record and asks for the session's changes again. Container changes in a `WorldState` carry who made
+them; the player's own changes after the save are skipped (the save is from before them, so
+replaying them would empty the container without giving the loot back, or duplicate what they put
+in). Player ids are never reused, so this only covers reloads in the same connection.
 
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 

@@ -399,8 +399,8 @@ namespace Protocol
 	struct WorldState
 	{
 		std::vector<std::uint32_t>    deadActors;
-		std::uint32_t                 containerFirstIndex = 0;  // session index of containerChanges[0]
-		std::vector<ContainerChange>  containerChanges;  // in order
+		std::uint32_t                       containerFirstIndex = 0;  // session index of containerChanges[0]
+		std::vector<IndexedContainerChange> containerChanges;  // in order (the index isn't sent)
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
 		std::vector<QuestStage>       questStages;  // in order
@@ -1367,9 +1367,10 @@ namespace Protocol
 		w.U32(static_cast<std::uint32_t>(changes));
 		for (std::size_t i = 0; i < changes; ++i) {
 			const auto& change = a_msg.containerChanges[i];
-			w.U32(change.container);
-			w.U32(change.item);
-			w.U32(static_cast<std::uint32_t>(change.count));
+			w.U32(change.change.container);
+			w.U32(change.change.item);
+			w.U32(static_cast<std::uint32_t>(change.change.count));
+			w.U32(change.playerId);
 		}
 		writeIds(a_msg.pickedUp);
 		const auto states = (std::min)(a_msg.refStates.size(), MAX_WORLD_STATE_ACTORS);
@@ -1413,10 +1414,12 @@ namespace Protocol
 			return std::nullopt;
 		}
 		for (std::uint32_t i = 0; i < changes && r.Ok(); ++i) {
-			ContainerChange change;
-			change.container = r.U32();
-			change.item = r.U32();
-			change.count = static_cast<std::int32_t>(r.U32());
+			IndexedContainerChange change;
+			change.index = msg.containerFirstIndex + i;
+			change.change.container = r.U32();
+			change.change.item = r.U32();
+			change.change.count = static_cast<std::int32_t>(r.U32());
+			change.playerId = r.U32();
 			msg.containerChanges.push_back(change);
 		}
 		if (!r.Ok() || !readIds(msg.pickedUp)) {
