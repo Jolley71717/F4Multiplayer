@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/Compass.h"
 #include "game/Conversations.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
@@ -633,6 +634,7 @@ namespace Session
 		}
 
 		RemotePlayers::Update();
+		Compass::Frame();
 		Puppets::Tick();
 	}
 
@@ -673,7 +675,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={}", hitsTaken, hitsIgnored) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

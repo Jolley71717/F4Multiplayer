@@ -1,6 +1,7 @@
 #include "game/Party.h"
 
 #include "Config.h"
+#include "game/Compass.h"
 #include "game/Downed.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
@@ -141,7 +142,7 @@ namespace Party
 
 		std::string Describe(const RemotePlayers::Info& a_player)
 		{
-			std::string out = a_player.name;
+			std::string out = std::format("{} [{}]", a_player.name, Compass::MarkerName(a_player.id));
 			const auto  it = known.find(a_player.id);
 			if (it != known.end() && it->second.hasStatus) {
 				const auto& status = it->second.status;
