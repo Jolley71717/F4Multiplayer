@@ -121,6 +121,64 @@ namespace Puppets
 			hookedVtable = vtable;
 			REX::INFO("Puppets: hooked actor update (vtable {:X})", vtable);
 		}
+
+		// Activation (pressing E) is handled by the base form. Puppets must not start the
+		// base NPC's dialogue or show an activation prompt.
+		constexpr std::size_t ACTIVATE_INDEX = 0x40;       // TESForm::Activate
+		constexpr std::size_t ACTIVATE_TEXT_INDEX = 0x60;  // TESBoundObject::GetActivateText
+
+		using ActivateFn = bool (*)(RE::TESForm*, RE::TESObjectREFR*, RE::TESObjectREFR*, RE::TESBoundObject*, std::int32_t);
+		using ActivateTextFn = bool (*)(RE::TESBoundObject*, RE::TESObjectREFR*, RE::BSString&);
+		std::uintptr_t hookedBaseVtable = 0;
+		ActivateFn     originalActivate = nullptr;
+		ActivateTextFn originalActivateText = nullptr;
+
+		bool IsPuppetRef(RE::TESObjectREFR* a_ref)
+		{
+			const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+			return actor && IsPuppet(actor);
+		}
+
+		bool ActivateHook(RE::TESForm* a_this, RE::TESObjectREFR* a_itemActivated, RE::TESObjectREFR* a_actionRef, RE::TESBoundObject* a_objectToGet, std::int32_t a_count)
+		{
+			if (IsPuppetRef(a_itemActivated)) {
+				return false;
+			}
+			return originalActivate(a_this, a_itemActivated, a_actionRef, a_objectToGet, a_count);
+		}
+
+		bool ActivateTextHook(RE::TESBoundObject* a_this, RE::TESObjectREFR* a_itemActivated, RE::BSString& a_result)
+		{
+			if (IsPuppetRef(a_itemActivated)) {
+				return false;
+			}
+			return originalActivateText(a_this, a_itemActivated, a_result);
+		}
+
+		void InstallActivationHooks(RE::Actor* a_actor)
+		{
+			const auto base = a_actor->GetObjectReference();
+			if (!base) {
+				return;
+			}
+			const auto vtable = *reinterpret_cast<std::uintptr_t*>(base);
+			if (hookedBaseVtable == vtable) {
+				return;
+			}
+			if (hookedBaseVtable != 0) {
+				REX::WARN("Puppets: base form of {:08X} uses an unhooked vtable", a_actor->GetFormID());
+				return;
+			}
+
+			const auto activateSlot = vtable + sizeof(void*) * ACTIVATE_INDEX;
+			const auto textSlot = vtable + sizeof(void*) * ACTIVATE_TEXT_INDEX;
+			originalActivate = *reinterpret_cast<ActivateFn*>(activateSlot);
+			originalActivateText = *reinterpret_cast<ActivateTextFn*>(textSlot);
+			REL::WriteSafeData(activateSlot, reinterpret_cast<std::uintptr_t>(&ActivateHook));
+			REL::WriteSafeData(textSlot, reinterpret_cast<std::uintptr_t>(&ActivateTextHook));
+			hookedBaseVtable = vtable;
+			REX::INFO("Puppets: hooked NPC activation (vtable {:X})", vtable);
+		}
 	}
 
 	void Register(RE::Actor* a_actor)
@@ -129,6 +187,7 @@ namespace Puppets
 			return;
 		}
 		InstallHook(a_actor);
+		InstallActivationHooks(a_actor);
 		SuppressBehavior(a_actor);
 		a_actor->InitiateDoNothingPackage();
 
