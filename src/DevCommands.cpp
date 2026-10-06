@@ -725,6 +725,37 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
+		// idles <text>: idle animations whose editor ID, event or file contains the text.
+		std::string Idles(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: idles <text>";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			const auto text = [](const RE::BSFixedString& a_str) { return std::string_view{ a_str.c_str() ? a_str.c_str() : "" }; };
+			for (const auto& [id, form] : *map) {
+				const auto idle = form ? form->As<RE::TESIdleForm>() : nullptr;
+				if (!idle || count >= 25) {
+					continue;
+				}
+				const std::string_view editorId = idle->formEditorID.c_str() ? idle->formEditorID.c_str() : "";
+				const auto event = text(idle->animEventName);
+				const auto file = text(idle->animFileName);
+				if (editorId.find(a_args) == std::string_view::npos && event.find(a_args) == std::string_view::npos && file.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X} {} ev={} file={} graph={}; ", id, editorId, event, file, text(idle->behaviorGraphName));
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
 		// edid <formHex>: a form's editor ID (most forms have none at runtime).
 		std::string EditorId(std::string_view a_args)
 		{
@@ -859,6 +890,7 @@ namespace DevCommands
 			Entry{ "echo", Echo },
 			Entry{ "voice", VoiceCommand },
 			Entry{ "markers", Markers },
+			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },
 			Entry{ "party", PartyCommand },

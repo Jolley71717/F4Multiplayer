@@ -18,7 +18,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 9 | Shared kill XP | Friends get part of the XP for your kills, so nobody falls behind | done (protocol 14) |
 | 10 | Connection warnings | "Connection to the host is unstable" instead of silent rubber-banding | done (protocol 14) |
 | 11 | Friendly fire setting | Host chooses whether players can hurt each other (off by default) | done (protocol 15) |
-| 12 | Emotes | Wave, point, cheer on hotkeys, played on your character for others | later |
+| 12 | Emotes | Wave, point, cheer on hotkeys, played on your character for others | later: idles exist (IdlePointing 0013A445, IdleCheeringStanding 0010BA3A, IdleClapping 00141F3C), but stand-ins ignore `playidle` while the puppet driver animates them |
 | 13 | Session saved on the host's disk | The shared world state survives the host quitting | later |
 | 14 | Shared map discoveries | A location one player finds shows up on everyone's map | done (protocol 18) |
 | 15 | Waiting and sleeping together | Waiting moves time for everyone | partly: the host's waiting moves everyone's clock; others snap back |

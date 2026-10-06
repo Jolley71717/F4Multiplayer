@@ -209,7 +209,7 @@ Protocol VERSION 18.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
 - Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
-  markers and their flags).
+  markers and their flags), `idles <text>` (idle animations by editor ID, event or file).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
