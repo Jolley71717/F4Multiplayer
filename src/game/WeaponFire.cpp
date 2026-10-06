@@ -10,6 +10,7 @@ namespace WeaponFire
 		std::atomic<std::uint32_t> total{ 0 };
 		std::uint32_t              replayed = 0;  // shots received for a stand-in or mirrored NPC
 		std::uint32_t              played = 0;    // ... that its animation graph accepted
+		std::uint32_t              sounded = 0;   // ... with the gunshot played
 
 		// Every reference receives its own animation graph's events through its
 		// BSTEventSink<BSAnimationGraphEvent> base (at 0x38). An actor's graph sends "WeaponFire"
@@ -96,6 +97,48 @@ namespace WeaponFire
 		return std::exchange(npcShots, {});
 	}
 
+	namespace
+	{
+		// The gunshot the game picked for the actor's weapon when it was equipped (by the
+		// weapon's keywords: a suppressor changes it). The weapon's own sound fields are empty.
+		RE::BGSSoundDescriptorForm* FireSound(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return nullptr;
+			}
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				if (!equipped.item.object || !equipped.item.object->Is(RE::ENUM_FORM_ID::kWEAP)) {
+					continue;
+				}
+				const auto data = static_cast<RE::EquippedWeaponData*>(equipped.data.get());
+				const auto mapping = data ? data->attackSoundData : nullptr;
+				if (mapping && mapping->descriptor) {
+					return mapping->descriptor;
+				}
+			}
+			return nullptr;
+		}
+
+		// Plays a sound at the actor and follows them while it lasts.
+		bool PlaySound(RE::Actor* a_actor, const RE::BGSSoundDescriptorForm* a_sound)
+		{
+			constexpr std::uint32_t POSITIONED = 0x10;  // a 3D sound, heard from where it is
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			RE::BSSoundHandle handle;
+			if (!a_sound || !audio || !audio->GetSoundHandle(handle, a_sound, 0.0f, POSITIONED)) {
+				return false;
+			}
+			handle.SetPosition(a_actor->data.location);
+			if (const auto root = a_actor->Get3D()) {
+				handle.SetObjectToFollow(root);
+			}
+			return handle.Play();
+		}
+	}
+
 	void PlayShot(RE::Actor* a_actor)
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
@@ -103,6 +146,10 @@ namespace WeaponFire
 		if (a_actor && !a_actor->IsDead(false) && a_actor->GetWeaponMagicDrawn() && a_actor->Get3D() &&
 			static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
+			// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter.
+			if (PlaySound(a_actor, FireSound(a_actor))) {
+				++sounded;
+			}
 		}
 	}
 
@@ -126,7 +173,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{}", total.load(), played, replayed);
+		return std::format("shots={} replayed={}/{} sounded={}", total.load(), played, replayed, sounded);
 	}
 
 	std::string LogAnimationEvents(bool a_start)

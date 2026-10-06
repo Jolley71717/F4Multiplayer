@@ -117,9 +117,13 @@
   projectiles from stand-ins would add friendly fire and kills nobody made.
 - A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
   rejects attacks, so after every equipment change it holsters and draws again.
-- Not yet: gunshot sound and muzzle flash. The weapon's own attack sound fields are empty for
-  vanilla guns (the sound is resolved elsewhere when firing), and
-  `TaskQueueInterface::QueueWeaponFire` (which would bring both) only works for the player.
+- Gunshot: the weapon's own attack sound fields are empty for vanilla guns. The game picks the
+  sound when the weapon is equipped (by its keywords, so a suppressor changes it) and keeps it in
+  the equipped item's `EquippedWeaponData::attackSoundData`. A replayed shot plays that
+  descriptor through `BSAudioManager` as a 3D sound following the shooter. (Papyrus `Sound.Play`
+  crashed the VM when called from here.)
+- Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
+  the player.
 
 ## Shared world (src/game/WorldSync.cpp)
 
@@ -242,7 +246,8 @@ Protocol VERSION 20.
   `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
   `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
   [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
-  <member> <value>` (look at and change a menu's Flash objects).
+  <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
+  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
