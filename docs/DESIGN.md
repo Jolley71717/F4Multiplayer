@@ -124,7 +124,9 @@ References are identified by form ID, which matches across players because the l
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
-items, pickups only for loose inventory items that don't fill a quest alias.
+items, pickups only for loose inventory items that don't fill a quest alias. Personal items stay in
+everyone's world, loose or in containers: keys, notes/holotapes, `FeaturedItem` (bobbleheads,
+magazines), and stacks a container holds in a quest alias.
 
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
@@ -228,7 +230,7 @@ Protocol VERSION 20.
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
   `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
-  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `menu <name>
+  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
   [hide|force]` (open or close a menu), `paused`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the

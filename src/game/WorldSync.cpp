@@ -75,6 +75,7 @@ namespace WorldSync
 		std::uint32_t              localPlayer = 0;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
+		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -315,6 +316,43 @@ namespace WorldSync
 		}
 
 		// Containers, and NPCs (corpses, merchants): what another player can take from or put into.
+		constexpr std::uint32_t FEATURED_ITEM_KEYWORD = 0x001B3FAC;  // bobbleheads and magazines
+
+		// Items every player collects for themselves: bobbleheads, magazines, keys, notes and
+		// holotapes. Taking one doesn't take it from anyone else's world.
+		bool IsPersonalItem(RE::TESForm* a_item)
+		{
+			if (!a_item) {
+				return false;
+			}
+			if (a_item->Is(RE::ENUM_FORM_ID::kKEYM, RE::ENUM_FORM_ID::kNOTE)) {
+				return true;
+			}
+			const auto keywords = a_item->As<RE::BGSKeywordForm>();
+			return keywords && keywords->HasKeywordID(FEATURED_ITEM_KEYWORD);
+		}
+
+		// Whether a container holds the item as part of a quest (it's in a quest alias).
+		bool HoldsAsQuestItem(RE::TESObjectREFR* a_container, const RE::TESForm* a_item)
+		{
+			const auto list = a_container->inventoryList;
+			if (!list) {
+				return false;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (entry.object != a_item) {
+					continue;
+				}
+				for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get()) {
+					if (stack->extra && stack->extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		bool IsItemHolder(RE::TESObjectREFR* a_ref)
 		{
 			if (const auto actor = a_ref->As<RE::Actor>()) {
@@ -334,8 +372,15 @@ namespace WorldSync
 			if (!container || container->IsDeleted()) {
 				return false;  // not loaded yet
 			}
-			if (!IsItemHolder(container) || !IsInventoryForm(RE::TESForm::GetFormByID(a_change.item))) {
+			const auto item = RE::TESForm::GetFormByID(a_change.item);
+			if (!IsItemHolder(container) || !IsInventoryForm(item)) {
 				return true;  // nothing sensible to do
+			}
+			// Everyone takes their own bobblehead, key or quest item (and doesn't get a copy of
+			// one someone else put in).
+			if (IsPersonalItem(item) || (a_change.count < 0 && HoldsAsQuestItem(container, item))) {
+				++personalSkipped;
+				return true;
 			}
 			const auto command = a_change.count < 0 ?
 				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
@@ -485,9 +530,13 @@ namespace WorldSync
 			if (!ref) {
 				return false;
 			}
-			// Only loose items. Quest items stay so every player can still pick up their own copy.
-			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference()) ||
-				(ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+			// Only loose items. Quest and personal items (bobbleheads, magazines, keys, holotapes)
+			// stay so every player can still pick up their own copy.
+			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference())) {
+				return true;
+			}
+			if (IsPersonalItem(ref->GetObjectReference()) || (ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+				++personalSkipped;
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
@@ -794,7 +843,7 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size());
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={} personal={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size(), personalSkipped);
 	}
 }

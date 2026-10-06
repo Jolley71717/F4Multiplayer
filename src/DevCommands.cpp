@@ -725,6 +725,42 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
+		// named <typeNumber> <text>: forms of a type whose name contains the text, with their keywords.
+		std::string Named(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        type = -1;
+			if (args.size() < 2 || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
+				return "error: usage: named <typeNumber> <text>";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				if (!form || static_cast<int>(form->GetFormType()) != type || count >= 20) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*form);
+				if (name.find(args[1]) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X}'{}'", id, name);
+				if (const auto keywords = form->As<RE::BGSKeywordForm>()) {
+					for (std::uint32_t i = 0; i < keywords->GetNumKeywords(); ++i) {
+						const auto keyword = keywords->GetKeywordAt(i).value_or(nullptr);
+						out += std::format(" k{:08X}", keyword ? keyword->GetFormID() : 0);
+					}
+				}
+				out += "; ";
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
 		// idles <text>: idle animations whose editor ID, event or file contains the text.
 		std::string Idles(std::string_view a_args)
 		{
@@ -1005,6 +1041,7 @@ namespace DevCommands
 			Entry{ "party", PartyCommand },
 			Entry{ "edid", EditorId },
 			Entry{ "forms", Forms },
+			Entry{ "named", Named },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
