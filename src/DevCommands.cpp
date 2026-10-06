@@ -222,6 +222,29 @@ namespace DevCommands
 			return count ? out : "none";
 		}
 
+		// items [radius]: lists nearby loose items that can be picked up.
+		std::string Items(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const float radius = ParseFloat(a_args).value_or(2000.0f);
+			std::string out;
+			int         count = 0;
+			cell->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+				using F = RE::ENUM_FORM_ID;
+				if (base && !a_ref->IsDisabled() && base->Is(F::kMISC, F::kWEAP, F::kALCH, F::kAMMO, F::kARMO, F::kBOOK, F::kNOTE) && count < 30) {
+					out += std::format("{}{:08X} '{}'", count ? "; " : "", a_ref->GetFormID(), RE::TESFullName::GetFullName(*base));
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
 		// count <refHex> <itemHex>: how many of an item a container/actor holds.
 		std::string Count(std::string_view a_args)
 		{
@@ -518,6 +541,7 @@ namespace DevCommands
 			Entry{ "actors", Actors },
 			Entry{ "containers", Containers },
 			Entry{ "count", Count },
+			Entry{ "items", Items },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },

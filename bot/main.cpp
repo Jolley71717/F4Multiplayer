@@ -47,6 +47,7 @@ int main(int argc, char* argv[])
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
+	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
 	std::uint32_t lootItem = 0;
 	std::int32_t  lootCount = 0;
@@ -80,6 +81,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--pickup") {
+			ok = ParseNumber(value, pickupRef, 16);
 		} else if (key == "--loot") {
 			// container:item:count, hex:hex:decimal (negative count = take)
 			const auto first = value.find(':');
@@ -149,6 +152,10 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (pickupRef) {
+								std::cout << "reporting pickup\n";
+								Net::Send(peer, Protocol::Encode(Protocol::RefPickedUp{ pickupRef }, Protocol::MessageType::kReportPickup), true);
+							}
 							if (lootContainer) {
 								std::cout << "reporting container change\n";
 								Net::Send(peer, Protocol::Encode(Protocol::ContainerChange{ lootContainer, lootItem, lootCount }, Protocol::MessageType::kReportContainer), true);

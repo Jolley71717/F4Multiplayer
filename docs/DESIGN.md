@@ -55,14 +55,13 @@ shared. The server keeps the session's world state and sends it to late joiners 
 | Deaths | done, tested | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
 | Health | done, tested (incoming) | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | done, tested (both directions + late join) | TESContainerChangedEvent player<->container -> ContainerChange; receivers `removeitem`/`additem` |
-| World item pickup | built, NOT yet tested | container event old=0,new=player -> RefPickedUp; receivers disable the ref |
+| World item pickup | done, tested (both directions) | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
 
 ## Status and next steps (2026-10-06)
 
 Protocol VERSION 7. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
 
 Next, in order:
-1. Test world item pickups (pick an item off the ground; bot listener should print `picked up`).
 2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
 3. Doors and locks (TESActivateEvent on doors, lock state).
 4. Names above players (detour TESObjectREFR::GetDisplayFullName for puppets).

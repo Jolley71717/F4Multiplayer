@@ -20,6 +20,20 @@ namespace WorldSync
 		std::vector<std::uint32_t> deathInbox;
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
+		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
+
+		struct Activation
+		{
+			std::uint32_t     ref;
+			std::uint32_t     base;
+			Clock::time_point time{};
+		};
+		std::vector<Activation> activateInbox;
+
+		// Recent local activations and world pickups, matched up in Frame() (either can arrive first).
+		constexpr auto          MATCH_WINDOW = 2s;
+		std::vector<Activation> recentActivations;
+		std::vector<Activation> unmatchedPickups;  // ref unused
 
 		// Remote loot changes for containers/items that weren't loaded yet, in arrival order.
 		std::vector<Protocol::ContainerChange> pendingContainer;
@@ -153,9 +167,14 @@ namespace WorldSync
 				// container and nothing, so they never match and never echo back.
 				std::optional<std::vector<std::uint8_t>> packet;
 				const auto count = a_event.itemCount;
-				if (a_event.newContainerFormID == PLAYER_REF && a_event.oldContainerFormID == 0 && IsShareable(a_event.referenceFormID)) {
-					packet = Protocol::Encode(Protocol::RefPickedUp{ a_event.referenceFormID }, Protocol::MessageType::kReportPickup);
-				} else if (a_event.newContainerFormID == PLAYER_REF && IsShareable(a_event.oldContainerFormID) && count > 0) {
+				if (a_event.newContainerFormID == PLAYER_REF && a_event.oldContainerFormID == 0) {
+					// Picked up from the world. The event doesn't say which reference (referenceFormID is 0),
+					// so Frame() pairs it with the item the player just activated.
+					std::scoped_lock l{ inboxLock };
+					pickupInbox.push_back(a_event.baseObjectFormID);
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (a_event.newContainerFormID == PLAYER_REF && IsShareable(a_event.oldContainerFormID) && count > 0) {
 					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count }, Protocol::MessageType::kReportContainer);
 				} else if (a_event.oldContainerFormID == PLAYER_REF && IsShareable(a_event.newContainerFormID) && count > 0) {
 					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.newContainerFormID, a_event.baseObjectFormID, count }, Protocol::MessageType::kReportContainer);
@@ -169,6 +188,26 @@ namespace WorldSync
 		};
 
 		ContainerWatcher containerWatcher;
+
+		class ActivateWatcher :
+			public RE::BSTEventSink<RE::TESActivateEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESActivateEvent& a_event, RE::BSTEventSource<RE::TESActivateEvent>*) override
+			{
+				const auto& target = a_event.objectActivated;
+				const auto& by = a_event.actionRef;
+				if (!target || !by || !by->IsPlayerRef() || !IsShareable(target->GetFormID())) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				const auto base = target->GetObjectReference();
+				std::scoped_lock l{ inboxLock };
+				activateInbox.push_back({ target->GetFormID(), base ? base->GetFormID() : 0 });
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		ActivateWatcher activateWatcher;
 
 		// Applies another player's container change. Returns false if the container isn't loaded.
 		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
@@ -185,6 +224,30 @@ namespace WorldSync
 				std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
 			RE::Console::ExecuteCommand(command.c_str());
 			return true;
+		}
+
+		// Pairs world pickups with the reference the player activated, and reports them.
+		void MatchPickups(Clock::time_point a_now, std::vector<Activation>& a_activations, const std::vector<std::uint32_t>& a_pickups)
+		{
+			for (auto& activation : a_activations) {
+				activation.time = a_now;
+				recentActivations.push_back(activation);
+			}
+			for (const auto base : a_pickups) {
+				unmatchedPickups.push_back({ 0, base, a_now });
+			}
+			std::erase_if(unmatchedPickups, [&](const Activation& a_pickup) {
+				const auto match = std::ranges::find(recentActivations, a_pickup.base, &Activation::base);
+				if (match == recentActivations.end()) {
+					return false;
+				}
+				outgoing.push_back(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				recentActivations.erase(match);
+				return true;
+			});
+			const auto expired = [&](const Activation& a_entry) { return a_now - a_entry.time > MATCH_WINDOW; };
+			std::erase_if(recentActivations, expired);
+			std::erase_if(unmatchedPickups, expired);
 		}
 
 		bool TryApplyPickup(std::uint32_t a_refId)
@@ -213,6 +276,9 @@ namespace WorldSync
 		}
 		if (const auto source = RE::TESContainerChangedEvent::GetEventSource()) {
 			source->RegisterSink(&containerWatcher);
+		}
+		if (const auto source = RE::TESActivateEvent::GetEventSource()) {
+			source->RegisterSink(&activateWatcher);
 		}
 	}
 
@@ -271,10 +337,14 @@ namespace WorldSync
 	{
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::uint32_t> newHits;
+		std::vector<std::uint32_t> newPickups;
+		std::vector<Activation>    newActivations;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newHits.swap(hitInbox);
+			newPickups.swap(pickupInbox);
+			newActivations.swap(activateInbox);
 			for (auto& packet : lootInbox) {
 				outgoing.push_back(std::move(packet));
 			}
@@ -309,6 +379,7 @@ namespace WorldSync
 		hitLastFrame.insert(newHits.begin(), newHits.end());
 
 		const auto now = Clock::now();
+		MatchPickups(now, newActivations, newPickups);
 		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty()) || now < nextApply) {
 			return;
 		}
@@ -342,7 +413,11 @@ namespace WorldSync
 		pendingContainer.clear();
 		pendingPickups.clear();
 		hitLastFrame.clear();
+		recentActivations.clear();
+		unmatchedPickups.clear();
 		std::scoped_lock l{ inboxLock };
+		pickupInbox.clear();
+		activateInbox.clear();
 		deathInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
