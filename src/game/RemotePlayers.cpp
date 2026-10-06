@@ -44,8 +44,25 @@ namespace RemotePlayers
 			return a_from + delta * a_t;
 		}
 
+		struct Sampled
+		{
+			Protocol::PlayerState state;
+			float                 motionAngle = 0.0f;  // world heading of travel, radians
+		};
+
+		// Movement direction relative to facing, as a fraction of a turn in [0, 1).
+		float RelativeDirection(float a_motionAngle, float a_heading)
+		{
+			constexpr float twoPi = std::numbers::pi_v<float> * 2.0f;
+			float rel = std::fmod(a_motionAngle - a_heading, twoPi);
+			if (rel < 0.0f) {
+				rel += twoPi;
+			}
+			return rel / twoPi;
+		}
+
 		// Interpolated state at (now - delay), or nullopt if we have nothing recent.
-		std::optional<Protocol::PlayerState> Sample(const RemotePlayer& a_player, Clock::time_point a_now)
+		std::optional<Sampled> Sample(const RemotePlayer& a_player, Clock::time_point a_now)
 		{
 			const auto& snaps = a_player.snapshots;
 			if (snaps.empty() || a_now - snaps.back().received > STALE_AFTER) {
@@ -54,7 +71,7 @@ namespace RemotePlayers
 
 			const auto renderTime = a_now - INTERPOLATION_DELAY;
 			if (renderTime <= snaps.front().received) {
-				return snaps.front().state;
+				return Sampled{ snaps.front().state, snaps.front().state.heading };
 			}
 
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
@@ -66,7 +83,7 @@ namespace RemotePlayers
 
 				// Don't blend across a cell or worldspace change (doors, fast travel).
 				if (a.state.cell != b.state.cell || a.state.worldspace != b.state.worldspace) {
-					return b.state;
+					return Sampled{ b.state, b.state.heading };
 				}
 
 				const float span = std::chrono::duration<float>(b.received - a.received).count();
@@ -77,11 +94,20 @@ namespace RemotePlayers
 				out.y = std::lerp(a.state.y, b.state.y, t);
 				out.z = std::lerp(a.state.z, b.state.z, t);
 				out.heading = LerpAngle(a.state.heading, b.state.heading, t);
-				return out;
+
+				const float dx = b.state.x - a.state.x;
+				const float dy = b.state.y - a.state.y;
+				const float motionAngle = dx * dx + dy * dy > 1.0f ? std::atan2(dx, dy) : out.heading;
+				return Sampled{ out, motionAngle };
 			}
 
-			// Past the newest snapshot: hold position rather than guessing ahead.
-			return snaps.back().state;
+			// Past the newest snapshot: hold position rather than guessing ahead, and stop
+			// animating if updates have dried up.
+			auto held = snaps.back().state;
+			if (a_now - snaps.back().received > INTERPOLATION_DELAY + 250ms) {
+				held.speed = 0.0f;
+			}
+			return Sampled{ held, held.heading };
 		}
 
 		RE::Actor* GetActor(const RemotePlayer& a_player)
@@ -200,7 +226,8 @@ namespace RemotePlayers
 				remote.snapshots.pop_front();
 			}
 
-			const auto state = Sample(remote, now);
+			const auto sampled = Sample(remote, now);
+			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
 			if (visible && localCell->IsExterior()) {
 				const auto& p = player->data.location;
@@ -231,7 +258,8 @@ namespace RemotePlayers
 				remote.actor = actor->GetHandle();
 			}
 
-			Puppets::SetTarget(actor, { state->x, state->y, state->z }, state->heading);
+			Puppets::SetTarget(actor, { state->x, state->y, state->z }, state->heading, state->speed,
+				RelativeDirection(sampled->motionAngle, state->heading));
 		}
 	}
 

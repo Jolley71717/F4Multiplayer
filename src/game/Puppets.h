@@ -11,8 +11,10 @@ namespace Puppets
 
 	[[nodiscard]] bool IsPuppet(const RE::Actor* a_actor);
 
-	// Sets where the puppet should be. Applied on the actor's next update.
-	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading);
+	// Sets where the puppet should be and how it is moving. Applied on the actor's next update.
+	// a_speed is in units/second; a_direction is the movement direction relative to the
+	// heading as a fraction of a turn (0 = forward, 0.25 = right, 0.5 = back, 0.75 = left).
+	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed = 0.0f, float a_direction = 0.0f);
 
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();

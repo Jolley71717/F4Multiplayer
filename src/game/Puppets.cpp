@@ -1,4 +1,4 @@
-#include "game/Puppets.h"
+﻿#include "game/Puppets.h"
 
 namespace Puppets
 {
@@ -10,11 +10,18 @@ namespace Puppets
 		// The engine periodically re-evaluates AI packages, so the idle package is re-applied.
 		constexpr auto IDLE_REFRESH = 2s;
 
+		// Locomotion starts above MOVE_START and stops below MOVE_STOP (units/second).
+		constexpr float MOVE_START = 25.0f;
+		constexpr float MOVE_STOP = 10.0f;
+
 		struct Puppet
 		{
 			RE::NiPoint3                          position;
 			float                                 heading = 0.0f;
+			float                                 speed = 0.0f;
+			float                                 direction = 0.0f;
 			bool                                  hasTarget = false;
+			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 		};
 
@@ -34,6 +41,36 @@ namespace Puppets
 		void SuppressBehavior(RE::Actor* a_actor)
 		{
 			a_actor->boolFlags.set(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR));
+		}
+
+		// With AI off nothing feeds the locomotion graph, so we do: Speed/Direction every
+		// frame, plus moveStart/moveStop events when the remote player starts or stops.
+		void DriveLocomotion(RE::Actor* a_actor, const Puppet& a_puppet)
+		{
+			static const RE::BSFixedString speedVar{ "Speed" };
+			static const RE::BSFixedString directionVar{ "Direction" };
+			static const RE::BSFixedString moveStart{ "moveStart" };
+			static const RE::BSFixedString moveStop{ "moveStop" };
+
+			const auto graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+
+			bool moving = a_puppet.moving;
+			if (!moving && a_puppet.speed > MOVE_START) {
+				moving = graph->NotifyAnimationGraphImpl(moveStart);
+			} else if (moving && a_puppet.speed < MOVE_STOP) {
+				graph->NotifyAnimationGraphImpl(moveStop);
+				moving = false;
+			}
+
+			graph->SetGraphVariableFloat(speedVar, moving ? a_puppet.speed : 0.0f);
+			graph->SetGraphVariableFloat(directionVar, a_puppet.direction);
+
+			if (moving != a_puppet.moving) {
+				std::scoped_lock l{ lock };
+				if (const auto it = puppets.find(a_actor); it != puppets.end()) {
+					it->second.moving = moving;
+				}
+			}
 		}
 
 		void UpdateHook(RE::Actor* a_this, float a_delta)
@@ -60,6 +97,7 @@ namespace Puppets
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->position, true);
 				a_this->SetHeading(puppet->heading);
+				DriveLocomotion(a_this, *puppet);
 			}
 			a_this->UpdateNoAI(a_delta);
 		}
@@ -119,12 +157,14 @@ namespace Puppets
 		return puppets.contains(a_actor);
 	}
 
-	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading)
+	void SetTarget(RE::Actor* a_actor, const RE::NiPoint3& a_position, float a_heading, float a_speed, float a_direction)
 	{
 		std::scoped_lock l{ lock };
 		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
 			it->second.position = a_position;
 			it->second.heading = a_heading;
+			it->second.speed = a_speed;
+			it->second.direction = a_direction;
 			it->second.hasTarget = true;
 		}
 	}

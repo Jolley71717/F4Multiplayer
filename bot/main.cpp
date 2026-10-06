@@ -1,4 +1,4 @@
-// Test client that pretends to be a player: connects to a server and walks in a circle.
+﻿// Test client that pretends to be a player: connects to a server and walks in a circle.
 //
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--content-hash HEX] [--seconds N]
@@ -100,6 +100,8 @@ int main(int argc, char* argv[])
 	using Clock = std::chrono::steady_clock;
 	const auto start = Clock::now();
 	auto       nextSend = start;
+	auto       lastStep = start;
+	float      angle = 0.0f;  // position on the circle, radians
 	bool       welcomed = false;
 	std::uint32_t sequence = 0;
 
@@ -158,10 +160,17 @@ int main(int argc, char* argv[])
 		if (welcomed && now >= nextSend) {
 			nextSend = now + std::chrono::milliseconds(50);  // 20 Hz like the game client
 
-			// Walk around the circle at roughly walking speed (~150 units/s).
-			const float t = std::chrono::duration<float>(now - start).count();
-			const float angularSpeed = 150.0f / radius;
-			const float a = t * angularSpeed;
+			// Walk around the circle at walking speed (~150 units/s) for 4 s, then stand for 3 s,
+			// so both locomotion start and stop get exercised.
+			const float elapsed = std::chrono::duration<float>(now - start).count();
+			const float dt = std::chrono::duration<float>(now - lastStep).count();
+			lastStep = now;
+			const bool  walking = std::fmod(elapsed, 7.0f) < 4.0f;
+			const float walkSpeed = 150.0f;
+			if (walking) {
+				angle += dt * walkSpeed / radius;
+			}
+			const float a = angle;
 
 			Protocol::PlayerState state;
 			state.sequence = ++sequence;
@@ -171,7 +180,7 @@ int main(int argc, char* argv[])
 			state.y = cy + radius * std::cos(a);
 			state.z = cz;
 			state.heading = a + std::numbers::pi_v<float> / 2;  // tangent to the circle
-			state.speed = 150.0f;
+			state.speed = walking ? walkSpeed : 0.0f;
 			Net::Send(peer, Protocol::Encode(state), false);
 		}
 	}
