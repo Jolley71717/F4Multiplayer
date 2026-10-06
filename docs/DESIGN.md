@@ -1,15 +1,15 @@
-# F4Multiplayer design
+﻿# F4Multiplayer design
 
 ## Overview
 
 ```
  Player A's game                    Host (player or F4MPServer.exe)           Player B's game
- ┌────────────────────┐   UDP/ENet   ┌──────────────────────────┐   UDP/ENet   ┌────────────────────┐
- │ F4SE plugin        │─────────────▶│ Relay server (30 Hz)     │◀─────────────│ F4SE plugin        │
- │  Session           │◀─────────────│  join checks, rate limit │─────────────▶│  Session           │
- │  RemotePlayers ──▶ │              │  relays player states    │              │  RemotePlayers ──▶ │
- │  Puppets (actors)  │              └──────────────────────────┘              │  Puppets (actors)  │
- └────────────────────┘                                                         └────────────────────┘
+ â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   UDP/ENet   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   UDP/ENet   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+ â”‚ F4SE plugin        â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¶â”‚ Relay server (30 Hz)     â”‚â—€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚ F4SE plugin        â”‚
+ â”‚  Session           â”‚â—€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”‚  join checks, rate limit â”‚â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¶â”‚  Session           â”‚
+ â”‚  RemotePlayers â”€â”€â–¶ â”‚              â”‚  relays player states    â”‚              â”‚  RemotePlayers â”€â”€â–¶ â”‚
+ â”‚  Puppets (actors)  â”‚              â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜              â”‚  Puppets (actors)  â”‚
+ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                                                         â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 - **Transport:** ENet. Channel 0 is reliable (join/leave, future events). Channel 1 is unreliable,
@@ -43,6 +43,34 @@
   Curie's 001846CB is her robot form.
 - Loading screens are tied to presentation. Setting `presentInterval = 0` while `LoadingMenu` is open
   cuts load times substantially.
+
+## Shared world (src/game/WorldSync.cpp)
+
+Actors, containers and world items are identified by reference form ID, which matches across
+players because the load order must match. Runtime-created references (0xFF......) are never
+shared. The server keeps the session's world state and sends it to late joiners (WorldState).
+
+| Feature | Status | How |
+|---|---|---|
+| Deaths | done, tested | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
+| Health | done, tested (incoming) | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
+| Container loot | built, NOT yet tested | TESContainerChangedEvent player<->container -> ContainerChange; receivers `removeitem`/`additem` |
+| World item pickup | built, NOT yet tested | container event old=0,new=player -> RefPickedUp; receivers disable the ref |
+
+## Status and next steps (2026-10-06)
+
+Protocol VERSION 7. Release zip 0.3.0 was sent to the user (protocol 4), so it is now outdated.
+
+Next, in order:
+1. Test loot sync: `containers` dev command, `count <ref> <item>`, bot `--loot C:I:N`, and
+   `<C>.removeallitems player` in the console to simulate the local player looting.
+2. Test outgoing health with a real player hit (needs the user, or an explosion placed by the player).
+3. Doors and locks (TESActivateEvent on doors, lock state).
+4. Names above players (detour TESObjectREFR::GetDisplayFullName for puppets).
+5. Real look and gear: equipment sync (TESEquipEvent -> equip the same items on the puppet, weapon drawn).
+6. Shared enemy AI ownership (one client runs each NPC's AI, the others puppet it); Skyrim Together's design.
+7. Quest stage sync (opt-in).
+8. Re-package a release and test with the friend.
 
 ## Prior art
 

@@ -47,6 +47,9 @@ int main(int argc, char* argv[])
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
+	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
+	std::uint32_t lootItem = 0;
+	std::int32_t  lootCount = 0;
 	float         healthValue = 0;
 
 	for (int i = 1; i + 1 < argc; i += 2) {
@@ -77,6 +80,14 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--loot") {
+			// container:item:count, hex:hex:decimal (negative count = take)
+			const auto first = value.find(':');
+			const auto second = value.find(':', first + 1);
+			ok = first != std::string_view::npos && second != std::string_view::npos &&
+			     ParseNumber(value.substr(0, first), lootContainer, 16) &&
+			     ParseNumber(value.substr(first + 1, second - first - 1), lootItem, 16) &&
+			     ParseNumber(value.substr(second + 1), lootCount);
 		} else if (key == "--health-ref") {
 			ok = ParseNumber(value, healthRef, 16);
 		} else if (key == "--health") {
@@ -138,6 +149,10 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << '\n';
 							welcomed = true;
+							if (lootContainer) {
+								std::cout << "reporting container change\n";
+								Net::Send(peer, Protocol::Encode(Protocol::ContainerChange{ lootContainer, lootItem, lootCount }, Protocol::MessageType::kReportContainer), true);
+							}
 							if (healthRef) {
 								std::cout << "reporting health of " << std::hex << healthRef << std::dec << " = " << healthValue << '\n';
 								Net::Send(peer, Protocol::Encode(Protocol::ActorHealth{ healthRef, healthValue }, Protocol::MessageType::kReportHealth), true);
@@ -168,9 +183,19 @@ int main(int argc, char* argv[])
 							std::cout << "actor health: " << std::hex << msg->refId << std::dec << " = " << msg->health << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kContainerChanged:
+						if (const auto msg = Protocol::DecodeContainerChange(data)) {
+							std::cout << "container changed: " << std::hex << msg->container << " item " << msg->item << std::dec << " count " << msg->count << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kRefPickedUp:
+						if (const auto msg = Protocol::DecodeRefPickedUp(data)) {
+							std::cout << "picked up: " << std::hex << msg->refId << std::dec << std::endl;
+						}
+						break;
 					case Protocol::MessageType::kWorldState:
 						if (const auto msg = Protocol::DecodeWorldState(data)) {
-							std::cout << "world state: " << msg->deadActors.size() << " dead actors:";
+							std::cout << "world state: " << msg->containerChanges.size() << " container changes, " << msg->pickedUp.size() << " pickups, " << msg->deadActors.size() << " dead actors:";
 							for (const auto id : msg->deadActors) {
 								std::cout << ' ' << std::hex << id << std::dec;
 							}

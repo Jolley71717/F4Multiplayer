@@ -111,7 +111,19 @@ void Server::Run(void* a_host)
 	std::uint32_t                          sessionContentHash = 0;  // set by the first player
 
 	// Shared world state for this session.
-	std::unordered_set<std::uint32_t> deadActors;
+	std::unordered_set<std::uint32_t>         deadActors;
+	std::vector<Protocol::ContainerChange>    containerChanges;
+	std::unordered_set<std::uint32_t>         pickedUp;
+
+	const auto shareable = [](std::uint32_t a_id) { return a_id != 0 && (a_id >> 24) != 0xFF; };
+
+	const auto relayToOthers = [&](const Player& a_from, const std::vector<std::uint8_t>& a_packet) {
+		for (const auto& [peer, other] : players) {
+			if (peer != a_from.peer && other.welcomed) {
+				Net::Send(peer, a_packet, true);
+			}
+		}
+	};
 	auto                                   nextTick = Clock::now();
 
 	const auto welcomedCount = [&] {
@@ -156,9 +168,11 @@ void Server::Run(void* a_host)
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		Net::Send(a_player.peer, Protocol::Encode(Protocol::Welcome{ a_player.id }), true);
-		if (!deadActors.empty()) {
+		if (!deadActors.empty() || !containerChanges.empty() || !pickedUp.empty()) {
 			Protocol::WorldState world;
 			world.deadActors.assign(deadActors.begin(), deadActors.end());
+			world.containerChanges = containerChanges;
+			world.pickedUp.assign(pickedUp.begin(), pickedUp.end());
 			Net::Send(a_player.peer, Protocol::Encode(world), true);
 		}
 
@@ -239,6 +253,31 @@ void Server::Run(void* a_host)
 		}
 	};
 
+	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto change = Protocol::DecodeContainerChange(a_data);
+		if (!change || !shareable(change->container) || change->item == 0 || change->count == 0 ||
+			containerChanges.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+			return;
+		}
+		containerChanges.push_back(*change);
+		relayToOthers(a_player, Protocol::Encode(*change, Protocol::MessageType::kContainerChanged));
+	};
+
+	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || ++a_player.eventsInWindow > MAX_EVENTS_PER_SECOND) {
+			return;
+		}
+		const auto pickup = Protocol::DecodeRefPickedUp(a_data);
+		if (!pickup || !shareable(pickup->refId) || pickedUp.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
+			!pickedUp.insert(pickup->refId).second) {
+			return;
+		}
+		relayToOthers(a_player, Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp));
+	};
+
 	while (!stopRequested) {
 		ENetEvent event;
 		while (enet_host_service(host, &event, 2) > 0) {
@@ -271,6 +310,12 @@ void Server::Run(void* a_host)
 							break;
 						case Protocol::MessageType::kReportHealth:
 							handleHealth(it->second, data);
+							break;
+						case Protocol::MessageType::kReportContainer:
+							handleContainer(it->second, data);
+							break;
+						case Protocol::MessageType::kReportPickup:
+							handlePickup(it->second, data);
 							break;
 						default:
 							break;

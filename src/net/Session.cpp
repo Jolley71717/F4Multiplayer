@@ -118,6 +118,16 @@ namespace Session
 					WorldSync::ApplyRemoteHealth(msg->refId, msg->health);
 				}
 				break;
+			case MessageType::kContainerChanged:
+				if (const auto msg = Protocol::DecodeContainerChange(a_data)) {
+					WorldSync::ApplyRemoteContainerChange(*msg);
+				}
+				break;
+			case MessageType::kRefPickedUp:
+				if (const auto msg = Protocol::DecodeRefPickedUp(a_data)) {
+					WorldSync::ApplyRemotePickup(msg->refId);
+				}
+				break;
 			case MessageType::kWorldState:
 				if (const auto msg = Protocol::DecodeWorldState(a_data)) {
 					WorldSync::ApplyWorldState(*msg);

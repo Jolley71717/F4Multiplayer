@@ -50,6 +50,8 @@ namespace DevCommands
 			return value;
 		}
 
+		RE::TESObjectREFR* LookupRef(std::string_view a_hex);
+
 		RE::TESObjectCELL* PlayerCell()
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -196,6 +198,43 @@ namespace DevCommands
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return count ? out : "none";
+		}
+
+		// containers [radius]: lists nearby container references.
+		std::string Containers(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const float radius = ParseFloat(a_args).value_or(2000.0f);
+			std::string out;
+			int         count = 0;
+			cell->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+				if (base && base->Is(RE::ENUM_FORM_ID::kCONT) && count < 30) {
+					out += std::format("{}{:08X} '{}'", count ? "; " : "", a_ref->GetFormID(), RE::TESFullName::GetFullName(*base));
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
+		// count <refHex> <itemHex>: how many of an item a container/actor holds.
+		std::string Count(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() < 2 ? nullptr : LookupRef(args[0]);
+			const auto itemId = args.size() < 2 ? std::nullopt : ParseHex(args[1]);
+			const auto item = itemId ? RE::TESForm::GetFormByID(*itemId) : nullptr;
+			if (!ref || !item) {
+				return "error: usage: count <refHex> <itemHex>";
+			}
+			std::uint32_t n = 0;
+			ref->GetItemCount(n, item, false);
+			return std::format("{}", n);
 		}
 
 		// spawn <baseHex> [distance]: places a copy of an NPC base in front of the player.
@@ -477,6 +516,8 @@ namespace DevCommands
 			Entry{ "spawn", Spawn },
 			Entry{ "safenpc", SafeNpc },
 			Entry{ "actors", Actors },
+			Entry{ "containers", Containers },
+			Entry{ "count", Count },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },

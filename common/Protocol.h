@@ -15,7 +15,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 6;
+	inline constexpr std::uint16_t VERSION = 7;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -33,6 +33,8 @@ namespace Protocol
 		kPlayerState = 2,
 		kReportDeath = 3,  // an actor died in the sender's world
 		kReportHealth = 4,  // the sender damaged an actor; this is its health now
+		kReportContainer = 5,  // the sender took items from / put items into a container
+		kReportPickup = 6,     // the sender picked up an item lying in the world
 
 		// server -> client
 		kWelcome = 101,
@@ -43,6 +45,8 @@ namespace Protocol
 		kActorDied = 106,     // an actor died in another player's world
 		kWorldState = 107,    // sent on join: everything that already happened this session
 		kActorHealth = 108,   // an actor's health changed in another player's world
+		kContainerChanged = 109,  // another player changed a container's contents
+		kRefPickedUp = 110,       // another player picked up this world item
 	};
 
 	enum StateFlags : std::uint8_t
@@ -123,9 +127,24 @@ namespace Protocol
 		float         health = 0.0f;  // 0..1
 	};
 
+	// Items added to (count > 0) or removed from (count < 0) a container or corpse.
+	struct ContainerChange
+	{
+		std::uint32_t container = 0;
+		std::uint32_t item = 0;  // base object form ID
+		std::int32_t  count = 0;
+	};
+
+	struct RefPickedUp
+	{
+		std::uint32_t refId = 0;
+	};
+
 	struct WorldState
 	{
-		std::vector<std::uint32_t> deadActors;
+		std::vector<std::uint32_t>    deadActors;
+		std::vector<ContainerChange>  containerChanges;  // in order
+		std::vector<std::uint32_t>    pickedUp;
 	};
 
 	inline constexpr std::size_t MAX_WORLD_STATE_ACTORS = 60000;
@@ -460,14 +479,68 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const ContainerChange& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.container);
+		w.U32(a_msg.item);
+		w.U32(static_cast<std::uint32_t>(a_msg.count));
+		return w.Data();
+	}
+
+	inline std::optional<ContainerChange> DecodeContainerChange(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ContainerChange msg;
+		msg.container = r.U32();
+		msg.item = r.U32();
+		msg.count = static_cast<std::int32_t>(r.U32());
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const RefPickedUp& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<RefPickedUp> DecodeRefPickedUp(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RefPickedUp msg;
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorldState& a_msg)
 	{
 		Writer w{ MessageType::kWorldState };
-		const auto count = (std::min)(a_msg.deadActors.size(), MAX_WORLD_STATE_ACTORS);
-		w.U32(static_cast<std::uint32_t>(count));
-		for (std::size_t i = 0; i < count; ++i) {
-			w.U32(a_msg.deadActors[i]);
+		const auto writeIds = [&](const std::vector<std::uint32_t>& a_ids) {
+			const auto count = (std::min)(a_ids.size(), MAX_WORLD_STATE_ACTORS);
+			w.U32(static_cast<std::uint32_t>(count));
+			for (std::size_t i = 0; i < count; ++i) {
+				w.U32(a_ids[i]);
+			}
+		};
+		writeIds(a_msg.deadActors);
+		const auto changes = (std::min)(a_msg.containerChanges.size(), MAX_WORLD_STATE_ACTORS);
+		w.U32(static_cast<std::uint32_t>(changes));
+		for (std::size_t i = 0; i < changes; ++i) {
+			const auto& change = a_msg.containerChanges[i];
+			w.U32(change.container);
+			w.U32(change.item);
+			w.U32(static_cast<std::uint32_t>(change.count));
 		}
+		writeIds(a_msg.pickedUp);
 		return w.Data();
 	}
 
@@ -476,15 +549,32 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		WorldState msg;
-		const auto count = r.U32();
-		if (count > MAX_WORLD_STATE_ACTORS) {
+		const auto readIds = [&](std::vector<std::uint32_t>& a_out) {
+			const auto count = r.U32();
+			if (count > MAX_WORLD_STATE_ACTORS) {
+				return false;
+			}
+			a_out.reserve(count);
+			for (std::uint32_t i = 0; i < count && r.Ok(); ++i) {
+				a_out.push_back(r.U32());
+			}
+			return r.Ok();
+		};
+		if (!readIds(msg.deadActors)) {
 			return std::nullopt;
 		}
-		msg.deadActors.reserve(count);
-		for (std::uint32_t i = 0; i < count && r.Ok(); ++i) {
-			msg.deadActors.push_back(r.U32());
+		const auto changes = r.U32();
+		if (changes > MAX_WORLD_STATE_ACTORS) {
+			return std::nullopt;
 		}
-		if (!r.Ok()) {
+		for (std::uint32_t i = 0; i < changes && r.Ok(); ++i) {
+			ContainerChange change;
+			change.container = r.U32();
+			change.item = r.U32();
+			change.count = static_cast<std::int32_t>(r.U32());
+			msg.containerChanges.push_back(change);
+		}
+		if (!r.Ok() || !readIds(msg.pickedUp)) {
 			return std::nullopt;
 		}
 		return msg;

@@ -19,6 +19,11 @@ namespace WorldSync
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
 		std::vector<std::uint32_t> hitInbox;
+		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
+
+		// Remote loot changes for containers/items that weren't loaded yet, in arrival order.
+		std::vector<Protocol::ContainerChange> pendingContainer;
+		std::unordered_set<std::uint32_t>      pendingPickups;
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -135,6 +140,64 @@ namespace WorldSync
 		};
 
 		HitWatcher hitWatcher;
+
+		constexpr std::uint32_t PLAYER_REF = 0x14;
+
+		class ContainerWatcher :
+			public RE::BSTEventSink<RE::TESContainerChangedEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent& a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
+			{
+				// Only moves the local player makes. Changes we apply for other players go between a
+				// container and nothing, so they never match and never echo back.
+				std::optional<std::vector<std::uint8_t>> packet;
+				const auto count = a_event.itemCount;
+				if (a_event.newContainerFormID == PLAYER_REF && a_event.oldContainerFormID == 0 && IsShareable(a_event.referenceFormID)) {
+					packet = Protocol::Encode(Protocol::RefPickedUp{ a_event.referenceFormID }, Protocol::MessageType::kReportPickup);
+				} else if (a_event.newContainerFormID == PLAYER_REF && IsShareable(a_event.oldContainerFormID) && count > 0) {
+					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count }, Protocol::MessageType::kReportContainer);
+				} else if (a_event.oldContainerFormID == PLAYER_REF && IsShareable(a_event.newContainerFormID) && count > 0) {
+					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.newContainerFormID, a_event.baseObjectFormID, count }, Protocol::MessageType::kReportContainer);
+				}
+				if (packet) {
+					std::scoped_lock l{ inboxLock };
+					lootInbox.push_back(std::move(*packet));
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		ContainerWatcher containerWatcher;
+
+		// Applies another player's container change. Returns false if the container isn't loaded.
+		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
+		{
+			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
+			if (!container || container->IsDeleted()) {
+				return false;
+			}
+			if (!RE::TESForm::GetFormByID(a_change.item)) {
+				return true;  // unknown item; nothing sensible to do
+			}
+			const auto command = a_change.count < 0 ?
+				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -a_change.count) :
+				std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
+			RE::Console::ExecuteCommand(command.c_str());
+			return true;
+		}
+
+		bool TryApplyPickup(std::uint32_t a_refId)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
+			if (!ref) {
+				return false;
+			}
+			if (!ref->IsDisabled() && !ref->IsDeleted()) {
+				ref->Disable();
+			}
+			return true;
+		}
 	}
 
 	void Install()
@@ -147,6 +210,9 @@ namespace WorldSync
 		}
 		if (const auto source = RE::TESHitEvent::GetEventSource()) {
 			source->RegisterSink(&hitWatcher);
+		}
+		if (const auto source = RE::TESContainerChangedEvent::GetEventSource()) {
+			source->RegisterSink(&containerWatcher);
 		}
 	}
 
@@ -165,6 +231,12 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
+		for (const auto& change : a_state.containerChanges) {
+			ApplyRemoteContainerChange(change);
+		}
+		for (const auto id : a_state.pickedUp) {
+			ApplyRemotePickup(id);
+		}
 		REX::INFO("WorldSync: session state has {} dead actors", a_state.deadActors.size());
 	}
 
@@ -180,6 +252,21 @@ namespace WorldSync
 		}
 	}
 
+	void ApplyRemoteContainerChange(const Protocol::ContainerChange& a_change)
+	{
+		// Keep order: if earlier changes for anything are still waiting, queue behind them.
+		if (!pendingContainer.empty() || !TryApplyContainer(a_change)) {
+			pendingContainer.push_back(a_change);
+		}
+	}
+
+	void ApplyRemotePickup(std::uint32_t a_refId)
+	{
+		if (IsShareable(a_refId) && !TryApplyPickup(a_refId)) {
+			pendingPickups.insert(a_refId);
+		}
+	}
+
 	void Frame()
 	{
 		std::vector<std::uint32_t> newDeaths;
@@ -188,6 +275,10 @@ namespace WorldSync
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newHits.swap(hitInbox);
+			for (auto& packet : lootInbox) {
+				outgoing.push_back(std::move(packet));
+			}
+			lootInbox.clear();
 		}
 
 		// Deaths we caused because someone else reported them are already known and don't go back out.
@@ -218,7 +309,7 @@ namespace WorldSync
 		hitLastFrame.insert(newHits.begin(), newHits.end());
 
 		const auto now = Clock::now();
-		if ((pending.empty() && pendingHealth.empty()) || now < nextApply) {
+		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty()) || now < nextApply) {
 			return;
 		}
 		nextApply = now + APPLY_INTERVAL;
@@ -234,6 +325,8 @@ namespace WorldSync
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
 			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
 		}
+		std::erase_if(pendingContainer, [](const Protocol::ContainerChange& a_change) { return TryApplyContainer(a_change); });
+		std::erase_if(pendingPickups, [](std::uint32_t a_id) { return TryApplyPickup(a_id); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -246,15 +339,18 @@ namespace WorldSync
 		dead.clear();
 		pending.clear();
 		pendingHealth.clear();
+		pendingContainer.clear();
+		pendingPickups.clear();
 		hitLastFrame.clear();
 		std::scoped_lock l{ inboxLock };
 		deathInbox.clear();
 		hitInbox.clear();
+		lootInbox.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={}", dead.size(), pending.size(), reported, applied);
+		return std::format("dead={} pending={} reported={} applied={} pendingLoot={} pendingPickups={}", dead.size(), pending.size(), reported, applied, pendingContainer.size(), pendingPickups.size());
 	}
 }
