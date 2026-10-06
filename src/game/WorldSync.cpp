@@ -22,6 +22,8 @@ namespace WorldSync
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
+		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
+		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
@@ -130,11 +132,22 @@ namespace WorldSync
 
 				const auto id = ref->GetFormID();
 				const auto actor = ref->As<RE::Actor>();
-				if (!IsShareableRef(id) || (actor && Puppets::IsPuppet(actor))) {
+				const auto killer = a_event.actorKiller.get();
+				const bool byPlayer = killer && killer->IsPlayerRef() && !ref->IsPlayerRef();
+				if (actor && Puppets::IsPuppet(actor)) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (byPlayer) {
+					++playerKills;
+				}
+				if (!IsShareableRef(id)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
+				if (byPlayer) {
+					killInbox.insert(id);
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -593,6 +606,7 @@ namespace WorldSync
 	void Frame()
 	{
 		std::vector<std::uint32_t> newDeaths;
+		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
 		std::vector<std::pair<std::uint32_t, float>> newStandInHits;
@@ -600,6 +614,8 @@ namespace WorldSync
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
+			killedByUs.swap(killInbox);
+			killInbox.clear();
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
 			newStandInHits.swap(standInHits);
@@ -613,7 +629,7 @@ namespace WorldSync
 		// Deaths we caused because someone else reported them are already known and don't go back out.
 		for (const auto id : newDeaths) {
 			if (dead.insert(id).second) {
-				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id }, Protocol::MessageType::kReportDeath));
+				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id, 0, killedByUs.contains(id) }, Protocol::MessageType::kReportDeath));
 				++reported;
 			}
 			pending.erase(id);
@@ -671,6 +687,11 @@ namespace WorldSync
 		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
 	}
 
+	std::uint32_t TakePlayerKills()
+	{
+		return playerKills.exchange(0);
+	}
+
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
@@ -692,6 +713,7 @@ namespace WorldSync
 		standInHits.clear();
 		activateInbox.clear();
 		deathInbox.clear();
+		killInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
 		outgoing.clear();

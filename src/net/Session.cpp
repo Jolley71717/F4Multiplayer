@@ -4,6 +4,9 @@
 #include "Protocol.h"
 #include "Server.h"
 #include "game/Equipment.h"
+#include "game/Hud.h"
+#include "game/Party.h"
+#include "game/WorldClock.h"
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
@@ -52,8 +55,7 @@ namespace Session
 
 		void Notify(const std::string& a_message)
 		{
-			REX::INFO("Session: {}", a_message);
-			RE::SendHUDMessage::ShowHUDMessage(a_message.c_str(), "", false, false);
+			Hud::Notify(a_message);
 		}
 
 		// FNV-1a over the load order, so players with different mods are told up front.
@@ -117,6 +119,7 @@ namespace Session
 					sentEquipment.reset();
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
+					Party::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->sessionId, localId);
 					lastRejectReason.clear();
 					Notify("Multiplayer: connected");
@@ -137,12 +140,15 @@ namespace Session
 				break;
 			case MessageType::kPlayerLeft:
 				if (const auto msg = Protocol::DecodePlayerLeft(a_data)) {
+					const auto name = RemotePlayers::NameOf(msg->playerId);
 					RemotePlayers::Remove(msg->playerId);
-					Notify("A player left");
+					Party::OnPlayerLeft(msg->playerId);
+					Notify(name.empty() ? "A player left" : name + " left");
 				}
 				break;
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
+					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way
 					WorldSync::ApplyRemoteDeath(msg->refId);
 				}
 				break;
@@ -179,6 +185,31 @@ namespace Session
 			case MessageType::kPlayerDamaged:
 				if (const auto msg = Protocol::DecodePlayerHit(a_data)) {
 					ApplyDamageToPlayer(msg->damage);
+				}
+				break;
+			case MessageType::kPlayerStatus:
+				if (const auto msg = Protocol::DecodePlayerStatus(a_data)) {
+					Party::ApplyStatus(*msg);
+				}
+				break;
+			case MessageType::kWorldTime:
+				if (const auto msg = Protocol::DecodeWorldTime(a_data)) {
+					WorldClock::Apply(*msg);
+				}
+				break;
+			case MessageType::kPinged:
+				if (const auto msg = Protocol::DecodePing(a_data)) {
+					Party::ApplyPing(*msg);
+				}
+				break;
+			case MessageType::kPartyXp:
+				if (const auto msg = Protocol::DecodeXpGain(a_data)) {
+					Party::ApplyXp(*msg);
+				}
+				break;
+			case MessageType::kHeartbeatAck:
+				if (const auto msg = Protocol::DecodeHeartbeat(a_data)) {
+					Party::ApplyHeartbeatAck(*msg);
 				}
 				break;
 			case MessageType::kShotFired:
@@ -299,6 +330,8 @@ namespace Session
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			NpcSync::Reset();
+			Party::Reset();
+			WorldClock::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -496,6 +529,21 @@ namespace Session
 			}
 		}
 
+		Party::Frame();
+		if (welcomed) {
+			WorldClock::Frame();
+		}
+		for (auto& packet : Party::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
+		for (auto& packet : WorldClock::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), false);
+			}
+		}
+
 		RemotePlayers::Update();
 		Puppets::Tick();
 	}
@@ -532,7 +580,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe(), RemotePlayers::Describe()) +
 		       " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

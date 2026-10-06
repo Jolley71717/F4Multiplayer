@@ -52,12 +52,26 @@ Everyone sets `sTransport = enet`. Friends set `sServerAddress` to the host's IP
 host's game listens on UDP port 7779; allow it when Windows Firewall asks. Over the internet the
 host also forwards UDP 7779 on their router.
 
-Each player keeps their own save, character and inventory. Meet up by travelling to the same place.
+Each player keeps their own save, character and inventory.
+
+### Hotkeys
+
+| Key | What it does |
+|---|---|
+| F6 | Player list: where everyone is, how far and which way, their health and level |
+| F7 | Teleport to a friend: tap to choose who, then hold for a second to go there |
+| F8 | "Over here!": tells everyone where you are, with distance and direction |
+
+Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`). They don't
+work while a menu or the console is open.
 
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
-  holstered), and your name when someone looks at you.
+  holstered), shooting, and your name when someone looks at you (with your health when you're
+  hurt). Messages tell everyone when a player kills something, dies, joins or leaves.
+- **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
+- **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
   the same raider in the same place. Enemies can attack any player, and the damage reaches that
   player. Killing or hurting an NPC counts for everyone.
@@ -93,6 +107,10 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - Workshop building is not shared.
 
 ## Problems
+
+- "Connection to the host is unstable": nothing has come back from the host for 4 seconds. It
+  usually recovers ("connection restored"); after 20 seconds you're disconnected and the mod keeps
+  trying to reconnect.
 
 - Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`
 - "load order is different": compare your mod lists; the order must match exactly.

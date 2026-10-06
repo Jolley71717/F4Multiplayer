@@ -38,7 +38,7 @@ target("F4Multiplayer")
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
-    add_syslinks("ws2_32", "bcrypt", "shell32", "ole32")
+    add_syslinks("ws2_32", "bcrypt", "shell32", "ole32", "user32")
 
 -- standalone dedicated server
 target("F4MPServer")

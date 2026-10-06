@@ -39,6 +39,8 @@ namespace RemotePlayers
 			// Never dereferenced; registeredId is its form ID.
 			RE::Actor*           registered = nullptr;
 			std::uint32_t        registeredId = 0;
+			std::uint8_t         health = 100;
+			std::string          shownName;  // the name tag currently on the stand-in
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -123,6 +125,16 @@ namespace RemotePlayers
 			return Sampled{ held, held.heading };
 		}
 
+		std::string NameTag(const RemotePlayer& a_player)
+		{
+			if (a_player.health == 0) {
+				return a_player.name + " (down)";
+			}
+			// Rounded to tens so the tag doesn't change with every scratch.
+			const int shown = (a_player.health + 9) / 10 * 10;
+			return shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+		}
+
 		RE::Actor* GetActor(const RemotePlayer& a_player)
 		{
 			const auto ref = a_player.actor.get();
@@ -199,10 +211,6 @@ namespace RemotePlayers
 			// and hitting it isn't a crime.
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
 
-			// Shown when looking at them, instead of the NPC's name.
-			if (actor->extraList) {
-				actor->extraList->SetOverrideName(a_player.name.c_str());
-			}
 			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
 			return actor;
 		}
@@ -258,6 +266,32 @@ namespace RemotePlayers
 		it->second.equipment = std::move(a_items);
 		it->second.hasEquipment = true;
 		it->second.equipmentApplied = false;
+	}
+
+	std::vector<Info> List()
+	{
+		std::vector<Info> out;
+		for (const auto& [id, remote] : players) {
+			Info info{ id, remote.name, std::nullopt, GetActor(remote) };
+			if (!remote.snapshots.empty()) {
+				info.state = remote.snapshots.back().state;
+			}
+			out.push_back(std::move(info));
+		}
+		return out;
+	}
+
+	std::string NameOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		return it != players.end() ? it->second.name : std::string{};
+	}
+
+	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.health = a_percent;
+		}
 	}
 
 	void PlayShot(std::uint32_t a_id)
@@ -339,6 +373,13 @@ namespace RemotePlayers
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
 				remote.equipmentApplied = false;
+				remote.shownName.clear();
+			}
+
+			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
+			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
+				actor->extraList->SetOverrideName(label.c_str());
+				remote.shownName = std::move(label);
 			}
 
 			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {

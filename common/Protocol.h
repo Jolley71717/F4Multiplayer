@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 13;
+	inline constexpr std::uint16_t VERSION = 14;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -58,6 +58,11 @@ namespace Protocol
 		kReportQuestStage = 13,  // a quest reached a new stage in the sender's game
 		kRequestWorldState = 14,  // the sender loaded a save and needs the session's changes again
 		kReportShot = 15,         // the sender (or an NPC it runs) fired a weapon
+		kReportStatus = 16,       // the sender's location, health and level, for the player list
+		kReportTime = 17,         // the sender's time of day and weather (only the first player's are used)
+		kPing = 18,               // "over here": the sender wants the others to come to them
+		kReportXp = 19,           // the sender got XP for a kill; the others get a share
+		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
 
 		// server -> client
 		kWelcome = 101,
@@ -77,6 +82,11 @@ namespace Protocol
 		kPlayerDamaged = 115,     // an NPC hit you in another player's world
 		kQuestStage = 116,        // a quest reached a new stage in another player's game
 		kShotFired = 117,         // another player (or an NPC they run) fired a weapon
+		kPlayerStatus = 118,      // another player's location, health and level
+		kWorldTime = 119,         // the session's time of day and weather
+		kPinged = 120,            // another player pinged their position
+		kPartyXp = 121,           // another player got XP for a kill
+		kHeartbeatAck = 122,
 	};
 
 	enum StateFlags : std::uint8_t
@@ -157,6 +167,8 @@ namespace Protocol
 	struct ActorDeath
 	{
 		std::uint32_t refId = 0;
+		std::uint32_t playerId = 0;  // who reported it (set by the server)
+		bool          killed = false;  // that player killed it
 	};
 
 	// Health as a fraction of maximum: leveled actors can have different max health in each
@@ -266,6 +278,46 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		std::uint32_t refId = 0;
+	};
+
+	// playerId is ignored client -> server in all of these.
+	struct PlayerStatus
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t location = 0;  // BGSLocation form ID, or 0
+		std::uint32_t cell = 0;      // interior cell form ID, or 0 when outside
+		std::uint8_t  health = 0;    // percent of maximum; 0 = dead
+		std::uint16_t level = 0;
+
+		bool operator==(const PlayerStatus&) const = default;
+	};
+
+	struct WorldTime
+	{
+		float         gameHour = 0.0f;  // 0..24
+		std::uint32_t worldspace = 0;   // where the weather applies (0 = inside)
+		std::uint32_t weather = 0;      // TESWeather form ID, or 0
+	};
+
+	struct Ping
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		float         x = 0, y = 0, z = 0;
+	};
+
+	struct Heartbeat
+	{
+		std::uint32_t token = 0;
+	};
+
+	inline constexpr float MAX_XP_SHARE = 10000.0f;
+
+	struct XpGain
+	{
+		std::uint32_t playerId = 0;
+		float         xp = 0.0f;
 	};
 
 	struct QuestStage
@@ -619,6 +671,8 @@ namespace Protocol
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.refId);
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.killed ? 1 : 0);
 		return w.Data();
 	}
 
@@ -628,6 +682,8 @@ namespace Protocol
 		r.U8();
 		ActorDeath msg;
 		msg.refId = r.U32();
+		msg.playerId = r.U32();
+		msg.killed = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
@@ -929,6 +985,125 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId))) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const PlayerStatus& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.location);
+		w.U32(a_msg.cell);
+		w.U8(a_msg.health);
+		w.U16(a_msg.level);
+		return w.Data();
+	}
+
+	inline std::optional<PlayerStatus> DecodePlayerStatus(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerStatus msg;
+		msg.playerId = r.U32();
+		msg.location = r.U32();
+		msg.cell = r.U32();
+		msg.health = r.U8();
+		msg.level = r.U16();
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const WorldTime& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.F32(a_msg.gameHour);
+		w.U32(a_msg.worldspace);
+		w.U32(a_msg.weather);
+		return w.Data();
+	}
+
+	inline std::optional<WorldTime> DecodeWorldTime(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorldTime msg;
+		msg.gameHour = r.F32();
+		msg.worldspace = r.U32();
+		msg.weather = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.gameHour) || msg.gameHour < 0.0f || msg.gameHour >= 24.0f) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Ping& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		return w.Data();
+	}
+
+	inline std::optional<Ping> DecodePing(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Ping msg;
+		msg.playerId = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Heartbeat& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.token);
+		return w.Data();
+	}
+
+	inline std::optional<Heartbeat> DecodeHeartbeat(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Heartbeat msg;
+		msg.token = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const XpGain& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.F32(a_msg.xp);
+		return w.Data();
+	}
+
+	inline std::optional<XpGain> DecodeXpGain(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		XpGain msg;
+		msg.playerId = r.U32();
+		msg.xp = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
 			return std::nullopt;
 		}
 		return msg;

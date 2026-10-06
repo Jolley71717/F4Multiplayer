@@ -35,6 +35,17 @@ namespace Config
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
+		// Follow the first player's (the host's) time of day and weather.
+		bool syncTime = true;
+
+		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
+		float xpShare = 0.5f;
+
+		// Hotkeys (Windows virtual-key codes, hex). 0 = off.
+		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
+		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
+		std::uint32_t keyPing = 0x77;        // F8: "over here"
+
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
 
