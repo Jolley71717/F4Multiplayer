@@ -182,6 +182,12 @@ save's record and asks for the session's changes again.
   `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
   `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`),
   furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
+- Compass (src/game/Compass.cpp): each friend in our cell or worldspace gets a shape in their color
+  (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
+  drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` on the UI thread (F4SE
+  `AddUITask`, one queued at a time). The bar is 304 px for about 100 degrees (3.02 px/degree);
+  friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
+  HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
@@ -235,7 +241,8 @@ Protocol VERSION 20.
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
   `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
   `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
-  [hide|force]` (open or close a menu), `paused`.
+  [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
+  <member> <value>` (look at and change a menu's Flash objects).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session

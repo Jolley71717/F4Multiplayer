@@ -761,6 +761,113 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
+		double GfxNumber(const Scaleform::GFx::Value& a_value)
+		{
+			return a_value.IsNumber() ? a_value.GetNumber() : a_value.IsInt() ? a_value.GetInt() : a_value.IsUInt() ? a_value.GetUInt() : -1.0;
+		}
+
+		void DumpGfx(Scaleform::GFx::Value& a_object, const std::string& a_path, int a_depth)
+		{
+			Scaleform::GFx::Value count;
+			if (!a_object.IsDisplayObject() || !a_object.GetMember("numChildren", &count)) {
+				return;
+			}
+			const int children = static_cast<int>(GfxNumber(count));
+			for (int i = 0; i < children && i < 60; ++i) {
+				Scaleform::GFx::Value child;
+				Scaleform::GFx::Value index{ i };
+				if (!a_object.Invoke("getChildAt", &child, &index, 1)) {
+					continue;
+				}
+				Scaleform::GFx::Value name, x, y, width, visible;
+				child.GetMember("name", &name);
+				child.GetMember("x", &x);
+				child.GetMember("y", &y);
+				child.GetMember("width", &width);
+				child.GetMember("visible", &visible);
+				const std::string path = a_path + "." + (name.IsString() ? name.GetString() : std::format("#{}", i));
+				Scaleform::GFx::Value text, height, color, embed;
+				child.GetMember("height", &height);
+				std::string extra;
+				if (child.GetMember("text", &text) && text.IsString()) {
+					child.GetMember("textColor", &color);
+					child.GetMember("embedFonts", &embed);
+					Scaleform::GFx::Value format, font, size;
+					if (child.Invoke("getTextFormat", &format, nullptr, 0)) {
+						format.GetMember("font", &font);
+						format.GetMember("size", &size);
+					}
+					extra = std::format(" text='{}' color={:06X} embed={} font='{}' size={}", text.GetString(), static_cast<std::uint32_t>(GfxNumber(color)),
+						embed.IsBoolean() && embed.GetBoolean(), font.IsString() ? font.GetString() : "?", GfxNumber(size));
+				}
+				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
+					visible.IsBoolean() && visible.GetBoolean(), extra);
+				if (a_depth > 1) {
+					DumpGfx(child, path, a_depth - 1);
+				}
+			}
+		}
+
+		// gfx <menu> <path> [depth]: logs a menu's display objects under path (e.g. HUDMenu root 2).
+		std::string Gfx(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 2) {
+				return "error: usage: gfx <menu> <path> [depth]";
+			}
+			int depth = 1;
+			if (args.size() > 2) {
+				std::from_chars(args[2].data(), args[2].data() + args[2].size(), depth);
+			}
+			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), depth]() {
+				const auto ui = RE::UI::GetSingleton();
+				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
+				const auto movie = menu ? menu->uiMovie.get() : nullptr;
+				if (!movie) {
+					REX::INFO("gfx: no movie for {}", menuName);
+					return;
+				}
+				Scaleform::GFx::Value object;
+				if (!movie->GetVariable(&object, path.c_str())) {
+					REX::INFO("gfx: no {}", path);
+					return;
+				}
+				REX::INFO("gfx: {} type={}", path, static_cast<int>(object.GetType()));
+				DumpGfx(object, path, depth);
+			});
+			return "queued (see the log)";
+		}
+
+		// gfxset <menu> <path> <member> <value>: sets a property (a number, true/false, or text).
+		std::string GfxSet(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 4) {
+				return "error: usage: gfxset <menu> <path> <member> <value>";
+			}
+			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), member = std::string(args[2]), text = std::string(args[3])]() {
+				const auto ui = RE::UI::GetSingleton();
+				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
+				const auto movie = menu ? menu->uiMovie.get() : nullptr;
+				Scaleform::GFx::Value object;
+				if (!movie || !movie->GetVariable(&object, path.c_str())) {
+					REX::INFO("gfxset: no {}", path);
+					return;
+				}
+				Scaleform::GFx::Value value;
+				double number = 0.0;
+				if (text == "true" || text == "false") {
+					value = Scaleform::GFx::Value(text == "true");
+				} else if (std::from_chars(text.data(), text.data() + text.size(), number).ec == std::errc{}) {
+					value = Scaleform::GFx::Value(number);
+				} else {
+					value = Scaleform::GFx::Value(text.c_str());
+				}
+				REX::INFO("gfxset: {}.{} = {} -> {}", path, member, text, object.SetMember(member, value));
+			});
+			return "queued (see the log)";
+		}
+
 		// idles <text>: idle animations whose editor ID, event or file contains the text.
 		std::string Idles(std::string_view a_args)
 		{
@@ -1044,6 +1151,8 @@ namespace DevCommands
 			Entry{ "edid", EditorId },
 			Entry{ "forms", Forms },
 			Entry{ "named", Named },
+			Entry{ "gfx", Gfx },
+			Entry{ "gfxset", GfxSet },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
