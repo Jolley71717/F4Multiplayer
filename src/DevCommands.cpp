@@ -3,6 +3,7 @@
 #include "game/Equipment.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/WeaponFire.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
 
@@ -142,6 +143,41 @@ namespace DevCommands
 				if (++count == 15) {
 					break;
 				}
+			}
+			return count ? result : "no matches";
+		}
+
+		// findref <text>: actor references (loaded or not) whose name contains the text.
+		std::string FindRef(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: findref <text>";
+			}
+			const auto lower = [](std::string_view a_str) {
+				std::string out{ a_str };
+				std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return out;
+			};
+			const auto  needle = lower(a_args);
+			std::string result;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "no matches";
+			}
+			for (const auto& [id, form] : *map) {
+				const auto actor = form ? form->As<RE::Actor>() : nullptr;
+				const auto base = actor ? actor->GetObjectReference() : nullptr;
+				if (!base || count >= 20 || (id >> 24) == 0xFF) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*base);
+				if (name.empty() || lower(name).find(needle) == std::string::npos) {
+					continue;
+				}
+				result += std::format("{}{:08X} '{}' dead={} 3d={}", count ? "; " : "", id, name, actor->IsDead(false), actor->Get3D() != nullptr);
+				++count;
 			}
 			return count ? result : "no matches";
 		}
@@ -330,11 +366,14 @@ namespace DevCommands
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			if (!player || !player->Get3D()) {
-				return "error: not in game";
+			// draw on|off [actorHex]
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() > 1 ? LookupRef(args[1]) : RE::PlayerCharacter::GetSingleton();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || !actor->Get3D() || args.empty()) {
+				return "error: usage: draw on|off [actorHex]";
 			}
-			player->DrawWeaponMagicHands(a_args == "on");
+			actor->DrawWeaponMagicHands(args[0] == "on");
 			return "ok";
 		}
 
@@ -623,6 +662,18 @@ namespace DevCommands
 			return holder->NotifyAnimationGraphImpl(RE::BSFixedString{ args[1] }) ? "ok" : "rejected";
 		}
 
+		// animlog on|off [actorHex]: records the player's (and that actor's) animation events; returns what was recorded so far.
+		std::string AnimLog(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() > 1) {
+				const auto ref = LookupRef(args[1]);
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				WeaponFire::LogActor(actor);
+			}
+			return WeaponFire::LogAnimationEvents(!args.empty() && args[0] == "on");
+		}
+
 		// net [connect <address>]
 		std::string Net(std::string_view a_args)
 		{
@@ -680,6 +731,7 @@ namespace DevCommands
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "findnpc", FindNpc },
+			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
 			Entry{ "safenpc", SafeNpc },
 			Entry{ "actors", Actors },
@@ -700,6 +752,7 @@ namespace DevCommands
 			Entry{ "net", Net },
 			Entry{ "echo", Echo },
 			Entry{ "steam", SteamCommand },
+			Entry{ "animlog", AnimLog },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },

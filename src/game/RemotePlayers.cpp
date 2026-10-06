@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "game/Equipment.h"
 #include "game/Puppets.h"
+#include "game/WeaponFire.h"
 
 namespace RemotePlayers
 {
@@ -259,6 +260,13 @@ namespace RemotePlayers
 		it->second.equipmentApplied = false;
 	}
 
+	void PlayShot(std::uint32_t a_id)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			WeaponFire::PlayShot(GetActor(it->second));
+		}
+	}
+
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)
 	{
 		for (const auto& [id, remote] : players) {
@@ -335,6 +343,7 @@ namespace RemotePlayers
 
 			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
 				Equipment::Apply(actor, remote.equipment);
+				Puppets::RedrawWeapon(actor);
 				remote.equipmentApplied = true;
 			}
 

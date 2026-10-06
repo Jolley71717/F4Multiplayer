@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 12;
+	inline constexpr std::uint16_t VERSION = 13;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -57,6 +57,7 @@ namespace Protocol
 		kPlayerHit = 12,       // an NPC in the sender's world hit another player's stand-in
 		kReportQuestStage = 13,  // a quest reached a new stage in the sender's game
 		kRequestWorldState = 14,  // the sender loaded a save and needs the session's changes again
+		kReportShot = 15,         // the sender (or an NPC it runs) fired a weapon
 
 		// server -> client
 		kWelcome = 101,
@@ -75,6 +76,7 @@ namespace Protocol
 		kActorStatesRelay = 114,  // NPC positions from their owners
 		kPlayerDamaged = 115,     // an NPC hit you in another player's world
 		kQuestStage = 116,        // a quest reached a new stage in another player's game
+		kShotFired = 117,         // another player (or an NPC they run) fired a weapon
 	};
 
 	enum StateFlags : std::uint8_t
@@ -256,6 +258,14 @@ namespace Protocol
 	{
 		std::uint32_t playerId = 0;
 		float         damage = 0.0f;
+	};
+
+	// A weapon shot, for the firing animation. refId 0 = the player themselves, otherwise an NPC
+	// they run. playerId is ignored client -> server.
+	struct Shot
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;
 	};
 
 	struct QuestStage
@@ -898,6 +908,27 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.damage = r.F32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Shot& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<Shot> DecodeShot(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Shot msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId))) {
 			return std::nullopt;
 		}
 		return msg;

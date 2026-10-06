@@ -8,6 +8,7 @@
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "net/NetClient.h"
 #include "steam/Steam.h"
@@ -180,6 +181,15 @@ namespace Session
 					ApplyDamageToPlayer(msg->damage);
 				}
 				break;
+			case MessageType::kShotFired:
+				if (const auto msg = Protocol::DecodeShot(a_data)) {
+					if (msg->refId == 0) {
+						RemotePlayers::PlayShot(msg->playerId);
+					} else {
+						NpcSync::ApplyShot(msg->refId);
+					}
+				}
+				break;
 			case MessageType::kPlayerEquipment:
 				if (auto msg = Protocol::DecodeEquipment(a_data)) {
 					RemotePlayers::SetEquipment(msg->playerId, std::move(msg->items));
@@ -338,6 +348,7 @@ namespace Session
 	{
 		contentHash = ComputeContentHash();
 		WorldSync::Install();
+		WeaponFire::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -379,6 +390,7 @@ namespace Session
 	void Frame()
 	{
 		const auto now = Clock::now();
+		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
 
 		if (steamMode) {
 			Steam::Frame();
@@ -425,6 +437,25 @@ namespace Session
 					state->y += echoOffsetY;
 					RemotePlayers::PushState(ECHO_ID, *state);
 				}
+			}
+		}
+
+		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one.
+		const auto shots = WeaponFire::TakeShots();
+		const auto npcShots = WeaponFire::TakeNpcShots();
+		if (welcomed) {
+			for (std::uint32_t i = 0; i < shots; ++i) {
+				client->Send(Protocol::Encode(Protocol::Shot{}, Protocol::MessageType::kReportShot), false);
+			}
+			for (const auto id : npcShots) {
+				if (NpcSync::RunsLocally(id)) {
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, id }, Protocol::MessageType::kReportShot), false);
+				}
+			}
+		}
+		if (echo) {
+			for (std::uint32_t i = 0; i < shots; ++i) {
+				RemotePlayers::PlayShot(ECHO_ID);
 			}
 		}
 
@@ -501,7 +532,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe(), RemotePlayers::Describe()) +
 		       " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

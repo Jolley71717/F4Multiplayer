@@ -32,6 +32,11 @@ namespace Puppets
 	// Unregisters a mirrored NPC and gives it back to its own AI.
 	void ReleaseNpc(RE::Actor* a_actor);
 
+	// The puppet's equipment changed: draw the weapon again once it is in place. (Drawing before
+	// the weapon arrives leaves the actor flagged as drawn but empty-handed, and then it can't
+	// play attacks.)
+	void RedrawWeapon(RE::Actor* a_actor);
+
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 

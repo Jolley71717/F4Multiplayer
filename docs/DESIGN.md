@@ -96,7 +96,24 @@
   owner list on join.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health).
-- Not yet: NPC attack animations and projectiles in non-owner worlds (they aim but don't fire there).
+- Shots are shared too (see Weapon fire).
+
+## Weapon fire (src/game/WeaponFire.cpp)
+
+- Detection: every actor gets its animation graph's events through its
+  `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot.
+  We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
+  NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
+- `ReportShot {refId}` (0 = the sender) goes to the server, which accepts NPC shots only from the
+  NPC's owner and relays `ShotFired {playerId, refId}` unreliably (60 shots/s per player).
+- Replay: "attackStart" on the stand-in's or mirrored NPC's graph plays the full firing animation
+  (recoil, aim pose). Nothing is launched: damage already arrives through health sync, and real
+  projectiles from stand-ins would add friendly fire and kills nobody made.
+- A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
+  rejects attacks, so after every equipment change it holsters and draws again.
+- Not yet: gunshot sound and muzzle flash. The weapon's own attack sound fields are empty for
+  vanilla guns (the sound is resolved elsewhere when firing), and
+  `TaskQueueInterface::QueueWeaponFire` (which would bring both) only works for the player.
 
 ## Shared world (src/game/WorldSync.cpp)
 
@@ -134,7 +151,7 @@ save's record and asks for the session's changes again.
 
 ## Status (2026-10-06)
 
-Protocol VERSION 12.
+Protocol VERSION 13.
 
 ## Prior art
 
@@ -147,5 +164,8 @@ Protocol VERSION 12.
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
-  quest stages and hits, take over an NPC (`--own`), and resume a session (`--session`, `--from`).
+  quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
+  NPC's), and resume a session (`--session`, `--from`).
+- `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
+- `tools/screenshot.ps1`: captures the screen for visual checks.
 - `F4MPServer.exe`: a standalone server.
