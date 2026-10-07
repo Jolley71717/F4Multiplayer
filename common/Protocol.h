@@ -147,6 +147,9 @@ namespace Protocol
 		std::string   password;
 		std::uint32_t appearance = 0;  // NPC base form others should use for this player (0 = their default)
 		WorldRequest  world;
+		// Random, kept on the player's PC: the server gives a player who comes back the same player
+		// ID, so their own changes to the world are still known as theirs. 0 = none.
+		std::uint64_t identity = 0;
 	};
 
 	struct Welcome
@@ -154,6 +157,7 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 		std::uint64_t sessionId = 0;  // random per server run
 		bool          friendlyFire = false;  // players can hurt each other
+		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 	};
 
 	struct Reject
@@ -305,6 +309,7 @@ namespace Protocol
 		std::uint8_t  health = 0;    // percent of maximum; 0 = dead or downed
 		std::uint16_t level = 0;
 		bool          downed = false;  // knocked down, waiting for a friend to help them up
+		bool          opening = false;  // still in the game's opening (before leaving Vault 111)
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -575,6 +580,7 @@ namespace Protocol
 		w.U32(a_msg.appearance);
 		w.U64(a_msg.world.sessionId);
 		w.U32(a_msg.world.containerFrom);
+		w.U64(a_msg.identity);
 		return w.Data();
 	}
 
@@ -591,6 +597,7 @@ namespace Protocol
 		msg.appearance = r.U32();
 		msg.world.sessionId = r.U64();
 		msg.world.containerFrom = r.U32();
+		msg.identity = r.U64();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -642,6 +649,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U64(a_msg.sessionId);
 		w.U8(a_msg.friendlyFire ? 1 : 0);
+		w.U8(a_msg.sharedStory ? 1 : 0);
 		return w.Data();
 	}
 
@@ -653,6 +661,7 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.sessionId = r.U64();
 		msg.friendlyFire = r.U8() != 0;
+		msg.sharedStory = r.U8() != 0;
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -1091,7 +1100,7 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(a_msg.downed ? 1 : 0);
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0)));
 		return w.Data();
 	}
 
@@ -1105,7 +1114,9 @@ namespace Protocol
 		msg.cell = r.U32();
 		msg.health = r.U8();
 		msg.level = r.U16();
-		msg.downed = r.U8() != 0;
+		const auto flags = r.U8();
+		msg.downed = (flags & 1) != 0;
+		msg.opening = (flags & 2) != 0;
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
 			return std::nullopt;
 		}

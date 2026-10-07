@@ -2,6 +2,7 @@
 
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 #include "game/WeaponFire.h"
 
 namespace NpcSync
@@ -303,6 +304,24 @@ namespace NpcSync
 			});
 		}
 
+		// Gives back every NPC we run and lets go of the ones we copy.
+		void LeaveAll()
+		{
+			std::vector<std::uint32_t> released;
+			for (const auto& [id, track] : owned) {
+				owners.erase(id);
+				released.push_back(id);
+			}
+			owned.clear();
+			claimedAt.clear();
+			for (auto& [id, mirror] : mirrors) {
+				StopMirroring(id, mirror);
+			}
+			mirrors.clear();
+			talkingTo = 0;
+			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
+		}
+
 		void SendOwnedStates(Clock::time_point a_now)
 		{
 			if (GamePaused()) {
@@ -510,6 +529,9 @@ namespace NpcSync
 
 	void ApplyStates(const std::vector<Protocol::ActorState>& a_states)
 	{
+		if (Story::InOpening()) {
+			return;
+		}
 		const auto now = Clock::now();
 		for (const auto& state : a_states) {
 			const auto owner = OwnerOf(state.refId);
@@ -546,7 +568,7 @@ namespace NpcSync
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
 		const auto owner = OwnerOf(a_refId);
-		if (localId == 0 || owner == 0 || owner == localId) {
+		if (localId == 0 || owner == 0 || owner == localId || Story::InOpening()) {
 			return;
 		}
 		const auto now = Clock::now();
@@ -575,6 +597,12 @@ namespace NpcSync
 			return;
 		}
 		const auto now = Clock::now();
+		// In the opening our NPCs are nobody else's business, and nobody else's run ours: its
+		// scenes need every NPC on its own AI.
+		if (Story::InOpening()) {
+			LeaveAll();
+			return;
+		}
 		if (now >= nextScan) {
 			nextScan = now + SCAN_INTERVAL;
 			Scan(now);

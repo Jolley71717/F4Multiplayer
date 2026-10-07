@@ -11,6 +11,8 @@
 //           [--marker REFHEX]  (reports discovering this map marker once welcomed)
 //           [--talk REFHEX]  (claims this NPC as if talking to it, every 2 s)
 //           [--say REFHEX]  (reports a line said by this NPC every 3 s; 0 = the bot itself)
+//           [--opening 1]  (status says the bot is still in the game's opening, before leaving Vault 111)
+//           [--identity HEX]  (sent in Hello; the server gives the same identity the same player ID again)
 //           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
 
 #include "Net.h"
@@ -90,6 +92,8 @@ int main(int argc, char* argv[])
 	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
 	int           statusHealth = 100;
 	bool          statusDowned = false;
+	bool          statusOpening = false;  // status says the bot hasn't left Vault 111 yet
+	std::uint64_t identity = 0;           // Hello::identity: the same value comes back as the same player
 	bool          voiceEcho = false;
 	bool          voiceSilence = false;
 	std::uint32_t markerRef = 0;
@@ -225,6 +229,10 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, markerRef, 16);
 		} else if (key == "--downed") {
 			statusDowned = value == "1";
+		} else if (key == "--opening") {
+			statusOpening = value == "1";
+		} else if (key == "--identity") {
+			ok = ParseNumber(value, identity, 16);
 		} else if (key == "--revive") {
 			ok = ParseNumber(value, reviveTarget);
 		} else if (key == "--ping") {
@@ -284,7 +292,7 @@ int main(int argc, char* argv[])
 			switch (event.type) {
 			case ENET_EVENT_TYPE_CONNECT:
 				std::cout << "connected, sending hello\n";
-				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world }), true);
+				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world, .identity = identity }), true);
 				break;
 			case ENET_EVENT_TYPE_RECEIVE:
 				{
@@ -297,7 +305,7 @@ int main(int argc, char* argv[])
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
 							}
-							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusDowned ? 0 : statusHealth), 7, statusDowned }, Protocol::MessageType::kReportStatus), true);
+							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusDowned ? 0 : statusHealth), 7, statusDowned, statusOpening }, Protocol::MessageType::kReportStatus), true);
 							if (reviveTarget) {
 								Net::Send(peer, Protocol::Encode(Protocol::Revive{ reviveTarget }, Protocol::MessageType::kRevive), true);
 							}

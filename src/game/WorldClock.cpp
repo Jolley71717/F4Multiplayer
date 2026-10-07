@@ -1,6 +1,7 @@
 #include "game/WorldClock.h"
 
 #include "Config.h"
+#include "game/Story.h"
 #include "game/WorldSync.h"
 
 namespace WorldClock
@@ -44,7 +45,8 @@ namespace WorldClock
 		bool Ready()
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
-			return player && player->GetParentCell() && Calendar() && WorldSync::InWorld();
+			// The opening keeps its own time and weather (and its clock isn't the session's).
+			return player && player->GetParentCell() && Calendar() && WorldSync::InWorld() && !Story::InOpening();
 		}
 
 		// Moves the clock forward like waiting does, one midnight at a time, so the date and the

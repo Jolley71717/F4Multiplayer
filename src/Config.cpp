@@ -76,6 +76,8 @@ namespace Config
 				settings.password = value;
 			} else if (key == "bFriendlyFire") {
 				settings.friendlyFire = ParseBool(value);
+			} else if (key == "sStory") {
+				settings.sharedStory = value == "shared";
 			} else if (key == "iMyAppearance") {
 				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {

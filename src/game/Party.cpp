@@ -8,6 +8,7 @@
 #include "game/MapShare.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 #include "game/WorldSync.h"
 
 namespace Party
@@ -179,6 +180,7 @@ namespace Party
 			}
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
 			status.downed = Downed::IsDown();
+			status.opening = Story::InOpening();
 			return status;
 		}
 
@@ -312,6 +314,9 @@ namespace Party
 		// stuck, and Survival has no fast travel.
 		std::string TeleportBlocked(RE::PlayerCharacter* a_player)
 		{
+			if (Story::InOpening()) {
+				return "until you've left Vault 111";
+			}
 			const auto ui = RE::UI::GetSingleton();
 			if (ui && ui->GetMenuOpen("DialogueMenu"sv)) {
 				return "while talking";
@@ -444,7 +449,7 @@ namespace Party
 	{
 		const auto player = Player();
 		const float share = a_gain.xp * Config::Get().xpShare;
-		if (!player || player->IsDead(false) || share < 1.0f || !WorldSync::InWorld()) {
+		if (!player || player->IsDead(false) || share < 1.0f || !WorldSync::InWorld() || Story::InOpening()) {
 			return;
 		}
 		const auto amount = std::lround(share);
@@ -558,6 +563,11 @@ namespace Party
 		}
 		if (!target->state) {
 			Hud::Notify(std::format("Can't find {} right now", target->name));
+			return;
+		}
+		// Their opening is a place (and a time) that doesn't exist in our game.
+		if (const auto it = known.find(target->id); it != known.end() && it->second.hasStatus && it->second.status.opening) {
+			Hud::Notify(std::format("{} hasn't left Vault 111 yet", target->name));
 			return;
 		}
 		const auto& state = *target->state;

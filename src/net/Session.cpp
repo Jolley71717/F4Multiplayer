@@ -16,8 +16,10 @@
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
+#include "net/Identity.h"
 #include "net/NetClient.h"
 #include "steam/Steam.h"
 #include "steam/SteamTransport.h"
@@ -169,7 +171,7 @@ namespace Session
 			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_hit.damage <= 0.0f) {
 				return;
 			}
-			if (GamePaused() || (!a_hit.byPlayer && !AttackerHere(player, a_hit.attacker))) {
+			if (GamePaused() || Story::InOpening() || (!a_hit.byPlayer && !AttackerHere(player, a_hit.attacker))) {
 				++hitsIgnored;
 				return;
 			}
@@ -191,8 +193,10 @@ namespace Session
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->sessionId, localId, msg->friendlyFire);
+					Story::SetShared(msg->sharedStory);
 					lastRejectReason.clear();
-					Notify(msg->friendlyFire ? "Multiplayer: connected (friendly fire is on)" : "Multiplayer: connected");
+					Notify(std::format("Multiplayer: connected ({}{})", msg->sharedStory ? "shared story" : "everyone has their own story",
+						msg->friendlyFire ? ", friendly fire is on" : ""));
 				}
 				break;
 			case MessageType::kReject:
@@ -506,6 +510,7 @@ namespace Session
 			// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
 			options.udpLoopbackOnly = steamMode;
 			options.friendlyFire = settings.friendlyFire;
+			options.sharedStory = settings.sharedStory;
 			std::vector<std::unique_ptr<ServerTransport>> extra;
 			if (steamMode) {
 				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
@@ -525,6 +530,7 @@ namespace Session
 	{
 		const auto now = Clock::now();
 		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
+		Story::Frame();  // first: the rest of the session checks it
 
 		if (steamMode) {
 			Steam::Frame();
@@ -543,6 +549,7 @@ namespace Session
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = WorldSync::ResyncPoint();
+					hello.identity = Identity::Get();
 					client->Send(Protocol::Encode(hello), true);
 				}
 				break;
@@ -612,9 +619,10 @@ namespace Session
 			}
 		}
 
-		// Events from our world go to the server only while we're in a session.
+		// Events from our world go to the server only while we're in a session, and not from the
+		// opening (see Story::InOpening).
 		for (auto& packet : WorldSync::TakeOutgoing()) {
-			if (welcomed) {
+			if (welcomed && !Story::InOpening()) {
 				client->Send(std::move(packet), true);
 			}
 		}
@@ -712,7 +720,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

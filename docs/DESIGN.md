@@ -159,7 +159,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
-| Quest stages | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) once the quest is running in their game (flag 0x1; until then the stage waits, so a new character isn't pulled out of the prologue and no quest starts out of nowhere), never during dialogue or a scene |
+| Quest stages | poll `TESQuest::currentStage` twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+) only with `sStory = shared` (Welcome::sharedStory); never misc. Forward changes only, 5 s settle after load, only of quests the reporter has started. Receivers `setstage` (only if higher) once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits, and never during dialogue or a scene |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Catching up (join, reconnect, loading a save)
@@ -177,7 +177,21 @@ After loading a save (including the reload after dying) the client forgets what 
 save's record and asks for the session's changes again. Container changes in a `WorldState` carry who made
 them; the player's own changes after the save are skipped (the save is from before them, so
 replaying them would empty the container without giving the loot back, or duplicate what they put
-in). Player ids are never reused, so this only covers reloads in the same connection.
+in). A player who reconnects gets their old player ID back: Hello carries `identity`, a random
+number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and the server remembers
+which ID each identity had during its run (not while the old connection is still open; the client
+also remembers every ID it had in the session).
+
+### The opening (src/game/Story.cpp)
+
+From a new game until "Exit Vault 111" (Out of Time, objective 1) is done, while the player is in the
+pre-war world (`SanctuaryHillsWorld`) or Vault 111, the session leaves their world alone: its scenes
+need their NPCs, doors and time of day as the game set them. Their game claims and copies no NPCs
+(it releases any it ran), applies no world changes, quest stages, time or weather (they wait and are
+applied once the player is out), takes no damage from friends' NPCs, gets no shared XP or map
+markers, and reports nothing. They can't teleport, and nobody can teleport to them (status flag
+`opening`). They still see friends who are in the same place. A mod that starts the game somewhere
+else skips this: the player is never in those places.
 
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
@@ -265,10 +279,12 @@ Protocol VERSION 20.
   `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
   [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
   <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
-  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor).
+  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
+  (quests the player has started; running quests of a type), `objectives <quest>` (stage and
+  objectives with their state), `status` (cell, worldspace and location).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
-  NPC's), report a status, ping and kill XP (`--status-health`, `--ping`, `--xp`), set the session
+  NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session
   time (`--time`, `--weather`, `--time-step` to move it forward), complete a quest (`--quest-done`), be down or help someone up
   (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
   valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`),

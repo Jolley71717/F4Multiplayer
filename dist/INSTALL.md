@@ -94,17 +94,24 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   host sets `bFriendlyFire = true`.
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
   ground, doors opened/closed and locks picked.
-- **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
-  the others (never backwards), once they have started that quest themselves. Turn this off with
-  `bSyncQuests = false` if a quest misbehaves.
+- **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
+  backwards), once they have started that quest themselves (it's in their Pip-Boy). Turn this off
+  with `bSyncQuests = false` if a quest misbehaves.
+- **The story:** everyone plays the main story and the faction quests in their own game, and gets
+  a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
+  each of you talks to the characters yourself. The host can set `sStory = shared` to move
+  everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
+  faction choices become yours).
+- **A new character:** play the opening up to leaving Vault 111 on your own; you can be connected
+  meanwhile. Nothing from the session touches it, and what your friends did is applied once you're out.
 - Players who join later catch up on everything that already happened this session. So does anyone
   who loads a save or dies and reloads.
 
 For the closest shared world, start from similar saves (for example, everyone at the same point in
 the story). Things that were already different between your saves before the session stay different.
 
-Make big story choices together. Quest progress only moves forward, so if one player sides with
-one faction and another player with a rival one, both games get both results.
+With `sStory = shared`, make big story choices together. Quest progress only moves forward, so if
+one player sides with one faction and another player with a rival one, both games get both results.
 
 What happens in a session is saved into your game when you save. Use a separate save for co-op if you
 want to keep your solo playthrough untouched.
