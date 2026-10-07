@@ -10,7 +10,7 @@
  | Session          | --------> | join checks, rate      | <------- | Session          |
  |  RemotePlayers   | <-------- |   limits               | -------> |  RemotePlayers   |
  |  NpcSync         |           | relays player and NPC  |          |  NpcSync         |
- |  WorldSync       |           |   states (30 Hz)       |          |  WorldSync       |
+ |  WorldSync       |           |   states (60 Hz tick)  |          |  WorldSync       |
  |  QuestSync       |           | keeps the session's    |          |  QuestSync       |
  |  Puppets         |           |   world state          |          |  Puppets         |
  +------------------+           +------------------------+          +------------------+
@@ -18,7 +18,8 @@
 
 - **Transports:** the server talks to players through `ServerTransport` (`common/Transport.h`), the
   client through `ClientConnection` (`src/net/ClientConnection.h`). Reliable messages are ordered;
-  unreliable ones carry player state (20 Hz) and NPC states (10 Hz).
+  unreliable ones carry player state (30 Hz) and NPC states (20 Hz for NPCs in combat or within 3000
+  units of any player, 10 Hz for the rest). The server relays new player states every 16 ms.
   - ENet (UDP, `common/EnetTransport.cpp`) is always on. With Steam it listens on 127.0.0.1 only, for
     the host's own game.
   - Steam (`src/steam/`): `ISteamNetworkingMessages` through Valve's relays, addressed by Steam ID
@@ -40,9 +41,12 @@
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
-  player is in the same interior or within about 9000 units outside. It renders 100 ms in the past
-  and blends between received states. Before every save and load, all puppets are deleted so they
-  never end up in a save file.
+  player is in the same interior or within about 9000 units outside. It renders 70 ms in the past
+  and blends between received states. `net status` shows the average gap between a friend's states
+  (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
+  was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
+  that connection. Before every save and load, all puppets are deleted so they never end up in a
+  save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
@@ -87,16 +91,54 @@
   - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
     hands in the last 5 s.
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
-  10 Hz (unreliable). The others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement
-  copied with 150 ms interpolation, but it can be hurt and killed. If the owner's copy is in a
+  20 Hz when they're in combat or within 3000 units of any player, else 10 Hz (unreliable). The
+  others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with
+  interpolation, but it can be hurt and killed. Each copy renders 100 ms in the past when its states
+  arrive at most 70 ms apart on average, else 150 ms, eased 2 ms per frame (`net status`: `fast=` NPCs
+  we send at 20 Hz, `delayMs=` the range over our copies). If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
-  is not moved there; it runs its own AI meanwhile.
+  is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
+  a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the
+  owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
+  our own current companion (two players can both have Dogmeat).
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.
+- An owner more than 6000 units from an NPC releases it when a friend in the same space is within
+  4000 units and at most half as far (not its companion, its conversation partner or an NPC
+  fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
+  it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
-  stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health).
-- Not yet: NPC attack animations and projectiles in non-owner worlds (they aim but don't fire there).
+  stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
+  NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
+  from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
+  their game (`UI::menuMode`; `Main::freezeTime` stays false). The damage was resisted by the
+  stand-in's copy of the victim's armor; the victim scales it by their own difficulty
+  (`fDiffMultHPToPC*`, NPC hits only) and VATS (`fVATSPlayerMenuDamageMult` while targeting,
+  `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
+  effects, limb damage, radiation and stagger.
+- Shots are shared too (see Weapon fire).
+
+## Weapon fire (src/game/WeaponFire.cpp)
+
+- Detection: every actor gets its animation graph's events through its
+  `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot.
+  We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
+  NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
+- `ReportShot {refId}` (0 = the sender) goes to the server, which accepts NPC shots only from the
+  NPC's owner and relays `ShotFired {playerId, refId}` unreliably (60 shots/s per player).
+- Replay: "attackStart" on the stand-in's or mirrored NPC's graph plays the full firing animation
+  (recoil, aim pose). Nothing is launched: damage already arrives through health sync, and real
+  projectiles from stand-ins would add friendly fire and kills nobody made.
+- A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
+  rejects attacks, so after every equipment change it holsters and draws again.
+- Gunshot: the weapon's own attack sound fields are empty for vanilla guns. The game picks the
+  sound when the weapon is equipped (by its keywords, so a suppressor changes it) and keeps it in
+  the equipped item's `EquippedWeaponData::attackSoundData`. A replayed shot plays that
+  descriptor through `BSAudioManager` as a 3D sound following the shooter. (Papyrus `Sound.Play`
+  crashed the VM when called from here.)
+- Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
+  the player.
 
 ## Shared world (src/game/WorldSync.cpp)
 
@@ -104,7 +146,9 @@ References are identified by form ID, which matches across players because the l
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
-items, pickups only for loose inventory items that don't fill a quest alias.
+items, pickups only for loose inventory items that don't fill a quest alias. Personal items stay in
+everyone's world, loose or in containers: keys, notes/holotapes, `FeaturedItem` (bobbleheads,
+magazines), and stacks a container holds in a quest alias.
 
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
@@ -115,7 +159,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
-| Quest stages | poll `TESQuest::currentStage` twice a second for quest types 1-5, 7+ (not misc); forward changes only, 5 s settle after load; receivers `setstage` (only if higher) |
+| Quest stages | poll `TESQuest::currentStage` twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+) only with `sStory = shared` (Welcome::sharedStory); never misc. Forward changes only, 5 s settle after load, only of quests the reporter has started. Receivers `setstage` (only if higher) once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits, and never during dialogue or a scene |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Catching up (join, reconnect, loading a save)
@@ -130,11 +174,93 @@ safely. Container changes can't (that would duplicate items), so:
 - Hello and RequestWorldState say what the world has, and the server sends only the rest.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
-save's record and asks for the session's changes again.
+save's record and asks for the session's changes again. Container changes in a `WorldState` carry who made
+them; the player's own changes after the save are skipped (the save is from before them, so
+replaying them would empty the container without giving the loot back, or duplicate what they put
+in). A player who reconnects gets their old player ID back: Hello carries `identity`, a random
+number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and the server remembers
+which ID each identity had during its run (not while the old connection is still open; the client
+also remembers every ID it had in the session).
+
+### The opening (src/game/Story.cpp)
+
+From a new game until "Exit Vault 111" (Out of Time, objective 1) is done, while the player is in the
+pre-war world (`SanctuaryHillsWorld`) or Vault 111, the session leaves their world alone: its scenes
+need their NPCs, doors and time of day as the game set them. Their game claims and copies no NPCs
+(it releases any it ran), applies no world changes, quest stages, time or weather (they wait and are
+applied once the player is out), takes no damage from friends' NPCs, gets no shared XP or map
+markers, and reports nothing. They can't teleport, and nobody can teleport to them (status flag
+`opening`). They still see friends who are in the same place. A mod that starts the game somewhere
+else skips this: the player is never in those places.
+
+## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
+
+- Status (location, interior cell, health %, level): sent when it changes (at most 4/s) and every
+  2 s; the server keeps the latest for newcomers. Receivers announce deaths (health 0) and put the
+  health on the stand-in's name tag.
+- Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
+  an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
+- Kill feed: deaths now carry who reported them and whether that player killed it
+  (`TESDeathEvent::actorKiller`).
+- Kill XP: XP gained within 2 s after a player kill (or up to 5 s before its death event, which
+  waits for the victim's next AI update) is held for 2.5 s, then reported unless a quest stage
+  changed or a location was discovered meanwhile (that XP isn't shared: the quest reaches the others
+  by itself); others get `fXpShare` of it through `player.modav experience`. Shares received are
+  credited so they aren't reported again. The server allows each player 10000 shared XP per 10 s.
+- Time and weather: everyone reports `Calendar::gameHour`, `gameDaysPassed` and
+  `Sky::currentWeather` every 5 s; the server passes on only the host's (a player on its machine,
+  else the one there longest). The game keeps GameDaysPassed at midnights passed + hour / 24, so
+  setting the hour across midnight would skip the date: receivers line their hour up once, remember
+  how their day count differs from the host's, and from then on move forward like waiting does
+  (stopping at 23:59 and letting the game roll the date over). Ahead of the host, they only go back
+  within the same day. Weather is forced only outside in the same worldspace.
+- Teleport: same cell or worldspace: `SetPosition`. Elsewhere: `coc <cell editor ID>` or
+  `cow <worldspace editor ID> x y` (cells and worldspaces keep their editor IDs at runtime), then
+  `SetPosition` once loaded. Refused in dialogue (`DialogueMenu`), a scene (`GetCurrentScene`),
+  furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
+- Compass (src/game/Compass.cpp): each friend in our cell or worldspace gets a shape in their color
+  (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
+  drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` on the UI thread (F4SE
+  `AddUITask`, one queued at a time). The bar is 304 px for about 100 degrees (3.02 px/degree);
+  friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
+  HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
+- Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
+- Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
+  become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
+  shots launch nothing, so each hit is only counted in the shooter's game.
+- Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
+  the essential flag (set directly, so it isn't recorded for the save, and cleared before every
+  save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
+  `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed`; a
+  friend within 180 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag
+  and restores health; the game stands them up a few seconds later with full health, which we cut
+  back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`. Both
+  flags are cleared for a save; a save made while down stands the player up when it's loaded.
+- Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
+  push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
+  `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within
+  8 m, silent beyond `fVoiceRange` or in another cell/worldspace) and queue them on one winmm
+  `waveOut` device per speaker, with 80 ms of silence first when it was idle.
+  `SetInGameVoiceSpeaking` tells Steam's own chat to mute the mic while we record.
+- Map (src/game/MapShare.cpp): map markers are persistent references with `ExtraMapMarker`. Its
+  `MapMarkerData` isn't in CommonLibF4: a TESFullName (name at +0x08), then a flags byte at +0x10
+  (1 = on the map, 2 = can fast travel). We list the markers once, poll their flags every 2 s and
+  report new bits. Receivers run `showmap <ref> 1` (the console records the change for the save;
+  writing the byte wouldn't). The server keeps the session's markers and sends them with the world
+  state (on join and after loading a save).
+- Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
+  player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
+- Conversations (src/game/Conversations.cpp): dialogue plays in one game only. The talker re-claims
+  the NPC every 2 s, so nobody takes it over mid-conversation, and if a friend runs it, their mirror
+  is paused so our copy can talk. Lines are read from `HighProcessData::strVoiceSubtitle` (filled
+  even with subtitles off; `voiceState` stays 0) while `IsTalking()`. The player's lines, and those of
+  NPCs we run or talk to, are reported unless the speaker is in combat. Receivers show
+  "Name: line" when their copy of the speaker (or the friend's stand-in) is within 20 m, isn't saying
+  it already, and the same line wasn't shown in the last 5 s (at most 3 lines per 3 s).
 
 ## Status (2026-10-06)
 
-Protocol VERSION 12.
+Protocol VERSION 20.
 
 ## Prior art
 
@@ -146,6 +272,24 @@ Protocol VERSION 12.
 
 - `tools/restart-game.ps1`: deploy, relaunch and load into a cell.
 - `tools/devctl.ps1`: dev channel (needs `bDevChannel = true`). `help` lists the commands.
+- Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
+  `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
+  markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
+  `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
+  `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
+  [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
+  <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
+  of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
+  (quests the player has started; running quests of a type), `objectives <quest>` (stage and
+  objectives with their state), `status` (cell, worldspace and location).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
-  quest stages and hits, take over an NPC (`--own`), and resume a session (`--session`, `--from`).
+  quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
+  NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session
+  time (`--time`, `--weather`, `--time-step` to move it forward), complete a quest (`--quest-done`), be down or help someone up
+  (`--downed`, `--revive`), hit a player as a player (`--hit-player id:damage:p`), talk (`--voice-silence`:
+  valid Steam voice packets of silence) or repeat what it hears (`--voice-echo`), discover a map marker (`--marker`),
+  keep claiming an NPC as if talking to it (`--talk`), report lines said by an NPC or itself (`--say`), and resume a session
+  (`--session`, `--from`).
+- `tools/input.ps1`: real mouse clicks and key presses in the game window (e.g. to fire).
+- `tools/screenshot.ps1`: captures the screen for visual checks.
 - `F4MPServer.exe`: a standalone server.

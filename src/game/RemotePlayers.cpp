@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "game/Equipment.h"
 #include "game/Puppets.h"
+#include "game/WeaponFire.h"
 
 namespace RemotePlayers
 {
@@ -11,12 +12,18 @@ namespace RemotePlayers
 		using Clock = std::chrono::steady_clock;
 
 		// Render remote players slightly in the past so there are always two states to blend.
-		constexpr auto INTERPOLATION_DELAY = 100ms;
+		// States arrive about every 33 ms; two of them, plus slack for the relay and network jitter.
+		constexpr auto INTERPOLATION_DELAY = 70ms;
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
 
 		// Exterior puppets further than this are outside the loaded area and are despawned.
 		constexpr float MAX_EXTERIOR_DISTANCE = 9000.0f;
+
+		// The game sometimes puts the NPC's own outfit back on a stand-in (when its inventory is
+		// set up late, or its 3D reloads). What it wears is checked this often and put right.
+		constexpr auto EQUIPMENT_CHECK_INTERVAL = 3s;
+		constexpr int  MAX_EQUIPMENT_FIXES = 3;  // in a row without it sticking, then give up
 
 		struct Snapshot
 		{
@@ -31,6 +38,8 @@ namespace RemotePlayers
 			std::vector<std::uint32_t> equipment;
 			bool                 hasEquipment = false;
 			bool                 equipmentApplied = false;
+			Clock::time_point    equipmentCheckAt{};
+			int                  equipmentFixes = 0;
 			std::deque<Snapshot> snapshots;
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
@@ -38,9 +47,31 @@ namespace RemotePlayers
 			// Never dereferenced; registeredId is its form ID.
 			RE::Actor*           registered = nullptr;
 			std::uint32_t        registeredId = 0;
+			std::uint8_t         health = 100;
+			bool                 downed = false;
+			std::string          shownName;  // the name tag currently on the stand-in
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
+		std::uint32_t                         equipmentFixesTotal = 0;
+		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
+		// (the next one was late) and held them still: the interpolation delay is too short if
+		// this is more than a few percent.
+		std::uint32_t                         movingFrames = 0;
+		std::uint32_t                         heldFrames = 0;
+
+		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
+		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto item : a_items) {
+				const auto form = RE::TESForm::GetFormByID(item);
+				if (form && form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+					out.push_back(item);
+				}
+			}
+			return out;
+		}
 
 		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
 
@@ -116,10 +147,24 @@ namespace RemotePlayers
 			// Past the newest snapshot: hold position rather than guessing ahead, and stop
 			// animating if updates have dried up.
 			auto held = snaps.back().state;
+			heldFrames += held.speed > 0.0f && a_now - snaps.back().received < 1s;
 			if (a_now - snaps.back().received > INTERPOLATION_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
 			return Sampled{ held, held.heading };
+		}
+
+		std::string NameTag(const RemotePlayer& a_player)
+		{
+			if (a_player.downed) {
+				return a_player.name + " (down - help them up)";
+			}
+			if (a_player.health == 0) {
+				return a_player.name + " (dead)";
+			}
+			// Rounded to tens so the tag doesn't change with every scratch.
+			const int shown = (a_player.health + 9) / 10 * 10;
+			return shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
 		}
 
 		RE::Actor* GetActor(const RemotePlayer& a_player)
@@ -198,10 +243,6 @@ namespace RemotePlayers
 			// and hitting it isn't a crime.
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
 
-			// Shown when looking at them, instead of the NPC's name.
-			if (actor->extraList) {
-				actor->extraList->SetOverrideName(a_player.name.c_str());
-			}
 			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
 			return actor;
 		}
@@ -257,6 +298,41 @@ namespace RemotePlayers
 		it->second.equipment = std::move(a_items);
 		it->second.hasEquipment = true;
 		it->second.equipmentApplied = false;
+		it->second.equipmentFixes = 0;
+	}
+
+	std::vector<Info> List()
+	{
+		std::vector<Info> out;
+		for (const auto& [id, remote] : players) {
+			Info info{ id, remote.name, std::nullopt, GetActor(remote) };
+			if (!remote.snapshots.empty()) {
+				info.state = remote.snapshots.back().state;
+			}
+			out.push_back(std::move(info));
+		}
+		return out;
+	}
+
+	std::string NameOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		return it != players.end() ? it->second.name : std::string{};
+	}
+
+	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent, bool a_downed)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.health = a_percent;
+			it->second.downed = a_downed;
+		}
+	}
+
+	void PlayShot(std::uint32_t a_id)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			WeaponFire::PlayShot(GetActor(it->second));
+		}
 	}
 
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)
@@ -290,6 +366,7 @@ namespace RemotePlayers
 				remote.snapshots.pop_front();
 			}
 
+			movingFrames += !remote.snapshots.empty() && remote.snapshots.back().state.speed > 0.0f && now - remote.snapshots.back().received < 1s;
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
@@ -331,11 +408,31 @@ namespace RemotePlayers
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
 				remote.equipmentApplied = false;
+				remote.equipmentFixes = 0;
+				remote.shownName.clear();
+			}
+
+			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
+			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
+				actor->extraList->SetOverrideName(label.c_str());
+				remote.shownName = std::move(label);
 			}
 
 			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
 				Equipment::Apply(actor, remote.equipment);
+				Puppets::RedrawWeapon(actor);
 				remote.equipmentApplied = true;
+				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
+			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
+				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
+				if (Equipment::Read(actor) == Wearable(remote.equipment)) {
+					remote.equipmentFixes = 0;
+				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
+					++remote.equipmentFixes;
+					++equipmentFixesTotal;
+					remote.equipmentApplied = false;  // applied again next frame
+					REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again", remote.name);
+				}
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{
@@ -355,10 +452,21 @@ namespace RemotePlayers
 		std::string out;
 		for (const auto& [id, remote] : players) {
 			const auto actor = GetActor(remote);
-			const auto& last = remote.snapshots.empty() ? Protocol::PlayerState{} : remote.snapshots.back().state;
-			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X}]",
+			const auto& snaps = remote.snapshots;
+			const auto& last = snaps.empty() ? Protocol::PlayerState{} : snaps.back().state;
+			// Average time between the states we hold (about the last second).
+			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
+			                                        static_cast<long long>(snaps.size() - 1) :
+			                                    0;
+			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace);
+				last.x, last.y, last.cell, last.worldspace, gap);
+		}
+		if (movingFrames) {
+			out += std::format(" held={}/{}", heldFrames, movingFrames);
+		}
+		if (equipmentFixesTotal) {
+			out += std::format(" gearFixes={}", equipmentFixesTotal);
 		}
 		return out.empty() ? "none" : out;
 	}

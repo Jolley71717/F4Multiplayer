@@ -3,12 +3,23 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/Compass.h"
+#include "game/Conversations.h"
+#include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/Hud.h"
+#include "game/MapShare.h"
+#include "game/Voice.h"
+#include "game/Party.h"
+#include "game/WorldClock.h"
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
+#include "game/WeaponFire.h"
 #include "game/WorldSync.h"
+#include "net/Identity.h"
 #include "net/NetClient.h"
 #include "steam/Steam.h"
 #include "steam/SteamTransport.h"
@@ -19,7 +30,7 @@ namespace Session
 	{
 		using Clock = std::chrono::steady_clock;
 
-		constexpr auto SEND_INTERVAL = 50ms;  // 20 Hz
+		constexpr auto SEND_INTERVAL = 33ms;  // 30 Hz
 		constexpr auto RECONNECT_DELAY = 5s;
 		constexpr auto REJECTED_RETRY_DELAY = 60s;
 
@@ -51,8 +62,7 @@ namespace Session
 
 		void Notify(const std::string& a_message)
 		{
-			REX::INFO("Session: {}", a_message);
-			RE::SendHUDMessage::ShowHUDMessage(a_message.c_str(), "", false, false);
+			Hud::Notify(a_message);
 		}
 
 		// FNV-1a over the load order, so players with different mods are told up front.
@@ -95,15 +105,80 @@ namespace Session
 			return player && player->GetParentCell();
 		}
 
-		// An NPC hit our stand-in in another player's world.
-		void ApplyDamageToPlayer(float a_damage)
+		std::uint32_t hitsTaken = 0;
+		std::uint32_t hitsIgnored = 0;
+		float         lastHitMult = 1.0f;  // how much the last hit was scaled (difficulty, VATS)
+
+		// Whether the NPC that hit our stand-in is there to see in our world: loaded, alive and
+		// within weapon range. Otherwise we'd take damage from nowhere (it died in our game, or
+		// hasn't spawned yet).
+		bool AttackerHere(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
+		{
+			constexpr float RANGE = 10000.0f;  // about 140 m: a sniper rifle's reach
+			const auto      actor = RE::TESForm::GetFormByID<RE::Actor>(a_attacker);
+			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
+				return false;
+			}
+			const auto here = a_player->GetParentCell();
+			const auto there = actor->GetParentCell();
+			if (!here || !there || (here->IsInterior() || there->IsInterior() ? here != there : here->worldSpace != there->worldSpace)) {
+				return false;
+			}
+			return actor->data.location.GetDistance(a_player->data.location) < RANGE;
+		}
+
+		// Menus that stop the game (pause menu, Pip-Boy, ...): no damage lands while it's stopped.
+		bool GamePaused()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return ui && ui->menuMode > 0;
+		}
+
+		// Something hit our stand-in in another player's world.
+		float GameSettingFloat(const char* a_name, float a_default)
+		{
+			const auto settings = RE::GameSettingCollection::GetSingleton();
+			const auto setting = settings ? settings->GetSetting(a_name) : nullptr;
+			return setting && setting->GetType() == RE::Setting::SETTING_TYPE::kFloat ? setting->GetFloat() : a_default;
+		}
+
+		// The hit landed on our stand-in in a friend's game, where nothing knew our difficulty or
+		// that we're in VATS. Scale it the way our own game scales damage to the player.
+		float DamageTakenMult(RE::PlayerCharacter* a_player, bool a_byPlayer)
+		{
+			static constexpr std::array<const char*, 7> DIFFICULTY{ "fDiffMultHPToPCVE", "fDiffMultHPToPCE", "fDiffMultHPToPCN", "fDiffMultHPToPCH",
+				"fDiffMultHPToPCVH", "fDiffMultHPToPCSV", "fDiffMultHPToPCTSV" };
+			float mult = 1.0f;
+			// Friendly fire was already scaled by the shooter's difficulty.
+			if (!a_byPlayer) {
+				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
+				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
+			}
+			const auto ui = RE::UI::GetSingleton();
+			const auto vats = RE::VATS::GetSingleton();
+			if (ui && ui->GetMenuOpen("VATSMenu"sv)) {
+				mult *= GameSettingFloat("fVATSPlayerMenuDamageMult", 1.0f);
+			} else if (vats && vats->mode.any(RE::VATS::VATS_MODE_ENUM::kPlayback)) {
+				mult *= GameSettingFloat("fVATSPlayerDamageMult", 0.1f);
+			}
+			return mult;
+		}
+
+		void ApplyDamageToPlayer(const Protocol::PlayerHit& a_hit)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto values = RE::ActorValue::GetSingleton();
-			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_damage <= 0.0f) {
+			if (!WorldSync::InWorld() || !player || !values || !values->health || player->IsDead(false) || a_hit.damage <= 0.0f) {
 				return;
 			}
-			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -(std::min)(a_damage, 1000.0f));
+			if (GamePaused() || Story::InOpening() || (!a_hit.byPlayer && !AttackerHere(player, a_hit.attacker))) {
+				++hitsIgnored;
+				return;
+			}
+			++hitsTaken;
+			lastHitMult = DamageTakenMult(player, a_hit.byPlayer);
+			const float damage = (std::min)(a_hit.damage * lastHitMult, 1000.0f);
+			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -damage);
 		}
 
 		void HandlePacket(std::span<const std::uint8_t> a_data)
@@ -116,9 +191,12 @@ namespace Session
 					sentEquipment.reset();
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
-					WorldSync::OnWelcome(msg->sessionId, localId);
+					Party::SetLocalPlayer(localId);
+					WorldSync::OnWelcome(msg->sessionId, localId, msg->friendlyFire);
+					Story::SetShared(msg->sharedStory);
 					lastRejectReason.clear();
-					Notify("Multiplayer: connected");
+					Notify(std::format("Multiplayer: connected ({}{})", msg->sharedStory ? "shared story" : "everyone has their own story",
+						msg->friendlyFire ? ", friendly fire is on" : ""));
 				}
 				break;
 			case MessageType::kReject:
@@ -136,12 +214,16 @@ namespace Session
 				break;
 			case MessageType::kPlayerLeft:
 				if (const auto msg = Protocol::DecodePlayerLeft(a_data)) {
+					const auto name = RemotePlayers::NameOf(msg->playerId);
 					RemotePlayers::Remove(msg->playerId);
-					Notify("A player left");
+					Party::OnPlayerLeft(msg->playerId);
+					Voice::OnPlayerLeft(msg->playerId);
+					Notify(name.empty() ? "A player left" : name + " left");
 				}
 				break;
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
+					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way
 					WorldSync::ApplyRemoteDeath(msg->refId);
 				}
 				break;
@@ -177,7 +259,66 @@ namespace Session
 				break;
 			case MessageType::kPlayerDamaged:
 				if (const auto msg = Protocol::DecodePlayerHit(a_data)) {
-					ApplyDamageToPlayer(msg->damage);
+					ApplyDamageToPlayer(*msg);
+				}
+				break;
+			case MessageType::kPlayerStatus:
+				if (const auto msg = Protocol::DecodePlayerStatus(a_data)) {
+					Party::ApplyStatus(*msg);
+				}
+				break;
+			case MessageType::kWorldTime:
+				if (const auto msg = Protocol::DecodeWorldTime(a_data)) {
+					WorldClock::Apply(*msg);
+				}
+				break;
+			case MessageType::kPinged:
+				if (const auto msg = Protocol::DecodePing(a_data)) {
+					Party::ApplyPing(*msg);
+				}
+				break;
+			case MessageType::kPartyXp:
+				if (const auto msg = Protocol::DecodeXpGain(a_data)) {
+					Party::ApplyXp(*msg);
+				}
+				break;
+			case MessageType::kMarkersFound:
+				if (const auto msg = Protocol::DecodeMarkers(a_data)) {
+					MapShare::Apply(*msg);
+				}
+				break;
+			case MessageType::kLineSpoken:
+				if (const auto msg = Protocol::DecodeLine(a_data)) {
+					Conversations::Apply(*msg);
+				}
+				break;
+			case MessageType::kVoiceRelay:
+				if (const auto msg = Protocol::DecodeVoice(a_data)) {
+					Voice::Apply(*msg);
+				}
+				break;
+			case MessageType::kRevived:
+				if (const auto msg = Protocol::DecodeRevive(a_data)) {
+					Downed::ApplyRevive(*msg);
+				}
+				break;
+			case MessageType::kQuestDone:
+				if (const auto msg = Protocol::DecodeQuestDone(a_data)) {
+					QuestSync::ApplyDone(*msg);
+				}
+				break;
+			case MessageType::kHeartbeatAck:
+				if (const auto msg = Protocol::DecodeHeartbeat(a_data)) {
+					Party::ApplyHeartbeatAck(*msg);
+				}
+				break;
+			case MessageType::kShotFired:
+				if (const auto msg = Protocol::DecodeShot(a_data)) {
+					if (msg->refId == 0) {
+						RemotePlayers::PlayShot(msg->playerId);
+					} else {
+						NpcSync::ApplyShot(msg->refId);
+					}
 				}
 				break;
 			case MessageType::kPlayerEquipment:
@@ -240,7 +381,8 @@ namespace Session
 			state.heading = player->data.angle.z;
 			state.speed = speed;
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
-			if (player->IsSneaking()) {
+			// A downed player's stand-in crouches.
+			if (player->IsSneaking() || Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;
 			}
 			if (player->GetWeaponMagicDrawn()) {
@@ -289,6 +431,11 @@ namespace Session
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			NpcSync::Reset();
+			Party::Reset();
+			WorldClock::Reset();
+			Voice::Reset();
+			MapShare::Reset();
+			Conversations::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -338,6 +485,7 @@ namespace Session
 	{
 		contentHash = ComputeContentHash();
 		WorldSync::Install();
+		WeaponFire::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
 		const auto& settings = Config::Get();
@@ -361,6 +509,8 @@ namespace Session
 			options.password = settings.password;
 			// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
 			options.udpLoopbackOnly = steamMode;
+			options.friendlyFire = settings.friendlyFire;
+			options.sharedStory = settings.sharedStory;
 			std::vector<std::unique_ptr<ServerTransport>> extra;
 			if (steamMode) {
 				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
@@ -379,6 +529,8 @@ namespace Session
 	void Frame()
 	{
 		const auto now = Clock::now();
+		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
+		Story::Frame();  // first: the rest of the session checks it
 
 		if (steamMode) {
 			Steam::Frame();
@@ -397,6 +549,7 @@ namespace Session
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = WorldSync::ResyncPoint();
+					hello.identity = Identity::Get();
 					client->Send(Protocol::Encode(hello), true);
 				}
 				break;
@@ -415,7 +568,12 @@ namespace Session
 		}
 
 		if ((welcomed || echo) && now >= nextSend) {
-			nextSend = now + SEND_INTERVAL;
+			// On schedule rather than "a full interval after this frame": at 60 fps that would
+			// often wait an extra frame and send at 20 Hz.
+			nextSend += SEND_INTERVAL;
+			if (nextSend <= now) {
+				nextSend = now + SEND_INTERVAL;  // fell behind (a hitch or the first send)
+			}
 			if (auto state = SampleLocalState(now)) {
 				if (welcomed) {
 					client->Send(Protocol::Encode(*state), false);
@@ -425,6 +583,25 @@ namespace Session
 					state->y += echoOffsetY;
 					RemotePlayers::PushState(ECHO_ID, *state);
 				}
+			}
+		}
+
+		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one.
+		const auto shots = WeaponFire::TakeShots();
+		const auto npcShots = WeaponFire::TakeNpcShots();
+		if (welcomed) {
+			for (std::uint32_t i = 0; i < shots; ++i) {
+				client->Send(Protocol::Encode(Protocol::Shot{}, Protocol::MessageType::kReportShot), false);
+			}
+			for (const auto id : npcShots) {
+				if (NpcSync::RunsLocally(id)) {
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, id }, Protocol::MessageType::kReportShot), false);
+				}
+			}
+		}
+		if (echo) {
+			for (std::uint32_t i = 0; i < shots; ++i) {
+				RemotePlayers::PlayShot(ECHO_ID);
 			}
 		}
 
@@ -442,9 +619,10 @@ namespace Session
 			}
 		}
 
-		// Events from our world go to the server only while we're in a session.
+		// Events from our world go to the server only while we're in a session, and not from the
+		// opening (see Story::InOpening).
 		for (auto& packet : WorldSync::TakeOutgoing()) {
-			if (welcomed) {
+			if (welcomed && !Story::InOpening()) {
 				client->Send(std::move(packet), true);
 			}
 		}
@@ -465,7 +643,43 @@ namespace Session
 			}
 		}
 
+		Party::Frame();
+		if (welcomed) {
+			WorldClock::Frame();
+		}
+		for (auto& packet : Party::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
+		for (auto& packet : WorldClock::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), false);
+			}
+		}
+		if (welcomed) {
+			MapShare::Frame();
+		}
+		for (auto& packet : MapShare::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
+		Conversations::Frame(welcomed);
+		for (auto& packet : Conversations::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
+		Voice::Frame(welcomed);
+		for (auto& packet : Voice::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), false);
+			}
+		}
+
 		RemotePlayers::Update();
+		Compass::Frame();
 		Puppets::Tick();
 	}
 
@@ -473,6 +687,7 @@ namespace Session
 	{
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
+		Downed::OnBeforeSave();
 	}
 
 	void OnGameLoaded()
@@ -480,6 +695,10 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		MapShare::Rebaseline();
+		Downed::OnGameLoaded();
+		Party::OnGameLoaded();
+		WorldClock::Rebaseline();
 		if (welcomed) {
 			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
@@ -501,8 +720,8 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe(), RemotePlayers::Describe()) +
-		       " " + (steamMode ? Steam::Describe() : "steam=off");
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	void ConnectTo(std::string a_address)

@@ -4,6 +4,7 @@
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 
 namespace WorldSync
 {
@@ -22,10 +23,20 @@ namespace WorldSync
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
+		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
+		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
-		std::vector<std::pair<std::uint32_t, float>> standInHits;  // (stand-in actor, damage)
+		struct StandInHit
+		{
+			std::uint32_t actor;
+			float         damage;
+			bool          byPlayer;  // we hit them, rather than an NPC in our world
+			std::uint32_t attacker;  // the NPC that hit them (0 when byPlayer)
+		};
+		std::vector<StandInHit> standInHits;
+		std::atomic<bool>       friendlyFire{ false };
 
 		struct Activation
 		{
@@ -62,9 +73,14 @@ namespace WorldSync
 		std::uint64_t              session = 0;
 		std::uint32_t              containerNext = 0;
 		std::vector<PendingChange> pendingContainer;
-		std::uint32_t              localPlayer = 0;
+		// Our player IDs in this session. A reconnect normally gets the old one back (the server
+		// knows us by Protocol::Hello::identity), but not while the server still holds the old
+		// connection; our changes under either ID are ours.
+		std::unordered_set<std::uint32_t> ownIds;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
+		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
+		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -91,7 +107,7 @@ namespace WorldSync
 		// (or can never be), false to try again later.
 		bool TryKill(std::uint32_t a_refId)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto form = RE::TESForm::GetFormByID(a_refId);
@@ -130,11 +146,22 @@ namespace WorldSync
 
 				const auto id = ref->GetFormID();
 				const auto actor = ref->As<RE::Actor>();
-				if (!IsShareableRef(id) || (actor && Puppets::IsPuppet(actor))) {
+				const auto killer = a_event.actorKiller.get();
+				const bool byPlayer = killer && killer->IsPlayerRef() && !ref->IsPlayerRef();
+				if (actor && Puppets::IsPuppet(actor)) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (byPlayer) {
+					++playerKills;
+				}
+				if (!IsShareableRef(id)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
+				if (byPlayer) {
+					killInbox.insert(id);
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -150,6 +177,9 @@ namespace WorldSync
 		// Sets a loaded actor's current health to a fraction of its maximum. Returns false to try again later.
 		bool TrySetHealth(std::uint32_t a_refId, float a_fraction)
 		{
+			if (Story::InOpening()) {
+				return false;
+			}
 			const auto info = HealthInfo();
 			const auto actor = InWorld() ? LoadedActor(a_refId) : nullptr;
 			if (!info || !actor) {
@@ -181,16 +211,23 @@ namespace WorldSync
 				if (!target || !cause) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
-				// An NPC in our world hit another player's stand-in: that player takes the damage.
-				if (!cause->IsPlayerRef()) {
-					const auto victim = target->As<RE::Actor>();
-					if (victim && Puppets::IsPuppet(victim) && a_event.usesHitData) {
+				// An NPC in our world (or we, with friendly fire on) hit another player's stand-in:
+				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame(). NPCs
+				// made at runtime (random encounters, spawned enemies) exist only in our game, so
+				// their hits would come from nowhere in the victim's: not passed on.
+				const bool byPlayer = cause->IsPlayerRef();
+				const auto attacker = byPlayer ? 0 : cause->GetFormID();
+				const auto victim = target->As<RE::Actor>();
+				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker))) {
+					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage });
+							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker });
 						}
 					}
+				}
+				if (!byPlayer) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// Only damage we dealt to others (not ourselves); each player reports their own hits.
@@ -287,6 +324,43 @@ namespace WorldSync
 		}
 
 		// Containers, and NPCs (corpses, merchants): what another player can take from or put into.
+		constexpr std::uint32_t FEATURED_ITEM_KEYWORD = 0x001B3FAC;  // bobbleheads and magazines
+
+		// Items every player collects for themselves: bobbleheads, magazines, keys, notes and
+		// holotapes. Taking one doesn't take it from anyone else's world.
+		bool IsPersonalItem(RE::TESForm* a_item)
+		{
+			if (!a_item) {
+				return false;
+			}
+			if (a_item->Is(RE::ENUM_FORM_ID::kKEYM, RE::ENUM_FORM_ID::kNOTE)) {
+				return true;
+			}
+			const auto keywords = a_item->As<RE::BGSKeywordForm>();
+			return keywords && keywords->HasKeywordID(FEATURED_ITEM_KEYWORD);
+		}
+
+		// Whether a container holds the item as part of a quest (it's in a quest alias).
+		bool HoldsAsQuestItem(RE::TESObjectREFR* a_container, const RE::TESForm* a_item)
+		{
+			const auto list = a_container->inventoryList;
+			if (!list) {
+				return false;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (entry.object != a_item) {
+					continue;
+				}
+				for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get()) {
+					if (stack->extra && stack->extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		bool IsItemHolder(RE::TESObjectREFR* a_ref)
 		{
 			if (const auto actor = a_ref->As<RE::Actor>()) {
@@ -299,15 +373,22 @@ namespace WorldSync
 		// Applies another player's container change. Returns false to try again later.
 		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
 			if (!container || container->IsDeleted()) {
 				return false;  // not loaded yet
 			}
-			if (!IsItemHolder(container) || !IsInventoryForm(RE::TESForm::GetFormByID(a_change.item))) {
+			const auto item = RE::TESForm::GetFormByID(a_change.item);
+			if (!IsItemHolder(container) || !IsInventoryForm(item)) {
 				return true;  // nothing sensible to do
+			}
+			// Everyone takes their own bobblehead, key or quest item (and doesn't get a copy of
+			// one someone else put in).
+			if (IsPersonalItem(item) || (a_change.count < 0 && HoldsAsQuestItem(container, item))) {
+				++personalSkipped;
+				return true;
 			}
 			const auto command = a_change.count < 0 ?
 				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
@@ -404,7 +485,7 @@ namespace WorldSync
 		// Applies another player's door/lock state. Returns false to try again later.
 		bool TryApplyRefState(const Protocol::RefState& a_state)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
@@ -450,16 +531,20 @@ namespace WorldSync
 		// Removes an item another player picked up. Returns false to try again later.
 		bool TryApplyPickup(std::uint32_t a_refId)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
 			if (!ref) {
 				return false;
 			}
-			// Only loose items. Quest items stay so every player can still pick up their own copy.
-			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference()) ||
-				(ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+			// Only loose items. Quest and personal items (bobbleheads, magazines, keys, holotapes)
+			// stay so every player can still pick up their own copy.
+			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference())) {
+				return true;
+			}
+			if (IsPersonalItem(ref->GetObjectReference()) || (ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+				++personalSkipped;
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
@@ -501,15 +586,17 @@ namespace WorldSync
 		}
 	}
 
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId)
+	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
 	{
-		localPlayer = a_localPlayerId;
+		friendlyFire = a_friendlyFire;
 		if (a_sessionId != session) {
 			// A different session: none of its changes are in our world yet.
 			session = a_sessionId;
 			containerNext = 0;
 			pendingContainer.clear();
+			ownIds.clear();
 		}
+		ownIds.insert(a_localPlayerId);
 	}
 
 	Protocol::WorldRequest ResyncPoint()
@@ -532,9 +619,13 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
-		// Our own changes too: the server only sends those our world doesn't have.
-		for (std::size_t i = 0; i < a_state.containerChanges.size(); ++i) {
-			OfferContainerChange(a_state.containerFirstIndex + static_cast<std::uint32_t>(i), a_state.containerChanges[i], false);
+		// The server sends the changes our world doesn't have: those made since our save. Our own
+		// are skipped. We loaded a save from before them, so replaying them would take loot from
+		// the container that isn't in our inventory any more (or duplicate what we put in).
+		for (const auto& change : a_state.containerChanges) {
+			const bool ours = ownIds.contains(change.playerId);
+			ownSkipped += ours && change.index >= containerNext;
+			OfferContainerChange(change.index, change.change, ours);
 		}
 		for (const auto id : a_state.pickedUp) {
 			ApplyRemotePickup(id);
@@ -564,7 +655,7 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		OfferContainerChange(a_change.index, a_change.change, a_change.playerId == localPlayer);
+		OfferContainerChange(a_change.index, a_change.change, ownIds.contains(a_change.playerId));
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)
@@ -593,13 +684,16 @@ namespace WorldSync
 	void Frame()
 	{
 		std::vector<std::uint32_t> newDeaths;
+		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
-		std::vector<std::pair<std::uint32_t, float>> newStandInHits;
+		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
+			killedByUs.swap(killInbox);
+			killInbox.clear();
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
 			newStandInHits.swap(standInHits);
@@ -613,7 +707,7 @@ namespace WorldSync
 		// Deaths we caused because someone else reported them are already known and don't go back out.
 		for (const auto id : newDeaths) {
 			if (dead.insert(id).second) {
-				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id }, Protocol::MessageType::kReportDeath));
+				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id, 0, killedByUs.contains(id) }, Protocol::MessageType::kReportDeath));
 				++reported;
 			}
 			pending.erase(id);
@@ -642,10 +736,11 @@ namespace WorldSync
 		}
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
+			NpcSync::OnActivated(activation.ref);
 		}
-		for (const auto& [actorId, damage] : newStandInHits) {
-			if (const auto playerId = RemotePlayers::PlayerIdFor(actorId)) {
-				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, damage }, Protocol::MessageType::kPlayerHit));
+		for (const auto& hit : newStandInHits) {
+			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
+				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 
@@ -671,6 +766,11 @@ namespace WorldSync
 		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
 	}
 
+	std::uint32_t TakePlayerKills()
+	{
+		return playerKills.exchange(0);
+	}
+
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
@@ -692,6 +792,7 @@ namespace WorldSync
 		standInHits.clear();
 		activateInbox.clear();
 		deathInbox.clear();
+		killInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
 		outgoing.clear();
@@ -755,7 +856,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size());
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size(), personalSkipped,
+			ownSkipped);
 	}
 }

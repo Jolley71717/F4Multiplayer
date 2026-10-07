@@ -142,7 +142,18 @@ namespace SteamApi
 
 		void (*RegisterCallback)(CallbackBase*, int) = nullptr;
 		void (*UnregisterCallback)(CallbackBase*) = nullptr;
+
+		// Voice (optional: nullptr if this Steam library lacks them). Results are EVoiceResult.
+		void (*StartVoiceRecording)(void*) = nullptr;
+		void (*StopVoiceRecording)(void*) = nullptr;
+		int (*GetAvailableVoice)(void*, std::uint32_t*, std::uint32_t*, std::uint32_t) = nullptr;
+		int (*GetVoice)(void*, bool, void*, std::uint32_t, std::uint32_t*, bool, void*, std::uint32_t, std::uint32_t*, std::uint32_t) = nullptr;
+		int (*DecompressVoice)(void*, const void*, std::uint32_t, void*, std::uint32_t, std::uint32_t*, std::uint32_t) = nullptr;
+		void (*SetInGameVoiceSpeaking)(void*, SteamId, bool) = nullptr;
 	};
+
+	constexpr int VOICE_OK = 0;
+	constexpr int VOICE_NO_DATA = 3;
 
 	// Resolves everything once Steam is running in the game. Returns nullptr until then (or if this
 	// game's Steam library lacks something we need). Call from the main thread; the returned table

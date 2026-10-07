@@ -3,7 +3,7 @@ includes("lib/commonlibf4")
 
 -- set project constants
 set_project("F4Multiplayer")
-set_version("0.4.0")
+set_version("0.5.0")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")
@@ -38,7 +38,7 @@ target("F4Multiplayer")
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
-    add_syslinks("ws2_32", "bcrypt", "shell32", "ole32")
+    add_syslinks("ws2_32", "bcrypt", "shell32", "ole32", "user32")
 
 -- standalone dedicated server
 target("F4MPServer")
@@ -51,3 +51,11 @@ target("F4MPBot")
     set_kind("binary")
     add_deps("F4MPCommon")
     add_files("bot/**.cpp")
+
+-- unit tests for the protocol and the server (no game needed): xmake build F4MPTests && xmake run F4MPTests
+target("F4MPTests")
+    set_kind("binary")
+    set_default(false)
+    add_deps("F4MPCommon")
+    add_files("tests/**.cpp")
+    add_headerfiles("tests/**.h")

@@ -22,6 +22,7 @@ public:
 	void Disconnect(PeerId a_peer) override;
 	void Close() override;
 	[[nodiscard]] std::string Describe(PeerId a_peer) const override;
+	[[nodiscard]] bool        IsLocal(PeerId a_peer) const override;
 
 private:
 	explicit EnetServerTransport(_ENetHost* a_host);

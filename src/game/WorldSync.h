@@ -14,7 +14,7 @@ namespace WorldSync
 	void Install();
 
 	// The server welcomed us into session a_sessionId.
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId);
+	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire);
 
 	// What our world already contains, for Hello and after loading a save.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
@@ -28,6 +28,9 @@ namespace WorldSync
 
 	// Applies pending remote changes as references load, and collects local events. Call every frame.
 	void Frame();
+
+	// How many actors the player killed since the last call (any actor, shared or not).
+	[[nodiscard]] std::uint32_t TakePlayerKills();
 
 	// Local events to send to the server since the last call.
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();

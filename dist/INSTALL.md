@@ -52,34 +52,73 @@ Everyone sets `sTransport = enet`. Friends set `sServerAddress` to the host's IP
 host's game listens on UDP port 7779; allow it when Windows Firewall asks. Over the internet the
 host also forwards UDP 7779 on their router.
 
-Each player keeps their own save, character and inventory. Meet up by travelling to the same place.
+Each player keeps their own save, character and inventory.
+
+### Hotkeys
+
+| Key | What it does |
+|---|---|
+| F6 | Player list: where everyone is, how far and which way, their health and level |
+| F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
+| F8 | "Over here!": tells everyone where you are, with distance and direction |
+
+Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`). They don't
+work while a menu or the console is open.
+
+### Voice chat
+
+Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
+a key). Friends hear you at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
+0 = everyone hears everyone). It uses the microphone chosen in Steam > Settings > Voice.
+
+### Going down
+
+With friends in the session, a hit that would kill you knocks you down instead. A friend who stands
+next to you for 2 seconds helps you up (with 30% health). When a friend goes down, holding F7 takes
+you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
+`bRevive = false`.
 
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
-  holstered), and your name when someone looks at you.
+  holstered), shooting, and your name when someone looks at you (with your health when you're
+  hurt). Messages tell everyone when a player kills something, dies, completes a quest, joins or
+  leaves.
+- **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
+- **Map:** a location one player discovers appears on everyone's map, ready for fast travel
+  (`bShareMap`).
+- **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
   the same raider in the same place. Enemies can attack any player, and the damage reaches that
-  player. Killing or hurting an NPC counts for everyone.
+  player. Killing or hurting an NPC counts for everyone. Players can't hurt each other unless the
+  host sets `bFriendlyFire = true`.
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
   ground, doors opened/closed and locks picked.
-- **Quests:** when a story, faction or side quest moves forward in one game, it moves forward in
-  the others (never backwards). Turn this off with `bSyncQuests = false` if a quest misbehaves.
+- **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
+  backwards), once they have started that quest themselves (it's in their Pip-Boy). Turn this off
+  with `bSyncQuests = false` if a quest misbehaves.
+- **The story:** everyone plays the main story and the faction quests in their own game, and gets
+  a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
+  each of you talks to the characters yourself. The host can set `sStory = shared` to move
+  everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
+  faction choices become yours).
+- **A new character:** play the opening up to leaving Vault 111 on your own; you can be connected
+  meanwhile. Nothing from the session touches it, and what your friends did is applied once you're out.
 - Players who join later catch up on everything that already happened this session. So does anyone
   who loads a save or dies and reloads.
 
 For the closest shared world, start from similar saves (for example, everyone at the same point in
 the story). Things that were already different between your saves before the session stay different.
 
-Make big story choices together. Quest progress only moves forward, so if one player sides with
-one faction and another player with a rival one, both games get both results.
+With `sStory = shared`, make big story choices together. Quest progress only moves forward, so if
+one player sides with one faction and another player with a rival one, both games get both results.
 
 What happens in a session is saved into your game when you save. Use a separate save for co-op if you
 want to keep your solo playthrough untouched.
 
 ## Dedicated server (optional)
 
-`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X]` runs a server
+`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
 
@@ -87,12 +126,16 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 
 - Other players appear as a settler of the same sex wearing their gear: their face, hair and
   weapon mods aren't copied.
-- NPCs run by another player aim at you but don't show their firing animation in your game (their
-  damage still applies).
+- Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
+  muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
 - Workshop building is not shared.
 
 ## Problems
+
+- "Connection to the host is unstable": nothing has come back from the host for 4 seconds. It
+  usually recovers ("connection restored"); after 20 seconds you're disconnected and the mod keeps
+  trying to reconnect.
 
 - Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`
 - "load order is different": compare your mod lists; the order must match exactly.

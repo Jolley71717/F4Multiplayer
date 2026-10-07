@@ -16,11 +16,12 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 12;
+	inline constexpr std::uint16_t VERSION = 20;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
+	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
 
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
@@ -57,6 +58,17 @@ namespace Protocol
 		kPlayerHit = 12,       // an NPC in the sender's world hit another player's stand-in
 		kReportQuestStage = 13,  // a quest reached a new stage in the sender's game
 		kRequestWorldState = 14,  // the sender loaded a save and needs the session's changes again
+		kReportShot = 15,         // the sender (or an NPC it runs) fired a weapon
+		kReportStatus = 16,       // the sender's location, health and level, for the player list
+		kReportTime = 17,         // the sender's time of day and weather (only the first player's are used)
+		kPing = 18,               // "over here": the sender wants the others to come to them
+		kReportXp = 19,           // the sender got XP for a kill; the others get a share
+		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
+		kReportQuestDone = 21,    // the sender completed a quest themselves
+		kRevive = 22,             // the sender helped a downed player up
+		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
+		kReportMarkers = 24,      // map markers the sender discovered
+		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
 		kWelcome = 101,
@@ -75,6 +87,17 @@ namespace Protocol
 		kActorStatesRelay = 114,  // NPC positions from their owners
 		kPlayerDamaged = 115,     // an NPC hit you in another player's world
 		kQuestStage = 116,        // a quest reached a new stage in another player's game
+		kShotFired = 117,         // another player (or an NPC they run) fired a weapon
+		kPlayerStatus = 118,      // another player's location, health and level
+		kWorldTime = 119,         // the session's time of day and weather
+		kPinged = 120,            // another player pinged their position
+		kPartyXp = 121,           // another player got XP for a kill
+		kHeartbeatAck = 122,
+		kQuestDone = 123,         // another player completed a quest
+		kRevived = 124,           // another player helped you up
+		kVoiceRelay = 125,        // a piece of another player's voice
+		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
+		kLineSpoken = 127,        // another player (or an NPC they run) said something
 	};
 
 	enum StateFlags : std::uint8_t
@@ -124,12 +147,17 @@ namespace Protocol
 		std::string   password;
 		std::uint32_t appearance = 0;  // NPC base form others should use for this player (0 = their default)
 		WorldRequest  world;
+		// Random, kept on the player's PC: the server gives a player who comes back the same player
+		// ID, so their own changes to the world are still known as theirs. 0 = none.
+		std::uint64_t identity = 0;
 	};
 
 	struct Welcome
 	{
 		std::uint32_t playerId = 0;
 		std::uint64_t sessionId = 0;  // random per server run
+		bool          friendlyFire = false;  // players can hurt each other
+		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
 	};
 
 	struct Reject
@@ -155,6 +183,8 @@ namespace Protocol
 	struct ActorDeath
 	{
 		std::uint32_t refId = 0;
+		std::uint32_t playerId = 0;  // who reported it (set by the server)
+		bool          killed = false;  // that player killed it
 	};
 
 	// Health as a fraction of maximum: leveled actors can have different max health in each
@@ -251,11 +281,114 @@ namespace Protocol
 		}
 	};
 
-	// kPlayerHit: playerId is the victim. kPlayerDamaged: playerId is unused.
+	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
+	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
+	// attacker: the NPC that hit them (0 when byPlayer); the victim checks it's there in their world.
 	struct PlayerHit
 	{
 		std::uint32_t playerId = 0;
 		float         damage = 0.0f;
+		bool          byPlayer = false;
+		std::uint32_t attacker = 0;
+	};
+
+	// A weapon shot, for the firing animation. refId 0 = the player themselves, otherwise an NPC
+	// they run. playerId is ignored client -> server.
+	struct Shot
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;
+	};
+
+	// playerId is ignored client -> server in all of these.
+	struct PlayerStatus
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t location = 0;  // BGSLocation form ID, or 0
+		std::uint32_t cell = 0;      // interior cell form ID, or 0 when outside
+		std::uint8_t  health = 0;    // percent of maximum; 0 = dead or downed
+		std::uint16_t level = 0;
+		bool          downed = false;  // knocked down, waiting for a friend to help them up
+		bool          opening = false;  // still in the game's opening (before leaving Vault 111)
+
+		bool operator==(const PlayerStatus&) const = default;
+	};
+
+	// playerId: whose clock it is (ignored client -> server).
+	struct WorldTime
+	{
+		std::uint32_t playerId = 0;
+		float         gameHour = 0.0f;    // 0..24
+		float         daysPassed = 0.0f;  // GameDaysPassed: tells a long sleep from a short one
+		std::uint32_t worldspace = 0;     // where the weather applies (0 = inside)
+		std::uint32_t weather = 0;        // TESWeather form ID, or 0
+	};
+
+	struct Ping
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		float         x = 0, y = 0, z = 0;
+	};
+
+	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
+	// playerId is ignored client -> server.
+	struct Line
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t speaker = 0;
+		std::string   text;
+	};
+
+	struct Heartbeat
+	{
+		std::uint32_t token = 0;
+	};
+
+	inline constexpr float MAX_XP_SHARE = 10000.0f;
+
+	struct XpGain
+	{
+		std::uint32_t playerId = 0;
+		float         xp = 0.0f;
+	};
+
+	inline constexpr std::size_t MAX_VOICE_BYTES = 4000;
+	inline constexpr std::size_t MAX_MARKERS_PER_PACKET = 200;
+	inline constexpr std::size_t MAX_SESSION_MARKERS = 8192;
+
+	struct MapMarker
+	{
+		std::uint32_t refId = 0;
+		std::uint8_t  flags = 0;  // 1 = on the map, 2 = discovered (fast travel)
+	};
+
+	// playerId is ignored client -> server.
+	struct MarkersFound
+	{
+		std::uint32_t          playerId = 0;
+		std::vector<MapMarker> markers;
+	};
+
+	// Compressed voice as Steam produces it. playerId is ignored client -> server.
+	struct VoiceData
+	{
+		std::uint32_t             playerId = 0;
+		std::vector<std::uint8_t> data;
+	};
+
+	// kRevive: playerId is the downed player. kRevived: playerId is the helper.
+	struct Revive
+	{
+		std::uint32_t playerId = 0;
+	};
+
+	// playerId is ignored client -> server.
+	struct QuestDone
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t quest = 0;
 	};
 
 	struct QuestStage
@@ -271,8 +404,8 @@ namespace Protocol
 	struct WorldState
 	{
 		std::vector<std::uint32_t>    deadActors;
-		std::uint32_t                 containerFirstIndex = 0;  // session index of containerChanges[0]
-		std::vector<ContainerChange>  containerChanges;  // in order
+		std::uint32_t                       containerFirstIndex = 0;  // session index of containerChanges[0]
+		std::vector<IndexedContainerChange> containerChanges;  // in order (the index isn't sent)
 		std::vector<std::uint32_t>    pickedUp;
 		std::vector<RefState>         refStates;  // latest per reference
 		std::vector<QuestStage>       questStages;  // in order
@@ -314,6 +447,14 @@ namespace Protocol
 			Raw(a_value.data(), length);
 		}
 
+		// A length-prefixed byte string (at most 65535 bytes).
+		void Bytes(std::span<const std::uint8_t> a_value)
+		{
+			const auto length = (std::min<std::size_t>)(a_value.size(), 0xFFFF);
+			U16(static_cast<std::uint16_t>(length));
+			Raw(a_value.data(), length);
+		}
+
 		[[nodiscard]] const std::vector<std::uint8_t>& Data() const { return buffer; }
 
 	private:
@@ -349,6 +490,18 @@ namespace Protocol
 				return {};
 			}
 			std::string out(reinterpret_cast<const char*>(data.data() + offset), length);
+			offset += length;
+			return out;
+		}
+
+		std::vector<std::uint8_t> Bytes(std::size_t a_maxLength)
+		{
+			const auto length = U16();
+			if (failed || length > a_maxLength || offset + length > data.size()) {
+				failed = true;
+				return {};
+			}
+			std::vector<std::uint8_t> out(data.begin() + offset, data.begin() + offset + length);
 			offset += length;
 			return out;
 		}
@@ -427,6 +580,7 @@ namespace Protocol
 		w.U32(a_msg.appearance);
 		w.U64(a_msg.world.sessionId);
 		w.U32(a_msg.world.containerFrom);
+		w.U64(a_msg.identity);
 		return w.Data();
 	}
 
@@ -443,6 +597,7 @@ namespace Protocol
 		msg.appearance = r.U32();
 		msg.world.sessionId = r.U64();
 		msg.world.containerFrom = r.U32();
+		msg.identity = r.U64();
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -493,6 +648,8 @@ namespace Protocol
 		Writer w{ MessageType::kWelcome };
 		w.U32(a_msg.playerId);
 		w.U64(a_msg.sessionId);
+		w.U8(a_msg.friendlyFire ? 1 : 0);
+		w.U8(a_msg.sharedStory ? 1 : 0);
 		return w.Data();
 	}
 
@@ -503,6 +660,8 @@ namespace Protocol
 		Welcome msg;
 		msg.playerId = r.U32();
 		msg.sessionId = r.U64();
+		msg.friendlyFire = r.U8() != 0;
+		msg.sharedStory = r.U8() != 0;
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -609,6 +768,8 @@ namespace Protocol
 	{
 		Writer w{ a_type };
 		w.U32(a_msg.refId);
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.killed ? 1 : 0);
 		return w.Data();
 	}
 
@@ -618,6 +779,8 @@ namespace Protocol
 		r.U8();
 		ActorDeath msg;
 		msg.refId = r.U32();
+		msg.playerId = r.U32();
+		msg.killed = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
@@ -887,6 +1050,8 @@ namespace Protocol
 		Writer w{ a_type };
 		w.U32(a_msg.playerId);
 		w.F32(a_msg.damage);
+		w.U8(a_msg.byPlayer ? 1 : 0);
+		w.U32(a_msg.attacker);
 		return w.Data();
 	}
 
@@ -897,7 +1062,280 @@ namespace Protocol
 		PlayerHit msg;
 		msg.playerId = r.U32();
 		msg.damage = r.F32();
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f) {
+		msg.byPlayer = r.U8() != 0;
+		msg.attacker = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
+			(msg.byPlayer ? msg.attacker != 0 : !IsShareableRef(msg.attacker))) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Shot& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<Shot> DecodeShot(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Shot msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId))) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const PlayerStatus& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.location);
+		w.U32(a_msg.cell);
+		w.U8(a_msg.health);
+		w.U16(a_msg.level);
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0)));
+		return w.Data();
+	}
+
+	inline std::optional<PlayerStatus> DecodePlayerStatus(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerStatus msg;
+		msg.playerId = r.U32();
+		msg.location = r.U32();
+		msg.cell = r.U32();
+		msg.health = r.U8();
+		msg.level = r.U16();
+		const auto flags = r.U8();
+		msg.downed = (flags & 1) != 0;
+		msg.opening = (flags & 2) != 0;
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const WorldTime& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.F32(a_msg.gameHour);
+		w.F32(a_msg.daysPassed);
+		w.U32(a_msg.worldspace);
+		w.U32(a_msg.weather);
+		return w.Data();
+	}
+
+	inline std::optional<WorldTime> DecodeWorldTime(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorldTime msg;
+		msg.playerId = r.U32();
+		msg.gameHour = r.F32();
+		msg.daysPassed = r.F32();
+		msg.worldspace = r.U32();
+		msg.weather = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.gameHour) || msg.gameHour < 0.0f || msg.gameHour >= 24.0f ||
+			!std::isfinite(msg.daysPassed) || msg.daysPassed < 0.0f || msg.daysPassed > 1.0e6f) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Ping& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		return w.Data();
+	}
+
+	inline std::optional<Ping> DecodePing(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Ping msg;
+		msg.playerId = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Line& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.speaker);
+		w.Str(a_msg.text, MAX_LINE_LENGTH);
+		return w.Data();
+	}
+
+	inline std::optional<Line> DecodeLine(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Line msg;
+		msg.playerId = r.U32();
+		msg.speaker = r.U32();
+		msg.text = r.Str(MAX_LINE_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsShareableRef(msg.speaker))) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Heartbeat& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.token);
+		return w.Data();
+	}
+
+	inline std::optional<Heartbeat> DecodeHeartbeat(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Heartbeat msg;
+		msg.token = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const XpGain& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.F32(a_msg.xp);
+		return w.Data();
+	}
+
+	inline std::optional<XpGain> DecodeXpGain(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		XpGain msg;
+		msg.playerId = r.U32();
+		msg.xp = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.xp) || msg.xp <= 0.0f || msg.xp > MAX_XP_SHARE) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const MarkersFound& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		const auto count = (std::min)(a_msg.markers.size(), MAX_MARKERS_PER_PACKET);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.markers[i].refId);
+			w.U8(a_msg.markers[i].flags);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<MarkersFound> DecodeMarkers(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		MarkersFound msg;
+		msg.playerId = r.U32();
+		const auto count = r.U16();
+		if (count > MAX_MARKERS_PER_PACKET) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < count && r.Ok(); ++i) {
+			MapMarker marker;
+			marker.refId = r.U32();
+			marker.flags = r.U8() & 0x03;
+			if (IsShareableRef(marker.refId) && marker.flags != 0) {
+				msg.markers.push_back(marker);
+			}
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const VoiceData& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.Bytes(a_msg.data);
+		return w.Data();
+	}
+
+	inline std::optional<VoiceData> DecodeVoice(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		VoiceData msg;
+		msg.playerId = r.U32();
+		msg.data = r.Bytes(MAX_VOICE_BYTES);
+		if (!r.Ok() || !r.AtEnd() || msg.data.empty()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Revive& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		return w.Data();
+	}
+
+	inline std::optional<Revive> DecodeRevive(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Revive msg;
+		msg.playerId = r.U32();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const QuestDone& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		return w.Data();
+	}
+
+	inline std::optional<QuestDone> DecodeQuestDone(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		QuestDone msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -940,9 +1378,10 @@ namespace Protocol
 		w.U32(static_cast<std::uint32_t>(changes));
 		for (std::size_t i = 0; i < changes; ++i) {
 			const auto& change = a_msg.containerChanges[i];
-			w.U32(change.container);
-			w.U32(change.item);
-			w.U32(static_cast<std::uint32_t>(change.count));
+			w.U32(change.change.container);
+			w.U32(change.change.item);
+			w.U32(static_cast<std::uint32_t>(change.change.count));
+			w.U32(change.playerId);
 		}
 		writeIds(a_msg.pickedUp);
 		const auto states = (std::min)(a_msg.refStates.size(), MAX_WORLD_STATE_ACTORS);
@@ -986,10 +1425,12 @@ namespace Protocol
 			return std::nullopt;
 		}
 		for (std::uint32_t i = 0; i < changes && r.Ok(); ++i) {
-			ContainerChange change;
-			change.container = r.U32();
-			change.item = r.U32();
-			change.count = static_cast<std::int32_t>(r.U32());
+			IndexedContainerChange change;
+			change.index = msg.containerFirstIndex + i;
+			change.change.container = r.U32();
+			change.change.item = r.U32();
+			change.change.count = static_cast<std::int32_t>(r.U32());
+			change.playerId = r.U32();
 			msg.containerChanges.push_back(change);
 		}
 		if (!r.Ok() || !readIds(msg.pickedUp)) {

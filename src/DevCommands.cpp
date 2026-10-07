@@ -3,6 +3,10 @@
 #include "game/Equipment.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/QuestSync.h"
+#include "game/Party.h"
+#include "game/Voice.h"
+#include "game/WeaponFire.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
 
@@ -92,7 +96,11 @@ namespace DevCommands
 		std::string Status(std::string_view)
 		{
 			const auto cell = PlayerCell();
-			return std::format("ingame={} cell={:08X}", cell != nullptr, cell ? cell->GetFormID() : 0);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto location = player ? player->currentLocation : nullptr;
+			return std::format("ingame={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, cell ? cell->GetFormID() : 0,
+				cell && cell->IsInterior(), cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, location ? location->GetFormID() : 0,
+				location && location->GetFullName() ? location->GetFullName() : "");
 		}
 
 		std::string Pos(std::string_view)
@@ -142,6 +150,41 @@ namespace DevCommands
 				if (++count == 15) {
 					break;
 				}
+			}
+			return count ? result : "no matches";
+		}
+
+		// findref <text>: actor references (loaded or not) whose name contains the text.
+		std::string FindRef(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: findref <text>";
+			}
+			const auto lower = [](std::string_view a_str) {
+				std::string out{ a_str };
+				std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return out;
+			};
+			const auto  needle = lower(a_args);
+			std::string result;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "no matches";
+			}
+			for (const auto& [id, form] : *map) {
+				const auto actor = form ? form->As<RE::Actor>() : nullptr;
+				const auto base = actor ? actor->GetObjectReference() : nullptr;
+				if (!base || count >= 20 || (id >> 24) == 0xFF) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*base);
+				if (name.empty() || lower(name).find(needle) == std::string::npos) {
+					continue;
+				}
+				result += std::format("{}{:08X} '{}' dead={} 3d={}", count ? "; " : "", id, name, actor->IsDead(false), actor->Get3D() != nullptr);
+				++count;
 			}
 			return count ? result : "no matches";
 		}
@@ -309,32 +352,72 @@ namespace DevCommands
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
 		}
 
-		// quests [text]: story/faction/side quests with a stage set (or whose name contains text).
+		// quests [text | running:N | started]: story/faction/side quests with a stage set (or whose
+		// name contains text); running quests of type N (internal ones too); quests the player has
+		// started (an objective shown in the Pip-Boy). started=yes/no says which ones count.
 		std::string Quests(std::string_view a_args)
 		{
 			std::string out;
 			int         count = 0;
+			std::optional<int> runningType;
+			if (a_args.starts_with("running:")) {
+				int type = 0;
+				std::from_chars(a_args.data() + 8, a_args.data() + a_args.size(), type);
+				runningType = type;
+			}
+			const bool startedOnly = a_args == "started";
 			for (const auto quest : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>()) {
-				if (!quest || quest->data.questType <= 0 || quest->data.questType == 6 || count >= 25) {
+				if (!quest || count >= 25) {
 					continue;
 				}
 				const std::string_view name = quest->GetFullName() ? quest->GetFullName() : "";
-				if (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos) {
+				const bool started = QuestSync::PlayerStarted(quest);
+				if (runningType) {
+					if (quest->data.questType != *runningType || !(quest->data.flags & 1)) {
+						continue;
+					}
+				} else if (startedOnly) {
+					if (!started) {
+						continue;
+					}
+				} else if (quest->data.questType <= 0 || quest->data.questType == 6 ||
+						   (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos)) {
 					continue;
 				}
-				out += std::format("{}{:08X} '{}' type={} stage={}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType, quest->currentStage);
+				out += std::format("{}{:08X} '{}' type={} stage={} flags={:04X} started={}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType,
+					quest->currentStage, quest->data.flags, started ? "yes" : "no");
 			}
 			return count ? out : "none";
+		}
+
+		// objectives <questHex>: the quest's stage and objectives (index, state 0 = not shown yet).
+		std::string Objectives(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: objectives <questHex>";
+			}
+			std::string out = std::format("stage={} flags={:04X}", quest->currentStage, quest->data.flags);
+			for (const auto objective : quest->objectives) {
+				if (objective) {
+					out += std::format("; {} state={} '{}'", objective->index, static_cast<int>(objective->state), objective->displayText.c_str());
+				}
+			}
+			return out;
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			if (!player || !player->Get3D()) {
-				return "error: not in game";
+			// draw on|off [actorHex]
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() > 1 ? LookupRef(args[1]) : RE::PlayerCharacter::GetSingleton();
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || !actor->Get3D() || args.empty()) {
+				return "error: usage: draw on|off [actorHex]";
 			}
-			player->DrawWeaponMagicHands(a_args == "on");
+			actor->DrawWeaponMagicHands(args[0] == "on");
 			return "ok";
 		}
 
@@ -544,8 +627,11 @@ namespace DevCommands
 				*word = args[2] == "set" ? (*word | *mask) : (*word & ~*mask);
 			}
 
-			return std::format("niFlags={:08X} boolFlags={:08X} moreFlags={:08X}",
-				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
+			const auto values = RE::ActorValue::GetSingleton();
+			const float health = values && values->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*values->health) : -1.0f;
+			return std::format("niFlags={:08X} boolFlags={:08X} moreFlags={:08X} lifeState={} health={:.1f} dead={}",
+				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags,
+				static_cast<std::uint32_t>(static_cast<RE::ActorState&>(*actor).lifeState), health, actor->IsDead(false));
 		}
 
 		// remove <refHex>: disables and deletes a reference we spawned.
@@ -623,6 +709,351 @@ namespace DevCommands
 			return holder->NotifyAnimationGraphImpl(RE::BSFixedString{ args[1] }) ? "ok" : "rejected";
 		}
 
+		// animlog on|off [actorHex]: records the player's (and that actor's) animation events; returns what was recorded so far.
+		std::string AnimLog(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() > 1) {
+				const auto ref = LookupRef(args[1]);
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				WeaponFire::LogActor(actor);
+			}
+			return WeaponFire::LogAnimationEvents(!args.empty() && args[0] == "on");
+		}
+
+		// party list|pick|go|ping: what the multiplayer hotkeys do.
+		std::string PartyCommand(std::string_view a_args)
+		{
+			if (a_args == "list") {
+				Party::ShowPlayerList();
+			} else if (a_args == "pick") {
+				Party::PickTeleportTarget();
+			} else if (a_args == "go") {
+				Party::TeleportToTarget();
+			} else if (a_args == "ping") {
+				Party::SendPing();
+			} else if (!a_args.empty()) {
+				return "error: usage: party [list|pick|go|ping]";
+			}
+			return Party::Describe();
+		}
+
+		// forms <typeNumber> [text]: forms of a type (ENUM_FORM_ID) whose editor ID contains the text.
+		std::string Forms(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        type = -1;
+			if (args.empty() || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
+				return "error: usage: forms <typeNumber> [text]";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				if (!form || static_cast<int>(form->GetFormType()) != type || count >= 40) {
+					continue;
+				}
+				const std::string_view editorId = form->GetFormEditorID();
+				if (args.size() > 1 && editorId.find(args[1]) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X}:{} ", id, editorId);
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// named <typeNumber> <text>: forms of a type whose name contains the text, with their keywords.
+		std::string Named(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        type = -1;
+			if (args.size() < 2 || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
+				return "error: usage: named <typeNumber> <text>";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				if (!form || static_cast<int>(form->GetFormType()) != type || count >= 20) {
+					continue;
+				}
+				const auto name = RE::TESFullName::GetFullName(*form);
+				if (name.find(args[1]) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X}'{}'", id, name);
+				if (const auto keywords = form->As<RE::BGSKeywordForm>()) {
+					for (std::uint32_t i = 0; i < keywords->GetNumKeywords(); ++i) {
+						const auto keyword = keywords->GetKeywordAt(i).value_or(nullptr);
+						out += std::format(" k{:08X}", keyword ? keyword->GetFormID() : 0);
+					}
+				}
+				out += "; ";
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		double GfxNumber(const Scaleform::GFx::Value& a_value)
+		{
+			return a_value.IsNumber() ? a_value.GetNumber() : a_value.IsInt() ? a_value.GetInt() : a_value.IsUInt() ? a_value.GetUInt() : -1.0;
+		}
+
+		void DumpGfx(Scaleform::GFx::Value& a_object, const std::string& a_path, int a_depth)
+		{
+			Scaleform::GFx::Value count;
+			if (!a_object.IsDisplayObject() || !a_object.GetMember("numChildren", &count)) {
+				return;
+			}
+			const int children = static_cast<int>(GfxNumber(count));
+			for (int i = 0; i < children && i < 60; ++i) {
+				Scaleform::GFx::Value child;
+				Scaleform::GFx::Value index{ i };
+				if (!a_object.Invoke("getChildAt", &child, &index, 1)) {
+					continue;
+				}
+				Scaleform::GFx::Value name, x, y, width, visible;
+				child.GetMember("name", &name);
+				child.GetMember("x", &x);
+				child.GetMember("y", &y);
+				child.GetMember("width", &width);
+				child.GetMember("visible", &visible);
+				const std::string path = a_path + "." + (name.IsString() ? name.GetString() : std::format("#{}", i));
+				Scaleform::GFx::Value text, height, color, embed;
+				child.GetMember("height", &height);
+				std::string extra;
+				if (child.GetMember("text", &text) && text.IsString()) {
+					child.GetMember("textColor", &color);
+					child.GetMember("embedFonts", &embed);
+					Scaleform::GFx::Value format, font, size;
+					if (child.Invoke("getTextFormat", &format, nullptr, 0)) {
+						format.GetMember("font", &font);
+						format.GetMember("size", &size);
+					}
+					extra = std::format(" text='{}' color={:06X} embed={} font='{}' size={}", text.GetString(), static_cast<std::uint32_t>(GfxNumber(color)),
+						embed.IsBoolean() && embed.GetBoolean(), font.IsString() ? font.GetString() : "?", GfxNumber(size));
+				}
+				REX::INFO("gfx: {} x={:.1f} y={:.1f} w={:.1f} h={:.1f} visible={}{}", path, GfxNumber(x), GfxNumber(y), GfxNumber(width), GfxNumber(height),
+					visible.IsBoolean() && visible.GetBoolean(), extra);
+				if (a_depth > 1) {
+					DumpGfx(child, path, a_depth - 1);
+				}
+			}
+		}
+
+		// gfx <menu> <path> [depth]: logs a menu's display objects under path (e.g. HUDMenu root 2).
+		std::string Gfx(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 2) {
+				return "error: usage: gfx <menu> <path> [depth]";
+			}
+			int depth = 1;
+			if (args.size() > 2) {
+				std::from_chars(args[2].data(), args[2].data() + args[2].size(), depth);
+			}
+			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), depth]() {
+				const auto ui = RE::UI::GetSingleton();
+				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
+				const auto movie = menu ? menu->uiMovie.get() : nullptr;
+				if (!movie) {
+					REX::INFO("gfx: no movie for {}", menuName);
+					return;
+				}
+				Scaleform::GFx::Value object;
+				if (!movie->GetVariable(&object, path.c_str())) {
+					REX::INFO("gfx: no {}", path);
+					return;
+				}
+				REX::INFO("gfx: {} type={}", path, static_cast<int>(object.GetType()));
+				DumpGfx(object, path, depth);
+			});
+			return "queued (see the log)";
+		}
+
+		// gfxset <menu> <path> <member> <value>: sets a property (a number, true/false, or text).
+		std::string GfxSet(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 4) {
+				return "error: usage: gfxset <menu> <path> <member> <value>";
+			}
+			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), member = std::string(args[2]), text = std::string(args[3])]() {
+				const auto ui = RE::UI::GetSingleton();
+				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
+				const auto movie = menu ? menu->uiMovie.get() : nullptr;
+				Scaleform::GFx::Value object;
+				if (!movie || !movie->GetVariable(&object, path.c_str())) {
+					REX::INFO("gfxset: no {}", path);
+					return;
+				}
+				Scaleform::GFx::Value value;
+				double number = 0.0;
+				if (text == "true" || text == "false") {
+					value = Scaleform::GFx::Value(text == "true");
+				} else if (std::from_chars(text.data(), text.data() + text.size(), number).ec == std::errc{}) {
+					value = Scaleform::GFx::Value(number);
+				} else {
+					value = Scaleform::GFx::Value(text.c_str());
+				}
+				REX::INFO("gfxset: {}.{} = {} -> {}", path, member, text, object.SetMember(member, value));
+			});
+			return "queued (see the log)";
+		}
+
+		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
+		std::string WeapSound(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			const auto process = actor ? actor->currentProcess : nullptr;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return "error: usage: weapsound <actorHex> (loaded actor)";
+			}
+			const auto sound = [](const RE::BGSSoundDescriptorForm* a_form) { return a_form ? a_form->GetFormID() : 0; };
+			std::string out;
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr;
+				if (!weapon) {
+					continue;
+				}
+				const auto instance = static_cast<RE::TESObjectWEAP::InstanceData*>(equipped.item.instanceData.get());
+				const auto& base = weapon->weaponData;
+				out += std::format("weap={:08X} base: attack={:08X} 2d={:08X} loop={:08X} fail={:08X}", weapon->GetFormID(), sound(base.attackSound), sound(base.attackSound2D),
+					sound(base.attackLoop), sound(base.attackFailSound));
+				if (const auto data = static_cast<RE::EquippedWeaponData*>(equipped.data.get())) {
+					const auto mapping = data->attackSoundData;
+					out += std::format(" equipped: kssm={:08X} descriptor={:08X} tail={:08X} vats={:08X} handle={:X}", mapping ? mapping->GetFormID() : 0,
+						sound(mapping ? mapping->descriptor : nullptr), sound(mapping ? mapping->exteriorTail : nullptr), sound(mapping ? mapping->vatsDescriptor : nullptr),
+						data->attackSound.soundID);
+				}
+				if (instance) {
+					out += std::format(" instance: attack={:08X} 2d={:08X} loop={:08X} fail={:08X} keywords:", sound(instance->attackSound), sound(instance->attackSound2D),
+						sound(instance->attackLoop), sound(instance->attackFailSound));
+					if (instance->keywords) {
+						for (std::uint32_t i = 0; i < instance->keywords->GetNumKeywords(); ++i) {
+							const auto keyword = instance->keywords->GetKeywordAt(i).value_or(nullptr);
+							out += std::format(" {:08X}", keyword ? keyword->GetFormID() : 0);
+						}
+					}
+				}
+				out += "; ";
+			}
+			return out.empty() ? "no weapon" : out;
+		}
+
+		// playsound <soundHex> [flagsHex] [refHex]: plays a sound descriptor at a reference (default
+		// the player) through the audio manager, with the given usage flags (default 10).
+		std::string PlaySoundCmd(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto soundId = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto sound = soundId ? RE::TESForm::GetFormByID<RE::BGSSoundDescriptorForm>(*soundId) : nullptr;
+			const auto flags = args.size() > 1 ? ParseHex(args[1]).value_or(0x10) : 0x10;
+			const auto refId = args.size() > 2 ? ParseHex(args[2]) : std::nullopt;
+			RE::TESObjectREFR* ref = refId ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(*refId) : RE::PlayerCharacter::GetSingleton();
+			const auto audio = RE::BSAudioManager::GetSingleton();
+			if (!sound || !ref || !audio) {
+				return "error: usage: playsound <soundHex> [flagsHex] [refHex]";
+			}
+			RE::BSSoundHandle handle;
+			if (!audio->GetSoundHandle(handle, sound, 0.0f, flags)) {
+				return "no handle";
+			}
+			handle.SetPosition(ref->data.location);
+			if (const auto root = ref->Get3D()) {
+				handle.SetObjectToFollow(root);
+			}
+			const bool played = handle.Play();
+			return std::format("handle={:X} played={}", handle.soundID, played);
+		}
+
+		// gs <text>: game settings whose name contains the text (case-sensitive), with their values.
+		std::string GameSettings(std::string_view a_args)
+		{
+			const auto collection = RE::GameSettingCollection::GetSingleton();
+			if (!collection || a_args.empty()) {
+				return "error: usage: gs <text>";
+			}
+			std::vector<std::string> found;
+			for (const auto& [key, setting] : collection->settings) {
+				const auto name = setting ? setting->GetKey() : ""sv;
+				if (name.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				switch (setting->GetType()) {
+				case RE::Setting::SETTING_TYPE::kFloat:
+					found.push_back(std::format("{}={}", name, setting->GetFloat()));
+					break;
+				case RE::Setting::SETTING_TYPE::kInt:
+					found.push_back(std::format("{}={}", name, setting->GetInt()));
+					break;
+				case RE::Setting::SETTING_TYPE::kBinary:
+					found.push_back(std::format("{}={}", name, setting->GetBinary()));
+					break;
+				default:
+					found.push_back(std::string(name));
+					break;
+				}
+			}
+			std::ranges::sort(found);
+			std::string out;
+			for (const auto& entry : found | std::views::take(60)) {
+				out += entry + "; ";
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// idles <text>: idle animations whose editor ID, event or file contains the text.
+		std::string Idles(std::string_view a_args)
+		{
+			if (a_args.empty()) {
+				return "error: usage: idles <text>";
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			const auto text = [](const RE::BSFixedString& a_str) { return std::string_view{ a_str.c_str() ? a_str.c_str() : "" }; };
+			for (const auto& [id, form] : *map) {
+				const auto idle = form ? form->As<RE::TESIdleForm>() : nullptr;
+				if (!idle || count >= 25) {
+					continue;
+				}
+				const std::string_view editorId = idle->formEditorID.c_str() ? idle->formEditorID.c_str() : "";
+				const auto event = text(idle->animEventName);
+				const auto file = text(idle->animFileName);
+				if (editorId.find(a_args) == std::string_view::npos && event.find(a_args) == std::string_view::npos && file.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				out += std::format("{:08X} {} ev={} file={} graph={}; ", id, editorId, event, file, text(idle->behaviorGraphName));
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// edid <formHex>: a form's editor ID (most forms have none at runtime).
+		std::string EditorId(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto form = id ? RE::TESForm::GetFormByID(*id) : nullptr;
+			return form ? std::format("'{}' type={}", form->GetFormEditorID(), static_cast<int>(form->GetFormType())) : "error: no such form";
+		}
+
 		// net [connect <address>]
 		std::string Net(std::string_view a_args)
 		{
@@ -656,6 +1087,158 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// topics <npcBaseHex>: topics with lines conditioned on that speaker (for `say`).
+		std::string Topics(std::string_view a_args)
+		{
+			const auto parsed = ParseHex(a_args);
+			if (!parsed) {
+				return "error: usage: topics <npcBaseHex>";
+			}
+			const auto id = *parsed;
+			std::set<std::uint32_t> topics;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [formId, form] : *map) {
+				const auto info = form ? form->As<RE::TESTopicInfo>() : nullptr;
+				if (info && info->parentTopic && topics.size() < 20) {
+					const auto speaker = info->GetSpeaker();
+					if (speaker && speaker->GetFormID() == id) {
+						topics.insert(info->parentTopic->GetFormID());
+					}
+				}
+			}
+			std::string out;
+			for (const auto topic : topics) {
+				out += std::format("{:08X} ", topic);
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// say <refHex> <topicHex>: the actor says a line from the topic (Papyrus ObjectReference.Say).
+		std::string Say(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto topicId = args.size() == 2 ? ParseHex(args[1]) : std::nullopt;
+			const auto topic = ref && topicId ? RE::TESForm::GetFormByID<RE::TESTopic>(*topicId) : nullptr;
+			if (!topic) {
+				return "error: usage: say <refHex> <topicHex>";
+			}
+			const bool ok = Papyrus::CallMethod(ref, "ObjectReference", "Say", topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr));
+			return ok ? "dispatched" : "error: dispatch failed";
+		}
+
+		// npcvoice <actorHex>: what the game knows about the actor's current line.
+		std::string NpcVoice(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			if (!actor) {
+				return "error: usage: npcvoice <actorHex>";
+			}
+			const auto process = actor->currentProcess;
+			const auto high = process ? process->high : nullptr;
+			if (!high) {
+				return std::format("talking={} voiceTimer={:.2f} high=none", actor->IsTalking(), actor->voiceTimer);
+			}
+			const char* text = high->strVoiceSubtitle.c_str();
+			return std::format("talking={} voiceTimer={:.2f} state={} elapsed={:.2f} hpTimer={:.2f} subtitle='{}' lastGreeting={:08X} sound={:X}",
+				actor->IsTalking(), actor->voiceTimer, static_cast<int>(high->voiceState.get()), high->voiceTimeElapsed, high->voiceTimer, text ? text : "",
+				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->soundHandle[0].soundID);
+		}
+
+		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
+		std::string Menu(std::string_view a_args)
+		{
+			const auto space = a_args.find(' ');
+			const std::string name{ a_args.substr(0, space) };
+			const auto how = space != std::string_view::npos ? a_args.substr(space + 1) : std::string_view{};
+			const auto queue = RE::UIMessageQueue::GetSingleton();
+			if (name.empty() || !queue) {
+				return "error: usage: menu <name> [hide|force]";
+			}
+			queue->AddMessage(name, how == "force" ? RE::UI_MESSAGE_TYPE::kForceHide : how == "hide" ? RE::UI_MESSAGE_TYPE::kHide : RE::UI_MESSAGE_TYPE::kShow);
+			return "queued";
+		}
+
+		// paused: whether the game is paused, and by what.
+		std::string Paused(std::string_view)
+		{
+			const auto main = RE::Main::GetSingleton();
+			const auto ui = RE::UI::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
+				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
+		}
+
+		// dialogue: the conversation the player is in, and whether the speaker is saying something.
+		std::string Dialogue(std::string_view)
+		{
+			const auto topics = RE::MenuTopicManager::GetSingleton();
+			if (!topics) {
+				return "none";
+			}
+			const auto speaker = topics->speaker.get();
+			const auto actor = speaker ? speaker->As<RE::Actor>() : nullptr;
+			const auto last = topics->lastSpeaker.get();
+			const auto ui = RE::UI::GetSingleton();
+			const bool dialogueMenu = ui && ui->GetMenuOpen("DialogueMenu"sv);
+			return std::format("last={:08X} dialogueMenu={} menuOpen={} allowInput={} speaker={:08X} talking={} voiceTimer={:.2f} inScene={}",
+				last ? last->GetFormID() : 0, dialogueMenu, topics->menuOpen, topics->allowInput, speaker ? speaker->GetFormID() : 0, speaker ? speaker->IsTalking() : false,
+				actor ? actor->voiceTimer : -1.0f, topics->overSceneActor);
+		}
+
+		// markers [text]: map markers (name from their data) with the first bytes of their data.
+		std::string Markers(std::string_view a_args)
+		{
+			std::string result;
+			int         count = 0;
+			int         total = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				const auto ref = form ? form->As<RE::TESObjectREFR>() : nullptr;
+				const auto extra = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraMapMarker>() : nullptr;
+				if (!extra || !extra->mapMarkerData) {
+					continue;
+				}
+				++total;
+				const auto bytes = reinterpret_cast<const std::uint8_t*>(extra->mapMarkerData);
+				const std::string_view markerName = reinterpret_cast<const RE::BSFixedString*>(bytes + 8)->c_str();
+				if (!a_args.empty() && markerName.find(a_args) == std::string_view::npos) {
+					continue;
+				}
+				if (count >= 12) {
+					continue;
+				}
+				std::string hex;
+				for (int i = 0x10; i < 0x14; ++i) {
+					hex += std::format("{:02X}{}", bytes[i], (i % 4 == 3) ? " " : "");
+				}
+				result += std::format("{}{:08X} '{}' [{}]", count++ ? "; " : "", id, markerName, hex);
+			}
+			return std::format("{} markers: {}", total, result);
+		}
+
+		// voice [talk|loop on|off]: record without the key, or hear our own voice.
+		std::string VoiceCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && (args[0] == "talk" || args[0] == "loop")) {
+				(args[0] == "talk" ? Voice::SetForceTalk : Voice::SetLoopback)(args[1] == "on");
+			} else if (!args.empty()) {
+				return "error: usage: voice [talk|loop on|off]";
+			}
+			return Voice::Describe();
+		}
+
 		// echo on|off [dx dy]: a puppet mirrors the local player, offset by (dx, dy).
 		std::string Echo(std::string_view a_args)
 		{
@@ -680,6 +1263,7 @@ namespace DevCommands
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "findnpc", FindNpc },
+			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
 			Entry{ "safenpc", SafeNpc },
 			Entry{ "actors", Actors },
@@ -689,6 +1273,7 @@ namespace DevCommands
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
 			Entry{ "quests", Quests },
+			Entry{ "objectives", Objectives },
 			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
 			Entry{ "findgear", FindGear },
@@ -699,7 +1284,26 @@ namespace DevCommands
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "echo", Echo },
+			Entry{ "voice", VoiceCommand },
+			Entry{ "markers", Markers },
+			Entry{ "dialogue", Dialogue },
+			Entry{ "topics", Topics },
+			Entry{ "say", Say },
+			Entry{ "npcvoice", NpcVoice },
+			Entry{ "menu", Menu },
+			Entry{ "paused", Paused },
+			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
+			Entry{ "animlog", AnimLog },
+			Entry{ "party", PartyCommand },
+			Entry{ "edid", EditorId },
+			Entry{ "forms", Forms },
+			Entry{ "named", Named },
+			Entry{ "gfx", Gfx },
+			Entry{ "gfxset", GfxSet },
+			Entry{ "weapsound", WeapSound },
+			Entry{ "playsound", PlaySoundCmd },
+			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },

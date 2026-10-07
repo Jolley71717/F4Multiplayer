@@ -14,10 +14,19 @@ namespace
 {
 	using Clock = std::chrono::steady_clock;
 
-	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(33);  // ~30 Hz state broadcast
-	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states, and NPC state batches
+	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(16);  // ~60 Hz relay of new player states
+	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states (sent at 30 Hz)
+	constexpr int  MAX_ACTOR_BATCHES_PER_SECOND = 120;             // NPC state batches (20 Hz, one per 64 NPCs)
 	// "Take all" from a big container reports one event per item type.
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
+	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
+	constexpr int  MAX_SHOTS_PER_SECOND = 60;
+	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
+	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
+	// (one more each XP_REPORT_INTERVAL).
+	constexpr auto XP_REFILL_TIME = std::chrono::seconds(10);
+	constexpr int  XP_REPORT_BURST = 10;
+	constexpr auto XP_REPORT_INTERVAL = std::chrono::milliseconds(500);
 	// Connections that haven't said Hello by then are dropped (they hold a slot).
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
@@ -37,12 +46,15 @@ namespace
 		int               states = 0;
 		int               actorStates = 0;
 		int               events = 0;
+		int               shots = 0;
+		int               heartbeats = 0;
+		int               voiceBytes = 0;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
 			}
 		}
 	};
@@ -62,6 +74,13 @@ namespace
 		Protocol::PlayerState      state;
 		RateWindow                 rate;
 		bool                       floodLogged = false;
+		std::optional<Protocol::PlayerStatus> status;
+		Clock::time_point          lastPing{};
+		Clock::time_point          lastLine{};
+		bool                       local = false;  // on the server's machine
+		float                      xpBudget = Protocol::MAX_XP_SHARE;
+		float                      xpReports = XP_REPORT_BURST;
+		Clock::time_point          xpRefilled{};
 	};
 
 	struct Ownership
@@ -152,6 +171,7 @@ void Server::Run()
 {
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
+	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
 	std::uint64_t                             sessionId = NewSessionId();
@@ -160,11 +180,13 @@ void Server::Run()
 
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
-	std::vector<Protocol::ContainerChange>                containerChanges;  // index = session index
+	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
+	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
+	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
@@ -173,6 +195,8 @@ void Server::Run()
 		refStates.clear();
 		actorOwners.clear();
 		questStages.clear();
+		worldTime.reset();
+		markers.clear();
 		sessionId = NewSessionId();
 	};
 
@@ -231,9 +255,24 @@ void Server::Run()
 		return false;
 	};
 
+	const auto sendMarkers = [&](ConnectionKey a_to) {
+		Protocol::MarkersFound batch;
+		for (const auto& [ref, flags] : markers) {
+			batch.markers.push_back({ ref, flags });
+			if (batch.markers.size() == Protocol::MAX_MARKERS_PER_PACKET) {
+				send(a_to, Protocol::Encode(batch, Protocol::MessageType::kMarkersFound), true);
+				batch.markers.clear();
+			}
+		}
+		if (!batch.markers.empty()) {
+			send(a_to, Protocol::Encode(batch, Protocol::MessageType::kMarkersFound), true);
+		}
+	};
+
 	// Sends the session's world state in chunks. Container changes before a_containerFrom are
 	// already in the receiver's world.
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
+		sendMarkers(a_to);
 		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
 		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
 		std::vector<Protocol::RefState>  states;
@@ -264,88 +303,6 @@ void Server::Run()
 		} while (offset < longest);
 	};
 
-	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		const auto hello = Protocol::DecodeHello(a_data);
-		if (!hello || hello->magic != Protocol::MAGIC) {
-			reject(a_player, "Not an F4Multiplayer client");
-			return;
-		}
-		if (hello->version != Protocol::VERSION) {
-			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
-			return;
-		}
-		if (welcomedCount() >= options.maxPlayers) {
-			reject(a_player, "Server is full");
-			return;
-		}
-		if (!password.empty() && hello->password != password) {
-			log(std::format("server: wrong password from {}", describe(a_player.key)));
-			reject(a_player, "Wrong password");
-			return;
-		}
-		if (welcomedCount() == 0) {
-			// A different mod list makes the stored form IDs meaningless: start a fresh session.
-			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
-				log("server: load order changed; starting a new session");
-				resetWorld();
-			}
-			sessionContentHash = hello->contentHash;
-		} else if (hello->contentHash != sessionContentHash) {
-			reject(a_player, "Your load order is different from the other players. Everyone needs the same mods in the same order.");
-			return;
-		}
-
-		a_player.name = SanitizeName(hello->name, a_player.id);
-		a_player.appearance = hello->appearance;
-		a_player.welcomed = true;
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId }), true);
-		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
-
-		for (auto& [key, other] : players) {
-			if (!other.welcomed || key == a_player.key) {
-				continue;
-			}
-			send(a_player.key, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
-			send(key, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
-			if (!other.equipment.empty()) {
-				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
-			}
-			// Let the newcomer see players who are standing still right away.
-			other.stateDirty = other.hasState;
-		}
-
-		std::vector<Protocol::ActorOwner> owners;
-		for (const auto& [ref, owner] : actorOwners) {
-			owners.push_back({ ref, owner.playerId });
-		}
-		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
-		}
-
-		log(std::format("server: '{}' joined as player {} from {} ({} online)", a_player.name, a_player.id, describe(a_player.key), welcomedCount()));
-	};
-
-	const auto handleState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!a_player.welcomed) {
-			return;
-		}
-		a_player.rate.Roll(Clock::now());
-		if (++a_player.rate.states > MAX_STATES_PER_SECOND) {
-			return;
-		}
-		const auto state = Protocol::DecodePlayerState(a_data);
-		if (!state) {
-			return;
-		}
-		if (a_player.hasState && state->sequence <= a_player.state.sequence) {
-			return;  // out of order
-		}
-		a_player.state = *state;
-		a_player.hasState = true;
-		a_player.stateDirty = true;
-	};
-
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -371,11 +328,134 @@ void Server::Run()
 		sendOwners(released, 0);
 	};
 
+	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
+	const auto leave = [&](const Player& a_player) {
+		if (a_player.welcomed) {
+			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
+			log(std::format("server: '{}' left", a_player.name));
+		}
+		releaseAll(a_player.id);
+	};
+
+	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto hello = Protocol::DecodeHello(a_data);
+		if (!hello || hello->magic != Protocol::MAGIC) {
+			reject(a_player, "Not an F4Multiplayer client");
+			return;
+		}
+		if (hello->version != Protocol::VERSION) {
+			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
+			return;
+		}
+		if (!password.empty() && hello->password != password) {
+			log(std::format("server: wrong password from {}", describe(a_player.key)));
+			reject(a_player, "Wrong password");
+			return;
+		}
+		if (welcomedCount() == 0) {
+			// A different mod list makes the stored form IDs meaningless: start a fresh session.
+			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
+				log("server: load order changed; starting a new session");
+				resetWorld();
+			}
+			sessionContentHash = hello->contentHash;
+		} else if (hello->contentHash != sessionContentHash) {
+			reject(a_player, "Your load order is different from the other players. Everyone needs the same mods in the same order.");
+			return;
+		}
+
+		// Someone coming back gets their old ID. If their old connection is still here, their game
+		// restarted before it timed out: that one is stale, so it goes.
+		bool returning = false;
+		if (hello->identity != 0) {
+			if (const auto known = identities.find(hello->identity); known != identities.end()) {
+				const auto stale = std::ranges::find_if(players, [&](const auto& a_entry) {
+					return a_entry.first != a_player.key && a_entry.second.welcomed && a_entry.second.id == known->second;
+				});
+				if (stale != players.end()) {
+					log(std::format("server: dropping the old connection of '{}' ({})", stale->second.name, describe(stale->first)));
+					leave(stale->second);
+					disconnect(stale->second);
+					players.erase(stale);
+				}
+				a_player.id = known->second;
+				returning = true;
+			} else {
+				identities[hello->identity] = a_player.id;
+			}
+		}
+		// (After dropping a stale connection: it doesn't take up a place.)
+		if (welcomedCount() >= options.maxPlayers) {
+			reject(a_player, "Server is full");
+			return;
+		}
+
+		a_player.name = SanitizeName(hello->name, a_player.id);
+		a_player.appearance = hello->appearance;
+		a_player.welcomed = true;
+		a_player.local = transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		a_player.xpRefilled = Clock::now();
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
+		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
+
+		for (auto& [key, other] : players) {
+			if (!other.welcomed || key == a_player.key) {
+				continue;
+			}
+			send(a_player.key, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
+			send(key, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
+			if (!other.equipment.empty()) {
+				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
+			}
+			if (other.status) {
+				send(a_player.key, Protocol::Encode(*other.status, Protocol::MessageType::kPlayerStatus), true);
+			}
+			// Let the newcomer see players who are standing still right away.
+			other.stateDirty = other.hasState;
+		}
+
+		std::vector<Protocol::ActorOwner> owners;
+		for (const auto& [ref, owner] : actorOwners) {
+			owners.push_back({ ref, owner.playerId });
+		}
+		for (std::size_t i = 0; i < owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
+		}
+
+		if (worldTime) {
+			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
+		}
+
+		log(std::format("server: '{}' {} as player {} from {} ({} online)", a_player.name, returning ? "came back" : "joined", a_player.id, describe(a_player.key),
+			welcomedCount()));
+	};
+
+	const auto handleState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		if (++a_player.rate.states > MAX_STATES_PER_SECOND) {
+			return;
+		}
+		const auto state = Protocol::DecodePlayerState(a_data);
+		if (!state) {
+			return;
+		}
+		if (a_player.hasState && state->sequence <= a_player.state.sequence) {
+			return;  // out of order
+		}
+		a_player.state = *state;
+		a_player.hasState = true;
+		a_player.stateDirty = true;
+	};
+
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
-		const auto death = Protocol::DecodeActorDeath(a_data);
+		auto death = Protocol::DecodeActorDeath(a_data);
 		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
 			!deadActors.insert(death->refId).second) {
 			return;
@@ -383,6 +463,7 @@ void Server::Run()
 		if (actorOwners.erase(death->refId)) {
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
+		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
@@ -408,8 +489,8 @@ void Server::Run()
 			return;
 		}
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
-		containerChanges.push_back(*change);
-		broadcast(Protocol::Encode(Protocol::IndexedContainerChange{ index, a_player.id, *change }), true, 0);
+		containerChanges.push_back({ index, a_player.id, *change });
+		broadcast(Protocol::Encode(containerChanges.back()), true, 0);
 	};
 
 	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -469,6 +550,10 @@ void Server::Run()
 				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS;
 			} else if (it->second.playerId == a_player.id) {
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
+				// The owner talking to it: nobody takes it over mid-conversation.
+				if (claim.reason == Reason::kInteract) {
+					it->second.since = now;
+				}
 				continue;
 			} else if (claim.reason == Reason::kCompanion) {
 				grant = it->second.reason != Reason::kCompanion;
@@ -509,8 +594,8 @@ void Server::Run()
 			return;
 		}
 		a_player.rate.Roll(Clock::now());
-		// Owners send one batch per 64 NPCs ten times a second.
-		if (++a_player.rate.actorStates > MAX_STATES_PER_SECOND) {
+		// Owners send one batch per 64 NPCs up to 20 times a second.
+		if (++a_player.rate.actorStates > MAX_ACTOR_BATCHES_PER_SECOND) {
 			return;
 		}
 		auto states = Protocol::DecodeActorStates(a_data);
@@ -532,14 +617,190 @@ void Server::Run()
 			return;
 		}
 		const auto hit = Protocol::DecodePlayerHit(a_data);
-		if (!hit || hit->playerId == a_player.id) {
+		if (!hit || hit->playerId == a_player.id || (hit->byPlayer && !options.friendlyFire)) {
 			return;
 		}
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage, hit->byPlayer, hit->attacker }, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
+	};
+
+	// Shots by the player, or by an NPC they run (anyone else's view of that NPC doesn't count).
+	const auto handleShot = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		if (++a_player.rate.shots > MAX_SHOTS_PER_SECOND) {
+			return;
+		}
+		const auto shot = Protocol::DecodeShot(a_data);
+		if (!shot) {
+			return;
+		}
+		if (shot->refId != 0) {
+			const auto it = actorOwners.find(shot->refId);
+			if (it == actorOwners.end() || it->second.playerId != a_player.id) {
+				return;
+			}
+		}
+		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId }, Protocol::MessageType::kShotFired), false, a_player.key);
+	};
+
+	const auto handleStatus = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto status = Protocol::DecodePlayerStatus(a_data);
+		if (!status) {
+			return;
+		}
+		status->playerId = a_player.id;
+		a_player.status = *status;
+		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
+	};
+
+	// The session's clock is the host's: a player on this machine, else the one here longest.
+	const auto handleTime = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && key != a_player.key && (other.local > a_player.local || (other.local == a_player.local && other.id < a_player.id))) {
+				return;
+			}
+		}
+		auto time = Protocol::DecodeWorldTime(a_data);
+		if (!time) {
+			return;
+		}
+		time->playerId = a_player.id;
+		worldTime = *time;
+		broadcast(Protocol::Encode(*time, Protocol::MessageType::kWorldTime), false, a_player.key);
+	};
+
+	const auto handlePing = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto now = Clock::now();
+		if (!allowEvent(a_player) || now - a_player.lastPing < std::chrono::seconds(1)) {
+			return;
+		}
+		auto ping = Protocol::DecodePing(a_data);
+		if (!ping) {
+			return;
+		}
+		a_player.lastPing = now;
+		ping->playerId = a_player.id;
+		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
+	};
+
+	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto now = Clock::now();
+		if (!allowEvent(a_player) || now - a_player.lastLine < std::chrono::milliseconds(250)) {
+			return;
+		}
+		auto line = Protocol::DecodeLine(a_data);
+		if (!line) {
+			return;
+		}
+		a_player.lastLine = now;
+		line->playerId = a_player.id;
+		broadcast(Protocol::Encode(*line, Protocol::MessageType::kLineSpoken), true, a_player.key);
+	};
+
+	const auto handleXp = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto gain = Protocol::DecodeXpGain(a_data);
+		if (!gain) {
+			return;
+		}
+		const auto now = Clock::now();
+		const float elapsed = std::chrono::duration<float>(now - a_player.xpRefilled).count();
+		a_player.xpRefilled = now;
+		a_player.xpBudget = (std::min)(Protocol::MAX_XP_SHARE, a_player.xpBudget + elapsed * Protocol::MAX_XP_SHARE / std::chrono::duration<float>(XP_REFILL_TIME).count());
+		a_player.xpReports = (std::min)(static_cast<float>(XP_REPORT_BURST), a_player.xpReports + elapsed / std::chrono::duration<float>(XP_REPORT_INTERVAL).count());
+		gain->xp = (std::min)(gain->xp, a_player.xpBudget);
+		if (a_player.xpReports < 1.0f || gain->xp < 1.0f) {
+			return;
+		}
+		a_player.xpReports -= 1.0f;
+		a_player.xpBudget -= gain->xp;
+		gain->playerId = a_player.id;
+		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
+	};
+
+	// Map markers: only what's new to the session is passed on.
+	const auto handleMarkers = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto found = Protocol::DecodeMarkers(a_data);
+		if (!found) {
+			return;
+		}
+		Protocol::MarkersFound news{ a_player.id, {} };
+		for (const auto& marker : found->markers) {
+			const auto it = markers.find(marker.refId);
+			if (it == markers.end() && markers.size() >= Protocol::MAX_SESSION_MARKERS) {
+				continue;
+			}
+			auto& flags = markers[marker.refId];
+			if ((marker.flags & ~flags) != 0) {
+				flags |= marker.flags;
+				news.markers.push_back({ marker.refId, flags });
+			}
+		}
+		if (!news.markers.empty()) {
+			broadcast(Protocol::Encode(news, Protocol::MessageType::kMarkersFound), true, a_player.key);
+		}
+	};
+
+	// Voice goes to everyone else; each listener sets the volume by distance.
+	const auto handleVoice = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		a_player.rate.Roll(Clock::now());
+		a_player.rate.voiceBytes += static_cast<int>(a_data.size());
+		if (a_player.rate.voiceBytes > MAX_VOICE_BYTES_PER_SECOND) {
+			return;
+		}
+		auto voice = Protocol::DecodeVoice(a_data);
+		if (!voice) {
+			return;
+		}
+		voice->playerId = a_player.id;
+		broadcast(Protocol::Encode(*voice, Protocol::MessageType::kVoiceRelay), false, a_player.key);
+	};
+
+	const auto handleRevive = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto revive = Protocol::DecodeRevive(a_data);
+		if (!revive || revive->playerId == a_player.id) {
+			return;
+		}
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && other.id == revive->playerId) {
+				send(key, Protocol::Encode(Protocol::Revive{ a_player.id }, Protocol::MessageType::kRevived), true);
+			}
+		}
+	};
+
+	const auto handleQuestDone = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto done = Protocol::DecodeQuestDone(a_data);
+		if (!done) {
+			return;
+		}
+		done->playerId = a_player.id;
+		broadcast(Protocol::Encode(*done, Protocol::MessageType::kQuestDone), true, a_player.key);
 	};
 
 	const auto handleQuestStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -581,9 +842,20 @@ void Server::Run()
 		using Protocol::MessageType;
 		switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
 		case MessageType::kHello:
-			if (!a_player.welcomed && !a_player.kicked) {
-				handleHello(a_player, a_data);
+			if (a_player.kicked) {
+				break;
 			}
+			if (a_player.welcomed) {
+				// Hello again on the same connection: their game restarted before it timed out
+				// (Steam keeps one connection per friend). Start over as a new arrival.
+				leave(a_player);
+				Player fresh;
+				fresh.key = a_player.key;
+				fresh.id = a_player.id;
+				fresh.connectedAt = Clock::now();
+				a_player = std::move(fresh);
+			}
+			handleHello(a_player, a_data);
 			break;
 		case MessageType::kPlayerState:
 			handleState(a_player, a_data);
@@ -624,6 +896,45 @@ void Server::Run()
 		case MessageType::kRequestWorldState:
 			handleWorldRequest(a_player, a_data);
 			break;
+		case MessageType::kReportShot:
+			handleShot(a_player, a_data);
+			break;
+		case MessageType::kReportStatus:
+			handleStatus(a_player, a_data);
+			break;
+		case MessageType::kReportTime:
+			handleTime(a_player, a_data);
+			break;
+		case MessageType::kPing:
+			handlePing(a_player, a_data);
+			break;
+		case MessageType::kReportLine:
+			handleLine(a_player, a_data);
+			break;
+		case MessageType::kReportXp:
+			handleXp(a_player, a_data);
+			break;
+		case MessageType::kReportQuestDone:
+			handleQuestDone(a_player, a_data);
+			break;
+		case MessageType::kRevive:
+			handleRevive(a_player, a_data);
+			break;
+		case MessageType::kVoice:
+			handleVoice(a_player, a_data);
+			break;
+		case MessageType::kReportMarkers:
+			handleMarkers(a_player, a_data);
+			break;
+		case MessageType::kHeartbeat:
+			// Own budget: players send one a second, and the answer must not wait behind events.
+			if (const auto beat = Protocol::DecodeHeartbeat(a_data); beat && a_player.welcomed) {
+				a_player.rate.Roll(Clock::now());
+				if (++a_player.rate.heartbeats <= 10) {
+					send(a_player.key, Protocol::Encode(*beat, Protocol::MessageType::kHeartbeatAck), true);
+				}
+			}
+			break;
 		default:
 			break;
 		}
@@ -655,13 +966,12 @@ void Server::Run()
 					break;
 				case TransportEvent::Type::kDisconnect:
 					if (const auto it = players.find(key); it != players.end()) {
-						if (it->second.welcomed) {
-							broadcast(Protocol::Encode(Protocol::PlayerLeft{ it->second.id }), true, key);
-							log(std::format("server: '{}' left", it->second.name));
-						}
-						const auto leftId = it->second.id;
+						leave(it->second);
 						players.erase(it);
-						releaseAll(leftId);
+						// The clock belonged to someone who's gone; the next player brings their own.
+						if (welcomedCount() == 0) {
+							worldTime.reset();
+						}
 					}
 					break;
 				}

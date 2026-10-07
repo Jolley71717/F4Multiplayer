@@ -74,14 +74,48 @@ namespace Config
 				ParseInt(value, settings.maxPlayers);
 			} else if (key == "sPassword") {
 				settings.password = value;
+			} else if (key == "bFriendlyFire") {
+				settings.friendlyFire = ParseBool(value);
+			} else if (key == "sStory") {
+				settings.sharedStory = value == "shared";
 			} else if (key == "iMyAppearance") {
 				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {
 				ParseInt(value, settings.puppetBaseForm, 16);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
+			} else if (key == "bRevive") {
+				settings.revive = ParseBool(value);
+			} else if (key == "bShareMap") {
+				settings.shareMap = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
+			} else if (key == "bSyncTime") {
+				settings.syncTime = ParseBool(value);
+			} else if (key == "fXpShare") {
+				float share = settings.xpShare;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);
+				if (ec == std::errc{} && std::isfinite(share)) {
+					settings.xpShare = std::clamp(share, 0.0f, 1.0f);
+				}
+			} else if (key == "bVoiceChat") {
+				settings.voiceChat = ParseBool(value);
+			} else if (key == "bVoiceOpenMic") {
+				settings.voiceOpenMic = ParseBool(value);
+			} else if (key == "iKeyVoice") {
+				ParseInt(value, settings.keyVoice, 16);
+			} else if (key == "fVoiceRange") {
+				float range = settings.voiceRange;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), range);
+				if (ec == std::errc{} && std::isfinite(range)) {
+					settings.voiceRange = std::clamp(range, 0.0f, 100000.0f);
+				}
+			} else if (key == "iKeyPlayerList") {
+				ParseInt(value, settings.keyPlayerList, 16);
+			} else if (key == "iKeyTeleport") {
+				ParseInt(value, settings.keyTeleport, 16);
+			} else if (key == "iKeyPing") {
+				ParseInt(value, settings.keyPing, 16);
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {

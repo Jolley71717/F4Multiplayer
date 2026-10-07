@@ -25,6 +25,13 @@ namespace Config
 		std::size_t   maxPlayers = 4;
 		std::string   password;
 
+		// When hosting: players can hurt each other.
+		bool friendlyFire = false;
+
+		// When hosting: the main story and faction quests are shared too ("shared"), or each
+		// player plays their own ("own", the default; side quests are shared either way).
+		bool sharedStory = false;
+
 		// NPC base form used for other players' characters. It should belong to no factions,
 		// or hitting another player can count as a crime against that faction.
 		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)
@@ -35,8 +42,34 @@ namespace Config
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
+		// Follow the first player's (the host's) time of day and weather.
+		bool syncTime = true;
+
+		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
+		float xpShare = 0.5f;
+
+		// Hotkeys (Windows virtual-key codes, hex). 0 = off.
+		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
+		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
+		std::uint32_t keyPing = 0x77;        // F8: "over here"
+
+		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
+		// Friends hear you at full volume within 8 m, fading out at voiceRange meters (0 = everyone
+		// always hears everyone).
+		bool          voiceChat = true;
+		bool          voiceOpenMic = false;
+		std::uint32_t keyVoice = 0x05;  // mouse side button (back)
+		float         voiceRange = 60.0f;
+
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
+
+		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
+		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).
+		bool revive = true;
+
+		// Locations a friend discovers show up on your map, ready for fast travel.
+		bool shareMap = true;
 
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;

@@ -27,6 +27,7 @@ namespace Puppets
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
+			bool                                  redraw = false;  // holster (if drawn) and draw again
 		};
 
 		std::mutex                                    lock;
@@ -65,14 +66,18 @@ namespace Puppets
 		void MatchWeaponDrawn(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
 			const bool wantDrawn = (a_puppet.target.flags & Protocol::kWeaponDrawn) != 0;
+			const bool drawn = a_actor->GetWeaponMagicDrawn();
 			const auto now = std::chrono::steady_clock::now();
-			if (wantDrawn == a_actor->GetWeaponMagicDrawn() || now < a_puppet.nextDrawAttempt) {
+			// A redraw holsters first; the next attempt draws.
+			const bool holster = a_puppet.redraw && drawn;
+			if (now < a_puppet.nextDrawAttempt || (wantDrawn == drawn && !holster)) {
 				return;
 			}
-			a_actor->DrawWeaponMagicHands(wantDrawn);
+			a_actor->DrawWeaponMagicHands(wantDrawn && !holster);
 			std::scoped_lock l{ lock };
 			if (const auto it = puppets.find(a_actor); it != puppets.end()) {
 				it->second.nextDrawAttempt = now + 1s;
+				it->second.redraw = false;
 			}
 		}
 
@@ -294,6 +299,15 @@ namespace Puppets
 		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
 		// Drop the do-nothing package and pick the NPC's own again.
 		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
+	}
+
+	void RedrawWeapon(RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
+			it->second.redraw = true;
+			it->second.nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
+		}
 	}
 
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion)

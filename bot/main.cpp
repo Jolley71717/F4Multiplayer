@@ -2,6 +2,18 @@
 //
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
+//           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
+//           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX [--time-step HOURS]]  (health in the status sent after joining, an "over here", a kill XP report)
+//           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
+//           [--downed 1] [--revive PLAYERID]  (status says the bot is down; helps that player up once welcomed)
+//           [--voice-echo 1]  (sends every piece of voice it hears back as its own)
+//           [--voice-silence 1]  (talks: Steam voice packets holding 100 ms of silence, 10 a second)
+//           [--marker REFHEX]  (reports discovering this map marker once welcomed)
+//           [--talk REFHEX]  (claims this NPC as if talking to it, every 2 s)
+//           [--say REFHEX]  (reports a line said by this NPC every 3 s; 0 = the bot itself)
+//           [--opening 1]  (status says the bot is still in the game's opening, before leaving Vault 111)
+//           [--identity HEX]  (sent in Hello; the server gives the same identity the same player ID again)
+//           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -10,13 +22,45 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
 
 namespace
 {
+	std::uint32_t Crc32(std::span<const std::uint8_t> a_data)
+	{
+		std::uint32_t crc = 0xFFFFFFFF;
+		for (const auto byte : a_data) {
+			crc ^= byte;
+			for (int i = 0; i < 8; ++i) {
+				crc = (crc >> 1) ^ (0xEDB88320 & (0u - (crc & 1)));
+			}
+		}
+		return ~crc;
+	}
+
+	// A Steam voice packet: the speaker's Steam ID, a sample rate (type 11) and a run of silent
+	// samples (type 0), then a CRC32 of all that.
+	std::vector<std::uint8_t> SilencePacket(std::uint16_t a_samples)
+	{
+		std::vector<std::uint8_t> packet;
+		const auto put = [&](const auto a_value) {
+			const auto bytes = reinterpret_cast<const std::uint8_t*>(&a_value);
+			packet.insert(packet.end(), bytes, bytes + sizeof(a_value));
+		};
+		put(std::uint64_t{ 0x0110000100000001 });
+		put(std::uint8_t{ 11 });
+		put(std::uint16_t{ 24000 });
+		put(std::uint8_t{ 0 });
+		put(a_samples);
+		put(Crc32(packet));
+		return packet;
+	}
+
 	template <class T>
 	bool ParseNumber(std::string_view a_str, T& a_out, int a_base = 10)
 	{
@@ -45,14 +89,39 @@ int main(int argc, char* argv[])
 	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
+	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
+	int           statusHealth = 100;
+	bool          statusDowned = false;
+	bool          statusOpening = false;  // status says the bot hasn't left Vault 111 yet
+	std::uint64_t identity = 0;           // Hello::identity: the same value comes back as the same player
+	bool          voiceEcho = false;
+	bool          voiceSilence = false;
+	std::uint32_t markerRef = 0;
+	std::uint64_t voiceBytes = 0;
+	std::uint32_t reviveTarget = 0;
+	bool          sendPing = false;
+	float         xpGain = 0.0f;
+	std::uint32_t questDone = 0;
+	float         timeHour = -1.0f;  // report this time of day (and timeWeather) every 5 s
+	float         timeStep = 0.0f;   // ... moving it this many hours forward each time
+	double        timeDays = 0.0;
+	std::uint32_t timeWeather = 0;
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
 	Protocol::QuestStage questStage;  // report this quest stage once welcomed (quest 0 = none)
 	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
+	bool          npcSlow = false;    // --own NPC sends 10 states a second (far from everyone) instead of 20
+	std::uint32_t talkRef = 0;        // keeps trying to take this NPC over as if talking to it (every 2 s)
+	std::optional<std::uint32_t> sayRef;  // reports a line said by this NPC (0 = the bot) every 3 s
+	int           linesSaid = 0;
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
 	std::uint32_t actorStatesSeen = 0;
+	// For the rates printed at the end: other players' states, and states per NPC.
+	std::uint32_t                                    playerStatesHeard = 0;
+	std::map<std::uint32_t, std::uint32_t>           npcStatesHeard;
+	std::optional<std::chrono::steady_clock::time_point> firstHeard;
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
 	std::uint32_t lootItem = 0;
 	std::int32_t  lootCount = 0;
@@ -95,12 +164,29 @@ int main(int argc, char* argv[])
 			// quest:stage, hex:decimal
 			const auto colon = value.find(':');
 			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), questStage.quest, 16) && ParseNumber(value.substr(colon + 1), questStage.stage);
+		} else if (key == "--talk") {
+			ok = ParseNumber(value, talkRef, 16);
+		} else if (key == "--say") {
+			std::uint32_t ref = 0;
+			ok = ParseNumber(value, ref, 16);
+			sayRef = ref;
+		} else if (key == "--npc-slow") {
+			npcSlow = value == "1";
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
-			// id:damage
+			// id:damage:ATTACKERHEX (an NPC hit them), or id:damage:p for a hit by the bot itself
+			// (friendly fire)
 			const auto colon = value.find(':');
-			ok = colon != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) && ParseNumber(value.substr(colon + 1), hitPlayer.damage);
+			const auto second = colon != std::string_view::npos ? value.find(':', colon + 1) : std::string_view::npos;
+			ok = second != std::string_view::npos && ParseNumber(value.substr(0, colon), hitPlayer.playerId) &&
+			     ParseNumber(value.substr(colon + 1, second - colon - 1), hitPlayer.damage);
+			const auto who = second != std::string_view::npos ? value.substr(second + 1) : std::string_view{};
+			if (who == "p") {
+				hitPlayer.byPlayer = true;
+			} else {
+				ok = ok && ParseNumber(who, hitPlayer.attacker, 16);
+			}
 		} else if (key == "--door") {
 			// ref:open:locked, hex:0|1|2:0|1|2 (2 = leave alone)
 			const auto first = value.find(':');
@@ -131,6 +217,37 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, killRef, 16);
 		} else if (key == "--jump") {
 			jump = value == "1";
+		} else if (key == "--shoot") {
+			ok = ParseNumber(value, shootWeapon, 16);
+		} else if (key == "--status-health") {
+			ok = ParseNumber(value, statusHealth) && statusHealth >= 0 && statusHealth <= 100;
+		} else if (key == "--voice-echo") {
+			voiceEcho = value == "1";
+		} else if (key == "--voice-silence") {
+			voiceSilence = value == "1";
+		} else if (key == "--marker") {
+			ok = ParseNumber(value, markerRef, 16);
+		} else if (key == "--downed") {
+			statusDowned = value == "1";
+		} else if (key == "--opening") {
+			statusOpening = value == "1";
+		} else if (key == "--identity") {
+			ok = ParseNumber(value, identity, 16);
+		} else if (key == "--revive") {
+			ok = ParseNumber(value, reviveTarget);
+		} else if (key == "--ping") {
+			sendPing = value == "1";
+		} else if (key == "--xp") {
+			ok = ParseNumber(value, xpGain);
+		} else if (key == "--quest-done") {
+			ok = ParseNumber(value, questDone, 16);
+		} else if (key == "--time") {
+			ok = ParseNumber(value, timeHour) && timeHour >= 0.0f && timeHour < 24.0f;
+			timeDays = 10.0 + timeHour / 24.0;
+		} else if (key == "--time-step") {
+			ok = ParseNumber(value, timeStep) && timeStep >= 0.0f && timeStep <= 48.0f;
+		} else if (key == "--weather") {
+			ok = ParseNumber(value, timeWeather, 16);
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
 		} else {
@@ -163,6 +280,7 @@ int main(int argc, char* argv[])
 	using Clock = std::chrono::steady_clock;
 	const auto start = Clock::now();
 	auto       nextSend = start;
+	auto       nextVoice = start;
 	auto       lastStep = start;
 	float      angle = 0.0f;  // position on the circle, radians
 	bool       welcomed = false;
@@ -174,7 +292,7 @@ int main(int argc, char* argv[])
 			switch (event.type) {
 			case ENET_EVENT_TYPE_CONNECT:
 				std::cout << "connected, sending hello\n";
-				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world }), true);
+				Net::Send(peer, Protocol::Encode(Protocol::Hello{ .contentHash = contentHash, .name = name, .password = password, .appearance = appearance, .world = world, .identity = identity }), true);
 				break;
 			case ENET_EVENT_TYPE_RECEIVE:
 				{
@@ -182,8 +300,27 @@ int main(int argc, char* argv[])
 					switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
 					case Protocol::MessageType::kWelcome:
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
-							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << '\n';
+							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << '\n';
 							welcomed = true;
+							if (shootWeapon) {
+								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
+							}
+							Net::Send(peer, Protocol::Encode(Protocol::PlayerStatus{ 0, 0x0001F228, 0, static_cast<std::uint8_t>(statusDowned ? 0 : statusHealth), 7, statusDowned, statusOpening }, Protocol::MessageType::kReportStatus), true);
+							if (reviveTarget) {
+								Net::Send(peer, Protocol::Encode(Protocol::Revive{ reviveTarget }, Protocol::MessageType::kRevive), true);
+							}
+							if (sendPing) {
+								Net::Send(peer, Protocol::Encode(Protocol::Ping{ 0, cell, cell ? 0 : worldspace, cx + 2000.0f, cy, cz }, Protocol::MessageType::kPing), true);
+							}
+							if (xpGain > 0.0f) {
+								Net::Send(peer, Protocol::Encode(Protocol::XpGain{ 0, xpGain }, Protocol::MessageType::kReportXp), true);
+							}
+							if (markerRef) {
+								Net::Send(peer, Protocol::Encode(Protocol::MarkersFound{ 0, { { markerRef, 3 } } }, Protocol::MessageType::kReportMarkers), true);
+							}
+							if (questDone) {
+								Net::Send(peer, Protocol::Encode(Protocol::QuestDone{ 0, questDone }, Protocol::MessageType::kReportQuestDone), true);
+							}
 							if (questStage.quest) {
 								std::cout << "reporting quest stage\n";
 								Net::Send(peer, Protocol::Encode(questStage, Protocol::MessageType::kReportQuestStage), true);
@@ -214,7 +351,7 @@ int main(int argc, char* argv[])
 							}
 							if (killRef) {
 								std::cout << "reporting kill of " << std::hex << killRef << std::dec << '\n';
-								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef }, Protocol::MessageType::kReportDeath), true);
+								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef, 0, true }, Protocol::MessageType::kReportDeath), true);
 							}
 						}
 						break;
@@ -230,7 +367,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kActorDied:
 						if (const auto msg = Protocol::DecodeActorDeath(data)) {
-							std::cout << "actor died: " << std::hex << msg->refId << std::dec << std::endl;
+							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorHealth:
@@ -254,6 +391,67 @@ int main(int argc, char* argv[])
 							std::cout << "quest stage: " << std::hex << msg->quest << std::dec << " " << msg->stage << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kPlayerStatus:
+						if (const auto msg = Protocol::DecodePlayerStatus(data)) {
+							std::cout << "status: player " << msg->playerId << " hp " << int(msg->health) << " level " << msg->level << std::hex << " location " << msg->location << " cell " << msg->cell << std::dec << (msg->downed ? " downed" : "") << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kRevived:
+						if (const auto msg = Protocol::DecodeRevive(data)) {
+							std::cout << "revived by player " << msg->playerId << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kWorldTime:
+						if (const auto msg = Protocol::DecodeWorldTime(data)) {
+							std::cout << "time: player " << msg->playerId << " hour " << msg->gameHour << " days " << msg->daysPassed << std::hex << " ws " << msg->worldspace << " weather " << msg->weather << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kLineSpoken:
+						if (const auto msg = Protocol::DecodeLine(data)) {
+							std::cout << "line: player " << msg->playerId << " speaker " << std::hex << msg->speaker << std::dec << " '" << msg->text << "'" << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kPinged:
+						if (const auto msg = Protocol::DecodePing(data)) {
+							std::cout << "ping: player " << msg->playerId << " at " << msg->x << "," << msg->y << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kMarkersFound:
+						if (const auto msg = Protocol::DecodeMarkers(data)) {
+							std::cout << "markers: player " << msg->playerId << " " << msg->markers.size();
+							for (std::size_t i = 0; i < msg->markers.size() && i < 5; ++i) {
+								std::cout << " " << std::hex << msg->markers[i].refId << ":" << int(msg->markers[i].flags) << std::dec;
+							}
+							std::cout << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kVoiceRelay:
+						if (auto msg = Protocol::DecodeVoice(data)) {
+							if (voiceBytes == 0) {
+								std::cout << "voice: first piece from player " << msg->playerId << ", " << msg->data.size() << " bytes" << std::endl;
+							}
+							voiceBytes += msg->data.size();
+							if (voiceEcho) {
+								msg->playerId = 0;
+								Net::Send(peer, Protocol::Encode(*msg, Protocol::MessageType::kVoice), false);
+							}
+						}
+						break;
+					case Protocol::MessageType::kQuestDone:
+						if (const auto msg = Protocol::DecodeQuestDone(data)) {
+							std::cout << "quest done: player " << msg->playerId << " " << std::hex << msg->quest << std::dec << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kPartyXp:
+						if (const auto msg = Protocol::DecodeXpGain(data)) {
+							std::cout << "xp: player " << msg->playerId << " " << msg->xp << std::endl;
+						}
+						break;
+					case Protocol::MessageType::kShotFired:
+						if (const auto msg = Protocol::DecodeShot(data)) {
+							std::cout << "shot: player " << msg->playerId << " ref " << std::hex << msg->refId << std::dec << std::endl;
+						}
+						break;
 					case Protocol::MessageType::kActorOwners:
 						if (const auto msg = Protocol::DecodeOwners(data)) {
 							std::cout << "owners:";
@@ -263,8 +461,19 @@ int main(int argc, char* argv[])
 							std::cout << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kPlayerStates:
+						if (const auto msg = Protocol::DecodePlayerStates(data)) {
+							if (!firstHeard) {
+								firstHeard = std::chrono::steady_clock::now();
+							}
+							playerStatesHeard += static_cast<std::uint32_t>(msg->players.size());
+						}
+						break;
 					case Protocol::MessageType::kActorStatesRelay:
 						if (const auto msg = Protocol::DecodeActorStates(data)) {
+							for (const auto& s : *msg) {
+								++npcStatesHeard[s.refId];
+							}
 							// Print every 20th batch so the output stays readable.
 							if (actorStatesSeen++ % 20 == 0) {
 								std::cout << "npc states:";
@@ -277,7 +486,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kPlayerDamaged:
 						if (const auto msg = Protocol::DecodePlayerHit(data)) {
-							std::cout << "damaged by player " << msg->playerId << "'s npc: " << msg->damage << std::endl;
+							std::cout << "damaged by player " << msg->playerId << (msg->byPlayer ? " themselves: " : "'s npc: ") << msg->damage << " (attacker " << std::hex << msg->attacker << std::dec << ")" << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kRefStateChanged:
@@ -318,8 +527,13 @@ int main(int argc, char* argv[])
 			break;
 		}
 
+		if (welcomed && voiceSilence && now >= nextVoice) {
+			nextVoice = now + std::chrono::milliseconds(100);
+			Net::Send(peer, Protocol::Encode(Protocol::VoiceData{ 0, SilencePacket(2400) }, Protocol::MessageType::kVoice), false);
+		}
+
 		if (welcomed && now >= nextSend) {
-			nextSend = now + std::chrono::milliseconds(50);  // 20 Hz like the game client
+			nextSend = now + std::chrono::milliseconds(33);  // 30 Hz like the game client
 
 			// Move around the circle at --speed (walk ~150, run ~370 units/s) for 4 s, then stand for 3 s,
 			// so both locomotion start and stop get exercised.
@@ -355,6 +569,25 @@ int main(int argc, char* argv[])
 			state.speed = walking ? walkSpeed : 0.0f;
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
+			const bool shoot = shootWeapon && !walking && sequence % 15 == 0;
+			if (timeHour >= 0.0f && sequence % 150 == 1) {
+				const float hour = static_cast<float>(std::fmod(timeDays, 1.0) * 24.0);
+				Net::Send(peer, Protocol::Encode(Protocol::WorldTime{ 0, hour, static_cast<float>(timeDays), worldspace, timeWeather }, Protocol::MessageType::kReportTime), false);
+				timeDays += timeStep / 24.0;
+			}
+			if (shootWeapon) {
+				state.flags |= Protocol::kWeaponDrawn;
+			}
+			if (sayRef && sequence % 90 == 5) {
+				const auto text = std::format("Test line {} - can you hear me?", ++linesSaid);
+				Net::Send(peer, Protocol::Encode(Protocol::Line{ 0, *sayRef, text }, Protocol::MessageType::kReportLine), true);
+			}
+			if (talkRef && sequence % 60 == 1) {
+				Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkRef, Protocol::ClaimReason::kInteract } }), true);
+			}
+			if (shoot) {
+				Net::Send(peer, Protocol::Encode(Protocol::Shot{ 0, ownRef }, Protocol::MessageType::kReportShot), false);
+			}
 			if (ownRef) {
 				// We walk the NPC instead; our own player stays put far away.
 				Protocol::ActorState npc;
@@ -367,7 +600,9 @@ int main(int argc, char* argv[])
 				npc.heading = state.heading;
 				npc.speed = state.speed;
 				npc.moveMode = state.moveMode;
-				if (sequence % 2 == 0) {  // 10 Hz like the game
+				npc.flags = state.flags & Protocol::kWeaponDrawn;
+				// Like the game: 20 a second near players (2 of every 3 sends), else 10.
+				if (npcSlow ? sequence % 3 == 0 : sequence % 3 != 0) {
 					Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorState>{ npc }, Protocol::MessageType::kActorStates), false);
 				}
 				state.x = state.y = 0.0f;
@@ -376,6 +611,17 @@ int main(int argc, char* argv[])
 		}
 	}
 
+	if (voiceBytes) {
+		std::cout << "voice: " << voiceBytes << " bytes heard" << std::endl;
+	}
+	if (firstHeard) {
+		const float heardFor = std::chrono::duration<float>(std::chrono::steady_clock::now() - *firstHeard).count();
+		std::cout << "rates: player states " << std::lround(playerStatesHeard / heardFor) << "/s, npc states/s:";
+		for (const auto& [ref, count] : npcStatesHeard) {
+			std::cout << ' ' << std::hex << ref << std::dec << '=' << std::lround(count / heardFor);
+		}
+		std::cout << std::endl;
+	}
 	enet_peer_disconnect(peer, 0);
 	enet_host_flush(host);
 	enet_host_destroy(host);
