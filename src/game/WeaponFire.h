@@ -21,6 +21,10 @@ namespace WeaponFire
 	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out).
 	void PlayShot(RE::Actor* a_actor);
 
+	// Ends the gunshot sounds that would otherwise loop (automatic weapons' fire sounds loop until
+	// stopped). Call every frame.
+	void Frame();
+
 	[[nodiscard]] std::string Describe();
 }
 

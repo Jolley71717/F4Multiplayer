@@ -1,5 +1,7 @@
 #include "game/WeaponFire.h"
 
+#include "game/ShotLoops.h"
+
 #include "Protocol.h"
 
 namespace WeaponFire
@@ -122,6 +124,13 @@ namespace WeaponFire
 			return nullptr;
 		}
 
+		// An automatic weapon's fire sound loops until the game stops it (when the trigger is
+		// released). Replayed shots have no trigger, so each loop is ended after one shot's worth.
+		constexpr std::uint16_t LOOP_FADE_MS = 40;
+
+		ShotLoops<RE::BSSoundHandle> loopingShots;
+		std::uint32_t                loopsEnded = 0;
+
 		// Plays a sound at the actor and follows them while it lasts.
 		bool PlaySound(RE::Actor* a_actor, const RE::BGSSoundDescriptorForm* a_sound)
 		{
@@ -135,8 +144,21 @@ namespace WeaponFire
 			if (const auto root = a_actor->Get3D()) {
 				handle.SetObjectToFollow(root);
 			}
-			return handle.Play();
+			if (!handle.Play()) {
+				return false;
+			}
+			if (handle.IsEnvelopeLoop()) {
+				loopingShots.Add(handle, std::chrono::steady_clock::now());
+			}
+			return true;
 		}
+	}
+
+	void Frame()
+	{
+		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndDue(std::chrono::steady_clock::now(), [](RE::BSSoundHandle& a_handle) {
+			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
+		}));
 	}
 
 	void PlayShot(RE::Actor* a_actor)
@@ -173,7 +195,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} sounded={}", total.load(), played, replayed, sounded);
+		return std::format("shots={} replayed={}/{} sounded={} loops={}/{}", total.load(), played, replayed, sounded, loopingShots.Active(), loopsEnded);
 	}
 
 	std::string LogAnimationEvents(bool a_start)

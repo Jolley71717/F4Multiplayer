@@ -83,4 +83,5 @@ target("F4MPTests")
     add_deps("F4MPCommon")
     analyze()
     add_files("tests/**.cpp")
+    add_includedirs("src")  -- for headers with no game dependency, e.g. game/ShotLoops.h
     add_headerfiles("tests/**.h")
