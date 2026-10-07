@@ -35,6 +35,22 @@ namespace Equipment
 		return items;
 	}
 
+	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	{
+		if (!a_actor) {
+			return;
+		}
+		const auto id = a_actor->GetFormID();
+		for (const auto item : a_items) {
+			const auto form = RE::TESForm::GetFormByID(item);
+			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+				continue;
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
+		}
+	}
+
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)
 	{
 		if (!a_puppet) {

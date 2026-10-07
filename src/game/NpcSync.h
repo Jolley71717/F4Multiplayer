@@ -27,6 +27,9 @@ namespace NpcSync
 	// The NPC fired in its owner's world: play the firing animation on our copy.
 	void ApplyShot(std::uint32_t a_refId);
 
+	// What an NPC wears and holds in its owner's world: dress our copy the same.
+	void ApplyEquipment(const Protocol::NpcEquipment& a_equipment);
+
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 

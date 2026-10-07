@@ -89,7 +89,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   (`bShareMap`).
 - **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
-  the same raider in the same place. Enemies can attack any player, and the damage reaches that
+  the same raider in the same place. Its weapon and armor are copied from that game too, so a
+  raider carries the same gun on every screen. Enemies can attack any player, and the damage reaches that
   player. Killing or hurting an NPC counts for everyone. Players can't hurt each other unless the
   host sets `bFriendlyFire = true`.
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the

@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 20;
+	inline constexpr std::uint16_t VERSION = 21;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -68,6 +68,7 @@ namespace Protocol
 		kRevive = 22,             // the sender helped a downed player up
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 		kReportMarkers = 24,      // map markers the sender discovered
+		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -92,6 +93,7 @@ namespace Protocol
 		kWorldTime = 119,         // the session's time of day and weather
 		kPinged = 120,            // another player pinged their position
 		kPartyXp = 121,           // another player got XP for a kill
+		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -240,6 +242,18 @@ namespace Protocol
 	{
 		std::uint32_t              playerId = 0;
 		std::vector<std::uint32_t> items;
+	};
+
+	// An NPC's armor and weapons, from the player who runs it (each game rolls NPC gear on its own,
+	// so without this a raider has a different weapon in every game). playerId is ignored client ->
+	// server; the server relays only the owner's.
+	struct NpcEquipment
+	{
+		std::uint32_t              playerId = 0;
+		std::uint32_t              refId = 0;
+		std::vector<std::uint32_t> items;
+
+		bool operator==(const NpcEquipment&) const = default;
 	};
 
 	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
@@ -933,6 +947,39 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const NpcEquipment& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		const auto count = (std::min)(a_msg.items.size(), MAX_EQUIPMENT);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.items[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<NpcEquipment> DecodeNpcEquipment(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		NpcEquipment msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		const auto count = r.U8();
+		if (count > MAX_EQUIPMENT) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			msg.items.push_back(r.U32());
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
 			return std::nullopt;
 		}
 		return msg;

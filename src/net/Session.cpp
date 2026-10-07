@@ -78,9 +78,16 @@ namespace Session
                 hash *= 16777619u;
 			};
 
+			// The free high-resolution texture pack is textures only (its plugin is empty), so a
+			// player without it can play with one who has it.
+			const auto texturesOnly = [](std::string_view a_name) {
+				return std::ranges::equal(a_name, std::string_view{ "dlcultrahighresolution.esm" }, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+			};
 			const auto data = RE::TESDataHandler::GetSingleton();
 			for (const auto file : data->compiledFileCollection.files) {
-				mix(file->GetFilename());
+				if (!texturesOnly(file->GetFilename())) {
+					mix(file->GetFilename());
+				}
 			}
 			mix("--light--");
 			for (const auto file : data->compiledFileCollection.smallFiles) {
@@ -290,6 +297,11 @@ namespace Session
 			case MessageType::kLineSpoken:
 				if (const auto msg = Protocol::DecodeLine(a_data)) {
 					Conversations::Apply(*msg);
+				}
+				break;
+			case MessageType::kNpcEquipment:
+				if (const auto msg = Protocol::DecodeNpcEquipment(a_data)) {
+					NpcSync::ApplyEquipment(*msg);
 				}
 				break;
 			case MessageType::kVoiceRelay:

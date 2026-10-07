@@ -1,5 +1,6 @@
 #include "game/NpcSync.h"
 
+#include "game/Equipment.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
@@ -77,6 +78,14 @@ namespace NpcSync
 		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        stateTick = 0;
 		std::uint32_t                                        fastNpcs = 0;  // owned NPCs sent at 20 Hz on the last tick
+		// Gear: each game rolls NPC gear on its own, so owners report what their NPCs wear and the
+		// others dress their copies the same.
+		constexpr auto                                                GEAR_INTERVAL = 1s;
+		Clock::time_point                                             nextGear{};
+		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> sentGear;   // owned NPCs: what was last reported
+		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> knownGear;  // mirrored NPCs: what their owner reported
+		std::uint32_t                                                 gearSent = 0;
+		std::uint32_t                                                 gearApplied = 0;
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -378,6 +387,27 @@ namespace NpcSync
 			SendList(states, [](const std::vector<Protocol::ActorState>& a) { return Protocol::Encode(a, Protocol::MessageType::kActorStates); }, false);
 		}
 
+		// Reports the gear of the NPCs we run whenever it changes (and once when we start running one).
+		void SendOwnedGear()
+		{
+			if (GamePaused()) {
+				return;
+			}
+			for (const auto& [id, track] : owned) {
+				const auto actor = LoadedActor(id);
+				if (!actor || actor->IsDead(false)) {
+					continue;
+				}
+				auto items = Equipment::Read(actor);
+				if (const auto last = sentGear.find(id); last != sentGear.end() && last->second == items) {
+					continue;
+				}
+				outgoing.push_back({ Protocol::Encode(Protocol::NpcEquipment{ 0, id, items }, Protocol::MessageType::kReportNpcEquipment), true });
+				sentGear[id] = std::move(items);
+				++gearSent;
+			}
+		}
+
 		float WrapAngle(float a_angle)
 		{
 			constexpr float twoPi = std::numbers::pi_v<float> * 2.0f;
@@ -492,6 +522,10 @@ namespace NpcSync
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
+					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
+						Equipment::Wear(actor, gear->second);
+						++gearApplied;
+					}
 				}
 				AdjustDelay(mirror);
 				if (const auto motion = Sample(mirror, a_now)) {
@@ -523,6 +557,7 @@ namespace NpcSync
 				StopMirroring(entry.refId);
 			} else {
 				owned.erase(entry.refId);
+				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
 			}
 		}
 	}
@@ -615,6 +650,10 @@ namespace NpcSync
 			}
 			SendOwnedStates(now);
 		}
+		if (now >= nextGear) {
+			nextGear = now + GEAR_INTERVAL;
+			SendOwnedGear();
+		}
 		// The partner is found when the conversation starts and kept until it ends.
 		const auto ui = RE::UI::GetSingleton();
 		const bool inConversation = ui && ui->GetMenuOpen("DialogueMenu"sv);
@@ -652,10 +691,24 @@ namespace NpcSync
 		mirrors.clear();
 	}
 
+	void ApplyEquipment(const Protocol::NpcEquipment& a_equipment)
+	{
+		if (a_equipment.playerId == localId) {
+			return;
+		}
+		knownGear[a_equipment.refId] = a_equipment.items;
+		if (const auto it = mirrors.find(a_equipment.refId); it != mirrors.end() && it->second.registered) {
+			Equipment::Wear(it->second.registered, a_equipment.items);
+			++gearApplied;
+		}
+	}
+
 	void Reset()
 	{
 		ReleaseMirrors();
 		localId = 0;
+		sentGear.clear();
+		knownGear.clear();
 		owners.clear();
 		claimedAt.clear();
 		lastTakeover.clear();
@@ -671,7 +724,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={} delayMs={}-{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs, minDelay, maxDelay);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }

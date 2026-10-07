@@ -64,6 +64,13 @@ GPL-3.0. The source will be published on GitHub.
 - Asset use permission: yes, with credit, under GPL-3.0.
 - Credits: F4SE and CommonLibF4 (libxse), ENet, Address Library.
 
+## Changelog for 0.6.1
+
+- NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
+- Replayed automatic-weapon fire no longer loops forever on the hearing side.
+- The free high-resolution texture pack no longer counts as a load-order difference.
+- Protocol 21: everyone updates together.
+
 ## Changelog for 0.6.0
 
 - First Nexus release.

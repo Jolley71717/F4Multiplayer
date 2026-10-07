@@ -190,6 +190,7 @@ void Server::Run()
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
+	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
@@ -200,6 +201,7 @@ void Server::Run()
 		pickedUp.clear();
 		refStates.clear();
 		actorOwners.clear();
+		npcEquipment.clear();
 		questStages.clear();
 		worldTime.reset();
 		markers.clear();
@@ -434,6 +436,12 @@ void Server::Run()
 			const auto end = (std::min)(owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
 			send(a_player.key, Protocol::Encode(std::vector<Protocol::ActorOwner>(owners.begin() + i, owners.begin() + end)), true);
 		}
+		// ... and what those NPCs are wearing, as their owners reported it.
+		for (const auto& [ref, items] : npcEquipment) {
+			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
+				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
+			}
+		}
 
 		if (worldTime) {
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
@@ -475,6 +483,7 @@ void Server::Run()
 		if (actorOwners.erase(death->refId)) {
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
+		npcEquipment.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
@@ -581,6 +590,24 @@ void Server::Run()
 		}
 		sendOwners(changed, 0);
 		sendOwners(current, a_player.key);
+	};
+
+	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
+	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto equipment = Protocol::DecodeNpcEquipment(a_data);
+		if (!equipment) {
+			return;
+		}
+		const auto owner = actorOwners.find(equipment->refId);
+		if (owner == actorOwners.end() || owner->second.playerId != a_player.id) {
+			return;
+		}
+		equipment->playerId = a_player.id;
+		npcEquipment[equipment->refId] = equipment->items;
+		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};
 
 	const auto handleRelease = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -899,6 +926,9 @@ void Server::Run()
 			break;
 		case MessageType::kReleaseActors:
 			handleRelease(a_player, a_data);
+			break;
+		case MessageType::kReportNpcEquipment:
+			handleNpcEquipment(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
