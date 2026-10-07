@@ -51,6 +51,17 @@ namespace Puppets
 			}
 		}
 
+		// A puppet's swings and punches are replays of the real ones (whose damage arrives through the
+		// session), so they must hurt nobody: its outgoing damage is multiplied by zero. 1 is the game's
+		// base value, restored when an NPC is released.
+		void SetAttackDamage(RE::Actor* a_actor, float a_multiplier)
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			if (values && values->attackDamageMult) {
+				static_cast<RE::ActorValueOwner*>(a_actor)->SetBaseActorValue(*values->attackDamageMult, a_multiplier);
+			}
+		}
+
 		// Damage to a stand-in is meaningless (the real player is elsewhere), and a dying or
 		// staggered puppet fights the forced transform, so keep it at full health.
 		void KeepHealthy(RE::Actor* a_actor)

@@ -1,4 +1,5 @@
 #include "game/WeaponFire.h"
+#include "game/AttackKind.h"
 
 #include "game/ShotLoops.h"
 
@@ -168,12 +169,53 @@ namespace WeaponFire
 		}));
 	}
 
+	namespace
+	{
+		static_assert(std::to_underlying(RE::WEAPON_TYPE::kGun) == AttackKind::GUN_TYPE);
+
+		// Whether the actor's equipped weapon is a gun (fists, nothing equipped, count as melee).
+		bool HoldsGun(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return false;
+			}
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr;
+				if (weapon) {
+					return AttackKind::ReplaysAsGun(std::to_underlying(weapon->weaponData.type.get()), true);
+				}
+			}
+			return false;
+		}
+
+		std::uint32_t swung = 0;
+
+		// ActionRightAttack in Fallout4.esm (the default object manager's lookup crashes the game).
+		constexpr std::uint32_t RIGHT_ATTACK = 0x00013005;
+	}
+
 	void PlayShot(RE::Actor* a_actor)
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
 		++replayed;
-		if (a_actor && !a_actor->IsDead(false) && a_actor->GetWeaponMagicDrawn() && a_actor->Get3D() &&
-			static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
+		if (!a_actor || a_actor->IsDead(false) || !a_actor->GetWeaponMagicDrawn() || !a_actor->Get3D()) {
+			return;
+		}
+		if (!HoldsGun(a_actor)) {
+			// A swing or a punch. The melee graph refuses "attackStart", so the engine is asked for the
+			// attack itself, as an NPC's AI would: the stand-in swings (with the weapon's own sound)
+			// but hurts nobody, its damage multiplier being zero (Puppets).
+			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(RIGHT_ATTACK);
+			if (action && a_actor->PerformAction(action, nullptr)) {
+				++played;
+				++swung;
+			}
+			return;
+		}
+		if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
 			// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter.
 			if (PlaySound(a_actor, FireSound(a_actor))) {
@@ -202,7 +244,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} sounded={} loops={}/{}", total.load(), played, replayed, sounded, loopingShots.Active(), loopsEnded);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded);
 	}
 
 	std::string LogAnimationEvents(bool a_start)

@@ -10,7 +10,7 @@ Candidates, by how often a player would notice the gap in a normal session:
 
 | # | Gap | Noticed when | Effort | Verdict |
 |---|---|---|---|---|
-| 1 | Melee swings and punches | Any melee fight; the friend just stands there | small once the graph's event is known | next |
+| 1 | Melee swings and punches | Any melee fight; the friend just stands there | done (protocol 21): the stand-in performs the engine's attack action | done |
 | 2 | Reloading, aiming down sights, VATS pose | Every firefight; the stand-in never reloads or aims | small (animation events "reloadStart", "sightedStateEnter") | next |
 | 3 | Power armor | A friend in power armor is a settler in a vault suit | medium (the frame is a furniture the stand-in must "use") | later |
 | 4 | Death animations and ragdolls of shared NPCs | Every kill: the copy drops flat instead of flying | medium | later |

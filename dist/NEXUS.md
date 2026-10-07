@@ -29,7 +29,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*]Friends appear as settlers wearing their gear, with their name and health over their head. You see them aim and fire.
+[*]Friends appear as settlers wearing their gear, with their name and health over their head. You see them aim, fire and swing.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
@@ -66,6 +66,7 @@ GPL-3.0. The source will be published on GitHub.
 
 ## Changelog for 0.6.1
 
+- Friends' melee swings and punches play on their stand-in (a friend's swing used to show nothing).
 - Friends' stand-ins are now the right sex and body shape (their full face is sent too, and will show once head generation works).
 - NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
 - Replayed automatic-weapon fire no longer loops forever on the hearing side.

@@ -81,7 +81,7 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
-  holstered), shooting, and your name when someone looks at you (with your health when you're
+  holstered), shooting, swinging a melee weapon or punching, and your name when someone looks at you (with your health when you're
   hurt). Messages tell everyone when a player kills something, dies, completes a quest, joins or
   leaves.
 - **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
