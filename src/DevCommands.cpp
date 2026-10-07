@@ -2,6 +2,7 @@
 
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -701,6 +702,13 @@ namespace DevCommands
 			const bool scrap = !args.empty() && args.back() == "scrap";
 			WorkshopSync::Report(ref, workshop, scrap ? Protocol::WorkshopOp::kScrapped : Protocol::WorkshopOp::kPlaced);
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
+		}
+
+		// mirror <refHex>: why an NPC is or isn't mirrored here.
+		std::string Mirror(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			return id ? NpcSync::DescribeMirror(*id) : "error: usage: mirror <refHex>";
 		}
 
 		// piplight on|off: the player's Pip-Boy light.
@@ -1419,6 +1427,7 @@ namespace DevCommands
 			Entry{ "facemask", FaceMask },
 			Entry{ "friendlight", FriendLight },
 			Entry{ "piplight", PipLight },
+			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
 		};
 	}

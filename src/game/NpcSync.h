@@ -51,4 +51,7 @@ namespace NpcSync
 	void Reset();
 
 	std::string Describe();
+
+	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted).
+	std::string DescribeMirror(std::uint32_t a_refId);
 }

@@ -728,6 +728,28 @@ namespace NpcSync
 		outgoing.clear();
 	}
 
+	std::string DescribeMirror(std::uint32_t a_refId)
+	{
+		const auto it = mirrors.find(a_refId);
+		const auto actor = LoadedActor(a_refId);
+		std::string out = std::format("owner={} owned={} mirror={} loaded={}", OwnerOf(a_refId), owned.contains(a_refId), it != mirrors.end(), actor != nullptr);
+		if (it == mirrors.end()) {
+			return out;
+		}
+		const auto& m = it->second;
+		out += std::format(" registered={} snapshots={} delayMs={:.0f}", m.registered != nullptr, m.snapshots.size(), m.delayMs);
+		if (!m.snapshots.empty()) {
+			const auto& s = m.snapshots.back();
+			const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - s.received).count();
+			out += std::format(" lastAgeMs={} state=({:.0f},{:.0f},{:.0f}) cell={:08X} ws={:08X}", age, s.state.x, s.state.y, s.state.z, s.state.cell, s.state.worldspace);
+			if (actor) {
+				const auto space = SpaceOf(actor);
+				out += std::format(" ours=({:.0f},{:.0f},{:.0f}) ourCell={:08X} ourWs={:08X} dist={:.0f} dead={}", actor->data.location.x, actor->data.location.y, actor->data.location.z, space.first, space.second, actor->data.location.GetDistance({ s.state.x, s.state.y, s.state.z }), actor->IsDead(false));
+			}
+		}
+		return out;
+	}
+
 	std::string Describe()
 	{
 		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });
