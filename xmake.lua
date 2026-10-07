@@ -14,6 +14,12 @@ add_rules("plugin.vsxmake.autoupdate")
 
 add_requires("enet")
 
+-- keep the build machine's paths (and so the user name) out of the binaries: __FILE__ loses the
+-- project directory, and the .pdb is referred to by name only
+add_cxxflags("/d1trimfile:" .. os.projectdir():gsub("/", "\\") .. "\\", { force = true })
+add_ldflags("/PDBALTPATH:%_PDB%", { force = true })
+add_shflags("/PDBALTPATH:%_PDB%", { force = true })
+
 -- static analysis: xmake f --analyze=y runs the MSVC analyser on our targets
 option("analyze")
     set_default(false)
