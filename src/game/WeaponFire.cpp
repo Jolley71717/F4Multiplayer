@@ -139,9 +139,14 @@ namespace WeaponFire
 		ShotLoops<RE::BSSoundHandle> loopingShots;
 		std::uint32_t                loopsEnded = 0;
 
-		// Plays a sound at the actor and follows them while it lasts.
+		// Plays a sound at the actor and follows them while it lasts. If the actor's previous shot is
+		// still sounding (a looping automatic-weapon sound), that one runs on instead: one burst.
 		bool PlaySound(RE::Actor* a_actor, const RE::BGSSoundDescriptorForm* a_sound)
 		{
+			const auto now = std::chrono::steady_clock::now();
+			if (loopingShots.Extend(a_actor->GetFormID(), now)) {
+				return true;
+			}
 			constexpr std::uint32_t POSITIONED = 0x10;  // a 3D sound, heard from where it is
 			const auto audio = RE::BSAudioManager::GetSingleton();
 			RE::BSSoundHandle handle;
@@ -156,7 +161,7 @@ namespace WeaponFire
 				return false;
 			}
 			if (handle.IsEnvelopeLoop()) {
-				loopingShots.Add(handle, std::chrono::steady_clock::now());
+				loopingShots.Add(a_actor->GetFormID(), handle, now);
 			}
 			return true;
 		}
@@ -215,12 +220,14 @@ namespace WeaponFire
 			}
 			return;
 		}
+		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
+		// than the animation), so the animation is best effort; the sound is played for every shot.
 		if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
-			// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter.
-			if (PlaySound(a_actor, FireSound(a_actor))) {
-				++sounded;
-			}
+		}
+		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter.
+		if (PlaySound(a_actor, FireSound(a_actor))) {
+			++sounded;
 		}
 	}
 

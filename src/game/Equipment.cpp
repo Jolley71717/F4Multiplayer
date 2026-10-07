@@ -49,6 +49,13 @@ namespace Equipment
 			RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
+		// What it wears that the owner's doesn't (its own roll from the outfit) comes off, so the two
+		// look the same; it stays in the inventory as loot.
+		for (const auto worn : Read(a_actor)) {
+			if (!std::ranges::contains(a_items, worn)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, worn).c_str());
+			}
+		}
 	}
 
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)

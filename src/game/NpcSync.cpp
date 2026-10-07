@@ -395,7 +395,8 @@ namespace NpcSync
 			}
 			for (const auto& [id, track] : owned) {
 				const auto actor = LoadedActor(id);
-				if (!actor || actor->IsDead(false)) {
+				// A dead one is reported once (it may have died before its first report), then left alone.
+				if (!actor || (actor->IsDead(false) && sentGear.contains(id))) {
 					continue;
 				}
 				auto items = Equipment::Read(actor);

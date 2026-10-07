@@ -66,6 +66,9 @@ GPL-3.0. The source will be published on GitHub.
 
 ## Changelog for 0.6.1
 
+- Fixed a crash when a friend joined: their stand-in could be replaced (once their face arrived) while the game was still loading it. A stand-in now waits a moment for the face, and is never deleted mid-load.
+- A friend's or NPC's automatic fire sounds like one burst, every shot heard (the stand-in used to play only the shots its animation had time for).
+- A mirrored NPC takes off the armor its owner's copy doesn't wear, so both games see the same outfit; an NPC that dies at once still gets its gear reported.
 - Friends' melee swings and punches play on their stand-in (a friend's swing used to show nothing).
 - Friends' stand-ins are now the right sex and body shape (their full face is sent too, and will show once head generation works).
 - NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).

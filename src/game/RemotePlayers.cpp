@@ -1,4 +1,5 @@
 ﻿#include "game/RemotePlayers.h"
+#include "game/DeferredDelete.h"
 
 #include "game/Face.h"
 #include "Config.h"
@@ -54,9 +55,23 @@ namespace RemotePlayers
 			std::uint8_t         health = 100;
 			bool                 downed = false;
 			std::string          shownName;  // the name tag currently on the stand-in
+			Clock::time_point    knownAt{};    // when we first heard of them
+			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
+
+		// Stand-ins to delete once their 3D is in (see DeferredDelete).
+		struct Grave
+		{
+			RE::ObjectRefHandle actor;
+			Clock::time_point   spawnedAt;
+		};
+		std::vector<Grave> graveyard;
+
+		// The first stand-in waits this long for the player's face, instead of being placed and then
+		// replaced a moment later when the face arrives.
+		constexpr auto FACE_GRACE = 1s;
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -194,8 +209,12 @@ namespace RemotePlayers
 				a_player.registeredId = 0;
 			}
 			if (const auto actor = GetActor(a_player)) {
-				actor->Disable();
-				actor->SetDelete(true);
+				if (DeferredDelete::Safe(actor->Get3D() != nullptr, Clock::now() - a_player.spawnedAt)) {
+					actor->Disable();
+					actor->SetDelete(true);
+				} else {
+					graveyard.push_back({ a_player.actor, a_player.spawnedAt });
+				}
 			}
 			a_player.actor = {};
 		}
@@ -273,6 +292,9 @@ namespace RemotePlayers
 		// A reused ID is a new player: start from scratch (old snapshots would hide their states).
 		Remove(a_id);
 		auto& player = players[a_id];
+		if (player.knownAt == Clock::time_point{}) {
+			player.knownAt = Clock::now();
+		}
 		player.name = std::move(a_name);
 		player.appearance = a_appearance;
 	}
@@ -406,6 +428,18 @@ namespace RemotePlayers
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
 
 		const auto now = Clock::now();
+		std::erase_if(graveyard, [&](const Grave& a_grave) {
+			const auto actor = a_grave.actor.get();
+			if (!actor) {
+				return true;
+			}
+			if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt)) {
+				return false;
+			}
+			actor->Disable();
+			actor->SetDelete(true);
+			return true;
+		});
 		for (auto& [id, remote] : players) {
 			// Drop snapshots that are too old to ever be rendered again.
 			while (remote.snapshots.size() > 2 && now - remote.snapshots[1].received > INTERPOLATION_DELAY + 1s) {
@@ -446,10 +480,14 @@ namespace RemotePlayers
 			}
 
 			if (!actor) {
+				if (!remote.face && now - remote.knownAt < FACE_GRACE) {
+					continue;  // their face is on its way
+				}
 				actor = Spawn(remote, *state, localCell);
 				if (!actor) {
 					continue;
 				}
+				remote.spawnedAt = now;
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();

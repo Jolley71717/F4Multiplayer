@@ -2,23 +2,40 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 // Replayed gunshots whose sound loops (automatic weapons: the game stops the loop when the trigger
-// is released, but a replayed shot has no trigger). Each one is ended after one shot's worth.
-// Pure bookkeeping, so it can be tested without the game; Handle is RE::BSSoundHandle in the game.
+// is released, but a replayed shot has no trigger). Each one is ended after one shot's worth, unless
+// the same shooter's next shot arrives first: then the loop runs on, as one burst, instead of a new
+// sound starting over it. Pure bookkeeping, so it can be tested without the game; Handle is
+// RE::BSSoundHandle in the game, the key is the shooter's form ID.
 template <class Handle>
 class ShotLoops
 {
 public:
 	using Clock = std::chrono::steady_clock;
+	using Key = std::uint32_t;
 
 	static constexpr auto SHOT_LENGTH = std::chrono::milliseconds(120);
 
-	void Add(Handle a_handle, Clock::time_point a_now)
+	void Add(Key a_key, Handle a_handle, Clock::time_point a_now)
 	{
-		loops.push_back({ std::move(a_handle), a_now });
+		loops.push_back({ a_key, std::move(a_handle), a_now });
+	}
+
+	// The shooter's loop is still running: keep it going for another shot's worth. False if there
+	// is none (its sound is over, or doesn't loop), so a new sound is wanted.
+	bool Extend(Key a_key, Clock::time_point a_now)
+	{
+		for (auto& loop : loops) {
+			if (loop.key == a_key) {
+				loop.started = a_now;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// Calls a_end(handle) for every loop older than SHOT_LENGTH and forgets it. Returns how many.
@@ -42,6 +59,7 @@ public:
 private:
 	struct Loop
 	{
+		Key               key;
 		Handle            handle;
 		Clock::time_point started;
 	};
