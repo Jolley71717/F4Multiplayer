@@ -28,7 +28,7 @@ namespace Session
 	{
 		using Clock = std::chrono::steady_clock;
 
-		constexpr auto SEND_INTERVAL = 50ms;  // 20 Hz
+		constexpr auto SEND_INTERVAL = 33ms;  // 30 Hz
 		constexpr auto RECONNECT_DELAY = 5s;
 		constexpr auto REJECTED_RETRY_DELAY = 60s;
 
@@ -561,7 +561,12 @@ namespace Session
 		}
 
 		if ((welcomed || echo) && now >= nextSend) {
-			nextSend = now + SEND_INTERVAL;
+			// On schedule rather than "a full interval after this frame": at 60 fps that would
+			// often wait an extra frame and send at 20 Hz.
+			nextSend += SEND_INTERVAL;
+			if (nextSend <= now) {
+				nextSend = now + SEND_INTERVAL;  // fell behind (a hitch or the first send)
+			}
 			if (auto state = SampleLocalState(now)) {
 				if (welcomed) {
 					client->Send(Protocol::Encode(*state), false);

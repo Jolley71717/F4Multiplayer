@@ -12,7 +12,8 @@ namespace RemotePlayers
 		using Clock = std::chrono::steady_clock;
 
 		// Render remote players slightly in the past so there are always two states to blend.
-		constexpr auto INTERPOLATION_DELAY = 100ms;
+		// States arrive about every 33 ms; two of them, plus slack for the relay and network jitter.
+		constexpr auto INTERPOLATION_DELAY = 70ms;
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
 
@@ -53,6 +54,11 @@ namespace RemotePlayers
 
 		std::map<std::uint32_t, RemotePlayer> players;
 		std::uint32_t                         equipmentFixesTotal = 0;
+		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
+		// (the next one was late) and held them still: the interpolation delay is too short if
+		// this is more than a few percent.
+		std::uint32_t                         movingFrames = 0;
+		std::uint32_t                         heldFrames = 0;
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
@@ -141,6 +147,7 @@ namespace RemotePlayers
 			// Past the newest snapshot: hold position rather than guessing ahead, and stop
 			// animating if updates have dried up.
 			auto held = snaps.back().state;
+			heldFrames += held.speed > 0.0f && a_now - snaps.back().received < 1s;
 			if (a_now - snaps.back().received > INTERPOLATION_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
@@ -359,6 +366,7 @@ namespace RemotePlayers
 				remote.snapshots.pop_front();
 			}
 
+			movingFrames += !remote.snapshots.empty() && remote.snapshots.back().state.speed > 0.0f && now - remote.snapshots.back().received < 1s;
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
@@ -444,10 +452,18 @@ namespace RemotePlayers
 		std::string out;
 		for (const auto& [id, remote] : players) {
 			const auto actor = GetActor(remote);
-			const auto& last = remote.snapshots.empty() ? Protocol::PlayerState{} : remote.snapshots.back().state;
-			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X}]",
+			const auto& snaps = remote.snapshots;
+			const auto& last = snaps.empty() ? Protocol::PlayerState{} : snaps.back().state;
+			// Average time between the states we hold (about the last second).
+			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
+			                                        static_cast<long long>(snaps.size() - 1) :
+			                                    0;
+			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace);
+				last.x, last.y, last.cell, last.worldspace, gap);
+		}
+		if (movingFrames) {
+			out += std::format(" held={}/{}", heldFrames, movingFrames);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
