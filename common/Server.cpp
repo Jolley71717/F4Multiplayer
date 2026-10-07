@@ -27,6 +27,7 @@ namespace
 	constexpr int  MAX_WORLD_STATES_PER_SECOND = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
+	constexpr std::size_t MAX_WORKSHOP_ITEMS = 20000;  // built objects remembered for joiners (a big settlement is a few thousand)
 	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
 	// (one more each XP_REPORT_INTERVAL).
 	constexpr auto XP_REFILL_TIME = std::chrono::seconds(10);
@@ -192,6 +193,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	std::map<std::pair<std::uint32_t, std::uint32_t>, Protocol::WorkshopItem> workshopItems;  // (player, ref) -> what they built, kept while they're away too
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
@@ -203,6 +205,7 @@ void Server::Run()
 		refStates.clear();
 		actorOwners.clear();
 		npcEquipment.clear();
+		workshopItems.clear();
 		questStages.clear();
 		worldTime.reset();
 		markers.clear();
@@ -446,6 +449,12 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
+		// Everything built at settlements so far, by anyone (their builder may be gone).
+		for (const auto& [key, item] : workshopItems) {
+			if (key.first != a_player.id) {
+				send(a_player.key, Protocol::Encode(item, Protocol::MessageType::kWorkshopItem), true);
+			}
+		}
 
 		if (worldTime) {
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
@@ -609,6 +618,30 @@ void Server::Run()
 		broadcast(Protocol::Encode(*face, Protocol::MessageType::kPlayerFace), true, a_player.key);
 	};
 
+	// Something a player built, moved or scrapped at a settlement: everyone else's copy follows.
+	const auto handleWorkshopItem = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto item = Protocol::DecodeWorkshopItem(a_data);
+		if (!item) {
+			return;
+		}
+		item->playerId = a_player.id;
+		const auto key = std::pair{ a_player.id, item->refId };
+		if (item->op == Protocol::WorkshopOp::kScrapped) {
+			if (workshopItems.erase(key) == 0) {
+				return;  // nothing anyone knew about
+			}
+		} else {
+			if (workshopItems.size() >= MAX_WORKSHOP_ITEMS && !workshopItems.contains(key)) {
+				return;
+			}
+			workshopItems[key] = *item;
+		}
+		broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -702,7 +735,7 @@ void Server::Run()
 				return;
 			}
 		}
-		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId }, Protocol::MessageType::kShotFired), false, a_player.key);
+		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
 
 	const auto handleStatus = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -949,6 +982,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportFace:
 			handleFace(a_player, a_data);
+			break;
+		case MessageType::kReportWorkshopItem:
+			handleWorkshopItem(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);

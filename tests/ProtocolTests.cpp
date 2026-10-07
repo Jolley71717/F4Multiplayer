@@ -145,6 +145,7 @@ namespace
 		}
 		for (const auto type : { MT::kReportShot, MT::kShotFired }) {
 			s.push_back({ "Shot", Encode(Shot{ 3, REF_A }, type), D(DecodeShot) });
+			s.push_back({ "Shot(reload)", Encode(Shot{ 3, 0, ShotAction::kReload }, type), D(DecodeShot) });
 		}
 		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true }, type), D(DecodePlayerStatus) });
@@ -548,6 +549,14 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		const auto npc = DecodeShot(Encode(Shot{ 4, REF_B }, type));
 		REQUIRE(npc);
 		CHECK(npc->refId == REF_B);
+		CHECK(npc->action == ShotAction::kShot);
+
+		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff }) {
+			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));
+			REQUIRE(other);
+			CHECK(other->action == action);
+		}
+		CHECK(!DecodeShot(Encode(Shot{ 4, 0, ShotAction::kMax + 1 }, type)));  // an action we don't know
 	}
 }
 
@@ -1154,4 +1163,28 @@ TEST("protocol: decoders survive corrupted valid packets")
 		}
 	}
 	CHECK(true);
+}
+
+TEST("protocol: WorkshopItem round trips, and refuses a placement without a base or a bad scale")
+{
+	WorkshopItem item;
+	item.playerId = 2, item.refId = 0xFF000042, item.base = 0x0001F2A1, item.workshop = REF_A, item.scale = 0.5f;
+	item.position[0] = 1.0f, item.position[1] = 2.0f, item.position[2] = 3.0f, item.rotation[2] = 1.5f;
+	const auto back = DecodeWorkshopItem(Encode(item, MT::kWorkshopItem));
+	REQUIRE(back);
+	CHECK(*back == item);
+
+	auto scrapped = item;
+	scrapped.op = WorkshopOp::kScrapped, scrapped.base = 0;
+	CHECK(DecodeWorkshopItem(Encode(scrapped, MT::kReportWorkshopItem)));  // scrapping needs no base
+
+	auto baseless = item;
+	baseless.base = 0;
+	CHECK(!DecodeWorkshopItem(Encode(baseless, MT::kReportWorkshopItem)));
+	auto flat = item;
+	flat.scale = 0.0f;
+	CHECK(!DecodeWorkshopItem(Encode(flat, MT::kReportWorkshopItem)));
+	auto unknownOp = item;
+	unknownOp.op = 7;
+	CHECK(!DecodeWorkshopItem(Encode(unknownOp, MT::kReportWorkshopItem)));
 }

@@ -81,7 +81,7 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
-  holstered), shooting, swinging a melee weapon or punching, and your name when someone looks at you (with your health when you're
+  holstered), shooting, reloading, aiming, swinging a melee weapon or punching, your Pip-Boy light, and your name when someone looks at you (with your health when you're
   hurt). Messages tell everyone when a player kills something, dies, completes a quest, joins or
   leaves.
 - **Time and weather:** everyone follows the host's time of day and weather (`bSyncTime`).
@@ -130,7 +130,7 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
-- Workshop building is not shared.
+- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet.
 
 ## Problems
 

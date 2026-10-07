@@ -601,6 +601,15 @@ namespace NpcSync
 		}
 	}
 
+	void ApplyAction(std::uint32_t a_refId, std::uint8_t a_action)
+	{
+		const auto it = mirrors.find(a_refId);
+		const auto actor = it != mirrors.end() ? LoadedActor(a_refId) : nullptr;
+		if (actor && it->second.registered == actor) {
+			WeaponFire::PlayAction(actor, a_action);
+		}
+	}
+
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
 		const auto owner = OwnerOf(a_refId);

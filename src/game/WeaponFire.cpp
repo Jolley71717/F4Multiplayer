@@ -31,6 +31,26 @@ namespace WeaponFire
 			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
 		}
 
+		// Other things the graph tells us the actor did, replayed on the stand-in as ShotActions.
+		std::optional<std::uint8_t> ActionOf(std::string_view a_tag)
+		{
+			if (a_tag == "reloadStateEnter") {  // what the graph announces; "reloadStart" is what it takes
+				return Protocol::ShotAction::kReload;
+			}
+			if (a_tag == "sightedStateEnter") {
+				return Protocol::ShotAction::kAimStart;
+			}
+			if (a_tag == "sightedStateExit") {
+				return Protocol::ShotAction::kAimStop;
+			}
+			return std::nullopt;
+		}
+
+		std::mutex                 actionLock;
+		std::vector<std::uint8_t>  playerActions;
+		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
+		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
+
 		std::atomic<bool>        logging{ false };
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -41,6 +61,12 @@ namespace WeaponFire
 			if (IsAttackEvent(tag)) {
 				++pending;
 				++total;
+			}
+			if (const auto action = ActionOf(tag)) {
+				std::scoped_lock l{ actionLock };
+				if (playerActions.size() < MAX_PENDING_ACTIONS) {
+					playerActions.push_back(*action);
+				}
 			}
 			if (logging) {
 				std::scoped_lock l{ logLock };
@@ -66,6 +92,12 @@ namespace WeaponFire
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);
+				}
+			}
+			if (const auto action = Protocol::IsShareableRef(id) && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
+				std::scoped_lock l{ actionLock };
+				if (npcActions.size() < MAX_PENDING_ACTIONS) {
+					npcActions.push_back({ id, *action });
 				}
 			}
 			if (logging && loggedActor != 0 && id == loggedActor) {
@@ -105,6 +137,18 @@ namespace WeaponFire
 	{
 		std::scoped_lock l{ npcLock };
 		return std::exchange(npcShots, {});
+	}
+
+	std::vector<std::uint8_t> TakeActions()
+	{
+		std::scoped_lock l{ actionLock };
+		return std::exchange(playerActions, {});
+	}
+
+	std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions()
+	{
+		std::scoped_lock l{ actionLock };
+		return std::exchange(npcActions, {});
 	}
 
 	namespace
@@ -200,6 +244,9 @@ namespace WeaponFire
 
 		// ActionRightAttack in Fallout4.esm (the default object manager's lookup crashes the game).
 		constexpr std::uint32_t RIGHT_ATTACK = 0x00013005;
+		constexpr std::uint32_t SIGHTED = 0x00004A57;          // ActionSighted
+		constexpr std::uint32_t SIGHTED_RELEASE = 0x00004A58;  // ActionSightedRelease
+		std::uint32_t           actionsPlayed = 0;
 	}
 
 	void PlayShot(RE::Actor* a_actor)
@@ -231,6 +278,31 @@ namespace WeaponFire
 		}
 	}
 
+	void PlayAction(RE::Actor* a_actor, std::uint8_t a_action)
+	{
+		static const RE::BSFixedString reloadStart{ "reloadStart" };
+		if (!a_actor || a_actor->IsDead(false) || !a_actor->GetWeaponMagicDrawn() || !a_actor->Get3D()) {
+			return;
+		}
+		bool played = false;
+		switch (a_action) {
+		case Protocol::ShotAction::kReload:
+			// The graph takes this one (unlike "attackStart" on a melee weapon).
+			played = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(reloadStart);
+			break;
+		case Protocol::ShotAction::kAimStart:
+		case Protocol::ShotAction::kAimStop: {
+			// Aiming has no graph event an NPC takes; the engine's sighted actions raise and lower the gun.
+			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(a_action == Protocol::ShotAction::kAimStart ? SIGHTED : SIGHTED_RELEASE);
+			played = action && a_actor->PerformAction(action, nullptr);
+			break;
+		}
+		default:
+			break;
+		}
+		actionsPlayed += played;
+	}
+
 	void Install()
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
@@ -251,7 +323,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed);
 	}
 
 	std::string LogAnimationEvents(bool a_start)

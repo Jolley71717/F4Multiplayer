@@ -9,6 +9,7 @@
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
+#include "game/WorkshopSync.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
 
@@ -652,6 +653,67 @@ namespace DevCommands
 			return std::format("faces rebuilt with mask {:X}", *mask);
 		}
 
+		// friendlight <hex>: the light form placed at a friend's stand-in while their Pip-Boy light is on.
+		std::string FriendLight(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			if (!id) {
+				return "error: usage: friendlight <formHex>";
+			}
+			RemotePlayers::SetLightForm(*id);
+			return std::format("friend light form {:08X}", *id);
+		}
+
+		// wsreport <refHex>|place <baseHex> [workshopHex] [scrap]: reports a reference (or a new one of that base,
+		// put a step in front of the player) as if just placed (or scrapped) in workshop mode.
+		std::string WsReport(std::string_view a_args)
+		{
+			auto args = SplitArgs(a_args);
+			RE::TESObjectREFR* ref = nullptr;
+			if (args.size() >= 2 && args[0] == "place") {
+				const auto baseId = ParseHex(args[1]);
+				const auto base = baseId ? RE::TESForm::GetFormByID<RE::TESBoundObject>(*baseId) : nullptr;
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto cell = player ? player->GetParentCell() : nullptr;
+				if (!base || !cell) {
+					return "error: no such base form, or not in game";
+				}
+				RE::NEW_REFR_DATA data;
+				data.location = player->data.location;
+				data.location.x += 120.0f * std::sin(player->data.angle.z);
+				data.location.y += 120.0f * std::cos(player->data.angle.z);
+				data.object = base;
+				data.interior = cell->IsInterior() ? cell : nullptr;
+				data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+				data.clearStillLoadingFlag = true;
+				ref = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data).get().get();
+				args.erase(args.begin(), args.begin() + 2);
+			} else {
+				ref = args.empty() ? nullptr : LookupRef(args[0]);
+				if (!args.empty()) {
+					args.erase(args.begin());
+				}
+			}
+			if (!ref) {
+				return "error: usage: wsreport <refHex>|place <baseHex> [workshopHex] [scrap]";
+			}
+			const auto workshop = !args.empty() && args[0] != "scrap" ? LookupRef(args[0]) : nullptr;
+			const bool scrap = !args.empty() && args.back() == "scrap";
+			WorkshopSync::Report(ref, workshop, scrap ? Protocol::WorkshopOp::kScrapped : Protocol::WorkshopOp::kPlaced);
+			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
+		}
+
+		// piplight on|off: the player's Pip-Boy light.
+		std::string PipLight(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || (a_args != "on" && a_args != "off")) {
+				return "error: usage: piplight on|off";
+			}
+			player->ShowPipboyLight(a_args == "on", false);
+			return std::format("pip-boy light {} (on={})", a_args, player->IsPipboyLightOn());
+		}
+
 		std::string Remove(std::string_view a_args)
 		{
 			const auto ref = LookupRef(a_args);
@@ -779,6 +841,32 @@ namespace DevCommands
 					continue;
 				}
 				out += std::format("{:08X}:{} ", id, editorId);
+				++count;
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// lights [minRadius]: light forms (LIGH) with their radius, color, flags, cone and fade, to pick one.
+		std::string Lights(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			int        minRadius = 0;
+			if (!args.empty()) {
+				std::from_chars(args[0].data(), args[0].data() + args[0].size(), minRadius);
+			}
+			std::string out;
+			int         count = 0;
+			const auto& [map, lock] = RE::TESForm::GetAllForms();
+			RE::BSAutoReadLock l{ lock };
+			if (!map) {
+				return "none";
+			}
+			for (const auto& [id, form] : *map) {
+				const auto light = form ? form->As<RE::TESObjectLIGH>() : nullptr;
+				if (!light || static_cast<int>(light->data.radius) < minRadius || (id >> 24) >= 0x02 || count >= 40) {
+					continue;
+				}
+				out += std::format("{:08X} r={} c={:06X} f={:04X} fov={:.0f} fade={:.1f} | ", id, light->data.radius, light->data.color & 0xFFFFFF, light->data.flags, light->data.fov, light->fade);
 				++count;
 			}
 			return out.empty() ? "none" : out;
@@ -1319,6 +1407,7 @@ namespace DevCommands
 			Entry{ "edid", EditorId },
 			Entry{ "forms", Forms },
 			Entry{ "named", Named },
+			Entry{ "lights", Lights },
 			Entry{ "gfx", Gfx },
 			Entry{ "gfxset", GfxSet },
 			Entry{ "weapsound", WeapSound },
@@ -1328,6 +1417,9 @@ namespace DevCommands
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
+			Entry{ "friendlight", FriendLight },
+			Entry{ "piplight", PipLight },
+			Entry{ "wsreport", WsReport },
 		};
 	}
 

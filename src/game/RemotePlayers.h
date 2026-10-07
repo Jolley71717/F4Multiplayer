@@ -23,6 +23,9 @@ namespace RemotePlayers
 	// Dev: throw away every stand-in's face copy and rebuild (after Face::SetParts).
 	void RebuildFaces();
 
+	// Dev: the light form placed at a stand-in whose player has their Pip-Boy light on.
+	void SetLightForm(std::uint32_t a_formId);
+
 	struct Info
 	{
 		std::uint32_t                        id = 0;
@@ -41,6 +44,9 @@ namespace RemotePlayers
 
 	// The player fired: their stand-in plays the firing animation.
 	void PlayShot(std::uint32_t a_id);
+
+	// Replays a reload or aiming on their stand-in, or notes their Pip-Boy light (a ShotAction).
+	void PlayAction(std::uint32_t a_id, std::uint8_t a_action);
 
 	// The player a stand-in actor belongs to, or 0.
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId);

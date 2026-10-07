@@ -27,6 +27,9 @@ namespace NpcSync
 	// The NPC fired in its owner's world: play the firing animation on our copy.
 	void ApplyShot(std::uint32_t a_refId);
 
+	// A mirrored NPC's owner reported it reloading or aiming: replay it.
+	void ApplyAction(std::uint32_t a_refId, std::uint8_t a_action);
+
 	// What an NPC wears and holds in its owner's world: dress our copy the same.
 	void ApplyEquipment(const Protocol::NpcEquipment& a_equipment);
 

@@ -10,6 +10,7 @@
 #include "game/Face.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
+#include "game/WorkshopSync.h"
 #include "game/Voice.h"
 #include "game/Party.h"
 #include "game/WorldClock.h"
@@ -47,6 +48,7 @@ namespace Session
 		std::string       serverAddress;
 
 		bool              welcomed = false;
+		bool              pipboyLightOn = false;  // as last reported
 		std::uint32_t     localId = 0;
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
@@ -312,6 +314,11 @@ namespace Session
 					RemotePlayers::SetFace(msg->playerId, std::move(*msg));
 				}
 				break;
+			case MessageType::kWorkshopItem:
+				if (const auto msg = Protocol::DecodeWorkshopItem(a_data)) {
+					WorkshopSync::Apply(*msg);
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -335,9 +342,9 @@ namespace Session
 			case MessageType::kShotFired:
 				if (const auto msg = Protocol::DecodeShot(a_data)) {
 					if (msg->refId == 0) {
-						RemotePlayers::PlayShot(msg->playerId);
+						msg->action == Protocol::ShotAction::kShot ? RemotePlayers::PlayShot(msg->playerId) : RemotePlayers::PlayAction(msg->playerId, msg->action);
 					} else {
-						NpcSync::ApplyShot(msg->refId);
+						msg->action == Protocol::ShotAction::kShot ? NpcSync::ApplyShot(msg->refId) : NpcSync::ApplyAction(msg->refId, msg->action);
 					}
 				}
 				break;
@@ -455,6 +462,7 @@ namespace Session
 			WorldClock::Reset();
 			Voice::Reset();
 			MapShare::Reset();
+			WorkshopSync::Reset();
 			Conversations::Reset();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
@@ -506,6 +514,7 @@ namespace Session
 	{
 		contentHash = ComputeContentHash();
 		WorldSync::Install();
+		WorkshopSync::Install();
 		WeaponFire::Install();
 		REX::INFO("Session: load order hash {:08X}", contentHash);
 
@@ -626,6 +635,32 @@ namespace Session
 			}
 		}
 
+		// Reloads and aiming (ours and our NPCs'), and the Pip-Boy light when it changes.
+		auto actions = WeaponFire::TakeActions();
+		const auto npcActions = WeaponFire::TakeNpcActions();
+		if (const auto player = RE::PlayerCharacter::GetSingleton(); player && InGame()) {
+			const bool lightOn = player->IsPipboyLightOn();
+			if (lightOn != pipboyLightOn) {
+				pipboyLightOn = lightOn;
+				actions.push_back(lightOn ? Protocol::ShotAction::kLightOn : Protocol::ShotAction::kLightOff);
+			}
+		}
+		if (welcomed) {
+			for (const auto action : actions) {
+				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, action }, Protocol::MessageType::kReportShot), false);
+			}
+			for (const auto& [id, action] : npcActions) {
+				if (NpcSync::RunsLocally(id)) {
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, id, action }, Protocol::MessageType::kReportShot), false);
+				}
+			}
+		}
+		if (echo) {
+			for (const auto action : actions) {
+				RemotePlayers::PlayAction(ECHO_ID, action);
+			}
+		}
+
 		if ((welcomed || echo) && now >= nextEquipmentCheck && InGame()) {
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
@@ -691,6 +726,12 @@ namespace Session
 		}
 		if (welcomed) {
 			MapShare::Frame();
+			WorkshopSync::Frame();
+		}
+		for (auto& packet : WorkshopSync::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(packet, true);
+			}
 		}
 		for (auto& packet : MapShare::TakeOutgoing()) {
 			if (welcomed) {
@@ -753,7 +794,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

@@ -37,7 +37,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | Downed and revive | Done (protocol 16) | The player's character is essential while friends are in the session; a lethal hit knocks them down for 45 s, and a friend who stays next to them for 2 s helps them up; otherwise the normal death. |
 | Horde mode at a settlement | Partly | Spawned enemies are runtime references with different IDs in each game, so the host's game would have to run them and send "spawn this" with its own ID mapping. A bigger change to NpcSync. |
 | Real faces for friends | Hard | Needs the player's face morphs, head parts and tints copied to the stand-in; FO4's face data is large and poorly documented. |
-| Shared settlements (workshop) | Not now | Every placed object is a runtime reference; it would need a full object replication system. |
+| Shared settlements (workshop) | Partly (protocol 22) | What a player places, moves or scraps is reported from the workshop's own events and copied into the others' games (the builder's reference ID keys each copy; a copy left in a save is adopted on the next session). Copies are plain objects: power, wiring and settler assignment stay the builder's. |
 
 ## Beyond the list (protocol 19-20)
 

@@ -29,7 +29,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*]Friends appear as settlers wearing their gear, with their name and health over their head. You see them aim, fire and swing.
+[*]Friends appear as settlers wearing their gear, with their name and health over their head. You see them aim, fire, reload and swing, and their Pip-Boy light at night.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
@@ -49,7 +49,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
 
 [size=4][b]Early alpha[/b][/size]
-Back up your saves or use a separate one for co-op. Known gaps: friends show as settlers (no faces or hair yet), no muzzle flash on their shots, misc/radiant quests and workshop building are not shared. If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log; please attach it to a bug report.
+Back up your saves or use a separate one for co-op. Known gaps: friends show as settlers (no faces or hair yet), no muzzle flash on their shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log; please attach it to a bug report.
 
 [size=4][b]Open source[/b][/size]
 GPL-3.0. The source will be published on GitHub.
@@ -66,6 +66,8 @@ GPL-3.0. The source will be published on GitHub.
 
 ## Changelog for 0.6.1
 
+- Settlement building is shared: what a friend places, moves or scraps appears in your game (as a plain copy; power and settler assignment stay theirs).
+- Friends' reloads and aiming down sights play on their stand-in, and their Pip-Boy light shows as a light on it.
 - Fixed a crash when a friend joined: their stand-in could be replaced (once their face arrived) while the game was still loading it. A stand-in now waits a moment for the face, and is never deleted mid-load.
 - A friend's or NPC's automatic fire sounds like one burst, every shot heard (the stand-in used to play only the shots its animation had time for).
 - A mirrored NPC takes off the armor its owner's copy doesn't wear, so both games see the same outfit; an NPC that dies at once still gets its gear reported.
@@ -74,7 +76,7 @@ GPL-3.0. The source will be published on GitHub.
 - NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
 - Replayed automatic-weapon fire no longer loops forever on the hearing side.
 - The free high-resolution texture pack no longer counts as a load-order difference.
-- Protocol 21: everyone updates together.
+- Protocol 22: everyone updates together.
 
 ## Changelog for 0.6.0
 

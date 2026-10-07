@@ -16,7 +16,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 21;
+	inline constexpr std::uint16_t VERSION = 22;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -70,6 +70,7 @@ namespace Protocol
 		kReportMarkers = 24,      // map markers the sender discovered
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
 		kReportFace = 27,          // the sender's character's face and body shape
+		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -96,6 +97,7 @@ namespace Protocol
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kPlayerFace = 129,        // another player's face and body shape
+		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -254,6 +256,29 @@ namespace Protocol
 	inline constexpr std::size_t MAX_FACE_BONES = 256;
 	inline constexpr std::size_t MAX_FACE_TINTS = 96;
 
+	// A workshop object (a wall, a turret, a crop...) placed, moved or scrapped by a player. refId is
+	// the object's reference ID in the sender's game (runtime IDs differ per game, so receivers map
+	// (playerId, refId) to their own copy). workshop is the settlement's workbench reference.
+	namespace WorkshopOp
+	{
+		inline constexpr std::uint8_t kPlaced = 0;  // placed, or moved (same message, new transform)
+		inline constexpr std::uint8_t kScrapped = 1;
+	}
+
+	struct WorkshopItem
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;
+		std::uint8_t  op = WorkshopOp::kPlaced;
+		std::uint32_t base = 0;
+		std::uint32_t workshop = 0;
+		float         position[3] = { 0.0f, 0.0f, 0.0f };
+		float         rotation[3] = { 0.0f, 0.0f, 0.0f };
+		float         scale = 1.0f;
+
+		bool operator==(const WorkshopItem&) const = default;
+	};
+
 	struct FaceBone
 	{
 		std::uint32_t region = 0;
@@ -354,12 +379,25 @@ namespace Protocol
 		std::uint32_t attacker = 0;
 	};
 
-	// A weapon shot, for the firing animation. refId 0 = the player themselves, otherwise an NPC
-	// they run. playerId is ignored client -> server.
+	// What a weapon-holding actor just did (a shot, by default), for the animation on their stand-in.
+	namespace ShotAction
+	{
+		inline constexpr std::uint8_t kShot = 0;      // fired, or swung a melee weapon
+		inline constexpr std::uint8_t kReload = 1;
+		inline constexpr std::uint8_t kAimStart = 2;  // aiming down the sights
+		inline constexpr std::uint8_t kAimStop = 3;
+		inline constexpr std::uint8_t kLightOn = 4;   // the Pip-Boy light (players only)
+		inline constexpr std::uint8_t kLightOff = 5;
+		inline constexpr std::uint8_t kMax = kLightOff;
+	}
+
+	// A weapon shot (or another ShotAction), for the animation. refId 0 = the player themselves,
+	// otherwise an NPC they run. playerId is ignored client -> server.
 	struct Shot
 	{
 		std::uint32_t playerId = 0;
 		std::uint32_t refId = 0;
+		std::uint8_t  action = ShotAction::kShot;
 	};
 
 	// playerId is ignored client -> server in all of these.
@@ -1000,6 +1038,51 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const WorkshopItem& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U8(a_msg.op);
+		w.U32(a_msg.base);
+		w.U32(a_msg.workshop);
+		for (const float v : a_msg.position) {
+			w.F32(v);
+		}
+		for (const float v : a_msg.rotation) {
+			w.F32(v);
+		}
+		w.F32(a_msg.scale);
+		return w.Data();
+	}
+
+	inline std::optional<WorkshopItem> DecodeWorkshopItem(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		WorkshopItem msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.op = r.U8();
+		msg.base = r.U32();
+		msg.workshop = r.U32();
+		bool finite = true;
+		for (float& v : msg.position) {
+			v = r.F32();
+			finite = finite && std::isfinite(v);
+		}
+		for (float& v : msg.rotation) {
+			v = r.F32();
+			finite = finite && std::isfinite(v);
+		}
+		msg.scale = r.F32();
+		finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
+		if (!r.Ok() || !r.AtEnd() || !finite || msg.refId == 0 || msg.op > WorkshopOp::kScrapped || (msg.op == WorkshopOp::kPlaced && msg.base == 0)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -1298,6 +1381,7 @@ namespace Protocol
 		Writer w{ a_type };
 		w.U32(a_msg.playerId);
 		w.U32(a_msg.refId);
+		w.U8(a_msg.action);
 		return w.Data();
 	}
 
@@ -1308,7 +1392,8 @@ namespace Protocol
 		Shot msg;
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
-		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId))) {
+		msg.action = r.U8();
+		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId)) || msg.action > ShotAction::kMax) {
 			return std::nullopt;
 		}
 		return msg;

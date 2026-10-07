@@ -1211,3 +1211,75 @@ TEST("server world: a different load order starts a fresh world")
 	REQUIRE(changes.size() == 1);
 	CHECK(changes[0].index == 0);
 }
+
+// ---- workshop building --------------------------------------------------------------------
+
+namespace
+{
+	Protocol::WorkshopItem Wall(std::uint32_t a_ref, float a_x = 10.0f)
+	{
+		Protocol::WorkshopItem item;
+		item.refId = a_ref;
+		item.base = 0x0001F2A1;
+		item.workshop = 0x000250FE;
+		item.position[0] = a_x;
+		item.rotation[2] = 1.5f;
+		return item;
+	}
+
+	std::vector<std::uint8_t> Built(const Protocol::WorkshopItem& a_item)
+	{
+		return Protocol::Encode(a_item, MT::kReportWorkshopItem);
+	}
+}
+
+TEST("server workshop: a placed object is relayed to the others with the builder's player ID")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	auto wall = Wall(0xFF001234);
+	wall.playerId = 999;  // ignored
+	f.fake->Deliver(1, Built(wall));
+	const auto items = Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem);
+	REQUIRE(items.size() == 1);
+	CHECK(items[0].playerId == alice);
+	CHECK(items[0].refId == 0xFF001234);
+	CHECK(items[0].base == 0x0001F2A1);
+	CHECK(items[0].position[0] == 10.0f);
+	CHECK(Count(Received(f, 1), MT::kWorkshopItem) == 0);  // not echoed to the builder
+}
+
+TEST("server workshop: a late joiner gets everything built so far, moved objects once, scrapped ones not at all")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	f.fake->Deliver(1, Built(Wall(0xFF000001, 10.0f)));
+	f.fake->Deliver(1, Built(Wall(0xFF000001, 20.0f)));  // moved
+	f.fake->Deliver(1, Built(Wall(0xFF000002)));
+	auto scrapped = Wall(0xFF000002);
+	scrapped.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(scrapped));
+	Clear(f, { 1 });
+
+	JoinAs(f, 2, "Bob");
+	const auto items = Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem);
+	REQUIRE(items.size() == 1);
+	CHECK(items[0].refId == 0xFF000001);
+	CHECK(items[0].position[0] == 20.0f);
+}
+
+TEST("server workshop: scrapping something nobody knew about is not relayed")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	auto scrapped = Wall(0xFF000009);
+	scrapped.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(scrapped));
+	CHECK(Count(Received(f, 2), MT::kWorkshopItem) == 0);
+}

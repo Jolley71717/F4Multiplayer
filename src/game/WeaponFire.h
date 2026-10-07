@@ -21,6 +21,13 @@ namespace WeaponFire
 	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out).
 	void PlayShot(RE::Actor* a_actor);
 
+	// Replays a reload or aiming (a ShotAction other than a shot) on a stand-in or mirrored NPC.
+	void PlayAction(RE::Actor* a_actor, std::uint8_t a_action);
+
+	// Reloads and aiming by the local player, and by NPCs (form ID, action), since the last call.
+	[[nodiscard]] std::vector<std::uint8_t> TakeActions();
+	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
+
 	// Ends the gunshot sounds that would otherwise loop (automatic weapons' fire sounds loop until
 	// stopped). Call every frame.
 	void Frame();

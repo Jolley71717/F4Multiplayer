@@ -56,6 +56,9 @@ namespace RemotePlayers
 			bool                 downed = false;
 			std::string          shownName;  // the name tag currently on the stand-in
 			Clock::time_point    knownAt{};    // when we first heard of them
+			bool                 lightOn = false;  // their Pip-Boy light
+			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
+			Clock::time_point    lightPlacedAt{};
 			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
 		};
 
@@ -72,6 +75,11 @@ namespace RemotePlayers
 		// The first stand-in waits this long for the player's face, instead of being placed and then
 		// replaced a moment later when the face arrives.
 		constexpr auto FACE_GRACE = 1s;
+
+		// The light form placed at a friend's stand-in while their Pip-Boy light is on (dev: friendlight).
+		std::uint32_t friendLightForm = 0x00000000;
+		constexpr float LIGHT_HEIGHT = 110.0f;  // above the feet: about the Pip-Boy
+		std::uint32_t   lightsPlaced = 0;
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -201,8 +209,58 @@ namespace RemotePlayers
 			return a_actor->IsDead(false) || a_actor->IsDisabled();
 		}
 
+		// Removes the stand-in's light, once its 3D is in (the same rule as for the stand-in itself).
+		void DeleteLight(RemotePlayer& a_player)
+		{
+			if (const auto light = a_player.light.get()) {
+				if (DeferredDelete::Safe(light->Get3D() != nullptr, Clock::now() - a_player.lightPlacedAt)) {
+					light->Disable();
+					light->SetDelete(true);
+				} else {
+					graveyard.push_back({ a_player.light, a_player.lightPlacedAt });
+				}
+			}
+			a_player.light = {};
+		}
+
+		// Keeps a light at the stand-in while their Pip-Boy light is on, and removes it when it goes off.
+		void UpdateLight(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
+		{
+			auto light = a_player.light.get();
+			if (!a_player.lightOn || !a_actor || !a_actor->Get3D()) {
+				if (light) {
+					DeleteLight(a_player);
+				}
+				return;
+			}
+			RE::NiPoint3 at = a_actor->data.location;
+			at.z += LIGHT_HEIGHT;
+			if (!light) {
+				const auto form = RE::TESForm::GetFormByID<RE::TESObjectLIGH>(friendLightForm);
+				if (!form) {
+					return;
+				}
+				RE::NEW_REFR_DATA data;
+				data.location = at;
+				data.object = form;
+				data.interior = a_cell->IsInterior() ? a_cell : nullptr;
+				data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
+				data.clearStillLoadingFlag = true;
+				const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+				light = handle.get().get();
+				if (!light) {
+					return;
+				}
+				a_player.light = handle;
+				a_player.lightPlacedAt = a_now;
+				++lightsPlaced;
+			}
+			light->SetLocationOnReference(at);
+		}
+
 		void DeleteActor(RemotePlayer& a_player)
 		{
+			DeleteLight(a_player);
 			if (a_player.registered) {
 				Puppets::Unregister(a_player.registered);
 				a_player.registered = nullptr;
@@ -394,6 +452,20 @@ namespace RemotePlayers
 		}
 	}
 
+	void PlayAction(std::uint32_t a_id, std::uint8_t a_action)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end()) {
+			return;
+		}
+		auto& player = it->second;
+		if (a_action == Protocol::ShotAction::kLightOn || a_action == Protocol::ShotAction::kLightOff) {
+			player.lightOn = a_action == Protocol::ShotAction::kLightOn;
+			return;  // Update() keeps the light with the stand-in
+		}
+		WeaponFire::PlayAction(GetActor(player), a_action);
+	}
+
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)
 	{
 		for (const auto& [id, remote] : players) {
@@ -408,6 +480,14 @@ namespace RemotePlayers
 	{
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
+		}
+	}
+
+	void SetLightForm(std::uint32_t a_formId)
+	{
+		friendLightForm = a_formId;
+		for (auto& [id, player] : players) {
+			DeleteLight(player);  // placed again with the new form
 		}
 	}
 
@@ -495,6 +575,8 @@ namespace RemotePlayers
 				remote.equipmentFixes = 0;
 				remote.shownName.clear();
 			}
+
+			UpdateLight(remote, actor, localCell, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
