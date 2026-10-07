@@ -308,7 +308,10 @@ namespace DevCommands
 			int         count = 0;
 			const auto  scan = [&](auto& a_forms) {
 				for (const auto form : a_forms) {
-					const auto name = form ? RE::TESFullName::GetFullName(*form) : ""sv;
+					if (!form) {
+						continue;
+					}
+					const auto name = RE::TESFullName::GetFullName(*form);
 					if (count < 15 && !name.empty() && lower(name).find(needle) != std::string::npos) {
 						result += std::format("{}{:08X} '{}'", count++ ? "; " : "", form->GetFormID(), name);
 					}
@@ -988,7 +991,10 @@ namespace DevCommands
 			}
 			std::vector<std::string> found;
 			for (const auto& [key, setting] : collection->settings) {
-				const auto name = setting ? setting->GetKey() : ""sv;
+				if (!setting) {
+					continue;
+				}
+				const auto name = setting->GetKey();
 				if (name.find(a_args) == std::string_view::npos) {
 					continue;
 				}

@@ -14,12 +14,27 @@ add_rules("plugin.vsxmake.autoupdate")
 
 add_requires("enet")
 
+-- static analysis: xmake f --analyze=y runs the MSVC analyser on our targets
+option("analyze")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Run the MSVC code analyser (/analyze) on our own sources")
+option_end()
+
+-- only our own sources are analysed and reported; <...> headers (lib/, enet, the SDK) are external
+local function analyze()
+    if has_config("analyze") then
+        add_cxxflags("/analyze", "/analyze:external-", "/external:anglebrackets", "/external:W0", { force = true })
+    end
+end
+
 -- protocol, networking helpers and the relay server, shared by every target
 target("F4MPCommon")
     set_kind("static")
     add_files("common/**.cpp")
     add_headerfiles("common/**.h")
     add_includedirs("common", { public = true })
+    analyze()
     add_packages("enet", { public = true })
     add_syslinks("ws2_32", "winmm", { public = true })
 
@@ -32,6 +47,7 @@ target("F4Multiplayer")
     })
 
     add_deps("F4MPCommon")
+    analyze()
 
     -- add src files
     add_files("src/**.cpp")
@@ -44,12 +60,14 @@ target("F4Multiplayer")
 target("F4MPServer")
     set_kind("binary")
     add_deps("F4MPCommon")
+    analyze()
     add_files("server/**.cpp")
 
 -- fake player for testing without a second copy of the game
 target("F4MPBot")
     set_kind("binary")
     add_deps("F4MPCommon")
+    analyze()
     add_files("bot/**.cpp")
 
 -- unit tests for the protocol and the server (no game needed): xmake build F4MPTests && xmake run F4MPTests
@@ -57,5 +75,6 @@ target("F4MPTests")
     set_kind("binary")
     set_default(false)
     add_deps("F4MPCommon")
+    analyze()
     add_files("tests/**.cpp")
     add_headerfiles("tests/**.h")
