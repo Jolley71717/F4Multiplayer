@@ -51,3 +51,11 @@ target("F4MPBot")
     set_kind("binary")
     add_deps("F4MPCommon")
     add_files("bot/**.cpp")
+
+-- unit tests for the protocol and the server (no game needed): xmake build F4MPTests && xmake run F4MPTests
+target("F4MPTests")
+    set_kind("binary")
+    set_default(false)
+    add_deps("F4MPCommon")
+    add_files("tests/**.cpp")
+    add_headerfiles("tests/**.h")

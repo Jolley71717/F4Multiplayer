@@ -303,6 +303,40 @@ void Server::Run()
 		} while (offset < longest);
 	};
 
+	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
+	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
+		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
+			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
+			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
+			if (a_to) {
+				send(a_to, packet, true);
+			} else {
+				broadcast(packet, true, 0);
+			}
+		}
+	};
+
+	const auto releaseAll = [&](std::uint32_t a_playerId) {
+		std::vector<Protocol::ActorOwner> released;
+		std::erase_if(actorOwners, [&](const auto& a_entry) {
+			if (a_entry.second.playerId != a_playerId) {
+				return false;
+			}
+			released.push_back({ a_entry.first, 0 });
+			return true;
+		});
+		sendOwners(released, 0);
+	};
+
+	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
+	const auto leave = [&](const Player& a_player) {
+		if (a_player.welcomed) {
+			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
+			log(std::format("server: '{}' left", a_player.name));
+		}
+		releaseAll(a_player.id);
+	};
+
 	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto hello = Protocol::DecodeHello(a_data);
 		if (!hello || hello->magic != Protocol::MAGIC) {
@@ -311,10 +345,6 @@ void Server::Run()
 		}
 		if (hello->version != Protocol::VERSION) {
 			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
-			return;
-		}
-		if (welcomedCount() >= options.maxPlayers) {
-			reject(a_player, "Server is full");
 			return;
 		}
 		if (!password.empty() && hello->password != password) {
@@ -334,19 +364,30 @@ void Server::Run()
 			return;
 		}
 
-		// Someone coming back gets their old ID, unless their old connection hasn't been dropped yet.
+		// Someone coming back gets their old ID. If their old connection is still here, their game
+		// restarted before it timed out: that one is stale, so it goes.
 		bool returning = false;
 		if (hello->identity != 0) {
-			const auto known = identities.find(hello->identity);
-			const bool inUse = known != identities.end() && std::ranges::any_of(players, [&](const auto& a_entry) {
-				return a_entry.second.welcomed && a_entry.second.id == known->second;
-			});
-			if (known != identities.end() && !inUse) {
+			if (const auto known = identities.find(hello->identity); known != identities.end()) {
+				const auto stale = std::ranges::find_if(players, [&](const auto& a_entry) {
+					return a_entry.first != a_player.key && a_entry.second.welcomed && a_entry.second.id == known->second;
+				});
+				if (stale != players.end()) {
+					log(std::format("server: dropping the old connection of '{}' ({})", stale->second.name, describe(stale->first)));
+					leave(stale->second);
+					disconnect(stale->second);
+					players.erase(stale);
+				}
 				a_player.id = known->second;
 				returning = true;
 			} else {
 				identities[hello->identity] = a_player.id;
 			}
+		}
+		// (After dropping a stale connection: it doesn't take up a place.)
+		if (welcomedCount() >= options.maxPlayers) {
+			reject(a_player, "Server is full");
+			return;
 		}
 
 		a_player.name = SanitizeName(hello->name, a_player.id);
@@ -408,31 +449,6 @@ void Server::Run()
 		a_player.state = *state;
 		a_player.hasState = true;
 		a_player.stateDirty = true;
-	};
-
-	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
-	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
-		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
-			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
-			const auto packet = Protocol::Encode(std::vector<Protocol::ActorOwner>(a_owners.begin() + i, a_owners.begin() + end));
-			if (a_to) {
-				send(a_to, packet, true);
-			} else {
-				broadcast(packet, true, 0);
-			}
-		}
-	};
-
-	const auto releaseAll = [&](std::uint32_t a_playerId) {
-		std::vector<Protocol::ActorOwner> released;
-		std::erase_if(actorOwners, [&](const auto& a_entry) {
-			if (a_entry.second.playerId != a_playerId) {
-				return false;
-			}
-			released.push_back({ a_entry.first, 0 });
-			return true;
-		});
-		sendOwners(released, 0);
 	};
 
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -826,9 +842,20 @@ void Server::Run()
 		using Protocol::MessageType;
 		switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
 		case MessageType::kHello:
-			if (!a_player.welcomed && !a_player.kicked) {
-				handleHello(a_player, a_data);
+			if (a_player.kicked) {
+				break;
 			}
+			if (a_player.welcomed) {
+				// Hello again on the same connection: their game restarted before it timed out
+				// (Steam keeps one connection per friend). Start over as a new arrival.
+				leave(a_player);
+				Player fresh;
+				fresh.key = a_player.key;
+				fresh.id = a_player.id;
+				fresh.connectedAt = Clock::now();
+				a_player = std::move(fresh);
+			}
+			handleHello(a_player, a_data);
 			break;
 		case MessageType::kPlayerState:
 			handleState(a_player, a_data);
@@ -939,13 +966,8 @@ void Server::Run()
 					break;
 				case TransportEvent::Type::kDisconnect:
 					if (const auto it = players.find(key); it != players.end()) {
-						if (it->second.welcomed) {
-							broadcast(Protocol::Encode(Protocol::PlayerLeft{ it->second.id }), true, key);
-							log(std::format("server: '{}' left", it->second.name));
-						}
-						const auto leftId = it->second.id;
+						leave(it->second);
 						players.erase(it);
-						releaseAll(leftId);
 						// The clock belonged to someone who's gone; the next player brings their own.
 						if (welcomedCount() == 0) {
 							worldTime.reset();
