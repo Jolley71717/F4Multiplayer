@@ -388,7 +388,8 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
-		Downed::Frame(localId != 0 && !RemotePlayers::List().empty());
+		// Not in the opening: no friend could get there to help.
+		Downed::Frame(localId != 0 && !RemotePlayers::List().empty() && !Story::InOpening());
 		if (localId == 0) {
 			return;
 		}

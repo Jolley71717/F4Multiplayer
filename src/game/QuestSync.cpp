@@ -28,6 +28,9 @@ namespace QuestSync
 		constexpr std::uint16_t QUEST_COMPLETED = 0x0002;
 		// A quest that completes this soon after a stage from another player was completed by them.
 		constexpr auto REMOTE_COMPLETION_WINDOW = 10s;
+		// Stages a quest's script sets this soon after another player's stage are its reaction to
+		// that stage, not this player's progress: every game that applies it gets there by itself.
+		constexpr auto SCRIPT_REACTION_WINDOW = 3s;
 
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last stage seen per quest
 		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
@@ -200,7 +203,9 @@ namespace QuestSync
 			// Only progress is shared (a quest that restarts or resets goes back to a lower stage),
 			// and only of quests this player has started: the game moves some quests along in the
 			// background, and a new game sets up many while the player is still in the opening.
-			if (report && forward && (id >> 24) != 0xFF && Shared(quest) && PlayerStarted(quest) && !Story::InOpening()) {
+			const auto remote = remoteStageAt.find(id);
+			const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
+			if (report && forward && !reaction && (id >> 24) != 0xFF && Shared(quest) && PlayerStarted(quest) && !Story::InOpening()) {
 				outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ id, quest->currentStage }, Protocol::MessageType::kReportQuestStage));
 				++reported;
 			}
