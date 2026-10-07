@@ -1,0 +1,25 @@
+#!/bin/sh
+# Refuses a push if any commit being pushed (identity, message, or content) matches a private
+# pattern from ~/.f4mp-private-patterns. Install: git config core.hooksPath tools/git-hooks
+patterns="$HOME/.f4mp-private-patterns"
+if [ ! -f "$patterns" ]; then
+	echo "pre-push: $patterns is missing; create it before pushing" >&2
+	exit 1
+fi
+zero=0000000000000000000000000000000000000000
+fail=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[ "$local_sha" = "$zero" ] && continue  # deleting a branch
+	if [ "$remote_sha" = "$zero" ]; then range="$local_sha --not --remotes"; else range="$remote_sha..$local_sha"; fi
+	if git log --format='%an <%ae> %cn <%ce> %s%n%b' $range | grep -q -i -E -f "$patterns"; then
+		echo "pre-push: a commit identity or message in $local_ref matches a private pattern:" >&2
+		git log --format='%h %an <%ae> %cn <%ce> %s' $range | grep -i -E -f "$patterns" | head -5 >&2
+		fail=1
+	fi
+	if git log -p --format='commit %h' --diff-filter=ACMR $range | grep '^+' | grep -v '^+++' | grep -q -i -E -f "$patterns"; then
+		echo "pre-push: content in $local_ref contains a private string:" >&2
+		git log -p --format='commit %h' --diff-filter=ACMR $range | grep -E '^commit |^\+' | grep -v '^+++' | grep -i -B1 -E -f "$patterns" | head -8 >&2
+		fail=1
+	fi
+done
+exit $fail

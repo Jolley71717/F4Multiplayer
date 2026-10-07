@@ -21,6 +21,8 @@ if (-not (Test-Path $tokenPath)) {
 	throw "Token not found at $tokenPath. Is the game running with bDevChannel = true?"
 }
 $token = (Get-Content $tokenPath -Raw).Trim()
+# Another PC's game (through an SSH tunnel): its token in $env:F4MP_DEV_TOKEN.
+if ($env:F4MP_DEV_TOKEN) { $token = $env:F4MP_DEV_TOKEN.Trim() }
 
 $client = New-Object System.Net.Sockets.TcpClient
 $client.Connect('127.0.0.1', $Port)
