@@ -21,20 +21,24 @@ xmake config -m releasedbg
 xmake build
 ```
 
-The plugin is written to `build/windows/x64/releasedbg/F4Multiplayer.dll`. Copy it to `Data/F4SE/Plugins/`, or set `XSE_FO4_MODS_PATH` (mod manager mods folder) or `XSE_FO4_GAME_PATH` and run `xmake install`.
+The plugin is written to `build/windows/x64/releasedbg/F4Multiplayer.dll`, next to the standalone server `F4MPServer.exe` and the test bot `F4MPBot.exe`. Copy the plugin to `Data/F4SE/Plugins/`, or set `XSE_FO4_MODS_PATH` (mod manager mods folder) or `XSE_FO4_GAME_PATH` and run `xmake install`. xmake fetches ENet; CommonLibF4 is the submodule. The Steamworks SDK is not needed: the plugin calls the game's own `steam_api64.dll` through a few hand-declared functions (`src/steam/SteamApi.cpp`).
+
+`tools/package.ps1` builds the release zip in `dist/out/` (the one on Nexus). It refuses a zip that names the build machine or its user.
 
 Logs are written to `Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`.
 
+## Tests
+
+```bat
+xmake build F4MPTests
+xmake run F4MPTests
+```
+
+Unit tests for the protocol and the session server (a fake transport drives a real server). `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
+
 ## Roadmap
 
-1. ~~Plugin loads and reads player state~~
-2. ~~Players see each other move (server, puppets, interpolation)~~
-3. ~~Walk/run/stop animations, per-player appearance choice~~
-4. ~~Jumping, sneaking, weapons drawn, equipment~~ (real face/hair still to do)
-5. ~~Names when looking at players~~
-6. ~~Shared enemies: NPC AI ownership, enemy hits on any player~~ (NPC firing animations for non-owners still to do)
-7. ~~World sync: deaths, health, containers, pickups, doors, locks, quests~~
-8. Workshop building, real character faces, PvP option
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: real character faces, muzzle flash, workshop building, misc/radiant quests.
 
 ## License
 
