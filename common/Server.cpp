@@ -14,8 +14,9 @@ namespace
 {
 	using Clock = std::chrono::steady_clock;
 
-	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(33);  // ~30 Hz state broadcast
-	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states, and NPC state batches
+	constexpr auto TICK_INTERVAL = std::chrono::milliseconds(16);  // ~60 Hz relay of new player states
+	constexpr int  MAX_STATES_PER_SECOND = 60;                     // player states (sent at 30 Hz)
+	constexpr int  MAX_ACTOR_BATCHES_PER_SECOND = 120;             // NPC state batches (20 Hz, one per 64 NPCs)
 	// "Take all" from a big container reports one event per item type.
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
@@ -560,8 +561,8 @@ void Server::Run()
 			return;
 		}
 		a_player.rate.Roll(Clock::now());
-		// Owners send one batch per 64 NPCs ten times a second.
-		if (++a_player.rate.actorStates > MAX_STATES_PER_SECOND) {
+		// Owners send one batch per 64 NPCs up to 20 times a second.
+		if (++a_player.rate.actorStates > MAX_ACTOR_BATCHES_PER_SECOND) {
 			return;
 		}
 		auto states = Protocol::DecodeActorStates(a_data);

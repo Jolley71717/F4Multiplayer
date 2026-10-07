@@ -51,6 +51,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | Safe teleport | No teleporting out of conversations, scenes, furniture or Survival |
 | Safe quest sharing | A friend's quest progress reaches you once you've started that quest, never mid-conversation |
 | Reload keeps your loot | Dying and reloading doesn't take back loot you'd picked up after your save |
+| Less lag | Friends update 30 times a second and nearby NPCs 20, shown about 50 ms closer to live |
 
 ## Next
 

@@ -11,14 +11,20 @@ namespace NpcSync
 		using Clock = std::chrono::steady_clock;
 
 		constexpr auto SCAN_INTERVAL = 250ms;
-		constexpr auto STATE_INTERVAL = 100ms;  // 10 Hz per owned NPC
+		// NPCs fighting or near a player send 20 states a second, the rest 10 (every other tick).
+		constexpr auto  STATE_INTERVAL = 50ms;
+		constexpr float FAST_RANGE = 3000.0f;  // game units from any player
 		constexpr auto CLAIM_RETRY = 3s;
 		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
 		// While we talk to an NPC we run, we claim it again this often so nobody takes it over
 		// mid-conversation (the server refuses takeovers within 5 s of a claim).
 		constexpr auto TALK_CLAIM_INTERVAL = 2s;
-		// States arrive at 10 Hz; render far enough in the past to have two to blend.
-		constexpr auto INTERPOLATION_DELAY = 150ms;
+		// Render far enough in the past to have two states to blend: less for NPCs sending 20 a
+		// second than for those sending 10. Changes are eased in so the NPC doesn't jump.
+		constexpr auto  FAST_DELAY = 100ms;
+		constexpr auto  SLOW_DELAY = 150ms;
+		constexpr auto  FAST_GAP = 70ms;  // average time between states for FAST_DELAY
+		constexpr float DELAY_SLEW_MS = 2.0f;  // per frame
 		constexpr auto STALE_AFTER = 1s;
 		// No states for this long (the owner's game is paused, loading or gone): our copy runs its
 		// own AI until they come back.
@@ -47,6 +53,7 @@ namespace NpcSync
 		{
 			std::deque<Snapshot> snapshots;
 			RE::Actor*           registered = nullptr;  // as registered with Puppets
+			float                delayMs = std::chrono::duration<float, std::milli>(SLOW_DELAY).count();
 		};
 
 		// An NPC we run.
@@ -67,6 +74,8 @@ namespace NpcSync
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
+		std::uint32_t                                        stateTick = 0;
+		std::uint32_t                                        fastNpcs = 0;  // owned NPCs sent at 20 Hz on the last tick
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -278,11 +287,31 @@ namespace NpcSync
 			return ui && ui->menuMode > 0;
 		}
 
+		// Fighting, or near enough to a player to be watched closely.
+		bool IsFast(RE::Actor* a_actor, const RE::NiPoint3& a_pos, RE::PlayerCharacter* a_player, const std::vector<RemotePlayers::Info>& a_friends)
+		{
+			if (a_actor->IsInCombat()) {
+				return true;
+			}
+			if (a_player && a_pos.GetDistance(a_player->data.location) < FAST_RANGE) {
+				return true;
+			}
+			const auto space = SpaceOf(a_actor);
+			return std::ranges::any_of(a_friends, [&](const RemotePlayers::Info& a_info) {
+				return a_info.state && std::pair{ a_info.state->cell, a_info.state->worldspace } == space &&
+				       a_pos.GetDistance(RE::NiPoint3{ a_info.state->x, a_info.state->y, a_info.state->z }) < FAST_RANGE;
+			});
+		}
+
 		void SendOwnedStates(Clock::time_point a_now)
 		{
 			if (GamePaused()) {
 				return;
 			}
+			const bool slowTick = ++stateTick % 2 == 0;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto friends = RemotePlayers::List();
+			std::uint32_t fast = 0;
 			std::vector<Protocol::ActorState> states;
 			for (auto& [id, track] : owned) {
 				const auto actor = LoadedActor(id);
@@ -290,6 +319,13 @@ namespace NpcSync
 					continue;
 				}
 				const auto& pos = actor->data.location;
+				if (!IsFast(actor, pos, player, friends)) {
+					if (!slowTick) {
+						continue;
+					}
+				} else {
+					++fast;
+				}
 				float       speed = 0.0f;
 				if (track.lastTime != Clock::time_point{}) {
 					const float dt = std::chrono::duration<float>(a_now - track.lastTime).count();
@@ -319,6 +355,7 @@ namespace NpcSync
 				}
 				states.push_back(state);
 			}
+			fastNpcs = fast;
 			SendList(states, [](const std::vector<Protocol::ActorState>& a) { return Protocol::Encode(a, Protocol::MessageType::kActorStates); }, false);
 		}
 
@@ -338,12 +375,25 @@ namespace NpcSync
 			return a_from + delta * a_t;
 		}
 
+		// Ease the mirror's delay toward what its owner's send rate needs.
+		void AdjustDelay(Mirror& a_mirror)
+		{
+			const auto& snaps = a_mirror.snapshots;
+			constexpr std::size_t GAPS = 4;
+			if (snaps.size() <= GAPS) {
+				return;
+			}
+			const auto gap = (snaps.back().received - snaps[snaps.size() - 1 - GAPS].received) / GAPS;
+			const float target = std::chrono::duration<float, std::milli>(gap <= FAST_GAP ? FAST_DELAY : SLOW_DELAY).count();
+			a_mirror.delayMs += std::clamp(target - a_mirror.delayMs, -DELAY_SLEW_MS, DELAY_SLEW_MS);
+		}
+
 		std::optional<Puppets::Motion> Sample(const Mirror& a_mirror, Clock::time_point a_now)
 		{
 			if (a_mirror.snapshots.empty()) {
 				return std::nullopt;
 			}
-			const auto renderTime = a_now - INTERPOLATION_DELAY;
+			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(a_mirror.delayMs));
 			const auto& snaps = a_mirror.snapshots;
 
 			Protocol::ActorState state = snaps.back().state;
@@ -424,6 +474,7 @@ namespace NpcSync
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
 				}
+				AdjustDelay(mirror);
 				if (const auto motion = Sample(mirror, a_now)) {
 					Puppets::SetTarget(actor, *motion);
 				}
@@ -529,7 +580,11 @@ namespace NpcSync
 			Scan(now);
 		}
 		if (now >= nextStates) {
-			nextStates = now + STATE_INTERVAL;
+			// On schedule, not an interval after this frame (see Session's SEND_INTERVAL).
+			nextStates += STATE_INTERVAL;
+			if (nextStates <= now) {
+				nextStates = now + STATE_INTERVAL;
+			}
 			SendOwnedStates(now);
 		}
 		// The partner is found when the conversation starts and kept until it ends.
@@ -585,7 +640,10 @@ namespace NpcSync
 	std::string Describe()
 	{
 		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });
-		return std::format("npcs: owned={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={}", owned.size(), mirrors.size(),
-			puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs);
+		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
+		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
+		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={} delayMs={}-{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs, minDelay, maxDelay);
 	}
 }

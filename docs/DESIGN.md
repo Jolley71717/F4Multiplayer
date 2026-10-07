@@ -10,7 +10,7 @@
  | Session          | --------> | join checks, rate      | <------- | Session          |
  |  RemotePlayers   | <-------- |   limits               | -------> |  RemotePlayers   |
  |  NpcSync         |           | relays player and NPC  |          |  NpcSync         |
- |  WorldSync       |           |   states (30 Hz)       |          |  WorldSync       |
+ |  WorldSync       |           |   states (60 Hz tick)  |          |  WorldSync       |
  |  QuestSync       |           | keeps the session's    |          |  QuestSync       |
  |  Puppets         |           |   world state          |          |  Puppets         |
  +------------------+           +------------------------+          +------------------+
@@ -18,7 +18,8 @@
 
 - **Transports:** the server talks to players through `ServerTransport` (`common/Transport.h`), the
   client through `ClientConnection` (`src/net/ClientConnection.h`). Reliable messages are ordered;
-  unreliable ones carry player state (20 Hz) and NPC states (10 Hz).
+  unreliable ones carry player state (30 Hz) and NPC states (20 Hz for NPCs in combat or within 3000
+  units of any player, 10 Hz for the rest). The server relays new player states every 16 ms.
   - ENet (UDP, `common/EnetTransport.cpp`) is always on. With Steam it listens on 127.0.0.1 only, for
     the host's own game.
   - Steam (`src/steam/`): `ISteamNetworkingMessages` through Valve's relays, addressed by Steam ID
@@ -40,9 +41,12 @@
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
-  player is in the same interior or within about 9000 units outside. It renders 100 ms in the past
-  and blends between received states. Before every save and load, all puppets are deleted so they
-  never end up in a save file.
+  player is in the same interior or within about 9000 units outside. It renders 70 ms in the past
+  and blends between received states. `net status` shows the average gap between a friend's states
+  (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
+  was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
+  that connection. Before every save and load, all puppets are deleted so they never end up in a
+  save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
@@ -87,8 +91,11 @@
   - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
     hands in the last 5 s.
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
-  10 Hz (unreliable). The others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement
-  copied with 150 ms interpolation, but it can be hurt and killed. If the owner's copy is in a
+  20 Hz when they're in combat or within 3000 units of any player, else 10 Hz (unreliable). The
+  others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with
+  interpolation, but it can be hurt and killed. Each copy renders 100 ms in the past when its states
+  arrive at most 70 ms apart on average, else 150 ms, eased 2 ms per frame (`net status`: `fast=` NPCs
+  we send at 20 Hz, `delayMs=` the range over our copies). If the owner's copy is in a
   different cell or worldspace (a companion that followed its player through a door), the local copy
   is not moved there; it runs its own AI meanwhile. The same goes when the owner's copy is more than
   a cell (4096 units) away from ours (fast travel, script moves), when no state came for 3 s (the

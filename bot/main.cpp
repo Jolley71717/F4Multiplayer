@@ -11,6 +11,7 @@
 //           [--marker REFHEX]  (reports discovering this map marker once welcomed)
 //           [--talk REFHEX]  (claims this NPC as if talking to it, every 2 s)
 //           [--say REFHEX]  (reports a line said by this NPC every 3 s; 0 = the bot itself)
+//           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
 
 #include "Net.h"
 #include "Protocol.h"
@@ -19,7 +20,9 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -105,11 +108,16 @@ int main(int argc, char* argv[])
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
 	Protocol::QuestStage questStage;  // report this quest stage once welcomed (quest 0 = none)
 	std::uint32_t ownRef = 0;         // take over this NPC and walk it around the circle instead of ourselves
+	bool          npcSlow = false;    // --own NPC sends 10 states a second (far from everyone) instead of 20
 	std::uint32_t talkRef = 0;        // keeps trying to take this NPC over as if talking to it (every 2 s)
 	std::optional<std::uint32_t> sayRef;  // reports a line said by this NPC (0 = the bot) every 3 s
 	int           linesSaid = 0;
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
 	std::uint32_t actorStatesSeen = 0;
+	// For the rates printed at the end: other players' states, and states per NPC.
+	std::uint32_t                                    playerStatesHeard = 0;
+	std::map<std::uint32_t, std::uint32_t>           npcStatesHeard;
+	std::optional<std::chrono::steady_clock::time_point> firstHeard;
 	std::uint32_t lootContainer = 0;  // take lootCount of lootItem from this container once welcomed
 	std::uint32_t lootItem = 0;
 	std::int32_t  lootCount = 0;
@@ -158,6 +166,8 @@ int main(int argc, char* argv[])
 			std::uint32_t ref = 0;
 			ok = ParseNumber(value, ref, 16);
 			sayRef = ref;
+		} else if (key == "--npc-slow") {
+			npcSlow = value == "1";
 		} else if (key == "--own") {
 			ok = ParseNumber(value, ownRef, 16);
 		} else if (key == "--hit-player") {
@@ -443,8 +453,19 @@ int main(int argc, char* argv[])
 							std::cout << std::endl;
 						}
 						break;
+					case Protocol::MessageType::kPlayerStates:
+						if (const auto msg = Protocol::DecodePlayerStates(data)) {
+							if (!firstHeard) {
+								firstHeard = std::chrono::steady_clock::now();
+							}
+							playerStatesHeard += static_cast<std::uint32_t>(msg->players.size());
+						}
+						break;
 					case Protocol::MessageType::kActorStatesRelay:
 						if (const auto msg = Protocol::DecodeActorStates(data)) {
+							for (const auto& s : *msg) {
+								++npcStatesHeard[s.refId];
+							}
 							// Print every 20th batch so the output stays readable.
 							if (actorStatesSeen++ % 20 == 0) {
 								std::cout << "npc states:";
@@ -504,7 +525,7 @@ int main(int argc, char* argv[])
 		}
 
 		if (welcomed && now >= nextSend) {
-			nextSend = now + std::chrono::milliseconds(50);  // 20 Hz like the game client
+			nextSend = now + std::chrono::milliseconds(33);  // 30 Hz like the game client
 
 			// Move around the circle at --speed (walk ~150, run ~370 units/s) for 4 s, then stand for 3 s,
 			// so both locomotion start and stop get exercised.
@@ -540,8 +561,8 @@ int main(int argc, char* argv[])
 			state.speed = walking ? walkSpeed : 0.0f;
 			// ActorState::moveMode: 0x01 forward, 0x40 walking, 0x80 running.
 			state.moveMode = walking ? (walkSpeed > 200.0f ? 0x81 : 0x41) : 0;
-			const bool shoot = shootWeapon && !walking && sequence % 10 == 0;
-			if (timeHour >= 0.0f && sequence % 100 == 1) {
+			const bool shoot = shootWeapon && !walking && sequence % 15 == 0;
+			if (timeHour >= 0.0f && sequence % 150 == 1) {
 				const float hour = static_cast<float>(std::fmod(timeDays, 1.0) * 24.0);
 				Net::Send(peer, Protocol::Encode(Protocol::WorldTime{ 0, hour, static_cast<float>(timeDays), worldspace, timeWeather }, Protocol::MessageType::kReportTime), false);
 				timeDays += timeStep / 24.0;
@@ -549,11 +570,11 @@ int main(int argc, char* argv[])
 			if (shootWeapon) {
 				state.flags |= Protocol::kWeaponDrawn;
 			}
-			if (sayRef && sequence % 60 == 5) {
+			if (sayRef && sequence % 90 == 5) {
 				const auto text = std::format("Test line {} - can you hear me?", ++linesSaid);
 				Net::Send(peer, Protocol::Encode(Protocol::Line{ 0, *sayRef, text }, Protocol::MessageType::kReportLine), true);
 			}
-			if (talkRef && sequence % 40 == 1) {
+			if (talkRef && sequence % 60 == 1) {
 				Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkRef, Protocol::ClaimReason::kInteract } }), true);
 			}
 			if (shoot) {
@@ -572,7 +593,8 @@ int main(int argc, char* argv[])
 				npc.speed = state.speed;
 				npc.moveMode = state.moveMode;
 				npc.flags = state.flags & Protocol::kWeaponDrawn;
-				if (sequence % 2 == 0) {  // 10 Hz like the game
+				// Like the game: 20 a second near players (2 of every 3 sends), else 10.
+				if (npcSlow ? sequence % 3 == 0 : sequence % 3 != 0) {
 					Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorState>{ npc }, Protocol::MessageType::kActorStates), false);
 				}
 				state.x = state.y = 0.0f;
@@ -583,6 +605,14 @@ int main(int argc, char* argv[])
 
 	if (voiceBytes) {
 		std::cout << "voice: " << voiceBytes << " bytes heard" << std::endl;
+	}
+	if (firstHeard) {
+		const float heardFor = std::chrono::duration<float>(std::chrono::steady_clock::now() - *firstHeard).count();
+		std::cout << "rates: player states " << std::lround(playerStatesHeard / heardFor) << "/s, npc states/s:";
+		for (const auto& [ref, count] : npcStatesHeard) {
+			std::cout << ' ' << std::hex << ref << std::dec << '=' << std::lround(count / heardFor);
+		}
+		std::cout << std::endl;
 	}
 	enet_peer_disconnect(peer, 0);
 	enet_host_flush(host);
