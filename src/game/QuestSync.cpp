@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 #include "game/WorldSync.h"
 
 namespace QuestSync
@@ -62,18 +63,25 @@ namespace QuestSync
 			kWait,     // try again later
 		};
 
-		// Sets another player's stage here if the quest is running here. A quest that isn't running
-		// yet waits until this player starts it: setting a stage starts a quest from wherever the
-		// player is, skips the stages before it, and can pull a new character out of the prologue.
+		// The main story and faction quests are shared only if the host chose a shared story.
+		bool Shared(const RE::TESQuest* a_quest)
+		{
+			return IsSharedType(a_quest->data.questType) && (Story::Shared() || !Story::IsStoryType(a_quest->data.questType));
+		}
+
+		// Sets another player's stage here once this player has started the quest too (an objective
+		// is shown; the game runs some quests in the background long before that). Setting a stage
+		// starts a quest from wherever the player is, skips the stages before it, and can pull a new
+		// character out of the opening.
 		Outcome TrySet(std::uint32_t a_quest, std::uint16_t a_stage, bool a_waited)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
 			// Stages only move forward: never undo progress a player already has.
-			if (!quest || !IsSharedType(quest->data.questType) || (quest->data.flags & QUEST_COMPLETED) || a_stage <= quest->currentStage) {
+			if (!quest || !Shared(quest) || (quest->data.flags & QUEST_COMPLETED) || a_stage <= quest->currentStage) {
 				return Outcome::kDone;
 			}
 			// Quest scripts must not run at the main menu or during a loading screen.
-			if (!WorldSync::InWorld() || !(quest->data.flags & QUEST_RUNNING) || PlayerBusy()) {
+			if (!WorldSync::InWorld() || Story::InOpening() || !(quest->data.flags & QUEST_RUNNING) || !PlayerStarted(quest) || PlayerBusy()) {
 				return Outcome::kWait;
 			}
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", a_quest, a_stage).c_str());
@@ -92,6 +100,13 @@ namespace QuestSync
 			}
 			return Outcome::kDone;
 		}
+	}
+
+	bool PlayerStarted(const RE::TESQuest* a_quest)
+	{
+		return a_quest && std::ranges::any_of(a_quest->objectives, [](const RE::BGSQuestObjective* a_objective) {
+			return a_objective && a_objective->state != static_cast<char>(RE::QUEST_OBJECTIVE_STATE::kDormant);
+		});
 	}
 
 	void Apply(const Protocol::QuestStage& a_stage)
@@ -182,8 +197,10 @@ namespace QuestSync
 			const bool forward = quest->currentStage > it->second;
 			it->second = quest->currentStage;
 			lastStageChange = now;
-			// Only progress is shared (a quest that restarts or resets goes back to a lower stage).
-			if (report && forward && (id >> 24) != 0xFF) {
+			// Only progress is shared (a quest that restarts or resets goes back to a lower stage),
+			// and only of quests this player has started: the game moves some quests along in the
+			// background, and a new game sets up many while the player is still in the opening.
+			if (report && forward && (id >> 24) != 0xFF && Shared(quest) && PlayerStarted(quest) && !Story::InOpening()) {
 				outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ id, quest->currentStage }, Protocol::MessageType::kReportQuestStage));
 				++reported;
 			}

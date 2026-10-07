@@ -28,6 +28,10 @@ namespace Config
 		// When hosting: players can hurt each other.
 		bool friendlyFire = false;
 
+		// When hosting: the main story and faction quests are shared too ("shared"), or each
+		// player plays their own ("own", the default; side quests are shared either way).
+		bool sharedStory = false;
+
 		// NPC base form used for other players' characters. It should belong to no factions,
 		// or hitting another player can count as a crime against that faction.
 		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)

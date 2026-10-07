@@ -29,6 +29,10 @@ public:
 
 		// Players can hurt each other (their hits on each other's stand-ins are passed on).
 		bool friendlyFire = false;
+
+		// Main story and faction quest progress is shared too, not just side quests (each
+		// player's game decides what to apply; this only tells them the host's choice).
+		bool sharedStory = false;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;

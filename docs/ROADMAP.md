@@ -50,7 +50,9 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | NPCs go to the nearest player | An enemy run by a far-away friend is handed to the player standing next to it |
 | Safe teleport | No teleporting out of conversations, scenes, furniture or Survival |
 | Safe quest sharing | A friend's quest progress reaches you once you've started that quest, never mid-conversation |
-| Reload keeps your loot | Dying and reloading doesn't take back loot you'd picked up after your save |
+| Reload keeps your loot | Dying and reloading doesn't take back loot you'd picked up after your save, even after a reconnect |
+| Your own story | Each player plays the main story and factions in their own game (or the host shares it: `sStory`); side quests are shared once you've started them |
+| A safe opening | A new character's opening, up to leaving Vault 111, is left alone by the session |
 | Less lag | Friends update 30 times a second and nearby NPCs 20, shown about 50 ms closer to live |
 
 ## Next

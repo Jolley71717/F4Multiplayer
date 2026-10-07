@@ -4,6 +4,7 @@
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 
 namespace WorldSync
 {
@@ -72,7 +73,10 @@ namespace WorldSync
 		std::uint64_t              session = 0;
 		std::uint32_t              containerNext = 0;
 		std::vector<PendingChange> pendingContainer;
-		std::uint32_t              localPlayer = 0;
+		// Our player IDs in this session. A reconnect normally gets the old one back (the server
+		// knows us by Protocol::Hello::identity), but not while the server still holds the old
+		// connection; our changes under either ID are ours.
+		std::unordered_set<std::uint32_t> ownIds;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
 		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
@@ -103,7 +107,7 @@ namespace WorldSync
 		// (or can never be), false to try again later.
 		bool TryKill(std::uint32_t a_refId)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto form = RE::TESForm::GetFormByID(a_refId);
@@ -173,6 +177,9 @@ namespace WorldSync
 		// Sets a loaded actor's current health to a fraction of its maximum. Returns false to try again later.
 		bool TrySetHealth(std::uint32_t a_refId, float a_fraction)
 		{
+			if (Story::InOpening()) {
+				return false;
+			}
 			const auto info = HealthInfo();
 			const auto actor = InWorld() ? LoadedActor(a_refId) : nullptr;
 			if (!info || !actor) {
@@ -366,7 +373,7 @@ namespace WorldSync
 		// Applies another player's container change. Returns false to try again later.
 		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
@@ -478,7 +485,7 @@ namespace WorldSync
 		// Applies another player's door/lock state. Returns false to try again later.
 		bool TryApplyRefState(const Protocol::RefState& a_state)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
@@ -524,7 +531,7 @@ namespace WorldSync
 		// Removes an item another player picked up. Returns false to try again later.
 		bool TryApplyPickup(std::uint32_t a_refId)
 		{
-			if (!InWorld()) {
+			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
@@ -581,14 +588,15 @@ namespace WorldSync
 
 	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
 	{
-		localPlayer = a_localPlayerId;
 		friendlyFire = a_friendlyFire;
 		if (a_sessionId != session) {
 			// A different session: none of its changes are in our world yet.
 			session = a_sessionId;
 			containerNext = 0;
 			pendingContainer.clear();
+			ownIds.clear();
 		}
+		ownIds.insert(a_localPlayerId);
 	}
 
 	Protocol::WorldRequest ResyncPoint()
@@ -615,7 +623,7 @@ namespace WorldSync
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
 		// the container that isn't in our inventory any more (or duplicate what we put in).
 		for (const auto& change : a_state.containerChanges) {
-			const bool ours = change.playerId == localPlayer;
+			const bool ours = ownIds.contains(change.playerId);
 			ownSkipped += ours && change.index >= containerNext;
 			OfferContainerChange(change.index, change.change, ours);
 		}
@@ -647,7 +655,7 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		OfferContainerChange(a_change.index, a_change.change, a_change.playerId == localPlayer);
+		OfferContainerChange(a_change.index, a_change.change, ownIds.contains(a_change.playerId));
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)

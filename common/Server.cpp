@@ -171,6 +171,7 @@ void Server::Run()
 {
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
+	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
 	std::uint64_t                             sessionId = NewSessionId();
@@ -333,12 +334,27 @@ void Server::Run()
 			return;
 		}
 
+		// Someone coming back gets their old ID, unless their old connection hasn't been dropped yet.
+		bool returning = false;
+		if (hello->identity != 0) {
+			const auto known = identities.find(hello->identity);
+			const bool inUse = known != identities.end() && std::ranges::any_of(players, [&](const auto& a_entry) {
+				return a_entry.second.welcomed && a_entry.second.id == known->second;
+			});
+			if (known != identities.end() && !inUse) {
+				a_player.id = known->second;
+				returning = true;
+			} else {
+				identities[hello->identity] = a_player.id;
+			}
+		}
+
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		a_player.local = transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
 		a_player.xpRefilled = Clock::now();
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire }), true);
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
 		for (auto& [key, other] : players) {
@@ -370,7 +386,8 @@ void Server::Run()
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
 		}
 
-		log(std::format("server: '{}' joined as player {} from {} ({} online)", a_player.name, a_player.id, describe(a_player.key), welcomedCount()));
+		log(std::format("server: '{}' {} as player {} from {} ({} online)", a_player.name, returning ? "came back" : "joined", a_player.id, describe(a_player.key),
+			welcomedCount()));
 	};
 
 	const auto handleState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {

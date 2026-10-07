@@ -3,6 +3,7 @@
 #include "game/Equipment.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/QuestSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
@@ -95,7 +96,11 @@ namespace DevCommands
 		std::string Status(std::string_view)
 		{
 			const auto cell = PlayerCell();
-			return std::format("ingame={} cell={:08X}", cell != nullptr, cell ? cell->GetFormID() : 0);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto location = player ? player->currentLocation : nullptr;
+			return std::format("ingame={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, cell ? cell->GetFormID() : 0,
+				cell && cell->IsInterior(), cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, location ? location->GetFormID() : 0,
+				location && location->GetFullName() ? location->GetFullName() : "");
 		}
 
 		std::string Pos(std::string_view)
@@ -347,22 +352,59 @@ namespace DevCommands
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
 		}
 
-		// quests [text]: story/faction/side quests with a stage set (or whose name contains text).
+		// quests [text | running:N | started]: story/faction/side quests with a stage set (or whose
+		// name contains text); running quests of type N (internal ones too); quests the player has
+		// started (an objective shown in the Pip-Boy). started=yes/no says which ones count.
 		std::string Quests(std::string_view a_args)
 		{
 			std::string out;
 			int         count = 0;
+			std::optional<int> runningType;
+			if (a_args.starts_with("running:")) {
+				int type = 0;
+				std::from_chars(a_args.data() + 8, a_args.data() + a_args.size(), type);
+				runningType = type;
+			}
+			const bool startedOnly = a_args == "started";
 			for (const auto quest : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>()) {
-				if (!quest || quest->data.questType <= 0 || quest->data.questType == 6 || count >= 25) {
+				if (!quest || count >= 25) {
 					continue;
 				}
 				const std::string_view name = quest->GetFullName() ? quest->GetFullName() : "";
-				if (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos) {
+				const bool started = QuestSync::PlayerStarted(quest);
+				if (runningType) {
+					if (quest->data.questType != *runningType || !(quest->data.flags & 1)) {
+						continue;
+					}
+				} else if (startedOnly) {
+					if (!started) {
+						continue;
+					}
+				} else if (quest->data.questType <= 0 || quest->data.questType == 6 ||
+						   (a_args.empty() ? quest->currentStage == 0 : name.find(a_args) == std::string_view::npos)) {
 					continue;
 				}
-				out += std::format("{}{:08X} '{}' type={} stage={} flags={:04X}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType, quest->currentStage, quest->data.flags);
+				out += std::format("{}{:08X} '{}' type={} stage={} flags={:04X} started={}", count++ ? "; " : "", quest->GetFormID(), name, quest->data.questType,
+					quest->currentStage, quest->data.flags, started ? "yes" : "no");
 			}
 			return count ? out : "none";
+		}
+
+		// objectives <questHex>: the quest's stage and objectives (index, state 0 = not shown yet).
+		std::string Objectives(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: objectives <questHex>";
+			}
+			std::string out = std::format("stage={} flags={:04X}", quest->currentStage, quest->data.flags);
+			for (const auto objective : quest->objectives) {
+				if (objective) {
+					out += std::format("; {} state={} '{}'", objective->index, static_cast<int>(objective->state), objective->displayText.c_str());
+				}
+			}
+			return out;
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -1231,6 +1273,7 @@ namespace DevCommands
 			Entry{ "doors", Doors },
 			Entry{ "draw", Draw },
 			Entry{ "quests", Quests },
+			Entry{ "objectives", Objectives },
 			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
 			Entry{ "findgear", FindGear },

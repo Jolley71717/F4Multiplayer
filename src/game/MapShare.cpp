@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
+#include "game/Story.h"
 #include "game/WorldSync.h"
 
 namespace MapShare
@@ -130,7 +131,7 @@ namespace MapShare
 
 	void Frame()
 	{
-		if (!Config::Get().shareMap || !WorldSync::InWorld()) {
+		if (!Config::Get().shareMap || !WorldSync::InWorld() || Story::InOpening()) {
 			return;
 		}
 		if (!scanned) {
@@ -156,7 +157,7 @@ namespace MapShare
 		if (!Config::Get().shareMap) {
 			return;
 		}
-		if (!WorldSync::InWorld() || !scanned) {
+		if (!WorldSync::InWorld() || Story::InOpening() || !scanned) {
 			if (waiting.size() < 256) {
 				waiting.push_back(a_found);
 			}

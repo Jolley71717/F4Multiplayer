@@ -53,8 +53,10 @@ int main(int argc, char* argv[])
 			options.password = argv[++i];
 		} else if (arg == "--friendly-fire") {
 			options.friendlyFire = true;
+		} else if (arg == "--shared-story") {
+			options.sharedStory = true;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story]\n";
 			return 2;
 		}
 	}
