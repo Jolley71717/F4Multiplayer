@@ -14,6 +14,10 @@
 //           [--opening 1]  (status says the bot is still in the game's opening, before leaving Vault 111)
 //           [--identity HEX]  (sent in Hello; the server gives the same identity the same player ID again)
 //           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
+//           [--hit-player ID:DAMAGE:ATTACKERHEX|p]  (reports hitting that player once they are in the game)
+//
+// Exit codes: 0 ok, 2 bad arguments, 3 rejected, 4 disconnected by the server, 5 never welcomed
+// before --seconds ran out.
 
 #include "Net.h"
 #include "Protocol.h"
@@ -117,6 +121,7 @@ int main(int argc, char* argv[])
 	std::optional<std::uint32_t> sayRef;  // reports a line said by this NPC (0 = the bot) every 3 s
 	int           linesSaid = 0;
 	Protocol::PlayerHit hitPlayer;    // tell this player an NPC hit them (playerId 0 = none)
+	bool          hitSent = false;    // ... once they are in the game
 	std::uint32_t actorStatesSeen = 0;
 	// For the rates printed at the end: other players' states, and states per NPC.
 	std::uint32_t                                    playerStatesHeard = 0;
@@ -300,7 +305,7 @@ int main(int argc, char* argv[])
 					switch (Protocol::PeekType(data).value_or(Protocol::MessageType{})) {
 					case Protocol::MessageType::kWelcome:
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
-							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << '\n';
+							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << (msg->sharedStory ? " (shared story)" : "") << std::endl;
 							welcomed = true;
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
@@ -328,10 +333,6 @@ int main(int argc, char* argv[])
 							if (ownRef) {
 								std::cout << "claiming npc\n";
 								Net::Send(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { ownRef, Protocol::ClaimReason::kCompanion } }), true);
-							}
-							if (hitPlayer.playerId) {
-								std::cout << "reporting player hit\n";
-								Net::Send(peer, Protocol::Encode(hitPlayer, Protocol::MessageType::kPlayerHit), true);
 							}
 							if (doorState.refId) {
 								std::cout << "reporting door state\n";
@@ -362,7 +363,14 @@ int main(int argc, char* argv[])
 						return 3;
 					case Protocol::MessageType::kPlayerJoined:
 						if (const auto msg = Protocol::DecodePlayerJoined(data)) {
-							std::cout << "player joined: " << msg->playerId << " " << msg->name << '\n';
+							std::cout << "player joined: " << msg->playerId << " " << msg->name << std::endl;
+							// Players already here are announced right after our Welcome, so this
+							// covers a target who joined before us as well as one who joins later.
+							if (hitPlayer.playerId == msg->playerId && !hitSent) {
+								hitSent = true;
+								std::cout << "reporting player hit" << std::endl;
+								Net::Send(peer, Protocol::Encode(hitPlayer, Protocol::MessageType::kPlayerHit), true);
+							}
 						}
 						break;
 					case Protocol::MessageType::kActorDied:
@@ -505,7 +513,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kPlayerLeft:
 						if (const auto msg = Protocol::DecodePlayerLeft(data)) {
-							std::cout << "player left: " << msg->playerId << '\n';
+							std::cout << "player left: " << msg->playerId << std::endl;
 						}
 						break;
 					default:
@@ -626,5 +634,9 @@ int main(int argc, char* argv[])
 	enet_host_flush(host);
 	enet_host_destroy(host);
 	Net::Shutdown();
+	if (!welcomed) {
+		std::cout << "never welcomed" << std::endl;
+		return 5;
+	}
 	return 0;
 }
