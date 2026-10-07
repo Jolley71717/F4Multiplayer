@@ -22,6 +22,11 @@ namespace
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
+	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
+	// has its own small budget: the outgoing queue would otherwise grow without limit.
+	constexpr int  MAX_WORLD_STATES_PER_SECOND = 4;
+	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
+	constexpr std::size_t MAX_IDENTITIES = 1024;
 	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
 	// (one more each XP_REPORT_INTERVAL).
 	constexpr auto XP_REFILL_TIME = std::chrono::seconds(10);
@@ -49,12 +54,13 @@ namespace
 		int               shots = 0;
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
+		int               worldStates = 0;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = worldStates = 0;
 			}
 		}
 	};
@@ -255,6 +261,12 @@ void Server::Run()
 		return false;
 	};
 
+	// Counts a world state the player asked for (hello again or kRequestWorldState) against their budget.
+	const auto allowWorldState = [&](Player& a_player) {
+		a_player.rate.Roll(Clock::now());
+		return ++a_player.rate.worldStates <= MAX_WORLD_STATES_PER_SECOND;
+	};
+
 	const auto sendMarkers = [&](ConnectionKey a_to) {
 		Protocol::MarkersFound batch;
 		for (const auto& [ref, flags] : markers) {
@@ -380,7 +392,7 @@ void Server::Run()
 				}
 				a_player.id = known->second;
 				returning = true;
-			} else {
+			} else if (identities.size() < MAX_IDENTITIES) {
 				identities[hello->identity] = a_player.id;
 			}
 		}
@@ -830,7 +842,7 @@ void Server::Run()
 	};
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player)) {
+		if (!allowEvent(a_player) || !allowWorldState(a_player)) {
 			return;
 		}
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
@@ -848,11 +860,15 @@ void Server::Run()
 			if (a_player.welcomed) {
 				// Hello again on the same connection: their game restarted before it timed out
 				// (Steam keeps one connection per friend). Start over as a new arrival.
+				if (!allowWorldState(a_player)) {
+					break;
+				}
 				leave(a_player);
 				Player fresh;
 				fresh.key = a_player.key;
 				fresh.id = a_player.id;
 				fresh.connectedAt = Clock::now();
+				fresh.rate = a_player.rate;  // saying hello again doesn't refill the budgets
 				a_player = std::move(fresh);
 			}
 			handleHello(a_player, a_data);
