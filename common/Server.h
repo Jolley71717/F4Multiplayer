@@ -22,6 +22,10 @@ public:
 		std::uint16_t port = 7779;
 		std::size_t   maxPlayers = 4;
 		std::string   password;  // empty = no password
+
+		// Accept UDP connections only from this machine (the host's own game), e.g. when friends
+		// connect through Steam instead.
+		bool udpLoopbackOnly = false;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;
