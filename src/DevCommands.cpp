@@ -1,8 +1,10 @@
 ﻿#include "DevCommands.h"
 
 #include "game/Equipment.h"
+#include "game/Face.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
+#include "game/RemotePlayers.h"
 #include "game/QuestSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
@@ -638,6 +640,18 @@ namespace DevCommands
 		}
 
 		// remove <refHex>: disables and deletes a reference we spawned.
+		// facemask <bits>: which pieces of a friend's face to apply (see Face::SetParts), then rebuilds the stand-ins.
+		std::string FaceMask(std::string_view a_args)
+		{
+			const auto mask = ParseHex(a_args);
+			if (!mask) {
+				return "error: usage: facemask <hexBits> (1 head parts, 2 hair, 4 body, 8 sliders, 10 bones, 20 tints, 40 body tint)";
+			}
+			Face::SetParts(*mask);
+			RemotePlayers::RebuildFaces();
+			return std::format("faces rebuilt with mask {:X}", *mask);
+		}
+
 		std::string Remove(std::string_view a_args)
 		{
 			const auto ref = LookupRef(a_args);
@@ -1313,6 +1327,7 @@ namespace DevCommands
 			Entry{ "graph", Graph },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
+			Entry{ "facemask", FaceMask },
 		};
 	}
 

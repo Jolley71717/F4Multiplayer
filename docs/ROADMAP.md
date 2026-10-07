@@ -24,8 +24,9 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 15 | Waiting and sleeping together | Waiting moves time for everyone | partly: the host's waiting moves everyone's clock; others snap back |
 | 16 | Quest completion messages | "Sam completed Out of Time" | done (protocol 15) |
 | 17 | Gunshot sound and muzzle flash | Fights sound and look complete | partly: sound done (protocol 20); muzzle flash later |
+| 17b | Melee swings and punches | A friend's bat or fist swings on your screen | partly: swings are reported ("weaponSwing"), but a stand-in holding a melee weapon rejects "attackStart" and every other attack event tried; the melee graph's start event is still to be found |
 | 18 | Player markers on the compass | Find friends without opening the list | done (protocol 20): a colored shape per player |
-| 19 | Remote players' faces | Friends look like their own character | later (hard: face morphs) |
+| 19 | Remote players' faces | Friends look like their own character | partly (protocol 21): the look is sent and a copy of the base NPC gets it, but the game only builds heads at runtime for the player, so only sex and body shape apply until the engine's head generation (what LooksMenu uses) is called |
 | 20 | Spectating a friend after death | Watch while you reload | no (camera control is fragile) |
 
 ## 5 wild ideas

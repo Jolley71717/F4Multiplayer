@@ -125,8 +125,8 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 
 ## Known limitations (early version)
 
-- Other players appear as a settler of the same sex wearing their gear: their face, hair and
-  weapon mods aren't copied.
+- Other players appear as a settler of their sex and body shape wearing their gear: their face,
+  hair and weapon mods aren't copied yet.
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.

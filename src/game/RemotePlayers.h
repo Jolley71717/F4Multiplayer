@@ -17,6 +17,12 @@ namespace RemotePlayers
 	// What the player is wearing and holding (base forms); copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
 
+	// The player's look; their stand-in is rebuilt with it.
+	void SetFace(std::uint32_t a_id, Protocol::Face a_face);
+
+	// Dev: throw away every stand-in's face copy and rebuild (after Face::SetParts).
+	void RebuildFaces();
+
 	struct Info
 	{
 		std::uint32_t                        id = 0;

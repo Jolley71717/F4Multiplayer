@@ -73,6 +73,7 @@ namespace
 		std::string                name;
 		std::uint32_t              appearance = 0;
 		std::vector<std::uint32_t> equipment;
+		std::optional<Protocol::Face> face;
 		bool                       welcomed = false;
 		bool                       kicked = false;
 		bool                       hasState = false;
@@ -421,6 +422,9 @@ void Server::Run()
 			if (!other.equipment.empty()) {
 				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
 			}
+			if (other.face) {
+				send(a_player.key, Protocol::Encode(*other.face, Protocol::MessageType::kPlayerFace), true);
+			}
 			if (other.status) {
 				send(a_player.key, Protocol::Encode(*other.status, Protocol::MessageType::kPlayerStatus), true);
 			}
@@ -590,6 +594,19 @@ void Server::Run()
 		}
 		sendOwners(changed, 0);
 		sendOwners(current, a_player.key);
+	};
+
+	const auto handleFace = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto face = Protocol::DecodeFace(a_data);
+		if (!face) {
+			return;
+		}
+		face->playerId = a_player.id;
+		a_player.face = *face;
+		broadcast(Protocol::Encode(*face, Protocol::MessageType::kPlayerFace), true, a_player.key);
 	};
 
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
@@ -929,6 +946,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
+			break;
+		case MessageType::kReportFace:
+			handleFace(a_player, a_data);
 			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);

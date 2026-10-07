@@ -40,6 +40,13 @@
 - **Client:** `src/net/NetClient.cpp` keeps ENet (including DNS lookups) on its own thread, so the
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
+- **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
+  (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
+  transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.
+  The receiver duplicates the stand-in's base NPC (a settler of the right sex), writes the look
+  onto the copy (tint layers are rebuilt by vtable, pointing at the race's template entries by
+  uniqueID) and spawns the stand-in from it. A changed face deletes the stand-in; it respawns with
+  a fresh copy. Copies are never freed (forms can't be).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders 70 ms in the past
   and blends between received states. `net status` shows the average gap between a friend's states
@@ -122,7 +129,8 @@
 ## Weapon fire (src/game/WeaponFire.cpp)
 
 - Detection: every actor gets its animation graph's events through its
-  `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot.
+  `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot
+  and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack.
   We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
   NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
 - `ReportShot {refId}` (0 = the sender) goes to the server, which accepts NPC shots only from the

@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 
+#include "game/Face.h"
 #include "Config.h"
 #include "game/Equipment.h"
 #include "game/Puppets.h"
@@ -36,6 +37,9 @@ namespace RemotePlayers
 			std::string          name;
 			std::uint32_t        appearance = 0;
 			std::vector<std::uint32_t> equipment;
+			std::optional<Protocol::Face> face;
+			RE::TESNPC*          faceBase = nullptr;  // our copy of the base NPC wearing their face
+			bool                 faceTried = false;
 			bool                 hasEquipment = false;
 			bool                 equipmentApplied = false;
 			Clock::time_point    equipmentCheckAt{};
@@ -204,7 +208,11 @@ namespace RemotePlayers
 			return a_state.cell == 0 && a_localCell->worldSpace && a_state.worldspace == a_localCell->worldSpace->GetFormID();
 		}
 
-		RE::Actor* Spawn(const RemotePlayer& a_player, const Protocol::PlayerState& a_state, RE::TESObjectCELL* a_localCell)
+		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
+		constexpr std::uint32_t FEMALE_SETTLER = 0x0020A578;
+		constexpr std::uint32_t MALE_SETTLER = 0x0020A57B;
+
+		RE::Actor* Spawn(RemotePlayer& a_player, const Protocol::PlayerState& a_state, RE::TESObjectCELL* a_localCell)
 		{
 			// Prefer the look the player picked; fall back to our default if it isn't a valid NPC here.
 			// Unique NPCs (companions, quest characters) would bring their scripts along, so not those.
@@ -214,12 +222,24 @@ namespace RemotePlayers
 				npc = nullptr;
 			}
 			if (!npc) {
-				const auto baseID = Config::Get().puppetBaseForm;
+				auto baseID = Config::Get().puppetBaseForm;
+				// With their face known, the base is a settler of their sex (unless the ini picked another base).
+				if (a_player.face && baseID == FEMALE_SETTLER && !a_player.face->female) {
+					baseID = MALE_SETTLER;
+				}
 				npc = RE::TESForm::GetFormByID<RE::TESNPC>(baseID);
 				if (!npc) {
 					REX::ERROR("RemotePlayers: puppet base form {:08X} is not an NPC", baseID);
 					return nullptr;
 				}
+			}
+			// Their own face, hair and body shape on a copy of that base (made once per look).
+			if (a_player.face && !a_player.faceTried) {
+				a_player.faceTried = true;
+				a_player.faceBase = Face::MakeBase(npc, *a_player.face);
+			}
+			if (a_player.faceBase) {
+				npc = a_player.faceBase;
 			}
 
 			RE::NEW_REFR_DATA data;
@@ -289,6 +309,23 @@ namespace RemotePlayers
 		}
 	}
 
+	void SetFace(std::uint32_t a_id, Protocol::Face a_face)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end()) {
+			return;
+		}
+		auto& player = it->second;
+		if (player.face && *player.face == a_face) {
+			return;
+		}
+		player.face = std::move(a_face);
+		player.faceBase = nullptr;  // the old copy stays in memory (forms can't be freed); a new one is made
+		player.faceTried = false;
+		// The stand-in is rebuilt with the new look the next time it's drawn.
+		DeleteActor(player);
+	}
+
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items)
 	{
 		const auto it = players.find(a_id);
@@ -348,6 +385,15 @@ namespace RemotePlayers
 	void DespawnAll()
 	{
 		for (auto& [id, player] : players) {
+			DeleteActor(player);
+		}
+	}
+
+	void RebuildFaces()
+	{
+		for (auto& [id, player] : players) {
+			player.faceBase = nullptr;
+			player.faceTried = false;
 			DeleteActor(player);
 		}
 	}

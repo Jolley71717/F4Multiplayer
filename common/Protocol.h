@@ -69,6 +69,7 @@ namespace Protocol
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 		kReportMarkers = 24,      // map markers the sender discovered
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
+		kReportFace = 27,          // the sender's character's face and body shape
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -94,6 +95,7 @@ namespace Protocol
 		kPinged = 120,            // another player pinged their position
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
+		kPlayerFace = 129,        // another player's face and body shape
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -242,6 +244,52 @@ namespace Protocol
 	{
 		std::uint32_t              playerId = 0;
 		std::vector<std::uint32_t> items;
+	};
+
+	// A player's face and body shape, as the game stores it on their character's base NPC: head
+	// parts (hair, eyes, beard, scars, ...), sculpting sliders, bone sculpting, make-up and skin
+	// tints, and the body shape triangle. The others build their stand-in's look from it.
+	inline constexpr std::size_t MAX_FACE_HEAD_PARTS = 24;
+	inline constexpr std::size_t MAX_FACE_SLIDERS = 256;
+	inline constexpr std::size_t MAX_FACE_BONES = 256;
+	inline constexpr std::size_t MAX_FACE_TINTS = 96;
+
+	struct FaceBone
+	{
+		std::uint32_t region = 0;
+		float         position[3] = {};
+		float         rotation[3] = {};
+		float         scale[3] = {};
+
+		bool operator==(const FaceBone&) const = default;
+	};
+
+	struct FaceTint
+	{
+		std::uint16_t templateId = 0;  // the race's tint template entry (uniqueID)
+		std::uint8_t  type = 0;        // 0 mask, 1 palette, 2 texture set
+		std::uint8_t  value = 0;       // strength 0..100 (tintingValue)
+		std::uint32_t color = 0;       // palette: tinting colour (ARGB)
+		std::uint16_t swatch = 0;      // palette: swatch ID
+
+		bool operator==(const FaceTint&) const = default;
+	};
+
+	struct Face
+	{
+		std::uint32_t              playerId = 0;  // ignored client -> server
+		bool                       female = false;
+		std::uint32_t              race = 0;  // form ID; the look only applies to a stand-in of the same race
+		std::vector<std::uint32_t> headParts;  // BGSHeadPart form IDs
+		std::uint32_t              hairColor = 0;        // BGSColorForm, 0 = none
+		std::uint32_t              facialHairColor = 0;  // BGSColorForm, 0 = none
+		float                      weight[3] = {};       // thin, muscular, fat
+		std::vector<float>         sliders;  // morph region slider values, by index
+		std::vector<FaceBone>      bones;
+		std::vector<FaceTint>      tints;
+		std::uint8_t               bodyTint[4] = {};  // RGBA
+
+		bool operator==(const Face&) const = default;
 	};
 
 	// An NPC's armor and weapons, from the player who runs it (each game rolls NPC gear on its own,
@@ -947,6 +995,133 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U8(a_msg.female ? 1 : 0);
+		w.U32(a_msg.race);
+		const auto parts = (std::min)(a_msg.headParts.size(), MAX_FACE_HEAD_PARTS);
+		w.U8(static_cast<std::uint8_t>(parts));
+		for (std::size_t i = 0; i < parts; ++i) {
+			w.U32(a_msg.headParts[i]);
+		}
+		w.U32(a_msg.hairColor);
+		w.U32(a_msg.facialHairColor);
+		for (const float v : a_msg.weight) {
+			w.F32(v);
+		}
+		const auto sliders = (std::min)(a_msg.sliders.size(), MAX_FACE_SLIDERS);
+		w.U16(static_cast<std::uint16_t>(sliders));
+		for (std::size_t i = 0; i < sliders; ++i) {
+			w.F32(a_msg.sliders[i]);
+		}
+		const auto bones = (std::min)(a_msg.bones.size(), MAX_FACE_BONES);
+		w.U16(static_cast<std::uint16_t>(bones));
+		for (std::size_t i = 0; i < bones; ++i) {
+			const auto& b = a_msg.bones[i];
+			w.U32(b.region);
+			for (const float v : b.position) {
+				w.F32(v);
+			}
+			for (const float v : b.rotation) {
+				w.F32(v);
+			}
+			for (const float v : b.scale) {
+				w.F32(v);
+			}
+		}
+		const auto tints = (std::min)(a_msg.tints.size(), MAX_FACE_TINTS);
+		w.U8(static_cast<std::uint8_t>(tints));
+		for (std::size_t i = 0; i < tints; ++i) {
+			const auto& t = a_msg.tints[i];
+			w.U16(t.templateId);
+			w.U8(t.type);
+			w.U8(t.value);
+			w.U32(t.color);
+			w.U16(t.swatch);
+		}
+		for (const auto v : a_msg.bodyTint) {
+			w.U8(v);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<Face> DecodeFace(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Face msg;
+		msg.playerId = r.U32();
+		msg.female = r.U8() != 0;
+		msg.race = r.U32();
+		const auto parts = r.U8();
+		if (parts > MAX_FACE_HEAD_PARTS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < parts && r.Ok(); ++i) {
+			msg.headParts.push_back(r.U32());
+		}
+		msg.hairColor = r.U32();
+		msg.facialHairColor = r.U32();
+		for (float& v : msg.weight) {
+			v = r.F32();
+		}
+		const auto sliders = r.U16();
+		if (sliders > MAX_FACE_SLIDERS) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < sliders && r.Ok(); ++i) {
+			msg.sliders.push_back(r.F32());
+		}
+		const auto bones = r.U16();
+		if (bones > MAX_FACE_BONES) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < bones && r.Ok(); ++i) {
+			FaceBone b;
+			b.region = r.U32();
+			for (float& v : b.position) {
+				v = r.F32();
+			}
+			for (float& v : b.rotation) {
+				v = r.F32();
+			}
+			for (float& v : b.scale) {
+				v = r.F32();
+			}
+			msg.bones.push_back(b);
+		}
+		const auto tints = r.U8();
+		if (tints > MAX_FACE_TINTS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < tints && r.Ok(); ++i) {
+			FaceTint t;
+			t.templateId = r.U16();
+			t.type = r.U8();
+			t.value = r.U8();
+			t.color = r.U32();
+			t.swatch = r.U16();
+			if (t.type > 2) {
+				return std::nullopt;
+			}
+			msg.tints.push_back(t);
+		}
+		for (auto& v : msg.bodyTint) {
+			v = r.U8();
+		}
+		if (!r.Ok() || !r.AtEnd() || msg.race == 0) {
+			return std::nullopt;
+		}
+		const auto finite = [](float a_v) { return std::isfinite(a_v); };
+		if (!std::ranges::all_of(msg.weight, finite) || !std::ranges::all_of(msg.sliders, finite) ||
+			!std::ranges::all_of(msg.bones, [&](const FaceBone& b) { return std::ranges::all_of(b.position, finite) && std::ranges::all_of(b.rotation, finite) && std::ranges::all_of(b.scale, finite); })) {
 			return std::nullopt;
 		}
 		return msg;

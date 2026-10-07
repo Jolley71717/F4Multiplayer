@@ -7,6 +7,7 @@
 #include "game/Conversations.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/Face.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/Voice.h"
@@ -54,6 +55,7 @@ namespace Session
 		constexpr auto                            EQUIPMENT_INTERVAL = 1s;
 		Clock::time_point                         nextEquipmentCheck{};
 		std::optional<std::vector<std::uint32_t>> sentEquipment;
+		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		std::string       lastRejectReason;
 
@@ -196,6 +198,7 @@ namespace Session
 				if (const auto msg = Protocol::DecodeWelcome(a_data)) {
 					welcomed = true;
 					sentEquipment.reset();
+					sentFace.reset();
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
@@ -302,6 +305,11 @@ namespace Session
 			case MessageType::kNpcEquipment:
 				if (const auto msg = Protocol::DecodeNpcEquipment(a_data)) {
 					NpcSync::ApplyEquipment(*msg);
+				}
+				break;
+			case MessageType::kPlayerFace:
+				if (auto msg = Protocol::DecodeFace(a_data)) {
+					RemotePlayers::SetFace(msg->playerId, std::move(*msg));
 				}
 				break;
 			case MessageType::kVoiceRelay:
@@ -451,6 +459,7 @@ namespace Session
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
+				sentFace.reset();
 			}
 		}
 
@@ -619,6 +628,17 @@ namespace Session
 
 		if ((welcomed || echo) && now >= nextEquipmentCheck && InGame()) {
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
+			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
+			auto face = Face::Read(RE::PlayerCharacter::GetSingleton()->GetNPC());
+			if (face.race != 0 && (!sentFace || *sentFace != face)) {
+				if (welcomed) {
+					client->Send(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);
+				}
+				if (echo) {
+					RemotePlayers::SetFace(ECHO_ID, face);
+				}
+				sentFace = std::move(face);
+			}
 			auto items = Equipment::Read(RE::PlayerCharacter::GetSingleton());
 			if (!sentEquipment || *sentEquipment != items) {
 				if (welcomed) {
@@ -750,6 +770,7 @@ namespace Session
 		if (a_enabled) {
 			RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 			sentEquipment.reset();
+			sentFace.reset();
 		} else {
 			RemotePlayers::Remove(ECHO_ID);
 		}

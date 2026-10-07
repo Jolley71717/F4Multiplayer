@@ -66,6 +66,7 @@ GPL-3.0. The source will be published on GitHub.
 
 ## Changelog for 0.6.1
 
+- Friends' stand-ins are now the right sex and body shape (their full face is sent too, and will show once head generation works).
 - NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
 - Replayed automatic-weapon fire no longer loops forever on the hearing side.
 - The free high-resolution texture pack no longer counts as a load-order difference.

@@ -34,7 +34,7 @@ Start-Sleep -Milliseconds 400
 
 for ($i = 0; $i -lt $Times; $i++) {
 	if ($Click) {
-		[F4Input]::SetCursorPos(960, 540) | Out-Null  # over the game window, not whatever is beside it
+		[F4Input]::SetCursorPos(600, 400) | Out-Null  # over the game window, not whatever is beside it
 		[F4Input]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)  # left down
 		Start-Sleep -Milliseconds $HoldMs
 		[F4Input]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)  # left up

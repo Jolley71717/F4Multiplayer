@@ -23,6 +23,13 @@ namespace WeaponFire
 		using ProcessEventFn = RE::BSEventNotifyControl (*)(RE::BSTEventSink<RE::BSAnimationGraphEvent>*, const RE::BSAnimationGraphEvent&, RE::BSTEventSource<RE::BSAnimationGraphEvent>*);
 		ProcessEventFn originalPlayerEvent = nullptr;
 
+		// A shot ("WeaponFire", once per bullet) or a melee swing or punch ("weaponSwing", at the hit
+		// frame): both are replayed as an attack on the stand-in, which swings whatever it holds.
+		bool IsAttackEvent(std::string_view a_tag)
+		{
+			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
+		}
+
 		std::atomic<bool>        logging{ false };
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -30,7 +37,7 @@ namespace WeaponFire
 		RE::BSEventNotifyControl OnPlayerAnimationEvent(RE::BSTEventSink<RE::BSAnimationGraphEvent>* a_this, const RE::BSAnimationGraphEvent& a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* a_source)
 		{
 			const std::string_view tag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
-			if (tag == "WeaponFire") {
+			if (IsAttackEvent(tag)) {
 				++pending;
 				++total;
 			}
@@ -54,7 +61,7 @@ namespace WeaponFire
 		{
 			const auto actor = reinterpret_cast<RE::Actor*>(reinterpret_cast<std::uintptr_t>(a_this) - ANIM_SINK_OFFSET);
 			const auto id = actor->GetFormID();
-			if (Protocol::IsShareableRef(id) && a_event.tag.c_str() && std::string_view{ a_event.tag.c_str() } == "WeaponFire") {
+			if (Protocol::IsShareableRef(id) && a_event.tag.c_str() && IsAttackEvent(a_event.tag.c_str())) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);
