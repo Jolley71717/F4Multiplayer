@@ -33,6 +33,8 @@ can join. Optionally set the same `sPassword` for everyone.
 
 ## Playing
 
+If your Steam status hides what you play ("private" game details), friends can't see you in a game: invite them from the overlay instead of waiting for Join Game, or set your game details to visible for friends while hosting.
+
 1. Everyone starts the game **with F4SE** and loads a save.
 2. The host invites friends: open the Steam overlay (Shift+Tab), go to Friends, right-click a
    friend and pick **Invite to Game**. The friend accepts the invite in their Steam overlay.
@@ -130,7 +132,7 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
-- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet.
+- Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied.
 
 ## Problems
 
