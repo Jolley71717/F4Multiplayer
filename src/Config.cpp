@@ -107,6 +107,8 @@ namespace Config
 				settings.fastLoading = ParseBool(value);
 			} else if (key == "bSyncTime") {
 				settings.syncTime = ParseBool(value);
+			} else if (key == "bSaveSession") {
+				settings.saveSession = ParseBool(value);
 			} else if (key == "fXpShare") {
 				float share = settings.xpShare;
 				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);

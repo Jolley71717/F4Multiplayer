@@ -48,6 +48,9 @@ namespace Config
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 
+		// When hosting: the shared world is saved to disk and carried on next time (same load order).
+		bool saveSession = true;
+
 		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
 		float xpShare = 0.5f;
 

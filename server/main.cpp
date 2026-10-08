@@ -1,4 +1,4 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--session-file PATH]
 
 #include "Protocol.h"
 #include "Server.h"
@@ -55,8 +55,10 @@ int main(int argc, char* argv[])
 			options.friendlyFire = true;
 		} else if (arg == "--shared-story") {
 			options.sharedStory = true;
+		} else if (arg == "--session-file" && hasValue) {
+			options.sessionFile = argv[++i];
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH]\n";
 			return 2;
 		}
 	}

@@ -123,6 +123,10 @@ one player sides with one faction and another player with a rival one, both game
 What happens in a session is saved into your game when you save. Use a separate save for co-op if you
 want to keep your solo playthrough untouched.
 
+The host's game also keeps the shared world on disk (`bSaveSession`, on by default): the next time
+they host with the same load order, the session carries on where it stopped. Delete
+`DocumentsMy Gamesallout44se4multiplayer.session` to start over.
+
 ## Dedicated server (optional)
 
 `F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire]` runs a server

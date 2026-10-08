@@ -552,6 +552,11 @@ namespace Session
 			options.friendlyFire = settings.friendlyFire;
 			options.sharedStory = settings.sharedStory;
 			options.ignoredPlugins = settings.ignoredPlugins;
+			if (settings.saveSession) {
+				if (const auto folder = Identity::DataFolder()) {
+					options.sessionFile = (*folder / "F4Multiplayer.session").string();
+				}
+			}
 			std::vector<std::unique_ptr<ServerTransport>> extra;
 			if (steamMode) {
 				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));

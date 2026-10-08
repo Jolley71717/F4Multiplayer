@@ -37,6 +37,10 @@ public:
 		// Plugins that may differ between players (texture, sound or UI mods): a load order that
 		// matches once these are left out is accepted.
 		std::vector<std::string> ignoredPlugins;
+
+		// Where the session's world is saved (and loaded from at start), so it survives the host
+		// quitting. Empty = not saved.
+		std::string sessionFile;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;

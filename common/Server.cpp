@@ -2,8 +2,10 @@
 
 #include "EnetTransport.h"
 #include "Protocol.h"
+#include "SessionFile.h"
 
 #include <chrono>
+#include <filesystem>
 #include <format>
 #include <map>
 #include <random>
@@ -198,6 +200,68 @@ void Server::Run()
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
+
+	// The saved session, if any: adopted as this run's session (the first player's load order must
+	// match, or the hello path starts a fresh one). Saved again every few seconds while it changes.
+	const std::filesystem::path sessionPath{ options.sessionFile };
+	if (!options.sessionFile.empty()) {
+		if (const auto saved = SessionFile::Load(sessionPath)) {
+			sessionContentHash = saved->contentHash;
+			sessionId = saved->sessionId;
+			nextId = (std::max)(nextId, saved->nextId);
+			for (const auto& [identity, id] : saved->identities) {
+				identities[identity] = id;
+			}
+			deadActors.insert(saved->deadActors.begin(), saved->deadActors.end());
+			containerChanges = saved->containerChanges;
+			pickedUp.insert(saved->pickedUp.begin(), saved->pickedUp.end());
+			for (const auto& state : saved->refStates) {
+				refStates[state.refId] = state;
+			}
+			questStages = saved->questStages;
+			worldTime = saved->worldTime;
+			for (const auto& [ref, flags] : saved->markers) {
+				markers[ref] = flags;
+			}
+			for (const auto& item : saved->workshopItems) {
+				workshopItems[{ item.playerId, item.refId }] = item;
+			}
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built)", deadActors.size(), containerChanges.size(), workshopItems.size()));
+		}
+	}
+	std::size_t lastSavedSize = 0;  // a cheap change check: how much state there was at the last save
+	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshopItems.size() + (worldTime ? 1 : 0); };
+	const auto  saveSession = [&] {
+		if (options.sessionFile.empty() || sessionContentHash == 0) {
+			return;
+		}
+		SessionFile::Snapshot snapshot;
+		snapshot.contentHash = sessionContentHash;
+		snapshot.sessionId = sessionId;
+		snapshot.nextId = nextId;
+		for (const auto& [identity, id] : identities) {
+			snapshot.identities.emplace_back(identity, id);
+		}
+		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
+		snapshot.containerChanges = containerChanges;
+		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
+		for (const auto& [id, state] : refStates) {
+			snapshot.refStates.push_back(state);
+		}
+		snapshot.questStages = questStages;
+		snapshot.worldTime = worldTime;
+		for (const auto& [ref, flags] : markers) {
+			snapshot.markers.emplace_back(ref, flags);
+		}
+		for (const auto& [key, item] : workshopItems) {
+			snapshot.workshopItems.push_back(item);
+		}
+		if (!SessionFile::Save(sessionPath, snapshot)) {
+			log("server: could not save the session");
+		}
+		lastSavedSize = stateSize();
+	};
+	Clock::time_point nextSave = Clock::now() + std::chrono::seconds(15);
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
@@ -1129,7 +1193,16 @@ void Server::Run()
 		for (auto& [key, player] : players) {
 			player.stateDirty = false;
 		}
+
+		// The session goes to disk when it changed (checked every 15 s) and when the server stops.
+		if (Clock::now() >= nextSave) {
+			nextSave = Clock::now() + std::chrono::seconds(15);
+			if (stateSize() != lastSavedSize) {
+				saveSession();
+			}
+		}
 	}
+	saveSession();
 
 	for (auto& transport : transports) {
 		transport->Close();

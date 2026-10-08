@@ -6,5 +6,8 @@
 // person as before" within one hosting session.
 namespace Identity
 {
+	// Documents\My Games\Fallout4\F4SE, where this mod keeps its per-player files.
+	[[nodiscard]] std::optional<std::filesystem::path> DataFolder();
+
 	[[nodiscard]] std::uint64_t Get();
 }

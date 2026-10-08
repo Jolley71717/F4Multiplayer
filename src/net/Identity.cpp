@@ -9,17 +9,23 @@
 
 namespace Identity
 {
+	std::optional<std::filesystem::path> DataFolder()
+	{
+		PWSTR docs = nullptr;
+		if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs))) {
+			return std::nullopt;
+		}
+		std::filesystem::path path{ docs };
+		CoTaskMemFree(docs);
+		return path / "My Games" / "Fallout4" / "F4SE";
+	}
+
 	namespace
 	{
 		std::optional<std::filesystem::path> FilePath()
 		{
-			PWSTR docs = nullptr;
-			if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs))) {
-				return std::nullopt;
-			}
-			std::filesystem::path path{ docs };
-			CoTaskMemFree(docs);
-			return path / "My Games" / "Fallout4" / "F4SE" / "F4Multiplayer_player.id";
+			const auto folder = DataFolder();
+			return folder ? std::optional{ *folder / "F4Multiplayer_player.id" } : std::nullopt;
 		}
 
 		std::uint64_t Load()

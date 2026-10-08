@@ -3,6 +3,9 @@
 
 #include "ServerFixture.h"
 
+#include <cstdlib>
+#include <filesystem>
+#include <format>
 #include <set>
 #include <thread>
 #include <type_traits>
@@ -1284,4 +1287,59 @@ TEST("server workshop: scrapping something nobody knew about is not relayed")
 	scrapped.op = Protocol::WorkshopOp::kScrapped;
 	f.fake->Deliver(1, Built(scrapped));
 	CHECK(Count(Received(f, 2), MT::kWorkshopItem) == 0);
+}
+
+// ---- the saved session --------------------------------------------------------------------
+
+TEST("server session file: the world survives a server restart with the same load order")
+{
+	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	std::filesystem::remove(path);
+	Server::Options options;
+	options.sessionFile = path;
+	std::uint64_t firstSession = 0;
+	{
+		Fixture    f{ options };
+		const auto alice = f.Join(1, Fixture::MakeHello("Alice", 0xA11CE));
+		REQUIRE(alice);
+		CHECK(alice->playerId == 1);
+		firstSession = alice->sessionId;
+		f.fake->Deliver(1, Death(NPC));
+		f.fake->Deliver(1, Built(Wall(0xFF000001)));
+		Clear(f, { 1 });
+	}  // stopping saves
+
+	{
+		Fixture    f{ options };
+		const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+		REQUIRE(bob);
+		CHECK(bob->sessionId == firstSession);  // the same session carries on
+		CHECK(bob->playerId != 1);              // Alice's ID stays hers
+		CHECK(f.Logged("loaded the saved session"));
+		const auto received = Received(f, 2);
+		const auto world = WorldStates(received);
+		REQUIRE(world.size() == 1);
+		CHECK((std::set<std::uint32_t>(world[0].deadActors.begin(), world[0].deadActors.end()) == std::set<std::uint32_t>{ NPC }));
+		const auto batches = Decoded(received, MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+		REQUIRE(batches.size() == 1);
+		CHECK(batches[0].size() == 1);
+		// Alice comes back as player 1, and is not sent her own wall.
+		const auto again = f.Join(3, Fixture::MakeHello("Alice", 0xA11CE));
+		REQUIRE(again);
+		CHECK(again->playerId == 1);
+		CHECK(Decoded(Received(f, 3), MT::kWorkshopItems, Protocol::DecodeWorkshopItems).empty());
+	}
+
+	{
+		// A different load order starts fresh, as it would have mid-run.
+		Fixture f{ options };
+		auto    carol = Fixture::MakeHello("Carol");
+		carol.contentHash = 0x9999;
+		const auto welcome = f.Join(3, carol);
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId != firstSession);
+		CHECK(f.Logged("load order changed"));
+		CHECK(WorldStates(Received(f, 3))[0].deadActors.empty());
+	}
+	std::filesystem::remove(path);
 }
