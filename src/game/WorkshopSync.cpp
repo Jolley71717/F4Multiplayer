@@ -168,6 +168,35 @@ namespace WorkshopSync
 			return found;
 		}
 
+		// What workshop mode can build: furniture, walls, lights, containers, crops, turrets... A
+		// message from another player is untrusted, so bases the workshop never places (explosions,
+		// hazards, projectiles, unique NPCs) are refused: they would go off, or persist, in our save.
+		bool Buildable(const RE::TESBoundObject* a_base)
+		{
+			using T = RE::ENUM_FORM_ID;
+			switch (a_base->GetFormType()) {
+			case T::kSTAT:
+			case T::kSCOL:
+			case T::kMSTT:
+			case T::kACTI:
+			case T::kFURN:
+			case T::kCONT:
+			case T::kDOOR:
+			case T::kLIGH:
+			case T::kTERM:
+			case T::kMISC:
+			case T::kFLOR:
+			case T::kTREE:
+				return true;
+			case T::kNPC_: {
+				const auto npc = static_cast<const RE::TESNPC*>(a_base);  // turrets and other built actors
+				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007;
+			}
+			default:
+				return false;
+			}
+		}
+
 		// Places (or moves) the copy; false if its settlement isn't loaded yet.
 		bool Place(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
@@ -184,8 +213,8 @@ namespace WorkshopSync
 				return false;
 			}
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
-			if (!base) {
-				return true;  // nothing we can show (a mod we don't have)
+			if (!base || !Buildable(base)) {
+				return true;  // nothing we can show (a mod we don't have), or nothing we would
 			}
 			if (const auto existing = FindExisting(a_item)) {
 				SetTransform(existing, a_item);

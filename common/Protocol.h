@@ -1078,7 +1078,7 @@ namespace Protocol
 		}
 		msg.scale = r.F32();
 		finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
-		if (!r.Ok() || !r.AtEnd() || !finite || msg.refId == 0 || msg.op > WorkshopOp::kScrapped || (msg.op == WorkshopOp::kPlaced && msg.base == 0)) {
+		if (!r.Ok() || !r.AtEnd() || !finite || msg.refId == 0 || msg.op > WorkshopOp::kScrapped || (msg.op == WorkshopOp::kPlaced && (msg.base == 0 || (msg.base >> 24) == 0xFF))) {
 			return std::nullopt;
 		}
 		return msg;
