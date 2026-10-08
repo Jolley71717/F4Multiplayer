@@ -101,6 +101,7 @@ namespace Protocol
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
+		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -786,6 +787,32 @@ namespace Protocol
 		return msg;
 	}
 
+	// Whether two load orders are the same once the ignored plugins (the host's list) are left out of
+	// both: same names, same order. False when either list is unknown.
+	inline bool SameLoadOrderIgnoring(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored)
+	{
+		if (a_theirs.empty() || a_sessions.empty()) {
+			return false;
+		}
+		const auto lower = [](std::string a_s) {
+			for (char& c : a_s) {
+				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+			}
+			return a_s;
+		};
+		const auto kept = [&](const std::vector<std::string>& a_names) {
+			std::vector<std::string> out;
+			for (const auto& name : a_names) {
+				const auto l = lower(name);
+				if (std::ranges::none_of(a_ignored, [&](const std::string& a_ignore) { return lower(a_ignore) == l; })) {
+					out.push_back(l);
+				}
+			}
+			return out;
+		};
+		return kept(a_theirs) == kept(a_sessions);
+	}
+
 	// What a refused player needs to hear: the plugins only they have, and the ones only the session
 	// has (in load-order terms: names and order; a different order shows as both sides "having"
 	// nothing extra, so the order is named then). Fits a Reject.
@@ -1105,21 +1132,51 @@ namespace Protocol
 		return msg;
 	}
 
+	namespace detail
+	{
+		inline void WriteWorkshopItem(Writer& w, const WorkshopItem& a_msg)
+		{
+			w.U32(a_msg.playerId);
+			w.U32(a_msg.refId);
+			w.U8(a_msg.op);
+			w.U32(a_msg.base);
+			w.U32(a_msg.workshop);
+			for (const float v : a_msg.position) {
+				w.F32(v);
+			}
+			for (const float v : a_msg.rotation) {
+				w.F32(v);
+			}
+			w.F32(a_msg.scale);
+		}
+
+		// False if the item is not one we would accept.
+		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg)
+		{
+			msg.playerId = r.U32();
+			msg.refId = r.U32();
+			msg.op = r.U8();
+			msg.base = r.U32();
+			msg.workshop = r.U32();
+			bool finite = true;
+			for (float& v : msg.position) {
+				v = r.F32();
+				finite = finite && std::isfinite(v);
+			}
+			for (float& v : msg.rotation) {
+				v = r.F32();
+				finite = finite && std::isfinite(v);
+			}
+			msg.scale = r.F32();
+			finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
+			return r.Ok() && finite && msg.refId != 0 && msg.op <= WorkshopOp::kScrapped && (msg.op != WorkshopOp::kPlaced || (msg.base != 0 && (msg.base >> 24) != 0xFF));
+		}
+	}
+
 	inline std::vector<std::uint8_t> Encode(const WorkshopItem& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
-		w.U32(a_msg.playerId);
-		w.U32(a_msg.refId);
-		w.U8(a_msg.op);
-		w.U32(a_msg.base);
-		w.U32(a_msg.workshop);
-		for (const float v : a_msg.position) {
-			w.F32(v);
-		}
-		for (const float v : a_msg.rotation) {
-			w.F32(v);
-		}
-		w.F32(a_msg.scale);
+		detail::WriteWorkshopItem(w, a_msg);
 		return w.Data();
 	}
 
@@ -1128,26 +1185,42 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		WorkshopItem msg;
-		msg.playerId = r.U32();
-		msg.refId = r.U32();
-		msg.op = r.U8();
-		msg.base = r.U32();
-		msg.workshop = r.U32();
-		bool finite = true;
-		for (float& v : msg.position) {
-			v = r.F32();
-			finite = finite && std::isfinite(v);
-		}
-		for (float& v : msg.rotation) {
-			v = r.F32();
-			finite = finite && std::isfinite(v);
-		}
-		msg.scale = r.F32();
-		finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
-		if (!r.Ok() || !r.AtEnd() || !finite || msg.refId == 0 || msg.op > WorkshopOp::kScrapped || (msg.op == WorkshopOp::kPlaced && (msg.base == 0 || (msg.base >> 24) == 0xFF))) {
+		if (!detail::ReadWorkshopItem(r, msg) || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
+	}
+
+	// kWorkshopItems: up to MAX_ACTORS_PER_PACKET items in one packet (a joiner's catch-up).
+	inline std::vector<std::uint8_t> Encode(const std::vector<WorkshopItem>& a_msg)
+	{
+		Writer     w{ MessageType::kWorkshopItems };
+		const auto count = (std::min)(a_msg.size(), MAX_ACTORS_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteWorkshopItem(w, a_msg[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto count = r.U8();
+		if (count > MAX_ACTORS_PER_PACKET) {
+			return std::nullopt;
+		}
+		std::vector<WorkshopItem> items(count);
+		for (auto& item : items) {
+			if (!detail::ReadWorkshopItem(r, item)) {
+				return std::nullopt;
+			}
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return items;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)

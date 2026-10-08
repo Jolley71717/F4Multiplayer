@@ -1218,3 +1218,15 @@ TEST("protocol: LoadOrderDifference names what only one side has, or the order")
 	CHECK(LoadOrderDifference({}, session).find("same mods in the same order") != std::string::npos);
 	CHECK(LoadOrderDifference({ "Fallout4.esm", "X.esp", "Y.esp" }, session).size() <= MAX_REASON_LENGTH);
 }
+
+TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists")
+{
+	const std::vector<std::string> session{ "Fallout4.esm", "HDTextures.esp", "A.esp" };
+	const std::vector<std::string> ignore{ "hdtextures.esp" };
+	CHECK(SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, ignore));
+	CHECK(SameLoadOrderIgnoring({ "fallout4.esm", "a.esp", "HDTextures.esp" }, session, ignore));
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp", "B.esp" }, session, ignore));
+	CHECK(!SameLoadOrderIgnoring({ "A.esp", "Fallout4.esm" }, session, ignore));  // order still counts
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, {}));
+	CHECK(!SameLoadOrderIgnoring({}, session, ignore));
+}

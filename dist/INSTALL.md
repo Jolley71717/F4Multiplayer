@@ -31,6 +31,10 @@ Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through
 so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
 can join. Optionally set the same `sPassword` for everyone.
 
+If a friend has a purely cosmetic mod you don't (textures, sounds, UI), the host can list its plugin
+in `sIgnoredPlugins` (comma-separated) and the load orders are compared without it. Only do that for
+mods that add nothing the session shares: an NPC, item or settlement mod listed there desyncs quietly.
+
 ## Playing
 
 If your Steam status hides what you play ("private" game details), friends can't see you in a game: invite them from the overlay instead of waiting for Join Game, or set your game details to visible for friends while hosting.

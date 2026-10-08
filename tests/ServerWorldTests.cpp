@@ -1265,7 +1265,9 @@ TEST("server workshop: a late joiner gets everything built so far, moved objects
 	Clear(f, { 1 });
 
 	JoinAs(f, 2, "Bob");
-	const auto items = Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem);
+	const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	REQUIRE(batches.size() == 1);
+	const auto& items = batches[0];
 	REQUIRE(items.size() == 1);
 	CHECK(items[0].refId == 0xFF000001);
 	CHECK(items[0].position[0] == 20.0f);

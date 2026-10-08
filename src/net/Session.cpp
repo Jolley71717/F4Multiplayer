@@ -322,6 +322,13 @@ namespace Session
 					WorkshopSync::Apply(*msg);
 				}
 				break;
+			case MessageType::kWorkshopItems:
+				if (const auto msg = Protocol::DecodeWorkshopItems(a_data)) {
+					for (const auto& item : *msg) {
+						WorkshopSync::Apply(item);
+					}
+				}
+				break;
 			case MessageType::kVoiceRelay:
 				if (const auto msg = Protocol::DecodeVoice(a_data)) {
 					Voice::Apply(*msg);
@@ -544,6 +551,7 @@ namespace Session
 			options.udpLoopbackOnly = steamMode;
 			options.friendlyFire = settings.friendlyFire;
 			options.sharedStory = settings.sharedStory;
+			options.ignoredPlugins = settings.ignoredPlugins;
 			std::vector<std::unique_ptr<ServerTransport>> extra;
 			if (steamMode) {
 				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));

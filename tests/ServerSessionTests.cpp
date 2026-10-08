@@ -1143,3 +1143,27 @@ TEST("server session: a load-order refusal names the plugins that differ")
 	REQUIRE(reject);
 	CHECK(Contains(reject->reason, "Only you have: Extra.esp"));
 }
+
+TEST("server session: a load order that differs only in the host's ignored plugins is accepted")
+{
+	Server::Options options;
+	options.ignoredPlugins = { "Textures.esp" };
+	Fixture f{ options };
+	auto    alice = Fixture::MakeHello("Alice");
+	alice.plugins = { "Fallout4.esm", "Textures.esp" };
+	REQUIRE(f.Join(1, alice));
+	f.fake->Take(1);
+
+	auto bob = Fixture::MakeHello("Bob");
+	bob.contentHash = 0x9999;
+	bob.plugins = { "Fallout4.esm" };
+	REQUIRE(f.Join(2, bob));
+	CHECK(f.Logged("ignored plugins"));
+
+	auto carol = Fixture::MakeHello("Carol");
+	carol.contentHash = 0x7777;
+	carol.plugins = { "Fallout4.esm", "Other.esp" };
+	const auto reject = JoinRejected(f, 3, Protocol::Encode(carol));
+	REQUIRE(reject);
+	CHECK(Contains(reject->reason, "Only you have: Other.esp"));
+}

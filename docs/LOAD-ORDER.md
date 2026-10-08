@@ -30,7 +30,7 @@ plugins, not INI settings.
 
 ## Recommendation
 
-C is done (protocol 23). Next B with a conservative built-in list (the
+C and D are done (protocol 23; `sIgnoredPlugins` in the host's ini, compared on the plugin lists). Next B with a conservative built-in list (the
 official HD pack is already there; add the common texture and audio replacers, and any plugin whose
 record types are all outside what the mod shares) and D so hosts can extend it. Leave E and F out:
 E is a large, silent-failure change for a problem that matching load orders solves, and F cannot

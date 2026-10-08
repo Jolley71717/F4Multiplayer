@@ -76,7 +76,7 @@ GPL-3.0. The source will be published on GitHub.
 - NPC gear is shared: the game that runs an NPC reports its weapon and armor, and the others dress their copy the same (each game used to roll its own).
 - Replayed automatic-weapon fire no longer loops forever on the hearing side.
 - The free high-resolution texture pack no longer counts as a load-order difference.
-- A refused join now says which plugins differ ("Only you have: X.esp").
+- A refused join now says which plugins differ ("Only you have: X.esp"), and the host can list cosmetic plugins that may differ (sIgnoredPlugins).
 - Protocol 23: everyone updates together.
 
 ## Changelog for 0.6.0

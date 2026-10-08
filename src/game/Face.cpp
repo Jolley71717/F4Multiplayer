@@ -177,37 +177,39 @@ namespace Face
 			npc->morphWeight = { a_face.weight[0], a_face.weight[1], a_face.weight[2] };
 		}
 
-		const auto sliders = new RE::BSTArray<float>();
-		for (const float v : a_face.sliders) {
-			sliders->push_back(v);
-		}
 		if (Face::parts & 8) {
+			const auto sliders = new RE::BSTArray<float>();
+			for (const float v : a_face.sliders) {
+				sliders->push_back(v);
+			}
 			npc->morphRegionSliderValues = sliders;
 		}
 
-		const auto bones = new RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>();
-		for (const auto& b : a_face.bones) {
-			RE::BGSCharacterMorph::Transform t;
-			t.position = { b.position[0], b.position[1], b.position[2] };
-			t.rotation = { b.rotation[0], b.rotation[1], b.rotation[2] };
-			t.scale = { b.scale[0], b.scale[1], b.scale[2] };
-			bones->insert({ b.region, t });
-		}
 		if (Face::parts & 16) {
+			const auto bones = new RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>();
+			for (const auto& b : a_face.bones) {
+				RE::BGSCharacterMorph::Transform t;
+				t.position = { b.position[0], b.position[1], b.position[2] };
+				t.rotation = { b.rotation[0], b.rotation[1], b.rotation[2] };
+				t.scale = { b.scale[0], b.scale[1], b.scale[2] };
+				bones->insert({ b.region, t });
+			}
 			npc->facialBoneRegionSliderValues = bones;
 		}
 
-		const auto tints = new Tint::Entries();
-		for (const auto& t : a_face.tints) {
-			const auto templ = FindTemplate(race, a_face.female, t.templateId);
-			if (!templ) {
-				continue;  // a template from a mod the receiver doesn't have
-			}
-			if (const auto entry = MakeTint(t, templ)) {
-				tints->entriesA.push_back(entry);
-			}
-		}
+		std::size_t tintCount = 0;
 		if (Face::parts & 32) {
+			const auto tints = new Tint::Entries();
+			for (const auto& t : a_face.tints) {
+				const auto templ = FindTemplate(race, a_face.female, t.templateId);
+				if (!templ) {
+					continue;  // a template from a mod the receiver doesn't have
+				}
+				if (const auto entry = MakeTint(t, templ)) {
+					tints->entriesA.push_back(entry);
+				}
+			}
+			tintCount = tints->entriesA.size();
 			npc->tintingData = tints;
 		}
 
@@ -224,7 +226,7 @@ namespace Face
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
 		}
 		++made;
-		REX::INFO("Face: made base {:08X} from {:08X}: {} head parts, {} sliders, {} bones, {} tints", npc->GetFormID(), a_base->GetFormID(), parts.size(), a_face.sliders.size(), a_face.bones.size(), tints->entriesA.size());
+		REX::INFO("Face: made base {:08X} from {:08X}: {} head parts, {} sliders, {} bones, {} tints", npc->GetFormID(), a_base->GetFormID(), parts.size(), a_face.sliders.size(), a_face.bones.size(), tintCount);
 		return npc;
 	}
 

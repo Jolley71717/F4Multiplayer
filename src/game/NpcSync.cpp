@@ -663,6 +663,11 @@ namespace NpcSync
 		if (now >= nextGear) {
 			nextGear = now + GEAR_INTERVAL;
 			SendOwnedGear();
+			std::vector<std::uint32_t> ids;
+			for (const auto& [id, track] : owned) {
+				ids.push_back(id);
+			}
+			WeaponFire::SetOwnedNpcs(std::move(ids));
 		}
 		// The partner is found when the conversation starts and kept until it ends.
 		const auto ui = RE::UI::GetSingleton();

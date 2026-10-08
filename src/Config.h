@@ -32,6 +32,9 @@ namespace Config
 		// player plays their own ("own", the default; side quests are shared either way).
 		bool sharedStory = false;
 
+		// When hosting: plugins that may differ between players (comma-separated file names).
+		std::vector<std::string> ignoredPlugins;
+
 		// NPC base form used for other players' characters. It should belong to no factions,
 		// or hitting another player can count as a crime against that faction.
 		std::uint32_t puppetBaseForm = 0x0020A578;  // Settler (female, fixed look, no factions)

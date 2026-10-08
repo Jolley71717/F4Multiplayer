@@ -233,6 +233,12 @@ namespace RemotePlayers
 				}
 				return;
 			}
+			// The stand-in walked into another cell: the light is remade there (a reference stays in the
+			// cell it was created in).
+			if (light && light->GetParentCell() != a_actor->GetParentCell()) {
+				DeleteLight(a_player);
+				light = nullptr;
+			}
 			RE::NiPoint3 at = a_actor->data.location;
 			at.z += LIGHT_HEIGHT;
 			if (!light) {

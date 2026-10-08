@@ -28,6 +28,9 @@ namespace WeaponFire
 	[[nodiscard]] std::vector<std::uint8_t> TakeActions();
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
+	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
+	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
+
 	// Ends the gunshot sounds that would otherwise loop (automatic weapons' fire sounds loop until
 	// stopped). Call every frame.
 	void Frame();

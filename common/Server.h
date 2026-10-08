@@ -33,6 +33,10 @@ public:
 		// Main story and faction quest progress is shared too, not just side quests (each
 		// player's game decides what to apply; this only tells them the host's choice).
 		bool sharedStory = false;
+
+		// Plugins that may differ between players (texture, sound or UI mods): a load order that
+		// matches once these are left out is accepted.
+		std::vector<std::string> ignoredPlugins;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;

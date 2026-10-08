@@ -78,6 +78,21 @@ namespace Config
 				settings.friendlyFire = ParseBool(value);
 			} else if (key == "sStory") {
 				settings.sharedStory = value == "shared";
+			} else if (key == "sIgnoredPlugins") {
+				settings.ignoredPlugins.clear();
+				for (std::size_t start = 0; start <= value.size();) {
+					const auto comma = value.find(',', start);
+					auto name = value.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+					const auto first = name.find_first_not_of(" 	");
+					const auto last = name.find_last_not_of(" 	");
+					if (first != std::string::npos) {
+						settings.ignoredPlugins.emplace_back(name.substr(first, last - first + 1));
+					}
+					if (comma == std::string::npos) {
+						break;
+					}
+					start = comma + 1;
+				}
 			} else if (key == "iMyAppearance") {
 				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {

@@ -380,8 +380,12 @@ void Server::Run()
 			sessionContentHash = hello->contentHash;
 			sessionPlugins = hello->plugins;
 		} else if (hello->contentHash != sessionContentHash) {
-			reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
-			return;
+			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
+			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
+				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
+				return;
+			}
+			log(std::format("server: '{}' joins with a load order that differs only in ignored plugins", hello->name));
 		}
 
 		// Someone coming back gets their old ID. If their old connection is still here, their game
@@ -451,10 +455,21 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
-		// Everything built at settlements so far, by anyone (their builder may be gone).
-		for (const auto& [key, item] : workshopItems) {
-			if (key.first != a_player.id) {
-				send(a_player.key, Protocol::Encode(item, Protocol::MessageType::kWorkshopItem), true);
+		// Everything built at settlements so far, by anyone (their builder may be gone), in batches.
+		{
+			std::vector<Protocol::WorkshopItem> batch;
+			for (const auto& [key, item] : workshopItems) {
+				if (key.first == a_player.id) {
+					continue;
+				}
+				batch.push_back(item);
+				if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
+					send(a_player.key, Protocol::Encode(batch), true);
+					batch.clear();
+				}
+			}
+			if (!batch.empty()) {
+				send(a_player.key, Protocol::Encode(batch), true);
 			}
 		}
 

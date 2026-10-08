@@ -47,6 +47,7 @@ namespace WeaponFire
 		}
 
 		std::mutex                 actionLock;
+		std::unordered_set<std::uint32_t> ownedNpcs;  // the NPCs we run: only their actions are worth queuing
 		std::vector<std::uint8_t>  playerActions;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
@@ -96,7 +97,7 @@ namespace WeaponFire
 			}
 			if (const auto action = Protocol::IsShareableRef(id) && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
 				std::scoped_lock l{ actionLock };
-				if (npcActions.size() < MAX_PENDING_ACTIONS) {
+				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
 					npcActions.push_back({ id, *action });
 				}
 			}
@@ -149,6 +150,12 @@ namespace WeaponFire
 	{
 		std::scoped_lock l{ actionLock };
 		return std::exchange(npcActions, {});
+	}
+
+	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids)
+	{
+		std::scoped_lock l{ actionLock };
+		ownedNpcs = std::unordered_set<std::uint32_t>(a_ids.begin(), a_ids.end());
 	}
 
 	namespace
