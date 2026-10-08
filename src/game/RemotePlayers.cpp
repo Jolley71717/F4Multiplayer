@@ -77,7 +77,7 @@ namespace RemotePlayers
 		constexpr auto FACE_GRACE = 1s;
 
 		// The light form placed at a friend's stand-in while their Pip-Boy light is on (dev: friendlight).
-		std::uint32_t friendLightForm = 0x00000000;
+		std::uint32_t friendLightForm = 0x0001ED2D;  // a plain white light, radius 800, in Fallout4.esm
 		constexpr float LIGHT_HEIGHT = 110.0f;  // above the feet: about the Pip-Boy
 		std::uint32_t   lightsPlaced = 0;
 		std::uint32_t                         equipmentFixesTotal = 0;
