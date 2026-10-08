@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -16,10 +17,12 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 22;
+	inline constexpr std::uint16_t VERSION = 23;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
+	inline constexpr std::size_t   MAX_PLUGINS = 250;          // plugin names in a hello (the game allows 255 full plugins plus light ones; the rest are left off)
+	inline constexpr std::size_t   MAX_PLUGIN_NAME_LENGTH = 80;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
 	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
 
@@ -156,6 +159,8 @@ namespace Protocol
 		// Random, kept on the player's PC: the server gives a player who comes back the same player
 		// ID, so their own changes to the world are still known as theirs. 0 = none.
 		std::uint64_t identity = 0;
+		// The load order (plugin file names, in order), so a refusal can say which plugins differ.
+		std::vector<std::string> plugins;
 	};
 
 	struct Welcome
@@ -682,6 +687,11 @@ namespace Protocol
 		w.U64(a_msg.world.sessionId);
 		w.U32(a_msg.world.containerFrom);
 		w.U64(a_msg.identity);
+		const auto plugins = (std::min)(a_msg.plugins.size(), MAX_PLUGINS);
+		w.U8(static_cast<std::uint8_t>(plugins));
+		for (std::size_t i = 0; i < plugins; ++i) {
+			w.Str(a_msg.plugins[i], MAX_PLUGIN_NAME_LENGTH);
+		}
 		return w.Data();
 	}
 
@@ -699,6 +709,13 @@ namespace Protocol
 		msg.world.sessionId = r.U64();
 		msg.world.containerFrom = r.U32();
 		msg.identity = r.U64();
+		const auto plugins = r.U8();
+		if (plugins > MAX_PLUGINS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < plugins && r.Ok(); ++i) {
+			msg.plugins.push_back(r.Str(MAX_PLUGIN_NAME_LENGTH));
+		}
 		if (!r.Ok()) {
 			return std::nullopt;
 		}
@@ -767,6 +784,55 @@ namespace Protocol
 			return std::nullopt;
 		}
 		return msg;
+	}
+
+	// What a refused player needs to hear: the plugins only they have, and the ones only the session
+	// has (in load-order terms: names and order; a different order shows as both sides "having"
+	// nothing extra, so the order is named then). Fits a Reject.
+	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions)
+	{
+		const auto lower = [](std::string a_s) {
+			for (char& c : a_s) {
+				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+			}
+			return a_s;
+		};
+		const auto only = [&](const std::vector<std::string>& a_in, const std::vector<std::string>& a_notIn) {
+			std::vector<std::string> out;
+			for (const auto& name : a_in) {
+				const auto l = lower(name);
+				if (std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
+					out.push_back(name);
+				}
+			}
+			return out;
+		};
+		const auto list = [](const std::vector<std::string>& a_names) {
+			std::string s;
+			for (std::size_t i = 0; i < a_names.size() && s.size() < 70; ++i) {
+				s += (i ? ", " : "") + a_names[i];
+			}
+			if (s.size() >= 70) {
+				s += "...";
+			}
+			return s;
+		};
+		std::string out = "Your load order is different from the other players.";
+		if (a_theirs.empty() || a_sessions.empty()) {
+			return out + " Everyone needs the same mods in the same order.";  // a list is missing: nothing to compare
+		}
+		const auto mine = only(a_theirs, a_sessions);
+		const auto missing = only(a_sessions, a_theirs);
+		if (!mine.empty()) {
+			out += " Only you have: " + list(mine) + ".";
+		}
+		if (!missing.empty()) {
+			out += " You are missing: " + list(missing) + ".";
+		}
+		if (mine.empty() && missing.empty()) {
+			out += " Same mods, different order: sort yours like theirs.";
+		}
+		return out;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const Reject& a_msg)

@@ -86,6 +86,7 @@ namespace
 		h.world.sessionId = 0x0123456789ABCDEFull;
 		h.world.containerFrom = 77;
 		h.identity = 0xFEDCBA9876543210ull;
+		h.plugins = { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp" };
 		return h;
 	}
 
@@ -1188,4 +1189,32 @@ TEST("protocol: WorkshopItem round trips, and refuses a placement without a base
 	auto unknownOp = item;
 	unknownOp.op = 7;
 	CHECK(!DecodeWorkshopItem(Encode(unknownOp, MT::kReportWorkshopItem)));
+}
+
+TEST("protocol: Hello carries the load order, capped, and refuses too many plugins")
+{
+	auto hello = MakeHello();
+	const auto back = DecodeHello(Encode(hello));
+	REQUIRE(back);
+	CHECK((back->plugins == std::vector<std::string>{ "Fallout4.esm", "DLCCoast.esm", "MyMod.esp" }));
+
+	hello.plugins.assign(MAX_PLUGINS + 20, "x.esp");
+	const auto capped = DecodeHello(Encode(hello));
+	REQUIRE(capped);
+	CHECK(capped->plugins.size() == MAX_PLUGINS);
+
+	hello.plugins.clear();
+	auto packet = Encode(hello);
+	packet.back() = static_cast<std::uint8_t>(MAX_PLUGINS + 1);  // the count byte is last when the list is empty
+	CHECK(!DecodeHello(packet));
+}
+
+TEST("protocol: LoadOrderDifference names what only one side has, or the order")
+{
+	const std::vector<std::string> session{ "Fallout4.esm", "DLCCoast.esm", "A.esp" };
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "DLCCoast.esm", "A.esp", "B.esp" }, session).find("Only you have: B.esp") != std::string::npos);
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "DLCCoast.esm" }, session).find("You are missing: A.esp") != std::string::npos);
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "a.esp", "DLCCoast.esm" }, session).find("different order") != std::string::npos);
+	CHECK(LoadOrderDifference({}, session).find("same mods in the same order") != std::string::npos);
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "X.esp", "Y.esp" }, session).size() <= MAX_REASON_LENGTH);
 }

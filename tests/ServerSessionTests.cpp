@@ -1127,3 +1127,19 @@ TEST("server session: a player flooding states loses the excess")
 	REQUIRE(!states.empty());
 	CHECK(states.back().sequence < 200);
 }
+
+TEST("server session: a load-order refusal names the plugins that differ")
+{
+	Fixture f;
+	auto    alice = Fixture::MakeHello("Alice");
+	alice.plugins = { "Fallout4.esm", "DLCCoast.esm" };
+	REQUIRE(f.Join(1, alice));
+	f.fake->Take(1);
+
+	auto bob = Fixture::MakeHello("Bob");
+	bob.contentHash = 0x9999;
+	bob.plugins = { "Fallout4.esm", "DLCCoast.esm", "Extra.esp" };
+	const auto reject = JoinRejected(f, 2, Protocol::Encode(bob));
+	REQUIRE(reject);
+	CHECK(Contains(reject->reason, "Only you have: Extra.esp"));
+}

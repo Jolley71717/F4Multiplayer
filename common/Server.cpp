@@ -182,6 +182,7 @@ void Server::Run()
 	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
+	std::vector<std::string>                  sessionPlugins;          // their load order, to name the difference
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length).
 	const auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
@@ -377,8 +378,9 @@ void Server::Run()
 				resetWorld();
 			}
 			sessionContentHash = hello->contentHash;
+			sessionPlugins = hello->plugins;
 		} else if (hello->contentHash != sessionContentHash) {
-			reject(a_player, "Your load order is different from the other players. Everyone needs the same mods in the same order.");
+			reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
 			return;
 		}
 

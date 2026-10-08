@@ -12,9 +12,10 @@ in your game, or on nothing.
 
 At startup the plugin hashes the names of the loaded plugins, in order (FNV-1a, 32 bits), skipping
 the free HD texture pack. The hash travels in the hello message. The server keeps the first
-player's hash; a later hello with a different one is refused with "Your load order is different
-from the other players", and the joiner is told on screen. Nothing else is compared: not plugin
-versions, not file contents, not F4SE plugins, not INI settings.
+player's hash; a later hello with a different one is refused, and the refusal names the plugins only
+the joiner has and the ones they are missing (the plugin list travels with the hello; protocol 23),
+or says the order differs. Nothing else is compared: not plugin versions, not file contents, not F4SE
+plugins, not INI settings.
 
 ## Options, from cheapest to hardest
 
@@ -29,8 +30,7 @@ versions, not file contents, not F4SE plugins, not INI settings.
 
 ## Recommendation
 
-Do C now (name the differing plugins in the refusal; it costs almost nothing and turns most
-support questions into "oh, I have X enabled"). Then B with a conservative built-in list (the
+C is done (protocol 23). Next B with a conservative built-in list (the
 official HD pack is already there; add the common texture and audio replacers, and any plugin whose
 record types are all outside what the mod shares) and D so hosts can extend it. Leave E and F out:
 E is a large, silent-failure change for a problem that matching load orders solves, and F cannot

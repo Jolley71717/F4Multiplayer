@@ -141,7 +141,7 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
   trying to reconnect.
 
 - Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`
-- "load order is different": compare your mod lists; the order must match exactly.
+- "Your load order is different": the message names the plugins only you have or are missing, or says the order differs; match the host's list exactly.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.

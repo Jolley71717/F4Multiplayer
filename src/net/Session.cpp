@@ -37,6 +37,7 @@ namespace Session
 		constexpr auto REJECTED_RETRY_DELAY = 60s;
 
 		std::uint32_t           contentHash = 0;
+		std::vector<std::string> plugins;  // the load order, sent with the hello
 		std::unique_ptr<Server> hostedServer;
 		bool                    steamMode = false;  // friends connect through Steam
 
@@ -87,14 +88,17 @@ namespace Session
 				return std::ranges::equal(a_name, std::string_view{ "dlcultrahighresolution.esm" }, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
 			};
 			const auto data = RE::TESDataHandler::GetSingleton();
+			plugins.clear();
 			for (const auto file : data->compiledFileCollection.files) {
 				if (!texturesOnly(file->GetFilename())) {
 					mix(file->GetFilename());
+					plugins.emplace_back(file->GetFilename());
 				}
 			}
 			mix("--light--");
 			for (const auto file : data->compiledFileCollection.smallFiles) {
 				mix(file->GetFilename());
+				plugins.emplace_back(file->GetFilename());
 			}
 			return hash;
 		}
@@ -579,6 +583,7 @@ namespace Session
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = WorldSync::ResyncPoint();
 					hello.identity = Identity::Get();
+					hello.plugins = plugins;
 					client->Send(Protocol::Encode(hello), true);
 				}
 				break;
