@@ -23,6 +23,9 @@ namespace RemotePlayers
 	// Dev: throw away every stand-in's face copy and rebuild (after Face::SetParts).
 	void RebuildFaces();
 
+	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
+	void SetLight(std::uint32_t a_id, bool a_on);
+
 	// Dev: the light form placed at a stand-in whose player has their Pip-Boy light on.
 	void SetLightForm(std::uint32_t a_formId);
 

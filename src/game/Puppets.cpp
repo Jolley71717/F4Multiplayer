@@ -52,13 +52,16 @@ namespace Puppets
 		}
 
 		// A puppet's swings and punches are replays of the real ones (whose damage arrives through the
-		// session), so they must hurt nobody: its outgoing damage is multiplied by zero. 1 is the game's
-		// base value, restored when an NPC is released.
+		// session), so they must hurt nobody: its outgoing damage is multiplied by zero. The zero is a
+		// temporary modifier (-1 on top of the base 1), which the game does not carry into a save: a
+		// crash mid-session leaves the NPC's real damage intact. Undone when an NPC is released.
 		void SetAttackDamage(RE::Actor* a_actor, float a_multiplier)
 		{
 			const auto values = RE::ActorValue::GetSingleton();
 			if (values && values->attackDamageMult) {
-				static_cast<RE::ActorValueOwner*>(a_actor)->SetBaseActorValue(*values->attackDamageMult, a_multiplier);
+				const auto owner = static_cast<RE::ActorValueOwner*>(a_actor);
+				const float current = owner->GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, *values->attackDamageMult);
+				owner->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *values->attackDamageMult, (a_multiplier - 1.0f) - current);
 			}
 		}
 

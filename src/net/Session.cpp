@@ -48,7 +48,6 @@ namespace Session
 		std::string       serverAddress;
 
 		bool              welcomed = false;
-		bool              pipboyLightOn = false;  // as last reported
 		std::uint32_t     localId = 0;
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
@@ -635,16 +634,9 @@ namespace Session
 			}
 		}
 
-		// Reloads and aiming (ours and our NPCs'), and the Pip-Boy light when it changes.
+		// Reloads and aiming (ours and our NPCs'). The Pip-Boy light travels in the status message.
 		auto actions = WeaponFire::TakeActions();
 		const auto npcActions = WeaponFire::TakeNpcActions();
-		if (const auto player = RE::PlayerCharacter::GetSingleton(); player && InGame()) {
-			const bool lightOn = player->IsPipboyLightOn();
-			if (lightOn != pipboyLightOn) {
-				pipboyLightOn = lightOn;
-				actions.push_back(lightOn ? Protocol::ShotAction::kLightOn : Protocol::ShotAction::kLightOff);
-			}
-		}
 		if (welcomed) {
 			for (const auto action : actions) {
 				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, action }, Protocol::MessageType::kReportShot), false);

@@ -483,6 +483,13 @@ namespace RemotePlayers
 		}
 	}
 
+	void SetLight(std::uint32_t a_id, bool a_on)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.lightOn = a_on;  // Update() keeps the light with the stand-in
+		}
+	}
+
 	void SetLightForm(std::uint32_t a_formId)
 	{
 		friendLightForm = a_formId;

@@ -560,15 +560,16 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 	}
 }
 
-TEST("protocol: PlayerStatus round trips the downed and opening flags")
+TEST("protocol: PlayerStatus round trips the downed, opening and light flags")
 {
 	for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 		for (const bool downed : { false, true }) {
 			for (const bool opening : { false, true }) {
-				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening };
+				const bool         light = downed != opening;
+				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light };
 				const auto         packet = Encode(in, type);
-				// downed is bit 0 and opening is bit 1 of the last byte.
-				CHECK(packet.back() == ((downed ? 1 : 0) | (opening ? 2 : 0)));
+				// downed is bit 0, opening bit 1 and the Pip-Boy light bit 2 of the last byte.
+				CHECK(packet.back() == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);

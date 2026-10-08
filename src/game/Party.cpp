@@ -181,6 +181,7 @@ namespace Party
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
 			status.downed = Downed::IsDown();
 			status.opening = Story::InOpening();
+			status.light = player->IsPipboyLightOn();
 			return status;
 		}
 
@@ -430,6 +431,7 @@ namespace Party
 		}
 		entry.status = a_status;
 		entry.hasStatus = true;
+		RemotePlayers::SetLight(a_status.playerId, a_status.light);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}

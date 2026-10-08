@@ -136,6 +136,18 @@ namespace WorkshopSync
 			}
 		}
 
+		bool InGraveyard(const RE::TESObjectREFR* a_ref)
+		{
+			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.ref.get().get() == a_ref; });
+		}
+
+		// A real workshop object of this game (ours, or one we scrapped/moved ourselves): it carries the
+		// workshop's own extra data, which a plain copy never has.
+		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref)
+		{
+			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop);
+		}
+
 		// A copy left in this save by an earlier session: the same object at the same spot.
 		RE::TESObjectREFR* FindExisting(const Protocol::WorkshopItem& a_item)
 		{
@@ -147,7 +159,7 @@ namespace WorkshopSync
 			const RE::NiPoint3 at{ a_item.position[0], a_item.position[1], a_item.position[2] };
 			tes->ForEachReferenceInRange(at, ADOPT_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !IsCopy(a_ref)) {
+				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !IsCopy(a_ref) && !InGraveyard(a_ref) && !IsWorkshopObject(a_ref)) {
 					found = a_ref;
 					return RE::BSContainer::ForEachResult::kStop;
 				}

@@ -138,7 +138,7 @@ namespace Face
 			++rejected;
 			return nullptr;
 		}
-		const auto npc = a_base->CreateDuplicateForm(false, nullptr) ? static_cast<RE::TESNPC*>(a_base->CreateDuplicateForm(false, nullptr)) : nullptr;
+		const auto npc = static_cast<RE::TESNPC*>(a_base->CreateDuplicateForm(false, nullptr));
 		if (!npc) {
 			++rejected;
 			return nullptr;

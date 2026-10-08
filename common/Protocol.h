@@ -410,6 +410,7 @@ namespace Protocol
 		std::uint16_t level = 0;
 		bool          downed = false;  // knocked down, waiting for a friend to help them up
 		bool          opening = false;  // still in the game's opening (before leaving Vault 111)
+		bool          light = false;    // Pip-Boy light on
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -1407,7 +1408,7 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0)));
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0)));
 		return w.Data();
 	}
 
@@ -1424,6 +1425,7 @@ namespace Protocol
 		const auto flags = r.U8();
 		msg.downed = (flags & 1) != 0;
 		msg.opening = (flags & 2) != 0;
+		msg.light = (flags & 4) != 0;
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
 			return std::nullopt;
 		}
