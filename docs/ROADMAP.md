@@ -18,7 +18,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 9 | Shared kill XP | Friends get part of the XP for your kills, so nobody falls behind | done (protocol 14) |
 | 10 | Connection warnings | "Connection to the host is unstable" instead of silent rubber-banding | done (protocol 14) |
 | 11 | Friendly fire setting | Host chooses whether players can hurt each other (off by default) | done (protocol 15) |
-| 12 | Emotes | Wave, point, cheer on hotkeys, played on your character for others | later: idles exist (IdlePointing 0013A445, IdleCheeringStanding 0010BA3A, IdleClapping 00141F3C), but stand-ins ignore `playidle` while the puppet driver animates them |
+| 12 | Emotes | Point, cheer, clap on F9/F10/F11, played on your stand-in for others | done (protocol 23): the idle is played on the stand-in the way the console does; it takes while the stand-in stands still |
 | 13 | Session saved on the host's disk | The shared world state survives the host quitting | done (protocol 23): the host's server saves the world to F4Multiplayer.session every 15 s and on exit, and loads it next time; a different load order starts fresh (`bSaveSession`) |
 | 14 | Shared map discoveries | A location one player finds shows up on everyone's map | done (protocol 18) |
 | 15 | Waiting and sleeping together | Waiting moves time for everyone | partly: the host's waiting moves everyone's clock; others snap back |
@@ -59,5 +59,5 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 ## Next
 
 - Remote players' faces (#19).
-- Emotes (#12), muzzle flash (#17).
+- Muzzle flash (#17).
 - Donation links (Ko-fi, Patreon, Nexus Donation Points): last, before the release.

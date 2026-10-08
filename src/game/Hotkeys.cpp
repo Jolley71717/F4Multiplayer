@@ -27,6 +27,9 @@ namespace Hotkeys
 		Key list;
 		Key teleport;
 		Key ping;
+		Key emotePoint;
+		Key emoteCheer;
+		Key emoteClap;
 
 		bool GameHasFocus()
 		{
@@ -65,6 +68,9 @@ namespace Hotkeys
 		};
 		press(list, settings.keyPlayerList, Action::kPlayerList);
 		press(ping, settings.keyPing, Action::kPing);
+		press(emotePoint, settings.keyEmotePoint, Action::kEmotePoint);
+		press(emoteCheer, settings.keyEmoteCheer, Action::kEmoteCheer);
+		press(emoteClap, settings.keyEmoteClap, Action::kEmoteClap);
 
 		// Teleport: a tap picks, a hold goes.
 		const bool down = active && IsDown(settings.keyTeleport);

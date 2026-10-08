@@ -10,6 +10,9 @@ namespace Hotkeys
 		kTeleportPick,  // tapped (released within HOLD_TIME)
 		kTeleportGo,    // held for HOLD_TIME
 		kPing,          // pressed
+		kEmotePoint,    // pressed: emotes, played on your stand-in for others
+		kEmoteCheer,
+		kEmoteClap,
 	};
 
 	// Actions triggered since the last call. Call once per frame from the main thread.

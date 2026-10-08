@@ -133,6 +133,12 @@ namespace Config
 				ParseInt(value, settings.keyTeleport, 16);
 			} else if (key == "iKeyPing") {
 				ParseInt(value, settings.keyPing, 16);
+			} else if (key == "iKeyEmotePoint") {
+				ParseInt(value, settings.keyEmotePoint, 16);
+			} else if (key == "iKeyEmoteCheer") {
+				ParseInt(value, settings.keyEmoteCheer, 16);
+			} else if (key == "iKeyEmoteClap") {
+				ParseInt(value, settings.keyEmoteClap, 16);
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {

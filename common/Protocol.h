@@ -394,7 +394,10 @@ namespace Protocol
 		inline constexpr std::uint8_t kAimStop = 3;
 		inline constexpr std::uint8_t kLightOn = 4;   // the Pip-Boy light (players only)
 		inline constexpr std::uint8_t kLightOff = 5;
-		inline constexpr std::uint8_t kMax = kLightOff;
+		inline constexpr std::uint8_t kPoint = 6;  // emotes (players only): an idle played on the stand-in
+		inline constexpr std::uint8_t kCheer = 7;
+		inline constexpr std::uint8_t kClap = 8;
+		inline constexpr std::uint8_t kMax = kClap;
 	}
 
 	// A weapon shot (or another ShotAction), for the animation. refId 0 = the player themselves,

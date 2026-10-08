@@ -67,8 +67,9 @@ Each player keeps their own save, character and inventory.
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | "Over here!": tells everyone where you are, with distance and direction |
+| F9, F10, F11 | Emotes: point, cheer, clap. Your friends see your stand-in do it |
 
-Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`). They don't
+Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`). They don't
 work while a menu or the console is open.
 
 ### Voice chat

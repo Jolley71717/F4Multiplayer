@@ -26,6 +26,12 @@ namespace WeaponFire
 
 	// Reloads and aiming by the local player, and by NPCs (form ID, action), since the last call.
 	[[nodiscard]] std::vector<std::uint8_t> TakeActions();
+
+	// Something the local player did by hotkey (an emote) that others should see.
+	void QueueAction(std::uint8_t a_action);
+
+	// The idle an emote action plays (editor ID), or nullptr.
+	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).

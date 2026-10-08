@@ -58,6 +58,9 @@ namespace Config
 		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
 		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
 		std::uint32_t keyPing = 0x77;        // F8: "over here"
+		std::uint32_t keyEmotePoint = 0x78;  // F9: point
+		std::uint32_t keyEmoteCheer = 0x79;  // F10: cheer
+		std::uint32_t keyEmoteClap = 0x7A;   // F11: clap
 
 		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
 		// Friends hear you at full volume within 8 m, fading out at voiceRange meters (0 = everyone

@@ -26,6 +26,8 @@ namespace WeaponFire
 
 		// A shot ("WeaponFire", once per bullet) or a melee swing or punch ("weaponSwing", at the hit
 		// frame): both are replayed as an attack on the stand-in, which swings whatever it holds.
+		const char* EmoteIdle(std::uint8_t a_action);
+
 		bool IsAttackEvent(std::string_view a_tag)
 		{
 			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
@@ -146,6 +148,19 @@ namespace WeaponFire
 		return std::exchange(playerActions, {});
 	}
 
+	void QueueAction(std::uint8_t a_action)
+	{
+		std::scoped_lock l{ actionLock };
+		if (playerActions.size() < MAX_PENDING_ACTIONS) {
+			playerActions.push_back(a_action);
+		}
+	}
+
+	const char* EmoteIdleName(std::uint8_t a_action)
+	{
+		return EmoteIdle(a_action);
+	}
+
 	std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions()
 	{
 		std::scoped_lock l{ actionLock };
@@ -254,6 +269,21 @@ namespace WeaponFire
 		constexpr std::uint32_t SIGHTED = 0x00004A57;          // ActionSighted
 		constexpr std::uint32_t SIGHTED_RELEASE = 0x00004A58;  // ActionSightedRelease
 		std::uint32_t           actionsPlayed = 0;
+
+		// The idle behind an emote action (editor IDs from Fallout4.esm), or nullptr for other actions.
+		const char* EmoteIdle(std::uint8_t a_action)
+		{
+			switch (a_action) {
+			case Protocol::ShotAction::kPoint:
+				return "IdlePointing";
+			case Protocol::ShotAction::kCheer:
+				return "IdleCheeringStanding";
+			case Protocol::ShotAction::kClap:
+				return "IdleClapping";
+			default:
+				return nullptr;
+			}
+		}
 	}
 
 	void PlayShot(RE::Actor* a_actor)
@@ -288,7 +318,16 @@ namespace WeaponFire
 	void PlayAction(RE::Actor* a_actor, std::uint8_t a_action)
 	{
 		static const RE::BSFixedString reloadStart{ "reloadStart" };
-		if (!a_actor || a_actor->IsDead(false) || !a_actor->GetWeaponMagicDrawn() || !a_actor->Get3D()) {
+		if (!a_actor || a_actor->IsDead(false) || !a_actor->Get3D()) {
+			return;
+		}
+		// Emotes: an idle, played the way the console does (the stand-in takes it while standing still).
+		if (const auto idle = EmoteIdle(a_action)) {
+			RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", a_actor->GetFormID(), idle).c_str());
+			++actionsPlayed;
+			return;
+		}
+		if (!a_actor->GetWeaponMagicDrawn()) {
 			return;
 		}
 		bool played = false;

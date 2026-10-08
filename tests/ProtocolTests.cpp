@@ -552,7 +552,7 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		CHECK(npc->refId == REF_B);
 		CHECK(npc->action == ShotAction::kShot);
 
-		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff }) {
+		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap }) {
 			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));
 			REQUIRE(other);
 			CHECK(other->action == action);

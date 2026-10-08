@@ -1,5 +1,7 @@
 #include "game/Party.h"
 
+#include "game/WeaponFire.h"
+
 #include "Config.h"
 #include "game/Compass.h"
 #include "game/Downed.h"
@@ -15,6 +17,8 @@ namespace Party
 {
 	namespace
 	{
+		void Emote(std::uint8_t a_action);
+
 		using Clock = std::chrono::steady_clock;
 
 		constexpr auto STATUS_INTERVAL = 2s;
@@ -359,7 +363,21 @@ namespace Party
 				case Hotkeys::Action::kPing:
 					SendPing();
 					break;
+				case Hotkeys::Action::kEmotePoint:
+				case Hotkeys::Action::kEmoteCheer:
+				case Hotkeys::Action::kEmoteClap:
+					Emote(action == Hotkeys::Action::kEmotePoint ? Protocol::ShotAction::kPoint : action == Hotkeys::Action::kEmoteCheer ? Protocol::ShotAction::kCheer : Protocol::ShotAction::kClap);
+					break;
 				}
+			}
+		}
+
+		// An emote: our stand-in plays it for the others, and so do we (third person shows it).
+		void Emote(std::uint8_t a_action)
+		{
+			WeaponFire::QueueAction(a_action);
+			if (const auto idle = WeaponFire::EmoteIdleName(a_action)) {
+				RE::Console::ExecuteCommand(std::format("player.playidle {}", idle).c_str());
 			}
 		}
 
