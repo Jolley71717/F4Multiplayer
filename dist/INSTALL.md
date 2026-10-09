@@ -3,6 +3,7 @@
 Up to 4 players. Everyone needs:
 
 - Fallout 4 **1.11.240** on Steam
+- Windows. Linux through Proton should work (F4SE runs there; Steam invites and relays go through the game's own Steam library) but is untested; the saved session and per-player files land inside the Proton prefix's Documents folder.
 - [F4SE 0.7.9](https://www.nexusmods.com/fallout4/mods/42147?tab=files): copy `f4se_loader.exe` and `f4se_1_11_240.dll` next to `Fallout4.exe`
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
 - This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)

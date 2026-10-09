@@ -42,6 +42,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [size=4][b]Requirements[/b][/size]
 [list]
 [*]Fallout 4 [b]1.11.240[/b] (Steam, current version)
+[*]Windows. Linux through Proton should work (F4SE runs there and Steam networking goes through the game's own Steam library), but it is untested: reports welcome.
 [*][url=https://www.nexusmods.com/fallout4/mods/42147]F4SE[/url] 0.7.9
 [*][url=https://www.nexusmods.com/fallout4/mods/47327]Address Library for F4SE Plugins[/url]
 [*]Everyone needs the same version of this mod and [b]the same mods in the same load order[/b].
@@ -54,7 +55,7 @@ Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. 
 Back up your saves or use a separate one for co-op. Known gaps: friends show as settlers (no faces or hair yet), no muzzle flash on their shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log; please attach it to a bug report.
 
 [size=4][b]Open source[/b][/size]
-GPL-3.0. The source will be published on GitHub.
+GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]github.com/Jolley71717/F4Multiplayer[/url].
 ```
 
 ## Permissions
