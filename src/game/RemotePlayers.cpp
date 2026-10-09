@@ -276,6 +276,15 @@ namespace RemotePlayers
 		void DeleteFrame(RemotePlayer& a_player)
 		{
 			if (const auto frame = a_player.frame.get()) {
+				// Our own player may have climbed into the friend's frame copy: then it stays (deleting it would
+				// leave them in nothing) and is simply no longer ours to manage.
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				if (player && player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor) && player->data.location.GetDistance(frame->data.location) < 200.0f) {
+					REX::INFO("RemotePlayers: the player is in '{}'s frame copy; leaving it", a_player.name);
+					a_player.frame = {};
+					a_player.inPowerArmor = false;
+					return;
+				}
 				if (DeferredDelete::Safe(frame->Get3D() != nullptr, Clock::now() - a_player.framePlacedAt)) {
 					frame->Disable();
 					frame->SetDelete(true);
