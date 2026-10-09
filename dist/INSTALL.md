@@ -111,6 +111,15 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   each of you talks to the characters yourself. The host can set `sStory = shared` to move
   everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
   faction choices become yours).
+- **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
+  relay, Mass Fusion's reactor) open for each player at their own stage with the default `own`
+  story. A friend who is further along walks through; you are refused until you get there yourself,
+  or the host sets `sStory = shared`. Side-quest doors (the Museum of Freedom, Vault 81, Cabot House)
+  open for everyone once each has the quest, since side quests are shared. Doors you unlock with a
+  key, a bobby pin or a terminal open for your friends too.
+- **Factions with separate stories:** your NPCs are shared, so if one of you is at war with a
+  faction the other has joined, that faction's people are hostile to both of you where you stand
+  together.
 - **A new character:** play the opening up to leaving Vault 111 on your own; you can be connected
   meanwhile. Nothing from the session touches it, and what your friends did is applied once you're out.
 - Players who join later catch up on everything that already happened this session. So does anyone
