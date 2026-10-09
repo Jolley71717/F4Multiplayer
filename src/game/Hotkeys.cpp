@@ -56,11 +56,13 @@ namespace Hotkeys
 		std::vector<Action> actions;
 		const auto&         settings = Config::Get();
 		const bool          active = GameHasFocus() && !MenuOpen();
+		// A chord with Alt, Ctrl or Win belongs to something else (Alt+F9 is ShadowPlay's record key): not ours.
+		const bool          chord = IsDown(0x12) || IsDown(0x11) || IsDown(0x5B) || IsDown(0x5C);
 		const auto          now = Clock::now();
 
 		// Pressed: fires when the key goes down.
 		const auto press = [&](Key& a_key, std::uint32_t a_vk, Action a_action) {
-			const bool down = active && IsDown(a_vk);
+			const bool down = active && !chord && IsDown(a_vk);
 			if (down && !a_key.down) {
 				actions.push_back(a_action);
 			}

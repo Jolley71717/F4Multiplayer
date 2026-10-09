@@ -2,6 +2,7 @@
 
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/FrameStats.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
@@ -12,6 +13,8 @@
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
+
+#include <numbers>
 #include "steam/Steam.h"
 
 namespace DevCommands
@@ -107,12 +110,58 @@ namespace DevCommands
 				location && location->GetFullName() ? location->GetFullName() : "");
 		}
 
+		// frames: frame times since the last call (mean, worst, hitches over 100 ms).
+		std::string Frames(std::string_view)
+		{
+			return FrameStats::Global().Take().Describe();
+		}
+
 		std::string Pos(std::string_view)
 		{
 			if (!PlayerCell()) {
 				return "error: not in game";
 			}
 			return DescribeRef(RE::PlayerCharacter::GetSingleton());
+		}
+
+		// turnto <refHex> <ms> [pitchDeg]: turns the player to face a reference over a time, like a hand on
+		// the mouse would, instead of snapping (a snap is a smeared frame on video). Stepped by Frame().
+		struct Turn
+		{
+			float startYaw = 0.0f, endYaw = 0.0f, startPitch = 0.0f, endPitch = 0.0f;
+			std::chrono::steady_clock::time_point start{}, end{};
+			bool active = false;
+		};
+		Turn turn;
+
+		std::string TurnTo(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!player || !ref || args.size() < 2) {
+				return "error: usage: turnto <refHex> <ms> [pitchDeg]";
+			}
+			const auto& me = player->data.location;
+			const auto& to = ref->data.location;
+			constexpr float DEG = 180.0f / std::numbers::pi_v<float>;
+			float yaw = std::atan2(to.x - me.x, to.y - me.y) * DEG;
+			if (yaw < 0.0f) {
+				yaw += 360.0f;
+			}
+			const float startYaw = player->data.angle.z * DEG;
+			// Shortest way round.
+			float delta = yaw - startYaw;
+			while (delta > 180.0f) delta -= 360.0f;
+			while (delta < -180.0f) delta += 360.0f;
+			turn.startYaw = startYaw;
+			turn.endYaw = startYaw + delta;
+			turn.startPitch = player->data.angle.x * DEG;
+			turn.endPitch = args.size() > 2 ? std::stof(std::string{ args[2] }) : turn.startPitch;
+			turn.start = std::chrono::steady_clock::now();
+			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
+			turn.active = true;
+			return std::format("turning {:.1f} -> {:.1f} over {} ms", startYaw, turn.endYaw, args[1]);
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1409,8 +1458,10 @@ namespace DevCommands
 
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
+			Entry{ "frames", Frames },
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
+			Entry{ "turnto", TurnTo },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
@@ -1465,6 +1516,26 @@ namespace DevCommands
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
 		};
+	}
+
+	void Frame()
+	{
+		if (!turn.active) {
+			return;
+		}
+		const auto now = std::chrono::steady_clock::now();
+		float t = turn.end > turn.start ? std::chrono::duration<float>(now - turn.start).count() / std::chrono::duration<float>(turn.end - turn.start).count() : 1.0f;
+		t = std::clamp(t, 0.0f, 1.0f);
+		const float eased = t * t * (3.0f - 2.0f * t);  // smoothstep: slow start, slow stop
+		float yaw = turn.startYaw + (turn.endYaw - turn.startYaw) * eased;
+		while (yaw < 0.0f) yaw += 360.0f;
+		while (yaw >= 360.0f) yaw -= 360.0f;
+		const float pitch = turn.startPitch + (turn.endPitch - turn.startPitch) * eased;
+		RE::Console::ExecuteCommand(std::format("player.setangle z {:.2f}", yaw).c_str());
+		RE::Console::ExecuteCommand(std::format("player.setangle x {:.2f}", pitch).c_str());
+		if (t >= 1.0f) {
+			turn.active = false;
+		}
 	}
 
 	Handler Find(std::string_view a_name)

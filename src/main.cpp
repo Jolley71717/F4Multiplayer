@@ -1,7 +1,9 @@
 #include "Config.h"
 #include "DevChannel.h"
+#include "DevCommands.h"
 #include "game/FastLoad.h"
 #include "game/WorldSync.h"
+#include "game/FrameStats.h"
 #include "net/Session.h"
 
 namespace
@@ -63,8 +65,10 @@ namespace
 	// Runs on the game's main thread once per frame (F4SE permanent task).
 	void OnFrame()
 	{
+		FrameStats::Global().Frame(std::chrono::steady_clock::now());
 		if (gameDataReady) {
 			Session::Frame();
+			DevCommands::Frame();
 		}
 	}
 }
@@ -96,4 +100,13 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	DevChannel::Start();
 
 	return true;
+}
+
+namespace FrameStats
+{
+	Tracker& Global()
+	{
+		static Tracker tracker;
+		return tracker;
+	}
 }

@@ -9,6 +9,9 @@ namespace DevCommands
 	// Returns the handler for a command name, or nullptr if unknown.
 	Handler Find(std::string_view a_name);
 
+	// Once per frame on the game thread: steps a turnto in progress.
+	void Frame();
+
 	// One-line summary of available commands.
 	std::string Help();
 }
