@@ -203,7 +203,8 @@ namespace DevCommands
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u, 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP)
 		}
 
-		// Windows only lets the foreground thread change the foreground window: attach to it first.
+		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
+		// would be stronger, but called on the game thread it hung the game.)
 		bool BringGameToFront()
 		{
 			const auto window = FindWindowA(nullptr, "Fallout4");
@@ -213,19 +214,11 @@ namespace DevCommands
 			if (GetForegroundWindow() == window) {
 				return true;
 			}
-			const auto foreThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
-			const auto ourThread = GetCurrentThreadId();
-			if (foreThread && foreThread != ourThread) {
-				AttachThreadInput(foreThread, ourThread, 1);
-			}
 			KeyEvent(0x12, true);
 			KeyEvent(0x12, false);
 			ShowWindow(window, 9);  // SW_RESTORE
 			BringWindowToTop(window);
 			const bool ok = SetForegroundWindow(window) != 0;
-			if (foreThread && foreThread != ourThread) {
-				AttachThreadInput(foreThread, ourThread, 0);
-			}
 			return ok && GetForegroundWindow() == window;
 		}
 
