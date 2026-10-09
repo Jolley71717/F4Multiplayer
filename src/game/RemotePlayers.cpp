@@ -329,6 +329,7 @@ namespace RemotePlayers
 				if (!frame->Get3D()) {
 					return;
 				}
+				Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
 				frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
 				a_player.inPowerArmor = true;
 				a_player.frameActionAt = a_now;
@@ -336,6 +337,7 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: '{}' stand-in gets into power armor (frame {:08X})", a_player.name, a_player.powerArmorFrame);
 			} else if (!a_player.powerArmorOn && a_player.inPowerArmor) {
 				if (frame && frame->Get3D()) {
+					Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
 					frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
 				}
 				a_player.inPowerArmor = false;

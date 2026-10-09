@@ -40,6 +40,10 @@ namespace Puppets
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
+	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction
+	// such as getting into power armor; the stand-in is not warped meanwhile.
+	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for);
+
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();
 }

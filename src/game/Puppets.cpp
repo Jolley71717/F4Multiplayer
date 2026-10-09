@@ -27,6 +27,7 @@ namespace Puppets
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
+			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
 			// What the stand-in actually covers per frame, smoothed: the animation runs at this speed so
 			// the feet match the ground (the reported speed can lag behind).
 			RE::NiPoint3                          lastTargetPosition;
@@ -179,6 +180,11 @@ namespace Puppets
 
 			// A mirrored NPC that died here ragdolls normally.
 			if (puppet->kind == Kind::kNpc && a_this->IsDead(false)) {
+				originalUpdate(a_this, a_delta);
+				return;
+			}
+			// Climbing into or out of power armor is a furniture interaction the AI drives: let it.
+			if (std::chrono::steady_clock::now() < puppet->aiUntil) {
 				originalUpdate(a_this, a_delta);
 				return;
 			}
@@ -357,6 +363,14 @@ namespace Puppets
 		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
 			it->second.redraw = true;
 			it->second.nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
+		}
+	}
+
+	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
+			it->second.aiUntil = std::chrono::steady_clock::now() + a_for;
 		}
 	}
 
