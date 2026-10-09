@@ -266,9 +266,18 @@ else skips this: the player is never in those places.
   "Name: line" when their copy of the speaker (or the friend's stand-in) is within 20 m, isn't saying
   it already, and the same line wasn't shown in the last 5 s (at most 3 lines per 3 s).
 
-## Status (2026-10-06)
+## Status (2026-10-09)
 
-Protocol VERSION 20.
+Protocol VERSION 24 (0.6.3).
+
+### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
+
+What a peer can now send that it could not before, and what checks it on the way in:
+
+- `Line.topic` (a form id with an NPC line). Server: one line per 250 ms per player on top of the event budget, decoded with the bounds-checked Reader (`AtEnd` required). Hearer: the id must resolve to a `TESTopic`, the speaker must be our own copy within 1400 units, repeats within 5 s are dropped and at most 3 lines show per 3 s; the console command is built from two integers only (`{:08X}.say {:08X}`), so no text from the wire reaches the console. Residual: a friend can make an NPC near you say any topic in the game, and topic infos may carry script fragments; that is the same trust a co-op friend already has by talking to NPCs and shooting in your world. `bVoiceLines = false` turns it off.
+- Hotkeys: the Alt/Ctrl/Win chord check reads the local keyboard only.
+- Dev commands (`turnto`, `frames`, `say`): dev channel only, which is off by default and token-protected (docs/DEV-CHANNEL.md).
+- Frame-time stats: local counters, nothing on the wire.
 
 ## Prior art
 
