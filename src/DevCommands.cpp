@@ -17,6 +17,15 @@
 #include <numbers>
 #include "steam/Steam.h"
 
+// user32 (windows.h clashes with CommonLibF4's names).
+extern "C" {
+__declspec(dllimport) void __stdcall keybd_event(unsigned char a_vk, unsigned char a_scan, unsigned long a_flags, unsigned long long a_extra);
+__declspec(dllimport) unsigned int __stdcall MapVirtualKeyA(unsigned int a_code, unsigned int a_mapType);
+__declspec(dllimport) void* __stdcall FindWindowA(const char* a_class, const char* a_title);
+__declspec(dllimport) int __stdcall ShowWindow(void* a_window, int a_show);
+__declspec(dllimport) int __stdcall SetForegroundWindow(void* a_window);
+}
+
 namespace DevCommands
 {
 	namespace
@@ -169,6 +178,52 @@ namespace DevCommands
 			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			turn.active = true;
 			return std::format("turning {:.1f} -> {:.1f} over {} ms", startYaw, turn.endYaw, args[1]);
+		}
+
+		// key <vk> <holdMs>: presses a key inside the game process (down now, up after holdMs, stepped by
+		// Frame()), so two games can be driven at the same instant from a script; scheduled tasks on the
+		// VM used to fire seconds late. focus: brings the game window to the front (a tapped Alt lifts
+		// Windows' foreground lock), so a desktop capture shows the game and not whatever popped over it.
+		struct KeyHold
+		{
+			std::uint8_t                          vk = 0;
+			std::chrono::steady_clock::time_point until{};
+		};
+		KeyHold keyHold;
+
+		void KeyEvent(std::uint8_t a_vk, bool a_down)
+		{
+			const auto scan = static_cast<std::uint8_t>(MapVirtualKeyA(a_vk, 0));
+			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u, 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP)
+		}
+
+		std::string KeyPress(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto vk = args.empty() ? std::nullopt : ParseHex(args[0]);
+			if (!vk || *vk == 0 || *vk > 255 || args.size() < 2) {
+				return "error: usage: key <vkHex> <holdMs>";
+			}
+			if (keyHold.vk) {
+				KeyEvent(keyHold.vk, false);
+			}
+			keyHold.vk = static_cast<std::uint8_t>(*vk);
+			keyHold.until = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
+			KeyEvent(keyHold.vk, true);
+			return std::format("holding {:02X} for {} ms", *vk, args[1]);
+		}
+
+		std::string Focus(std::string_view)
+		{
+			const auto window = FindWindowA(nullptr, "Fallout4");
+			if (!window) {
+				return "error: no Fallout4 window";
+			}
+			KeyEvent(0x12, true);
+			KeyEvent(0x12, false);
+			ShowWindow(window, 9);  // SW_RESTORE
+			const bool ok = SetForegroundWindow(window) != 0;
+			return ok ? "focused" : "error: SetForegroundWindow refused";
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1469,6 +1524,8 @@ namespace DevCommands
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "turnto", TurnTo },
+			Entry{ "key", KeyPress },
+			Entry{ "focus", Focus },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
@@ -1527,6 +1584,10 @@ namespace DevCommands
 
 	void Frame()
 	{
+		if (keyHold.vk && std::chrono::steady_clock::now() >= keyHold.until) {
+			KeyEvent(keyHold.vk, false);
+			keyHold.vk = 0;
+		}
 		if (!turn.active) {
 			return;
 		}
