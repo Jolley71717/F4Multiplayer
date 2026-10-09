@@ -114,6 +114,8 @@ namespace Puppets
 			static const RE::BSFixedString jumpStart{ "jumpStart" };
 			static const RE::BSFixedString jumpFall{ "jumpFall" };
 			static const RE::BSFixedString jumpLand{ "jumpLand" };
+			static const RE::BSFixedString sneakStart{ "sneakStart" };
+			static const RE::BSFixedString sneakStop{ "sneakStop" };
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
@@ -124,6 +126,13 @@ namespace Puppets
 			} else if (moving && motion.speed < MOVE_STOP) {
 				graph->NotifyAnimationGraphImpl(moveStop);
 				moving = false;
+			}
+
+			// Crouching: the graph takes "sneakStart"/"sneakStop" (an NPC has no sneak key).
+			const bool sneaking = (motion.flags & Protocol::kSneaking) != 0;
+			const bool wasSneaking = (a_puppet.appliedFlags & Protocol::kSneaking) != 0;
+			if (sneaking != wasSneaking) {
+				graph->NotifyAnimationGraphImpl(sneaking ? sneakStart : sneakStop);
 			}
 
 			const bool inAir = (motion.flags & Protocol::kInAir) != 0;

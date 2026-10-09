@@ -83,8 +83,8 @@ namespace DevCommands
 			const auto base = actor->GetObjectReference();
 			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
 			return std::format(" base={:08X} female={} template={}", base ? base->GetFormID() : 0, npc && npc->IsFemale(), npc && npc->UsesTemplate()) +
-			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} 3dWorld=({:.0f},{:.0f},{:.0f})",
-				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), w.x, w.y, w.z);
+			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} sneaking={} 3dWorld=({:.0f},{:.0f},{:.0f})",
+				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), actor->IsSneaking(), w.x, w.y, w.z);
 		}
 
 		std::string DescribeRef(RE::TESObjectREFR* a_ref)
@@ -723,6 +723,25 @@ namespace DevCommands
 				return "error: no process data";
 			}
 			return std::format("desiredSpeed={:.1f} animationSpeed={:.1f} pathCur=({:.0f},{:.0f},{:.0f}) pathDesired=({:.0f},{:.0f},{:.0f}) output=({:.0f},{:.0f},{:.0f})", middle->desiredSpeed, middle->animationSpeed, high->pathingCurrentMovementSpeed.x, high->pathingCurrentMovementSpeed.y, high->pathingCurrentMovementSpeed.z, high->pathingDesiredMovementSpeed.x, high->pathingDesiredMovementSpeed.y, high->pathingDesiredMovementSpeed.z, 0.0f, 0.0f, 0.0f);
+		}
+
+		// sneak on|off [actorHex]: crouches or stands the player (or an actor), as the sneak key would.
+		std::string Sneak(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty() || (args[0] != "on" && args[0] != "off")) {
+				return "error: usage: sneak on|off [actorHex]";
+			}
+			RE::Actor* actor = RE::PlayerCharacter::GetSingleton();
+			if (args.size() > 1) {
+				const auto ref = LookupRef(args[1]);
+				actor = ref ? ref->As<RE::Actor>() : nullptr;
+			}
+			if (!actor) {
+				return "error: no such actor";
+			}
+			actor->SetSneaking(args[0] == "on");
+			return std::format("sneaking={}", actor->IsSneaking());
 		}
 
 		// piplight on|off: the player's Pip-Boy light.
@@ -1441,6 +1460,7 @@ namespace DevCommands
 			Entry{ "facemask", FaceMask },
 			Entry{ "friendlight", FriendLight },
 			Entry{ "piplight", PipLight },
+			Entry{ "sneak", Sneak },
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
