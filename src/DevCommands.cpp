@@ -593,11 +593,11 @@ namespace DevCommands
 			const auto call = [&](auto* a_object) {
 				switch (bools.size()) {
 				case 0:
-					return Papyrus::CallMethod(a_object, args[1], args[2]);
+					return Papyrus::CallMethod(a_object, args[1], args[2], true);
 				case 1:
-					return Papyrus::CallMethod(a_object, args[1], args[2], static_cast<bool>(bools[0]));
+					return Papyrus::CallMethod(a_object, args[1], args[2], true, static_cast<bool>(bools[0]));
 				default:
-					return Papyrus::CallMethod(a_object, args[1], args[2], static_cast<bool>(bools[0]), static_cast<bool>(bools[1]));
+					return Papyrus::CallMethod(a_object, args[1], args[2], true, static_cast<bool>(bools[0]), static_cast<bool>(bools[1]));
 				}
 			};
 
@@ -1276,7 +1276,7 @@ namespace DevCommands
 			if (!topic) {
 				return "error: usage: say <refHex> <topicHex>";
 			}
-			const bool ok = Papyrus::CallMethod(ref, "ObjectReference", "Say", topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr));
+			const bool ok = Papyrus::CallMethod(ref, "ObjectReference", "Say", true, topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr));
 			return ok ? "dispatched" : "error: dispatch failed";
 		}
 

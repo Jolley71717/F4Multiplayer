@@ -449,6 +449,7 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 		std::uint32_t speaker = 0;
 		std::string   text;
+		std::uint32_t topic = 0;  // the dialogue topic the line came from (0 = unknown): the hearer's copy can say it aloud
 	};
 
 	struct Heartbeat
@@ -1637,6 +1638,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U32(a_msg.speaker);
 		w.Str(a_msg.text, MAX_LINE_LENGTH);
+		w.U32(a_msg.topic);
 		return w.Data();
 	}
 
@@ -1648,6 +1650,7 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.speaker = r.U32();
 		msg.text = r.Str(MAX_LINE_LENGTH);
+		msg.topic = r.U32();
 		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsShareableRef(msg.speaker))) {
 			return std::nullopt;
 		}

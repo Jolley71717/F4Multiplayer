@@ -51,6 +51,10 @@ namespace Config
 		// When hosting: the shared world is saved to disk and carried on next time (same load order).
 		bool saveSession = true;
 
+		// Experimental: a friend's NPC lines are said aloud by your copy of the NPC (through the
+		// dialogue topic). Off: you see the line as text. It has crashed a mirrored NPC's game.
+		bool voiceLines = false;
+
 		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
 		float xpShare = 0.5f;
 

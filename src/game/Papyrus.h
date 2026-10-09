@@ -37,8 +37,11 @@ namespace Papyrus
 	}
 
 	// T must be the object's script type (e.g. RE::Actor for actors).
+	// a_create: make a script object for the reference if none is bound (needed for references made
+	// at runtime). Leave it off for calls that may hit many references: creating an object inside
+	// the VM has crashed the game (BSScript VirtualMachine::CreateObject) on a mirrored NPC.
 	template <class T, class... Args>
-	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, Args... a_args)
+	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
 	{
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
@@ -57,6 +60,9 @@ namespace Papyrus
 		const RE::BSFixedString                   scriptName{ a_scriptName };
 		RE::BSTSmartPointer<RE::BSScript::Object> object;
 		if (!vm->FindBoundObject(handle, scriptName.c_str(), false, object, false) || !object) {
+			if (!a_create) {
+				return false;
+			}
 			if (!detail::CreateObject(vm.get(), scriptName, object) || !object) {
 				REX::WARN("Papyrus: could not create {} object", a_scriptName);
 				return false;

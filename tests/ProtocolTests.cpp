@@ -633,6 +633,10 @@ TEST("protocol: Line round trips for the player and for an NPC")
 	for (const auto type : { MT::kReportLine, MT::kLineSpoken }) {
 		const auto npc = DecodeLine(Encode(Line{ 2, REF_A, "Hey, you got a minute?" }, type));
 		REQUIRE(npc);
+		CHECK(npc->topic == 0);
+		const auto voiced = DecodeLine(Encode(Line{ 2, REF_A, "Hey, you got a minute?", 0x0005E686 }, type));
+		REQUIRE(voiced);
+		CHECK(voiced->topic == 0x0005E686);
 		CHECK(npc->playerId == 2);
 		CHECK(npc->speaker == REF_A);
 		CHECK(npc->text == "Hey, you got a minute?");

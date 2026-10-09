@@ -1,5 +1,8 @@
 #include "game/Conversations.h"
 
+#include "game/Papyrus.h"
+#include "Config.h"
+
 #include "game/Hud.h"
 #include "game/NpcSync.h"
 #include "game/RemotePlayers.h"
@@ -38,6 +41,7 @@ namespace Conversations
 		std::uint32_t                               reported = 0;
 		std::uint32_t                               received = 0;
 		std::uint32_t                               displayed = 0;
+		std::uint32_t                               voiced = 0;
 
 		// The actor's latest subtitle. The game keeps it after the line ends; IsTalking() says
 		// whether it's being spoken now.
@@ -47,6 +51,24 @@ namespace Conversations
 			const auto high = process ? process->high : nullptr;
 			const char* text = high ? high->strVoiceSubtitle.c_str() : nullptr;
 			return text ? text : "";
+		}
+
+		// The topic of the line the actor is saying, when the engine still has it (greetings and most
+		// conversation lines keep their dialogue item on the actor), so the hearer's copy can say it too.
+		std::uint32_t TopicOf(RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto high = process ? process->high : nullptr;
+			if (!high) {
+				return 0;
+			}
+			if (high->greetTopic && high->greetTopic->topic) {
+				return high->greetTopic->topic->GetFormID();
+			}
+			if (high->lastGreeting && high->lastGreeting->parentTopic) {
+				return high->lastGreeting->parentTopic->GetFormID();
+			}
+			return 0;
 		}
 
 		// Cut to the protocol's limit without splitting a UTF-8 character.
@@ -93,7 +115,7 @@ namespace Conversations
 				const auto speaker = Reportable(a_actor, a_isPlayer);
 				REX::DEBUG("Conversations: {:08X} says '{}'{}", id, text, speaker ? " (reported)" : "");
 				if (speaker && a_connected) {
-					outgoing.push_back(Protocol::Encode(Protocol::Line{ 0, *speaker, Fit(text) }, Protocol::MessageType::kReportLine));
+					outgoing.push_back(Protocol::Encode(Protocol::Line{ 0, *speaker, Fit(text), a_isPlayer ? 0u : TopicOf(a_actor) }, Protocol::MessageType::kReportLine));
 					++reported;
 				}
 			}
@@ -191,6 +213,15 @@ namespace Conversations
 		}
 		shown.push_back({ key, a_line.text, now });
 		++displayed;
+		// An NPC's line is said aloud by our copy when we know its topic (the engine picks the line
+		// for the topic by its conditions, which match the speaker's game in all but odd cases).
+		if (a_line.speaker != 0 && a_line.topic != 0 && Config::Get().voiceLines) {
+			if (const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic)) {
+				if (Papyrus::CallMethod(static_cast<RE::TESObjectREFR*>(actor), "ObjectReference", "Say", false, topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr))) {  // an ObjectReference handle, as the script expects (an Actor one makes the VM build a new object and crash)
+					++voiced;
+				}
+			}
+		}
 		Hud::Notify(std::format("{}: {}", name, a_line.text));
 	}
 
@@ -202,6 +233,6 @@ namespace Conversations
 
 	std::string Describe()
 	{
-		return std::format("conversations: heard={} reported={} received={} shown={}", heard, reported, received, displayed);
+		return std::format("conversations: heard={} reported={} received={} shown={} voiced={}", heard, reported, received, displayed, voiced);
 	}
 }
