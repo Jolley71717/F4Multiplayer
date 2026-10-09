@@ -190,12 +190,6 @@ namespace DevCommands
 		// Frame()), so two games can be driven at the same instant from a script; scheduled tasks on the
 		// VM used to fire seconds late. focus: brings the game window to the front (a tapped Alt lifts
 		// Windows' foreground lock), so a desktop capture shows the game and not whatever popped over it.
-		struct KeyHold
-		{
-			std::uint8_t                          vk = 0;
-			std::chrono::steady_clock::time_point until{};
-		};
-		KeyHold keyHold;
 
 		void KeyEvent(std::uint8_t a_vk, bool a_down)
 		{
@@ -229,14 +223,17 @@ namespace DevCommands
 			if (!vk || *vk == 0 || *vk > 255 || args.size() < 2) {
 				return "error: usage: key <vkHex> <holdMs>";
 			}
-			if (keyHold.vk) {
-				KeyEvent(keyHold.vk, false);
-			}
-			const bool front = BringGameToFront();
-			keyHold.vk = static_cast<std::uint8_t>(*vk);
-			keyHold.until = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
-			KeyEvent(keyHold.vk, true);
-			return std::format("holding {:02X} for {} ms{}", *vk, args[1], front ? "" : " (window not in front)");
+			// Window and input calls run on their own thread: on the game thread they stalled the game
+			// (and with it the dev channel) on the VM.
+			const auto key = static_cast<std::uint8_t>(*vk);
+			const auto hold = std::stoi(std::string{ args[1] });
+			std::thread([key, hold] {
+				BringGameToFront();
+				KeyEvent(key, true);
+				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
+				KeyEvent(key, false);
+			}).detach();
+			return std::format("pressing {:02X} for {} ms", *vk, args[1]);
 		}
 
 		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
@@ -247,14 +244,22 @@ namespace DevCommands
 			if (args.size() < 2) {
 				return "error: usage: mouse <dx> <dy>";
 			}
-			BringGameToFront();
-			mouse_event(1u, std::stoi(std::string{ args[0] }), std::stoi(std::string{ args[1] }), 0, 0);  // MOUSEEVENTF_MOVE
-			return "moved";
+			const auto dx = std::stoi(std::string{ args[0] });
+			const auto dy = std::stoi(std::string{ args[1] });
+			std::thread([dx, dy] {
+				BringGameToFront();
+				mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
+			}).detach();
+			return "moving";
 		}
 
 		std::string Focus(std::string_view)
 		{
-			return BringGameToFront() ? "focused" : "error: could not bring the game window to the front";
+			auto result = std::async(std::launch::async, [] { return BringGameToFront(); });
+			if (result.wait_for(std::chrono::milliseconds(1500)) != std::future_status::ready) {
+				return "requested";  // still trying on its thread
+			}
+			return result.get() ? "focused" : "error: could not bring the game window to the front";
 		}
 
 		std::string Console(std::string_view a_args)
@@ -1616,10 +1621,6 @@ namespace DevCommands
 
 	void Frame()
 	{
-		if (keyHold.vk && std::chrono::steady_clock::now() >= keyHold.until) {
-			KeyEvent(keyHold.vk, false);
-			keyHold.vk = 0;
-		}
 		if (!turn.active) {
 			return;
 		}
