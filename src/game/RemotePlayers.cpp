@@ -739,9 +739,9 @@ namespace RemotePlayers
 			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
-			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={}]",
+			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} pa={}/{} frame={:08X}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace, gap);
+				last.x, last.y, last.cell, last.worldspace, gap, remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);

@@ -186,9 +186,12 @@ namespace Party
 			status.downed = Downed::IsDown();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();
-			status.powerArmor = RE::PowerArmor::PlayerInPowerArmor();
+			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
+			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
+			status.powerArmor = player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
 			if (status.powerArmor) {
-				const auto frame = player->lastUsedPowerArmor.get();
+				const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+				const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
 				const auto base = frame ? frame->GetObjectReference() : nullptr;
 				status.powerArmorFrame = base ? base->GetFormID() : 0;
 			}

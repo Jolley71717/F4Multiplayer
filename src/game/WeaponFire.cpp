@@ -268,6 +268,7 @@ namespace WeaponFire
 		constexpr std::uint32_t RIGHT_ATTACK = 0x00013005;
 		constexpr std::uint32_t SIGHTED = 0x00004A57;          // ActionSighted
 		constexpr std::uint32_t SIGHTED_RELEASE = 0x00004A58;  // ActionSightedRelease
+		constexpr std::uint32_t THROW = 0x00004E32;            // ActionThrow
 		std::uint32_t           actionsPlayed = 0;
 
 		// The idle behind an emote action (editor IDs from Fallout4.esm), or nullptr for other actions.
@@ -325,6 +326,12 @@ namespace WeaponFire
 		if (const auto idle = EmoteIdle(a_action)) {
 			RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", a_actor->GetFormID(), idle).c_str());
 			++actionsPlayed;
+			return;
+		}
+		// A throw needs no drawn weapon: the grenade in the stand-in's hand (from the equipment sync) flies.
+		if (a_action == Protocol::ShotAction::kThrow) {
+			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(THROW);
+			actionsPlayed += action && a_actor->PerformAction(action, nullptr);
 			return;
 		}
 		if (!a_actor->GetWeaponMagicDrawn()) {

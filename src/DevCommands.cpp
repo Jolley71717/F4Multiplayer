@@ -262,6 +262,20 @@ namespace DevCommands
 			return result.get() ? "focused" : "error: could not bring the game window to the front";
 		}
 
+		// pa: the local player's power armor state as the status reports it.
+		std::string PowerArmorInfo(std::string_view)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player) {
+				return "error: no player";
+			}
+			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+			const auto last = player->lastUsedPowerArmor.get();
+			const auto base = occupied ? occupied->GetObjectReference() : nullptr;
+			return std::format("engineSaysPA={} extraPA={} occupied={:08X} base={:08X} lastFrame={:08X}", RE::PowerArmor::PlayerInPowerArmor(), player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor), occupied ? occupied->GetFormID() : 0, base ? base->GetFormID() : 0, last ? last->GetFormID() : 0);
+		}
+
 		std::string Console(std::string_view a_args)
 		{
 			if (a_args.empty()) {
@@ -1009,6 +1023,11 @@ namespace DevCommands
 		std::string Forms(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
+			// The text to match is everything after the type, so "Power Armor" works as two words.
+			std::string text;
+			for (std::size_t i = 1; i < args.size(); ++i) {
+				text += (i > 1 ? " " : "") + std::string{ args[i] };
+			}
 			int        type = -1;
 			if (args.empty() || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
 				return "error: usage: forms <typeNumber> [text]";
@@ -1027,10 +1046,10 @@ namespace DevCommands
 				const std::string_view editorId = form->GetFormEditorID();
 				const auto named = form->As<RE::TESFullName>();
 				const std::string_view fullName = named && named->GetFullName() ? named->GetFullName() : "";  // most editor IDs are stripped at runtime; the name is not
-				if (args.size() > 1 && editorId.find(args[1]) == std::string_view::npos && fullName.find(args[1]) == std::string_view::npos) {
+				if (!text.empty() && editorId.find(text) == std::string_view::npos && fullName.find(text) == std::string_view::npos) {
 					continue;
 				}
-				out += std::format("{:08X}:{} ", id, editorId);
+				out += std::format("{:08X}:{}:{} ", id, editorId, fullName);
 				++count;
 			}
 			return out.empty() ? "none" : out;
@@ -1565,6 +1584,7 @@ namespace DevCommands
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
 			Entry{ "mouse", Mouse },
+			Entry{ "pa", PowerArmorInfo },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },

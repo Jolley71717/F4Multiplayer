@@ -397,6 +397,7 @@ namespace Protocol
 		inline constexpr std::uint8_t kPoint = 6;  // emotes (players only): an idle played on the stand-in
 		inline constexpr std::uint8_t kCheer = 7;
 		inline constexpr std::uint8_t kClap = 8;
+		inline constexpr std::uint8_t kThrow = 9;  // a grenade or mine thrown (the stand-in throws whatever grenade it holds)
 		inline constexpr std::uint8_t kMax = kClap;
 	}
 
