@@ -161,7 +161,7 @@ namespace DevCommands
 			if (args.size() > 2) {
 				turn.endPitch = std::stof(std::string{ args[2] });
 			} else {
-				const float dz = (to.z + 90.0f) - (me.z + 110.0f);
+				const float dz = (to.z + 60.0f) - (me.z + 120.0f);  // measured: shots at a standing raider 240 away land from 6 to 18 degrees down, auto was 5
 				const float flat = std::hypot(to.x - me.x, to.y - me.y);
 				turn.endPitch = -std::atan2(dz, (std::max)(flat, 1.0f)) * DEG;
 			}
