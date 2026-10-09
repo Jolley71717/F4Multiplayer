@@ -33,6 +33,12 @@ namespace WeaponFire
 			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
 		}
 
+		// A grenade or mine leaving the hand: the graph's "WeaponFire" with payload "2" (a gun's has none).
+		bool IsThrowEvent(std::string_view a_tag, std::string_view a_payload)
+		{
+			return a_tag == "WeaponFire" && a_payload == "2";
+		}
+
 		// Other things the graph tells us the actor did, replayed on the stand-in as ShotActions.
 		std::optional<std::uint8_t> ActionOf(std::string_view a_tag)
 		{
@@ -61,7 +67,13 @@ namespace WeaponFire
 		RE::BSEventNotifyControl OnPlayerAnimationEvent(RE::BSTEventSink<RE::BSAnimationGraphEvent>* a_this, const RE::BSAnimationGraphEvent& a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* a_source)
 		{
 			const std::string_view tag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
-			if (IsAttackEvent(tag)) {
+			const std::string_view payload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
+			if (IsThrowEvent(tag, payload)) {
+				std::scoped_lock l{ actionLock };
+				if (playerActions.size() < MAX_PENDING_ACTIONS) {
+					playerActions.push_back(Protocol::ShotAction::kThrow);
+				}
+			} else if (IsAttackEvent(tag)) {
 				++pending;
 				++total;
 			}
@@ -91,7 +103,14 @@ namespace WeaponFire
 		{
 			const auto actor = reinterpret_cast<RE::Actor*>(reinterpret_cast<std::uintptr_t>(a_this) - ANIM_SINK_OFFSET);
 			const auto id = actor->GetFormID();
-			if (Protocol::IsShareableRef(id) && a_event.tag.c_str() && IsAttackEvent(a_event.tag.c_str())) {
+			const std::string_view npcTag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
+			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
+			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
+				std::scoped_lock l{ actionLock };
+				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
+					npcActions.push_back({ id, Protocol::ShotAction::kThrow });
+				}
+			} else if (Protocol::IsShareableRef(id) && IsAttackEvent(npcTag)) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);

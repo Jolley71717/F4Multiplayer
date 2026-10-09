@@ -74,6 +74,7 @@ namespace NpcSync
 		Clock::time_point                                    nextTalkClaim{};
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
+		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        stateTick = 0;
@@ -510,6 +511,13 @@ namespace NpcSync
 				// The owner's copy is somewhere else (e.g. a companion that followed its player through
 				// a door), far away, or hasn't been heard from: ours runs its own AI meanwhile.
 				const auto* latest = mirror.snapshots.empty() ? nullptr : &mirror.snapshots.back();
+				// Outdoors in the same world, the owner's copy went far (a companion ran after its player, or
+				// was moved): ours is brought over and mirrored from there, instead of being left behind.
+				if (latest && a_now - latest->received <= LOST_AFTER && latest->state.cell == 0 && SpaceOf(actor) == std::pair{ 0u, latest->state.worldspace } &&
+					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
+					actor->SetPosition({ latest->state.x, latest->state.y, latest->state.z }, true);
+					++broughtOver;
+				}
 				if (!latest || SpaceOf(actor) != std::pair{ latest->state.cell, latest->state.worldspace } || a_now - latest->received > LOST_AFTER ||
 					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
 					if (mirror.registered) {
@@ -761,7 +769,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }
