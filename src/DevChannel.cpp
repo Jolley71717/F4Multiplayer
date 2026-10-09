@@ -117,6 +117,10 @@ namespace DevChannel
 			std::string buffer;
 			char        chunk[512];
 			bool        authed = false;
+			// One client is served at a time: a client that connects and goes quiet (a dropped tunnel, a
+			// killed script) must not hold the channel forever.
+			const DWORD timeout = 15000;
+			setsockopt(a_client, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
 
 			for (;;) {
 				const int received = recv(a_client, chunk, sizeof(chunk), 0);
