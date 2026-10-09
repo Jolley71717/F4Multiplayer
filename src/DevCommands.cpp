@@ -1025,7 +1025,9 @@ namespace DevCommands
 					continue;
 				}
 				const std::string_view editorId = form->GetFormEditorID();
-				if (args.size() > 1 && editorId.find(args[1]) == std::string_view::npos) {
+				const auto named = form->As<RE::TESFullName>();
+				const std::string_view fullName = named && named->GetFullName() ? named->GetFullName() : "";  // most editor IDs are stripped at runtime; the name is not
+				if (args.size() > 1 && editorId.find(args[1]) == std::string_view::npos && fullName.find(args[1]) == std::string_view::npos) {
 					continue;
 				}
 				out += std::format("{:08X}:{} ", id, editorId);

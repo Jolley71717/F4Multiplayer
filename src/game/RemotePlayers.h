@@ -27,6 +27,8 @@ namespace RemotePlayers
 	void SetLight(std::uint32_t a_id, bool a_on);
 	// Their power armor state and the base form of the frame they are in.
 	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase);
+	// The form ID of a player's stand-in, or 0 when they have none right now.
+	std::uint32_t ActorIdOf(std::uint32_t a_id);
 
 	// Dev: the light form placed at a stand-in whose player has their Pip-Boy light on.
 	void SetLightForm(std::uint32_t a_formId);

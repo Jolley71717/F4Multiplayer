@@ -18,7 +18,7 @@ namespace WorldSync
 		// Every actor known to be dead this session, and those we still have to kill locally
 		// (they weren't loaded when we heard about them).
 		std::unordered_set<std::uint32_t> dead;
-		std::unordered_set<std::uint32_t> pending;
+		std::unordered_map<std::uint32_t, std::uint32_t> pending;  // ref -> killer player (0 = none), until the actor is loaded and can be killed
 
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
@@ -106,7 +106,7 @@ namespace WorldSync
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be), false to try again later.
-		bool TryKill(std::uint32_t a_refId)
+		bool TryKill(std::uint32_t a_refId, std::uint32_t a_killer)
 		{
 			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
@@ -130,6 +130,11 @@ namespace WorldSync
 			// ragdoll, quest/script death events), exactly as if it happened here.
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
 			++applied;
+			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
+			// ragdolls away instead of dropping flat.
+			if (const auto standIn = a_killer ? RemotePlayers::ActorIdOf(a_killer) : 0) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.pushactoraway {:08X} 3", a_refId, standIn).c_str());
+			}
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
 		}
@@ -617,13 +622,13 @@ namespace WorldSync
 		return { session, containerNext };
 	}
 
-	void ApplyRemoteDeath(std::uint32_t a_refId)
+	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer)
 	{
 		if (!IsShareableRef(a_refId) || !dead.insert(a_refId).second) {
 			return;
 		}
-		if (!TryKill(a_refId)) {
-			pending.insert(a_refId);
+		if (!TryKill(a_refId, a_killer)) {
+			pending[a_refId] = a_killer;
 		}
 	}
 
@@ -769,7 +774,7 @@ namespace WorldSync
 		}
 
 		for (auto it = pending.begin(); it != pending.end();) {
-			it = TryKill(*it) ? pending.erase(it) : std::next(it);
+			it = TryKill(it->first, it->second) ? pending.erase(it) : std::next(it);
 		}
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
 			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);

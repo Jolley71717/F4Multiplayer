@@ -19,7 +19,8 @@ namespace WorldSync
 	// What our world already contains, for Hello and after loading a save.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
 
-	void ApplyRemoteDeath(std::uint32_t a_refId);
+	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
+	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0);
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);

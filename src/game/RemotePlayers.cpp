@@ -580,6 +580,13 @@ namespace RemotePlayers
 		}
 	}
 
+	std::uint32_t ActorIdOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		const auto actor = it != players.end() ? it->second.actor.get() : nullptr;
+		return actor ? actor->GetFormID() : 0;
+	}
+
 	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
