@@ -60,6 +60,7 @@ namespace WorldSync
 			Clock::time_point  until;
 		};
 		std::unordered_map<std::uint32_t, Watched>           watched;
+		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
 		// Container changes are numbered by the server. Everything before containerNext is in our
@@ -512,6 +513,18 @@ namespace WorldSync
 			for (const auto& activation : a_activations) {
 				auto& entry = watched[activation.ref];
 				entry.until = a_now + WATCH_TIME;
+				// What the thing is linked to is watched as well: a terminal's door opens without anyone
+				// activating the door, and the friend would otherwise stay locked out.
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(activation.ref);
+				const auto links = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+				if (links) {
+					for (const auto& link : links->linkedRefs) {
+						if (link.REFR && Protocol::IsShareableRef(link.REFR->GetFormID())) {
+							watched[link.REFR->GetFormID()].until = a_now + WATCH_TIME;
+							++linkedWatched;
+						}
+					}
+				}
 			}
 			for (auto it = watched.begin(); it != watched.end();) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(it->first);
@@ -856,8 +869,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} pendingDoors={} personal={} ownSkipped={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, pendingRefStates.size(), personalSkipped,
 			ownSkipped);
 	}
 }
