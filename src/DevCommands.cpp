@@ -157,7 +157,14 @@ namespace DevCommands
 			turn.startYaw = startYaw;
 			turn.endYaw = startYaw + delta;
 			turn.startPitch = player->data.angle.x * DEG;
-			turn.endPitch = args.size() > 2 ? std::stof(std::string{ args[2] }) : turn.startPitch;
+			// Pitch: given in degrees, or toward the target's chest from the player's eyes (down is positive).
+			if (args.size() > 2) {
+				turn.endPitch = std::stof(std::string{ args[2] });
+			} else {
+				const float dz = (to.z + 90.0f) - (me.z + 110.0f);
+				const float flat = std::hypot(to.x - me.x, to.y - me.y);
+				turn.endPitch = -std::atan2(dz, (std::max)(flat, 1.0f)) * DEG;
+			}
 			turn.start = std::chrono::steady_clock::now();
 			turn.end = turn.start + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			turn.active = true;
