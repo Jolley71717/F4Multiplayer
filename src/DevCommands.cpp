@@ -1322,7 +1322,7 @@ namespace DevCommands
 			return out.empty() ? "none" : out;
 		}
 
-		// say <refHex> <topicHex>: the actor says a line from the topic (Papyrus ObjectReference.Say).
+		// say <refHex> <topicHex>: the actor says a line from the topic (the console's Say; the Papyrus route crashes).
 		std::string Say(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1332,8 +1332,8 @@ namespace DevCommands
 			if (!topic) {
 				return "error: usage: say <refHex> <topicHex>";
 			}
-			const bool ok = Papyrus::CallMethod(ref, "ObjectReference", "Say", true, topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr));
-			return ok ? "dispatched" : "error: dispatch failed";
+			RE::Console::ExecuteCommand(std::format("{:08X}.say {:08X}", ref->GetFormID(), topic->GetFormID()).c_str());
+			return "dispatched";
 		}
 
 		// npcvoice <actorHex>: what the game knows about the actor's current line.
@@ -1350,9 +1350,9 @@ namespace DevCommands
 				return std::format("talking={} voiceTimer={:.2f} high=none", actor->IsTalking(), actor->voiceTimer);
 			}
 			const char* text = high->strVoiceSubtitle.c_str();
-			return std::format("talking={} voiceTimer={:.2f} state={} elapsed={:.2f} hpTimer={:.2f} subtitle='{}' lastGreeting={:08X} sound={:X}",
+			return std::format("talking={} voiceTimer={:.2f} state={} elapsed={:.2f} hpTimer={:.2f} subtitle='{}' lastGreeting={:08X} greetingTopic={:08X} sound={:X}",
 				actor->IsTalking(), actor->voiceTimer, static_cast<int>(high->voiceState.get()), high->voiceTimeElapsed, high->voiceTimer, text ? text : "",
-				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->soundHandle[0].soundID);
+				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->lastGreeting && high->lastGreeting->parentTopic ? high->lastGreeting->parentTopic->GetFormID() : 0, high->soundHandle[0].soundID);
 		}
 
 		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).

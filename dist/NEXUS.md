@@ -67,6 +67,12 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 - Asset use permission: yes, with credit, under GPL-3.0.
 - Credits: F4SE and CommonLibF4 (libxse), ENet, Address Library.
 
+## Changelog for 0.6.3
+
+- A friend's NPC lines are spoken aloud by your copy of that NPC (bVoiceLines, now on; the earlier route crashed and is gone).
+- Hotkeys ignore Alt, Ctrl and Win chords, so ShadowPlay's Alt+F9 no longer makes you point.
+- Protocol unchanged: 0.6.2 and 0.6.3 play together.
+
 ## Changelog for 0.6.2
 
 - Friends run with a real run gait (they used to glide with a walk animation at run speed), and keep moving smoothly when an update is late.

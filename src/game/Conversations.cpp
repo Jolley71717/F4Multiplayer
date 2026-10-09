@@ -1,6 +1,5 @@
 #include "game/Conversations.h"
 
-#include "game/Papyrus.h"
 #include "Config.h"
 
 #include "game/Hud.h"
@@ -217,9 +216,10 @@ namespace Conversations
 		// for the topic by its conditions, which match the speaker's game in all but odd cases).
 		if (a_line.speaker != 0 && a_line.topic != 0 && Config::Get().voiceLines) {
 			if (const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic)) {
-				if (Papyrus::CallMethod(static_cast<RE::TESObjectREFR*>(actor), "ObjectReference", "Say", false, topic, static_cast<RE::Actor*>(nullptr), false, static_cast<RE::TESObjectREFR*>(nullptr))) {  // an ObjectReference handle, as the script expects (an Actor one makes the VM build a new object and crash)
-					++voiced;
-				}
+				// Through the console, not Papyrus: packing the call's arguments for the script VM crashed
+				// both games in testing (BSScript::PackVariable), while the console's Say is plain engine code.
+				RE::Console::ExecuteCommand(std::format("{:08X}.say {:08X}", actor->GetFormID(), topic->GetFormID()).c_str());
+				++voiced;
 			}
 		}
 		Hud::Notify(std::format("{}: {}", name, a_line.text));
