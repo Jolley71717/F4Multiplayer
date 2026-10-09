@@ -1,5 +1,7 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/Prediction.h"
+
 #include "Protocol.h"
 
 namespace Puppets
@@ -25,6 +27,11 @@ namespace Puppets
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
+			// What the stand-in actually covers per frame, smoothed: the animation runs at this speed so
+			// the feet match the ground (the reported speed can lag behind).
+			RE::NiPoint3                          lastTargetPosition;
+			std::chrono::steady_clock::time_point lastTargetTime{};
+			Prediction::SpeedWindow               measured;  // .speed is what the stand-in really covers
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
 			bool                                  redraw = false;  // holster (if drawn) and draw again
@@ -127,7 +134,9 @@ namespace Puppets
 				graph->NotifyAnimationGraphImpl(jumpLand);
 			}
 
-			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
+			// The animation runs at the speed the stand-in really moves; the reported speed decides
+			// only whether it is moving at all.
+			graph->SetGraphVariableFloat(speedVar, moving ? (std::max)(a_puppet.measured.speed, motion.speed) : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
 
 			if (moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
@@ -173,10 +182,28 @@ namespace Puppets
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
-				DriveAnimation(a_this, *puppet);
 				MatchWeaponDrawn(a_this, *puppet);
+				// The engine feeds its locomotion graph from the actor's desired movement, which for an
+				// actor with no AI is a stale walk; tell it what the stand-in really does so the run
+				// cycle matches the ground covered.
+				if (const auto process = a_this->currentProcess) {
+					const float speed = puppet->moving ? (std::max)(puppet->measured.speed, puppet->target.speed) : 0.0f;
+					const RE::NiPoint3 velocity{ std::sin(puppet->target.heading) * speed, std::cos(puppet->target.heading) * speed, 0.0f };
+					if (const auto middle = process->middleHigh) {
+						middle->desiredSpeed = speed;
+					}
+					if (const auto high = process->high) {
+						high->pathingDesiredMovementSpeed = velocity;
+						high->pathingCurrentMovementSpeed = velocity;
+					}
+				}
 			}
 			a_this->UpdateNoAI(a_delta);
+			// After the engine's own update, which writes its idea of the speed (half of what a
+			// teleported actor covers) into the graph: ours is the last word before the graph samples.
+			if (puppet->hasTarget) {
+				DriveAnimation(a_this, *puppet);
+			}
 		}
 
 		void InstallHook(RE::Actor* a_actor)

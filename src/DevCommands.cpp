@@ -711,6 +711,20 @@ namespace DevCommands
 			return id ? NpcSync::DescribeMirror(*id) : "error: usage: mirror <refHex>";
 		}
 
+		// motion <refHex>: the engine's movement numbers for an actor (what its locomotion graph is fed).
+		std::string MotionInfo(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto process = actor ? actor->currentProcess : nullptr;
+			const auto middle = process ? process->middleHigh : nullptr;
+			const auto high = process ? process->high : nullptr;
+			if (!middle || !high) {
+				return "error: no process data";
+			}
+			return std::format("desiredSpeed={:.1f} animationSpeed={:.1f} pathCur=({:.0f},{:.0f},{:.0f}) pathDesired=({:.0f},{:.0f},{:.0f}) output=({:.0f},{:.0f},{:.0f})", middle->desiredSpeed, middle->animationSpeed, high->pathingCurrentMovementSpeed.x, high->pathingCurrentMovementSpeed.y, high->pathingCurrentMovementSpeed.z, high->pathingDesiredMovementSpeed.x, high->pathingDesiredMovementSpeed.y, high->pathingDesiredMovementSpeed.z, 0.0f, 0.0f, 0.0f);
+		}
+
 		// piplight on|off: the player's Pip-Boy light.
 		std::string PipLight(std::string_view a_args)
 		{
@@ -1427,6 +1441,7 @@ namespace DevCommands
 			Entry{ "facemask", FaceMask },
 			Entry{ "friendlight", FriendLight },
 			Entry{ "piplight", PipLight },
+			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
 		};

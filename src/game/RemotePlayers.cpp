@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/DeferredDelete.h"
+#include "game/Prediction.h"
 
 #include "game/Face.h"
 #include "Config.h"
