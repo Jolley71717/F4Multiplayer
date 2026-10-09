@@ -67,6 +67,15 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 - Asset use permission: yes, with credit, under GPL-3.0.
 - Credits: F4SE and CommonLibF4 (libxse), ENet, Address Library.
 
+## Changelog for 0.7.0
+
+- Power armor: a friend in a frame is shown in one; their stand-in climbs in and out.
+- Grenades and mines: a friend's throw plays on their stand-in and the explosion goes off in your game at the same spot.
+- Shared NPC kills ragdoll: the killer's stand-in gives the corpse the push it got in their game.
+- A door a friend unlocked with a terminal unlocks for you too.
+- A friend's companion that ran off with them outdoors is brought along in your game instead of left behind.
+- Protocol 25: everyone updates together.
+
 ## Changelog for 0.6.3
 
 - A friend's NPC lines are spoken aloud by your copy of that NPC (bVoiceLines, now on; the earlier route crashed and is gone).

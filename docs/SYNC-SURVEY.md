@@ -12,16 +12,16 @@ Candidates, by how often a player would notice the gap in a normal session:
 |---|---|---|---|---|
 | 1 | Melee swings and punches | Any melee fight; the friend just stands there | done (protocol 21): the stand-in performs the engine's attack action | done |
 | 2 | Reloading, aiming down sights | Every firefight; the stand-in never reloads or aims | done (protocol 22): "reloadStateEnter" and "sightedStateEnter/Exit" are reported; the stand-in takes "reloadStart" and the engine's ActionSighted/ActionSightedRelease | done |
-| 3 | Power armor | A friend in power armor is a settler in a vault suit | medium (the frame is a furniture the stand-in must "use") | later |
-| 4 | Death animations and ragdolls of shared NPCs | Every kill: the copy drops flat instead of flying | medium | later |
-| 5 | Companions following the right player | Dogmeat follows nobody in your game | medium (ownership exists; the follow package doesn't) | later |
+| 3 | Power armor | A friend in power armor is a settler in a vault suit | done (protocol 25, 2026-10-09): the status carries the frame's base; the hearer places a frame at the stand-in, gives it six seconds of its own AI and it climbs in; out again when the player leaves | done |
+| 4 | Death animations and ragdolls of shared NPCs | Every kill: the copy drops flat instead of flying | done (2026-10-09): the killer's stand-in pushes the corpse (pushactoraway) after the kill, measured 100 units on the other side | done |
+| 5 | Companions following the right player | Dogmeat follows nobody in your game | ownership follows the companion faction (verified); a mirror whose owner's copy went far outdoors is now brought over instead of left behind (2026-10-09); following itself is the owner's game's job and could not be driven from the console: to watch in a real session | partly |
 | 6 | Emotes (wave, point, sit) | Only if we add keys for them | small | later |
 | 7 | Facial expression, head tracking (looking at who talks) | Conversations feel flat | small-medium | later |
 | 8 | Workshop building | Any settlement work: a friend's walls are missing | placed, moved and scrapped objects are copied (protocol 22) | partly |
 | 9 | Misc/radiant quests | Settlement requests differ per game | large, by design | no |
 | 10 | Pip-Boy light | Night play: the friend's light is invisible | done (protocol 22): a light follows the stand-in while their light is on | done |
 | 11 | Crouch-sneak attack crits, VATS slow-mo for others | Rare; VATS can't be shared sensibly | n/a | no |
-| 12 | Grenades and mines | A friend's thrown grenade doesn't exist in your game | medium (shared projectile spawn) | later |
+| 12 | Grenades and mines | A friend's thrown grenade doesn't exist in your game | done (protocol 25, 2026-10-09): the throw plays on the stand-in, and every explosion the thrower's game sees in the next 8 s is set off at the same spot in the others (a projectile cannot be launched for a stand-in) | done |
 
 | 13 | Fast travel with a friend | Each player can fast travel alone today; the other sees them vanish and reappear. To verify both ways, and consider "travel together" (the friend gets a prompt) | small to verify; medium for travel-together | verify next |
 | 14 | Workshop building shared | The big one: a friend's walls, turrets and crops don't exist in your game | first step done (protocol 22): what a player places, moves or scraps is copied into the others' games (plain copies: not scrappable or powerable by them); the rest is planned in docs/WORKSHOP-POWER.md | partly |
@@ -47,7 +47,7 @@ both games). The main story and the faction quests are per player unless the hos
 |---|---|---|---|
 | Door with a key you both can pick up | Kellogg's house (key from Valentine's case is quest-given; the Mayor's key in Diamond City) | key-holder opens it, the open/unlock is sent, friend walks through | none |
 | Key given only in dialogue, to one player | Vault 81 (Overseer), Covenant, many settlement houses | only the speaker has the key; the door still opens for the friend when the speaker opens it | the friend cannot re-lock or open it alone; fine for co-op |
-| Door unlocked by a terminal in the same room | Fort Hagen, Mass Fusion, National Guard armory, Vault 75 | the terminal's lock state is sent (it was activated) but the *linked door* was never activated, so its unlock is not sent | **gap**: scan nearby doors for lock changes and send them; or send a terminal's linked refs' state when the terminal is used |
+| Door unlocked by a terminal in the same room | Fort Hagen, Mass Fusion, National Guard armory, Vault 75 | the terminal's lock state is sent (it was activated) but the *linked door* was never activated, so its unlock is not sent | done (2026-10-09): a used reference's linked refs are watched too |
 | Door that opens at a side-quest stage | Museum of Freedom (Preston), Vault 81, Cabot House, Covenant | stage is shared, both scripts unlock it | none once the friend has the quest; before that they are refused by the door until their own stage arrives |
 | Door gated by a main-story stage, `sStory = own` | Fort Hagen's elevator, Institute relay, Prydwen docking, Mass Fusion's reactor | each player must reach that stage themselves; a friend ahead of you walks through, you are refused | by design; `shared` lifts it. Worth saying plainly in INSTALL.md with these examples |
 | Scene that must play before the door opens | Diamond City gate (Piper), Goodneighbor's Hancock scene, Vault 81's intercom | the scene runs in the game of whoever starts it; the stage it sets is shared; the friend's door opens when their stage arrives | a friend standing next to you sees the scene's NPCs act (they are owned by the talker's game) but hears only subtitles; voiced lines now play on their copy (0.6.3) |
