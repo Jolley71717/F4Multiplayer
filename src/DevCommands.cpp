@@ -24,6 +24,11 @@ __declspec(dllimport) unsigned int __stdcall MapVirtualKeyA(unsigned int a_code,
 __declspec(dllimport) void* __stdcall FindWindowA(const char* a_class, const char* a_title);
 __declspec(dllimport) int __stdcall ShowWindow(void* a_window, int a_show);
 __declspec(dllimport) int __stdcall SetForegroundWindow(void* a_window);
+__declspec(dllimport) void* __stdcall GetForegroundWindow();
+__declspec(dllimport) unsigned long __stdcall GetWindowThreadProcessId(void* a_window, unsigned long* a_processId);
+__declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
+__declspec(dllimport) int __stdcall AttachThreadInput(unsigned long a_attach, unsigned long a_to, int a_flag);
+__declspec(dllimport) int __stdcall BringWindowToTop(void* a_window);
 }
 
 namespace DevCommands
@@ -197,6 +202,32 @@ namespace DevCommands
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u, 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP)
 		}
 
+		// Windows only lets the foreground thread change the foreground window: attach to it first.
+		bool BringGameToFront()
+		{
+			const auto window = FindWindowA(nullptr, "Fallout4");
+			if (!window) {
+				return false;
+			}
+			if (GetForegroundWindow() == window) {
+				return true;
+			}
+			const auto foreThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+			const auto ourThread = GetCurrentThreadId();
+			if (foreThread && foreThread != ourThread) {
+				AttachThreadInput(foreThread, ourThread, 1);
+			}
+			KeyEvent(0x12, true);
+			KeyEvent(0x12, false);
+			ShowWindow(window, 9);  // SW_RESTORE
+			BringWindowToTop(window);
+			const bool ok = SetForegroundWindow(window) != 0;
+			if (foreThread && foreThread != ourThread) {
+				AttachThreadInput(foreThread, ourThread, 0);
+			}
+			return ok && GetForegroundWindow() == window;
+		}
+
 		std::string KeyPress(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -207,23 +238,16 @@ namespace DevCommands
 			if (keyHold.vk) {
 				KeyEvent(keyHold.vk, false);
 			}
+			const bool front = BringGameToFront();
 			keyHold.vk = static_cast<std::uint8_t>(*vk);
 			keyHold.until = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			KeyEvent(keyHold.vk, true);
-			return std::format("holding {:02X} for {} ms", *vk, args[1]);
+			return std::format("holding {:02X} for {} ms{}", *vk, args[1], front ? "" : " (window not in front)");
 		}
 
 		std::string Focus(std::string_view)
 		{
-			const auto window = FindWindowA(nullptr, "Fallout4");
-			if (!window) {
-				return "error: no Fallout4 window";
-			}
-			KeyEvent(0x12, true);
-			KeyEvent(0x12, false);
-			ShowWindow(window, 9);  // SW_RESTORE
-			const bool ok = SetForegroundWindow(window) != 0;
-			return ok ? "focused" : "error: SetForegroundWindow refused";
+			return BringGameToFront() ? "focused" : "error: could not bring the game window to the front";
 		}
 
 		std::string Console(std::string_view a_args)
