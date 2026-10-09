@@ -29,6 +29,7 @@ __declspec(dllimport) unsigned long __stdcall GetWindowThreadProcessId(void* a_w
 __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
 __declspec(dllimport) int __stdcall AttachThreadInput(unsigned long a_attach, unsigned long a_to, int a_flag);
 __declspec(dllimport) int __stdcall BringWindowToTop(void* a_window);
+__declspec(dllimport) void __stdcall mouse_event(unsigned long a_flags, unsigned long a_dx, unsigned long a_dy, unsigned long a_data, unsigned long long a_extra);
 }
 
 namespace DevCommands
@@ -243,6 +244,19 @@ namespace DevCommands
 			keyHold.until = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::stoi(std::string{ args[1] }));
 			KeyEvent(keyHold.vk, true);
 			return std::format("holding {:02X} for {} ms{}", *vk, args[1], front ? "" : " (window not in front)");
+		}
+
+		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
+		// free camera (tfc) this is the only way to aim it from a script.
+		std::string Mouse(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() < 2) {
+				return "error: usage: mouse <dx> <dy>";
+			}
+			BringGameToFront();
+			mouse_event(1u, std::stoi(std::string{ args[0] }), std::stoi(std::string{ args[1] }), 0, 0);  // MOUSEEVENTF_MOVE
+			return "moved";
 		}
 
 		std::string Focus(std::string_view)
@@ -1550,6 +1564,7 @@ namespace DevCommands
 			Entry{ "turnto", TurnTo },
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
+			Entry{ "mouse", Mouse },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
