@@ -23,13 +23,15 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*][b]The world:[/b] loot taken or stored, items picked up, doors and locks, deaths.
 [*][b]Side quests:[/b] progress in one game moves the others forward once they have started the quest too. The main story and factions are played by each player in their own game (the host can switch to a shared story).
 [*][b]Map:[/b] a location one player finds shows up on everyone's map, ready for fast travel.
+[*][b]Settlements:[/b] what a friend builds, moves or scraps appears in your game.
+[*][b]The session is saved:[/b] the host's PC keeps the shared world, so dead NPCs stay dead and walls stand next time you play.
 [*][b]Time and weather[/b] follow the host.
 [*][b]XP:[/b] half the XP for your friends' kills.
 [/list]
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*]Friends appear as settlers wearing their gear, with their name and health over their head. You see them aim, fire, reload and swing, and their Pip-Boy light at night.
+[*]Friends appear as settlers of their sex and build, wearing their gear, with their name and health over their head. You see them aim, fire, reload, swing and emote (F9 point, F10 cheer, F11 clap), and their Pip-Boy light at night.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
