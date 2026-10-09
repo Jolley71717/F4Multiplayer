@@ -398,7 +398,7 @@ namespace Protocol
 		inline constexpr std::uint8_t kCheer = 7;
 		inline constexpr std::uint8_t kClap = 8;
 		inline constexpr std::uint8_t kThrow = 9;  // a grenade or mine thrown (the stand-in throws whatever grenade it holds)
-		inline constexpr std::uint8_t kMax = kClap;
+		inline constexpr std::uint8_t kMax = kThrow;
 	}
 
 	// A weapon shot (or another ShotAction), for the animation. refId 0 = the player themselves,
