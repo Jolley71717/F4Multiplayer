@@ -186,6 +186,12 @@ namespace Party
 			status.downed = Downed::IsDown();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();
+			status.powerArmor = RE::PowerArmor::PlayerInPowerArmor();
+			if (status.powerArmor) {
+				const auto frame = player->lastUsedPowerArmor.get();
+				const auto base = frame ? frame->GetObjectReference() : nullptr;
+				status.powerArmorFrame = base ? base->GetFormID() : 0;
+			}
 			return status;
 		}
 
@@ -450,6 +456,7 @@ namespace Party
 		entry.status = a_status;
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
+		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}

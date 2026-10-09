@@ -25,6 +25,8 @@ namespace RemotePlayers
 
 	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
 	void SetLight(std::uint32_t a_id, bool a_on);
+	// Their power armor state and the base form of the frame they are in.
+	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase);
 
 	// Dev: the light form placed at a stand-in whose player has their Pip-Boy light on.
 	void SetLightForm(std::uint32_t a_formId);

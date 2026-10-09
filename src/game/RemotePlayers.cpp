@@ -61,6 +61,12 @@ namespace RemotePlayers
 			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
 			Clock::time_point    lightPlacedAt{};
 			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
+			bool                 powerArmorOn = false;   // they are in power armor
+			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
+			bool                 inPowerArmor = false;   // the stand-in has climbed into our frame
+			RE::ObjectRefHandle  frame;                  // the frame we placed for it
+			Clock::time_point    framePlacedAt{};
+			Clock::time_point    frameActionAt{};        // when the stand-in last climbed in or out (the animation takes a moment)
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -81,6 +87,7 @@ namespace RemotePlayers
 		std::uint32_t friendLightForm = 0x0001ED2D;  // a plain white light, radius 800, in Fallout4.esm
 		constexpr float LIGHT_HEIGHT = 110.0f;  // above the feet: about the Pip-Boy
 		std::uint32_t   lightsPlaced = 0;
+		std::uint32_t   framesPlaced = 0;
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -265,9 +272,85 @@ namespace RemotePlayers
 			light->SetLocationOnReference(at);
 		}
 
+		// The frame placed for the stand-in is removed once the stand-in is out of it (or gone).
+		void DeleteFrame(RemotePlayer& a_player)
+		{
+			if (const auto frame = a_player.frame.get()) {
+				if (DeferredDelete::Safe(frame->Get3D() != nullptr, Clock::now() - a_player.framePlacedAt)) {
+					frame->Disable();
+					frame->SetDelete(true);
+				} else {
+					graveyard.push_back({ a_player.frame, a_player.framePlacedAt });
+				}
+			}
+			a_player.frame = {};
+			a_player.inPowerArmor = false;
+		}
+
+		// Power armor: a friend in a frame is shown in one. A frame of their frame's base is placed at
+		// the stand-in and the stand-in activates it, the way an NPC takes power armor; the armor pieces
+		// come with their equipment. When they climb out, the stand-in activates the frame again and the
+		// frame is removed.
+		constexpr auto FRAME_ACTION_GAP = 4s;
+		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
+		{
+			if (!a_actor || !a_actor->Get3D() || a_now - a_player.frameActionAt < FRAME_ACTION_GAP) {
+				return;
+			}
+			auto frame = a_player.frame.get();
+			if (a_player.powerArmorOn && !a_player.inPowerArmor) {
+				const auto base = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
+				if (!base) {
+					return;
+				}
+				if (frame && frame->GetParentCell() != a_actor->GetParentCell()) {
+					DeleteFrame(a_player);
+					frame = nullptr;
+				}
+				if (!frame) {
+					RE::NEW_REFR_DATA data;
+					data.location = a_actor->data.location;
+					data.direction = a_actor->data.angle;
+					data.object = base;
+					data.interior = a_cell->IsInterior() ? a_cell : nullptr;
+					data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
+					data.clearStillLoadingFlag = true;
+					const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+					frame = handle.get().get();
+					if (!frame) {
+						return;
+					}
+					a_player.frame = handle;
+					a_player.framePlacedAt = a_now;
+					a_player.frameActionAt = a_now;  // let it load before the stand-in uses it
+					++framesPlaced;
+					return;
+				}
+				if (!frame->Get3D()) {
+					return;
+				}
+				frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
+				a_player.inPowerArmor = true;
+				a_player.frameActionAt = a_now;
+				a_player.equipmentApplied = false;  // the pieces go on once it is in the frame
+				REX::INFO("RemotePlayers: '{}' stand-in gets into power armor (frame {:08X})", a_player.name, a_player.powerArmorFrame);
+			} else if (!a_player.powerArmorOn && a_player.inPowerArmor) {
+				if (frame && frame->Get3D()) {
+					frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
+				}
+				a_player.inPowerArmor = false;
+				a_player.frameActionAt = a_now;
+				a_player.equipmentApplied = false;
+				REX::INFO("RemotePlayers: '{}' stand-in gets out of power armor", a_player.name);
+			} else if (!a_player.powerArmorOn && frame && a_now - a_player.frameActionAt >= FRAME_ACTION_GAP) {
+				DeleteFrame(a_player);  // out of it and the animation is done
+			}
+		}
+
 		void DeleteActor(RemotePlayer& a_player)
 		{
 			DeleteLight(a_player);
+			DeleteFrame(a_player);
 			if (a_player.registered) {
 				Puppets::Unregister(a_player.registered);
 				a_player.registered = nullptr;
@@ -497,6 +580,16 @@ namespace RemotePlayers
 		}
 	}
 
+	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.powerArmorOn = a_on;
+			if (a_frameBase) {
+				it->second.powerArmorFrame = a_frameBase;
+			}
+		}
+	}
+
 	void SetLightForm(std::uint32_t a_formId)
 	{
 		friendLightForm = a_formId;
@@ -591,6 +684,7 @@ namespace RemotePlayers
 			}
 
 			UpdateLight(remote, actor, localCell, now);
+			UpdatePowerArmor(remote, actor, localCell, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -644,7 +738,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={}", lightsPlaced);
+			out += std::format(" lights={} frames={}", lightsPlaced, framesPlaced);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);

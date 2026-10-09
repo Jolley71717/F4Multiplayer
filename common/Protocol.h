@@ -17,7 +17,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 24;
+	inline constexpr std::uint16_t VERSION = 25;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -420,6 +420,8 @@ namespace Protocol
 		bool          downed = false;  // knocked down, waiting for a friend to help them up
 		bool          opening = false;  // still in the game's opening (before leaving Vault 111)
 		bool          light = false;    // Pip-Boy light on
+		bool          powerArmor = false;     // in power armor
+		std::uint32_t powerArmorFrame = 0;   // base form of the frame they are in (0 = none): the hearer places one for the stand-in
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -1551,7 +1553,8 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0)));
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0)));
+		w.U32(a_msg.powerArmorFrame);
 		return w.Data();
 	}
 
@@ -1569,6 +1572,8 @@ namespace Protocol
 		msg.downed = (flags & 1) != 0;
 		msg.opening = (flags & 2) != 0;
 		msg.light = (flags & 4) != 0;
+		msg.powerArmor = (flags & 8) != 0;
+		msg.powerArmorFrame = r.U32();
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
 			return std::nullopt;
 		}
