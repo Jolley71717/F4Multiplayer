@@ -865,6 +865,18 @@ void Server::Run()
 		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
 	};
 
+	const auto handleExplosion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto explosion = Protocol::DecodeExplosion(a_data);
+		if (!explosion) {
+			return;
+		}
+		explosion->playerId = a_player.id;
+		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);
+	};
+
 	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
 		if (!allowEvent(a_player) || now - a_player.lastLine < std::chrono::milliseconds(250)) {
@@ -1093,6 +1105,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportLine:
 			handleLine(a_player, a_data);
+			break;
+		case MessageType::kReportExplosion:
+			handleExplosion(a_player, a_data);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);

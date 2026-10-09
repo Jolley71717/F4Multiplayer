@@ -1237,3 +1237,14 @@ TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of b
 	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, {}));
 	CHECK(!SameLoadOrderIgnoring({}, session, ignore));
 }
+
+TEST("protocol: Explosion round trips and needs a base")
+{
+	for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
+		const Explosion in{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C };
+		const auto      out = DecodeExplosion(Encode(in, type));
+		REQUIRE(out);
+		CHECK(*out == in);
+		CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0, 1.0f, 2.0f, 3.0f, 0, 0 }, type)));
+	}
+}

@@ -61,6 +61,8 @@ namespace WeaponFire
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
 
 		std::atomic<bool>        logging{ false };
+		std::uint32_t            explosionsReported = 0;  // explosions seen after our throws and sent
+		std::uint32_t            explosionsSetOff = 0;    // explosions from other players set off here
 		std::mutex               logLock;
 		std::vector<std::string> logged;
 
@@ -73,6 +75,7 @@ namespace WeaponFire
 				if (playerActions.size() < MAX_PENDING_ACTIONS) {
 					playerActions.push_back(Protocol::ShotAction::kThrow);
 				}
+				ArmExplosionWatch();
 			} else if (IsAttackEvent(tag)) {
 				++pending;
 				++total;
@@ -110,6 +113,7 @@ namespace WeaponFire
 				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
 					npcActions.push_back({ id, Protocol::ShotAction::kThrow });
 				}
+				ArmExplosionWatch();
 			} else if (Protocol::IsShareableRef(id) && IsAttackEvent(npcTag)) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
@@ -252,11 +256,14 @@ namespace WeaponFire
 		}
 	}
 
+	void ScanExplosions();
+
 	void Frame()
 	{
 		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndDue(std::chrono::steady_clock::now(), [](RE::BSSoundHandle& a_handle) {
 			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
 		}));
+		ScanExplosions();
 	}
 
 	namespace
@@ -395,7 +402,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff);
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -408,5 +415,85 @@ namespace WeaponFire
 		}
 		logged.clear();
 		return out.empty() ? "none" : out;
+	}
+
+	// --- Explosions after a throw ------------------------------------------------------------
+	namespace
+	{
+		using Clock = std::chrono::steady_clock;
+		using namespace std::chrono_literals;
+		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
+		constexpr float EXPLOSION_RANGE = 6000.0f;    // from the player, both for reporting and for setting off
+		Clock::time_point                      watchUntil{};
+		Clock::time_point                      nextScan{};
+		std::unordered_set<std::uint32_t>      seenExplosions;
+		std::vector<Protocol::Explosion>       explosions;
+		std::mutex                             explosionLock;
+	}
+
+	void ArmExplosionWatch()
+	{
+		watchUntil = Clock::now() + EXPLOSION_WATCH;
+	}
+
+	void ScanExplosions()
+	{
+		const auto now = Clock::now();
+		if (now > watchUntil) {
+			seenExplosions.clear();
+			return;
+		}
+		if (now < nextScan) {
+			return;
+		}
+		nextScan = now + 100ms;
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto cell = player ? player->GetParentCell() : nullptr;
+		if (!cell) {
+			return;
+		}
+		RE::BSAutoLock l{ cell->spinLock };
+		for (const auto& ref : cell->references) {
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || !seenExplosions.insert(ref->GetFormID()).second) {
+				continue;
+			}
+			if (ref->data.location.GetDistance(player->data.location) > EXPLOSION_RANGE) {
+				continue;
+			}
+			const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+			std::scoped_lock e{ explosionLock };
+			explosions.push_back({ 0, base->GetFormID(), ref->data.location.x, ref->data.location.y, ref->data.location.z, space.first, space.second });
+			++explosionsReported;
+		}
+	}
+
+	std::vector<Protocol::Explosion> TakeExplosions()
+	{
+		std::scoped_lock l{ explosionLock };
+		return std::exchange(explosions, {});
+	}
+
+	void ApplyExplosion(const Protocol::Explosion& a_explosion)
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto cell = player ? player->GetParentCell() : nullptr;
+		const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_explosion.base);
+		if (!cell || !base || !base->Is(RE::ENUM_FORM_ID::kEXPL)) {
+			return;
+		}
+		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
+		if (space != std::pair{ a_explosion.cell, a_explosion.worldspace } || at.GetDistance(player->data.location) > EXPLOSION_RANGE) {
+			return;
+		}
+		RE::NEW_REFR_DATA data;
+		data.location = at;
+		data.object = base;
+		data.interior = cell->IsInterior() ? cell : nullptr;
+		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+		data.clearStillLoadingFlag = true;
+		RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+		++explosionsSetOff;
 	}
 }

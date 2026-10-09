@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Protocol.h"
+
 // Weapon shots: the local player's and those of NPCs we run are reported, so other players see
 // the shooter's firing animation. Only the animation is replayed (no projectile, no damage):
 // damage already reaches everyone through health sync.
@@ -33,6 +35,13 @@ namespace WeaponFire
 	// The idle an emote action plays (editor ID), or nullptr.
 	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
+
+	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), for the
+	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
+	void ArmExplosionWatch();
+	[[nodiscard]] std::vector<Protocol::Explosion> TakeExplosions();
+	// Sets off an explosion another player reported, if it is in our space and near enough to matter.
+	void ApplyExplosion(const Protocol::Explosion& a_explosion);
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);

@@ -236,6 +236,11 @@ namespace Session
 					Notify(name.empty() ? "A player left" : name + " left");
 				}
 				break;
+			case MessageType::kExplosion:
+				if (const auto msg = Protocol::DecodeExplosion(a_data)) {
+					WeaponFire::ApplyExplosion(*msg);
+				}
+				break;
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way
@@ -649,6 +654,14 @@ namespace Session
 		if (echo) {
 			for (std::uint32_t i = 0; i < shots; ++i) {
 				RemotePlayers::PlayShot(ECHO_ID);
+			}
+		}
+
+		// Explosions after our throws: the others set them off at the same spot (unreliable, like shots).
+		WeaponFire::Frame();
+		for (const auto& explosion : WeaponFire::TakeExplosions()) {
+			if (welcomed) {
+				client->Send(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), false);
 			}
 		}
 

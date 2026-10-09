@@ -74,6 +74,7 @@ namespace Protocol
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
+		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -102,6 +103,7 @@ namespace Protocol
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
+		kExplosion = 132,         // an explosion from another player's throw
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -270,6 +272,20 @@ namespace Protocol
 		inline constexpr std::uint8_t kPlaced = 0;  // placed, or moved (same message, new transform)
 		inline constexpr std::uint8_t kScrapped = 1;
 	}
+
+	// An explosion the sender's game saw after one of its throws (a grenade, a mine, a Molotov): the
+	// others set off the same explosion at the same spot, since a thrown projectile cannot be launched
+	// for a stand-in (the engine's throw action plays the animation only).
+	struct Explosion
+	{
+		std::uint32_t playerId = 0;  // who reported it (set by the server)
+		std::uint32_t base = 0;      // the BGSExplosion form
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
+		std::uint32_t cell = 0;        // interior cell, or 0 outside
+		std::uint32_t worldspace = 0;
+
+		bool operator==(const Explosion&) const = default;
+	};
 
 	struct WorkshopItem
 	{
@@ -983,6 +999,37 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.killed = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Explosion& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.base);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		return w.Data();
+	}
+
+	inline std::optional<Explosion> DecodeExplosion(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Explosion msg;
+		msg.playerId = r.U32();
+		msg.base = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.base == 0) {
 			return std::nullopt;
 		}
 		return msg;
