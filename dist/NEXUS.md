@@ -67,6 +67,12 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 - Asset use permission: yes, with credit, under GPL-3.0.
 - Credits: F4SE and CommonLibF4 (libxse), ENet, Address Library.
 
+## Changelog for 0.7.1
+
+- The shared clock: a player whose game clock drifted from the host's (after a wait, a sleep or a console time change) now lines up again instead of staying hours apart.
+- A friend's power armor frame copy is left alone if you climb into it yourself.
+- Protocol unchanged: 0.7.0 and 0.7.1 play together.
+
 ## Changelog for 0.7.0
 
 - Power armor: a friend in a frame is shown in one; their stand-in climbs in and out.
