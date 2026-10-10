@@ -210,6 +210,8 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
 	std::map<std::pair<std::uint32_t, std::uint32_t>, Protocol::WorkshopItem> workshopItems;  // (player, ref) -> what they built, kept while they're away too
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
+	std::unordered_set<std::uint64_t>                     questStageKeys;  // the same, for the repeat check (quest << 16 | stage)
+	const auto questKey = [](const Protocol::QuestStage& a_stage) { return (static_cast<std::uint64_t>(a_stage.quest) << 16) | a_stage.stage; };
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
 
@@ -231,6 +233,10 @@ void Server::Run()
 				refStates[state.refId] = state;
 			}
 			questStages = saved->questStages;
+			questStageKeys.clear();
+			for (const auto& stage : questStages) {
+				questStageKeys.insert(questKey(stage));
+			}
 			worldTime = saved->worldTime;
 			for (const auto& [ref, flags] : saved->markers) {
 				markers[ref] = flags;
@@ -284,6 +290,7 @@ void Server::Run()
 		npcEquipment.clear();
 		workshopItems.clear();
 		questStages.clear();
+		questStageKeys.clear();
 		worldTime.reset();
 		markers.clear();
 		sessionId = NewSessionId();
@@ -1063,10 +1070,11 @@ void Server::Run()
 		}
 		const auto stage = Protocol::DecodeQuestStage(a_data);
 		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
-			std::ranges::find(questStages, *stage) != questStages.end()) {
+			questStageKeys.contains(questKey(*stage))) {
 			return;
 		}
 		questStages.push_back(*stage);
+		questStageKeys.insert(questKey(*stage));
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
