@@ -1,4 +1,7 @@
 #include "game/WeaponFire.h"
+
+#include "game/DeferredDelete.h"
+#include "game/EngineRefs.h"
 #include "game/AttackKind.h"
 
 #include "game/ShotLoops.h"
@@ -431,7 +434,7 @@ namespace WeaponFire
 		using namespace std::chrono_literals;
 		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
 		constexpr float EXPLOSION_RANGE = 6000.0f;    // from the player, both for reporting and for setting off
-		Clock::time_point                      watchUntil{};
+		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		Clock::time_point                      nextScan{};
 		std::unordered_set<std::uint32_t>      seenExplosions;
 		std::vector<Protocol::Explosion>       explosions;
@@ -453,7 +456,7 @@ namespace WeaponFire
 	void ScanExplosions()
 	{
 		const auto now = Clock::now();
-		if (now > watchUntil) {
+		if (now > watchUntil.load()) {
 			seenExplosions.clear();
 			return;
 		}
@@ -508,15 +511,25 @@ namespace WeaponFire
 			if (!actor || !actor->Get3D()) {
 				continue;
 			}
+			// Nothing is changed while the engine walks its lists: the ghosts are collected as handles and
+			// dealt with afterwards, and only once their 3D is in (deleting a reference still loading is
+			// the loader-thread crash DeferredDelete describes); one not ready yet is caught next frame.
+			std::vector<RE::ObjectRefHandle> ghosts;
 			tes->ForEachReferenceInRange(actor->data.location, 1000.0f, [&](RE::TESObjectREFR* a_ref) {
 				const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
 				if (projectile && !projectile->IsDisabled() && projectile->shooter.get().get() == actor) {
-					projectile->Disable();
-					RE::Console::ExecuteCommand(std::format("{:08X}.markfordelete", projectile->GetFormID()).c_str());  // a disabled projectile would otherwise linger in the cell
-					++ghostsRemoved;
+					ghosts.push_back(projectile->GetHandle());
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
+			for (const auto& handle : ghosts) {
+				const auto ghost = handle.get();
+				if (ghost && !ghost->IsDeleted() && DeferredDelete::Safe(ghost->Get3D() != nullptr, 0s)) {
+					ghost->Disable();
+					ghost->SetDelete(true);
+					++ghostsRemoved;
+				}
+			}
 		}
 	}
 
@@ -536,7 +549,8 @@ namespace WeaponFire
 		}
 		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
-		if (space != std::pair{ a_explosion.cell, a_explosion.worldspace } || at.GetDistance(player->data.location) > EXPLOSION_RANGE) {
+		// Written so that a NaN distance fails too (a comparison with NaN is always false).
+		if (space != std::pair{ a_explosion.cell, a_explosion.worldspace } || !(at.GetDistance(player->data.location) <= EXPLOSION_RANGE)) {
 			return;
 		}
 		RE::NEW_REFR_DATA data;
@@ -545,7 +559,7 @@ namespace WeaponFire
 		data.interior = cell->IsInterior() ? cell : nullptr;
 		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
 		data.clearStillLoadingFlag = true;
-		RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+		EngineRefs::CreateReferenceAtLocation(data);
 		++explosionsSetOff;
 	}
 }

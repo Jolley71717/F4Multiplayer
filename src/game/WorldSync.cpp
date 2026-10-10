@@ -53,7 +53,8 @@ namespace WorldSync
 
 		// Doors and lockable things the player used recently. Their open/lock state is reported
 		// whenever it changes while watched (lockpicking can take a while, hence the long window).
-		constexpr auto WATCH_TIME = 5min;  // hacking a terminal and walking its menus, or a long lockpick, can take minutes
+		constexpr auto WATCH_TIME = 5min;
+		constexpr std::size_t MAX_PENDING_HEALTH = 512;  // health reports waiting for their actor to load  // hacking a terminal and walking its menus, or a long lockpick, can take minutes
 		struct Watched
 		{
 			Protocol::RefState lastSent;
@@ -140,7 +141,9 @@ namespace WorldSync
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
 			// ragdolls away instead of dropping flat.
 			if (const auto standIn = a_killer ? RemotePlayers::ActorIdOf(a_killer) : 0) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.pushactoraway {:08X} 3", a_refId, standIn).c_str());
+				// The calling reference is the source of the push and the argument is what flies: the stand-in
+				// pushes the corpse (the other way round ragdolled the stand-in).
+				RE::Console::ExecuteCommand(std::format("{:08X}.pushactoraway {:08X} 3", standIn, a_refId).c_str());
 			}
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
@@ -329,7 +332,6 @@ namespace WorldSync
 			case Type::kNOTE:
 			case Type::kINGR:
 			case Type::kCMPO:
-			case Type::kOMOD:
 				return true;
 			default:
 				return false;
@@ -469,8 +471,8 @@ namespace WorldSync
 		// Current open/lock state of a loaded reference, or nullopt if it isn't loaded or has neither.
 		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref)
 		{
-			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D()) {
-				return std::nullopt;
+			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D() || a_ref->As<RE::Actor>()) {
+				return std::nullopt;  // talking to someone is an activation too, but an actor has no door or lock state
 			}
 			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
 			Protocol::RefState state{ a_ref->GetFormID() };
@@ -712,6 +714,9 @@ namespace WorldSync
 		if (TrySetHealth(a_refId, a_health)) {
 			pendingHealth.erase(a_refId);
 		} else {
+			if (pendingHealth.size() >= MAX_PENDING_HEALTH && !pendingHealth.contains(a_refId)) {
+				pendingHealth.clear();  // a flood of reports for actors we never load: start over rather than grow
+			}
 			pendingHealth[a_refId] = a_health;
 		}
 	}

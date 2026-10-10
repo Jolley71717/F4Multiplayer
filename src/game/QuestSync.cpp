@@ -48,7 +48,11 @@ namespace QuestSync
 
 		std::span<RE::TESQuest*> AllQuests()
 		{
-			auto& quests = RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>();
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler) {
+				return {};
+			}
+			auto& quests = handler->GetFormArray<RE::TESQuest>();
 			return { quests.data(), quests.size() };
 		}
 

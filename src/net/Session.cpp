@@ -200,6 +200,9 @@ namespace Session
 			using Protocol::MessageType;
 			switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
 			case MessageType::kWelcome:
+				if (welcomed) {
+					break;  // one welcome per connection: a second would reset the world counters mid-session
+				}
 				if (const auto msg = Protocol::DecodeWelcome(a_data)) {
 					welcomed = true;
 					sentEquipment.reset();

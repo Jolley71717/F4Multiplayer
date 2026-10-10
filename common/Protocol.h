@@ -1042,7 +1042,7 @@ namespace Protocol
 		msg.z = r.F32();
 		msg.cell = r.U32();
 		msg.worldspace = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.base == 0) {
+		if (!r.Ok() || !r.AtEnd() || msg.base == 0 || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
 			return std::nullopt;
 		}
 		return msg;

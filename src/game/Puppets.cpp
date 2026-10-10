@@ -322,6 +322,7 @@ namespace Puppets
 		}
 		const auto originalFlags = a_actor->boolFlags.underlying() & SUPPRESSED_BEHAVIOR;
 		SuppressBehavior(a_actor, a_kind);
+		SetAttackDamage(a_actor, 0.0f);
 		a_actor->InitiateDoNothingPackage();
 
 		std::scoped_lock l{ lock };
@@ -370,6 +371,7 @@ namespace Puppets
 		Unregister(a_actor, a_actor->GetFormID());
 		// Clear only what we set; a script may have blocked the NPC on purpose.
 		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
+		SetAttackDamage(a_actor, 1.0f);
 		// Drop the do-nothing package and pick the NPC's own again.
 		RE::Console::ExecuteCommand(std::format("{:08X}.evp", a_actor->GetFormID()).c_str());
 	}

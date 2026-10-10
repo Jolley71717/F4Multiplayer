@@ -1,5 +1,7 @@
 #include "game/Face.h"
 
+#include "game/EngineRefs.h"
+
 namespace Face
 {
 	namespace
@@ -186,7 +188,10 @@ namespace Face
 		}
 
 		if (Face::parts & 16) {
-			const auto bones = new RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>();
+			const auto bones = EngineRefs::New<RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>>();
+			if (!bones) {
+				return nullptr;
+			}
 			for (const auto& b : a_face.bones) {
 				RE::BGSCharacterMorph::Transform t;
 				t.position = { b.position[0], b.position[1], b.position[2] };
@@ -199,7 +204,10 @@ namespace Face
 
 		std::size_t tintCount = 0;
 		if (Face::parts & 32) {
-			const auto tints = new Tint::Entries();
+			const auto tints = EngineRefs::New<Tint::Entries>();
+			if (!tints) {
+				return nullptr;
+			}
 			for (const auto& t : a_face.tints) {
 				const auto templ = FindTemplate(race, a_face.female, t.templateId);
 				if (!templ) {

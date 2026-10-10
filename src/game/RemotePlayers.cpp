@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/DeferredDelete.h"
+#include "game/EngineRefs.h"
 #include "game/Prediction.h"
 
 #include "game/Face.h"
@@ -261,7 +262,7 @@ namespace RemotePlayers
 				data.interior = a_cell->IsInterior() ? a_cell : nullptr;
 				data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 				data.clearStillLoadingFlag = true;
-				const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+				const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 				light = handle.get().get();
 				if (!light) {
 					return;
@@ -344,7 +345,7 @@ namespace RemotePlayers
 					data.interior = a_cell->IsInterior() ? a_cell : nullptr;
 					data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 					data.clearStillLoadingFlag = true;
-					const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+					const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 					frame = handle.get().get();
 					if (!frame) {
 						return;
@@ -455,7 +456,7 @@ namespace RemotePlayers
 			data.world = a_localCell->IsInterior() ? nullptr : a_localCell->worldSpace;
 			data.clearStillLoadingFlag = true;
 
-			const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 			const auto ref = handle.get();
 			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 			if (!actor) {

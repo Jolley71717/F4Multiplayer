@@ -1,5 +1,7 @@
 #include "game/WorkshopSync.h"
 
+#include "game/EngineRefs.h"
+
 #include "game/DeferredDelete.h"
 
 namespace WorkshopSync
@@ -32,13 +34,31 @@ namespace WorkshopSync
 		std::uint32_t scrapped = 0;
 		std::uint32_t adopted = 0;
 
+		// The form IDs of our copies, for the workshop event sinks (which may run off the game thread while
+		// the game thread changes `copies`): kept in step with `copies` under its own lock.
+		std::mutex                        copyIdsLock;
+		std::unordered_set<std::uint32_t> copyIds;
+
+		void NoteCopy(const RE::ObjectRefHandle& a_handle)
+		{
+			if (const auto ref = a_handle.get()) {
+				std::scoped_lock l{ copyIdsLock };
+				copyIds.insert(ref->GetFormID());
+			}
+		}
+
+		void ForgetCopy(const RE::ObjectRefHandle& a_handle)
+		{
+			if (const auto ref = a_handle.get()) {
+				std::scoped_lock l{ copyIdsLock };
+				copyIds.erase(ref->GetFormID());
+			}
+		}
+
 		bool IsCopy(const RE::TESObjectREFR* a_ref)
 		{
-			const auto id = a_ref->GetFormID();
-			return std::ranges::any_of(copies, [&](const auto& a_entry) {
-				const auto ref = a_entry.second.ref.get();
-				return ref && ref->GetFormID() == id;
-			});
+			std::scoped_lock l{ copyIdsLock };
+			return copyIds.contains(a_ref->GetFormID());
 		}
 
 		void Push(const Protocol::WorkshopItem& a_item)
@@ -206,6 +226,7 @@ namespace WorkshopSync
 					++moved;
 					return true;
 				}
+				ForgetCopy(it->second.ref);
 				copies.erase(it);  // the game dropped it
 			}
 			const auto cell = CellFor(a_item);
@@ -219,6 +240,7 @@ namespace WorkshopSync
 			if (const auto existing = FindExisting(a_item)) {
 				SetTransform(existing, a_item);
 				copies[a_key] = { existing->GetHandle(), Clock::now() };
+				NoteCopy(copies[a_key].ref);
 				++adopted;
 				return true;
 			}
@@ -229,7 +251,7 @@ namespace WorkshopSync
 			data.interior = cell->IsInterior() ? cell : nullptr;
 			data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
 			data.clearStillLoadingFlag = true;
-			const auto handle = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data);
+			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 			const auto ref = handle.get();
 			if (!ref) {
 				return true;
@@ -238,6 +260,7 @@ namespace WorkshopSync
 				ref->SetScale(a_item.scale);
 			}
 			copies[a_key] = { handle, Clock::now() };
+			NoteCopy(handle);
 			++placed;
 			return true;
 		}
@@ -302,6 +325,7 @@ namespace WorkshopSync
 			pending.erase(key);
 			if (const auto it = copies.find(key); it != copies.end()) {
 				Remove(it->second);
+				ForgetCopy(it->second.ref);
 				copies.erase(it);
 				++scrapped;
 			}
@@ -323,6 +347,10 @@ namespace WorkshopSync
 			Remove(copy);
 		}
 		copies.clear();
+		{
+			std::scoped_lock l{ copyIdsLock };
+			copyIds.clear();
+		}
 		pending.clear();
 		std::scoped_lock l{ outLock };
 		outgoing.clear();
