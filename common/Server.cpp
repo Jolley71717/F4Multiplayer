@@ -27,6 +27,14 @@ namespace
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
 	constexpr int  MAX_WORLD_STATES_PER_SECOND = 4;
+	// What a client is believed about. These bound what one player (or one player's broken game) can do
+	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
+	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
+	constexpr float MAX_HIT_DAMAGE_PER_SECOND = 1500.0f;     // per reporter, across all victims
+	constexpr auto  FACE_INTERVAL = std::chrono::seconds(5); // each face change makes a new base form in every game
+	constexpr auto  EXPLOSION_AFTER_THROW = std::chrono::seconds(10);  // explosions are reported only after a throw
+	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
+	constexpr std::size_t MAX_COMPANIONS_PER_PLAYER = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
 	constexpr std::size_t MAX_WORKSHOP_ITEMS = 20000;  // built objects remembered for joiners (a big settlement is a few thousand)
@@ -58,12 +66,14 @@ namespace
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
 		int               worldStates = 0;
+		float             hitDamage = 0.0f;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
 				states = actorStates = events = shots = heartbeats = voiceBytes = worldStates = 0;
+				hitDamage = 0.0f;
 			}
 		}
 	};
@@ -87,6 +97,8 @@ namespace
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
 		Clock::time_point          lastLine{};
+		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
+		Clock::time_point          lastFace{};
 		bool                       local = false;  // on the server's machine
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
 		float                      xpReports = XP_REPORT_BURST;
@@ -436,7 +448,9 @@ void Server::Run()
 			return;
 		}
 		if (welcomedCount() == 0) {
-			// A different mod list makes the stored form IDs meaningless: start a fresh session.
+			// A different mod list makes the stored form IDs meaningless: start a fresh session. (The first
+			// arrival decides; a dedicated server has no local player, and over Steam the host's own game
+			// is always first.)
 			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
 				log("server: load order changed; starting a new session");
 				resetWorld();
@@ -570,8 +584,15 @@ void Server::Run()
 			return;
 		}
 		auto death = Protocol::DecodeActorDeath(a_data);
-		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
-			!deadActors.insert(death->refId).second) {
+		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+			return;
+		}
+		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
+		// or mischief (it would kill the NPC for everyone and be saved).
+		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+			return;
+		}
+		if (!deadActors.insert(death->refId).second) {
 			return;
 		}
 		if (actorOwners.erase(death->refId)) {
@@ -643,6 +664,15 @@ void Server::Run()
 	//   player's companion (then the first keeps it);
 	// - a player fighting or talking to it takes it over, unless it is someone's companion or
 	//   changed hands moments ago (two players fighting it would otherwise trade it constantly).
+	const auto ownedBy = [&](std::uint32_t a_playerId) {
+		return static_cast<std::size_t>(std::ranges::count_if(actorOwners, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; }));
+	};
+	const auto companionsOf = [&](std::uint32_t a_playerId) {
+		return static_cast<std::size_t>(std::ranges::count_if(actorOwners, [&](const auto& a_entry) {
+			return a_entry.second.playerId == a_playerId && a_entry.second.reason == Protocol::ClaimReason::kCompanion;
+		}));
+	};
+
 	const auto handleClaims = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -662,7 +692,8 @@ void Server::Run()
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
 			if (it == actorOwners.end()) {
-				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS;
+				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && ownedBy(a_player.id) < Protocol::MAX_OWNED_PER_PLAYER &&
+				        (claim.reason != Reason::kCompanion || companionsOf(a_player.id) < MAX_COMPANIONS_PER_PLAYER);
 			} else if (it->second.playerId == a_player.id) {
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
 				// The owner talking to it: nobody takes it over mid-conversation.
@@ -695,7 +726,14 @@ void Server::Run()
 			return;
 		}
 		face->playerId = a_player.id;
-		a_player.face = *face;
+		a_player.face = *face;  // the latest is what a newcomer gets
+		// Every change makes a new base form in each game and respawns the stand-in, so the others hear
+		// about a change at most every few seconds.
+		const auto now = Clock::now();
+		if (now - a_player.lastFace < FACE_INTERVAL) {
+			return;
+		}
+		a_player.lastFace = now;
 		broadcast(Protocol::Encode(*face, Protocol::MessageType::kPlayerFace), true, a_player.key);
 	};
 
@@ -790,9 +828,16 @@ void Server::Run()
 		if (!hit || hit->playerId == a_player.id || (hit->byPlayer && !options.friendlyFire)) {
 			return;
 		}
+		// No single hit beyond what the strongest weapon does, and no more per second from one
+		// reporter than a fight can produce; the rest is dropped.
+		const float damage = (std::min)(hit->damage, MAX_HIT_DAMAGE);
+		if (a_player.rate.hitDamage + damage > MAX_HIT_DAMAGE_PER_SECOND) {
+			return;
+		}
+		a_player.rate.hitDamage += damage;
 		for (const auto& [key, other] : players) {
 			if (other.welcomed && other.id == hit->playerId) {
-				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, hit->damage, hit->byPlayer, hit->attacker }, Protocol::MessageType::kPlayerDamaged), true);
+				send(key, Protocol::Encode(Protocol::PlayerHit{ a_player.id, damage, hit->byPlayer, hit->attacker }, Protocol::MessageType::kPlayerDamaged), true);
 			}
 		}
 	};
@@ -815,6 +860,9 @@ void Server::Run()
 			if (it == actorOwners.end() || it->second.playerId != a_player.id) {
 				return;
 			}
+		}
+		if (shot->action == static_cast<std::uint8_t>(Protocol::ShotAction::kThrow)) {
+			a_player.lastThrow = Clock::now();
 		}
 		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
@@ -884,6 +932,18 @@ void Server::Run()
 		auto explosion = Protocol::DecodeExplosion(a_data);
 		if (!explosion) {
 			return;
+		}
+		// Only what follows one of the reporter's throws, and near where they are: an explosion report
+		// is otherwise a way to set off anything at anyone.
+		if (Clock::now() - a_player.lastThrow > EXPLOSION_AFTER_THROW) {
+			return;
+		}
+		if (a_player.hasState) {
+			const float dx = explosion->x - a_player.state.x;
+			const float dy = explosion->y - a_player.state.y;
+			if (!(dx * dx + dy * dy <= EXPLOSION_RANGE * EXPLOSION_RANGE)) {
+				return;
+			}
 		}
 		explosion->playerId = a_player.id;
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);

@@ -265,7 +265,7 @@ TEST("server world: a death frees the NPC's owner, and the dead can't be claimed
 	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
 	Clear(f, { 1 });
 
-	f.fake->Deliver(2, Death(NPC));
+	f.fake->Deliver(1, Death(NPC));  // its runner reports it (a report from anyone else is dropped)
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, 0));
 	CHECK(HasOwner(Owners(Received(f, 2)), NPC, 0));
 
@@ -857,9 +857,10 @@ TEST("server world: NPC position batches are capped per second")
 	CHECK(Count(Received(f, 2), MT::kActorStatesRelay) == 120);  // MAX_ACTOR_BATCHES_PER_SECOND
 }
 
-TEST("server world: NPC ownership is capped at MAX_WORLD_STATE_ACTORS")
+TEST("server world: NPC ownership is capped per player")
 {
-	constexpr std::size_t PACKETS = (Protocol::MAX_WORLD_STATE_ACTORS + Protocol::MAX_ACTORS_PER_PACKET - 1) / Protocol::MAX_ACTORS_PER_PACKET + 1;
+	constexpr std::size_t CAP = 2 * Protocol::MAX_OWNED_PER_PLAYER;  // two players
+	constexpr std::size_t PACKETS = (CAP + Protocol::MAX_ACTORS_PER_PACKET - 1) / Protocol::MAX_ACTORS_PER_PACKET + 2;
 	Fixture               f;
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
@@ -875,21 +876,21 @@ TEST("server world: NPC ownership is capped at MAX_WORLD_STATE_ACTORS")
 		}
 		packets.emplace_back(static_cast<PeerId>(1 + p % 2), Claim(claims));
 	}
-	const auto watched = Burst(f, packets, { 1, 2 }, 1, MT::kActorOwners, Protocol::MAX_WORLD_STATE_ACTORS / Protocol::MAX_ACTORS_PER_PACKET + 1);
+	const auto watched = Burst(f, packets, { 1, 2 }, 1, MT::kActorOwners, CAP / Protocol::MAX_ACTORS_PER_PACKET + 1);
 	std::this_thread::sleep_for(200ms);
 	auto all = watched;
 	std::ranges::move(Received(f, 1), std::back_inserter(all));
 	Clear(f, { 2 });
-	CHECK(Owners(all).size() == Protocol::MAX_WORLD_STATE_ACTORS);
+	CHECK(Owners(all).size() == CAP);
 
 	// Full: a new NPC isn't granted, not even as a companion.
 	f.fake->Deliver(1, Claim(0x00F00000, Reason::kCompanion));
 	CHECK(Owners(Received(f, 1)).empty());
 
-	// A death makes room.
+	// A death makes room for its runner.
 	f.fake->Deliver(1, Death(0x00100000));
 	Clear(f, { 1, 2 });
-	f.fake->Deliver(2, Claim(0x00F00000));
+	f.fake->Deliver(1, Claim(0x00F00000));
 	CHECK(Owners(Received(f, 2)).size() == 1);
 }
 
@@ -1342,4 +1343,133 @@ TEST("server session file: the world survives a server restart with the same loa
 		CHECK(WorldStates(Received(f, 3))[0].deadActors.empty());
 	}
 	std::filesystem::remove(path);
+}
+
+// --- What a client is believed about (docs/AUDIT-LIFETIME.md, network trust) ---------------------
+
+namespace
+{
+	std::vector<std::uint8_t> Throw()
+	{
+		return Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kThrow }, MT::kReportShot);
+	}
+
+	std::vector<std::uint8_t> Explosion(float a_x, float a_y)
+	{
+		return Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, a_x, a_y, 0.0f, 0, 0x0000003C }, MT::kReportExplosion);
+	}
+
+	std::vector<std::uint8_t> SomeFace(float a_weight)
+	{
+		Protocol::Face face;
+		face.female = true;
+		face.race = 0x00013746;
+		face.headParts = { 0x0004DA7A };
+		face.hairColor = 0x0005D7A1;
+		face.weight[0] = a_weight, face.weight[1] = 0.5f, face.weight[2] = 0.3f;
+		return Protocol::Encode(face, MT::kReportFace);
+	}
+}
+
+TEST("server trust: a death reported by someone who doesn't run the actor is dropped")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Death(NPC, true));  // Bob doesn't run it
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+
+	f.fake->Deliver(1, Death(NPC, true));  // Alice does
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == alice);
+}
+
+TEST("server trust: a death of an actor nobody runs is taken from anyone")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, Death(NPC2));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
+}
+
+TEST("server trust: a hit is capped per hit and per second")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Hit(bob, 5000.0f, false, NPC));
+	auto damage = Decoded(Received(f, 2), MT::kPlayerDamaged, Protocol::DecodePlayerHit);
+	REQUIRE(damage.size() == 1);
+	CHECK(damage[0].damage == 500.0f);
+
+	for (int i = 0; i < 10; ++i) {
+		f.fake->Deliver(1, Hit(bob, 500.0f, false, NPC));
+	}
+	damage = Decoded(Received(f, 2), MT::kPlayerDamaged, Protocol::DecodePlayerHit);
+	float total = 0.0f;
+	for (const auto& d : damage) {
+		total += d.damage;
+	}
+	CHECK(total <= 1000.0f);  // 1500 a second, 500 already spent
+}
+
+TEST("server trust: a second face within five seconds is dropped")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, SomeFace(0.2f));
+	f.fake->Deliver(1, SomeFace(0.9f));
+	CHECK(Count(Received(f, 2), MT::kPlayerFace) == 1);
+}
+
+TEST("server trust: an explosion is relayed only after a throw and near the thrower")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Explosion(100.0f, 100.0f));  // no throw yet
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+
+	f.fake->Deliver(1, Throw());
+	Protocol::PlayerState state;
+	state.sequence = 1;
+	state.worldspace = 0x0000003C;
+	state.x = 100.0f, state.y = 100.0f;
+	f.fake->Deliver(1, Protocol::Encode(state));
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Explosion(100000.0f, 100000.0f));  // far from Alice
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+	f.fake->Deliver(1, Explosion(600.0f, 300.0f));  // near her, after her throw
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+}
+
+TEST("server trust: one player's companion claims are capped")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	std::vector<Protocol::ActorClaim> claims;
+	for (std::uint32_t i = 0; i < 6; ++i) {
+		claims.push_back({ 0x00020000 + i, Reason::kCompanion });
+	}
+	f.fake->Deliver(1, Claim(claims));
+	const auto owners = Decoded(Received(f, 2), MT::kActorOwners, Protocol::DecodeOwners);
+	std::size_t granted = 0;
+	for (const auto& batch : owners) {
+		granted += batch.size();
+	}
+	CHECK(granted == 4);
 }

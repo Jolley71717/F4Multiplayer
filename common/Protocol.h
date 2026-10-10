@@ -258,6 +258,8 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_EQUIPMENT = 32;
+	// NPCs one player's game may run at once (a busy cell is a few dozen); one client cannot fill the owner table.
+	inline constexpr std::size_t MAX_OWNED_PER_PLAYER = 4096;
 
 	// Base forms of a player's equipped armor and weapons. playerId is ignored client -> server.
 	struct Equipment
