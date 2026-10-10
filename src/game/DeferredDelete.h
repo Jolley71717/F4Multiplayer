@@ -7,7 +7,7 @@
 // stand-in is only deleted once its 3D is in, or once the load has had ample time to finish.
 namespace DeferredDelete
 {
-	constexpr auto MAX_WAIT = std::chrono::seconds(3);
+	constexpr auto MAX_WAIT = std::chrono::seconds(15);  // long enough for a load stall; a reference whose 3D never came is deleted after this
 
 	constexpr bool Safe(bool a_has3D, std::chrono::steady_clock::duration a_sinceSpawn)
 	{
