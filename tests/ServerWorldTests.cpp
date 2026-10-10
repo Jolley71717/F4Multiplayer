@@ -534,7 +534,7 @@ TEST("server world: door states are relayed when they change, and the latest is 
 	f.fake->Deliver(1, Door(DOOR, RS::kYes, RS::kNo));
 	auto states = Decoded(Received(f, 2), MT::kRefStateChanged, Protocol::DecodeRefState);
 	REQUIRE(states.size() == 1);
-	CHECK((states[0] == RS{ DOOR, RS::kYes, RS::kNo }));
+	CHECK(states[0].SameState(RS{ DOOR, RS::kYes, RS::kNo }));
 	CHECK(Count(Received(f, 1), MT::kRefStateChanged) == 0);
 
 	// No change: nothing to pass on.
@@ -545,7 +545,7 @@ TEST("server world: door states are relayed when they change, and the latest is 
 	f.fake->Deliver(2, Door(DOOR, RS::kNo, RS::kYes));
 	states = Decoded(Received(f, 1), MT::kRefStateChanged, Protocol::DecodeRefState);
 	REQUIRE(states.size() == 1);
-	CHECK((states[0] == RS{ DOOR, RS::kNo, RS::kYes }));
+	CHECK(states[0].SameState(RS{ DOOR, RS::kNo, RS::kYes }));
 
 	JoinAs(f, 3, "Carol");
 	const auto world = WorldStates(Received(f, 3));

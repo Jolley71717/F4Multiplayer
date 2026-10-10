@@ -658,11 +658,14 @@ void Server::Run()
 			return;
 		}
 		auto& stored = refStates[state->refId];
-		if (stored == *state) {
+		if (stored.SameState(*state)) {
 			return;
 		}
 		stored = *state;
-		broadcast(Protocol::Encode(*state, Protocol::MessageType::kRefStateChanged), true, a_player.key);
+		stored.playerId = 0;  // a world state names nobody: a joiner takes it as it is
+		Protocol::RefState relayed = *state;
+		relayed.playerId = a_player.id;  // the others take it only if this player is near the thing
+		broadcast(Protocol::Encode(relayed, Protocol::MessageType::kRefStateChanged), true, a_player.key);
 	};
 
 	// Who runs an NPC's AI:

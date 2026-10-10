@@ -20,7 +20,8 @@ namespace WorldSync
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
 
 	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
-	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0);
+	// a_x/y/z: where the corpse lies in the reporter's game (all zero when unknown).
+	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0, float a_x = 0, float a_y = 0, float a_z = 0);
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId);  // another player pressed a button, switch or lever
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);

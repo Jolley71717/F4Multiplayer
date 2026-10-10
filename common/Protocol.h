@@ -17,7 +17,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 25;
+	inline constexpr std::uint16_t VERSION = 26;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -209,6 +209,9 @@ namespace Protocol
 		std::uint32_t refId = 0;
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
 		bool          killed = false;  // that player killed it
+		float         x = 0, y = 0, z = 0;  // where the corpse lies in the reporter's game (all zero: unknown)
+
+		bool operator==(const ActorDeath&) const = default;
 	};
 
 	// Health as a fraction of maximum: leveled actors can have different max health in each
@@ -253,7 +256,10 @@ namespace Protocol
 		std::uint32_t refId = 0;
 		std::uint8_t  open = kUnknown;
 		std::uint8_t  locked = kUnknown;
+		std::uint32_t playerId = 0;  // who reported it (set by the server); 0 in a world state
 
+		// The same change, whoever reported it.
+		[[nodiscard]] bool SameState(const RefState& a_other) const { return refId == a_other.refId && open == a_other.open && locked == a_other.locked; }
 		bool operator==(const RefState&) const = default;
 	};
 
@@ -1010,6 +1016,9 @@ namespace Protocol
 		w.U32(a_msg.refId);
 		w.U32(a_msg.playerId);
 		w.U8(a_msg.killed ? 1 : 0);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
 		return w.Data();
 	}
 
@@ -1021,7 +1030,10 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.playerId = r.U32();
 		msg.killed = r.U8() != 0;
-		if (!r.Ok() || !r.AtEnd()) {
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1182,6 +1194,7 @@ namespace Protocol
 		w.U32(a_msg.refId);
 		w.U8(a_msg.open);
 		w.U8(a_msg.locked);
+		w.U32(a_msg.playerId);
 		return w.Data();
 	}
 
@@ -1193,6 +1206,7 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.open = r.U8();
 		msg.locked = r.U8();
+		msg.playerId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || msg.open > RefState::kUnknown || msg.locked > RefState::kUnknown) {
 			return std::nullopt;
 		}

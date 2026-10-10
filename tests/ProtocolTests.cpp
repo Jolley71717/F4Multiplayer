@@ -1250,6 +1250,21 @@ TEST("protocol: Activation round trips and needs a shareable ref")
 	}
 }
 
+TEST("protocol: a RefState carries its reporter and an ActorDeath where the corpse lies")
+{
+	const RefState state{ REF_A, RefState::kYes, RefState::kNo, 7 };
+	const auto     out = DecodeRefState(Encode(state, MT::kRefStateChanged));
+	REQUIRE(out);
+	CHECK(*out == state);
+	CHECK(out->SameState(RefState{ REF_A, RefState::kYes, RefState::kNo, 9 }));
+
+	const ActorDeath death{ REF_B, 3, true, -59420.5f, 72560.25f, 6174.0f };
+	const auto       back = DecodeActorDeath(Encode(death, MT::kActorDied));
+	REQUIRE(back);
+	CHECK(*back == death);
+	CHECK(!DecodeActorDeath(Encode(ActorDeath{ REF_B, 3, true, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f }, MT::kActorDied)));
+}
+
 TEST("protocol: Explosion round trips and needs a base")
 {
 	for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {

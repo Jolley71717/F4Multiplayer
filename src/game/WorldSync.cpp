@@ -18,7 +18,12 @@ namespace WorldSync
 		// Every actor known to be dead this session, and those we still have to kill locally
 		// (they weren't loaded when we heard about them).
 		std::unordered_set<std::uint32_t> dead;
-		std::unordered_map<std::uint32_t, std::uint32_t> pending;  // ref -> killer player (0 = none), until the actor is loaded and can be killed
+		struct PendingDeath
+		{
+			std::uint32_t killer = 0;  // player (0 = none)
+			RE::NiPoint3  at;          // where the corpse lies in the reporter's game (zero: unknown)
+		};
+		std::unordered_map<std::uint32_t, PendingDeath> pending;  // ref -> who and where, until the actor is loaded and can be killed
 
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
@@ -69,6 +74,8 @@ namespace WorldSync
 		constexpr auto                                         REPLAY_ECHO = 2s;
 		std::unordered_map<std::uint32_t, Clock::time_point> replayed;
 		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
+		std::uint32_t                                          refStatesRefused = 0, corpsesMoved = 0;
+		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
@@ -115,7 +122,7 @@ namespace WorldSync
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be), false to try again later.
-		bool TryKill(std::uint32_t a_refId, std::uint32_t a_killer)
+		bool TryKill(std::uint32_t a_refId, std::uint32_t a_killer, const RE::NiPoint3& a_at)
 		{
 			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
@@ -137,6 +144,14 @@ namespace WorldSync
 
 			// The console kill goes through the engine's normal death path (death animation,
 			// ragdoll, quest/script death events), exactly as if it happened here.
+			// The corpse lies where it fell in the reporter's game (each game's copy stood somewhere else when
+			// the report came; a far-off corpse is confusing and its loot is in the wrong place).
+			if ((a_at.x != 0.0f || a_at.y != 0.0f || a_at.z != 0.0f) && actor->data.location.GetDistance(a_at) > CORPSE_SLACK) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.1f}", a_refId, a_at.x).c_str());
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.1f}", a_refId, a_at.y).c_str());
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.1f}", a_refId, a_at.z).c_str());
+				++corpsesMoved;
+			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
@@ -651,13 +666,14 @@ namespace WorldSync
 		return { session, containerNext };
 	}
 
-	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer)
+	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer, float a_x, float a_y, float a_z)
 	{
 		if (!IsShareableRef(a_refId) || !dead.insert(a_refId).second) {
 			return;
 		}
-		if (!TryKill(a_refId, a_killer)) {
-			pending[a_refId] = a_killer;
+		const RE::NiPoint3 at{ a_x, a_y, a_z };
+		if (!TryKill(a_refId, a_killer, at)) {
+			pending[a_refId] = { a_killer, at };
 		}
 	}
 
@@ -746,6 +762,19 @@ namespace WorldSync
 		if (!IsShareableRef(a_state.refId)) {
 			return;
 		}
+		// A live report (one that names its reporter) counts only when they are near the thing, if the
+		// thing is here to measure against: a lock changed from across the map is a mistake or mischief.
+		// A world state names nobody and is taken as it is.
+		if (a_state.playerId != 0) {
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
+			if (ref && ref->Get3D()) {
+				const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
+				if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
+					++refStatesRefused;
+					return;
+				}
+			}
+		}
 		// So our own watcher doesn't report this change back.
 		if (const auto it = watched.find(a_state.refId); it != watched.end()) {
 			it->second.lastSent = a_state;
@@ -783,7 +812,9 @@ namespace WorldSync
 		// Deaths we caused because someone else reported them are already known and don't go back out.
 		for (const auto id : newDeaths) {
 			if (dead.insert(id).second) {
-				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id, 0, killedByUs.contains(id) }, Protocol::MessageType::kReportDeath));
+				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
+				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};
+				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id, 0, killedByUs.contains(id), at.x, at.y, at.z }, Protocol::MessageType::kReportDeath));
 				++reported;
 			}
 			pending.erase(id);
@@ -839,7 +870,7 @@ namespace WorldSync
 		}
 
 		for (auto it = pending.begin(); it != pending.end();) {
-			it = TryKill(it->first, it->second) ? pending.erase(it) : std::next(it);
+			it = TryKill(it->first, it->second.killer, it->second.at) ? pending.erase(it) : std::next(it);
 		}
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
 			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
@@ -940,8 +971,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={} pendingDoors={} personal={} ownSkipped={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
 			ownSkipped);
 	}
 }
