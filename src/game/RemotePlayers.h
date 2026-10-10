@@ -61,6 +61,8 @@ namespace RemotePlayers
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();
+	// A save was loaded: forgets handles and runtime forms from before it.
+	void OnGameLoaded();
 
 	// Spawns, moves and despawns puppets. Call once per frame.
 	void Update();

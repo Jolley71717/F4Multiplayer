@@ -126,8 +126,11 @@ namespace NpcSync
 
 		RE::Actor* LoadedActor(std::uint32_t a_id)
 		{
+			if (!Protocol::IsShareableRef(a_id)) {
+				return nullptr;  // the player, a stand-in or a runtime actor: never something to mirror
+			}
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-			return actor && !actor->IsDeleted() && !actor->IsDisabled() && actor->Get3D() ? actor : nullptr;
+			return actor && !actor->IsDeleted() && !actor->IsDisabled() && actor->Get3D() && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor) ? actor : nullptr;
 		}
 
 		// NPCs we can share: loaded, alive, from a plugin file, and not a player or a stand-in.
@@ -164,7 +167,7 @@ namespace NpcSync
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 			} else {
-				Puppets::Unregister(a_mirror.registered);  // the actor is gone; just forget it
+				Puppets::Unregister(a_mirror.registered, a_id);  // the actor is gone; just forget it
 			}
 			a_mirror.registered = nullptr;
 		}
@@ -720,8 +723,11 @@ namespace NpcSync
 			return;
 		}
 		knownGear[a_equipment.refId] = a_equipment.items;
-		if (const auto it = mirrors.find(a_equipment.refId); it != mirrors.end() && it->second.registered) {
-			Equipment::Wear(it->second.registered, a_equipment.items);
+		// The mirror's actor is resolved afresh: its cell may have unloaded since the last frame, and the
+		// stored pointer is only compared, never followed.
+		const auto actor = LoadedActor(a_equipment.refId);
+		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
+			Equipment::Wear(actor, a_equipment.items);
 			++gearApplied;
 		}
 	}

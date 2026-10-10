@@ -42,6 +42,14 @@ namespace Puppets
 		std::unordered_map<const RE::Actor*, Puppet> puppets;
 		std::atomic<std::size_t>                      puppetCount{ 0 };
 
+		// The entry for a live actor, or null. The map is keyed by address and the game reuses addresses,
+		// so an entry only counts when its form ID is the actor's (lock held by the caller).
+		Puppet* Find(const RE::Actor* a_actor)
+		{
+			const auto it = puppets.find(a_actor);
+			return it != puppets.end() && it->second.formId == a_actor->GetFormID() ? &it->second : nullptr;
+		}
+
 		using UpdateFn = void (*)(RE::Actor*, float);
 		std::uintptr_t hookedVtable = 0;
 		UpdateFn       originalUpdate = nullptr;
@@ -97,9 +105,9 @@ namespace Puppets
 			}
 			a_actor->DrawWeaponMagicHands(wantDrawn && !holster);
 			std::scoped_lock l{ lock };
-			if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-				it->second.nextDrawAttempt = now + 1s;
-				it->second.redraw = false;
+			if (const auto entry = Find(a_actor)) {
+				entry->nextDrawAttempt = now + 1s;
+				entry->redraw = false;
 			}
 		}
 
@@ -151,9 +159,9 @@ namespace Puppets
 
 			if (moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
 				std::scoped_lock l{ lock };
-				if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-					it->second.moving = moving;
-					it->second.appliedFlags = motion.flags;
+				if (const auto entry = Find(a_actor)) {
+					entry->moving = moving;
+					entry->appliedFlags = motion.flags;
 				}
 			}
 		}
@@ -326,10 +334,14 @@ namespace Puppets
 		puppetCount = puppets.size();
 	}
 
-	void Unregister(RE::Actor* a_actor)
+	void Unregister(const RE::Actor* a_actor, std::uint32_t a_formId)
 	{
+		// The actor may be freed already (its owner noticed it gone), so it is never read here; the
+		// entry goes only if it is still that actor's, not a newer actor's at the same address.
 		std::scoped_lock l{ lock };
-		puppets.erase(a_actor);
+		if (const auto it = puppets.find(a_actor); it != puppets.end() && it->second.formId == a_formId) {
+			puppets.erase(it);
+		}
 		puppetCount = puppets.size();
 	}
 
@@ -343,14 +355,19 @@ namespace Puppets
 
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
+		if (!a_actor || a_actor->IsDeleted()) {
+			return;
+		}
 		std::uint32_t originalFlags = 0;
 		{
 			std::scoped_lock l{ lock };
-			if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-				originalFlags = it->second.originalFlags;
+			const auto entry = Find(a_actor);
+			if (!entry) {
+				return;  // not ours (a freed actor's address reused): leave its flags alone
 			}
+			originalFlags = entry->originalFlags;
 		}
-		Unregister(a_actor);
+		Unregister(a_actor, a_actor->GetFormID());
 		// Clear only what we set; a script may have blocked the NPC on purpose.
 		a_actor->boolFlags.reset(static_cast<RE::Actor::BOOL_FLAGS>(SUPPRESSED_BEHAVIOR & ~originalFlags));
 		// Drop the do-nothing package and pick the NPC's own again.
@@ -360,26 +377,26 @@ namespace Puppets
 	void RedrawWeapon(RE::Actor* a_actor)
 	{
 		std::scoped_lock l{ lock };
-		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-			it->second.redraw = true;
-			it->second.nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
+		if (const auto entry = Find(a_actor)) {
+			entry->redraw = true;
+			entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // let the equipping finish
 		}
 	}
 
 	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for)
 	{
 		std::scoped_lock l{ lock };
-		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-			it->second.aiUntil = std::chrono::steady_clock::now() + a_for;
+		if (const auto entry = Find(a_actor)) {
+			entry->aiUntil = std::chrono::steady_clock::now() + a_for;
 		}
 	}
 
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion)
 	{
 		std::scoped_lock l{ lock };
-		if (const auto it = puppets.find(a_actor); it != puppets.end()) {
-			it->second.target = a_motion;
-			it->second.hasTarget = true;
+		if (const auto entry = Find(a_actor)) {
+			entry->target = a_motion;
+			entry->hasTarget = true;
 		}
 	}
 

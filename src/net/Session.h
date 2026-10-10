@@ -24,4 +24,6 @@ namespace Session
 
 	// Test: leaves the current session and connects to another address ("ip[:port]" or "steam:<id>").
 	void ConnectTo(std::string a_address);
+	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command).
+	void InjectPacket(std::span<const std::uint8_t> a_data);
 }

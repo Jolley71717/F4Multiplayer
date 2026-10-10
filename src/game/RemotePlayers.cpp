@@ -40,7 +40,7 @@ namespace RemotePlayers
 			std::uint32_t        appearance = 0;
 			std::vector<std::uint32_t> equipment;
 			std::optional<Protocol::Face> face;
-			RE::TESNPC*          faceBase = nullptr;  // our copy of the base NPC wearing their face
+			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
 			bool                 hasEquipment = false;
 			bool                 equipmentApplied = false;
@@ -384,7 +384,7 @@ namespace RemotePlayers
 			DeleteLight(a_player);
 			DeleteFrame(a_player);
 			if (a_player.registered) {
-				Puppets::Unregister(a_player.registered);
+				Puppets::Unregister(a_player.registered, a_player.registeredId);
 				a_player.registered = nullptr;
 				a_player.registeredId = 0;
 			}
@@ -435,10 +435,16 @@ namespace RemotePlayers
 			// Their own face, hair and body shape on a copy of that base (made once per look).
 			if (a_player.face && !a_player.faceTried) {
 				a_player.faceTried = true;
-				a_player.faceBase = Face::MakeBase(npc, *a_player.face);
+				const auto made = Face::MakeBase(npc, *a_player.face);
+				a_player.faceBaseId = made ? made->GetFormID() : 0;
 			}
-			if (a_player.faceBase) {
-				npc = a_player.faceBase;
+			if (a_player.faceBaseId) {
+				if (const auto faceBase = RE::TESForm::GetFormByID<RE::TESNPC>(a_player.faceBaseId)) {
+					npc = faceBase;
+				} else {
+					a_player.faceBaseId = 0;  // gone with a load: made again next time
+					a_player.faceTried = false;
+				}
 			}
 
 			RE::NEW_REFR_DATA data;
@@ -522,7 +528,7 @@ namespace RemotePlayers
 			return;
 		}
 		player.face = std::move(a_face);
-		player.faceBase = nullptr;  // the old copy stays in memory (forms can't be freed); a new one is made
+		player.faceBaseId = 0;  // the old copy stays in memory (forms can't be freed); a new one is made
 		player.faceTried = false;
 		// The stand-in is rebuilt with the new look the next time it's drawn.
 		DeleteActor(player);
@@ -605,6 +611,18 @@ namespace RemotePlayers
 		}
 	}
 
+	void OnGameLoaded()
+	{
+		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
+		// entry resolved after the load could delete some unrelated object, and a face base made before
+		// it may be gone.
+		graveyard.clear();
+		for (auto& [id, player] : players) {
+			player.faceBaseId = 0;
+			player.faceTried = false;
+		}
+	}
+
 	void SetLight(std::uint32_t a_id, bool a_on)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
@@ -640,7 +658,7 @@ namespace RemotePlayers
 	void RebuildFaces()
 	{
 		for (auto& [id, player] : players) {
-			player.faceBase = nullptr;
+			player.faceBaseId = 0;
 			player.faceTried = false;
 			DeleteActor(player);
 		}

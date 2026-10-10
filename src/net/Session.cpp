@@ -800,6 +800,7 @@ namespace Session
 		MapShare::Rebaseline();
 		Downed::OnGameLoaded();
 		Party::OnGameLoaded();
+		RemotePlayers::OnGameLoaded();
 		WorldClock::Rebaseline();
 		if (welcomed) {
 			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
@@ -843,5 +844,10 @@ namespace Session
 		} else {
 			RemotePlayers::Remove(ECHO_ID);
 		}
+	}
+
+	void InjectPacket(std::span<const std::uint8_t> a_data)
+	{
+		HandlePacket(a_data);
 	}
 }

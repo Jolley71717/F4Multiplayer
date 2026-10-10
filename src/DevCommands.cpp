@@ -1,6 +1,10 @@
 ﻿#include "DevCommands.h"
 
 #include "DevChannel.h"
+#include "net/Session.h"
+#include "Protocol.h"
+
+#include <random>
 
 #include "game/Equipment.h"
 #include "game/Face.h"
@@ -498,6 +502,71 @@ namespace DevCommands
 			}
 		}
 
+		// fuzz <rounds> [seed]: feeds the session's packet handler, on this game thread, messages of every
+		// server-to-client type: well-formed ones whose form IDs are real nearby references of every kind
+		// (so a death lands on a door, a loot change on an activator, an explosion with a weapon as its
+		// base) mixed with made-up IDs, and plain random bytes. The game must shrug all of it off. Run
+		// with a crash logger attached; the counters in `net status` show what the handlers did with it.
+		std::string Fuzz(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const int rounds = args.empty() ? 10 : std::stoi(std::string{ args[0] });
+			std::mt19937 rng{ args.size() > 1 ? static_cast<std::uint32_t>(std::stoul(std::string{ args[1] })) : std::random_device{}() };
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			// Real IDs of everything around: references of every type, their bases, and the odd ones.
+			std::vector<std::uint32_t> refs{ 0, 0x14, 0xFF000001, 0xFFFFFFFF, 0x00000007, 0x0001D162 };
+			std::vector<std::uint32_t> bases{ 0, 0x14, 0x0004A9C1, 0x000EEBED, 0x00004822, 0x0000003C };
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, 4000.0f, [&](RE::TESObjectREFR* a_ref) {
+				if (a_ref && refs.size() < 400) {
+					refs.push_back(a_ref->GetFormID());
+					if (const auto base = a_ref->GetObjectReference()) {
+						bases.push_back(base->GetFormID());
+					}
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			auto pick = [&](const std::vector<std::uint32_t>& a_from) { return a_from[rng() % a_from.size()]; };
+			auto u32 = [&] { return static_cast<std::uint32_t>(rng()); };
+			using namespace Protocol;
+			using MT = MessageType;
+			std::size_t sent = 0;
+			auto inject = [&](std::vector<std::uint8_t> a_packet) { Session::InjectPacket(a_packet); ++sent; };
+			for (int round = 0; round < rounds; ++round) {
+				inject(Encode(ActorDeath{ pick(refs), 2, (rng() & 1) != 0 }, MT::kActorDied));
+				inject(Encode(ActorHealth{ pick(refs), static_cast<float>(rng() % 200) / 100.0f - 0.5f }, MT::kActorHealth));
+				inject(Encode(IndexedContainerChange{ u32() % 1000, 2, ContainerChange{ pick(refs), pick(bases), static_cast<std::int32_t>(rng() % 7) - 3 } }));
+				inject(Encode(RefPickedUp{ pick(refs) }, MT::kRefPickedUp));
+				inject(Encode(RefState{ pick(refs), static_cast<std::uint8_t>(rng() % 3), static_cast<std::uint8_t>(rng() % 3) }, MT::kRefStateChanged));
+				inject(Encode(Activation{ 2, pick(refs) }, MT::kActivation));
+				inject(Encode(Explosion{ 2, pick(bases), player->data.location.x + static_cast<float>(rng() % 600) - 300.0f, player->data.location.y + static_cast<float>(rng() % 600) - 300.0f, player->data.location.z,
+							   cell->IsInterior() ? cell->GetFormID() : 0u, cell->IsInterior() ? 0u : (cell->worldSpace ? cell->worldSpace->GetFormID() : 0u) },
+					MT::kExplosion));
+				inject(Encode(QuestStage{ pick(bases), static_cast<std::uint16_t>(rng() % 300) }, MT::kQuestStage));
+				{
+					Protocol::Equipment equipment{ 2, {} };
+					for (int i = 0; i < static_cast<int>(rng() % 6); ++i) {
+						equipment.items.push_back(pick(bases));
+					}
+					inject(Encode(equipment, MT::kPlayerEquipment));
+				}
+				inject(Encode(std::vector<ActorOwner>{ { pick(refs), static_cast<std::uint32_t>(rng() % 3) }, { pick(refs), 2 } }));
+				// Random bytes under every server-to-client type, the first byte being the type.
+				for (std::uint8_t type = 101; type <= 133; ++type) {
+					std::vector<std::uint8_t> packet(1 + rng() % 48);
+					packet[0] = type;
+					for (std::size_t i = 1; i < packet.size(); ++i) {
+						packet[i] = static_cast<std::uint8_t>(rng());
+					}
+					inject(std::move(packet));
+				}
+			}
+			return std::format("fuzz: {} packets over {} rounds with {} refs and {} bases; still here", sent, rounds, refs.size(), bases.size());
+		}
+
 		// refs <typeNumber> [radius] [text]: nearby references of a form type (27 = activator, 32 = door), with the
 		// base name, for finding a real button or lever to test with (console-spawned refs are never shared).
 		std::string Refs(std::string_view a_args)
@@ -850,7 +919,7 @@ namespace DevCommands
 				return "error: usage: puppet <actorRefHex> [0|1] (not the player)";
 			}
 			if (args.size() > 1 && args[1] == "0") {
-				Puppets::Unregister(actor);
+				Puppets::Unregister(actor, actor->GetFormID());
 				return "released";
 			}
 			Puppets::Register(actor);
@@ -1053,7 +1122,7 @@ namespace DevCommands
 				return "error: refusing to delete a reference from a plugin file";
 			}
 			if (const auto actor = ref->As<RE::Actor>()) {
-				Puppets::Unregister(actor);
+				Puppets::Unregister(actor, actor->GetFormID());
 			}
 			ref->Disable();
 			ref->SetDelete(true);
@@ -1750,6 +1819,7 @@ namespace DevCommands
 			Entry{ "forms", Forms },
 			Entry{ "refs", Refs },
 			Entry{ "trace", TraceCmd },
+			Entry{ "fuzz", Fuzz },
 			Entry{ "named", Named },
 			Entry{ "lights", Lights },
 			Entry{ "gfx", Gfx },
