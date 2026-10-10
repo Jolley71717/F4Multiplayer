@@ -1,4 +1,5 @@
 #include "game/WorldClock.h"
+#include "game/ClockMath.h"
 
 #include "Config.h"
 #include "game/Story.h"
@@ -84,12 +85,13 @@ namespace WorldClock
 			if (dayOffset && a_time.playerId == clockOwner) {
 				delta = (a_time.daysPassed + *dayOffset - days) * 24.0;
 			}
-			if (!dayOffset || a_time.playerId != clockOwner || std::fabs(delta) > MAX_FOLLOW_HOURS) {
+			// The day offset keeps the date right across midnights, but it goes stale when a clock is set
+			// by hand (a console "set gamehour", a wait): then the hours themselves are what counts. A
+			// follower sat three hours behind its host for a whole session before this check (2026-10-09).
+			const bool stale = dayOffset && std::fabs(ClockMath::HourGap(a_time.gameHour, hour + delta)) > MAX_HOUR_DRIFT;
+			if (!dayOffset || a_time.playerId != clockOwner || std::fabs(delta) > MAX_FOLLOW_HOURS || stale) {
 				// Line up with the host's time of day: forward, or back if that stays on the same day.
-				delta = std::fmod(a_time.gameHour - hour + 24.0, 24.0);
-				if (delta > 12.0 && hour - (24.0 - delta) >= 0.0) {
-					delta -= 24.0;
-				}
+				delta = ClockMath::LineUp(a_time.gameHour, hour);
 				dayOffset = days + delta / 24.0 - a_time.daysPassed;
 				clockOwner = a_time.playerId;
 			}
