@@ -28,7 +28,10 @@ user profile.
 Fixed and verified this month, both directions, two games over Steam: buttons and switches
 (GitHub #5), ghost grenades (GitHub #6), terminal-linked locks lost after a minute (GitHub #7). Lifetime audit
 (docs/AUDIT-LIFETIME.md): ten code-confirmed lifetime and validity bugs fixed (GitHub #10 to #19); the
-trust-hardening backlog is beads epic lkt.
+trust-hardening backlog is beads epic lkt. Trust items fixed so far: deaths only from the
+NPC's runner, hit caps, face throttle, explosions only after a real throw and near the thrower, owner and
+companion caps, activation and lock changes only from a player near the thing, NPC gear given once,
+settlement pieces wait for their workbench, HUD text sanitised (0.7.6 to 0.8.0).
 
 Feature asks from the thread, in order: in-game menu (620), alternate-start compatibility check
 (0df), companions following both players (90g, needs a real recruit in a session).
