@@ -1,0 +1,26 @@
+#!/bin/sh
+# Refuses a commit whose author/committer or staged content matches a private pattern.
+# The patterns live outside the repo: ~/.f4mp-private-patterns (one case-insensitive regex per line).
+# Install: git config core.hooksPath tools/git-hooks
+patterns="$HOME/.f4mp-private-patterns"
+if [ ! -f "$patterns" ]; then
+	echo "pre-commit: $patterns is missing; create it (one private string per line) before committing" >&2
+	exit 1
+fi
+fail=0
+ident="$(git var GIT_AUTHOR_IDENT) $(git var GIT_COMMITTER_IDENT)"
+if echo "$ident" | grep -q -i -E -f "$patterns"; then
+	echo "pre-commit: the author or committer identity matches a private pattern; fix git config user.name/user.email" >&2
+	fail=1
+fi
+# Staged content and file names (added lines only).
+if git diff --cached --diff-filter=ACMR -U0 | grep '^+' | grep -v '^+++' | grep -q -i -E -f "$patterns"; then
+	echo "pre-commit: staged changes contain a private string:" >&2
+	git diff --cached --diff-filter=ACMR -U0 | grep '^+' | grep -v '^+++' | grep -i -n -E -f "$patterns" | head -5 >&2
+	fail=1
+fi
+if git diff --cached --name-only | grep -q -i -E -f "$patterns"; then
+	echo "pre-commit: a staged file name contains a private string" >&2
+	fail=1
+fi
+exit $fail

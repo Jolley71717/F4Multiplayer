@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "F4Multiplayer",
+  "project_id": "0821f73d-6620-4c51-b20d-ecaea8671359"
+}
