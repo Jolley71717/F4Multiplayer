@@ -98,12 +98,26 @@ namespace RemotePlayers
 		std::uint32_t                         heldFrames = 0;
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
+		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand) but
+		// never counted when checking what the stand-in wears, since an NPC does not report a throwable as
+		// equipped. Counting it made the gear check fail for ever: the stand-in was stripped and dressed
+		// again every few seconds, which also threw it out of its power armor frame each time.
+		bool Throwable(std::uint32_t a_item)
+		{
+			const auto weapon = RE::TESForm::GetFormByID<RE::TESObjectWEAP>(a_item);
+			if (!weapon) {
+				return false;
+			}
+			const auto type = weapon->weaponData.type.get();
+			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
+		}
+
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
 		{
 			std::vector<std::uint32_t> out;
 			for (const auto item : a_items) {
 				const auto form = RE::TESForm::GetFormByID(item);
-				if (form && form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+				if (form && form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) && !Throwable(item)) {
 					out.push_back(item);
 				}
 			}
@@ -777,7 +791,7 @@ namespace RemotePlayers
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
 			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-				if (Equipment::Read(actor) == Wearable(remote.equipment)) {
+				if (Wearable(Equipment::Read(actor)) == Wearable(remote.equipment)) {
 					remote.equipmentFixes = 0;
 				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
 					++remote.equipmentFixes;
