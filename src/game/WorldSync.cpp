@@ -522,6 +522,21 @@ namespace WorldSync
 			return true;
 		}
 
+		// The reference a linked-ref entry points at. The engine fills the entry with the target's form ID
+		// and resolves it to a pointer later ("transient" refs); until then the pointer field holds the
+		// ID, and reading it as a pointer crashed both games at the Red Rocket terminal (2026-10-10).
+		RE::TESObjectREFR* LinkedTarget(const RE::ExtraLinkedRef& a_links, const RE::ExtraLinkedRef::LinkedRef& a_link)
+		{
+			const auto raw = reinterpret_cast<std::uintptr_t>(a_link.REFR);
+			if (!raw) {
+				return nullptr;
+			}
+			if (a_links.transientRefs || raw <= 0xFFFFFFFFull) {
+				return RE::TESForm::GetFormByID<RE::TESObjectREFR>(static_cast<std::uint32_t>(raw));
+			}
+			return a_link.REFR;
+		}
+
 		// Starts watching references the player activated, and reports changes to watched ones.
 		void WatchRefStates(Clock::time_point a_now, const std::vector<Activation>& a_activations)
 		{
@@ -534,8 +549,9 @@ namespace WorldSync
 				const auto links = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
 				if (links) {
 					for (const auto& link : links->linkedRefs) {
-						if (link.REFR && Protocol::IsShareableRef(link.REFR->GetFormID())) {
-							watched[link.REFR->GetFormID()].until = a_now + WATCH_TIME;
+						const auto target = LinkedTarget(*links, link);
+						if (target && Protocol::IsShareableRef(target->GetFormID())) {
+							watched[target->GetFormID()].until = a_now + WATCH_TIME;
 							++linkedWatched;
 						}
 					}
