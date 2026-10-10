@@ -25,6 +25,8 @@ Candidates, by how often a player would notice the gap in a normal session:
 
 | 13 | Fast travel with a friend | Each player can fast travel alone today; the other sees them vanish and reappear. To verify both ways, and consider "travel together" (the friend gets a prompt) | small to verify; medium for travel-together | verify next |
 | 14 | Workshop building shared | The big one: a friend's walls, turrets and crops don't exist in your game | first step done (protocol 22): what a player places, moves or scraps is copied into the others' games (plain copies: not scrappable or powerable by them); the rest is planned in docs/WORKSHOP-POWER.md | partly |
+| 15 | Buttons, switches, levers | A friend presses the button; your door, elevator or light does nothing (Nexus report on 0.7.0) | done (0.7.2, 2026-10-10): an activator a player uses is reported and the others activate the same reference as their own player; replayed presses are not reported back. Verified both ways at the Vault 81 elevator call buttons | done |
+| 16 | Ghost grenades | The stand-in really threw the grenade the equipment sync gave it: a second grenade near the stand-in | done (0.7.2): projectiles a stand-in shoots within 2 s of a replayed throw are disabled and deleted | done |
 
 Next up, in order: 1, 2, 10, 13. Then 14 (building), 3 and 12 for fights, 5 for companions.
 
@@ -62,7 +64,7 @@ both games). The main story and the faction quests are per player unless the hos
 
 - Grenades, mines, Molotovs (first pass #12): a friend's throw does not exist in your game. Shared projectile spawn, medium.
 - Death animations and ragdolls of shared NPCs (first pass #4).
-- Power armor on the stand-in (first pass #3): in progress 2026-10-09.
+- Power armor on the stand-in (first pass #3): done 2026-10-09; the stand-in shows the full piece set (verified 2026-10-10 with T-45). A Nexus report of it "displayed incorrectly" is open (needs a screenshot).
 - Companions: each follows its owner; the friend's game runs it as a mirror. To verify on video.
 - Vertibird signal grenades and the Vertibird itself: the rider is on their own; the friend sees the stand-in in the sky.
 - Settlement attacks and radiant settlement quests: per game (first pass #9).
