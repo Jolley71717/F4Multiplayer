@@ -390,6 +390,7 @@ namespace RemotePlayers
 				a_player.registeredId = 0;
 			}
 			if (const auto actor = GetActor(a_player)) {
+				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
 				if (DeferredDelete::Safe(actor->Get3D() != nullptr, Clock::now() - a_player.spawnedAt)) {
 					actor->Disable();
 					actor->SetDelete(true);

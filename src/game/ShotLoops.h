@@ -54,6 +54,22 @@ public:
 		return ended;
 	}
 
+	// Ends every loop of one shooter now (its actor is about to be deleted; the sound follows its 3D).
+	template <class End>
+	std::size_t EndFor(Key a_key, End&& a_end)
+	{
+		std::size_t ended = 0;
+		std::erase_if(loops, [&](Loop& a_loop) {
+			if (a_loop.key != a_key) {
+				return false;
+			}
+			a_end(a_loop.handle);
+			++ended;
+			return true;
+		});
+		return ended;
+	}
+
 	[[nodiscard]] std::size_t Active() const { return loops.size(); }
 
 private:

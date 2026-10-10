@@ -109,3 +109,18 @@ TEST("shot loops: an automatic burst is one sound from the first shot to a shot'
 	CHECK(loops.EndDue(now + Loops::SHOT_LENGTH, [](int) {}) == 1);
 	CHECK(ended == 0);
 }
+
+TEST("shot loops: one shooter's loops can be ended at once, leaving the others running")
+{
+	Loops      loops;
+	const auto now = Loops::Clock::now();
+	loops.Add(7, 1, now);
+	loops.Add(7, 2, now);
+	loops.Add(9, 3, now);
+	int ended = 0;
+	CHECK(loops.EndFor(7, [&](int) { ++ended; }) == 2);
+	CHECK(ended == 2);
+	CHECK(loops.Active() == 1);
+	CHECK(loops.EndFor(7, [](int) {}) == 0);
+	CHECK(loops.EndDue(now + Loops::SHOT_LENGTH, [](int) {}) == 1);
+}

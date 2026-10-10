@@ -448,6 +448,13 @@ namespace WeaponFire
 		std::uint32_t                                         ghostsRemoved = 0;
 	}
 
+	void ReleaseSoundsOf(std::uint32_t a_actorFormId)
+	{
+		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndFor(a_actorFormId, [](RE::BSSoundHandle& a_handle) {
+			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
+		}));
+	}
+
 	void ArmExplosionWatch()
 	{
 		watchUntil = Clock::now() + EXPLOSION_WATCH;

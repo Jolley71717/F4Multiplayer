@@ -39,6 +39,10 @@ namespace WeaponFire
 	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), for the
 	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
 	void ArmExplosionWatch();
+
+	// Ends any replayed sound still following this actor: called before the actor is deleted, since
+	// the sound follows its 3D root.
+	void ReleaseSoundsOf(std::uint32_t a_actorFormId);
 	[[nodiscard]] std::vector<Protocol::Explosion> TakeExplosions();
 	// Sets off an explosion another player reported, if it is in our space and near enough to matter.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);

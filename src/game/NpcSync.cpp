@@ -164,6 +164,7 @@ namespace NpcSync
 			if (!a_mirror.registered) {
 				return;
 			}
+			WeaponFire::ReleaseSoundsOf(a_id);  // a replayed burst may still follow the actor's 3D
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 			} else {
