@@ -88,6 +88,7 @@ namespace RemotePlayers
 		constexpr float LIGHT_HEIGHT = 110.0f;  // above the feet: about the Pip-Boy
 		std::uint32_t   lightsPlaced = 0;
 		std::uint32_t   framesPlaced = 0;
+		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -301,12 +302,31 @@ namespace RemotePlayers
 		// come with their equipment. When they climb out, the stand-in activates the frame again and the
 		// frame is removed.
 		constexpr auto FRAME_ACTION_GAP = 4s;
+		constexpr float FRAME_FOLLOW_DISTANCE = 48.0f;  // a frame this far from its stand-in has been left behind
 		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
 		{
-			if (!a_actor || !a_actor->Get3D() || a_now - a_player.frameActionAt < FRAME_ACTION_GAP) {
+			if (!a_actor || !a_actor->Get3D()) {
 				return;
 			}
 			auto frame = a_player.frame.get();
+			// The engine moves a frame along with the actor walking in it, but a stand-in is placed each
+			// frame, which left its frame standing where it climbed in: the friend saw a spare suit of
+			// power armor, with the pieces in it, at that spot (Nexus report on 0.7.0). The frame is
+			// brought along whenever it falls behind.
+			if (a_player.inPowerArmor && frame && frame->Get3D() && frame->GetParentCell() == a_actor->GetParentCell()) {
+				// While it is worn, the frame object itself is hidden (the stand-in's own armor is what shows,
+				// as for any actor in power armor); a visible one trailed the stand-in as a second, empty suit.
+				frame->Get3D()->SetAppCulled(true);
+				if (frame->data.location.GetDistance(a_actor->data.location) > FRAME_FOLLOW_DISTANCE) {
+					frame->data.location = a_actor->data.location;
+					frame->data.angle = a_actor->data.angle;
+					frame->Update3DPosition(true);
+					++framesFollowed;
+				}
+			}
+			if (a_now - a_player.frameActionAt < FRAME_ACTION_GAP) {
+				return;
+			}
 			if (a_player.powerArmorOn && !a_player.inPowerArmor) {
 				const auto base = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
 				if (!base) {
@@ -346,6 +366,7 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: '{}' stand-in gets into power armor (frame {:08X})", a_player.name, a_player.powerArmorFrame);
 			} else if (!a_player.powerArmorOn && a_player.inPowerArmor) {
 				if (frame && frame->Get3D()) {
+					frame->Get3D()->SetAppCulled(false);  // it stands where they got out, until it is deleted
 					Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
 					frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
 				}
@@ -756,7 +777,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}", lightsPlaced, framesPlaced);
+			out += std::format(" lights={} frames={}/{}", lightsPlaced, framesPlaced, framesFollowed);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
