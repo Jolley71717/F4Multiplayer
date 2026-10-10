@@ -53,7 +53,7 @@ namespace WorldSync
 
 		// Doors and lockable things the player used recently. Their open/lock state is reported
 		// whenever it changes while watched (lockpicking can take a while, hence the long window).
-		constexpr auto WATCH_TIME = 60s;
+		constexpr auto WATCH_TIME = 5min;  // hacking a terminal and walking its menus, or a long lockpick, can take minutes
 		struct Watched
 		{
 			Protocol::RefState lastSent;
@@ -61,6 +61,7 @@ namespace WorldSync
 		};
 		std::unordered_map<std::uint32_t, Watched>           watched;
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
+		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
 		// Activators (buttons, switches, levers) pressed in another player's game are pressed here
 		// too. A press we replayed is remembered briefly so our own watcher doesn't report it back.
@@ -511,9 +512,12 @@ namespace WorldSync
 			if (a_state.locked != Protocol::RefState::kUnknown && current->locked != Protocol::RefState::kUnknown && a_state.locked != current->locked) {
 				ref->GetLock()->SetLocked(a_state.locked == Protocol::RefState::kYes);
 				ref->AddLockChange();
+				++refStatesApplied;
+				REX::INFO("WorldSync: {:08X} {} (changed in another player's world)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked");
 			}
 			if (a_state.open != Protocol::RefState::kUnknown && current->open != Protocol::RefState::kUnknown && a_state.open != current->open) {
 				RE::BGSOpenCloseForm::SetOpenState(ref, a_state.open == Protocol::RefState::kYes, false);
+				++refStatesApplied;
 			}
 			return true;
 		}
@@ -907,8 +911,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{} pendingDoors={} personal={} ownSkipped={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{} states={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, refStatesApplied, pendingRefStates.size(), personalSkipped,
 			ownSkipped);
 	}
 }

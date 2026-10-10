@@ -27,6 +27,7 @@ Candidates, by how often a player would notice the gap in a normal session:
 | 14 | Workshop building shared | The big one: a friend's walls, turrets and crops don't exist in your game | first step done (protocol 22): what a player places, moves or scraps is copied into the others' games (plain copies: not scrappable or powerable by them); the rest is planned in docs/WORKSHOP-POWER.md | partly |
 | 15 | Buttons, switches, levers | A friend presses the button; your door, elevator or light does nothing (Nexus report on 0.7.0) | done (0.7.2, 2026-10-10): an activator a player uses is reported and the others activate the same reference as their own player; replayed presses are not reported back. Verified both ways at the Vault 81 elevator call buttons | done |
 | 16 | Ghost grenades | The stand-in really threw the grenade the equipment sync gave it: a second grenade near the stand-in | done (0.7.2): projectiles a stand-in shoots within 2 s of a replayed throw are disabled and deleted | done |
+| 17 | Terminal-linked locks and doors | A terminal that unlocks a safe or door: the other game keeps it locked | done (0.7.0 code, verified 0.7.2 on 2026-10-10 both ways with the Super-Duper Mart storage terminal and its safe); the watch on a used object now lasts five minutes, since hacking and menus took longer than the old minute | done |
 
 Next up, in order: 1, 2, 10, 13. Then 14 (building), 3 and 12 for fights, 5 for companions.
 

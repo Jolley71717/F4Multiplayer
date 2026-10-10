@@ -111,10 +111,11 @@ namespace DevCommands
 		{
 			const auto& loc = a_ref->data.location;
 			const auto  cell = a_ref->GetParentCell();
+			const auto  lock = a_ref->GetLock();
 			return std::format(
-				"ref={:08X} x={:.1f} y={:.1f} z={:.1f} rz={:.1f} cell={:08X} 3d={}",
+				"ref={:08X} x={:.1f} y={:.1f} z={:.1f} rz={:.1f} cell={:08X} 3d={} locked={}",
 				a_ref->GetFormID(), loc.x, loc.y, loc.z, a_ref->data.angle.z * TO_DEGREES,
-				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr) + DescribeMovement(a_ref);
+				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr, lock ? ((lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? "yes" : "no") : "-") + DescribeMovement(a_ref);
 		}
 
 		std::string Status(std::string_view)
