@@ -7,6 +7,10 @@
 
 namespace WeaponFire
 {
+	// Defined with the explosion watch below.
+	void          ArmGhostWatch(std::uint32_t a_actorId);
+	std::uint32_t GhostsRemoved();
+
 	namespace
 	{
 		std::atomic<std::uint32_t> pending{ 0 };
@@ -257,6 +261,7 @@ namespace WeaponFire
 	}
 
 	void ScanExplosions();
+	void RemoveGhostGrenades();
 
 	void Frame()
 	{
@@ -264,6 +269,7 @@ namespace WeaponFire
 			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
 		}));
 		ScanExplosions();
+		RemoveGhostGrenades();
 	}
 
 	namespace
@@ -358,6 +364,7 @@ namespace WeaponFire
 		if (a_action == Protocol::ShotAction::kThrow) {
 			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(THROW);
 			actionsPlayed += action && a_actor->PerformAction(action, nullptr);
+			ArmGhostWatch(a_actor->GetFormID());
 			return;
 		}
 		if (!a_actor->GetWeaponMagicDrawn()) {
@@ -402,7 +409,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -429,6 +436,13 @@ namespace WeaponFire
 		std::unordered_set<std::uint32_t>      seenExplosions;
 		std::vector<Protocol::Explosion>       explosions;
 		std::mutex                             explosionLock;
+
+		// A stand-in that replayed a throw really throws the grenade it holds (the equipment sync gave it
+		// one), so the friend's game got a second grenade landing at the stand-in's feet on top of the
+		// owner's explosion. For a moment after the replay, anything the stand-in shoots is removed.
+		constexpr auto                                        GHOST_WATCH = 2s;
+		std::unordered_map<std::uint32_t, Clock::time_point>  ghostWatch;  // stand-in -> until
+		std::uint32_t                                         ghostsRemoved = 0;
 	}
 
 	void ArmExplosionWatch()
@@ -465,6 +479,44 @@ namespace WeaponFire
 			std::scoped_lock e{ explosionLock };
 			explosions.push_back({ 0, base->GetFormID(), ref->data.location.x, ref->data.location.y, ref->data.location.z, space.first, space.second });
 			++explosionsReported;
+		}
+	}
+
+	void ArmGhostWatch(std::uint32_t a_actorId)
+	{
+		ghostWatch[a_actorId] = Clock::now() + GHOST_WATCH;
+	}
+
+	std::uint32_t GhostsRemoved()
+	{
+		return ghostsRemoved;
+	}
+
+	void RemoveGhostGrenades()
+	{
+		if (ghostWatch.empty()) {
+			return;
+		}
+		const auto now = Clock::now();
+		std::erase_if(ghostWatch, [&](const auto& a_entry) { return now > a_entry.second; });
+		const auto tes = RE::TES::GetSingleton();
+		if (!tes) {
+			return;
+		}
+		for (const auto& [actorId, until] : ghostWatch) {
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(actorId);
+			if (!actor || !actor->Get3D()) {
+				continue;
+			}
+			tes->ForEachReferenceInRange(actor->data.location, 1000.0f, [&](RE::TESObjectREFR* a_ref) {
+				const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
+				if (projectile && !projectile->IsDisabled() && projectile->shooter.get().get() == actor) {
+					projectile->Disable();
+					RE::Console::ExecuteCommand(std::format("{:08X}.markfordelete", projectile->GetFormID()).c_str());  // a disabled projectile would otherwise linger in the cell
+					++ghostsRemoved;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
 		}
 	}
 
