@@ -30,6 +30,14 @@ namespace Protocol
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
 	// References are shared by form ID, which matches for everyone because the load order must.
+	// A coordinate the game world can hold: finite and well inside the engine's limits (the Commonwealth
+	// spans about 150,000 units; a value like 1e38 from a bad client would break cell lookup).
+	inline constexpr float MAX_COORDINATE = 1.0e6f;
+	[[nodiscard]] inline bool InWorld(float a_v)
+	{
+		return std::isfinite(a_v) && a_v >= -MAX_COORDINATE && a_v <= MAX_COORDINATE;
+	}
+
 	// Runtime-created references (0xFF......) differ per game, and the player is per game.
 	[[nodiscard]] constexpr bool IsShareableRef(std::uint32_t a_id)
 	{
@@ -139,7 +147,7 @@ namespace Protocol
 
 		[[nodiscard]] bool IsFinite() const
 		{
-			return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) &&
+			return InWorld(x) && InWorld(y) && InWorld(z) &&
 			       std::isfinite(heading) && std::isfinite(speed);
 		}
 	};
@@ -399,7 +407,7 @@ namespace Protocol
 
 		[[nodiscard]] bool IsFinite() const
 		{
-			return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(heading) && std::isfinite(speed);
+			return InWorld(x) && InWorld(y) && InWorld(z) && std::isfinite(heading) && std::isfinite(speed);
 		}
 	};
 
@@ -1249,7 +1257,7 @@ namespace Protocol
 			bool finite = true;
 			for (float& v : msg.position) {
 				v = r.F32();
-				finite = finite && std::isfinite(v);
+				finite = finite && InWorld(v);  // position and rotation alike: both must be sane numbers
 			}
 			for (float& v : msg.rotation) {
 				v = r.F32();
