@@ -771,6 +771,7 @@ namespace WorldSync
 				const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
 				if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
 					++refStatesRefused;
+					REX::INFO("WorldSync: {:08X} state from player {} refused: they are {} away", a_state.refId, a_state.playerId, senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : "nowhere known");
 					return;
 				}
 			}
