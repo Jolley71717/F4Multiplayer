@@ -38,7 +38,7 @@ Status: F = fixed (commit), O = open issue (beads id), N = checked, no change ne
 | RemotePlayers.cpp:43, :438-441 | face base (runtime NPC form) kept as a pointer across loads | F 46dd515 (by ID, remade when gone, reset on load) |
 | RemotePlayers.cpp:657-668 | graveyard handles drained after a load | F 46dd515 (cleared on load) |
 | NpcSync.cpp:127 | mirrors could target the player, a stand-in or a runtime actor | F 46dd515 |
-| WeaponFire.cpp:251 | sound handle follows a stand-in's 3D root that may be deleted mid-tail | O 76z |
+| WeaponFire.cpp:251 | sound handle follows a stand-in's 3D root that may be deleted mid-tail | F 72646ce |
 | WorldSync.cpp:537 | `LinkedTarget` returns the engine's pointer branch unverified | N (engine-owned entry; the ID branch handles the transient case) |
 | RemotePlayers.cpp:265, :348, :453; WorkshopSync.cpp:163 | raw pointer taken from a temporary smart pointer, used in the same frame | N (same frame, cell holds the reference) |
 
@@ -47,9 +47,9 @@ Status: F = fixed (commit), O = open issue (beads id), N = checked, no change ne
 | Where | What | Status |
 |---|---|---|
 | WeaponFire.cpp:511-519 | ghost projectile disabled and deleted inside the reference walk, before its 3D loads | F 4902dce |
-| DeferredDelete.h:14 | 3 s fallback can delete during a long load stall | O clf |
+| DeferredDelete.h:14 | 3 s fallback can delete during a long load stall | O 76z |
 | RemotePlayers.cpp:601 | young spawns go to the graveyard before a save instead of being deleted | O 6ut |
-| RemotePlayers.cpp:336, :385 | frame copy deleted while the stand-in is inside it | O afx |
+| RemotePlayers.cpp:336, :385 | frame copy deleted while the stand-in is inside it | O clf |
 | WorldSync.cpp:595 | picked-up item disabled without a 3D check (disable only) | N |
 | WorkshopSync.cpp:249-282 | copies deleted through DeferredDelete or the graveyard | N |
 
