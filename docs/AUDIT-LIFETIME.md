@@ -107,6 +107,21 @@ on the host with the crash logger attached. Pass means no "DOWN", no new crash l
 and lag, error and counter results no worse than the baseline (100 to 150 ms, under 5 units; NPC height
 error under 40 units; ghosts and states counters moving as before).
 
-### Results (2026-10-10, 14:38 to 15:05)
+### Results: final sweep on 0.8.0 (2026-10-10, 17:05 to 17:35) against the pre-fix baseline
 
-Unit tests 197/197. Full rebuild with zero warnings. Movement: 100 ms and 150 ms best-fit lag, mean error 3 and 2 units (baseline 100 to 150 ms, 2 to 3 units). Combat at Corvega: 17 NPC tracks, height error at most 10 units. Terminals, loot and the safe: both directions, both games up, states counters moving. Grenades: both directions, one ghost caught per throw. Power armor: both directions, frame copy within two units of the stand-in. Cell churn with save reloads: three minutes plus two minutes, both games up, no crash log. Reconnect: VM rejoined, stand-ins back. Fuzz: five seeds, 2,150 packets, no crash. Host-driven keyboard steps need the game window in front; two were rerun for that reason and passed.
+| Check | Before the fixes (13:00 to 14:00) | Final build |
+|---|---|---|
+| Unit tests | 197 pass | 205 pass |
+| Build warnings (full rebuild) | 2 (pre-existing) | 0 |
+| Movement, VM as the host draws it | 100 ms lag, mean 3 u, max 20 u | 100 ms, mean 3 u, max 24 u |
+| Movement, host as the VM draws it | 150 ms lag, mean 2 u, max 26 u | 125 ms, mean 2 u, max 25 u |
+| Combat, Corvega, NPC height error | max 33 to 35 u (37 tracks) | max 16 u (17 tracks) |
+| Terminals, loot and the safe, both ways | applied both ways | applied both ways, loot counters equal on both sides |
+| Grenades, both ways | one ghost caught per throw | one ghost caught per throw |
+| Power armor in motion, both ways | frame copy within 10 u of the stand-in | within 12 u (VM in armor) and 28 u (host in armor) |
+| Cell churn with save reloads | not run before | 5 min (11 hops, 3 reloads) plus 2 min earlier: both games up |
+| Reconnect | not run before | VM restarted and rejoined, stand-ins back |
+| Fuzz on the host, crash logger attached | 1,290 packets (3 seeds), no crash | 1,290 packets (3 seeds), no crash; 6,450 across the day |
+| Crash logs | the one Red Rocket crash per machine (13:23, 13:24) | none new on either machine |
+
+The power armor section inside the scripted sweep fails for a test reason: the host-side script placed the host where the VM's frame copy stood and the host climbed into it (a real feature). Run on fresh ground it passes both ways; the script now moves first.
