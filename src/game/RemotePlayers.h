@@ -43,6 +43,9 @@ namespace RemotePlayers
 
 	[[nodiscard]] std::vector<Info> List();
 
+	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
+	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);
+
 	// The player's name, or "" if unknown.
 	[[nodiscard]] std::string NameOf(std::uint32_t a_id);
 

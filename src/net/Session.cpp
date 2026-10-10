@@ -246,7 +246,7 @@ namespace Session
 				break;
 			case MessageType::kActivation:
 				if (const auto msg = Protocol::DecodeActivation(a_data)) {
-					WorldSync::ApplyRemoteActivation(msg->refId);
+					WorldSync::ApplyRemoteActivation(msg->refId, msg->playerId);
 				}
 				break;
 			case MessageType::kActorDied:

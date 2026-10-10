@@ -139,7 +139,7 @@ namespace WorkshopSync
 			}
 			const auto cell = workshop ? workshop->GetParentCell() : nullptr;
 			if (!cell) {
-				return here;  // no workbench known: wherever we are
+				return nullptr;  // its workbench isn't loaded here: the piece waits (it used to land in whatever cell we were in)
 			}
 			if (cell->IsInterior()) {
 				return cell == here ? cell : nullptr;

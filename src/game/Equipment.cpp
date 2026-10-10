@@ -35,6 +35,22 @@ namespace Equipment
 		return items;
 	}
 
+	// Whether the actor carries at least one of the item.
+	bool Has(RE::Actor* a_actor, std::uint32_t a_item)
+	{
+		const auto list = a_actor ? a_actor->inventoryList : nullptr;
+		if (!list) {
+			return false;
+		}
+		RE::BSAutoReadLock l{ list->rwLock };
+		for (auto& entry : list->data) {
+			if (entry.object && entry.object->GetFormID() == a_item) {
+				return entry.GetCount() > 0;
+			}
+		}
+		return false;
+	}
+
 	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
 	{
 		if (!a_actor) {
@@ -46,7 +62,11 @@ namespace Equipment
 			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 				continue;
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			// Given only when missing: every gear report used to add another copy, so an NPC's
+			// inventory grew with each one (and unique items were duplicated as loot).
+			if (!Has(a_actor, item)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		// What it wears that the owner's doesn't (its own roll from the outfit) comes off, so the two

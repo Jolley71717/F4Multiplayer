@@ -68,7 +68,8 @@ namespace WorldSync
 		// too. A press we replayed is remembered briefly so our own watcher doesn't report it back.
 		constexpr auto                                         REPLAY_ECHO = 2s;
 		std::unordered_map<std::uint32_t, Clock::time_point> replayed;
-		std::uint32_t                                          activationsSent = 0, activationsApplied = 0;
+		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
+		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
 		// Container changes are numbered by the server. Everything before containerNext is in our
@@ -660,7 +661,7 @@ namespace WorldSync
 		}
 	}
 
-	void ApplyRemoteActivation(std::uint32_t a_refId)
+	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId)
 	{
 		if (!InWorld() || !IsShareableRef(a_refId)) {
 			return;
@@ -672,6 +673,13 @@ namespace WorldSync
 		}
 		const auto base = ref->GetObjectReference();
 		if (!base || !base->Is(RE::ENUM_FORM_ID::kACTI)) {
+			return;
+		}
+		// Only a press by someone standing at the thing: a report naming a far-away activator (or
+		// from a player we know nothing about) would run its script here on their say-so.
+		const auto senderAt = RemotePlayers::PositionOf(a_playerId);
+		if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
+			++activationsRefused;
 			return;
 		}
 		replayed[a_refId] = Clock::now();
@@ -932,8 +940,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{} states={} pendingDoors={} personal={} ownSkipped={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, refStatesApplied, pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, pendingRefStates.size(), personalSkipped,
 			ownSkipped);
 	}
 }

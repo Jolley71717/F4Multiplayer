@@ -612,6 +612,25 @@ namespace RemotePlayers
 		}
 	}
 
+	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end() || it->second.snapshots.empty()) {
+			return std::nullopt;
+		}
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto cell = player ? player->GetParentCell() : nullptr;
+		if (!cell) {
+			return std::nullopt;
+		}
+		const auto& last = it->second.snapshots.back().state;
+		const bool here = cell->IsInterior() ? last.cell == cell->GetFormID() : (cell->worldSpace && last.worldspace == cell->worldSpace->GetFormID());
+		if (!here) {
+			return std::nullopt;
+		}
+		return RE::NiPoint3{ last.x, last.y, last.z };
+	}
+
 	void OnGameLoaded()
 	{
 		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
