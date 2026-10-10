@@ -255,11 +255,10 @@ namespace DevCommands
 
 		std::string Focus(std::string_view)
 		{
-			auto result = std::async(std::launch::async, [] { return BringGameToFront(); });
-			if (result.wait_for(std::chrono::milliseconds(1500)) != std::future_status::ready) {
-				return "requested";  // still trying on its thread
-			}
-			return result.get() ? "focused" : "error: could not bring the game window to the front";
+			// Never waited for: the window calls send messages to the game thread, which is the thread
+			// running this command (waiting here deadlocked the game on 2026-10-09).
+			std::thread([] { BringGameToFront(); }).detach();
+			return "requested";
 		}
 
 		// pa: the local player's power armor state as the status reports it.
