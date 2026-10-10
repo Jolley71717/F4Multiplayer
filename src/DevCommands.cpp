@@ -484,6 +484,15 @@ namespace DevCommands
 					row(std::format("p{}", info.id), info.actor);
 				}
 			}
+			// Every other actor nearby (shared NPCs have the same form ID in both games, so the two files
+			// line up by it): a mirrored NPC drifting up or sinking shows as a height error over time.
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, 3000.0f, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor) && actor->Get3D() && Protocol::IsShareableRef(actor->GetFormID())) {
+					row(std::format("n{:08X}{}", actor->GetFormID(), actor->IsDead(false) ? "d" : ""), actor);
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
 			if (trace.rows.size() > 200000) {
 				trace.active = false;
 			}
