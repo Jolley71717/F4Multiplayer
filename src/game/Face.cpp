@@ -234,7 +234,7 @@ namespace Face
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
 		}
 		++made;
-		REX::INFO("Face: made base {:08X} from {:08X}: {} head parts, {} sliders, {} bones, {} tints", npc->GetFormID(), a_base->GetFormID(), parts.size(), a_face.sliders.size(), a_face.bones.size(), tintCount);
+		REX::INFO("Face: made base {:08X} from {:08X}: {} head parts, {} sliders, {} bones, {} tints", npc->GetFormID(), a_base->GetFormID(), headParts.size(), a_face.sliders.size(), a_face.bones.size(), tintCount);
 		return npc;
 	}
 
