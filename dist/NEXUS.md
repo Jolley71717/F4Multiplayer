@@ -21,7 +21,8 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [list]
 [*][b]NPCs and combat:[/b] one game runs each NPC and the others copy it, so everyone fights the same raider in the same place. Enemies attack any player; kills and damage count for everyone.
 [*][b]The world:[/b] loot taken or stored, items picked up, doors and locks, deaths.
-[*][b]Side quests:[/b] progress in one game moves the others forward once they have started the quest too. The main story and factions are played by each player in their own game (the host can switch to a shared story).
+[*][b]Side quests:[/b] progress in one game moves the others forward once they have started the quest too.
+[*][b]The main story is yours:[/b] by default each player plays the main quest and the factions in their own game, at their own pace, with their own choices. If you blew up the Institute and your friend has not, it stands in their game and is a crater in yours; you can still walk around their Boston with them, and their quest NPCs are shared like any others. Nothing resets or reverts. The host can instead set [b]sStory = shared[/b] so everyone follows the host's story and the host's choices.
 [*][b]Map:[/b] a location one player finds shows up on everyone's map, ready for fast travel.
 [*][b]Settlements:[/b] what a friend builds, moves or scraps appears in your game.
 [*][b]The session is saved:[/b] the host's PC keeps the shared world, so dead NPCs stay dead and walls stand next time you play.
@@ -31,12 +32,14 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*]Friends appear as settlers of their sex and build, wearing their gear, with their name and health over their head. You see them aim, fire, reload, swing and emote (F9 point, F10 cheer, F11 clap), and their Pip-Boy light at night.
+[*][b]How friends appear:[/b] a friend is a character standing next to you, wherever you both are in the world (not in a settlement). They have their own face, body and sex, wear the armor and weapons from their own save, and carry their name and health over their head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F9 point, F10 cheer, F11 clap), and their Pip-Boy light at night.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
 [*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
-[*]A new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault.
+[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods should behave the same way (you join once your character is in the open world) but are untested.
+[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. [b]Shared:[/b] NPCs, loot, doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
+[*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). Different mod collections per player do not work.
 [/list]
 
 [size=4][b]Requirements[/b][/size]
@@ -52,7 +55,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
 
 [size=4][b]Early alpha[/b][/size]
-Back up your saves or use a separate one for co-op. Known gaps: friends show as settlers (no faces or hair yet), no muzzle flash on their shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log; please attach it to a bug report.
+Back up your saves or use a separate one for co-op. Known gaps: no muzzle flash on friends' shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. Every upload here is checked by hand because the mod is compiled code, so updates reach Nexus in batches; the newest builds are always on GitHub (link below). If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log; please attach it to a bug report.
 
 [size=4][b]Open source[/b][/size]
 GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]github.com/Jolley71717/F4Multiplayer[/url].
