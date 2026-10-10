@@ -1238,6 +1238,18 @@ TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of b
 	CHECK(!SameLoadOrderIgnoring({}, session, ignore));
 }
 
+TEST("protocol: Activation round trips and needs a shareable ref")
+{
+	for (const auto type : { MT::kReportActivation, MT::kActivation }) {
+		const Activation in{ 2, 0x000A1B2C };
+		const auto       out = DecodeActivation(Encode(in, type));
+		REQUIRE(out);
+		CHECK(*out == in);
+		CHECK(!DecodeActivation(Encode(Activation{ 2, 0xFF000123 }, type)));
+		CHECK(!DecodeActivation(Encode(Activation{ 2, 0 }, type)));
+	}
+}
+
 TEST("protocol: Explosion round trips and needs a base")
 {
 	for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {

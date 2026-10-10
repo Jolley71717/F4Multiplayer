@@ -3,7 +3,8 @@
 # Produces dist\out\F4Multiplayer-<version>.zip, laid out like a Data folder so Vortex or
 # Mod Organizer 2 can install it directly, plus the standalone server.
 param(
-	[string]$Mode = 'releasedbg'
+	[string]$Mode = 'releasedbg',
+	[switch]$Nexus  # the Nexus upload: without F4MPServer.exe (only dedicated servers need it, and it is one more compiled file for their scanner); the GitHub release carries the full zip
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,7 +20,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 $version = (Select-String -Path xmake.lua -Pattern 'set_version\("([^"]+)"\)').Matches[0].Groups[1].Value
 $build = Join-Path $root "build\windows\x64\$Mode"
 $stage = Join-Path $root 'dist\out\stage'
-$zip = Join-Path $root "dist\out\F4Multiplayer-$version.zip"
+$suffix = if ($Nexus) { '-nexus' } else { '' }
+$zip = Join-Path $root "dist\out\F4Multiplayer-$version$suffix.zip"
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force (Join-Path $stage 'F4SE\Plugins') | Out-Null
@@ -30,7 +32,7 @@ New-Item -ItemType Directory -Force (Join-Path $stage 'F4Multiplayer') | Out-Nul
 Copy-Item (Join-Path $build 'F4Multiplayer.dll') (Join-Path $stage 'F4SE\Plugins')
 Copy-Item (Join-Path $build 'F4Multiplayer.pdb') (Join-Path $root "dist\out\F4Multiplayer-$version.pdb")
 Copy-Item (Join-Path $root 'dist\F4Multiplayer.ini') (Join-Path $stage 'F4SE\Plugins')
-Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer')
+if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'F4Multiplayer')
 

@@ -61,6 +61,12 @@ namespace WorldSync
 		};
 		std::unordered_map<std::uint32_t, Watched>           watched;
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
+
+		// Activators (buttons, switches, levers) pressed in another player's game are pressed here
+		// too. A press we replayed is remembered briefly so our own watcher doesn't report it back.
+		constexpr auto                                         REPLAY_ECHO = 2s;
+		std::unordered_map<std::uint32_t, Clock::time_point> replayed;
+		std::uint32_t                                          activationsSent = 0, activationsApplied = 0;
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
 		// Container changes are numbered by the server. Everything before containerNext is in our
@@ -632,6 +638,25 @@ namespace WorldSync
 		}
 	}
 
+	void ApplyRemoteActivation(std::uint32_t a_refId)
+	{
+		if (!InWorld() || !IsShareableRef(a_refId)) {
+			return;
+		}
+		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!ref || !player || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell()) {
+			return;  // not where we are: whatever it drives reaches us as a door state, or not at all
+		}
+		const auto base = ref->GetObjectReference();
+		if (!base || !base->Is(RE::ENUM_FORM_ID::kACTI)) {
+			return;
+		}
+		replayed[a_refId] = Clock::now();
+		ref->ActivateRef(player, nullptr, 0, false, false, false);
+		++activationsApplied;
+	}
+
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
 		for (const auto id : a_state.deadActors) {
@@ -755,6 +780,12 @@ namespace WorldSync
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
 			NpcSync::OnActivated(activation.ref);
+			// A button, switch or lever: the others press it too, so what it drives happens in their games.
+			const auto base = RE::TESForm::GetFormByID(activation.base);
+			if (base && base->Is(RE::ENUM_FORM_ID::kACTI) && !replayed.erase(activation.ref)) {
+				outgoing.push_back(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
+				++activationsSent;
+			}
 		}
 		for (const auto& hit : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
@@ -763,6 +794,7 @@ namespace WorldSync
 		}
 
 		const auto now = Clock::now();
+		std::erase_if(replayed, [&](const auto& a_entry) { return now - a_entry.second > REPLAY_ECHO; });
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
 		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
@@ -805,6 +837,7 @@ namespace WorldSync
 		watched.clear();
 		pendingRefStates.clear();
 		unmatchedPickups.clear();
+		replayed.clear();
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
 		standInHits.clear();
@@ -874,8 +907,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} pendingDoors={} personal={} ownSkipped={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{} pendingDoors={} personal={} ownSkipped={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, pendingRefStates.size(), personalSkipped,
 			ownSkipped);
 	}
 }

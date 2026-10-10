@@ -865,6 +865,18 @@ void Server::Run()
 		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
 	};
 
+	const auto handleActivation = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto activation = Protocol::DecodeActivation(a_data);
+		if (!activation) {
+			return;
+		}
+		activation->playerId = a_player.id;
+		broadcast(Protocol::Encode(*activation, Protocol::MessageType::kActivation), true, a_player.key);
+	};
+
 	const auto handleExplosion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1108,6 +1120,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportExplosion:
 			handleExplosion(a_player, a_data);
+			break;
+		case MessageType::kReportActivation:
+			handleActivation(a_player, a_data);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);

@@ -1,5 +1,7 @@
 ﻿#include "DevCommands.h"
 
+#include "DevChannel.h"
+
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/FrameStats.h"
@@ -402,6 +404,122 @@ namespace DevCommands
 				if (actor && !actor->IsPlayerRef() && count < 30) {
 					const auto base = actor->GetObjectReference();
 					out += std::format("{}{:08X} '{}' dead={}", count ? "; " : "", actor->GetFormID(), base ? RE::TESFullName::GetFullName(*base) : ""sv, actor->IsDead(false));
+					++count;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return count ? out : "none";
+		}
+
+		// trace start [hz] | trace stop: samples the player and every stand-in (position, heading,
+		// speed) at a fixed rate into F4Multiplayer_trace.csv next to the dev token. Run in both
+		// games at once and compare the files: the owner's path against the stand-in's copy of it
+		// (lag, error) is what a movement-sync change has to keep or improve.
+		struct Trace
+		{
+			bool                              active = false;
+			std::chrono::milliseconds         gap{ 50 };
+			std::chrono::steady_clock::time_point next{};
+			std::vector<std::string>          rows;
+		};
+		Trace trace;
+
+		std::string TraceCmd(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "start") {
+				const float hz = args.size() > 1 ? ParseFloat(args[1]).value_or(20.0f) : 20.0f;
+				trace = {};
+				trace.gap = std::chrono::milliseconds{ static_cast<int>(1000.0f / std::clamp(hz, 1.0f, 60.0f)) };
+				trace.active = true;
+				trace.rows.push_back("ms,who,x,y,z,rz,speed");
+				return std::format("tracing every {} ms", trace.gap.count());
+			}
+			if (!args.empty() && args[0] == "stop") {
+				trace.active = false;
+				const auto path = DevChannel::DevFile("F4Multiplayer_trace.csv");
+				if (path.empty()) {
+					return "error: no documents folder";
+				}
+				std::ofstream file{ path, std::ios::trunc };
+				for (const auto& row : trace.rows) {
+					file << row << '\n';
+				}
+				const auto count = trace.rows.size();
+				trace.rows.clear();
+				return std::format("{} rows -> {}", count, path.string());
+			}
+			return "error: usage: trace start [hz] | trace stop";
+		}
+
+		void TraceFrame()
+		{
+			if (!trace.active) {
+				return;
+			}
+			const auto now = std::chrono::steady_clock::now();
+			if (now < trace.next) {
+				return;
+			}
+			trace.next = now + trace.gap;
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell()) {
+				return;
+			}
+			const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			const auto row = [&](std::string_view a_who, RE::Actor* a_actor) {
+				const auto& p = a_actor->data.location;
+				float speed = 0.0f;
+				{
+					RE::NiPoint3 v;
+					a_actor->GetLinearVelocity(v);
+					speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+				}
+				trace.rows.push_back(std::format("{},{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", ms, a_who, p.x, p.y, p.z, a_actor->data.angle.z * 57.29578f, speed));
+			};
+			row("me", player);
+			for (const auto& info : RemotePlayers::List()) {
+				if (info.actor) {
+					row(std::format("p{}", info.id), info.actor);
+				}
+			}
+			if (trace.rows.size() > 200000) {
+				trace.active = false;
+			}
+		}
+
+		// refs <typeNumber> [radius] [text]: nearby references of a form type (27 = activator, 32 = door), with the
+		// base name, for finding a real button or lever to test with (console-spawned refs are never shared).
+		std::string Refs(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const auto args = SplitArgs(a_args);
+			int        type = -1;
+			if (args.empty() || std::from_chars(args[0].data(), args[0].data() + args[0].size(), type).ec != std::errc{}) {
+				return "error: usage: refs <typeNumber> [radius] [text]";
+			}
+			const float radius = args.size() > 1 ? ParseFloat(args[1]).value_or(3000.0f) : 3000.0f;
+			std::string text;
+			for (std::size_t i = 2; i < args.size(); ++i) {
+				text += (i > 2 ? " " : "") + std::string{ args[i] };
+			}
+			std::string out;
+			int         count = 0;
+			// TES-level: the loaded area including persistent refs (doors, buttons), not just the cell array.
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+				if (!base || static_cast<int>(base->GetFormType()) != type || count >= 40) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				const std::string_view editorId = base->GetFormEditorID();
+				const std::string_view fullName = RE::TESFullName::GetFullName(*base);
+				if (text.empty() || editorId.find(text) != std::string_view::npos || fullName.find(text) != std::string_view::npos) {
+					const auto& pos = a_ref->data.location;
+					out += std::format("{}{:08X} base={:08X} '{}' {} at {:.0f} {:.0f} {:.0f}", count ? "; " : "", a_ref->GetFormID(), base->GetFormID(), fullName, editorId, pos.x, pos.y, pos.z);
 					++count;
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
@@ -1620,6 +1738,8 @@ namespace DevCommands
 			Entry{ "party", PartyCommand },
 			Entry{ "edid", EditorId },
 			Entry{ "forms", Forms },
+			Entry{ "refs", Refs },
+			Entry{ "trace", TraceCmd },
 			Entry{ "named", Named },
 			Entry{ "lights", Lights },
 			Entry{ "gfx", Gfx },
@@ -1642,6 +1762,7 @@ namespace DevCommands
 
 	void Frame()
 	{
+		TraceFrame();
 		if (!turn.active) {
 			return;
 		}

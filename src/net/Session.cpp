@@ -241,6 +241,11 @@ namespace Session
 					WeaponFire::ApplyExplosion(*msg);
 				}
 				break;
+			case MessageType::kActivation:
+				if (const auto msg = Protocol::DecodeActivation(a_data)) {
+					WorldSync::ApplyRemoteActivation(msg->refId);
+				}
+				break;
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way

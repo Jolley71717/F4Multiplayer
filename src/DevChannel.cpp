@@ -13,6 +13,17 @@
 
 namespace DevChannel
 {
+	std::filesystem::path DevFile(std::string_view a_name)
+	{
+		PWSTR docs = nullptr;
+		if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs))) {
+			return {};
+		}
+		std::filesystem::path path{ docs };
+		CoTaskMemFree(docs);
+		return path / "My Games" / "Fallout4" / "F4SE" / a_name;
+	}
+
 	namespace
 	{
 		constexpr auto        MAIN_THREAD_TIMEOUT = 5s;
@@ -22,13 +33,8 @@ namespace DevChannel
 
 		std::optional<std::filesystem::path> TokenPath()
 		{
-			PWSTR docs = nullptr;
-			if (FAILED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs))) {
-				return std::nullopt;
-			}
-			std::filesystem::path path{ docs };
-			CoTaskMemFree(docs);
-			return path / "My Games" / "Fallout4" / "F4SE" / "F4Multiplayer_dev.token";
+			const auto path = DevFile("F4Multiplayer_dev.token");
+			return path.empty() ? std::nullopt : std::optional{ path };
 		}
 
 		bool CreateToken()

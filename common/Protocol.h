@@ -75,6 +75,7 @@ namespace Protocol
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
+		kReportActivation = 30,    // the sender pressed a button, switch or lever
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -104,6 +105,7 @@ namespace Protocol
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
 		kExplosion = 132,         // an explosion from another player's throw
+		kActivation = 133,        // another player pressed one
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -285,6 +287,17 @@ namespace Protocol
 		std::uint32_t worldspace = 0;
 
 		bool operator==(const Explosion&) const = default;
+	};
+
+	// A button, switch or lever the sender pressed: the others press the same one, so what it drives
+	// (a door, an elevator, a light) happens in their games too. Only activators travel; doors,
+	// containers and pickups have their own messages.
+	struct Activation
+	{
+		std::uint32_t playerId = 0;  // who pressed it (set by the server)
+		std::uint32_t refId = 0;
+
+		bool operator==(const Activation&) const = default;
 	};
 
 	struct WorkshopItem
@@ -1030,6 +1043,27 @@ namespace Protocol
 		msg.cell = r.U32();
 		msg.worldspace = r.U32();
 		if (!r.Ok() || !r.AtEnd() || msg.base == 0) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Activation& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		return w.Data();
+	}
+
+	inline std::optional<Activation> DecodeActivation(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Activation msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
 			return std::nullopt;
 		}
 		return msg;

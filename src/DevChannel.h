@@ -13,4 +13,7 @@ namespace DevChannel
 {
 	// Starts the listener on a background thread if enabled in the config.
 	void Start();
+
+	// A dev file next to the token (Documents/My Games/Fallout4/F4SE/<name>), or empty without a Documents folder.
+	[[nodiscard]] std::filesystem::path DevFile(std::string_view a_name);
 }
