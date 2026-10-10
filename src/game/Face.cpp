@@ -152,17 +152,17 @@ namespace Face
 		}
 
 		// Head parts: only ones that exist here (same load order, so all should).
-		std::vector<RE::BGSHeadPart*> parts;
+		std::vector<RE::BGSHeadPart*> headParts;
 		for (const auto id : a_face.headParts) {
 			if (const auto part = RE::TESForm::GetFormByID<RE::BGSHeadPart>(id)) {
-				parts.push_back(part);
+				headParts.push_back(part);
 			}
 		}
-		if (!parts.empty() && (Face::parts & 1)) {
-			const auto array = RE::calloc<RE::BGSHeadPart*>(parts.size());
-			std::ranges::copy(parts, array);
+		if (!headParts.empty() && (Face::parts & 1)) {
+			const auto array = RE::calloc<RE::BGSHeadPart*>(headParts.size());
+			std::ranges::copy(headParts, array);
 			npc->headParts = array;
-			npc->numHeadParts = static_cast<std::int8_t>(parts.size());
+			npc->numHeadParts = static_cast<std::int8_t>(headParts.size());
 		}
 
 		const auto head = (Face::parts & 2) ? RE::calloc<RE::TESNPC::HeadRelatedData>(1) : nullptr;

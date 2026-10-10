@@ -373,23 +373,23 @@ namespace WeaponFire
 		if (!a_actor->GetWeaponMagicDrawn()) {
 			return;
 		}
-		bool played = false;
+		bool taken = false;
 		switch (a_action) {
 		case Protocol::ShotAction::kReload:
 			// The graph takes this one (unlike "attackStart" on a melee weapon).
-			played = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(reloadStart);
+			taken = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(reloadStart);
 			break;
 		case Protocol::ShotAction::kAimStart:
 		case Protocol::ShotAction::kAimStop: {
 			// Aiming has no graph event an NPC takes; the engine's sighted actions raise and lower the gun.
 			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(a_action == Protocol::ShotAction::kAimStart ? SIGHTED : SIGHTED_RELEASE);
-			played = action && a_actor->PerformAction(action, nullptr);
+			taken = action && a_actor->PerformAction(action, nullptr);
 			break;
 		}
 		default:
 			break;
 		}
-		actionsPlayed += played;
+		actionsPlayed += taken;
 	}
 
 	void Install()
