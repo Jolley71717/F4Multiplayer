@@ -26,7 +26,9 @@ user profile.
 | S3 | Empty hand during the stand-in's throw wind-up (2r3) | confirmed on video | Backlog; the engine attaches the grenade mesh only through its own throw behaviour. |
 
 Fixed and verified this month, both directions, two games over Steam: buttons and switches
-(GitHub #5), ghost grenades (GitHub #6), terminal-linked locks lost after a minute (GitHub #7).
+(GitHub #5), ghost grenades (GitHub #6), terminal-linked locks lost after a minute (GitHub #7). Lifetime audit
+(docs/AUDIT-LIFETIME.md): ten code-confirmed lifetime and validity bugs fixed (GitHub #10 to #19); the
+trust-hardening backlog is beads epic lkt.
 
 Feature asks from the thread, in order: in-game menu (620), alternate-start compatibility check
 (0df), companions following both players (90g, needs a real recruit in a session).

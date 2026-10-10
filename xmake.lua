@@ -3,7 +3,7 @@ includes("lib/commonlibf4")
 
 -- set project constants
 set_project("F4Multiplayer")
-set_version("0.7.4")
+set_version("0.7.5")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")

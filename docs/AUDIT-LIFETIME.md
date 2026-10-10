@@ -106,3 +106,7 @@ power armor in motion, a three-minute cell churn with save reloads, a reconnect,
 on the host with the crash logger attached. Pass means no "DOWN", no new crash log on either machine,
 and lag, error and counter results no worse than the baseline (100 to 150 ms, under 5 units; NPC height
 error under 40 units; ghosts and states counters moving as before).
+
+### Results (2026-10-10, 14:38 to 15:05)
+
+Unit tests 197/197. Full rebuild with zero warnings. Movement: 100 ms and 150 ms best-fit lag, mean error 3 and 2 units (baseline 100 to 150 ms, 2 to 3 units). Combat at Corvega: 17 NPC tracks, height error at most 10 units. Terminals, loot and the safe: both directions, both games up, states counters moving. Grenades: both directions, one ghost caught per throw. Power armor: both directions, frame copy within two units of the stand-in. Cell churn with save reloads: three minutes plus two minutes, both games up, no crash log. Reconnect: VM rejoined, stand-ins back. Fuzz: five seeds, 2,150 packets, no crash. Host-driven keyboard steps need the game window in front; two were rerun for that reason and passed.
