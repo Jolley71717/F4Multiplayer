@@ -67,11 +67,6 @@ namespace Party
 		bool                                                unstable = false;
 		int                                                 slowAnswers = 0;
 		Clock::time_point                                   nextPingWarning{};
-		// An emote played on our own character through the console's playidle leaves the player in the
-		// idle until they move: the Pip-Boy would not open and the weapon would not fire ("sometimes the
-		// pip-boy doesn't open and nobody can shoot"). The idle is ended for them a moment after it played.
-		constexpr auto                                      EMOTE_LENGTH = std::chrono::milliseconds(3500);
-		Clock::time_point                                   emoteEndsAt{};
 
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
@@ -405,14 +400,14 @@ namespace Party
 			}
 		}
 
-		// An emote: our stand-in plays it for the others, and so do we (third person shows it).
+		// An emote: our stand-in plays it for the others. It is not played on our own character: an idle
+		// played on the player through the console leaves them in it until they move, with the Pip-Boy
+		// and the weapon dead meanwhile ("sometimes the Pip-Boy doesn't open and nobody can shoot"),
+		// and no animation event the plugin can send ends it (IdleStop, IdleStopInstant, moveStart,
+		// IdleForceDefaultState were all tried).
 		void Emote(std::uint8_t a_action)
 		{
 			WeaponFire::QueueAction(a_action);
-			if (const auto idle = WeaponFire::EmoteIdleName(a_action)) {
-				RE::Console::ExecuteCommand(std::format("player.playidle {}", idle).c_str());
-				emoteEndsAt = Clock::now() + EMOTE_LENGTH;
-			}
 		}
 
 		std::optional<RemotePlayers::Info> FindPlayer(std::uint32_t a_id)
@@ -438,12 +433,6 @@ namespace Party
 
 	void Frame()
 	{
-		if (emoteEndsAt != Clock::time_point{} && Clock::now() >= emoteEndsAt) {
-			emoteEndsAt = {};
-			if (const auto player = RE::PlayerCharacter::GetSingleton()) {
-				static_cast<RE::IAnimationGraphManagerHolder*>(player)->NotifyAnimationGraphImpl(RE::BSFixedString{ "IdleStop" });
-			}
-		}
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
