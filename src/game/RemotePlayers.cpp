@@ -347,7 +347,11 @@ namespace RemotePlayers
 				if (!base) {
 					return;
 				}
-				if (frame && frame->GetParentCell() != a_actor->GetParentCell()) {
+				// A frame left in another cell is no use; one still attaching (no cell yet) or standing right at the
+				// stand-in is kept, else a frame placed on a cell seam was deleted and placed again for ever.
+				if (frame && frame->GetParentCell() && frame->GetParentCell() != a_actor->GetParentCell() &&
+					frame->data.location.GetDistance(a_actor->data.location) > 256.0f) {
+					REX::INFO("RemotePlayers: '{}'s frame copy is in cell {:08X}, the stand-in in {:08X}: placing it again", a_player.name, frame->GetParentCell()->GetFormID(), a_actor->GetParentCell() ? a_actor->GetParentCell()->GetFormID() : 0);
 					DeleteFrame(a_player);
 					frame = nullptr;
 				}
@@ -371,6 +375,10 @@ namespace RemotePlayers
 					return;
 				}
 				if (!frame->Get3D()) {
+					if (a_now - a_player.framePlacedAt > std::chrono::seconds(10)) {
+						REX::INFO("RemotePlayers: '{}'s frame copy has had no 3D for ten seconds; placing it again", a_player.name);
+						DeleteFrame(a_player);
+					}
 					return;
 				}
 				Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
