@@ -7,4 +7,5 @@
 - Trust: a player's container changes stop at their share of the shared table; workshop pieces built remotely are turrets and robots only, and must stand within reach of their workbench.
 - Map marker data is read through a size-checked mirror of the engine type.
 - Control characters are dropped from every name, reason and line as it is read off the wire.
+- A grenade thrown across an exterior cell seam now goes off for your friends too; the explosion scan covers every loaded cell around you, not only the one you stand in.
 - Protocol 26, as 0.8.0 and 0.8.1. Newer builds are on GitHub first; Nexus follows less often.
