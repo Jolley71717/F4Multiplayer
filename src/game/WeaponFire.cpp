@@ -476,20 +476,20 @@ namespace WeaponFire
 		if (!cell) {
 			return;
 		}
-		RE::BSAutoLock l{ cell->spinLock };
-		for (const auto& ref : cell->references) {
-			const auto base = ref ? ref->GetObjectReference() : nullptr;
-			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || !seenExplosions.insert(ref->GetFormID()).second) {
-				continue;
+		// Every loaded cell around the player, not only the one they stand in: outdoors a grenade thrown
+		// across a cell seam went off in the next cell over and was never reported (the thrower's friends
+		// saw the throw and nothing else), while the same throw the other way was.
+		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+		RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, EXPLOSION_RANGE, [&](RE::TESObjectREFR* a_ref) {
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || !seenExplosions.insert(a_ref->GetFormID()).second) {
+				return RE::BSContainer::ForEachResult::kContinue;
 			}
-			if (ref->data.location.GetDistance(player->data.location) > EXPLOSION_RANGE) {
-				continue;
-			}
-			const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 			std::scoped_lock e{ explosionLock };
-			explosions.push_back({ 0, base->GetFormID(), ref->data.location.x, ref->data.location.y, ref->data.location.z, space.first, space.second });
+			explosions.push_back({ 0, base->GetFormID(), a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z, space.first, space.second });
 			++explosionsReported;
-		}
+			return RE::BSContainer::ForEachResult::kContinue;
+		});
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)
