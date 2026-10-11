@@ -73,6 +73,13 @@ namespace SteamApi
 		NetworkingIdentity remote;
 	};
 
+	struct FriendRichPresenceUpdate  // 336
+	{
+		std::uint64_t friendId;
+		std::uint32_t appId;
+	};
+	static_assert(sizeof(FriendRichPresenceUpdate) == 16);
+
 	// FriendGameInfo_t: what a friend is playing, and the lobby they're in (0 = none).
 	struct FriendGameInfo
 	{
@@ -101,6 +108,7 @@ namespace SteamApi
 	enum Callback : int
 	{
 		kGameLobbyJoinRequested = 333,
+		kFriendRichPresenceUpdate = 336,
 		kGameRichPresenceJoinRequested = 337,
 		kLobbyEnter = 504,
 		kLobbyChatUpdate = 506,
@@ -167,7 +175,10 @@ namespace SteamApi
 		// Steam library lacks them; the page then only offers the configured address).
 		int (*GetFriendCount)(void*, int) = nullptr;
 		SteamId (*GetFriendByIndex)(void*, int, int) = nullptr;
+		int (*GetFriendPersonaState)(void*, SteamId) = nullptr;  // EPersonaState: 0 = offline
 		const char* (*GetFriendRichPresence)(void*, SteamId, const char*) = nullptr;
+		// Asks Steam for a friend's rich presence; it arrives through FriendRichPresenceUpdate.
+		void (*RequestFriendRichPresence)(void*, SteamId) = nullptr;
 		bool (*GetFriendGamePlayed)(void*, SteamId, FriendGameInfo*) = nullptr;
 	};
 
