@@ -76,7 +76,8 @@ toggled (only that line changes; comments and the rest of the file stay):
 ## Testing it
 
 The dev channel drives it without the keyboard: `mpmenu open` shows the main page, `mpmenu press
-<0-3>` presses a button of the page showing, `mpmenu` reports the page's buttons and counters.
+<0-3>` presses a button of the page showing, `mpmenu` reports the page's buttons, counters and body
+text (line breaks shown as `/`; the channel's reply is a single line, as are all of these).
 `hotkeys` says why a key may be doing nothing: focus, `menuMode`, the console, which chord keys
 (Alt, Ctrl, Win) are down, each hotkey's code and whether it's down, and how many presses were
 blocked. `steam friends` lists what Steam says about each friend (state, game, lobby, "connect"
