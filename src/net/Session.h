@@ -19,6 +19,32 @@ namespace Session
 
 	[[nodiscard]] std::string Describe();
 
+	// The in-game menu: hosting and leaving while playing, and what to show.
+	// Starts the session server in this game (as bHost does at startup) and connects to it. Returns
+	// what went wrong, or "" when it's up.
+	[[nodiscard]] std::string StartHosting();
+	// Stops the hosted server; everyone in it is disconnected.
+	void StopHosting();
+	// Leaves the session we joined (and its Steam lobby) and stops reconnecting.
+	void Leave();
+
+	struct Status
+	{
+		enum class Link
+		{
+			kNone,        // not trying to reach anyone
+			kConnecting,  // trying (or waiting to retry)
+			kConnected,   // transport up, waiting for the welcome
+			kJoined,      // welcomed: in the session
+		};
+		Link          link = Link::kNone;
+		bool          hosting = false;
+		bool          steam = false;  // friends come through Steam (invites, Join Game)
+		std::string   address;        // the server we're set to reach ("" = none)
+		std::string   rejectReason;   // why the last join was refused ("" = it wasn't)
+	};
+	[[nodiscard]] Status GetStatus();
+
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
 	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);
 

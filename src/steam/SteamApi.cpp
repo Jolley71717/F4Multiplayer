@@ -79,6 +79,14 @@ namespace SteamApi
 			api.StartVoiceRecording = nullptr;  // voice chat checks this one
 		}
 
+		const bool friendList = Resolve(module, "SteamAPI_ISteamFriends_GetFriendCount", api.GetFriendCount) &&
+		                        Resolve(module, "SteamAPI_ISteamFriends_GetFriendByIndex", api.GetFriendByIndex) &&
+		                        Resolve(module, "SteamAPI_ISteamFriends_GetFriendRichPresence", api.GetFriendRichPresence) &&
+		                        Resolve(module, "SteamAPI_ISteamFriends_GetFriendGamePlayed", api.GetFriendGamePlayed);
+		if (!friendList) {
+			api.GetFriendCount = nullptr;  // the menu checks this one
+		}
+
 		reportedMissing = true;
 		if (!ok) {
 			return nullptr;

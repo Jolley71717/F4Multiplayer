@@ -204,19 +204,26 @@ namespace Steam
 			JoinLobby(a_event.lobby);
 		}
 
-		void Handle(const ConnectRequested& a_event)
+		// The lobby a rich presence "connect" string (see AdvertiseLobby) points at, if it's one of ours.
+		std::optional<SteamId> LobbyFromConnect(std::string_view a_connect)
 		{
 			constexpr auto PREFIX = "+f4mp_lobby "sv;
-			const auto     start = a_event.connect.find(PREFIX);
-			if (start == std::string::npos) {
-				Note(std::format("ignored join request '{}'", a_event.connect));
-				return;
+			const auto     start = a_connect.find(PREFIX);
+			if (start == std::string_view::npos) {
+				return std::nullopt;
 			}
 			std::uint64_t id = 0;
-			const auto    digits = std::string_view{ a_event.connect }.substr(start + PREFIX.size());
+			const auto    digits = a_connect.substr(start + PREFIX.size());
 			std::from_chars(digits.data(), digits.data() + digits.size(), id);
-			if (IsLobbyId(id)) {
-				JoinLobby(id);
+			return IsLobbyId(id) ? std::optional{ id } : std::nullopt;
+		}
+
+		void Handle(const ConnectRequested& a_event)
+		{
+			if (const auto id = LobbyFromConnect(a_event.connect)) {
+				JoinLobby(*id);
+			} else {
+				Note(std::format("ignored join request '{}'", a_event.connect));
 			}
 		}
 
@@ -325,6 +332,12 @@ namespace Steam
 		return name ? name : "";
 	}
 
+	std::string NameOf(SteamApi::SteamId a_id)
+	{
+		const auto name = Available() && a_id != 0 ? api->GetFriendPersonaName(api->friends, a_id) : nullptr;
+		return name ? name : "";
+	}
+
 	void StartHosting(std::size_t a_maxPlayers)
 	{
 		hosting = true;
@@ -368,6 +381,55 @@ namespace Steam
 		} else if (IsUserId(a_id) && a_id != LocalId()) {
 			joinTarget = a_id;
 		}
+	}
+
+	void Leave()
+	{
+		if (Available() && !hosting) {
+			LeaveLobby();
+		}
+	}
+
+	bool LobbyOpen()
+	{
+		return hosting && lobby != 0;
+	}
+
+	std::vector<JoinableFriend> JoinableFriends()
+	{
+		std::vector<JoinableFriend> out;
+		if (!Available() || !api->GetFriendCount) {
+			return out;
+		}
+		constexpr std::uint64_t FALLOUT4_APP_ID = 377160;
+		constexpr std::size_t   MAX_LISTED = 12;  // the menu pages through them two or three at a time
+		const int               count = api->GetFriendCount(api->friends, SteamApi::FRIEND_FLAG_IMMEDIATE);
+		for (int i = 0; i < count && out.size() < MAX_LISTED; ++i) {
+			const auto id = api->GetFriendByIndex(api->friends, i, SteamApi::FRIEND_FLAG_IMMEDIATE);
+			if (id == 0 || id == LocalId()) {
+				continue;
+			}
+			// Hosts advertise their lobby in their rich presence (what "Join Game" uses); Steam also
+			// knows the lobby a friend in the same game is in, which covers a host whose presence
+			// hasn't reached us yet.
+			std::optional<SteamId> target;
+			const char* const      connect = api->GetFriendRichPresence(api->friends, id, "connect");
+			if (connect && *connect) {
+				target = LobbyFromConnect(connect);
+			}
+			if (!target) {
+				SteamApi::FriendGameInfo game{};
+				if (api->GetFriendGamePlayed(api->friends, id, &game) && game.gameId == FALLOUT4_APP_ID && IsLobbyId(game.lobby)) {
+					target = game.lobby;
+				}
+			}
+			if (!target) {
+				continue;
+			}
+			const char* name = api->GetFriendPersonaName(api->friends, id);
+			out.push_back({ id, *target, name && *name ? name : std::format("Friend {}", id) });
+		}
+		return out;
 	}
 
 	std::string Describe()
