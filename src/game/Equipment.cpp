@@ -216,22 +216,6 @@ namespace Equipment
 		return attachesAsked;
 	}
 
-	RE::TESObjectWEAP* HeldThrowable(RE::Actor* a_actor)
-	{
-		const auto process = a_actor ? a_actor->currentProcess : nullptr;
-		const auto middle = process ? process->middleHigh : nullptr;
-		if (!middle) {
-			return nullptr;
-		}
-		RE::BSAutoLock l{ middle->equippedItemsLock };
-		for (const auto& equipped : middle->equippedItems) {
-			if (const auto weapon = equipped.item.object ? ThrowableForm(equipped.item.object->GetFormID()) : nullptr) {
-				return weapon;
-			}
-		}
-		return nullptr;
-	}
-
 	std::string DescribeHeld(RE::Actor* a_actor)
 	{
 		std::string out;
@@ -239,14 +223,8 @@ namespace Equipment
 		if (const auto middle = process ? process->middleHigh : nullptr) {
 			RE::BSAutoLock l{ middle->equippedItemsLock };
 			for (const auto& equipped : middle->equippedItems) {
-				// An entry with no data (a weapon's holds its sounds, preloads and fire node) was never set
-				// up as a weapon; a weapon's preloads (model, projectile) are what the engine clones from.
-				const auto object = equipped.item.object;
-				out += std::format(" {:08X}@{}{}", object ? object->GetFormID() : 0, equipped.equipIndex.index, equipped.data ? "" : "(nodata)");
-				if (equipped.data && object && object->Is(RE::ENUM_FORM_ID::kWEAP)) {
-					const auto data = static_cast<const RE::EquippedWeaponData*>(equipped.data.get());
-					out += std::format("(pre={}{})", data->weaponPreload ? "m" : "-", data->projectilePreload ? "p" : "-");
-				}
+				// An entry with no data (a weapon's holds its sounds, preloads and fire node) was never set up as a weapon.
+				out += std::format(" {:08X}@{}{}", equipped.item.object ? equipped.item.object->GetFormID() : 0, equipped.equipIndex.index, equipped.data ? "" : "(nodata)");
 			}
 		}
 		// A throwable's 3D hangs in the biped's grenade or mine slot once loaded; the throw's
@@ -263,29 +241,5 @@ namespace Equipment
 			}
 		}
 		return out.empty() ? " nothing" : out;
-	}
-
-	std::string DescribeHands(RE::Actor* a_actor)
-	{
-		std::string out;
-		const auto root = a_actor ? a_actor->Get3D() : nullptr;
-		if (!root) {
-			return " no3D";
-		}
-		for (const auto name : { "LArm_Hand", "RArm_Hand", "Weapon", "AnimObjectA", "AnimObjectB" }) {
-			const auto found = root->GetObjectByName(RE::BSFixedString{ name });
-			const auto node = found ? found->IsNode() : nullptr;
-			if (!node) {
-				continue;
-			}
-			out += std::format(" {}[", name);
-			for (const auto& child : node->children) {  // the array runs to its capacity: empty slots are null
-				if (child.get()) {
-					out += std::format("'{}'{} ", child->name.c_str() ? child->name.c_str() : "", child->GetAppCulled() ? "(culled)" : "");
-				}
-			}
-			out += "]";
-		}
-		return out.empty() ? " nohands" : out;
 	}
 }

@@ -26,14 +26,7 @@ namespace Equipment
 	// an NPC); for the status line.
 	std::uint32_t AttachesAsked();
 
-	// The grenade or mine the engine lists as equipped on the actor, or null.
-	RE::TESObjectWEAP* HeldThrowable(RE::Actor* a_actor);
-
-	// What the engine lists as equipped on the actor (form@equipIndex, a weapon's preloads), and the
-	// state of a throwable's 3D in its biped: for the log and the equipped dev command.
+	// What the engine lists as equipped on the actor (form@equipIndex), and the state of a throwable's
+	// 3D in its biped: for the log and the equipped dev command.
 	std::string DescribeHeld(RE::Actor* a_actor);
-
-	// What hangs under the actor's hand, weapon and anim-object nodes (the children's names): where a
-	// throwable's model sits during a throw, for the log.
-	std::string DescribeHands(RE::Actor* a_actor);
 }
