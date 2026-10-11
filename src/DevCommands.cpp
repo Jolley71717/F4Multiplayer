@@ -134,7 +134,7 @@ namespace DevCommands
 			const auto cell = PlayerCell();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto location = player ? player->currentLocation : nullptr;
-			return std::format("ingame={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, cell ? cell->GetFormID() : 0,
+			return std::format("ingame={} god={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, RE::PlayerCharacter::IsGodMode(), cell ? cell->GetFormID() : 0,
 				cell && cell->IsInterior(), cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, location ? location->GetFormID() : 0,
 				location && location->GetFullName() ? location->GetFullName() : "");
 		}
@@ -1742,6 +1742,20 @@ namespace DevCommands
 				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->lastGreeting && high->lastGreeting->parentTopic ? high->lastGreeting->parentTopic->GetFormID() : 0, high->soundHandle[0].soundID);
 		}
 
+		// god on|off: sets god mode (the console's tgm only toggles, so a script that ran it twice left
+		// the player mortal and a test grenade killed them).
+		std::string God(std::string_view a_args)
+		{
+			const bool want = a_args == "on";
+			if (!want && a_args != "off") {
+				return "error: usage: god on|off";
+			}
+			if (RE::PlayerCharacter::IsGodMode() != want) {
+				RE::Console::ExecuteCommand("tgm");
+			}
+			return std::format("god={}", RE::PlayerCharacter::IsGodMode());
+		}
+
 		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
 		std::string Menu(std::string_view a_args)
 		{
@@ -1896,6 +1910,7 @@ namespace DevCommands
 			Entry{ "npcvoice", NpcVoice },
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
+			Entry{ "god", God },
 			Entry{ "paused", Paused },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
