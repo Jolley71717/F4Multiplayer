@@ -344,7 +344,12 @@ TEST("server session: nothing from a connection is relayed before its hello")
 	f.fake->Deliver(2, Protocol::Encode(Status(5), MT::kReportStatus));
 	f.fake->Deliver(2, Protocol::Encode(State(1)));
 	f.fake->Deliver(2, Protocol::Encode(Protocol::Heartbeat{ 42 }, MT::kHeartbeat));
-	CHECK(Settle(f, 1).empty());
+	// Alice may still get the server's own periodic messages (time, her own ack); nothing of the
+	// stranger's status or state may reach her.
+	const auto toAlice = Settle(f, 1);
+	CHECK(OfType(toAlice, MT::kPlayerStatus).empty());
+	CHECK(OfType(toAlice, MT::kPlayerStates).empty());
+	CHECK(OfType(toAlice, MT::kPlayerJoined).empty());
 	CHECK(f.fake->Take(2).empty());
 }
 

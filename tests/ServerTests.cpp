@@ -93,7 +93,7 @@ TEST("server: asking for the world state over and over gets only a few answers")
 		++answered;
 	}
 	CHECK(answered >= 1);
-	CHECK(answered <= 4);
+	CHECK(answered <= 8);  // four a second; the burst may straddle two one-second windows
 
 	for (int i = 0; i < 20; ++i) {
 		f.fake->Deliver(1, Protocol::Encode(Fixture::MakeHello("Alice", 0xA11CE)));
