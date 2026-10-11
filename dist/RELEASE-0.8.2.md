@@ -6,5 +6,5 @@
 - A joiner is told where each dead NPC fell, so corpses lie where the killer saw them rather than at the spawn point.
 - Trust: a player's container changes stop at their share of the shared table; workshop pieces built remotely are turrets and robots only, and must stand within reach of their workbench.
 - Map marker data is read through a size-checked mirror of the engine type.
-- Protocol 26, as 0.8.0 and 0.8.1. Newer builds are on GitHub first; Nexus follows less often.
 - Control characters are dropped from every name, reason and line as it is read off the wire.
+- Protocol 26, as 0.8.0 and 0.8.1. Newer builds are on GitHub first; Nexus follows less often.
