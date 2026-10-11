@@ -264,10 +264,14 @@ namespace Compass
 		if (!Config::Get().compassMarkers || loading) {
 			return;
 		}
+		auto targets = FindTargets();
+		if (targets.empty() && shown.load() == 0) {
+			return;  // nobody to show and nothing showing: the UI thread is not bothered at all (main menu, loads, playing alone)
+		}
 		if (updateQueued.exchange(true)) {
 			return;  // the last update hasn't reached the UI thread yet
 		}
-		F4SE::GetTaskInterface()->AddUITask([targets = FindTargets()]() { Apply(targets); });
+		F4SE::GetTaskInterface()->AddUITask([targets = std::move(targets)]() { Apply(targets); });
 	}
 
 	std::string_view MarkerName(std::uint32_t a_playerId)
