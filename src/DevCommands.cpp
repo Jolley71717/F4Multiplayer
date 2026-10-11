@@ -1717,6 +1717,9 @@ namespace DevCommands
 			if (name.empty() || !queue) {
 				return "error: usage: menu <name> [hide|force]";
 			}
+			if (name == "DialogueMenu" && !how.empty()) {
+				return "error: a dialogue is closed by the conversation ending, not by hiding its menu (that crashed the game in the menu's destructor)";
+			}
 			queue->AddMessage(name, how == "force" ? RE::UI_MESSAGE_TYPE::kForceHide : how == "hide" ? RE::UI_MESSAGE_TYPE::kHide : RE::UI_MESSAGE_TYPE::kShow);
 			return "queued";
 		}
