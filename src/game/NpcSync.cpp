@@ -659,6 +659,10 @@ namespace NpcSync
 		const auto it = mirrors.find(a_refId);
 		const auto actor = it != mirrors.end() ? LoadedActor(a_refId) : nullptr;
 		if (actor && it->second.registered == actor) {
+			// A mirror's replayed throw shows and throws the grenade its owner's copy holds (if the owner reported one).
+			if (const auto gear = a_action == Protocol::ShotAction::kThrow ? knownGear.find(a_refId) : knownGear.end(); gear != knownGear.end()) {
+				Equipment::HoldThrowable(actor, gear->second);
+			}
 			WeaponFire::PlayAction(actor, a_action);
 		}
 	}

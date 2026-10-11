@@ -730,7 +730,8 @@ namespace DevCommands
 				const auto form = RE::TESForm::GetFormByID(id);
 				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
 			}
-			return out;
+			// The engine's own list (a throwable shows up here and not above on an NPC), and its 3D.
+			return out + " held:" + Equipment::DescribeHeld(actor);
 		}
 
 		// combat <refHex>: whether an actor is in combat and whom it targets.

@@ -121,10 +121,11 @@ namespace RemotePlayers
 		std::uint32_t                         heldFrames = 0;
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
-		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand) but
-		// never counted when checking what the stand-in wears, since an NPC does not report a throwable as
-		// equipped. Counting it made the gear check fail for ever: the stand-in was stripped and dressed
-		// again every few seconds, which also threw it out of its power armor frame each time.
+		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand,
+		// Equipment::HoldThrowable puts it there) but never counted when checking what the stand-in wears,
+		// since an NPC's inventory does not report a throwable as equipped. Counting it made the gear check
+		// fail for ever: the stand-in was stripped and dressed again every few seconds, which also threw it
+		// out of its power armor frame each time.
 		bool Throwable(std::uint32_t a_item)
 		{
 			const auto weapon = RE::TESForm::GetFormByID<RE::TESObjectWEAP>(a_item);
@@ -628,7 +629,13 @@ namespace RemotePlayers
 			player.lightOn = a_action == Protocol::ShotAction::kLightOn;
 			return;  // Update() keeps the light with the stand-in
 		}
-		WeaponFire::PlayAction(GetActor(player), a_action);
+		const auto actor = GetActor(player);
+		// The grenade the stand-in shows and throws is the one the owner holds; the last replayed
+		// throw spent the one it had.
+		if (a_action == Protocol::ShotAction::kThrow && player.hasEquipment) {
+			Equipment::HoldThrowable(actor, player.equipment);
+		}
+		WeaponFire::PlayAction(actor, a_action);
 	}
 
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId)

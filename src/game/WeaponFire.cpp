@@ -2,6 +2,7 @@
 
 #include "game/DeferredDelete.h"
 #include "game/EngineRefs.h"
+#include "game/Equipment.h"
 #include "game/AttackKind.h"
 
 #include "game/ShotLoops.h"
@@ -45,6 +46,17 @@ namespace WeaponFire
 		{
 			return a_tag == "WeaponFire" && a_payload == "2";
 		}
+
+		// The throw's wind-up: the graph asks the engine to put the throwable (equip index 2) in the hand
+		// with "weaponAttach(2)", and to take it away after the throw with "weaponDetach(2)". Counted
+		// for NPC graphs (a stand-in's replayed throw among them) to tell a wind-up that never asked
+		// from one the engine had nothing to show for.
+		bool IsThrowAttachEvent(std::string_view a_tag, std::string_view a_payload)
+		{
+			return a_tag == "weaponAttach" && a_payload == "2";
+		}
+
+		std::atomic<std::uint32_t> throwAttaches{ 0 };
 
 		// Other things the graph tells us the actor did, replayed on the stand-in as ShotActions.
 		std::optional<std::uint8_t> ActionOf(std::string_view a_tag)
@@ -126,6 +138,8 @@ namespace WeaponFire
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);
 				}
+			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
+				++throwAttaches;
 			}
 			if (const auto action = Protocol::IsShareableRef(id) && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
 				std::scoped_lock l{ actionLock };
@@ -363,10 +377,13 @@ namespace WeaponFire
 			++actionsPlayed;
 			return;
 		}
-		// A throw needs no drawn weapon: the grenade in the stand-in's hand (from the equipment sync) flies.
+		// A throw needs no drawn weapon: the grenade in the stand-in's hand (Equipment::HoldThrowable) flies.
 		if (a_action == Protocol::ShotAction::kThrow) {
 			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(THROW);
-			actionsPlayed += action && a_actor->PerformAction(action, nullptr);
+			const bool taken = action && a_actor->PerformAction(action, nullptr);
+			actionsPlayed += taken;
+			// What the engine had in hand as the wind-up began; the ghost watch logs it again mid-throw.
+			REX::INFO("WeaponFire: throw replayed on {:08X}: taken={} holds{}", a_actor->GetFormID(), taken, Equipment::DescribeHeld(a_actor));
 			ArmGhostWatch(a_actor->GetFormID());
 			return;
 		}
@@ -412,7 +429,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -445,8 +462,15 @@ namespace WeaponFire
 		// one), so the friend's game got a second grenade landing at the stand-in's feet on top of the
 		// owner's explosion. For a moment after the replay, anything the stand-in shoots is removed.
 		constexpr auto                                        GHOST_WATCH = 2s;
-		std::unordered_map<std::uint32_t, Clock::time_point>  ghostWatch;  // stand-in -> until
-		std::uint32_t                                         ghostsRemoved = 0;
+		// The wind-up is where the grenade should show: what the engine holds then goes to the log once.
+		constexpr auto                                        MID_THROW = 400ms;
+		struct ThrowWatch
+		{
+			Clock::time_point until;
+			Clock::time_point sampleAt;  // zero once logged
+		};
+		std::unordered_map<std::uint32_t, ThrowWatch>  ghostWatch;  // stand-in -> watch
+		std::uint32_t                                  ghostsRemoved = 0;
 	}
 
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId)
@@ -495,7 +519,8 @@ namespace WeaponFire
 
 	void ArmGhostWatch(std::uint32_t a_actorId)
 	{
-		ghostWatch[a_actorId] = Clock::now() + GHOST_WATCH;
+		const auto now = Clock::now();
+		ghostWatch[a_actorId] = { now + GHOST_WATCH, now + MID_THROW };
 	}
 
 	std::uint32_t GhostsRemoved()
@@ -509,15 +534,19 @@ namespace WeaponFire
 			return;
 		}
 		const auto now = Clock::now();
-		std::erase_if(ghostWatch, [&](const auto& a_entry) { return now > a_entry.second; });
+		std::erase_if(ghostWatch, [&](const auto& a_entry) { return now > a_entry.second.until; });
 		const auto tes = RE::TES::GetSingleton();
 		if (!tes) {
 			return;
 		}
-		for (const auto& [actorId, until] : ghostWatch) {
+		for (auto& [actorId, watch] : ghostWatch) {
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(actorId);
 			if (!actor || !actor->Get3D()) {
 				continue;
+			}
+			if (watch.sampleAt != Clock::time_point{} && now >= watch.sampleAt) {
+				watch.sampleAt = {};
+				REX::INFO("WeaponFire: {:08X} mid-throw holds{} (attach events so far {})", actorId, Equipment::DescribeHeld(actor), throwAttaches.load());
 			}
 			// Nothing is changed while the engine walks its lists: the ghosts are collected as handles and
 			// dealt with afterwards, and only once their 3D is in (deleting a reference still loading is
