@@ -55,7 +55,8 @@ namespace Menu
 		std::vector<Button> buttons;  // the page showing, by button index
 		std::uint32_t       pagesShown = 0;
 		std::uint32_t       pressesHandled = 0;
-		std::string         notice;  // shown once at the top of the main page (why hosting failed)
+		std::string         notice;    // shown once at the top of the main page (why hosting failed)
+		std::string         lastBody;  // the page showing, for Describe
 
 		// "Join a friend" first asks Steam for the friends' rich presence (a host's names their lobby,
 		// and Steam hands it out only once asked), then shows the page when the answers are in or
@@ -103,6 +104,7 @@ namespace Menu
 			++pagesShown;
 			const auto label = [&](std::size_t a_index) -> const char* { return a_index < buttons.size() ? buttons[a_index].label.c_str() : nullptr; };
 			const auto body = Clean(a_body);
+			lastBody = body;
 			// The game's own warning dialog, with our text and buttons. It copies the strings and keeps
 			// the callback alive for as long as the box exists.
 			manager->Create(HEADER, body.c_str(), new Callback(serial), RE::WARNING_TYPES::kDefault, label(0), label(1), label(2), label(3));
@@ -365,6 +367,9 @@ namespace Menu
 		for (const auto& button : buttons) {
 			labels += (labels.empty() ? "" : "|") + button.label;
 		}
-		return std::format("menu: pages={} presses={} serial={} pendingJoin={} buttons='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), labels);
+		// The body on one line (the dev channel's reply is one line).
+		std::string body = lastBody;
+		std::ranges::replace(body, '\n', '/');
+		return std::format("menu: pages={} presses={} serial={} pendingJoin={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), labels, body);
 	}
 }

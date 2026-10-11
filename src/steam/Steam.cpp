@@ -480,8 +480,23 @@ namespace Steam
 			if (a_friend.lobby != 0 && scan.hosting.size() < MAX_LISTED) {
 				scan.hosting.push_back({ a_friend.id, a_friend.lobby, a_friend.name });
 			}
+			// Online friends only, in the log: the join page is the one place this runs.
+			if (a_friend.state != 0) {
+				REX::INFO("Steam: friend {} ({}) state={} app={} gameLobby={} connect='{}' -> lobby={}", a_friend.name, a_friend.id, a_friend.state, a_friend.gameId,
+					a_friend.gameLobby, a_friend.connect, a_friend.lobby);
+			}
 			return true;
 		});
+		// The owner of the lobby we're in (joined through an invite or Join Game) hosts for sure,
+		// whatever their presence says; "Join someone else" can still pick them again.
+		if (lobby && !hosting && Available()) {
+			const auto owner = api->GetLobbyOwner(api->matchmaking, lobby);
+			if (owner != 0 && owner != LocalId() && std::ranges::none_of(scan.hosting, [&](const auto& a_host) { return a_host.id == owner; })) {
+				auto name = NameOf(owner);
+				scan.hosting.insert(scan.hosting.begin(), { owner, lobby, name.empty() ? std::format("Steam user {}", owner) : std::move(name) });
+			}
+		}
+		REX::INFO("Steam: friends scanned: {} total, {} online, {} in Fallout 4, {} hosting", scan.friends, scan.online, scan.inGame, scan.hosting.size());
 		return scan;
 	}
 
@@ -519,12 +534,21 @@ namespace Steam
 		if (!api->GetFriendCount) {
 			return "friends list: this Steam library lacks the friends functions";
 		}
-		std::string out = std::format("presenceUpdates={}", presenceUpdates);
-		ForEachFriend([&](const FriendInfo& a_friend) {
-			out += std::format("\n{} ({}): state={} game={} gameLobby={} connect='{}' lobby={}", a_friend.name, a_friend.id, a_friend.state, a_friend.gameId,
-				a_friend.gameLobby, a_friend.connect, a_friend.lobby);
-			return true;
-		});
+		// One line: the dev channel's reply is a line, so a second line never reaches the caller.
+		// Every friend, raw, without the skips ForEachFriend makes, so a wrong count or flag shows.
+		const int   count = api->GetFriendCount(api->friends, SteamApi::FRIEND_FLAG_IMMEDIATE);
+		std::string out = std::format("presenceUpdates={} self={} count={} flags={} friends:", presenceUpdates, LocalId(), count, SteamApi::FRIEND_FLAG_IMMEDIATE);
+		for (int i = 0; i < count; ++i) {
+			const auto               id = api->GetFriendByIndex(api->friends, i, SteamApi::FRIEND_FLAG_IMMEDIATE);
+			const char* const        name = api->GetFriendPersonaName(api->friends, id);
+			const char* const        connect = api->GetFriendRichPresence(api->friends, id, "connect");
+			const char* const        status = api->GetFriendRichPresence(api->friends, id, "status");
+			SteamApi::FriendGameInfo game{};
+			const bool               inGame = api->GetFriendGamePlayed(api->friends, id, &game);
+			out += std::format(" | '{}' {} state={} inGame={} app={} gameLobby={} connect='{}' status='{}' lobby={}", name ? name : "", id,
+				api->GetFriendPersonaState(api->friends, id), inGame, game.gameId, game.lobby, connect ? connect : "", status ? status : "",
+				LobbyFromConnect(connect ? connect : "").value_or(game.gameId == FALLOUT4_APP_ID && IsLobbyId(game.lobby) ? game.lobby : 0));
+		}
 		return out;
 	}
 
@@ -533,9 +557,14 @@ namespace Steam
 		if (!Available()) {
 			return "steam=unavailable";
 		}
-		return std::format("steam={} name='{}' relay={} hosting={} lobby={} members={} callbacks={} last='{}'",
+		// Our own rich presence, read back the way friends read it: shows whether the lobby is still
+		// advertised (LeaveLobby clears it).
+		const char* const ownConnect = api->GetFriendRichPresence ? api->GetFriendRichPresence(api->friends, LocalId(), "connect") : nullptr;
+		const char* const ownStatus = api->GetFriendRichPresence ? api->GetFriendRichPresence(api->friends, LocalId(), "status") : nullptr;
+		return std::format("steam={} name='{}' relay={} hosting={} lobby={} members={} ownConnect='{}' ownStatus='{}' presenceUpdates={} callbacks={} last='{}'",
 			LocalId(), PersonaName(), api->GetRelayNetworkStatus(api->utils, nullptr), hosting, lobby,
-			lobby ? api->GetNumLobbyMembers(api->matchmaking, lobby) : 0, callbacksSeen.load(), lastEvent);
+			lobby ? api->GetNumLobbyMembers(api->matchmaking, lobby) : 0, ownConnect ? ownConnect : "", ownStatus ? ownStatus : "", presenceUpdates,
+			callbacksSeen.load(), lastEvent);
 	}
 }
 
