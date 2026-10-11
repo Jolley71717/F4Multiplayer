@@ -108,7 +108,12 @@ namespace DevCommands
 			const auto base = actor->GetObjectReference();
 			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
 			return std::format(" base={:08X} female={} template={}", base ? base->GetFormID() : 0, npc && npc->IsFemale(), npc && npc->UsesTemplate()) +
-			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) + std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} sneaking={} 3dWorld=({:.0f},{:.0f},{:.0f})",
+			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) +
+			       std::format(" teammate={} companion={}", actor->IsPlayerTeammate(), [&] {
+				       const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(0x00023C01);  // CurrentCompanionFaction
+				       return faction && actor->IsInFaction(faction);
+			       }()) +
+			       std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} sneaking={} 3dWorld=({:.0f},{:.0f},{:.0f})",
 				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), actor->IsSneaking(), w.x, w.y, w.z);
 		}
 
