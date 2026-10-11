@@ -127,3 +127,19 @@ One uninterrupted run of sweep.sh; every section passed on both machines. Baseli
 | Crash logs | the one Red Rocket crash per machine (13:23, 13:24) | none new on either machine |
 
 The scripted sweep earned its keep: run in sequence, the power armor section failed three times while the same check passed on its own. The cause was a friend holding a grenade from the previous section: the stand-in gear check counted it, could never pass, stripped and re-dressed the stand-in every three seconds and threw it out of its frame each time (1e0e40b, GitHub #21); a frame still attaching or standing at the stand-in is also no longer replaced (f5837d3).
+
+### Before and after from disk (2026-10-10, 18:30 to 19:10)
+
+To make the comparison reproducible, the pre-fix sources (commit 0087695, the last before the audit fixes) were built and deployed to both games, then the final sources (52110c3) again, and the same checks run on each. The pre-fix trace files are `stage/trace/baseline-*.csv`, the final ones `final*-*.csv`; run logs are `scratchpad/baseline-run.log` and `final-run.log`.
+
+| Check | Pre-fix build 0087695 | Final build 52110c3 |
+|---|---|---|
+| Movement, VM as the host draws it | 100 ms lag, mean 3 u, max 21 u | 100 ms, mean 3 u, max 25 u (three runs: 25, 25, 25; a first run right after the restart had one 126 u sample) |
+| Movement, host as the VM draws it | 150 ms, mean 2 u, max 24 u | 150 ms, mean 2 u, max 23, 27, 23 u (first run 125 ms, mean 3 u, max 31 u) |
+| Combat at Corvega | not measurable: the pre-fix build has no NPC tracing (14:04 files: worst height error 35 u) | 20 NPC tracks, worst height error 22 u apart from the one NPC that teleports (42 u) |
+| Terminals, loot and the safe | **both games crashed on the first terminal** (crash logs 18:33 host, 18:34 VM, WorldSync.cpp:537, the linked-ref dereference) | applied both ways, loot counters 8 = 8, both games up |
+| Grenades | not reached (crashed before) | one ghost caught per throw, both ways |
+| Cell churn with save reloads | not run on the pre-fix build | 10 min, 24 hops with the roles swapped halfway, 5 save reloads, both games up |
+| Reconnect | not run on the pre-fix build | twice: VM restarted and rejoined, stand-ins back |
+| Fuzz, crash logger attached | 1,290 packets, no crash (13:5x log) | 2,580 packets (6 seeds), no crash |
+| New crash logs | the terminal crash on both machines | none |
