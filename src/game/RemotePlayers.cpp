@@ -295,8 +295,12 @@ namespace RemotePlayers
 			if (const auto frame = a_player.frame.get()) {
 				// Our own player may have climbed into the friend's frame copy: then it stays (deleting it would
 				// leave them in nothing) and is simply no longer ours to manage.
+				// Only when it really is this frame they occupy: a player in their own armor standing next to a
+				// friend's frame copy used to count, and the copy was abandoned under its stand-in.
 				const auto player = RE::PlayerCharacter::GetSingleton();
-				if (player && player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor) && player->data.location.GetDistance(frame->data.location) < 200.0f) {
+				const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				if (occupied && occupied.get() == frame.get()) {
 					REX::INFO("RemotePlayers: the player is in '{}'s frame copy; leaving it", a_player.name);
 					a_player.frame = {};
 					a_player.inPowerArmor = false;
