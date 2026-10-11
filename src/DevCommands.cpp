@@ -742,9 +742,10 @@ namespace DevCommands
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
 		}
 
-		// quests [text | running:N | started]: story/faction/side quests with a stage set (or whose
-		// name contains text); running quests of type N (internal ones too); quests the player has
-		// started (an objective shown in the Pip-Boy). started=yes/no says which ones count.
+		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
+		// whose name contains text); every quest whose editor ID contains text (internal ones too, with
+		// the editor ID shown); running quests of type N; quests the player has started (an objective
+		// shown in the Pip-Boy). started=yes/no says which ones count.
 		std::string Quests(std::string_view a_args)
 		{
 			std::string out;
@@ -756,12 +757,25 @@ namespace DevCommands
 				runningType = type;
 			}
 			const bool startedOnly = a_args == "started";
+			std::string_view edid;
+			if (a_args.starts_with("edid:")) {
+				edid = a_args.substr(5);
+			}
 			for (const auto quest : RE::TESDataHandler::GetSingleton()->GetFormArray<RE::TESQuest>()) {
 				if (!quest || count >= 25) {
 					continue;
 				}
 				const std::string_view name = quest->GetFullName() ? quest->GetFullName() : "";
 				const bool started = QuestSync::PlayerStarted(quest);
+				if (!edid.empty()) {
+					const std::string_view id = quest->formEditorID.c_str() ? quest->formEditorID.c_str() : "";
+					if (id.find(edid) == std::string_view::npos) {
+						continue;
+					}
+					out += std::format("{}{:08X} {} '{}' type={} stage={} running={}", count++ ? "; " : "", quest->GetFormID(), id, name, quest->data.questType,
+						quest->currentStage, (quest->data.flags & 1) != 0);
+					continue;
+				}
 				if (runningType) {
 					if (quest->data.questType != *runningType || !(quest->data.flags & 1)) {
 						continue;
