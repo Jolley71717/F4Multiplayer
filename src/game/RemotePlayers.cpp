@@ -136,6 +136,31 @@ namespace RemotePlayers
 			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
 		}
 
+		// A power armor piece: put on a stand-in that is not in its frame, it hangs off a body of normal
+		// size (a report: "a dwarf in a frame with the parts in the air"). The engine sizes the actor
+		// for the pieces only once it is in the frame.
+		bool PowerArmorPiece(std::uint32_t a_item)
+		{
+			const auto armor = RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_item);
+			return armor && armor->HasKeywordString("ArmorTypePower");
+		}
+
+		// What a stand-in should wear now: everything the owner has on, less the power armor pieces
+		// while the stand-in is not in a frame.
+		std::vector<std::uint32_t> Outfit(const RemotePlayer& a_player)
+		{
+			if (a_player.inPowerArmor) {
+				return a_player.equipment;
+			}
+			std::vector<std::uint32_t> out;
+			for (const auto item : a_player.equipment) {
+				if (!PowerArmorPiece(item)) {
+					out.push_back(item);
+				}
+			}
+			return out;
+		}
+
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
 		{
 			std::vector<std::uint32_t> out;
@@ -844,13 +869,13 @@ namespace RemotePlayers
 			}
 
 			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
-				Equipment::Apply(actor, remote.equipment);
+				Equipment::Apply(actor, Outfit(remote));
 				Puppets::RedrawWeapon(actor);
 				remote.equipmentApplied = true;
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
 			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-				if (Wearable(Equipment::Read(actor)) == Wearable(remote.equipment)) {
+				if (Wearable(Equipment::Read(actor)) == Wearable(Outfit(remote))) {
 					remote.equipmentFixes = 0;
 				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
 					++remote.equipmentFixes;
@@ -859,7 +884,7 @@ namespace RemotePlayers
 					{
 						std::string worn, wanted;
 						for (const auto id : Wearable(Equipment::Read(actor))) worn += std::format("{:08X} ", id);
-						for (const auto id : Wearable(remote.equipment)) wanted += std::format("{:08X} ", id);
+						for (const auto id : Wearable(Outfit(remote))) wanted += std::format("{:08X} ", id);
 						REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
 					}
 				}
