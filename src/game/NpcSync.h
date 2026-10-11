@@ -50,6 +50,9 @@ namespace NpcSync
 	// Forget everything (on disconnect).
 	void Reset();
 
+	// Which player runs the NPC (0: nobody yet).
+	std::uint32_t Owner(std::uint32_t a_refId);
+
 	std::string Describe();
 
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted).

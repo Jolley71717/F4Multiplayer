@@ -811,6 +811,11 @@ namespace NpcSync
 		return out;
 	}
 
+	std::uint32_t Owner(std::uint32_t a_refId)
+	{
+		return OwnerOf(a_refId);
+	}
+
 	std::string Describe()
 	{
 		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });
