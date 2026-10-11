@@ -8,6 +8,7 @@
 
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/MapMarkerLayout.h"
 #include "game/FrameStats.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
@@ -1737,8 +1738,9 @@ namespace DevCommands
 					continue;
 				}
 				++total;
-				const auto bytes = reinterpret_cast<const std::uint8_t*>(extra->mapMarkerData);
-				const std::string_view markerName = reinterpret_cast<const RE::BSFixedString*>(bytes + 8)->c_str();
+				const auto marker = MapMarkerLayout::Of(extra->mapMarkerData);
+				const auto bytes = reinterpret_cast<const std::uint8_t*>(extra->mapMarkerData);  // for the hex dump below
+				const std::string_view markerName = marker->name.c_str() ? marker->name.c_str() : "";
 				if (!a_args.empty() && markerName.find(a_args) == std::string_view::npos) {
 					continue;
 				}

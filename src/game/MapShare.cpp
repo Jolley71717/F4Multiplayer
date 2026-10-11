@@ -1,5 +1,7 @@
 #include "game/MapShare.h"
 
+#include "game/MapMarkerLayout.h"
+
 #include "Config.h"
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
@@ -13,9 +15,6 @@ namespace MapShare
 		using Clock = std::chrono::steady_clock;
 
 		constexpr auto POLL_INTERVAL = 2s;
-		// MapMarkerData (not in CommonLibF4): TESFullName (name at +0x08), then the flags byte.
-		constexpr std::size_t  NAME_OFFSET = 0x08;
-		constexpr std::size_t  FLAGS_OFFSET = 0x10;
 		constexpr std::uint8_t VISIBLE = 0x01;
 		constexpr std::uint8_t CAN_TRAVEL = 0x02;  // discovered
 		constexpr std::uint8_t SHARED = VISIBLE | CAN_TRAVEL;
@@ -33,23 +32,23 @@ namespace MapShare
 		std::uint32_t                                    applied = 0;
 		Clock::time_point                                lastDiscovery{};
 
-		const std::uint8_t* MarkerData(std::uint32_t a_id)
+		const MapMarkerLayout::Mirror* MarkerData(std::uint32_t a_id)
 		{
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto extra = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraMapMarker>() : nullptr;
-			return extra ? reinterpret_cast<const std::uint8_t*>(extra->mapMarkerData) : nullptr;
+			return extra ? MapMarkerLayout::Of(extra->mapMarkerData) : nullptr;
 		}
 
 		std::optional<std::uint8_t> Flags(std::uint32_t a_id)
 		{
 			const auto data = MarkerData(a_id);
-			return data ? std::optional{ static_cast<std::uint8_t>(data[FLAGS_OFFSET] & SHARED) } : std::nullopt;
+			return data ? std::optional{ static_cast<std::uint8_t>(data->flags & SHARED) } : std::nullopt;
 		}
 
 		std::string NameOf(std::uint32_t a_id)
 		{
 			const auto data = MarkerData(a_id);
-			const auto name = data ? reinterpret_cast<const RE::BSFixedString*>(data + NAME_OFFSET)->c_str() : nullptr;
+			const auto name = data ? data->name.c_str() : nullptr;
 			return name ? name : "";
 		}
 
