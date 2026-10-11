@@ -98,6 +98,17 @@ without proximity; NPC equipment growth; unsanitised HUD text. Fixed already fro
 unbounded coordinates (261d792), health backlog (4902dce), second welcome (4902dce), swing damage
 (4902dce).
 
+Fixed since, in order: the server believes a death only from the player who runs the actor, caps hits
+per hit and per second, keeps one face report in five seconds, relays an explosion only within ten
+seconds of a throw and near the thrower, caps companion claims and world states (c3dc533); the client
+runs an activation only from a player standing at the thing, gives an NPC an item only when it lacks
+it, waits for a settlement's workbench to be loaded, and strips markup from other players' HUD text
+(0f1953d); a player's container changes stop at their share of the table, a joiner is told where each
+dead NPC fell, built actors are turrets and robots only (bd24f6a); a workshop piece is shown only
+within 12,000 units of its workbench (7f38a5c). Left as is: the world-state resend rate (955, four a
+second of about 2 MB is the host's own bandwidth to spend) and quest stages, which the host already
+forces only from a player who has the quest.
+
 ## Confirmation sweep
 
 `sweep.sh` (stage scripts): unit tests, a clean build, deploy to both games, then over Steam in both
