@@ -233,6 +233,11 @@ else skips this: the player is never in those places.
   friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
   HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
+- Menu (src/game/Menu.cpp, F1): the engine's message box (`MessageMenuManager::Create`, four
+  buttons, our `IMessageBoxCallback`) as a paged menu: host, join a Steam friend who advertises a
+  lobby, who's here, and five settings written back to the ini (`common/IniFile.h`, one line
+  replaced). The button press is kept under a lock and acted on in the next frame, where the next
+  page is created. See docs/MENU.md.
 - Friendly fire (`bFriendlyFire`, the host's setting, sent in `Welcome`): our hits on a stand-in
   become `PlayerHit{byPlayer}` like an NPC's; the server drops them when it's off. Our replayed
   shots launch nothing, so each hit is only counted in the shooter's game.
