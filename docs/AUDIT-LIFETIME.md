@@ -107,21 +107,23 @@ on the host with the crash logger attached. Pass means no "DOWN", no new crash l
 and lag, error and counter results no worse than the baseline (100 to 150 ms, under 5 units; NPC height
 error under 40 units; ghosts and states counters moving as before).
 
-### Results: final sweep on 0.8.0 (2026-10-10, 17:05 to 17:35) against the pre-fix baseline
+### Results: the scripted sweep on 0.8.1 (2026-10-10, 18:11 to 18:26, commit f5837d3) against the pre-fix baseline
+
+One uninterrupted run of sweep.sh; every section passed on both machines.
 
 | Check | Before the fixes (13:00 to 14:00) | Final build |
 |---|---|---|
 | Unit tests | 197 pass | 205 pass |
 | Build warnings (full rebuild) | 2 (pre-existing) | 0 |
-| Movement, VM as the host draws it | 100 ms lag, mean 3 u, max 20 u | 100 ms, mean 3 u, max 24 u |
-| Movement, host as the VM draws it | 150 ms lag, mean 2 u, max 26 u | 125 ms, mean 2 u, max 25 u |
-| Combat, Corvega, NPC height error | max 33 to 35 u (37 tracks) | max 16 u (17 tracks) |
-| Terminals, loot and the safe, both ways | applied both ways | applied both ways, loot counters equal on both sides |
+| Movement, VM as the host draws it | 100 ms lag, mean 3 u, max 20 u | 100 ms, mean 3 u, max 22 u |
+| Movement, host as the VM draws it | 150 ms lag, mean 2 u, max 26 u | 150 ms, mean 2 u, max 21 u |
+| Combat, Corvega, NPC height error | max 33 to 35 u (37 tracks) | max 3 u (17 tracks) |
+| Terminals, loot and the safe, both ways | applied both ways | applied both ways, loot counters 55 = 55 |
 | Grenades, both ways | one ghost caught per throw | one ghost caught per throw |
-| Power armor in motion, both ways | frame copy within 10 u of the stand-in | within 12 u (VM in armor) and 28 u (host in armor) |
-| Cell churn with save reloads | not run before | 5 min (11 hops, 3 reloads) plus 2 min earlier: both games up |
+| Power armor in motion, both ways (worst frame-to-stand-in distance over a 10 s run; the frame is pulled under the stand-in once it is 48 u behind) | one snapshot only | 45 u (VM in armor) and 71 u (host in armor), both under the 48 u threshold plus a sprinting stride |
+| Cell churn with save reloads | not run before | 5 min, 11 hops, 3 reloads, both games up |
 | Reconnect | not run before | VM restarted and rejoined, stand-ins back |
-| Fuzz on the host, crash logger attached | 1,290 packets (3 seeds), no crash | 1,290 packets (3 seeds), no crash; 6,450 across the day |
+| Fuzz on the host, crash logger attached | 1,290 packets (3 seeds), no crash | 1,290 packets (3 seeds), no crash; 11,610 packets over 27 seeds through the day |
 | Crash logs | the one Red Rocket crash per machine (13:23, 13:24) | none new on either machine |
 
-The power armor section inside the scripted sweep fails for a test reason: the host-side script placed the host where the VM's frame copy stood and the host climbed into it (a real feature). Run on fresh ground it passes both ways; the script now moves first.
+The scripted sweep earned its keep: run in sequence, the power armor section failed three times while the same check passed on its own. The cause was a friend holding a grenade from the previous section: the stand-in gear check counted it, could never pass, stripped and re-dressed the stand-in every three seconds and threw it out of its frame each time (1e0e40b, GitHub #21); a frame still attaching or standing at the stand-in is also no longer replaced (f5837d3).
