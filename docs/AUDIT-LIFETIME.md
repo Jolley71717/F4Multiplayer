@@ -155,3 +155,17 @@ d4aee27 is the last commit before the audit fixes that has NPC tracing; its chur
 | Reconnect, twice | VM rejoined both times, stand-ins back | VM rejoined both times, stand-ins back |
 | Fuzz seeds 1, 2, 3 with the crash logger | 1,290 packets, no crash (13:5x, pre-fix code plus the fuzz command) | 1,290 packets, no crash |
 | New crash logs on either machine | none in this run (the pre-fix build 0087695 crashed on the first terminal at 18:33 and 18:34) | none |
+
+### Run-to-run spread on the pre-fix commit (19:40 to 19:48), to read the single-run maxima against
+
+Three movement runs and three combat runs on d4aee27, plus its terminal check (the terminal crash fix 6da1cb6 is in it, so the check runs). Traces: stage/trace/prefix-move1..3-*.csv, baseline2-combat2..3-*.csv; log scratchpad/baseline3-run.log.
+
+| Check | Pre-fix d4aee27, three runs | Final build, three runs |
+|---|---|---|
+| Movement, VM as the host draws it: best lag, mean, max | 125 ms 2 u 27 u; 100 ms 3 u 20 u; 100 ms 3 u 23 u | 100 ms 3 u 25 u; 100 ms 3 u 25 u; 100 ms 3 u 25 u |
+| Movement, host as the VM draws it | 125 ms 1 u 24 u; 125 ms 2 u 21 u; 150 ms 2 u 22 u | 150 ms 2 u 23 u; 150 ms 2 u 27 u; 150 ms 2 u 23 u |
+| Combat, worst single-sample height error | 12, 36, 19 u | 37, 34, 23 u |
+| Combat, p95 of all samples | 4 u | 2 u |
+| Terminals, loot and the safe | applied both ways, loot counters 9 = 9, lock states applied | applied both ways, loot counters equal, lock states applied |
+
+The movement maxima of both builds lie in the same 20 to 27 unit band; the combat maxima of both lie in the same 12 to 37 band (a single sample at a death or a stair), while the p95 is lower after the fixes. Nothing measured is worse than before.
