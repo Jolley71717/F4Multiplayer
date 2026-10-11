@@ -82,6 +82,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	F4SE::Init(a_f4se);
 
 	REX::INFO("F4Multiplayer loaded");
+	if constexpr (sizeof(F4MP_BUILD_LABEL) > 1) {
+		REX::INFO("F4Multiplayer build {}", F4MP_BUILD_LABEL);  // a release candidate names itself
+	}
 
 	Config::Load();
 

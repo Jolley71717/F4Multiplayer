@@ -46,6 +46,7 @@ target("F4MPCommon")
 
 -- client plugin, loaded into the game by F4SE
 target("F4Multiplayer")
+	add_defines('F4MP_BUILD_LABEL="' .. (os.getenv("F4MP_LABEL") or "") .. '"')  -- "rc1" on a release candidate, shown in the log
     add_rules("commonlibf4.plugin", {
         name = "F4Multiplayer",
         author = "Jolley71717",

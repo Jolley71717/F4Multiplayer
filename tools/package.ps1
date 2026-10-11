@@ -4,6 +4,7 @@
 # Mod Organizer 2 can install it directly, plus the standalone server.
 param(
 	[string]$Mode = 'releasedbg',
+	[string]$Label = '',  # "rc1" for a release candidate: named in the zip and in the plugin log
 	[switch]$Nexus  # the Nexus upload: without F4MPServer.exe (only dedicated servers need it, and it is one more compiled file for their scanner); the GitHub release carries the full zip
 )
 
@@ -13,6 +14,7 @@ $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
 $env:Path = "C:\Program Files\xmake;C:\Program Files\Git\cmd;" + $env:Path
+$env:F4MP_LABEL = $Label
 xmake config -m $Mode -y | Out-Null
 xmake build -y
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
@@ -20,7 +22,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 $version = (Select-String -Path xmake.lua -Pattern 'set_version\("([^"]+)"\)').Matches[0].Groups[1].Value
 $build = Join-Path $root "build\windows\x64\$Mode"
 $stage = Join-Path $root 'dist\out\stage'
-$suffix = if ($Nexus) { '-nexus' } else { '' }
+$suffix = ''
+if ($Label) { $suffix += "-$Label" }
+if ($Nexus) { $suffix += '-nexus' }
 $zip = Join-Path $root "dist\out\F4Multiplayer-$version$suffix.zip"
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
