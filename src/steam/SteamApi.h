@@ -72,6 +72,17 @@ namespace SteamApi
 	{
 		NetworkingIdentity remote;
 	};
+
+	// FriendGameInfo_t: what a friend is playing, and the lobby they're in (0 = none).
+	struct FriendGameInfo
+	{
+		std::uint64_t gameId;  // CGameID; a plain Steam app is its app ID in the low 32 bits
+		std::uint32_t gameIp;
+		std::uint16_t gamePort;
+		std::uint16_t queryPort;
+		std::uint64_t lobby;
+	};
+	static_assert(sizeof(FriendGameInfo) == 24);
 #pragma pack(pop)
 
 	// Matches CCallbackBase. Both Run overloads do the same thing, so their vtable order doesn't matter.
@@ -104,6 +115,7 @@ namespace SteamApi
 
 	constexpr int LOBBY_FRIENDS_ONLY = 1;
 	constexpr int FRIEND_RELATIONSHIP_FRIEND = 3;
+	constexpr int FRIEND_FLAG_IMMEDIATE = 4;  // "regular" friends, for GetFriendCount/GetFriendByIndex
 	constexpr int RELAY_AVAILABLE = 100;
 
 	struct Api
@@ -150,6 +162,13 @@ namespace SteamApi
 		int (*GetVoice)(void*, bool, void*, std::uint32_t, std::uint32_t*, bool, void*, std::uint32_t, std::uint32_t*, std::uint32_t) = nullptr;
 		int (*DecompressVoice)(void*, const void*, std::uint32_t, void*, std::uint32_t, std::uint32_t*, std::uint32_t) = nullptr;
 		void (*SetInGameVoiceSpeaking)(void*, SteamId, bool) = nullptr;
+
+		// The friends list, for the in-game menu's "join a friend" page (optional: nullptr if this
+		// Steam library lacks them; the page then only offers the configured address).
+		int (*GetFriendCount)(void*, int) = nullptr;
+		SteamId (*GetFriendByIndex)(void*, int, int) = nullptr;
+		const char* (*GetFriendRichPresence)(void*, SteamId, const char*) = nullptr;
+		bool (*GetFriendGamePlayed)(void*, SteamId, FriendGameInfo*) = nullptr;
 	};
 
 	constexpr int VOICE_OK = 0;

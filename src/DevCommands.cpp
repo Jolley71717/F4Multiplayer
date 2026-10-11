@@ -9,6 +9,7 @@
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
+#include "game/Menu.h"
 #include "game/FrameStats.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
@@ -1645,6 +1646,26 @@ namespace DevCommands
 			return "error: usage: steam [invite | join <id> | selftest send|recv]";
 		}
 
+		// mpmenu [open | press <buttonIndex>]: the multiplayer menu (F1), driven without the keyboard.
+		std::string MpMenu(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "open") {
+				::Menu::Open();
+				return "opened";
+			}
+			if (args.size() == 2 && args[0] == "press") {
+				int index = -1;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), index);
+				if (index < 0 || index > 3) {
+					return "error: usage: mpmenu press <0-3>";
+				}
+				::Menu::Press(static_cast<std::uint8_t>(index));
+				return "pressed";
+			}
+			return ::Menu::Describe();
+		}
+
 		// topics <npcBaseHex>: topics with lines conditioned on that speaker (for `say`).
 		std::string Topics(std::string_view a_args)
 		{
@@ -1860,6 +1881,7 @@ namespace DevCommands
 			Entry{ "say", Say },
 			Entry{ "npcvoice", NpcVoice },
 			Entry{ "menu", Menu },
+			Entry{ "mpmenu", MpMenu },
 			Entry{ "paused", Paused },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },

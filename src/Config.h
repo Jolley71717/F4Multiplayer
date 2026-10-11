@@ -63,6 +63,7 @@ namespace Config
 		float xpShare = 0.5f;
 
 		// Hotkeys (Windows virtual-key codes, hex). 0 = off.
+		std::uint32_t keyMenu = 0x70;        // F1: the multiplayer menu (host, join, who's here, settings)
 		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
 		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
 		std::uint32_t keyPing = 0x77;        // F8: "over here"
@@ -95,4 +96,10 @@ namespace Config
 
 	void            Load();
 	const Settings& Get();
+
+	// The in-game menu changes settings while playing: the change applies to the running game
+	// through Mutable() and is kept for next time with Write() (one "key = value" line of the ini;
+	// the rest of the file, comments included, stays as the player left it). Main thread only.
+	Settings& Mutable();
+	bool      Write(std::string_view a_key, std::string_view a_value);
 }

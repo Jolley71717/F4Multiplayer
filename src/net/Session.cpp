@@ -553,36 +553,98 @@ namespace Session
 		client = &ConnectionFor(serverAddress);
 
 		if (settings.host) {
-			hostedServer = std::make_unique<Server>([](std::string_view a_line) {
-				REX::INFO("{}", a_line);
-			});
-			Server::Options options;
-			options.port = settings.port;
-			options.maxPlayers = settings.maxPlayers;
-			options.password = settings.password;
-			// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
-			options.udpLoopbackOnly = steamMode;
-			options.friendlyFire = settings.friendlyFire;
-			options.sharedStory = settings.sharedStory;
-			options.ignoredPlugins = settings.ignoredPlugins;
-			if (settings.saveSession) {
-				if (const auto folder = Identity::DataFolder()) {
-					options.sessionFile = (*folder / "F4Multiplayer.session").string();
-				}
-			}
-			std::vector<std::unique_ptr<ServerTransport>> extra;
-			if (steamMode) {
-				extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
-			}
-			if (hostedServer->Start(options, std::move(extra))) {
-				if (steamMode) {
-					Steam::StartHosting(settings.maxPlayers);
-				}
-			} else {
-				Notify(std::format("Multiplayer: could not host on port {}", settings.port));
-				hostedServer.reset();
+			if (const auto error = StartHosting(); !error.empty()) {
+				Notify("Multiplayer: " + error);
 			}
 		}
+	}
+
+	std::string StartHosting()
+	{
+		if (hostedServer) {
+			return {};
+		}
+		const auto& settings = Config::Get();
+		hostedServer = std::make_unique<Server>([](std::string_view a_line) {
+			REX::INFO("{}", a_line);
+		});
+		Server::Options options;
+		options.port = settings.port;
+		options.maxPlayers = settings.maxPlayers;
+		options.password = settings.password;
+		// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
+		options.udpLoopbackOnly = steamMode;
+		options.friendlyFire = settings.friendlyFire;
+		options.sharedStory = settings.sharedStory;
+		options.ignoredPlugins = settings.ignoredPlugins;
+		if (settings.saveSession) {
+			if (const auto folder = Identity::DataFolder()) {
+				options.sessionFile = (*folder / "F4Multiplayer.session").string();
+			}
+		}
+		std::vector<std::unique_ptr<ServerTransport>> extra;
+		if (steamMode) {
+			extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
+		}
+		if (!hostedServer->Start(options, std::move(extra))) {
+			hostedServer.reset();
+			return std::format("could not host on port {}", settings.port);
+		}
+		if (steamMode) {
+			Steam::StartHosting(settings.maxPlayers);
+		}
+		// Started from the menu mid-game: leave whatever we were joining and connect to our own server
+		// (at startup this is where Initialize already pointed us, so nothing changes). Steam's
+		// StartHosting has left any lobby we were in.
+		const auto own = std::format("127.0.0.1:{}", settings.port);
+		if (serverAddress != own) {
+			SwitchServer(own);
+		}
+		return {};
+	}
+
+	void StopHosting()
+	{
+		if (!hostedServer) {
+			return;
+		}
+		SwitchServer({});  // our own connection first, so the server's stop doesn't count as a drop
+		hostedServer->Stop();
+		hostedServer.reset();
+		if (steamMode) {
+			Steam::StopHosting();
+		}
+	}
+
+	void Leave()
+	{
+		if (hostedServer) {
+			return;  // the host leaves by stopping
+		}
+		Steam::Leave();
+		SwitchServer({});
+	}
+
+	Status GetStatus()
+	{
+		Status status;
+		switch (client->GetStatus()) {
+		case ClientConnection::Status::kConnecting:
+			status.link = Status::Link::kConnecting;
+			break;
+		case ClientConnection::Status::kConnected:
+			status.link = welcomed ? Status::Link::kJoined : Status::Link::kConnected;
+			break;
+		default:
+			// Disconnected with an address set: Frame retries it (every 5 s, or a minute after a reject).
+			status.link = serverAddress.empty() ? Status::Link::kNone : Status::Link::kConnecting;
+			break;
+		}
+		status.hosting = hostedServer && hostedServer->Running();
+		status.steam = steamMode;
+		status.address = serverAddress;
+		status.rejectReason = lastRejectReason;
+		return status;
 	}
 
 	void Frame()
