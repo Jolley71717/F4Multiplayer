@@ -437,6 +437,7 @@ namespace WeaponFire
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		Clock::time_point                      nextScan{};
 		std::unordered_set<std::uint32_t>      seenExplosions;
+		std::unordered_set<std::uint32_t>      setOffExplosions;  // the ones we placed for a friend's throw: never reported back as ours
 		std::vector<Protocol::Explosion>       explosions;
 		std::mutex                             explosionLock;
 
@@ -482,7 +483,7 @@ namespace WeaponFire
 		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 		RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, EXPLOSION_RANGE, [&](RE::TESObjectREFR* a_ref) {
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || !seenExplosions.insert(a_ref->GetFormID()).second) {
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || setOffExplosions.contains(a_ref->GetFormID()) || !seenExplosions.insert(a_ref->GetFormID()).second) {
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 			std::scoped_lock e{ explosionLock };
@@ -566,7 +567,15 @@ namespace WeaponFire
 		data.interior = cell->IsInterior() ? cell : nullptr;
 		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
 		data.clearStillLoadingFlag = true;
-		EngineRefs::CreateReferenceAtLocation(data);
+		const auto handle = EngineRefs::CreateReferenceAtLocation(data);
+		if (const auto ref = handle.get()) {
+			// A friend's explosion we just placed is in range of our own scan after our next throw: it
+			// was reported back as ours, and went off a second time for everyone.
+			if (setOffExplosions.size() > 256) {
+				setOffExplosions.clear();
+			}
+			setOffExplosions.insert(ref->GetFormID());
+		}
 		++explosionsSetOff;
 	}
 }
