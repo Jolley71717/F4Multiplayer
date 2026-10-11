@@ -207,7 +207,11 @@ namespace DevCommands
 		void KeyEvent(std::uint8_t a_vk, bool a_down)
 		{
 			const auto scan = static_cast<std::uint8_t>(MapVirtualKeyA(a_vk, 0));
-			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u, 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP)
+			// The arrows, Insert/Delete/Home/End/PageUp/PageDown and the right-hand Ctrl/Alt are extended
+			// keys: without the flag the game's input layer sees the numpad key with the same scan code, and a
+			// dialogue option picked with an arrow never registered.
+			const bool extended = (a_vk >= 0x21 && a_vk <= 0x28) || a_vk == 0x2D || a_vk == 0x2E || a_vk == 0xA3 || a_vk == 0xA5 || a_vk == 0x6F;
+			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u | (extended ? 1u : 0u), 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY)
 		}
 
 		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
