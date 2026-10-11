@@ -818,6 +818,12 @@ TEST("protocol: strings longer than their maximum on the wire are rejected")
 	}
 	CHECK(!DecodeReject(reject.Data()));
 
+	Writer junk{ MT::kReject };  // control characters in a reason are dropped before anyone sees it
+	junk.U8(4);
+	junk.U8('o'), junk.U8('k'), junk.U8('\n'), junk.U8(0);
+	REQUIRE(DecodeReject(junk.Data()));
+	CHECK(DecodeReject(junk.Data())->reason == "ok");
+
 	Writer line{ MT::kLineSpoken };
 	line.U32(1);
 	line.U32(0);

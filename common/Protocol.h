@@ -650,6 +650,9 @@ namespace Protocol
 			}
 			std::string out(reinterpret_cast<const char*>(data.data() + offset), length);
 			offset += length;
+			// Every string on the wire is text someone reads (a name, a reason, a line): control
+			// characters are dropped here, before any of it reaches a HUD, a log or a status line.
+			std::erase_if(out, [](const unsigned char c) { return c < 0x20 || c == 0x7F; });
 			return out;
 		}
 
