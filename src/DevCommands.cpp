@@ -569,8 +569,14 @@ namespace DevCommands
 					inject(Encode(equipment, MT::kPlayerEquipment));
 				}
 				inject(Encode(std::vector<ActorOwner>{ { pick(refs), static_cast<std::uint32_t>(rng() % 3) }, { pick(refs), 2 } }));
-				// Random bytes under every server-to-client type, the first byte being the type.
+				// Random bytes under every server-to-client type, the first byte being the type. The session's
+				// own bookkeeping messages are left out: a random "player left" or "joined" would drop a real
+				// friend from the list or add a phantom for the rest of the session, which is noise, not a find.
 				for (std::uint8_t type = 101; type <= 133; ++type) {
+					const auto t = static_cast<MT>(type);
+					if (t == MT::kWelcome || t == MT::kPlayerJoined || t == MT::kPlayerLeft || t == MT::kReject) {
+						continue;
+					}
 					std::vector<std::uint8_t> packet(1 + rng() % 48);
 					packet[0] = type;
 					for (std::size_t i = 1; i < packet.size(); ++i) {
