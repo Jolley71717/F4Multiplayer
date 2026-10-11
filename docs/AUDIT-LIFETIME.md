@@ -180,3 +180,7 @@ Largest frame-to-stand-in distance over a ten-second run of running, turning and
 | Host in armor, VM watching | 51, 44, 58 units | 52, 54, 53 units |
 
 Same band on both builds, no drift over the run, no frame left behind. Pre-fix fuzz with the same three seeds on d4aee27 plus the fuzz command alone: 1,290 packets, no crash (scratchpad/baseline4-run.log), matching the final build.
+
+### The flying NPC report, confirmed (20:10 to 20:22)
+
+Diamond City with 39 NPCs, both ownership directions, 30 s of running around: 31 and 26 tracked actors, worst height error 15 units, nothing flagged. The report was something else: a controlled shared kill at Corvega (the VM shoots a raider it runs, the host watches the VM stand-in) moved the stand-in **276 units** on the pre-fix build d4aee27 (the 0.7.0 push with its arguments reversed, which launched the killer stand-in) and **10 units** on the final build; the corpse took the push instead (97 units). Script: scratchpad/kill-push.sh. The gunfire sound report remains not reproduced (46 of 46 shots replayed and sounded, no loop left active).
