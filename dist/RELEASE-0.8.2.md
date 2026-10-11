@@ -9,4 +9,5 @@
 - Control characters are dropped from every name, reason and line as it is read off the wire.
 - A grenade thrown across an exterior cell seam now goes off for your friends too; the explosion scan covers every loaded cell around you, not only the one you stand in.
 - An explosion your game set off for a friend's grenade is no longer reported back as your own after your next throw, so it does not go off twice for everyone.
+- Loading-screen crashes: the compass markers for friends are no longer written to the HUD while a loading screen is up (the HUD is torn down and rebuilt then), and unchanged marker values are not rewritten every frame. On the test rig the second game crashed on a loading screen three times in nine ten-minute cycles with the markers on and not once in six with them off; the crash was in the HUD's render tree with nothing of this plugin on the stack. New setting bCompassMarkers (default on).
 - Protocol 26, as 0.8.0 and 0.8.1. Newer builds are on GitHub first; Nexus follows less often.
