@@ -143,3 +143,15 @@ To make the comparison reproducible, the pre-fix sources (commit 0087695, the la
 | Reconnect | not run on the pre-fix build | twice: VM restarted and rejoined, stand-ins back |
 | Fuzz, crash logger attached | 1,290 packets, no crash (13:5x log) | 2,580 packets (6 seeds), no crash |
 | New crash logs | the terminal crash on both machines | none |
+
+### Like for like (2026-10-10, 19:07 to 19:39): pre-fix commit d4aee27 against the final build b386c52, same checks, same seeds
+
+d4aee27 is the last commit before the audit fixes that has NPC tracing; its churn and reconnect use no terminal, so it runs. Logs: scratchpad/baseline2-run.log and final2-run.log; traces stage/trace/baseline2-*.csv and final-combat1..3-*.csv.
+
+| Check | Pre-fix d4aee27 | Final build |
+|---|---|---|
+| Combat, NPC height error distribution over all matched samples (p50 / p95 / p99 / max) | 0 / 4 / 6 / 12 units (one run; the 14:04 pre-fix run: 0 / 4 / 11 / 638) | 0 / 2 / 6 / 37, 0 / 2 / 8 / 34, 0 / 2 / 5 / 23 (three runs). The max is a single sample at a death or a stair; the distribution is tighter after the fixes |
+| Cell churn with save reloads, 10 min | 23 hops, 4 reloads, roles swapped, both games up, no crash log | 24 hops, 5 reloads, roles swapped, both games up, no crash log |
+| Reconnect, twice | VM rejoined both times, stand-ins back | VM rejoined both times, stand-ins back |
+| Fuzz seeds 1, 2, 3 with the crash logger | 1,290 packets, no crash (13:5x, pre-fix code plus the fuzz command) | 1,290 packets, no crash |
+| New crash logs on either machine | none in this run (the pre-fix build 0087695 crashed on the first terminal at 18:33 and 18:34) | none |
