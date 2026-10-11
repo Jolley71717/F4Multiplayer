@@ -3,6 +3,7 @@
 #include "DevCommands.h"
 #include "game/Compass.h"
 #include "game/FastLoad.h"
+#include "game/Hud.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "net/Session.h"
@@ -44,6 +45,7 @@ namespace
 				FastLoad::Install();
 			}
 			Compass::Install();
+			Hud::Install();
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");

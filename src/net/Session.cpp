@@ -785,6 +785,7 @@ namespace Session
 		RemotePlayers::Update();
 		WeaponFire::Frame();
 		Compass::Frame();
+		Hud::Frame();
 		Puppets::Tick();
 	}
 
