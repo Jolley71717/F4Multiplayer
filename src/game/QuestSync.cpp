@@ -1,4 +1,5 @@
 ﻿#include "game/QuestSync.h"
+#include "game/Official.h"
 
 #include "Config.h"
 #include "game/Hud.h"
@@ -70,10 +71,11 @@ namespace QuestSync
 			kWait,     // try again later
 		};
 
-		// The main story and faction quests are shared only if the host chose a shared story.
+		// The main story and faction quests are shared only if the host chose a shared story. Quests
+		// from other mods are never shared (see Official.h).
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			return IsSharedType(a_quest->data.questType) && (Story::Shared() || !Story::IsStoryType(a_quest->data.questType));
+			return IsSharedType(a_quest->data.questType) && Official::IsOfficialForm(a_quest) && (Story::Shared() || !Story::IsStoryType(a_quest->data.questType));
 		}
 
 		// Sets another player's stage here once this player has started the quest too (an objective
@@ -131,7 +133,7 @@ namespace QuestSync
 	{
 		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_done.quest);
 		const char* name = quest ? quest->GetFullName() : nullptr;
-		if (!quest || !IsSharedType(quest->data.questType) || !name || !*name) {
+		if (!quest || !IsSharedType(quest->data.questType) || !Official::IsOfficialForm(quest) || !name || !*name) {
 			return;
 		}
 		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));

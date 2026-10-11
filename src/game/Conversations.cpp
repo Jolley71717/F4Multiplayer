@@ -1,4 +1,5 @@
 #include "game/Conversations.h"
+#include "game/Official.h"
 
 #include "Config.h"
 
@@ -215,7 +216,8 @@ namespace Conversations
 		// An NPC's line is said aloud by our copy when we know its topic (the engine picks the line
 		// for the topic by its conditions, which match the speaker's game in all but odd cases).
 		if (a_line.speaker != 0 && a_line.topic != 0 && Config::Get().voiceLines) {
-			if (const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic)) {
+			const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic);
+			if (topic && Official::IsOfficialForm(topic)) {  // a mod's topic said here would run that mod's scripts out of place
 				// Through the console, not Papyrus: packing the call's arguments for the script VM crashed
 				// both games in testing (BSScript::PackVariable), while the console's Say is plain engine code.
 				RE::Console::ExecuteCommand(std::format("{:08X}.say {:08X}", actor->GetFormID(), topic->GetFormID()).c_str());
