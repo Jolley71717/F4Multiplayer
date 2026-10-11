@@ -4,6 +4,7 @@
 #include "Protocol.h"
 #include "SessionFile.h"
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -210,7 +211,12 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
 	std::map<std::pair<std::uint32_t, std::uint32_t>, Protocol::WorkshopItem> workshopItems;  // (player, ref) -> what they built, kept while they're away too
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
-	std::unordered_set<std::uint64_t>                     questStageKeys;  // the same, for the repeat check (quest << 16 | stage)
+	std::unordered_set<std::uint64_t>                     questStageKeys;
+	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
+	// Where an NPC fell, by the report that killed it; a joiner gets these before the dead list so its copy
+	// lies where the killer saw it. Not saved: after a restart the list alone is what there is.
+	std::unordered_map<std::uint32_t, std::array<float, 3>> deathPositions;
+	constexpr std::size_t MAX_DEATH_POSITIONS_SENT = 500;  // the same, for the repeat check (quest << 16 | stage)
 	const auto questKey = [](const Protocol::QuestStage& a_stage) { return (static_cast<std::uint64_t>(a_stage.quest) << 16) | a_stage.stage; };
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
@@ -228,6 +234,10 @@ void Server::Run()
 			}
 			deadActors.insert(saved->deadActors.begin(), saved->deadActors.end());
 			containerChanges = saved->containerChanges;
+			containersAuthored.clear();
+			for (const auto& change : containerChanges) {
+				++containersAuthored[change.playerId];
+			}
 			pickedUp.insert(saved->pickedUp.begin(), saved->pickedUp.end());
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
@@ -284,6 +294,8 @@ void Server::Run()
 	const auto resetWorld = [&] {
 		deadActors.clear();
 		containerChanges.clear();
+		containersAuthored.clear();
+		deathPositions.clear();
 		pickedUp.clear();
 		refStates.clear();
 		actorOwners.clear();
@@ -375,6 +387,15 @@ void Server::Run()
 	// already in the receiver's world.
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
 		sendMarkers(a_to);
+		// Deaths with a known place go first, one by one with the place; the list that follows then finds
+		// them already dead, so each copy lies where the killer saw it fall.
+		std::size_t placed = 0;
+		for (const auto& [refId, at] : deathPositions) {
+			if (placed++ >= MAX_DEATH_POSITIONS_SENT) {
+				break;
+			}
+			send(a_to, Protocol::Encode(Protocol::ActorDeath{ refId, 0, false, at[0], at[1], at[2] }, Protocol::MessageType::kActorDied), true);
+		}
 		const std::vector<std::uint32_t> dead(deadActors.begin(), deadActors.end());
 		const std::vector<std::uint32_t> picked(pickedUp.begin(), pickedUp.end());
 		std::vector<Protocol::RefState>  states;
@@ -602,6 +623,9 @@ void Server::Run()
 		if (!deadActors.insert(death->refId).second) {
 			return;
 		}
+		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+			deathPositions[death->refId] = { death->x, death->y, death->z };
+		}
 		if (actorOwners.erase(death->refId)) {
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
@@ -631,6 +655,10 @@ void Server::Run()
 		if (!change || !Protocol::IsValid(*change) || containerChanges.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
 			return;
 		}
+		if (containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
+			return;  // their share of the session's table is used up
+		}
+		++containersAuthored[a_player.id];
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
 		containerChanges.push_back({ index, a_player.id, *change });
 		broadcast(Protocol::Encode(containerChanges.back()), true, 0);

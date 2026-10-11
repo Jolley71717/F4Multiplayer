@@ -34,6 +34,10 @@ public:
 		// player's game decides what to apply; this only tells them the host's choice).
 		bool sharedStory = false;
 
+		// Container changes one player may author in a session: one client cannot fill the shared table
+		// (60,000) on its own. Tests lower it.
+		std::size_t maxContainerChangesPerPlayer = 30000;
+
 		// Plugins that may differ between players (texture, sound or UI mods): a load order that
 		// matches once these are left out is accepted.
 		std::vector<std::string> ignoredPlugins;

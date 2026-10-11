@@ -1473,3 +1473,47 @@ TEST("server trust: one player's companion claims are capped")
 	}
 	CHECK(granted == 4);
 }
+
+TEST("server trust: one player's container changes stop at their share of the table")
+{
+	Server::Options options;
+	options.maxContainerChangesPerPlayer = 5;
+	Fixture f{ options };
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	for (int i = 0; i < 8; ++i) {
+		f.fake->Deliver(1, Container(CHEST, ITEM + i, 1));
+	}
+	CHECK(Count(Received(f, 2), MT::kContainerChanged) == 5);
+	Clear(f, { 1 });
+	f.fake->Deliver(2, Container(CHEST, ITEM, 1));  // Bob's share is his own
+	CHECK(Count(Received(f, 1), MT::kContainerChanged) == 1);
+}
+
+TEST("server trust: a joiner is told where each dead NPC fell before the dead list")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice");
+	Clear(f, { 1 });
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorDeath{ NPC, 0, true, 100.0f, 200.0f, 300.0f }, MT::kReportDeath));
+	f.fake->Deliver(1, Death(NPC2));  // no place known
+	Clear(f, { 1 });
+
+	JoinAs(f, 2, "Bob");
+	const auto packets = Received(f, 2);
+	const auto deaths = Decoded(packets, MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].x == 100.0f);
+	CHECK(deaths[0].z == 300.0f);
+	std::size_t deathAt = 0, worldAt = 0;
+	for (std::size_t i = 0; i < packets.size(); ++i) {
+		if (packets[i][0] == Type(MT::kActorDied)) deathAt = i;
+		if (packets[i][0] == Type(MT::kWorldState) && !worldAt) worldAt = i;
+	}
+	CHECK(deathAt < worldAt);
+	const auto world = WorldStates(packets);
+	REQUIRE(world.size() == 1);
+	CHECK(world[0].deadActors.size() == 2);
+}

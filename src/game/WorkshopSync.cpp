@@ -209,8 +209,11 @@ namespace WorkshopSync
 			case T::kTREE:
 				return true;
 			case T::kNPC_: {
-				const auto npc = static_cast<const RE::TESNPC*>(a_base);  // turrets and other built actors
-				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007;
+				// Workshop mode builds turrets (and, with Automatron, robots); any other actor from a workshop
+				// message is someone placing creatures or people on us.
+				const auto npc = static_cast<const RE::TESNPC*>(a_base);
+				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007 &&
+				       (npc->HasKeywordString("ActorTypeTurret") || npc->HasKeywordString("ActorTypeRobot"));
 			}
 			default:
 				return false;
