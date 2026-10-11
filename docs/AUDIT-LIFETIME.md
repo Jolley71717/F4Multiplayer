@@ -169,3 +169,14 @@ Three movement runs and three combat runs on d4aee27, plus its terminal check (t
 | Terminals, loot and the safe | applied both ways, loot counters 9 = 9, lock states applied | applied both ways, loot counters equal, lock states applied |
 
 The movement maxima of both builds lie in the same 20 to 27 unit band; the combat maxima of both lie in the same 12 to 37 band (a single sample at a death or a stair), while the p95 is lower after the fixes. Nothing measured is worse than before.
+
+### Power armor with the run-max metric, both builds (19:51 to 20:07)
+
+Largest frame-to-stand-in distance over a ten-second run of running, turning and jumping (the frame is pulled under the stand-in once it is 48 units behind, so a sprinting stride can show on top).
+
+| Direction | Pre-fix d4aee27, three runs | Final build, three runs |
+|---|---|---|
+| VM in armor, host watching | 28, 42, 38 units | 44, 42, 51 units |
+| Host in armor, VM watching | 51, 44, 58 units | 52, 54, 53 units |
+
+Same band on both builds, no drift over the run, no frame left behind. Pre-fix fuzz with the same three seeds on d4aee27 plus the fuzz command alone: 1,290 packets, no crash (scratchpad/baseline4-run.log), matching the final build.
