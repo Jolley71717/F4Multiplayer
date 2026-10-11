@@ -8,4 +8,5 @@
 - Map marker data is read through a size-checked mirror of the engine type.
 - Control characters are dropped from every name, reason and line as it is read off the wire.
 - A grenade thrown across an exterior cell seam now goes off for your friends too; the explosion scan covers every loaded cell around you, not only the one you stand in.
+- An explosion your game set off for a friend's grenade is no longer reported back as your own after your next throw, so it does not go off twice for everyone.
 - Protocol 26, as 0.8.0 and 0.8.1. Newer builds are on GitHub first; Nexus follows less often.
