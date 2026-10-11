@@ -27,7 +27,11 @@ namespace
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
-	constexpr int  MAX_WORLD_STATES_PER_SECOND = 4;
+	// World states a player may ask for: a bucket of three (a join, a reload and one more right after),
+	// refilled one every ten seconds. It used to be four a second, every second: a client asking without
+	// pause could have the host send its whole session, up to a couple of megabytes, four times a second.
+	constexpr double WORLD_STATE_BUCKET = 3.0;
+	constexpr auto   WORLD_STATE_REFILL = std::chrono::seconds(10);
 	// What a client is believed about. These bound what one player (or one player's broken game) can do
 	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
 	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
@@ -66,14 +70,15 @@ namespace
 		int               shots = 0;
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
-		int               worldStates = 0;
 		float             hitDamage = 0.0f;
+		double            worldStateTokens = WORLD_STATE_BUCKET;
+		Clock::time_point worldStateRefill{};
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = heartbeats = voiceBytes = worldStates = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
 				hitDamage = 0.0f;
 			}
 		}
@@ -365,8 +370,19 @@ void Server::Run()
 
 	// Counts a world state the player asked for (hello again or kRequestWorldState) against their budget.
 	const auto allowWorldState = [&](Player& a_player) {
-		a_player.rate.Roll(Clock::now());
-		return ++a_player.rate.worldStates <= MAX_WORLD_STATES_PER_SECOND;
+		auto&      rate = a_player.rate;
+		const auto now = Clock::now();
+		if (rate.worldStateRefill == Clock::time_point{}) {
+			rate.worldStateRefill = now;
+		}
+		const auto elapsed = std::chrono::duration<double>(now - rate.worldStateRefill).count();
+		rate.worldStateTokens = (std::min)(WORLD_STATE_BUCKET, rate.worldStateTokens + elapsed / std::chrono::duration<double>(WORLD_STATE_REFILL).count());
+		rate.worldStateRefill = now;
+		if (rate.worldStateTokens < 1.0) {
+			return false;
+		}
+		rate.worldStateTokens -= 1.0;
+		return true;
 	};
 
 	const auto sendMarkers = [&](ConnectionKey a_to) {
