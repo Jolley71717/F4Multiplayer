@@ -76,6 +76,7 @@ namespace Equipment
 				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, worn).c_str());
 			}
 		}
+		HoldThrowable(a_actor, a_items);
 	}
 
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)
@@ -94,5 +95,96 @@ namespace Equipment
 			RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
+		HoldThrowable(a_puppet, a_items);
+	}
+
+	namespace
+	{
+		RE::TESObjectWEAP* ThrowableForm(std::uint32_t a_item)
+		{
+			const auto weapon = RE::TESForm::GetFormByID<RE::TESObjectWEAP>(a_item);
+			if (!weapon) {
+				return nullptr;
+			}
+			const auto type = weapon->weaponData.type.get();
+			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine ? weapon : nullptr;
+		}
+
+		// Whether the engine's own equipped list (not the inventory's flags, which Read() sees) holds
+		// the item: a throw and the weaponAttach animation event read this list.
+		bool EngineHolds(RE::Actor* a_actor, std::uint32_t a_item)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return false;
+			}
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				if (equipped.item.object && equipped.item.object->GetFormID() == a_item) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	bool HoldThrowable(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	{
+		if (!a_actor || !a_actor->Get3D()) {
+			return false;
+		}
+		for (const auto item : a_items) {
+			const auto weapon = ThrowableForm(item);
+			if (!weapon) {
+				continue;
+			}
+			if (!Has(a_actor, item)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), item).c_str());
+			}
+			if (EngineHolds(a_actor, item)) {
+				return true;
+			}
+			const auto manager = RE::ActorEquipManager::GetSingleton();
+			if (!manager) {
+				return false;
+			}
+			// Forced, applied now, silently: the stand-in neither chooses nor announces its gear. The
+			// weapon's own slot (the grenade slot, read from the form rather than asked of the engine
+			// with no instance data) is named, so the throwable goes where the throw looks for it.
+			const RE::BGSEquipSlot* slot = weapon->weaponData.equipSlot ? weapon->weaponData.equipSlot : weapon->equipSlot;
+			const RE::BGSObjectInstance instance{ weapon, nullptr };
+			const bool accepted = manager->EquipObject(a_actor, instance, 0, 1, slot, false, true, false, true, false);
+			const bool held = EngineHolds(a_actor, item);
+			REX::INFO("Equipment: throwable {:08X} on {:08X} through the equip manager (slot {:08X}): accepted={} held={} holds{}", item, a_actor->GetFormID(), slot ? slot->GetFormID() : 0, accepted, held, DescribeHeld(a_actor));
+			return held;
+		}
+		return false;
+	}
+
+	std::string DescribeHeld(RE::Actor* a_actor)
+	{
+		std::string out;
+		const auto process = a_actor ? a_actor->currentProcess : nullptr;
+		if (const auto middle = process ? process->middleHigh : nullptr) {
+			RE::BSAutoLock l{ middle->equippedItemsLock };
+			for (const auto& equipped : middle->equippedItems) {
+				out += std::format(" {:08X}@{}", equipped.item.object ? equipped.item.object->GetFormID() : 0, equipped.equipIndex.index);
+			}
+		}
+		// A throwable's 3D hangs in the biped's grenade or mine slot once loaded; the throw's
+		// weaponAttach event is meant to move it to the hand and show it.
+		if (const auto biped = a_actor ? a_actor->biped.get() : nullptr) {
+			for (const auto slot : { RE::BIPED_OBJECT::kWeaponGrenade, RE::BIPED_OBJECT::kWeaponMine }) {
+				const auto part = biped->GetBipObject(slot)->partClone.get();
+				if (!part) {
+					continue;
+				}
+				const auto parent = part->parent;
+				out += std::format(" 3d[{}]='{}' culled={} under='{}'", std::to_underlying(slot), part->name.c_str() ? part->name.c_str() : "", part->GetAppCulled(),
+					parent && parent->name.c_str() ? parent->name.c_str() : "none");
+			}
+		}
+		return out.empty() ? " nothing" : out;
 	}
 }

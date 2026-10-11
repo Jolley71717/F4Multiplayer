@@ -13,4 +13,16 @@ namespace Equipment
 	// armor or weapon it wears; the rest of its inventory is left alone (a mirrored NPC's loot stays
 	// its own).
 	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+
+	// Puts the grenade or mine among these items in the actor's hand the way the combat AI does before
+	// a throw: through the equip manager, in the weapon's own slot. The console's equipitem leaves a
+	// throwable in an NPC's inventory but never in the engine's equipped list (the one the throw
+	// animation's weaponAttach event shows and WeaponFire launches), so a replayed throw played
+	// empty-handed. One is given when the actor has none left (a replayed throw spends it). Returns
+	// whether the engine lists it as equipped afterwards; false when the items hold no throwable.
+	bool HoldThrowable(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+
+	// What the engine lists as equipped on the actor (form@equipIndex), and the state of a throwable's
+	// 3D in its biped: for the log and the equipped dev command.
+	std::string DescribeHeld(RE::Actor* a_actor);
 }
