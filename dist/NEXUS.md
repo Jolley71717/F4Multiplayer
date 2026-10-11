@@ -112,7 +112,7 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 - The free high-resolution texture pack no longer counts as a load-order difference.
 - A refused join now says which plugins differ ("Only you have: X.esp"), and the host can list cosmetic plugins that may differ (sIgnoredPlugins).
 - The shared world is saved on the host's PC and carried on next session: dead NPCs stay dead, loot stays taken, walls stand (bSaveSession, on by default).
-- Emotes: F9 points, F10 cheers, F11 claps, and your friends see it.
+- Emotes: F2 points, F3 cheers, F4 claps, and your friends see it.
 - Protocol 23: everyone updates together.
 
 ## Changelog for 0.6.0
