@@ -195,3 +195,18 @@ Same band on both builds, no drift over the run, no frame left behind. Pre-fix f
 ### The flying NPC report, confirmed (20:10 to 20:22)
 
 Diamond City with 39 NPCs, both ownership directions, 30 s of running around: 31 and 26 tracked actors, worst height error 15 units, nothing flagged. The report was something else: a controlled shared kill at Corvega (the VM shoots a raider it runs, the host watches the VM stand-in) moved the stand-in **276 units** on the pre-fix build d4aee27 (the 0.7.0 push with its arguments reversed, which launched the killer stand-in) and **10 units** on the final build; the corpse took the push instead (97 units). Script: scratchpad/kill-push.sh. The gunfire sound report remains not reproduced (46 of 46 shots replayed and sounded, no loop left active).
+
+### Soaks on 0.8.2 (2026-10-10 22:44 to 2026-10-11, soak.sh, three-hour runs of the standing set, both directions)
+
+Each cycle: movement trace, Corvega combat, terminals and loot, grenades both ways, power armor in motion both ways, a three-minute cell churn with save reloads, every third cycle a VM restart and rejoin, then a fuzz seed on the host. Stops on a crash or a game going down.
+
+| Run | Build | Result | What it found |
+|---|---|---|---|
+| soak3 22:44 | 82b73d8 | 2 cycles, stopped by me | A fuzzed reject packet left a NUL in the last reject reason, which cut the host's status line short and broke every id lookup after it (ec8ce6e strips control characters from wire strings). |
+| soak4 23:07 | c706e3d | 3 cycles, VM crash | The host's grenade thrown across an exterior cell seam was never reported (28a1978, GitHub #24). The VM crash was my own doing: a 2.5 s activate-hold on the VM during the churn's cell change. |
+| soak5 23:42 | f74cac1 | 3 cycles, VM crash | An explosion set off for a friend was reported back as our own after our next throw (710e49a). The VM crashed 10 s after the reconnect's main-menu coc: Scaleform texture manager on the render thread, plugin not on the stack. |
+| soak6 00:23 | 928d899 | running | bFastLoading=false on the VM only, to see whether the loading-screen render crashes stop. |
+
+Measurement artefacts fixed in the scripts along the way: the power armor check picked an older, deleted frame copy standing at the same spot (now the nearest copy that still has 3D; `refinfo` shows deleted= and disabled= since 9d229ba), the `refs` listing is one line separated by semicolons, and the climb-out looks up first so the activate-hold does not target the frame or a stand-in.
+
+Scaleform render crashes with no plugin frame appear eight times in the host's logs from 2026-10-09 (two with LoadingMenu on the stack, three with HUDMenu) and twice on the VM in these soaks, both on loading screens. The host did not crash once in the soaks. The plugin's fast loading (presentInterval 0 while LoadingMenu is open) is the suspect under test in soak6.
