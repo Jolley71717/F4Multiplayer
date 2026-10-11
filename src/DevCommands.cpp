@@ -109,7 +109,7 @@ namespace DevCommands
 			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
 			return std::format(" base={:08X} female={} template={}", base ? base->GetFormID() : 0, npc && npc->IsFemale(), npc && npc->UsesTemplate()) +
 			       std::format(" hp={:.0f} dead={}", health, actor->IsDead(false)) +
-			       std::format(" teammate={} companion={}", actor->IsPlayerTeammate(), [&] {
+			       std::format(" companion={}", [&] {
 				       const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(0x00023C01);  // CurrentCompanionFaction
 				       return faction && actor->IsInFaction(faction);
 			       }()) +
