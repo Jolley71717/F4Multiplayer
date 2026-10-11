@@ -14,6 +14,11 @@ namespace WeaponFire
 	// Defined with the explosion watch below.
 	void          ArmGhostWatch(std::uint32_t a_actorId);
 	std::uint32_t GhostsRemoved();
+	// Defined with the shown throwable below.
+	void          ShowThrowable(RE::Actor* a_actor);
+	void          MarkThrowRelease(std::uint32_t a_actorId);
+	void          ArmPlayerThrowSample();
+	std::uint32_t ThrowablesShown();
 
 	namespace
 	{
@@ -98,6 +103,8 @@ namespace WeaponFire
 			} else if (IsAttackEvent(tag)) {
 				++pending;
 				++total;
+			} else if (IsThrowAttachEvent(tag, payload)) {
+				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it does show it for
 			}
 			if (const auto action = ActionOf(tag)) {
 				std::scoped_lock l{ actionLock };
@@ -127,6 +134,10 @@ namespace WeaponFire
 			const auto id = actor->GetFormID();
 			const std::string_view npcTag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
 			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
+			// A stand-in's grenade leaving its hand (or the graph taking it away): the one the plugin hung comes off.
+			if (IsThrowEvent(npcTag, npcPayload) || (npcTag == "weaponDetach" && npcPayload == "2")) {
+				MarkThrowRelease(id);
+			}
 			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
 				std::scoped_lock l{ actionLock };
 				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
@@ -279,6 +290,7 @@ namespace WeaponFire
 
 	void ScanExplosions();
 	void RemoveGhostGrenades();
+	void UpdateShownThrowables();
 
 	void Frame()
 	{
@@ -287,6 +299,7 @@ namespace WeaponFire
 		}));
 		ScanExplosions();
 		RemoveGhostGrenades();
+		UpdateShownThrowables();
 	}
 
 	namespace
@@ -382,8 +395,11 @@ namespace WeaponFire
 			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(THROW);
 			const bool taken = action && a_actor->PerformAction(action, nullptr);
 			actionsPlayed += taken;
+			if (taken) {
+				ShowThrowable(a_actor);
+			}
 			// What the engine had in hand as the wind-up began; the ghost watch logs it again mid-throw.
-			REX::INFO("WeaponFire: throw replayed on {:08X}: taken={} holds{}", a_actor->GetFormID(), taken, Equipment::DescribeHeld(a_actor));
+			REX::INFO("WeaponFire: throw replayed on {:08X}: taken={} holds{} hands{}", a_actor->GetFormID(), taken, Equipment::DescribeHeld(a_actor), Equipment::DescribeHands(a_actor));
 			ArmGhostWatch(a_actor->GetFormID());
 			return;
 		}
@@ -429,7 +445,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} shown={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), ThrowablesShown());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -546,7 +562,7 @@ namespace WeaponFire
 			}
 			if (watch.sampleAt != Clock::time_point{} && now >= watch.sampleAt) {
 				watch.sampleAt = {};
-				REX::INFO("WeaponFire: {:08X} mid-throw holds{} (attach events so far {})", actorId, Equipment::DescribeHeld(actor), throwAttaches.load());
+				REX::INFO("WeaponFire: {:08X} mid-throw holds{} hands{} (attach events so far {})", actorId, Equipment::DescribeHeld(actor), Equipment::DescribeHands(actor), throwAttaches.load());
 			}
 			// Nothing is changed while the engine walks its lists: the ghosts are collected as handles and
 			// dealt with afterwards, and only once their 3D is in (deleting a reference still loading is
@@ -567,6 +583,141 @@ namespace WeaponFire
 					++ghostsRemoved;
 				}
 			}
+		}
+	}
+
+	// --- The grenade in the stand-in's hand ---------------------------------------------------
+	namespace
+	{
+		// The engine shows a throwable during a throw of its own: on the player too the biped's grenade
+		// slot stays empty, so at the graph's weaponAttach(2) it hangs the model from somewhere the plugin
+		// could not reach, and for an NPC the plugin dressed it hangs nothing (the equip manager listed
+		// the grenade, AttachWeapon was asked and loaded none; seen on the rig). So the stand-in's is hung
+		// by the plugin: the weapon's own model, from the model DB, under the throwing hand for the
+		// wind-up, off again when the graph reports the release or the ghost watch ends.
+		constexpr const char* HAND_NODES[] = { "LArm_Hand", "RArm_Hand", "Weapon" };  // the first found: throws are left-handed
+		constexpr RE::NiPoint3 IN_PALM{ 6.0f, 0.0f, 0.0f };  // a hand bone starts at the wrist and runs toward the fingers
+
+		std::unordered_map<std::uint32_t, RE::NiPointer<RE::NiAVObject>> shownThrowables;  // stand-in -> the model hung
+		std::uint32_t                                                    throwablesShown = 0;
+		std::mutex                                                       releaseLock;
+		std::vector<std::uint32_t>                                       released;  // from the NPC animation hook, drained in Frame
+		std::atomic<Clock::time_point>                                   playerSampleAt{};
+
+		void HideThrowable(std::uint32_t a_actorId)
+		{
+			const auto it = shownThrowables.find(a_actorId);
+			if (it == shownThrowables.end()) {
+				return;
+			}
+			// Taken off its parent only while that parent lives: when the stand-in's 3D is gone, so is the
+			// node the model hung from, and the model (ours to release) goes with the map entry.
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_actorId);
+			const auto model = it->second.get();
+			if (actor && actor->Get3D() && model && model->parent) {
+				model->parent->DetachChild(model);
+			}
+			shownThrowables.erase(it);
+		}
+	}
+
+	void ShowThrowable(RE::Actor* a_actor)
+	{
+		const auto id = a_actor->GetFormID();
+		const auto weapon = Equipment::HeldThrowable(a_actor);
+		const auto root = a_actor->Get3D();
+		const char* path = weapon ? weapon->GetModel() : nullptr;
+		if (!root || !path || !*path || shownThrowables.contains(id)) {
+			return;
+		}
+		RE::NiNode* hand = nullptr;
+		const char* handName = "none";
+		for (const auto name : HAND_NODES) {
+			const auto found = root->GetObjectByName(RE::BSFixedString{ name });
+			if (hand = found ? found->IsNode() : nullptr; hand) {
+				handName = name;
+				break;
+			}
+		}
+		if (!hand) {
+			REX::WARN("WeaponFire: {:08X} has no hand node to hang a throwable from", id);
+			return;
+		}
+		// Loaded the way the engine loads a reference's model (from the archives if not cached: a small
+		// file, on this thread), and cloned so the DB's own copy stays untouched.
+		RE::BSModelDB::DBTraits::ArgsType args{};
+		args.lodFadeMult = RE::ENUM_LOD_MULT::kNone;
+		args.loadLevel = 0;
+		args.prepareAfterLoad = 1;
+		args.performProcess = 1;
+		args.loadTextures = 1;
+		RE::NiPointer<RE::NiNode> loaded;
+		const auto error = RE::BSModelDB::Demand(path, &loaded, args);
+		if (error != RE::BSResource::ErrorCode::kNone || !loaded) {
+			REX::WARN("WeaponFire: throwable model '{}' did not load for {:08X} (error {})", path, id, std::to_underlying(error));
+			return;
+		}
+		RE::NiCloningProcess cloning{};
+		cloning.copyType = RE::NiCloningProcess::CopyType::kCopyExact;
+		cloning.scale = { 1.0f, 1.0f, 1.0f };
+		const auto cloned = loaded->CreateClone(cloning);
+		if (cloned) {
+			cloned->ProcessClone(cloning);
+		}
+		RE::NiPointer<RE::NiAVObject> model{ cloned ? static_cast<RE::NiAVObject*>(cloned) : static_cast<RE::NiAVObject*>(loaded.get()) };
+		model->local.MakeIdentity();
+		model->local.translate = IN_PALM;
+		hand->AttachChild(model.get(), true);
+		model->SetAppCulled(false);
+		shownThrowables[id] = model;
+		++throwablesShown;
+		REX::INFO("WeaponFire: hung '{}' under {} of {:08X} (cloned={})", path, handName, id, cloned != nullptr);
+	}
+
+	void MarkThrowRelease(std::uint32_t a_actorId)
+	{
+		std::scoped_lock l{ releaseLock };
+		if (released.size() < 64) {
+			released.push_back(a_actorId);
+		}
+	}
+
+	void ArmPlayerThrowSample()
+	{
+		playerSampleAt = Clock::now() + MID_THROW;
+	}
+
+	std::uint32_t ThrowablesShown()
+	{
+		return throwablesShown;
+	}
+
+	void UpdateShownThrowables()
+	{
+		if (!shownThrowables.empty()) {
+			std::vector<std::uint32_t> done;
+			{
+				std::scoped_lock l{ releaseLock };
+				done = std::exchange(released, {});
+			}
+			// The ghost watch outlives any throw: a stand-in no longer watched has long let go.
+			for (const auto& shown : shownThrowables) {
+				if (!ghostWatch.contains(shown.first)) {
+					done.push_back(shown.first);
+				}
+			}
+			for (const auto actorId : done) {
+				HideThrowable(actorId);
+			}
+		} else {
+			std::scoped_lock l{ releaseLock };
+			released.clear();
+		}
+		// The player's own throw, 400 ms in: where the engine hangs a grenade on an actor it shows it for.
+		if (const auto at = playerSampleAt.load(); at != Clock::time_point{} && Clock::now() >= at) {
+			playerSampleAt = Clock::time_point{};
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			REX::INFO("WeaponFire: player mid-throw holds{} hands{}", Equipment::DescribeHeld(player), Equipment::DescribeHands(player));
 		}
 	}
 
