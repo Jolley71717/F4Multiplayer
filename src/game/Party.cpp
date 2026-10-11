@@ -189,11 +189,22 @@ namespace Party
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on:
+			// the occupied furniture changes with every terminal or chair used in the armor (a terminal was once
+			// sent as the frame, and the others placed a terminal copy and sat the stand-in at it).
+			static std::uint32_t frameInUse = 0;
 			if (status.powerArmor) {
-				const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-				const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
-				const auto base = frame ? frame->GetObjectReference() : nullptr;
-				status.powerArmorFrame = base ? base->GetFormID() : 0;
+				if (frameInUse == 0) {
+					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+					const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
+					const auto base = frame ? frame->GetObjectReference() : nullptr;
+					if (base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN) {
+						frameInUse = base->GetFormID();
+					}
+				}
+				status.powerArmorFrame = frameInUse;
+			} else {
+				frameInUse = 0;
 			}
 			return status;
 		}

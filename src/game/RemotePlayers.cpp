@@ -90,6 +90,7 @@ namespace RemotePlayers
 		std::uint32_t   lightsPlaced = 0;
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
+		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -344,8 +345,8 @@ namespace RemotePlayers
 			}
 			if (a_player.powerArmorOn && !a_player.inPowerArmor) {
 				const auto base = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
-				if (!base) {
-					return;
+				if (!base || base->GetFormType() != RE::ENUM_FORM_ID::kFURN) {
+					return;  // a terminal is furniture too, but never a frame
 				}
 				// A frame left in another cell is no use; one still attaching (no cell yet) or standing right at the
 				// stand-in is kept, else a frame placed on a cell seam was deleted and placed again for ever.
@@ -376,7 +377,8 @@ namespace RemotePlayers
 				}
 				if (!frame->Get3D()) {
 					if (a_now - a_player.framePlacedAt > std::chrono::seconds(10)) {
-						REX::INFO("RemotePlayers: '{}'s frame copy has had no 3D for ten seconds; placing it again", a_player.name);
+						const auto frameCell = frame->GetParentCell();
+						REX::INFO("RemotePlayers: '{}'s frame copy has had no 3D for ten seconds; placing it again (frame at ({:.0f},{:.0f},{:.0f}) cell {:08X} attached={}, stand-in at ({:.0f},{:.0f},{:.0f}) cell {:08X} 3d={}, we are in cell {:08X})", a_player.name, frame->data.location.x, frame->data.location.y, frame->data.location.z, frameCell ? frameCell->GetFormID() : 0, frameCell ? frameCell->IsAttached() : false, a_actor->data.location.x, a_actor->data.location.y, a_actor->data.location.z, a_actor->GetParentCell() ? a_actor->GetParentCell()->GetFormID() : 0, a_actor->Get3D() != nullptr, a_cell ? a_cell->GetFormID() : 0);
 						DeleteFrame(a_player);
 					}
 					return;
@@ -760,10 +762,17 @@ namespace RemotePlayers
 				continue;
 			}
 
-			// A puppet left behind in another cell (e.g. we went through a door) is replaced.
-			if (actor && actor->GetParentCell() != localCell && localCell->IsInterior()) {
-				DeleteActor(remote);
-				actor = nullptr;
+			// A puppet left behind in another cell (we went through a door) is replaced: always when we are
+			// inside, and outside when its cell is an interior or not attached (a neighbouring exterior cell is
+			// fine). It used to stay when we stepped from an interior into the open: stuck in the unloaded
+			// interior, never moving, with its power armor frame placed at that stale spot.
+			if (actor && actor->GetParentCell() != localCell) {
+				const auto puppetCell = actor->GetParentCell();
+				if (localCell->IsInterior() || !puppetCell || puppetCell->IsInterior() || !puppetCell->IsAttached()) {
+					++leftBehind;
+					DeleteActor(remote);
+					actor = nullptr;
+				}
 			}
 
 			if (!actor) {
@@ -805,7 +814,12 @@ namespace RemotePlayers
 					++remote.equipmentFixes;
 					++equipmentFixesTotal;
 					remote.equipmentApplied = false;  // applied again next frame
-					REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again", remote.name);
+					{
+						std::string worn, wanted;
+						for (const auto id : Wearable(Equipment::Read(actor))) worn += std::format("{:08X} ", id);
+						for (const auto id : Wearable(remote.equipment)) wanted += std::format("{:08X} ", id);
+						REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
+					}
 				}
 			}
 
@@ -838,7 +852,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{}", lightsPlaced, framesPlaced, framesFollowed);
+			out += std::format(" lights={} frames={}/{} leftBehind={}", lightsPlaced, framesPlaced, framesFollowed, leftBehind);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
