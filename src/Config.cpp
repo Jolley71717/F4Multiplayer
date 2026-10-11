@@ -1,5 +1,7 @@
 ﻿#include "Config.h"
 
+#include "IniFile.h"
+
 namespace Config
 {
 	namespace
@@ -131,6 +133,8 @@ namespace Config
 				if (ec == std::errc{} && std::isfinite(range)) {
 					settings.voiceRange = std::clamp(range, 0.0f, 100000.0f);
 				}
+			} else if (key == "iKeyMenu") {
+				ParseInt(value, settings.keyMenu, 16);
 			} else if (key == "iKeyPlayerList") {
 				ParseInt(value, settings.keyPlayerList, 16);
 			} else if (key == "iKeyTeleport") {
@@ -158,5 +162,28 @@ namespace Config
 	const Settings& Get()
 	{
 		return settings;
+	}
+
+	Settings& Mutable()
+	{
+		return settings;
+	}
+
+	bool Write(std::string_view a_key, std::string_view a_value)
+	{
+		// The whole file is read and written back: it's a few kilobytes, and keeping the player's
+		// comments and ordering matters more than speed here (a menu click, not a frame).
+		std::string text;
+		if (std::ifstream in{ std::string{ PATH }, std::ios::binary }) {
+			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
+		}
+		const auto    updated = IniFile::SetValue(text, a_key, a_value);
+		std::ofstream out{ std::string{ PATH }, std::ios::binary | std::ios::trunc };
+		if (!out || !out.write(updated.data(), static_cast<std::streamsize>(updated.size()))) {
+			REX::WARN("Config: could not write {} = {} to {}", a_key, a_value, PATH);
+			return false;
+		}
+		REX::INFO("Config: wrote {} = {}", a_key, a_value);
+		return true;
 	}
 }
