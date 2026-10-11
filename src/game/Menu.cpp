@@ -270,7 +270,7 @@ namespace Menu
 			} else {
 				// The counts tell a player (and us) where the list stops: no friends online, none
 				// in the game, or in the game but not hosting (or hosting with private game details).
-				body = std::format("None of your Steam friends is hosting right now ({} friends, {} online, {} in Fallout 4).\nThe host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list.",
+				body = std::format("None of your Steam friends is hosting right now ({} friends, {} online, {} in Fallout 4).\nA host shows up here only when Steam shows them playing Fallout 4 (their profile must say so): start the game through Steam with F4SE as the launcher, and set the profile's Game details to Friends Only or Public.\nOtherwise the host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list.",
 					scan.friends, scan.online, scan.inGame);
 			}
 			if (!settings.serverAddress.empty()) {

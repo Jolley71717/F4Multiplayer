@@ -57,10 +57,18 @@ connects to it directly (the UDP/LAN case). With nobody to list, the page says h
 Steam sees, how many are online and how many are in Fallout 4, so you can tell where the list
 stops.
 
-Friends hosting with "private" game details in their Steam profile don't show up: Steam shares
-rich presence and lobby membership only for friends whose game details are visible. Their invite
-still works. A lobby search (`RequestLobbyList`) is not an alternative: the lobby is friends-only,
-and Steam leaves friends-only lobbies out of searches.
+A host appears on this page only if the joiner's Steam shows them as playing Fallout 4: Steam
+shares rich presence and lobby membership for a friend only inside the game it sees them in. The
+check is the host's own Steam profile: it must say "In-Game: Fallout 4" while they host. Two things
+on the host's side decide that: how the game is started (through Steam, with F4SE set as the
+launcher; a game started some other way may run with Steam unaware of it), and the profile's
+"Game details" privacy, which must be Friends Only or Public. On the test rig the host's game was
+started directly, and the joiner's Steam saw the host as online but not in a game
+(`steam friends`: `inGame=false app=0 connect=''`), while the host's own presence was intact
+(`steam`: `ownConnect='+f4mp_lobby <id>'`). The invite and "Join Game" paths still work in that
+case, and the page says so. A lobby search
+(`RequestLobbyList`) is not an alternative: the lobby is friends-only, and Steam leaves
+friends-only lobbies out of searches.
 
 **Settings.** Five switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
