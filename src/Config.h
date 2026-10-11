@@ -45,6 +45,10 @@ namespace Config
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
+		// Friends' markers on the compass (bCompassMarkers). Off to test whether writing to the HUD
+		// is behind loading-screen crashes.
+		bool compassMarkers = true;
+
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 

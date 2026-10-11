@@ -1,6 +1,7 @@
 #include "game/Compass.h"
 
 #include "game/RemotePlayers.h"
+#include "Config.h"
 
 namespace Compass
 {
@@ -205,6 +206,9 @@ namespace Compass
 
 	void Frame()
 	{
+		if (!Config::Get().compassMarkers) {
+			return;
+		}
 		if (updateQueued.exchange(true)) {
 			return;  // the last update hasn't reached the UI thread yet
 		}
