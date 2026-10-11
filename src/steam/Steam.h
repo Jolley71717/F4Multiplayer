@@ -46,7 +46,24 @@ namespace Steam
 		SteamApi::SteamId lobby = 0;
 		std::string       name;
 	};
-	[[nodiscard]] std::vector<JoinableFriend> JoinableFriends();
+	struct FriendScan
+	{
+		std::size_t                 friends = 0;  // Steam friends
+		std::size_t                 online = 0;
+		std::size_t                 inGame = 0;   // in Fallout 4, as far as Steam tells us
+		std::vector<JoinableFriend> hosting;
+	};
+	[[nodiscard]] FriendScan                  ScanFriends();
+	[[nodiscard]] std::vector<JoinableFriend> JoinableFriends();  // ScanFriends().hosting
+
+	// Steam hands out a friend's rich presence only once it's been asked for: this asks for every
+	// online friend's and returns how many were asked. The answers come in over the next moment, each
+	// counted in PresenceUpdates(), after which ScanFriends sees a host's lobby.
+	std::size_t                 RefreshFriends();
+	[[nodiscard]] std::uint32_t PresenceUpdates();
+
+	// Dev: one line per Steam friend (state, game, lobby, "connect" presence).
+	[[nodiscard]] std::string DescribeFriends();
 
 	[[nodiscard]] std::string Describe();
 

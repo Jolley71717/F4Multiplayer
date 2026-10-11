@@ -47,14 +47,20 @@ who is with you, one line each as the F6 player list shows them. Buttons depend 
 
 **Join a friend.** Steam friends who are hosting Fallout 4 co-op right now, by name: those whose
 rich presence advertises a lobby (the same "connect" string the overlay's "Join Game" uses) or who
-Steam reports in a lobby of this game. Pressing a name joins their lobby, and the join carries on
-as an accepted invite would (you see "joining your friend's game", then "connected"). If
-`sServerAddress` is set, `Join <address>` connects to it directly (the UDP/LAN case). With nobody
-to list, *Look again* re-reads the friends list.
+Steam reports in a lobby of this game. Steam hands out a friend's rich presence only once it has
+been asked for, so pressing *Join a friend* (or *Look again*) first asks for every online friend's
+(`RequestFriendRichPresence`) and shows the page when the answers have arrived
+(`FriendRichPresenceUpdate_t`), or after 1.5 seconds; the screen is empty for that moment.
+Pressing a name joins their lobby, and the join carries on as an accepted invite would (you see
+"joining your friend's game", then "connected"). If `sServerAddress` is set, `Join <address>`
+connects to it directly (the UDP/LAN case). With nobody to list, the page says how many friends
+Steam sees, how many are online and how many are in Fallout 4, so you can tell where the list
+stops.
 
 Friends hosting with "private" game details in their Steam profile don't show up: Steam shares
 rich presence and lobby membership only for friends whose game details are visible. Their invite
-still works.
+still works. A lobby search (`RequestLobbyList`) is not an alternative: the lobby is friends-only,
+and Steam leaves friends-only lobbies out of searches.
 
 **Settings.** Five switches, each shown with its current value and written to the ini when
 toggled (only that line changes; comments and the rest of the file stay):
@@ -71,6 +77,10 @@ toggled (only that line changes; comments and the rest of the file stay):
 
 The dev channel drives it without the keyboard: `mpmenu open` shows the main page, `mpmenu press
 <0-3>` presses a button of the page showing, `mpmenu` reports the page's buttons and counters.
+`hotkeys` says why a key may be doing nothing: focus, `menuMode`, the console, which chord keys
+(Alt, Ctrl, Win) are down, each hotkey's code and whether it's down, and how many presses were
+blocked. `steam friends` lists what Steam says about each friend (state, game, lobby, "connect"
+presence); `steam refresh` asks for their presence, as the join page does.
 Things to check in a real two-game session: the menu opens in gameplay only (not in the Pip-Boy or
 over the console); hosting from the menu lets a friend's "Join Game" work; the friend's game lists
 the host on the join page and joining from there connects; Stop hosting disconnects the friend

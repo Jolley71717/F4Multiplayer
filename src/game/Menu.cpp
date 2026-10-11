@@ -57,6 +57,20 @@ namespace Menu
 		std::uint32_t       pressesHandled = 0;
 		std::string         notice;  // shown once at the top of the main page (why hosting failed)
 
+		// "Join a friend" first asks Steam for the friends' rich presence (a host's names their lobby,
+		// and Steam hands it out only once asked), then shows the page when the answers are in or
+		// after a moment. Nothing is on screen meanwhile, so the moment is short.
+		using Clock = std::chrono::steady_clock;
+		constexpr auto PRESENCE_WAIT = 1500ms;
+		struct PendingJoin
+		{
+			std::size_t       page;
+			Clock::time_point deadline;
+			std::uint32_t     updatesBefore;
+			std::size_t       asked;
+		};
+		std::optional<PendingJoin> pendingJoin;
+
 		// Names and reject reasons come from other players: the box's text field reads markup, so
 		// '<' and '>' and control characters (other than line breaks) are dropped, as the HUD does.
 		std::string Clean(std::string_view a_text)
@@ -97,6 +111,17 @@ namespace Menu
 		void ShowMain();
 		void ShowJoin(std::size_t a_page);
 		void ShowSettings(std::size_t a_page);
+
+		// The way to the join page: ask Steam about the friends first (see PendingJoin).
+		void RequestJoin(std::size_t a_page)
+		{
+			const auto asked = Steam::RefreshFriends();
+			if (asked == 0) {
+				ShowJoin(a_page);  // nobody online, or no Steam: nothing to wait for
+				return;
+			}
+			pendingJoin = PendingJoin{ a_page, Clock::now() + PRESENCE_WAIT, Steam::PresenceUpdates(), asked };
+		}
 
 		// A list longer than a page: two entries per page with "More" to turn it (three when they all
 		// fit on one), and "Back". a_page wraps around.
@@ -213,10 +238,10 @@ namespace Menu
 				entries.push_back({ "Stop hosting", StopHosting });
 			} else if (status.link != Session::Status::Link::kNone) {
 				entries.push_back({ "Leave", [] { Session::Leave(); ShowMain(); } });
-				entries.push_back({ "Join someone else", [] { ShowJoin(0); } });
+				entries.push_back({ "Join someone else", [] { RequestJoin(0); } });
 			} else {
 				entries.push_back({ "Host a session", Host });
-				entries.push_back({ "Join a friend", [] { ShowJoin(0); } });
+				entries.push_back({ "Join a friend", [] { RequestJoin(0); } });
 			}
 			entries.push_back({ "Settings", [] { ShowSettings(0); } });
 			entries.push_back({ "Close", {} });
@@ -226,12 +251,12 @@ namespace Menu
 		void ShowJoin(std::size_t a_page)
 		{
 			const auto& settings = Config::Get();
-			const auto  friends = Steam::JoinableFriends();
+			const auto  scan = Steam::ScanFriends();
 			std::string body;
 			std::vector<Button> entries;
-			if (!friends.empty()) {
+			if (!scan.hosting.empty()) {
 				body = "Steam friends hosting Fallout 4 co-op right now:";
-				for (const auto& host : friends) {
+				for (const auto& host : scan.hosting) {
 					body += "\n" + host.name;
 					entries.push_back({ host.name, [host] {
 										   Steam::Join(host.lobby);
@@ -241,7 +266,10 @@ namespace Menu
 			} else if (!Steam::Available()) {
 				body = "Steam isn't available in this game, so friends can't be listed.";
 			} else {
-				body = "No Steam friend is hosting right now. The host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list.";
+				// The counts tell a player (and us) where the list stops: no friends online, none
+				// in the game, or in the game but not hosting (or hosting with private game details).
+				body = std::format("None of your Steam friends is hosting right now ({} friends, {} online, {} in Fallout 4).\nThe host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list.",
+					scan.friends, scan.online, scan.inGame);
 			}
 			if (!settings.serverAddress.empty()) {
 				body += "\nAddress from the ini: " + settings.serverAddress;
@@ -251,7 +279,7 @@ namespace Menu
 								   } });
 			}
 			if (entries.empty()) {
-				Show(body, { { "Look again", [] { ShowJoin(0); } }, { "Back", ShowMain } });
+				Show(body, { { "Look again", [] { RequestJoin(0); } }, { "Back", ShowMain } });
 				return;
 			}
 			ShowPaged(body, std::move(entries), a_page, ShowJoin, { "Back", ShowMain });
@@ -304,6 +332,11 @@ namespace Menu
 
 	void Frame()
 	{
+		if (pendingJoin && (Clock::now() >= pendingJoin->deadline || Steam::PresenceUpdates() - pendingJoin->updatesBefore >= pendingJoin->asked)) {
+			const auto page = pendingJoin->page;
+			pendingJoin.reset();
+			ShowJoin(page);
+		}
 		std::optional<ButtonPress> press;
 		{
 			std::scoped_lock l{ Callback::pressedLock };
@@ -332,6 +365,6 @@ namespace Menu
 		for (const auto& button : buttons) {
 			labels += (labels.empty() ? "" : "|") + button.label;
 		}
-		return std::format("menu: pages={} presses={} serial={} buttons='{}'", pagesShown, pressesHandled, serial, labels);
+		return std::format("menu: pages={} presses={} serial={} pendingJoin={} buttons='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), labels);
 	}
 }

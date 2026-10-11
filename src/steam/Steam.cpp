@@ -29,7 +29,14 @@ namespace Steam
 		{
 			SteamId user;
 		};
-		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested>;
+		struct PresenceUpdated
+		{
+			SteamId       user;
+			std::uint32_t appId;
+		};
+		using Event = std::variant<LobbyEntered, JoinRequested, ConnectRequested, SessionRequested, PresenceUpdated>;
+
+		constexpr std::uint64_t FALLOUT4_APP_ID = 377160;
 
 		std::mutex         eventLock;
 		std::vector<Event> events;
@@ -84,6 +91,10 @@ namespace Steam
 		Callback sessionRequestCallback{ SteamApi::kSessionRequest, sizeof(SteamApi::SessionRequest), [](void* a_param) {
 											Push(SessionRequested{ SteamApi::SteamIdOf(static_cast<const SteamApi::SessionRequest*>(a_param)->remote) });
 										} };
+		Callback presenceCallback{ SteamApi::kFriendRichPresenceUpdate, sizeof(SteamApi::FriendRichPresenceUpdate), [](void* a_param) {
+									  const auto data = static_cast<const SteamApi::FriendRichPresenceUpdate*>(a_param);
+									  Push(PresenceUpdated{ data->friendId, data->appId });
+								  } };
 
 		const SteamApi::Api* api = nullptr;
 		bool                 setUp = false;
@@ -204,6 +215,16 @@ namespace Steam
 			JoinLobby(a_event.lobby);
 		}
 
+		std::uint32_t presenceUpdates = 0;
+
+		void Handle(const PresenceUpdated& a_event)
+		{
+			++presenceUpdates;
+			if (a_event.appId == FALLOUT4_APP_ID) {
+				REX::INFO("Steam: rich presence from {} arrived", a_event.user);
+			}
+		}
+
 		// The lobby a rich presence "connect" string (see AdvertiseLobby) points at, if it's one of ours.
 		std::optional<SteamId> LobbyFromConnect(std::string_view a_connect)
 		{
@@ -287,6 +308,7 @@ namespace Steam
 			api->RegisterCallback(&lobbyJoinCallback, SteamApi::kGameLobbyJoinRequested);
 			api->RegisterCallback(&richPresenceJoinCallback, SteamApi::kGameRichPresenceJoinRequested);
 			api->RegisterCallback(&sessionRequestCallback, SteamApi::kSessionRequest);
+			api->RegisterCallback(&presenceCallback, SteamApi::kFriendRichPresenceUpdate);
 			api->InitRelayNetworkAccess(api->utils);
 			setUp = true;
 			REX::INFO("Steam: ready as {} ({})", PersonaName(), LocalId());
@@ -395,40 +417,114 @@ namespace Steam
 		return hosting && lobby != 0;
 	}
 
-	std::vector<JoinableFriend> JoinableFriends()
+	namespace
 	{
-		std::vector<JoinableFriend> out;
-		if (!Available() || !api->GetFriendCount) {
-			return out;
-		}
-		constexpr std::uint64_t FALLOUT4_APP_ID = 377160;
-		constexpr std::size_t   MAX_LISTED = 12;  // the menu pages through them two or three at a time
-		const int               count = api->GetFriendCount(api->friends, SteamApi::FRIEND_FLAG_IMMEDIATE);
-		for (int i = 0; i < count && out.size() < MAX_LISTED; ++i) {
-			const auto id = api->GetFriendByIndex(api->friends, i, SteamApi::FRIEND_FLAG_IMMEDIATE);
-			if (id == 0 || id == LocalId()) {
-				continue;
+		// What Steam tells us about one friend.
+		struct FriendInfo
+		{
+			SteamId       id = 0;
+			std::string   name;
+			int           state = 0;   // EPersonaState: 0 = offline
+			std::uint64_t gameId = 0;  // 0 = not in a game (or not shared with us)
+			SteamId       gameLobby = 0;
+			std::string   connect;     // their "connect" rich presence
+			SteamId       lobby = 0;   // the lobby they host, from either source
+		};
+
+		// Walks the friends list (immediate friends only) while a_each returns true.
+		void ForEachFriend(const std::function<bool(const FriendInfo&)>& a_each)
+		{
+			if (!Available() || !api->GetFriendCount) {
+				return;
 			}
-			// Hosts advertise their lobby in their rich presence (what "Join Game" uses); Steam also
-			// knows the lobby a friend in the same game is in, which covers a host whose presence
-			// hasn't reached us yet.
-			std::optional<SteamId> target;
-			const char* const      connect = api->GetFriendRichPresence(api->friends, id, "connect");
-			if (connect && *connect) {
-				target = LobbyFromConnect(connect);
-			}
-			if (!target) {
+			const int count = api->GetFriendCount(api->friends, SteamApi::FRIEND_FLAG_IMMEDIATE);
+			for (int i = 0; i < count; ++i) {
+				FriendInfo info;
+				info.id = api->GetFriendByIndex(api->friends, i, SteamApi::FRIEND_FLAG_IMMEDIATE);
+				if (info.id == 0 || info.id == LocalId()) {
+					continue;
+				}
+				const char* name = api->GetFriendPersonaName(api->friends, info.id);
+				info.name = name && *name ? name : std::format("Friend {}", info.id);
+				info.state = api->GetFriendPersonaState(api->friends, info.id);
 				SteamApi::FriendGameInfo game{};
-				if (api->GetFriendGamePlayed(api->friends, id, &game) && game.gameId == FALLOUT4_APP_ID && IsLobbyId(game.lobby)) {
-					target = game.lobby;
+				if (api->GetFriendGamePlayed(api->friends, info.id, &game)) {
+					info.gameId = game.gameId;
+					info.gameLobby = game.lobby;
+				}
+				// Hosts advertise their lobby in their rich presence (what "Join Game" uses); Steam also
+				// knows the lobby a friend in the same game is in, which covers a host whose presence
+				// hasn't reached us (yet).
+				const char* const connect = api->GetFriendRichPresence(api->friends, info.id, "connect");
+				info.connect = connect ? connect : "";
+				if (const auto fromPresence = LobbyFromConnect(info.connect)) {
+					info.lobby = *fromPresence;
+				} else if (info.gameId == FALLOUT4_APP_ID && IsLobbyId(info.gameLobby)) {
+					info.lobby = info.gameLobby;
+				}
+				if (!a_each(info)) {
+					return;
 				}
 			}
-			if (!target) {
-				continue;
-			}
-			const char* name = api->GetFriendPersonaName(api->friends, id);
-			out.push_back({ id, *target, name && *name ? name : std::format("Friend {}", id) });
 		}
+	}
+
+	FriendScan ScanFriends()
+	{
+		constexpr std::size_t MAX_LISTED = 12;  // the menu pages through them two or three at a time
+		FriendScan            scan;
+		ForEachFriend([&](const FriendInfo& a_friend) {
+			++scan.friends;
+			scan.online += a_friend.state != 0;
+			scan.inGame += a_friend.gameId == FALLOUT4_APP_ID;
+			if (a_friend.lobby != 0 && scan.hosting.size() < MAX_LISTED) {
+				scan.hosting.push_back({ a_friend.id, a_friend.lobby, a_friend.name });
+			}
+			return true;
+		});
+		return scan;
+	}
+
+	std::vector<JoinableFriend> JoinableFriends()
+	{
+		return ScanFriends().hosting;
+	}
+
+	std::size_t RefreshFriends()
+	{
+		std::size_t asked = 0;
+		ForEachFriend([&](const FriendInfo& a_friend) {
+			// Offline friends have nothing to tell; everyone else is asked (a host whose game details
+			// are private shows as online with no game, so "in Fallout 4" would miss them).
+			if (a_friend.state != 0) {
+				api->RequestFriendRichPresence(api->friends, a_friend.id);
+				++asked;
+			}
+			return true;
+		});
+		Note(std::format("asked {} friends for their rich presence", asked));
+		return asked;
+	}
+
+	std::uint32_t PresenceUpdates()
+	{
+		return presenceUpdates;
+	}
+
+	std::string DescribeFriends()
+	{
+		if (!Available()) {
+			return "steam=unavailable";
+		}
+		if (!api->GetFriendCount) {
+			return "friends list: this Steam library lacks the friends functions";
+		}
+		std::string out = std::format("presenceUpdates={}", presenceUpdates);
+		ForEachFriend([&](const FriendInfo& a_friend) {
+			out += std::format("\n{} ({}): state={} game={} gameLobby={} connect='{}' lobby={}", a_friend.name, a_friend.id, a_friend.state, a_friend.gameId,
+				a_friend.gameLobby, a_friend.connect, a_friend.lobby);
+			return true;
+		});
 		return out;
 	}
 

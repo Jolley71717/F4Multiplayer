@@ -11,6 +11,7 @@
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
 #include "game/FrameStats.h"
+#include "game/Hotkeys.h"
 #include "game/NpcSync.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
@@ -1637,7 +1638,13 @@ namespace DevCommands
 			return Session::Describe();
 		}
 
-		// steam [invite | join <lobby or Steam ID> | selftest send|recv]
+		// hotkeys: why a hotkey may do nothing (focus, menu mode, chords, each key's state).
+		std::string HotkeysCommand(std::string_view)
+		{
+			return Hotkeys::Describe();
+		}
+
+		// steam [invite | join <lobby or Steam ID> | friends | refresh | selftest send|recv]
 		std::string SteamCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1646,6 +1653,12 @@ namespace DevCommands
 			}
 			if (args[0] == "invite") {
 				return Steam::OpenInviteDialog() ? "ok" : "error: no lobby";
+			}
+			if (args[0] == "friends") {
+				return Steam::DescribeFriends();
+			}
+			if (args[0] == "refresh") {
+				return std::format("asked {} friends; run `steam friends` in a moment", Steam::RefreshFriends());
 			}
 			if (args[0] == "join" && args.size() > 1) {
 				std::uint64_t id = 0;
@@ -1656,7 +1669,7 @@ namespace DevCommands
 			if (args[0] == "selftest" && args.size() > 1) {
 				return Steam::SelfTest(args[1] == "send");
 			}
-			return "error: usage: steam [invite | join <id> | selftest send|recv]";
+			return "error: usage: steam [invite | join <id> | friends | refresh | selftest send|recv]";
 		}
 
 		// mpmenu [open | press <buttonIndex>]: the multiplayer menu (F1), driven without the keyboard.
@@ -1912,6 +1925,7 @@ namespace DevCommands
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
 			Entry{ "god", God },
+			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
