@@ -27,12 +27,17 @@ namespace WorkshopSync
 		constexpr auto                         PENDING_INTERVAL = std::chrono::seconds(2);
 		constexpr std::size_t                  MAX_OUTGOING = 512;
 		constexpr float                        ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
+		// How far from its workbench a piece may stand. The largest build area in the game (Spectacle
+		// Island) reaches about 9,000 units from its bench; a piece claimed farther away is someone placing
+		// things in the open world under a settlement's name.
+		constexpr float                        BUILD_REACH = 12000.0f;
 
 		std::uint32_t reported = 0;
 		std::uint32_t placed = 0;
 		std::uint32_t moved = 0;
 		std::uint32_t scrapped = 0;
 		std::uint32_t adopted = 0;
+		std::uint32_t refused = 0;  // outside their workbench's reach
 
 		// The form IDs of our copies, for the workshop event sinks (which may run off the game thread while
 		// the game thread changes `copies`): kept in step with `copies` under its own lock.
@@ -220,9 +225,28 @@ namespace WorkshopSync
 			}
 		}
 
+		// Whether the piece stands within its workbench's reach (the bench is known to be loaded here).
+		bool InReach(const Protocol::WorkshopItem& a_item)
+		{
+			const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop);
+			if (!workshop) {
+				return false;
+			}
+			const RE::NiPoint3 at{ a_item.position[0], a_item.position[1], a_item.position[2] };
+			return workshop->data.location.GetDistance(at) <= BUILD_REACH;
+		}
+
 		// Places (or moves) the copy; false if its settlement isn't loaded yet.
 		bool Place(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
+			const auto cell = CellFor(a_item);
+			if (!cell) {
+				return false;
+			}
+			if (!InReach(a_item)) {
+				++refused;
+				return true;  // dropped, and a copy already standing is left where it was
+			}
 			if (const auto it = copies.find(a_key); it != copies.end()) {
 				if (const auto ref = it->second.ref.get()) {
 					SetTransform(ref.get(), a_item);
@@ -231,10 +255,6 @@ namespace WorkshopSync
 				}
 				ForgetCopy(it->second.ref);
 				copies.erase(it);  // the game dropped it
-			}
-			const auto cell = CellFor(a_item);
-			if (!cell) {
-				return false;
 			}
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			if (!base || !Buildable(base)) {
@@ -361,6 +381,6 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} adopted={} pending={}", reported, copies.size(), placed, moved, scrapped, adopted, pending.size());
+		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped, adopted, refused, pending.size());
 	}
 }
