@@ -85,6 +85,7 @@ namespace RemotePlayers
 			std::optional<Clock::time_point> disabledAt;
 		};
 		std::vector<Grave> graveyard;
+		std::uint32_t      flushedBeforeSave = 0;
 
 		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
 		void Bury(RE::ObjectRefHandle a_handle, Clock::time_point a_placedAt)
@@ -645,6 +646,23 @@ namespace RemotePlayers
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
 		}
+		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now, so no
+		// stand-in, light or frame copy is written into the save. (A reference whose 3D is still loading
+		// is left alone: deleting it crashes the loader when it finishes; it is a stray in the save, not
+		// a crash.) The save runs between frames, so no physics job holds any of them.
+		std::erase_if(graveyard, [&](const Grave& a_grave) {
+			const auto ref = a_grave.actor.get();
+			if (!ref) {
+				return true;
+			}
+			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_grave.spawnedAt)) {
+				return false;
+			}
+			ref->Disable();
+			ref->SetDelete(true);
+			++flushedBeforeSave;
+			return true;
+		});
 	}
 
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
@@ -869,7 +887,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{} leftBehind={}", lightsPlaced, framesPlaced, framesFollowed, leftBehind);
+			out += std::format(" lights={} frames={}/{} leftBehind={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, leftBehind, graveyard.size(), flushedBeforeSave);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
