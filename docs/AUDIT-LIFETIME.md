@@ -109,7 +109,7 @@ error under 40 units; ghosts and states counters moving as before).
 
 ### Results: the scripted sweep on 0.8.1 (2026-10-10, 18:11 to 18:26, commit f5837d3) against the pre-fix baseline
 
-One uninterrupted run of sweep.sh; every section passed on both machines.
+One uninterrupted run of sweep.sh; every section passed on both machines. Baseline provenance: the pre-fix fuzz run is scratchpad/fuzz-before.log (13:5x); the pre-fix NPC trace is stage/trace/host-npc2.csv and vm-npc2.csv (14:04); the pre-fix movement figures are the trace.sh output of the 13:05 and 13:25 runs as printed then (those two trace files were overwritten by later sweeps).
 
 | Check | Before the fixes (13:00 to 14:00) | Final build |
 |---|---|---|
@@ -123,7 +123,7 @@ One uninterrupted run of sweep.sh; every section passed on both machines.
 | Power armor in motion, both ways (worst frame-to-stand-in distance over a 10 s run; the frame is pulled under the stand-in once it is 48 u behind) | one snapshot only | 45 u (VM in armor) and 71 u (host in armor), both under the 48 u threshold plus a sprinting stride |
 | Cell churn with save reloads | not run before | 5 min, 11 hops, 3 reloads, both games up |
 | Reconnect | not run before | VM restarted and rejoined, stand-ins back |
-| Fuzz on the host, crash logger attached | 1,290 packets (3 seeds), no crash | 1,290 packets (3 seeds), no crash; 11,610 packets over 27 seeds through the day |
+| Fuzz on the host, crash logger attached | 1,290 packets (3 seeds), no crash | 1,290 packets (3 seeds), no crash; 10,320 packets over 24 seeds through the day, counted from the run logs |
 | Crash logs | the one Red Rocket crash per machine (13:23, 13:24) | none new on either machine |
 
 The scripted sweep earned its keep: run in sequence, the power armor section failed three times while the same check passed on its own. The cause was a friend holding a grenade from the previous section: the stand-in gear check counted it, could never pass, stripped and re-dressed the stand-in every three seconds and threw it out of its frame each time (1e0e40b, GitHub #21); a frame still attaching or standing at the stand-in is also no longer replaced (f5837d3).
