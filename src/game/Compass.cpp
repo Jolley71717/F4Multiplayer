@@ -52,7 +52,35 @@ namespace Compass
 		// kept reference would point at a destroyed object.
 		std::set<std::uint32_t> markerIds;
 
+		// What each marker was last given (UI thread only): a value that has not changed is not written
+		// again, so a HUD with nobody near shows no writes at all.
+		struct Placed
+		{
+			float x = 0.0f;
+			bool  pinned = false;
+			bool  visible = false;
+		};
+		std::map<std::uint32_t, Placed> placed;
 		std::atomic<bool>          updateQueued{ false };
+		// While a loading screen is up the HUD is being torn down or rebuilt; no marker is touched until
+		// it has closed. Crashes in the HUD's render tree on loading screens pointed here (TreeNode::
+		// SetVisible on the render thread, no plugin frame).
+		std::atomic<bool>          loading{ false };
+		std::atomic<std::uint32_t> skippedLoading{ 0 };
+
+		class MenuWatcher :
+			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+			{
+				if (a_event.menuName == "LoadingMenu"sv) {
+					loading = a_event.opening;
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+		MenuWatcher watcher;
 		std::atomic<std::uint32_t> shown{ 0 };
 		std::atomic<std::uint32_t> made{ 0 };
 
@@ -142,6 +170,10 @@ namespace Compass
 		void Apply(const std::vector<Target>& a_targets)
 		{
 			updateQueued = false;
+			if (loading) {
+				++skippedLoading;
+				return;
+			}
 			const auto ui = RE::UI::GetSingleton();
 			const auto menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
 			const auto movie = menu ? menu->uiMovie.get() : nullptr;
@@ -158,18 +190,34 @@ namespace Compass
 						continue;
 					}
 					markerIds.insert(target.id);
+					placed.erase(target.id);  // a fresh shape: everything below is written once
+					shape->SetMember("y", GValue(0.0));
 				}
-				shape->SetMember("x", GValue(static_cast<double>(target.x)));
-				shape->SetMember("y", GValue(0.0));
-				shape->SetMember("alpha", GValue(target.pinned ? 0.5 : 1.0));
-				shape->SetMember("visible", GValue(true));
+				auto& was = placed[target.id];
+				if (was.x != target.x) {
+					shape->SetMember("x", GValue(static_cast<double>(target.x)));
+					was.x = target.x;
+				}
+				if (!was.visible || was.pinned != target.pinned) {
+					shape->SetMember("alpha", GValue(target.pinned ? 0.5 : 1.0));
+					was.pinned = target.pinned;
+				}
+				if (!was.visible) {
+					shape->SetMember("visible", GValue(true));
+					was.visible = true;
+				}
 				++visible;
 			}
 			for (const auto id : markerIds) {
 				if (std::ranges::none_of(a_targets, [&](const Target& a_target) { return a_target.id == id; })) {
+					auto& was = placed[id];
+					if (!was.visible) {
+						continue;
+					}
 					if (auto shape = FindShape(compass, id)) {
 						shape->SetMember("visible", GValue(false));
 					}
+					was.visible = false;
 				}
 			}
 			shown = visible;
@@ -204,9 +252,16 @@ namespace Compass
 		}
 	}
 
+	void Install()
+	{
+		if (const auto ui = RE::UI::GetSingleton()) {
+			ui->RegisterSink<RE::MenuOpenCloseEvent>(&watcher);
+		}
+	}
+
 	void Frame()
 	{
-		if (!Config::Get().compassMarkers) {
+		if (!Config::Get().compassMarkers || loading) {
 			return;
 		}
 		if (updateQueued.exchange(true)) {
@@ -222,6 +277,6 @@ namespace Compass
 
 	std::string Describe()
 	{
-		return std::format("compass: shown={} made={}", shown.load(), made.load());
+		return std::format("compass: shown={} made={} skippedLoading={}", shown.load(), made.load(), skippedLoading.load());
 	}
 }

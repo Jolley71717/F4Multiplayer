@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Compass.h"
 #include "game/FastLoad.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -42,6 +43,7 @@ namespace
 			if (Config::Get().fastLoading) {
 				FastLoad::Install();
 			}
+			Compass::Install();
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");

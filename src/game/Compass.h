@@ -4,6 +4,9 @@
 // the HUD's compass widget (Scaleform), clamped to the edge when they're behind you.
 namespace Compass
 {
+	// Watches for loading screens: the markers are left alone while one is up.
+	void Install();
+
 	// Works out where each friend is and updates the markers (on the UI thread). Main thread, every frame.
 	void Frame();
 
