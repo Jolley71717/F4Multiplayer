@@ -19,8 +19,9 @@ namespace Hotkeys
 
 		struct Key
 		{
-			bool              down = false;
-			bool              held = false;  // the hold action fired for this press
+			bool              down = false;      // down and counted (focus, no menu, no chord)
+			bool              physical = false;  // down at all
+			bool              held = false;      // the hold action fired for this press
 			Clock::time_point since{};
 		};
 
@@ -31,6 +32,11 @@ namespace Hotkeys
 		Key emotePoint;
 		Key emoteCheer;
 		Key emoteClap;
+
+		// For Describe: how often Poll ran, and the last actions it produced.
+		std::uint64_t polls = 0;
+		std::uint64_t actionsFired = 0;
+		std::uint64_t blockedPresses = 0;  // a hotkey went down while focus, a menu or a chord blocked it
 
 		bool GameHasFocus()
 		{
@@ -60,14 +66,19 @@ namespace Hotkeys
 		// A chord with Alt, Ctrl or Win belongs to something else (Alt+F9 is ShadowPlay's record key): not ours.
 		const bool          chord = IsDown(0x12) || IsDown(0x11) || IsDown(0x5B) || IsDown(0x5C);
 		const auto          now = Clock::now();
+		++polls;
 
 		// Pressed: fires when the key goes down.
 		const auto press = [&](Key& a_key, std::uint32_t a_vk, Action a_action) {
-			const bool down = active && !chord && IsDown(a_vk);
+			const bool physical = IsDown(a_vk);
+			const bool down = active && !chord && physical;
 			if (down && !a_key.down) {
 				actions.push_back(a_action);
+			} else if (physical && !a_key.physical && !down) {
+				++blockedPresses;  // Describe says why
 			}
 			a_key.down = down;
+			a_key.physical = physical;
 		};
 		press(menu, settings.keyMenu, Action::kMenu);
 		press(list, settings.keyPlayerList, Action::kPlayerList);
@@ -88,11 +99,26 @@ namespace Hotkeys
 			actions.push_back(Action::kTeleportPick);
 		}
 		teleport.down = down;
+		actionsFired += actions.size();
 		return actions;
 	}
 
 	bool Held(std::uint32_t a_vk)
 	{
 		return IsDown(a_vk) && GameHasFocus();
+	}
+
+	std::string Describe()
+	{
+		static const RE::BSFixedString console{ "Console" };
+		const auto&                    settings = Config::Get();
+		const auto                     ui = RE::UI::GetSingleton();
+		const auto                     key = [](const char* a_name, std::uint32_t a_vk) {
+			return std::format(" {}={:02X}{}", a_name, a_vk, IsDown(a_vk) ? "(down)" : "");
+		};
+		return std::format("hotkeys: focus={} menuMode={} console={} chord: alt={} ctrl={} win={} polls={} fired={} blocked={} keys:",
+				   GameHasFocus(), ui ? static_cast<int>(ui->menuMode) : -1, ui && ui->GetMenuOpen(console), IsDown(0x12), IsDown(0x11), IsDown(0x5B) || IsDown(0x5C),
+				   polls, actionsFired, blockedPresses) +
+		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("voice", settings.keyVoice);
 	}
 }
