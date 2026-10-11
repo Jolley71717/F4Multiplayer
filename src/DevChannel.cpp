@@ -76,8 +76,16 @@ namespace DevChannel
 		{
 			auto promise = std::make_shared<std::promise<std::string>>();
 			auto future = promise->get_future();
+			// A caller that gave up waiting (a long loading screen) does not want the command run minutes
+			// later: cell changes and key presses queued behind a load used to go off long after the test
+			// that asked for them had moved on.
+			auto abandoned = std::make_shared<std::atomic<bool>>(false);
 
-			F4SE::GetTaskInterface()->AddTask([promise, fn = std::move(a_fn)]() {
+			F4SE::GetTaskInterface()->AddTask([promise, abandoned, fn = std::move(a_fn)]() {
+				if (abandoned->load()) {
+					promise->set_value({});
+					return;
+				}
 				// An exception must never escape into the game's task loop.
 				try {
 					promise->set_value(fn());
@@ -89,6 +97,7 @@ namespace DevChannel
 			});
 
 			if (future.wait_for(MAIN_THREAD_TIMEOUT) != std::future_status::ready) {
+				abandoned->store(true);
 				return "error: timed out waiting for game thread";
 			}
 			return future.get();
