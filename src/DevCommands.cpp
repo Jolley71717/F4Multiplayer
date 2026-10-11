@@ -260,6 +260,20 @@ namespace DevCommands
 			return "moving";
 		}
 
+		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
+		std::string Click(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const int hold = args.empty() ? 60 : std::stoi(std::string{ args[0] });
+			std::thread([hold] {
+				BringGameToFront();
+				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
+				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
+				mouse_event(0x0004u, 0, 0, 0, 0);  // left up
+			}).detach();
+			return std::format("clicking for {} ms", hold);
+		}
+
 		std::string Focus(std::string_view)
 		{
 			// Never waited for: the window calls send messages to the game thread, which is the thread
@@ -1780,6 +1794,7 @@ namespace DevCommands
 			Entry{ "key", KeyPress },
 			Entry{ "focus", Focus },
 			Entry{ "mouse", Mouse },
+			Entry{ "click", Click },
 			Entry{ "pa", PowerArmorInfo },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
