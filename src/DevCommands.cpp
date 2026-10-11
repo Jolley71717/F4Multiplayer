@@ -134,7 +134,7 @@ namespace DevCommands
 			const auto cell = PlayerCell();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto location = player ? player->currentLocation : nullptr;
-			return std::format("ingame={} god={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, RE::PlayerCharacter::IsGodMode(), cell ? cell->GetFormID() : 0,
+			return std::format("ingame={} god={} cell={:08X} interior={} worldspace={:08X} location={:08X} '{}'", cell != nullptr, player && player->IsGodMode(), cell ? cell->GetFormID() : 0,
 				cell && cell->IsInterior(), cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, location ? location->GetFormID() : 0,
 				location && location->GetFullName() ? location->GetFullName() : "");
 		}
@@ -1750,10 +1750,11 @@ namespace DevCommands
 			if (!want && a_args != "off") {
 				return "error: usage: god on|off";
 			}
-			if (RE::PlayerCharacter::IsGodMode() != want) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (player && player->IsGodMode() != want) {
 				RE::Console::ExecuteCommand("tgm");
 			}
-			return std::format("god={}", RE::PlayerCharacter::IsGodMode());
+			return std::format("god={}", player && player->IsGodMode());
 		}
 
 		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
