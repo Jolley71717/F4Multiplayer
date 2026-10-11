@@ -26,7 +26,7 @@ namespace DevChannel
 
 	namespace
 	{
-		constexpr auto        MAIN_THREAD_TIMEOUT = 5s;
+		constexpr auto        MAIN_THREAD_TIMEOUT = 12s;  // a loading screen on a slow machine holds the game thread for longer than five seconds
 		constexpr std::size_t MAX_LINE = 4096;
 
 		std::string token;
