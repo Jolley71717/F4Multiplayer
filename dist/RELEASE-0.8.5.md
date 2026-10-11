@@ -6,4 +6,5 @@
 - A friend's companion that came along from a part of the map you have not loaded now appears beside them instead of staying where it lived.
 - HUD messages (a friend's line, "X joined") wait while a loading screen is up; writing them into a HUD being rebuilt crashed the game.
 - The compass does nothing while there is nobody to show.
+- A friend's stand-in wears their power armor pieces only once it stands in its frame copy; before that the pieces hung off a normal-sized body (the "dwarf in a frame").
 - Protocol 26, as 0.8.0 to 0.8.4. Newer builds are on GitHub first; Nexus follows less often.
