@@ -22,6 +22,10 @@ namespace Equipment
 	// whether the engine lists it as equipped afterwards; false when the items hold no throwable.
 	bool HoldThrowable(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
 
+	// How often a throwable's 3D was asked of the engine's AttachWeapon (its equip path loads none on
+	// an NPC); for the status line.
+	std::uint32_t AttachesAsked();
+
 	// What the engine lists as equipped on the actor (form@equipIndex), and the state of a throwable's
 	// 3D in its biped: for the log and the equipped dev command.
 	std::string DescribeHeld(RE::Actor* a_actor);

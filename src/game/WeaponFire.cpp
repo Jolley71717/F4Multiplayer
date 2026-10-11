@@ -429,7 +429,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
