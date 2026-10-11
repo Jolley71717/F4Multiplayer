@@ -75,6 +75,10 @@ namespace NpcSync
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
+		std::uint32_t                                        broughtIn = 0;       // unloaded copies moved into our cell after their owner's
+		std::unordered_map<std::uint32_t, Clock::time_point> broughtInAt;
+		constexpr auto                                       BRING_IN_RETRY = 10s;
+		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        stateTick = 0;
@@ -486,6 +490,39 @@ namespace NpcSync
 			};
 		}
 
+		// The owner's copy stands near us outdoors, but ours sits in a cell we have not loaded (a companion
+		// that walked here with its player from across the map, say): ours is moved to where theirs is,
+		// through the console's moveto, which handles the cell change; it loads and is mirrored from there.
+		void BringIn(const Protocol::ActorState& a_state, Clock::time_point a_now)
+		{
+			if (a_state.cell != 0 || !Protocol::IsShareableRef(a_state.refId)) {
+				return;
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell || cell->IsInterior() || !cell->worldSpace || cell->worldSpace->GetFormID() != a_state.worldspace) {
+				return;
+			}
+			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
+			if (at.GetDistance(player->data.location) > BRING_IN_RANGE) {
+				return;
+			}
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
+			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || actor->Get3D() || actor->IsPlayerRef()) {
+				return;
+			}
+			if (const auto last = broughtInAt.find(a_state.refId); last != broughtInAt.end() && a_now - last->second < BRING_IN_RETRY) {
+				return;
+			}
+			broughtInAt[a_state.refId] = a_now;
+			++broughtIn;
+			REX::INFO("NpcSync: bringing {:08X} in from an unloaded cell to ({:.0f},{:.0f},{:.0f}) where its owner's copy is", a_state.refId, at.x, at.y, at.z);
+			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", a_state.refId).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_state.refId, at.x).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_state.refId, at.y).c_str());
+			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", a_state.refId, at.z).c_str());
+		}
+
 		void UpdateMirrors(Clock::time_point a_now)
 		{
 			for (auto it = mirrors.begin(); it != mirrors.end();) {
@@ -583,7 +620,11 @@ namespace NpcSync
 		const auto now = Clock::now();
 		for (const auto& state : a_states) {
 			const auto owner = OwnerOf(state.refId);
-			if (owner == 0 || owner == localId || !LoadedActor(state.refId)) {
+			if (owner == 0 || owner == localId) {
+				continue;
+			}
+			if (!LoadedActor(state.refId)) {
+				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
 			}
 			auto& snaps = mirrors[state.refId].snapshots;
@@ -776,7 +817,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }
