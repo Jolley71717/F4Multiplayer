@@ -110,22 +110,67 @@ namespace Equipment
 			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine ? weapon : nullptr;
 		}
 
-		// Whether the engine's own equipped list (not the inventory's flags, which Read() sees) holds
-		// the item: a throw and the weaponAttach animation event read this list.
-		bool EngineHolds(RE::Actor* a_actor, std::uint32_t a_item)
+		// The engine's own equipped entry for an item (not the inventory's flags, which Read() sees):
+		// a throw and the weaponAttach animation event read this list, by equip index.
+		struct Held
+		{
+			std::uint32_t         index;
+			RE::TBO_InstanceData* instance;
+		};
+
+		std::optional<Held> EngineHolds(RE::Actor* a_actor, std::uint32_t a_item)
 		{
 			const auto process = a_actor->currentProcess;
 			const auto middle = process ? process->middleHigh : nullptr;
 			if (!middle) {
-				return false;
+				return std::nullopt;
 			}
 			RE::BSAutoLock l{ middle->equippedItemsLock };
 			for (const auto& equipped : middle->equippedItems) {
 				if (equipped.item.object && equipped.item.object->GetFormID() == a_item) {
-					return true;
+					return Held{ equipped.equipIndex.index, equipped.item.instanceData.get() };
 				}
 			}
-			return false;
+			return std::nullopt;
+		}
+
+		// The biped slot a throwable's 3D hangs in, which the throw's weaponAttach moves to the hand.
+		RE::BIPED_OBJECT BipedSlot(const RE::TESObjectWEAP* a_weapon)
+		{
+			return a_weapon->weaponData.type.get() == RE::WEAPON_TYPE::kMine ? RE::BIPED_OBJECT::kWeaponMine : RE::BIPED_OBJECT::kWeaponGrenade;
+		}
+
+		bool Has3D(RE::Actor* a_actor, const RE::TESObjectWEAP* a_weapon)
+		{
+			const auto biped = a_actor->biped.get();
+			return biped && biped->GetBipObject(BipedSlot(a_weapon))->partClone.get() != nullptr;
+		}
+
+		// The equip manager lists a throwable on an NPC but loads no model for it (seen on the rig: the
+		// grenade sat at equip index 2 and the throw's weaponAttach(2) came, with the biped's grenade
+		// slot empty throughout), so the hand stayed empty. AttachWeapon is the engine's own load-and-hang
+		// of one equipped weapon's 3D, the step its equip path skipped. The model comes in through the
+		// loader, so the slot fills a moment later; asked again (next gear report or throw) only once
+		// that moment has clearly passed, never twice for one load.
+		constexpr auto                                                       ATTACH_RETRY = 5s;
+		std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> attachAsked;  // actor -> when
+		std::uint32_t                                                        attachesAsked = 0;
+
+		void LoadThrowable3D(RE::Actor* a_actor, RE::TESObjectWEAP* a_weapon, const Held& a_held)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			const auto asked = attachAsked.find(a_actor->GetFormID());
+			if (Has3D(a_actor, a_weapon) || (asked != attachAsked.end() && now < asked->second + ATTACH_RETRY)) {
+				return;
+			}
+			if (attachAsked.size() > 64) {
+				attachAsked.clear();  // stand-ins come and go with new form IDs; a spacing lost is one early retry
+			}
+			attachAsked[a_actor->GetFormID()] = now;
+			++attachesAsked;
+			const RE::BGSObjectInstanceT<RE::TESObjectWEAP> instance{ a_weapon, a_held.instance };
+			a_actor->AttachWeapon(instance, RE::BGSEquipIndex{ a_held.index });
+			REX::INFO("Equipment: throwable {:08X} 3D asked of AttachWeapon on {:08X} (index {}): loaded now={} holds{}", a_weapon->GetFormID(), a_actor->GetFormID(), a_held.index, Has3D(a_actor, a_weapon), DescribeHeld(a_actor));
 		}
 	}
 
@@ -142,7 +187,8 @@ namespace Equipment
 			if (!Has(a_actor, item)) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), item).c_str());
 			}
-			if (EngineHolds(a_actor, item)) {
+			if (const auto held = EngineHolds(a_actor, item)) {
+				LoadThrowable3D(a_actor, weapon, *held);
 				return true;
 			}
 			const auto manager = RE::ActorEquipManager::GetSingleton();
@@ -155,11 +201,19 @@ namespace Equipment
 			const RE::BGSEquipSlot* slot = weapon->weaponData.equipSlot ? weapon->weaponData.equipSlot : weapon->equipSlot;
 			const RE::BGSObjectInstance instance{ weapon, nullptr };
 			const bool accepted = manager->EquipObject(a_actor, instance, 0, 1, slot, false, true, false, true, false);
-			const bool held = EngineHolds(a_actor, item);
-			REX::INFO("Equipment: throwable {:08X} on {:08X} through the equip manager (slot {:08X}): accepted={} held={} holds{}", item, a_actor->GetFormID(), slot ? slot->GetFormID() : 0, accepted, held, DescribeHeld(a_actor));
-			return held;
+			const auto held = EngineHolds(a_actor, item);
+			REX::INFO("Equipment: throwable {:08X} on {:08X} through the equip manager (slot {:08X}): accepted={} held={} holds{}", item, a_actor->GetFormID(), slot ? slot->GetFormID() : 0, accepted, held.has_value(), DescribeHeld(a_actor));
+			if (held) {
+				LoadThrowable3D(a_actor, weapon, *held);
+			}
+			return held.has_value();
 		}
 		return false;
+	}
+
+	std::uint32_t AttachesAsked()
+	{
+		return attachesAsked;
 	}
 
 	std::string DescribeHeld(RE::Actor* a_actor)
@@ -169,7 +223,8 @@ namespace Equipment
 		if (const auto middle = process ? process->middleHigh : nullptr) {
 			RE::BSAutoLock l{ middle->equippedItemsLock };
 			for (const auto& equipped : middle->equippedItems) {
-				out += std::format(" {:08X}@{}", equipped.item.object ? equipped.item.object->GetFormID() : 0, equipped.equipIndex.index);
+				// An entry with no data (a weapon's holds its sounds, preloads and fire node) was never set up as a weapon.
+				out += std::format(" {:08X}@{}{}", equipped.item.object ? equipped.item.object->GetFormID() : 0, equipped.equipIndex.index, equipped.data ? "" : "(nodata)");
 			}
 		}
 		// A throwable's 3D hangs in the biped's grenade or mine slot once loaded; the throw's

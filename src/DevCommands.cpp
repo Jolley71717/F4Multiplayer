@@ -734,6 +734,19 @@ namespace DevCommands
 			return out + " held:" + Equipment::DescribeHeld(actor);
 		}
 
+		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
+		// grenade slot empty: the engine's own 3D refresh of a reference (what it rebuilds on a stand-in is
+		// not known, so it is run by hand on the rig, with `equipped` before and after). Dev only.
+		std::string Refresh3D(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref || !ref->Get3D()) {
+				return "error: usage: refresh3d <refHex> (a loaded reference)";
+			}
+			ref->UpdateReference3D();
+			return "ok";
+		}
+
 		// combat <refHex>: whether an actor is in combat and whom it targets.
 		std::string Combat(std::string_view a_args)
 		{
@@ -1845,6 +1858,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
+			Entry{ "refresh3d", Refresh3D },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
