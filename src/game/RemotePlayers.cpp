@@ -73,12 +73,33 @@ namespace RemotePlayers
 		std::map<std::uint32_t, RemotePlayer> players;
 
 		// Stand-ins to delete once their 3D is in (see DeferredDelete).
+		// A stand-in (or its light or frame) goes in two steps: disabled now, so the engine takes its 3D and
+		// collision out at its own safe point, and marked for deletion a moment later. Deleting in one
+		// step crashed a physics job that was still handling a collision with the actor
+		// (CharacterCollisionHandler -> Actor::GetDesiredProcessLevel -> Get3D on a freed actor).
+		constexpr auto DELETE_AFTER_DISABLE = 1s;
 		struct Grave
 		{
-			RE::ObjectRefHandle actor;
-			Clock::time_point   spawnedAt;
+			RE::ObjectRefHandle              actor;
+			Clock::time_point                spawnedAt;
+			std::optional<Clock::time_point> disabledAt;
 		};
 		std::vector<Grave> graveyard;
+
+		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
+		void Bury(RE::ObjectRefHandle a_handle, Clock::time_point a_placedAt)
+		{
+			const auto ref = a_handle.get();
+			if (!ref) {
+				return;
+			}
+			if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_placedAt)) {
+				ref->Disable();
+				graveyard.push_back({ a_handle, a_placedAt, Clock::now() });
+			} else {
+				graveyard.push_back({ a_handle, a_placedAt, std::nullopt });
+			}
+		}
 
 		// The first stand-in waits this long for the player's face, instead of being placed and then
 		// replaced a moment later when the face arrives.
@@ -238,12 +259,7 @@ namespace RemotePlayers
 		void DeleteLight(RemotePlayer& a_player)
 		{
 			if (const auto light = a_player.light.get()) {
-				if (DeferredDelete::Safe(light->Get3D() != nullptr, Clock::now() - a_player.lightPlacedAt)) {
-					light->Disable();
-					light->SetDelete(true);
-				} else {
-					graveyard.push_back({ a_player.light, a_player.lightPlacedAt });
-				}
+				Bury(a_player.light, a_player.lightPlacedAt);
 			}
 			a_player.light = {};
 		}
@@ -306,12 +322,7 @@ namespace RemotePlayers
 					a_player.inPowerArmor = false;
 					return;
 				}
-				if (DeferredDelete::Safe(frame->Get3D() != nullptr, Clock::now() - a_player.framePlacedAt)) {
-					frame->Disable();
-					frame->SetDelete(true);
-				} else {
-					graveyard.push_back({ a_player.frame, a_player.framePlacedAt });
-				}
+				Bury(a_player.frame, a_player.framePlacedAt);
 			}
 			a_player.frame = {};
 			a_player.inPowerArmor = false;
@@ -419,12 +430,7 @@ namespace RemotePlayers
 			}
 			if (const auto actor = GetActor(a_player)) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
-				if (DeferredDelete::Safe(actor->Get3D() != nullptr, Clock::now() - a_player.spawnedAt)) {
-					actor->Disable();
-					actor->SetDelete(true);
-				} else {
-					graveyard.push_back({ a_player.actor, a_player.spawnedAt });
-				}
+				Bury(a_player.actor, a_player.spawnedAt);
 			}
 			a_player.actor = {};
 		}
@@ -721,15 +727,22 @@ namespace RemotePlayers
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
 
 		const auto now = Clock::now();
-		std::erase_if(graveyard, [&](const Grave& a_grave) {
+		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
 				return true;
 			}
-			if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt)) {
+			if (!a_grave.disabledAt) {
+				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt)) {
+					return false;
+				}
+				actor->Disable();
+				a_grave.disabledAt = now;
 				return false;
 			}
-			actor->Disable();
+			if (now - *a_grave.disabledAt < DELETE_AFTER_DISABLE) {
+				return false;
+			}
 			actor->SetDelete(true);
 			return true;
 		});
