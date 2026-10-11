@@ -24,6 +24,7 @@ namespace Hotkeys
 			Clock::time_point since{};
 		};
 
+		Key menu;
 		Key list;
 		Key teleport;
 		Key ping;
@@ -68,6 +69,7 @@ namespace Hotkeys
 			}
 			a_key.down = down;
 		};
+		press(menu, settings.keyMenu, Action::kMenu);
 		press(list, settings.keyPlayerList, Action::kPlayerList);
 		press(ping, settings.keyPing, Action::kPing);
 		press(emotePoint, settings.keyEmotePoint, Action::kEmotePoint);

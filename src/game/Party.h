@@ -24,6 +24,9 @@ namespace Party
 
 	void OnPlayerLeft(std::uint32_t a_id);
 
+	// One line per other player (name, marker, health, level, where), as the player list shows them.
+	[[nodiscard]] std::vector<std::string> PlayerLines();
+
 	// What the hotkeys do, also reachable from dev commands.
 	void ShowPlayerList();
 	void PickTeleportTarget();

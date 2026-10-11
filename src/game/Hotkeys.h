@@ -6,6 +6,7 @@ namespace Hotkeys
 {
 	enum class Action
 	{
+		kMenu,          // pressed: the multiplayer menu (works outside a session too)
 		kPlayerList,    // pressed
 		kTeleportPick,  // tapped (released within HOLD_TIME)
 		kTeleportGo,    // held for HOLD_TIME

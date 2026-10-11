@@ -1,5 +1,7 @@
 #include "game/FastLoad.h"
 
+#include "Config.h"
+
 namespace FastLoad
 {
 	namespace
@@ -19,7 +21,12 @@ namespace FastLoad
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
+				// The setting is read per loading screen, not at install: the in-game menu can turn it off
+				// and on, and a screen that started with vsync off still gets it back when it closes.
 				if (a_event.opening) {
+					if (!Config::Get().fastLoading) {
+						return RE::BSEventNotifyControl::kContinue;
+					}
 					if (!active) {
 						savedInterval = renderer->presentInterval;
 						active = true;

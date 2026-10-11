@@ -8,6 +8,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
+#include "game/Menu.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
@@ -361,6 +362,11 @@ namespace Party
 		void HandleHotkeys()
 		{
 			for (const auto action : Hotkeys::Poll()) {
+				// The menu is how you get into a session, so it doesn't need one.
+				if (action == Hotkeys::Action::kMenu) {
+					Menu::Open();
+					continue;
+				}
 				if (localId == 0) {
 					Hud::Notify("Multiplayer: not in a session");
 					continue;
@@ -388,6 +394,8 @@ namespace Party
 				case Hotkeys::Action::kEmoteClap:
 					Emote(action == Hotkeys::Action::kEmotePoint ? Protocol::ShotAction::kPoint : action == Hotkeys::Action::kEmoteCheer ? Protocol::ShotAction::kCheer : Protocol::ShotAction::kClap);
 					break;
+				case Hotkeys::Action::kMenu:
+					break;  // handled above
 				}
 			}
 		}
@@ -554,6 +562,15 @@ namespace Party
 		if (teleportTarget == a_id) {
 			teleportTarget = 0;
 		}
+	}
+
+	std::vector<std::string> PlayerLines()
+	{
+		std::vector<std::string> lines;
+		for (const auto& player : RemotePlayers::List()) {
+			lines.push_back(Describe(player));
+		}
+		return lines;
 	}
 
 	void ShowPlayerList()

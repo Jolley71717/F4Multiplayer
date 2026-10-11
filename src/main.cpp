@@ -5,6 +5,7 @@
 #include "game/FastLoad.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
+#include "game/Menu.h"
 #include "net/Session.h"
 
 namespace
@@ -40,9 +41,7 @@ namespace
 	{
 		switch (a_msg->type) {
 		case F4SE::MessagingInterface::kGameDataReady:
-			if (Config::Get().fastLoading) {
-				FastLoad::Install();
-			}
+			FastLoad::Install();  // checks bFastLoading itself, per loading screen
 			Compass::Install();
 			Session::Initialize();
 			gameDataReady = true;
@@ -70,6 +69,7 @@ namespace
 		FrameStats::Global().Frame(std::chrono::steady_clock::now());
 		if (gameDataReady) {
 			Session::Frame();
+			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 			DevCommands::Frame();
 		}
 	}
