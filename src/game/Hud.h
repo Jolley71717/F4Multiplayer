@@ -3,16 +3,19 @@
 // Messages for the player (the HUD's top-left notifications).
 namespace Hud
 {
-	// Watches for loading screens: nothing is written to the HUD while one is up or just closed.
+	// Watches for loading screens: nothing is written to the HUD while one is up or just closed. The
+	// game's one loading screen watcher: the frame, the compass and the hang watch go by it too.
 	void Install();
 
-	// A save is about to be loaded: nothing is written to the HUD until it has been, and has settled.
-	void OnLoadStarting();
+	// Whether a loading screen is up. Any thread.
+	[[nodiscard]] bool LoadingScreenUp();
 
 	// A save was loaded: the HUD is rebuilt over the next seconds; nothing is written to it meanwhile.
+	// (While the load itself is under way the save/load hold keeps the HUD alone; see SaveLoadHold.)
 	void OnGameLoaded();
 
-	// Whether the HUD may be written to right now (no loading screen, and not just after one or a load).
+	// Whether the HUD may be written to right now (no loading screen, save or load, and not just after
+	// a loading screen or a load).
 	[[nodiscard]] bool IsSettled();
 
 	// Shows the next waiting message. Called only from inside the HUD's own update (Compass hooks it),

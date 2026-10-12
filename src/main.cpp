@@ -10,6 +10,7 @@
 #include "HangWatch.h"
 #include "MainThread.h"
 #include "game/SaveGuard.h"
+#include "game/SaveLoadHold.h"
 #include "net/Session.h"
 
 // user32 (windows.h clashes with CommonLibF4's names).
@@ -62,55 +63,89 @@ namespace
 		}
 	}
 
-	// A loading screen is up. The engine may pump window messages from inside its load code, and game
-	// work must not run in the middle of that; it waits for the load to finish.
-	std::atomic<bool> loading{ false };
-
-	class LoadingWatcher :
-		public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-	{
-	public:
-		RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
-		{
-			if (a_event.menuName == "LoadingMenu"sv) {
-				loading = a_event.opening;
-				HangWatch::SetLoading(a_event.opening);
-			}
-			return RE::BSEventNotifyControl::kContinue;
-		}
-	};
-	LoadingWatcher loadingWatcher;
-
-	// A save or a game load is under way: from F4SE's message before it to the one after. The engine may
-	// pump window messages inside either, and a load starts before its loading screen's event comes: game
-	// work then would spawn the stand-ins just taken out for the save (into it), or change the world
-	// under the load. It waits for the engine to finish; a message that never came stops it only for
+	// A save or a game load is under way: from F4SE's message before it to the one after (SaveLoadHold).
+	// The engine may pump window messages inside either, a load runs on a thread of its own while the main
+	// thread goes on running frames, and a load starts before its loading screen's event comes: game work
+	// then would spawn the stand-ins just taken out for the save (into it), or change the world under the
+	// load. It waits for the engine to finish; a message that never came stops it only for
 	// SAVE_OR_LOAD_LIMIT.
-	constexpr auto                                     SAVE_OR_LOAD_LIMIT = std::chrono::seconds(60);
-	std::atomic<bool>                                  savingOrLoading{ false };
-	std::atomic<std::chrono::steady_clock::time_point> saveOrLoadSince{};
-	std::atomic<std::uint32_t>                         heldForSaveOrLoad{ 0 };  // frames, logged after it
+	constexpr auto SAVE_OR_LOAD_LIMIT = std::chrono::seconds(60);
+	// How long a load's thread waits for the main thread to do the game work it hands over.
+	constexpr auto MAIN_THREAD_WAIT = std::chrono::seconds(2);
+	constexpr auto WAKE_EVERY = std::chrono::milliseconds(100);  // a wake can be skipped (inside a frame)
+
+	bool OnMainThread()
+	{
+		return std::this_thread::get_id() == mainThread;
+	}
+
+	void WakeMainThread();  // with the window, below
 
 	void BeginSaveOrLoad()
 	{
-		saveOrLoadSince = std::chrono::steady_clock::now();
-		savingOrLoading = true;
+		SaveLoadHold::Global().Begin(std::chrono::steady_clock::now());
 	}
 
-	void EndSaveOrLoad(std::string_view a_what)
+	void EndSaveOrLoad(std::uint64_t a_hold, std::string_view a_what)
 	{
-		savingOrLoading = false;
-		if (const auto held = heldForSaveOrLoad.exchange(0)) {
-			REX::INFO("Frame: {} frame(s) held during the {}", held, a_what);
+		if (const auto held = SaveLoadHold::Global().End(a_hold); held && *held) {
+			REX::INFO("Frame: {} frame(s) held during the {}", *held, a_what);
 		}
 	}
 
-	bool SaveOrLoadUnderWay()
+	// Game work a save's or load's message needs done before the engine goes on, done on the main thread
+	// between frames. A save's message comes on the main thread: it runs at once, after the work an earlier
+	// message handed over (a load's, should the save come before the frame after it). A load's comes on the
+	// load's own thread while the main thread may be in a frame: that thread hands the work over and waits
+	// here, so the frame in progress finishes first, no game object is touched from two threads, and the
+	// stand-ins are out before the load starts. Should the main thread not come in MAIN_THREAD_WAIT (busy in
+	// the engine's own load work), the load's thread does it itself, once no frame is working, as it always
+	// did, rather than hold the load up any longer.
+	void RunBeforeSaveOrLoad(SaveLoadHold::Hold::Work a_work, std::string_view a_what)
 	{
-		return savingOrLoading && std::chrono::steady_clock::now() - saveOrLoadSince.load() < SAVE_OR_LOAD_LIMIT;
+		auto& hold = SaveLoadHold::Global();
+		if (OnMainThread()) {
+			hold.RunNow(a_work);  // what an earlier message handed over goes first
+			return;
+		}
+		const auto start = std::chrono::steady_clock::now();
+		const auto waited = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count(); };
+		hold.Post(std::move(a_work));
+		do {
+			WakeMainThread();
+			if (hold.WaitForFrames(WAKE_EVERY)) {
+				REX::INFO("Frame: the main thread took the stand-ins out for the {} ({} ms)", a_what, waited());
+				return;
+			}
+		} while (std::chrono::steady_clock::now() - start < MAIN_THREAD_WAIT);
+		auto       left = hold.TakeBack();
+		const bool idle = hold.WaitForFrames(MAIN_THREAD_WAIT);
+		if (left.empty()) {
+			REX::WARN("Frame: the main thread took the stand-ins out for the {} late ({} ms{})", a_what, waited(), idle ? "" : ", and is still at it");
+			return;
+		}
+		REX::WARN("Frame: the main thread didn't come in {} ms; the {}'s thread takes the stand-ins out{}", waited(), a_what, idle ? "" : " beside a frame still working");
+		for (auto& fn : left) {
+			fn();
+		}
 	}
 
-	// Co-save records: which of the session's changes each save contains.
+	// Game work after a load (or a new game), done on the main thread before its next frame's game work;
+	// the hold ends after it, so no frame works between the load and the session starting over. A load's
+	// thread hands it over and goes on.
+	void RunAfterLoad(SaveLoadHold::Hold::Work a_work)
+	{
+		auto& hold = SaveLoadHold::Global();
+		if (OnMainThread()) {
+			hold.RunNow(a_work);
+			return;
+		}
+		hold.Post(std::move(a_work));
+		WakeMainThread();
+	}
+
+	// Co-save records: which of the session's changes each save contains. The callbacks run inside the
+	// save or load, on its thread, and touch only the plugin's own records; the hold keeps frames out then.
 	constexpr std::uint32_t SERIALIZATION_ID = 'F4MP';
 
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
@@ -140,43 +175,49 @@ namespace
 		switch (a_msg->type) {
 		case F4SE::MessagingInterface::kGameDataReady:
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
-			if (const auto ui = RE::UI::GetSingleton()) {
-				ui->RegisterSink<RE::MenuOpenCloseEvent>(&loadingWatcher);
-			}
 			Compass::Install();
-			Hud::Install();
+			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
 			HangWatch::Start();
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
-			if (gameDataReady) {
-				Hud::OnLoadStarting();  // the HUD is torn down before the loading screen's event comes
-			}
-			BeginSaveOrLoad();
-			Session::OnBeforeSaveOrLoad();
+			BeginSaveOrLoad();  // the HUD holds from here too: it is torn down before the loading screen's event comes
+			RunBeforeSaveOrLoad([] { Session::OnBeforeSaveOrLoad(); }, "load");
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 			BeginSaveOrLoad();
-			// Remote players' actors must never be written into a save.
-			Session::OnBeforeSaveOrLoad();
-			SaveGuard::BeforeSave();
+			// Remote players' actors must never be written into a save. A save made before the first frame
+			// after a load runs that load's own work first (RunAfterLoad), or the stand-ins it took out
+			// would be the ones from before the load.
+			RunBeforeSaveOrLoad(
+				[] {
+					Session::OnBeforeSaveOrLoad();
+					SaveGuard::BeforeSave();
+				},
+				"save");
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
-			EndSaveOrLoad("save");
+			EndSaveOrLoad(SaveLoadHold::Global().Newest(), "save");
 			break;
 		case F4SE::MessagingInterface::kPostLoadGame:
-			if (gameDataReady) {
-				SaveGuard::AfterLoad();
-			}
-			[[fallthrough]];
 		case F4SE::MessagingInterface::kNewGame:
-			EndSaveOrLoad("load");
-			if (gameDataReady) {
-				Session::OnGameLoaded();
-				Hud::OnGameLoaded();
-			}
+			RunAfterLoad([loaded = a_msg->type == F4SE::MessagingInterface::kPostLoadGame, hold = SaveLoadHold::Global().Newest()] {
+				// An exception must not keep the hold from ending.
+				try {
+					if (gameDataReady) {
+						if (loaded) {
+							SaveGuard::AfterLoad();
+						}
+						Session::OnGameLoaded();
+						Hud::OnGameLoaded();
+					}
+				} catch (const std::exception& e) {
+					REX::ERROR("Frame: after the load: {}", e.what());
+				}
+				EndSaveOrLoad(hold, "load");
+			});
 			break;
 		default:
 			break;
@@ -211,12 +252,18 @@ namespace
 	// The game's work for one frame.
 	void RunFrame(bool a_onMain)
 	{
-		if (a_onMain && loading) {
+		// What a save or load handed over (RunBeforeSaveOrLoad, RunAfterLoad) comes first, held or not.
+		auto& hold = SaveLoadHold::Global();
+		hold.RunPosted();
+		// A loading screen is up. The engine may pump window messages from inside its load code, and game
+		// work must not run in the middle of that; it waits for the load to finish.
+		if (a_onMain && Hud::LoadingScreenUp()) {
 			return;
 		}
-		if (a_onMain && SaveOrLoadUnderWay()) {
-			++heldForSaveOrLoad;
-			return;
+		// Entered under the hold's lock: a load that begins from here on waits for this frame to finish.
+		const SaveLoadHold::Frame frame{ hold, std::chrono::steady_clock::now() };
+		if (!frame) {
+			return;  // a save or load is under way (counted, and logged after it)
 		}
 		CountFrameThread();
 		std::vector<std::function<void()>> work;
@@ -241,25 +288,42 @@ namespace
 	// lists from there raced the engine unloading actors (a crash leaving Red Rocket). So the task only
 	// asks: once per drawn frame it posts a message to the game's window, and the window procedure, which
 	// Windows runs on the thread that made the window (WinMain's), does the work.
-	constexpr int     GWLP_WNDPROC = -4;
-	constexpr auto    REPOST_AFTER = std::chrono::seconds(2);  // a message that got lost (it shouldn't)
-	void*             gameWindow = nullptr;
-	std::intptr_t     originalWndProc = 0;
-	unsigned int      frameMessage = 0;
-	bool              windowFailed = false;
-	bool              inFrame = false;  // main thread only: an engine call can pump messages inside ours
-	std::atomic<bool> framePosted{ false };
+	constexpr int            GWLP_WNDPROC = -4;
+	constexpr auto           REPOST_AFTER = std::chrono::seconds(2);  // a message that got lost (it shouldn't)
+	constexpr std::uintptr_t WAKE = 1;                                // the message's wparam: only a save's or load's work
+	std::atomic<void*>       gameWindow{ nullptr };                   // also read by a load's thread (WakeMainThread)
+	std::intptr_t            originalWndProc = 0;
+	unsigned int             frameMessage = 0;
+	bool                     windowFailed = false;
+	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
+	std::atomic<bool>        framePosted{ false };
 	std::chrono::steady_clock::time_point postedAt{};
+
+	// Has the main thread do what a save or load handed over (and only that) now: the frame task may not
+	// run while the engine loads.
+	void WakeMainThread()
+	{
+		if (const auto window = gameWindow.load()) {
+			PostMessageW(window, frameMessage, WAKE, 0);
+		}
+	}
 
 	std::intptr_t __stdcall WndProc(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam)
 	{
 		if (a_msg == frameMessage && frameMessage != 0) {
-			framePosted = false;
+			const bool wake = a_wparam == WAKE;
+			if (!wake) {
+				framePosted = false;
+			}
 			if (!inFrame) {
 				inFrame = true;
 				// An exception must never escape into the game's message loop.
 				try {
-					RunFrame(true);
+					if (wake) {
+						SaveLoadHold::Global().RunPosted();
+					} else {
+						RunFrame(true);
+					}
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: {}", e.what());
 				}
@@ -272,8 +336,8 @@ namespace
 
 	bool HookWindow()
 	{
-		if (gameWindow || windowFailed) {
-			return gameWindow != nullptr;
+		if (gameWindow.load() || windowFailed) {
+			return gameWindow.load() != nullptr;
 		}
 		const auto main = RE::Main::GetSingleton();
 		const auto window = main ? reinterpret_cast<void*>(main->hwnd) : nullptr;
@@ -296,7 +360,7 @@ namespace
 		} else {
 			REX::INFO("Frame: game work runs on the main thread");
 		}
-		return gameWindow != nullptr;
+		return gameWindow.load() != nullptr;
 	}
 
 	// The F4SE permanent task (see NewFrame for when it runs).
@@ -312,7 +376,7 @@ namespace
 		}
 		if (!framePosted.exchange(true) || now - postedAt > REPOST_AFTER) {
 			postedAt = now;
-			if (!PostMessageW(gameWindow, frameMessage, 0, 0)) {
+			if (!PostMessageW(gameWindow.load(), frameMessage, 0, 0)) {
 				framePosted = false;
 			}
 		}
@@ -359,6 +423,15 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	DevChannel::Start();
 
 	return true;
+}
+
+namespace SaveLoadHold
+{
+	Hold& Global()
+	{
+		static Hold hold{ SAVE_OR_LOAD_LIMIT };
+		return hold;
+	}
 }
 
 namespace FrameStats

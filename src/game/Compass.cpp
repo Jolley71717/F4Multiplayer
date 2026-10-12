@@ -63,10 +63,9 @@ namespace Compass
 		};
 		std::map<std::uint32_t, Placed> placed;
 		std::atomic<bool>          updateQueued{ false };
-		// While a loading screen is up the HUD is being torn down or rebuilt; no marker is touched until
-		// it has closed. Crashes in the HUD's render tree on loading screens pointed here (TreeNode::
-		// SetVisible on the render thread, no plugin frame).
-		std::atomic<bool>          loading{ false };
+		// While a loading screen is up (Hud::LoadingScreenUp) the HUD is being torn down or rebuilt; no
+		// marker is touched until it has closed. Crashes in the HUD's render tree on loading screens
+		// pointed here (TreeNode::SetVisible on the render thread, no plugin frame).
 		std::atomic<std::uint32_t> skippedLoading{ 0 };
 		// Nor while another menu is up (a conversation, the Pip-Boy, the workshop): the HUD hides and
 		// rearranges itself then, and a host crashed in the HUD's render tree as a conversation opened,
@@ -102,9 +101,6 @@ namespace Compass
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
-				if (a_event.menuName == "LoadingMenu"sv) {
-					loading = a_event.opening;
-				}
 				for (std::size_t i = 0; i < OTHER_MENUS.size(); ++i) {
 					if (a_event.menuName == OTHER_MENUS[i]) {
 						const auto bit = 1u << i;
@@ -208,7 +204,7 @@ namespace Compass
 		void Apply(RE::IMenu* a_hud, const std::vector<Target>& a_targets)
 		{
 			Seen(uiThreads);
-			if (loading) {
+			if (Hud::LoadingScreenUp()) {
 				++skippedLoading;
 				return;
 			}
@@ -282,7 +278,7 @@ namespace Compass
 			++advances;
 			// An update queued before a load (or its loading screen) names a HUD that is being torn down
 			// and rebuilt; it is dropped, and Frame queues a fresh one once the HUD has settled.
-			if (loading || !Hud::IsSettled()) {
+			if (Hud::LoadingScreenUp() || !Hud::IsSettled()) {
 				updateQueued = false;
 				return;
 			}
@@ -354,10 +350,10 @@ namespace Compass
 
 	void Frame()
 	{
-		if (!loading) {
+		if (!Hud::LoadingScreenUp()) {
 			HookHud();  // the HUD messages go out through it too, markers or not
 		}
-		if (!Config::Get().compassMarkers || loading || !Hud::IsSettled()) {
+		if (!Config::Get().compassMarkers || Hud::LoadingScreenUp() || !Hud::IsSettled()) {
 			return;  // the HUD is being torn down or rebuilt (loading screen, or a game load just finished)
 		}
 		Seen(frameThreads);
