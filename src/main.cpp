@@ -58,6 +58,7 @@ namespace
 		case F4SE::MessagingInterface::kNewGame:
 			if (gameDataReady) {
 				Session::OnGameLoaded();
+				Hud::OnGameLoaded();
 			}
 			break;
 		default:

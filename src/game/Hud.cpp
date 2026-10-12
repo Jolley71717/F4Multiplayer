@@ -11,6 +11,10 @@ namespace Hud
 		// friend's spoken line, "X joined") was behind crashes in the HUD's text layout on the render
 		// thread. Messages wait until the HUD has been back for a moment.
 		constexpr auto        SETTLE = 1500ms;
+		// A game load rebuilds every menu some seconds after its loading screen has closed: the old HUD
+		// movie is released while the new one comes up (a host crashed in the text layout, with
+		// Movie::Release on the stack, 3 s after a save was loaded). Longer hold after one.
+		constexpr auto        SETTLE_AFTER_LOAD = 6s;
 		constexpr std::size_t MAX_QUEUED = 8;
 
 		std::atomic<bool>        loading{ false };
@@ -37,15 +41,36 @@ namespace Hud
 		};
 		MenuWatcher watcher;
 
+		std::atomic<bool> gameLoaded{ false };
+		Clock::time_point gameLoadedAt{};
+
 		bool Settled()
 		{
-			return !loading && (!everLoaded || Clock::now() - loadedAt >= SETTLE);
+			if (loading) {
+				return false;
+			}
+			const auto now = Clock::now();
+			if (gameLoaded && now - gameLoadedAt < SETTLE_AFTER_LOAD) {
+				return false;
+			}
+			return !everLoaded || now - loadedAt >= SETTLE;
 		}
 
 		void Show(const std::string& a_clean)
 		{
 			RE::SendHUDMessage::ShowHUDMessage(a_clean.c_str(), "", false, false);
 		}
+	}
+
+	void OnGameLoaded()
+	{
+		gameLoadedAt = Clock::now();
+		gameLoaded = true;
+	}
+
+	bool IsSettled()
+	{
+		return Settled();
 	}
 
 	void Install()

@@ -2,6 +2,7 @@
 
 #include "game/RemotePlayers.h"
 #include "Config.h"
+#include "game/Hud.h"
 
 namespace Compass
 {
@@ -261,8 +262,8 @@ namespace Compass
 
 	void Frame()
 	{
-		if (!Config::Get().compassMarkers || loading) {
-			return;
+		if (!Config::Get().compassMarkers || loading || !Hud::IsSettled()) {
+			return;  // the HUD is being torn down or rebuilt (loading screen, or a game load just finished)
 		}
 		auto targets = FindTargets();
 		if (targets.empty() && shown.load() == 0) {
