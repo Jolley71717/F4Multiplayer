@@ -4,6 +4,11 @@
 
 namespace Equipment
 {
+	namespace
+	{
+		constexpr REL::ID POWER_ARMOR_FURNITURE_KEYWORD{ 2194741 };  // PowerArmor::GetFurnitureKeyword
+	}
+
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor)
 	{
 		std::vector<std::uint32_t> items;
@@ -77,6 +82,22 @@ namespace Equipment
 			}
 		}
 		HoldThrowable(a_actor, a_items);
+	}
+
+	bool InPowerArmor(const RE::Actor* a_actor)
+	{
+		return a_actor && a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+	}
+
+	bool IsPowerArmorFrame(const RE::TESForm* a_base)
+	{
+		const auto furniture = a_base && a_base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? a_base->As<RE::TESFurniture>() : nullptr;
+		if (!furniture) {
+			return false;
+		}
+		static REL::Relocation<RE::BGSKeyword* (*)()> furnitureKeyword{ POWER_ARMOR_FURNITURE_KEYWORD };
+		const auto keyword = furnitureKeyword();
+		return keyword && static_cast<const RE::BGSKeywordForm*>(furniture)->HasKeyword(keyword);
 	}
 
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)

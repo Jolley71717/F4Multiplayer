@@ -71,10 +71,11 @@
   and blends between received states. `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
   was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
-  that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still,
-  where the stand-in was found more than 2 units from where it was put (w the furthest): anything
-  but 0 means something in the engine is moving it, such as a power armor frame copy. Before every
-  save and load, all puppets are deleted so they never end up in a save file.
+  that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still
+  (their state says speed 0: one held still only by a late state is not counted), where the
+  stand-in was found more than 2 units from where it was put (w the furthest): anything but 0
+  means something in the engine is moving it, such as a power armor frame copy. Before every save
+  and load, all puppets are deleted so they never end up in a save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
@@ -231,9 +232,32 @@ else skips this: the player is never in those places.
 
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
-- Status (location, interior cell, health %, level): sent when it changes (at most 4/s) and every
-  2 s; the server keeps the latest for newcomers. Receivers announce deaths (health 0) and put the
-  health on the stand-in's name tag.
+- Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor):
+  sent when it changes (at most 4/s) and every 2 s; the server keeps the latest for newcomers.
+  Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
+  armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
+  such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
+  itself. The stand-in wears the pieces they wear from the moment the status says they are in
+  power armor (`RemotePlayers.cpp`, `ArmorFrames.h`), and the receiver keeps a copy of the base
+  (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
+  placed at once, hidden and without collision from the moment its 3D is in, and moved along with
+  the stand-in (placed again if it is in another place, over 256 units off or without 3D after
+  10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
+  nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
+  to them. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
+  (`TESFurniture::Activate` begins power armor use only for the player; an NPC gets in only through
+  its AI package), so the stand-in sent in never got in, and pieces that waited for it left the
+  friend shown without armor. The receiver's own copy of a shared frame reference is hidden (not
+  drawn, no collision; the reference itself is never moved, used or deleted) while the friend wears
+  theirs, only when it is a power armor frame of the base they sent, nobody there is in it, it is
+  not the receiver's own suit (worn or last left), no quest of the receiver's holds it (it fills no
+  quest alias: the museum's suit is the main quest's objective) and it stands within 200 units of
+  where the friend was as they got in (their newest state if it came within 0.5 s of the status,
+  else the next one); otherwise, or once it has been elsewhere or used in that wear, it stays shown
+  until they get in anew. It stays hidden through saves (only its 3D is touched) and is hidden again
+  at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
+  several friends wear their copies of it, once the last of them is), and solid again once nobody
+  stands within 70 units of it.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

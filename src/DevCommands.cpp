@@ -326,7 +326,7 @@ namespace DevCommands
 			const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
 			const auto last = player->lastUsedPowerArmor.get();
 			const auto base = occupied ? occupied->GetObjectReference() : nullptr;
-			return std::format("engineSaysPA={} extraPA={} occupied={:08X} base={:08X} lastFrame={:08X}", RE::PowerArmor::PlayerInPowerArmor(), player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor), occupied ? occupied->GetFormID() : 0, base ? base->GetFormID() : 0, last ? last->GetFormID() : 0);
+			return std::format("engineSaysPA={} extraPA={} occupied={:08X} base={:08X} lastFrame={:08X}", RE::PowerArmor::PlayerInPowerArmor(), Equipment::InPowerArmor(player), occupied ? occupied->GetFormID() : 0, base ? base->GetFormID() : 0, last ? last->GetFormID() : 0);
 		}
 
 		std::string Console(std::string_view a_args)

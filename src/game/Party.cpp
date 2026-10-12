@@ -5,6 +5,7 @@
 #include "Config.h"
 #include "game/Compass.h"
 #include "game/Downed.h"
+#include "game/Equipment.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
@@ -67,6 +68,12 @@ namespace Party
 		bool                                                unstable = false;
 		int                                                 slowAnswers = 0;
 		Clock::time_point                                   nextPingWarning{};
+
+		// The frame our player wears (its base, and itself when every game has it), from the furniture occupied when
+		// the armor went on (see SampleStatus). Forgotten on a load: the loaded save may have our player in another
+		// frame, and the old one was sent for as long as the armor stayed on.
+		std::uint32_t frameInUse = 0;
+		std::uint32_t frameRefInUse = 0;
 
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
@@ -189,23 +196,28 @@ namespace Party
 			status.light = player->IsPipboyLightOn();
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
-			status.powerArmor = player->extraList && player->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+			status.powerArmor = Equipment::InPowerArmor(player);
 			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on:
 			// the occupied furniture changes with every terminal or chair used in the armor (a terminal was once
 			// sent as the frame, and the others placed a terminal copy and sat the stand-in at it).
-			static std::uint32_t frameInUse = 0;
+			// The reference goes too when every game has it (a frame placed in the world by a plugin, such as the
+			// museum's suit in Concord): the others hide their own copy of it while we wear ours, else they saw
+			// two suits. One made in this game (0xFF......) is another reference, or none, in theirs.
 			if (status.powerArmor) {
 				if (frameInUse == 0) {
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 					const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
 					const auto base = frame ? frame->GetObjectReference() : nullptr;
-					if (base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN) {
+					if (Equipment::IsPowerArmorFrame(base)) {
 						frameInUse = base->GetFormID();
+						frameRefInUse = Protocol::IsShareableRef(frame->GetFormID()) ? frame->GetFormID() : 0;
 					}
 				}
 				status.powerArmorFrame = frameInUse;
+				status.powerArmorFrameRef = frameRefInUse;
 			} else {
 				frameInUse = 0;
+				frameRefInUse = 0;
 			}
 			return status;
 		}
@@ -478,7 +490,7 @@ namespace Party
 		entry.status = a_status;
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
-		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame);
+		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame, a_status.powerArmorFrameRef);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}
@@ -685,6 +697,8 @@ namespace Party
 		unclaimedXp = 0.0f;
 		heldXp = 0.0f;
 		killWindowEnd = {};
+		frameInUse = 0;
+		frameRefInUse = 0;
 	}
 
 	void Reset()
