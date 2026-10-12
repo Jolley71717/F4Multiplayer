@@ -1422,6 +1422,46 @@ TEST("server trust: a death of an actor nobody runs is taken from anyone")
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
 }
 
+TEST("server trust: the host's game is believed about a death of an NPC another player runs")
+{
+	Fixture f;
+	f.fake->SetLocal(1);
+	const auto host = JoinAs(f, 1, "Host");
+	JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game
+	Clear(f, { 1, 2, 3 });
+
+	f.fake->Deliver(3, Death(NPC2, false));  // Carol isn't the host
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	f.fake->Deliver(1, Death(NPC, false));  // dead in the host's save
+	const auto packets = Received(f, 2);
+	const auto deaths = Decoded(packets, MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == host);
+	CHECK(HasOwner(Owners(packets), NPC, 0));  // Bob's game gives it up
+	CHECK(Count(Received(f, 3), MT::kActorDied) == 1);
+
+	f.fake->Deliver(2, Claim(NPC));
+	CHECK(Owners(Received(f, 2)).empty());
+}
+
+TEST("server trust: an NPC the session knows is dead hurts nobody")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Death(NPC, false));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Hit(alice, 10.0f, false, NPC));  // still alive in Bob's game for a moment
+	CHECK(Count(Received(f, 1), MT::kPlayerDamaged) == 0);
+	f.fake->Deliver(2, Hit(alice, 10.0f, false, NPC2));
+	CHECK(Count(Received(f, 1), MT::kPlayerDamaged) == 1);
+}
+
 TEST("server trust: a hit is capped per hit and per second")
 {
 	Fixture    f;

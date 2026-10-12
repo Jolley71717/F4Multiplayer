@@ -632,8 +632,11 @@ void Server::Run()
 			return;
 		}
 		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
-		// or mischief (it would kill the NPC for everyone and be saved).
-		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+		// or mischief (it would kill the NPC for everyone and be saved). The host's own game (a player on
+		// this machine) is believed all the same: its world is the session's, so an NPC dead in it is dead
+		// for everyone, even one a joiner's game took over because it was alive there (a joiner's game ran
+		// bloatflies the host's save had dead, and they fought the host's stand-in).
+		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id && !a_player.local) {
 			return;
 		}
 		if (!deadActors.insert(death->refId).second) {
@@ -888,6 +891,11 @@ void Server::Run()
 		}
 		const auto hit = Protocol::DecodePlayerHit(a_data);
 		if (!hit || hit->playerId == a_player.id || (hit->byPlayer && !options.friendlyFire)) {
+			return;
+		}
+		// A dead NPC hurts nobody. One the session knows is dead can still be alive for a moment in the
+		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it).
+		if (!hit->byPlayer && deadActors.contains(hit->attacker)) {
 			return;
 		}
 		// No single hit beyond what the strongest weapon does, and no more per second from one

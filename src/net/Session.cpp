@@ -278,6 +278,7 @@ namespace Session
 			case MessageType::kActorOwners:
 				if (const auto msg = Protocol::DecodeOwners(a_data)) {
 					NpcSync::ApplyOwners(*msg);
+					WorldSync::OnActorOwners(*msg);
 				}
 				break;
 			case MessageType::kActorStatesRelay:

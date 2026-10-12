@@ -29,8 +29,8 @@ namespace WorldSync
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
 		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
-		// Actors whose 3D just loaded (the host checks them for deaths no event reported).
-		std::vector<std::uint32_t> loadInbox;
+		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
+		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
@@ -114,10 +114,18 @@ namespace WorldSync
 		// The host's world is the session's: an actor already dead in it (killed before the session, or
 		// while nobody was joined, and saved that way) is dead for everyone, though no death event says so.
 		// A joiner's fresh world had bloatflies alive and fighting that the host's save had dead.
-		// They are checked as they load, once the loading screen is gone. The session starts after a
-		// save's cells have loaded, so until we know we host, the latest loads are kept.
+		// What our game has loaded is known from its load and unload events. When we host, an actor is
+		// checked as it loads, and everything loaded is checked again whenever a session starts or a save
+		// is loaded: the bloatflies' corpses had loaded during an earlier session, and nothing loaded them
+		// again. An NPC another player's game takes over is checked too (OnActorOwners).
+		// Limit: only what is in our game's memory can be checked. Persistent actors always are, and so are
+		// those of cells loaded lately; an ordinary NPC of a cell our game hasn't loaded isn't, and lives on
+		// in a friend's game until ours loads it (then it dies there too: the server takes the host's word
+		// over its runner's). It can only fight our stand-in where we are, and there our game has it loaded.
 		constexpr std::size_t                  MAX_LOADED_ACTORS = 1024;
-		std::vector<std::uint32_t>             loadedActors;
+		std::unordered_set<std::uint32_t>      loadedActors;  // their 3D is loaded, by the events
+		std::unordered_set<std::uint32_t>      toCheck;       // for a death no event reported, once we can
+		bool                                   checkAllLoaded = true;
 		std::uint32_t                          foundDead = 0;
 
 		void ReportDead(std::uint32_t a_id, const RE::NiPoint3& a_at, bool a_byUs)
@@ -223,11 +231,11 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent& a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
 			{
-				if (a_event.loaded && IsShareableRef(a_event.formID)) {
+				if (IsShareableRef(a_event.formID)) {
 					const auto form = RE::TESForm::GetFormByID(a_event.formID);
 					if (form && form->GetFormType() == RE::ENUM_FORM_ID::kACHR) {
 						std::scoped_lock l{ inboxLock };
-						loadInbox.push_back(a_event.formID);
+						loadInbox.emplace_back(a_event.formID, a_event.loaded);
 					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
@@ -235,6 +243,58 @@ namespace WorldSync
 		};
 
 		LoadWatcher loadWatcher;
+
+		void TrackLoads(const std::vector<std::pair<std::uint32_t, bool>>& a_events)
+		{
+			for (const auto& [id, isLoaded] : a_events) {
+				if (!isLoaded) {
+					loadedActors.erase(id);
+					continue;
+				}
+				toCheck.insert(id);
+				if (loadedActors.size() >= MAX_LOADED_ACTORS) {
+					// Unload events keep the set to what is loaded; should some go missing, it is pruned when full.
+					std::erase_if(loadedActors, [](std::uint32_t a_id) {
+						const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+						return !actor || !actor->Get3D();
+					});
+				}
+				if (loadedActors.size() < MAX_LOADED_ACTORS) {
+					loadedActors.insert(id);
+				}
+			}
+		}
+
+		// When we host, reports the actors to check that are dead in our world and not known to be yet.
+		void CheckFoundDead(bool a_hosting)
+		{
+			if (!a_hosting) {
+				// Not ours to say. Once we host (again), everything loaded is checked: a new session knows nothing.
+				toCheck.clear();
+				checkAllLoaded = true;
+				return;
+			}
+			if (!InWorld() || Story::InOpening()) {
+				return;
+			}
+			if (checkAllLoaded) {
+				checkAllLoaded = false;
+				toCheck.insert(loadedActors.begin(), loadedActors.end());
+			}
+			for (const auto id : toCheck) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !dead.insert(id).second) {
+					continue;
+				}
+				// Where the corpse lies only when it is loaded here: one in a cell we don't have loaded may lie
+				// in another cell than the friend's copy, which would be moved there.
+				ReportDead(id, actor->Get3D() ? actor->data.location : RE::NiPoint3{}, false);
+				++foundDead;
+				pending.erase(id);
+				pendingHealth.erase(id);
+			}
+			toCheck.clear();
+		}
 
 		const RE::ActorValueInfo* HealthInfo()
 		{
@@ -784,6 +844,17 @@ namespace WorldSync
 		}
 	}
 
+	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners)
+	{
+		// Another player's game runs these, so they live there. A persistent NPC (or one of a cell we left
+		// lately) is in our memory even where we aren't, and when we host, ours is checked (CheckFoundDead).
+		for (const auto& owner : a_owners) {
+			if (owner.playerId != 0 && !ownIds.contains(owner.playerId) && IsShareableRef(owner.refId)) {
+				toCheck.insert(owner.refId);
+			}
+		}
+	}
+
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
 		OfferContainerChange(a_change.index, a_change.change, ownIds.contains(a_change.playerId));
@@ -829,6 +900,7 @@ namespace WorldSync
 	void Frame(bool a_hosting)
 	{
 		std::vector<std::uint32_t> newDeaths;
+		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
@@ -837,8 +909,7 @@ namespace WorldSync
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
-			loadedActors.insert(loadedActors.end(), loadInbox.begin(), loadInbox.end());
-			loadInbox.clear();
+			newLoads.swap(loadInbox);
 			killedByUs.swap(killInbox);
 			killInbox.clear();
 			newHits.swap(hitInbox);
@@ -862,21 +933,8 @@ namespace WorldSync
 			pendingHealth.erase(id);
 		}
 
-		if (a_hosting && InWorld() && !Story::InOpening()) {
-			for (const auto id : loadedActors) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !dead.insert(id).second) {
-					continue;
-				}
-				ReportDead(id, actor->data.location, false);
-				++foundDead;
-				pending.erase(id);
-				pendingHealth.erase(id);
-			}
-			loadedActors.clear();
-		} else if (loadedActors.size() > MAX_LOADED_ACTORS) {
-			loadedActors.erase(loadedActors.begin(), loadedActors.end() - MAX_LOADED_ACTORS);
-		}
+		TrackLoads(newLoads);
+		CheckFoundDead(a_hosting);
 
 		// Report the health of actors we hit last frame (damage has been applied by now).
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
@@ -959,6 +1017,9 @@ namespace WorldSync
 		pendingRefStates.clear();
 		unmatchedPickups.clear();
 		replayed.clear();
+		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
+		// all of it is checked again when we host: what we knew to be dead is forgotten.
+		checkAllLoaded = true;
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
 		standInHits.clear();
@@ -1028,8 +1089,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} loadedActors={}",
 			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped, foundDead);
+			ownSkipped, foundDead, loadedActors.size());
 	}
 }
