@@ -154,6 +154,18 @@ namespace DevCommands
 			return result;
 		}
 
+		// stall <seconds>: holds the game's main thread that long (up to 120 s), to see the hang watch
+		// (iHangSeconds) at work without a real freeze. The channel stops waiting for the answer after 12 s.
+		std::string Stall(std::string_view a_args)
+		{
+			const auto seconds = ParseFloat(a_args);
+			if (!seconds || !(*seconds > 0.0f && *seconds <= 120.0f)) {
+				return "error: usage: stall <seconds, up to 120>";
+			}
+			std::this_thread::sleep_for(std::chrono::duration<float>(*seconds));
+			return std::format("stalled {} s", *seconds);
+		}
+
 		std::string Pos(std::string_view)
 		{
 			if (!PlayerCell()) {
@@ -1935,6 +1947,7 @@ namespace DevCommands
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
 			Entry{ "frames", Frames },
+			Entry{ "stall", Stall },
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
 			Entry{ "turnto", TurnTo },

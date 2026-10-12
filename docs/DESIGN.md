@@ -40,6 +40,13 @@
 - **Client:** `src/net/NetClient.cpp` keeps ENet (including DNS lookups) on its own thread, so the
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
+- **Hang watch:** `src/HangWatch.cpp`, one thread, touches no game object. Once a second it asks
+  Windows whether the game's window is "not responding" (`IsHungAppWindow`: the main thread hasn't
+  read its messages for 5 s; nothing is sent to it, and a minimised game waiting for messages
+  counts as answering). A stall of `iHangSeconds` (15; four times that on a loading screen) is
+  logged once with a minidump of the thread stacks (`F4Multiplayer-hang-<time>.dmp` next to the log,
+  the newest 3 kept), and the recovery is logged too. The judgement is `src/HangDetector.h`, unit
+  tested.
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
   (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
   transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.

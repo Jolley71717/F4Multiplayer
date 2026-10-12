@@ -24,8 +24,11 @@ namespace TestServer
 		explicit Fixture(Server::Options a_options = {})
 		{
 			// The server also listens on UDP (this machine only). Test runs can overlap, so start
-			// somewhere random and move on while a port is taken.
-			static std::uint16_t port = static_cast<std::uint16_t>(40000 + std::random_device{}() % 20000);
+			// somewhere random and move on while a port is taken. A port that can't be had is often in
+			// a block Windows reserved (Hyper-V takes them a hundred at a time), so the next try starts
+			// somewhere else rather than at the next port, which would likely be reserved too.
+			const auto randomPort = [] { return static_cast<std::uint16_t>(40000 + std::random_device{}() % 20000); };
+			static std::uint16_t port = randomPort();
 			a_options.udpLoopbackOnly = true;
 			for (int attempt = 0; attempt < 50; ++attempt) {
 				auto transport = std::make_unique<FakeTransport>();
@@ -37,6 +40,7 @@ namespace TestServer
 					fake = raw;
 					return;
 				}
+				port = randomPort();
 			}
 			REQUIRE(fake);
 		}

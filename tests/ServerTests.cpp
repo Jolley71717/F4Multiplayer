@@ -83,6 +83,9 @@ TEST("server: asking for the world state over and over gets only a few answers")
 {
 	Fixture f;
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+	// The join's own world state (free, not from the bucket) is sent right after the Welcome, on the
+	// server's thread: Take alone could run before it arrives and leave it to be counted below.
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kWorldState)));
 	f.fake->Take(1);
 
 	for (int i = 0; i < 20; ++i) {
