@@ -273,7 +273,7 @@ namespace Session
 				break;
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
-					QuestSync::Apply(*msg);
+					QuestSync::Apply(*msg, true);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -489,6 +489,7 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			QuestSync::OnSessionEnded();
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -796,7 +797,7 @@ namespace Session
 		if (welcomed) {
 			NpcSync::Frame();
 		}
-		QuestSync::Frame();
+		QuestSync::Frame(welcomed);
 		Achievements::Frame();
 		for (auto& packet : QuestSync::TakeOutgoing()) {
 			if (welcomed) {

@@ -49,6 +49,13 @@ namespace QuestStageLayout
 		});
 	}
 
+	// Whether the quest has this stage at all (setting one it doesn't have does nothing: TESQuest::SetStage
+	// finds no entry for it in the quest's stage table).
+	inline bool Has(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+	{
+		return std::ranges::any_of(a_quest->stages, [&](const RE::TESQuestStage* a_entry) { return a_entry && Of(a_entry)->data.index == a_stage; });
+	}
+
 	// How many stages the quest has.
 	inline std::size_t Count(const RE::TESQuest* a_quest)
 	{

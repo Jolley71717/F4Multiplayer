@@ -822,7 +822,7 @@ namespace WorldSync
 			ApplyRemoteRefState(state);
 		}
 		for (const auto& stage : a_state.questStages) {
-			QuestSync::Apply(stage);
+			QuestSync::Apply(stage, false);
 		}
 		REX::INFO("WorldSync: session state: {} dead, {} container changes from #{}, {} pickups, {} doors, {} quest stages",
 			a_state.deadActors.size(), a_state.containerChanges.size(), a_state.containerFirstIndex, a_state.pickedUp.size(),

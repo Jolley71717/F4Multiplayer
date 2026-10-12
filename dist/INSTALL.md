@@ -105,15 +105,21 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
   ground, doors opened/closed and locks picked.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
-  backwards), once they have started that quest themselves (it's in their Pip-Boy). Turn this off
-  with `bSyncQuests = false` if a quest misbehaves.
+  backwards), once they have started that quest themselves (it's in their Pip-Boy). A step that
+  would move you (a teleport, a fade to black, your controls taken away) only happens while you're
+  with the friend who did it, and you never pay a friend's bribe or payment (caps, a Stimpak) out of
+  your own pockets. Catching up waits while you're in a fight. Turn this off with
+  `bSyncQuests = false` if a quest misbehaves.
 - **The story:** everyone plays the main story and the faction quests in their own game, and gets
   a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
   each of you talks to the characters yourself. The host can set `sStory = shared` to move
   everyone's story along together instead: any player's progress moves the others forward, one
   stage after another, so each stage runs in every game as it did in the first, achievements
   included (the game only awards them without mods), and goes into each player's save when they
-  save. Scenes can play out where you aren't, and a friend's faction choices become yours.
+  save. Scenes can play out where you aren't, and a friend's faction choices become yours. A
+  story step that has to move you to go on (the Institute's teleporter) comes after a 10-second
+  warning, and not during a fight. With the default `own` story, a side quest never moves your story
+  on (Sanctuary doesn't make you a Minuteman because a friend joined them).
 - **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
   relay, Mass Fusion's reactor) open for each player at their own stage with the default `own`
   story. A friend who is further along walks through; you are refused until you get there yourself,
@@ -133,6 +139,9 @@ the story). Things that were already different between your saves before the ses
 
 With `sStory = shared`, make big story choices together. Quest progress only moves forward, so if
 one player sides with one faction and another player with a rival one, both games get both results.
+If an earlier version left your main story stuck after Unlikely Valentine (Getting a Clue never
+started), join a shared-story session once: it starts Getting a Clue for you. On your own, open the
+console and type `setstage 229E6 10`.
 
 What happens in a session is saved into your game when you save. Use a separate save for co-op if you
 want to keep your solo playthrough untouched.

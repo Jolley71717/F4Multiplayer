@@ -3,6 +3,7 @@
 #include "game/StageLog.h"
 
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <set>
 #include <utility>
@@ -12,34 +13,42 @@ namespace
 {
 	using StageLog::Clock;
 	using Stage = StageLog::Queue::Stage;
+	using namespace std::chrono_literals;
 
+	constexpr std::uint32_t MQ102 = 0x0001CC2A;
+	constexpr std::uint32_t MQ103 = 0x0001CC2B;
 	constexpr std::uint32_t MQ104 = 0x0001F25E;
 	constexpr std::uint32_t MQ105 = 0x000229E6;
+	constexpr std::uint32_t MQ206 = 0x000B1752;
+	constexpr std::uint32_t MQ207 = 0x000229EC;
 	constexpr std::uint32_t SIDE = 0x0001ED86;
 
 	// A game's quests as the queue sees them. A stage set through the console runs at the next Tick, as
 	// in the game, where it is set a moment later; a stage's script runs then too (onStage).
 	struct FakeGame
 	{
-		struct Quest
+		struct Record
 		{
-			bool                    running = true;
-			bool                    completed = false;
+			std::uint16_t           flags = StageLog::QUEST_RUNNING;
 			std::uint16_t           current = 0;
 			std::set<std::uint16_t> done;
 			std::set<std::uint16_t> missing;  // stages this quest doesn't have: setting them does nothing
 		};
 
-		std::map<std::uint32_t, Quest>                    quests;
-		std::vector<Stage>                                set;       // what the queue set, in order
-		std::vector<Stage>                                commands;  // not run yet
-		std::function<void(std::uint32_t, std::uint16_t)> onStage;
-		bool                                              busy = false;
+		std::map<std::uint32_t, Record>                                quests;
+		std::vector<Stage>                                             set;       // what the queue set, in order
+		std::vector<Stage>                                             commands;  // not run yet
+		std::function<void(std::uint32_t, std::uint16_t)>              onStage;
+		bool                                                           busy = false;
+		std::map<std::pair<std::uint32_t, std::uint16_t>, StageLog::Set> verdicts;  // kSet if not here
+		std::map<std::pair<std::uint32_t, std::uint16_t>, Clock::duration> holds;
+
+		bool Running(std::uint32_t a_quest) { return (quests[a_quest].flags & StageLog::QUEST_RUNNING) != 0; }
 
 		void SetStage(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			auto& quest = quests[a_quest];
-			if (!quest.running || quest.missing.contains(a_stage)) {
+			if (!(quest.flags & StageLog::QUEST_RUNNING) || quest.missing.contains(a_stage) || quest.done.contains(a_stage)) {
 				return;
 			}
 			quest.done.insert(a_stage);
@@ -56,27 +65,39 @@ namespace
 			}
 		}
 
-		std::vector<Stage> Poll(StageLog::Queue& a_queue, Clock::time_point a_now)
+		// The queue's view of this game.
+		StageLog::Quest Quest(std::uint32_t a_quest)
 		{
-			return a_queue.Poll(
-				a_now,
-				[&](std::uint32_t a_quest) {
-					const auto it = quests.find(a_quest);
-					if (it == quests.end() || it->second.completed) {
-						return StageLog::Quest::kGone;
-					}
-					return !it->second.running || busy ? StageLog::Quest::kWait : StageLog::Quest::kReady;
-				},
-				[&](std::uint32_t a_quest, std::uint16_t a_stage) {
-					const auto& quest = quests.at(a_quest);
-					return quest.done.contains(a_stage) || a_stage <= quest.current;
-				},
-				[&](std::uint32_t a_quest, std::uint16_t a_stage) {
-					set.push_back({ a_quest, a_stage });
-					commands.push_back({ a_quest, a_stage });
-					return true;
-				});
+			const auto it = quests.find(a_quest);
+			if (it == quests.end() || StageLog::Finished(it->second.flags)) {
+				return StageLog::Quest::kGone;
+			}
+			return !(it->second.flags & StageLog::QUEST_RUNNING) || busy ? StageLog::Quest::kWait : StageLog::Quest::kReady;
 		}
+
+		bool Settled(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			const auto& quest = quests.at(a_quest);
+			return quest.done.contains(a_stage) || a_stage <= quest.current;
+		}
+
+		StageLog::Set Set(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			if (const auto it = verdicts.find({ a_quest, a_stage }); it != verdicts.end() && it->second != StageLog::Set::kSet) {
+				return it->second;
+			}
+			set.push_back({ a_quest, a_stage });
+			commands.push_back({ a_quest, a_stage });
+			return StageLog::Set::kSet;
+		}
+
+		Clock::duration Hold(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			const auto it = holds.find({ a_quest, a_stage });
+			return it != holds.end() ? it->second : Clock::duration::zero();
+		}
+
+		std::vector<Stage> Poll(StageLog::Queue& a_queue, Clock::time_point a_now) { return a_queue.Poll(a_now, *this); }
 
 		// Polls and runs the console until nothing is waiting (or a_polls run out).
 		void Run(StageLog::Queue& a_queue, Clock::time_point& a_now, int a_polls = 50)
@@ -84,10 +105,15 @@ namespace
 			for (int i = 0; i < a_polls && a_queue.Size() > 0; ++i) {
 				Poll(a_queue, a_now);
 				Tick();
-				a_now += std::chrono::milliseconds(500);
+				a_now += 500ms;
 			}
 		}
 	};
+
+	Clock::time_point Start()
+	{
+		return Clock::time_point{} + std::chrono::hours(1);
+	}
 }
 
 TEST("stage log: newly done stages are each reported once, ascending")
@@ -123,6 +149,14 @@ TEST("stage log: a stage set from another player is known, in order, once")
 	CHECK(StageLog::NewlyDone(known, { 5, 10, 20, 30, 40 }).empty());
 }
 
+TEST("stage log: a quest is finished only once it is completed and stopped")
+{
+	CHECK(!StageLog::Finished(0));
+	CHECK(!StageLog::Finished(StageLog::QUEST_RUNNING));
+	CHECK(!StageLog::Finished(StageLog::QUEST_RUNNING | StageLog::QUEST_COMPLETED));
+	CHECK(StageLog::Finished(StageLog::QUEST_COMPLETED));
+}
+
 TEST("stage queue: stages are set lowest first, the next once the last reads done")
 {
 	FakeGame game;
@@ -134,13 +168,15 @@ TEST("stage queue: stages are set lowest first, the next once the last reads don
 	CHECK(queue.Add(SIDE, 20));
 	CHECK(!queue.Add(SIDE, 20));
 	CHECK(queue.Size() == 3);
+	CHECK(queue.Contains(SIDE, 20));
+	CHECK(!queue.Contains(SIDE, 40));
 
-	auto now = Clock::time_point{} + std::chrono::hours(1);
+	auto now = Start();
 	game.Poll(queue, now);
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
 	CHECK(queue.Setting() == 1);
 	// Not done yet (the console runs it a moment later): nothing more is set.
-	game.Poll(queue, now + std::chrono::milliseconds(500));
+	game.Poll(queue, now + 500ms);
 	CHECK(game.set.size() == 1);
 	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10, 20, 30 }));
 
@@ -156,14 +192,14 @@ TEST("stage queue: a quest another quest's stage starts gets its stages then (MQ
 {
 	FakeGame game;
 	game.quests[MQ104].current = 205;
-	game.quests[MQ105].running = false;
+	game.quests[MQ105].flags = 0;
 	// MQ104's stage 210: starts MQ105 at 10, then MQ104 is done.
 	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
 		if (a_quest == MQ104 && a_stage == 210) {
-			game.quests[MQ105].running = true;
+			game.quests[MQ105].flags = StageLog::QUEST_RUNNING;
 			game.SetStage(MQ105, 10);
 			game.SetStage(MQ104, 1000);
-			game.quests[MQ104].completed = true;
+			game.quests[MQ104].flags = StageLog::QUEST_COMPLETED;
 		}
 	};
 	StageLog::Queue queue;
@@ -172,7 +208,7 @@ TEST("stage queue: a quest another quest's stage starts gets its stages then (MQ
 		CHECK(queue.Add(quest, stage));
 	}
 
-	auto now = Clock::time_point{} + std::chrono::hours(1);
+	auto now = Start();
 	game.Poll(queue, now);
 	// MQ105 isn't running here yet: its stages wait, they aren't dropped.
 	CHECK((game.set == std::vector<Stage>{ { MQ104, 210 } }));
@@ -186,6 +222,39 @@ TEST("stage queue: a quest another quest's stage starts gets its stages then (MQ
 	CHECK(game.quests[MQ105].current == 30);
 }
 
+TEST("stage queue: a stage that completes its quest but leaves it running doesn't drop the stages after it (MQ102 65)")
+{
+	FakeGame game;
+	game.quests[MQ102].current = 60;
+	game.quests[MQ103].flags = 0;
+	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		if (a_quest == MQ102 && a_stage == 65) {
+			game.quests[MQ102].flags |= StageLog::QUEST_COMPLETED;  // the Complete Quest log entry: still running
+		} else if (a_quest == MQ102 && a_stage == 150) {
+			game.quests[MQ103].flags = StageLog::QUEST_RUNNING;
+			game.SetStage(MQ103, 10);
+		} else if (a_quest == MQ102 && a_stage == 200) {
+			game.quests[MQ102].flags = StageLog::QUEST_COMPLETED;  // Stop()
+		}
+	};
+	StageLog::Queue queue;
+	for (const auto stage : { 61, 62, 65, 70, 90, 150, 200 }) {
+		queue.Add(MQ102, static_cast<std::uint16_t>(stage));
+	}
+	queue.Add(MQ103, 10);
+	queue.Add(MQ103, 20);
+
+	auto now = Start();
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { MQ102, 61 }, { MQ102, 62 }, { MQ102, 65 }, { MQ102, 70 }, { MQ102, 90 }, { MQ102, 150 }, { MQ102, 200 }, { MQ103, 20 } }));
+	CHECK(queue.Size() == 0);
+	CHECK(game.quests[MQ103].current == 20);
+	// Once it is stopped too, whatever else comes for it is dropped.
+	queue.Add(MQ102, 300);
+	game.Poll(queue, now);
+	CHECK(queue.Size() == 0);
+}
+
 TEST("stage queue: a stage that never reads done is given up on after the timeout, then the next goes")
 {
 	FakeGame game;
@@ -194,25 +263,25 @@ TEST("stage queue: a stage that never reads done is given up on after the timeou
 	queue.Add(SIDE, 50);
 	queue.Add(SIDE, 60);
 
-	const auto start = Clock::time_point{} + std::chrono::hours(1);
+	const auto start = Start();
 	CHECK(game.Poll(queue, start).empty());
 	game.Tick();
-	CHECK(game.Poll(queue, start + std::chrono::seconds(4)).empty());
+	CHECK(game.Poll(queue, start + 4s).empty());
 	CHECK(game.set.size() == 1);
 	const auto gaveUp = game.Poll(queue, start + StageLog::Queue::TIMEOUT);
 	CHECK((gaveUp == std::vector<Stage>{ { SIDE, 50 } }));
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 50 }, { SIDE, 60 } }));
 	game.Tick();
-	game.Poll(queue, start + StageLog::Queue::TIMEOUT + std::chrono::milliseconds(500));
+	game.Poll(queue, start + StageLog::Queue::TIMEOUT + 500ms);
 	CHECK(queue.Size() == 0);
 }
 
-TEST("stage queue: stages done here or already passed are dropped, and a completed quest's all")
+TEST("stage queue: stages done here or already passed are dropped, and a finished quest's all")
 {
 	FakeGame game;
 	game.quests[SIDE].current = 40;
 	game.quests[SIDE].done = { 10, 40, 45 };
-	game.quests[MQ104].completed = true;
+	game.quests[MQ104].flags = StageLog::QUEST_COMPLETED;
 	StageLog::Queue queue;
 	for (const auto stage : StageLog::Stages{ 20, 30, 40, 45, 50 }) {
 		queue.Add(SIDE, stage);
@@ -221,7 +290,7 @@ TEST("stage queue: stages done here or already passed are dropped, and a complet
 	queue.Add(0x00ABCDEF, 10);  // a quest this game doesn't have
 	CHECK(queue.Size() == 7);
 
-	game.Poll(queue, Clock::time_point{} + std::chrono::hours(1));
+	game.Poll(queue, Start());
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 50 } }));
 	CHECK(queue.Size() == 1);
 	CHECK(queue.Waiting(MQ104).empty());
@@ -230,20 +299,20 @@ TEST("stage queue: stages done here or already passed are dropped, and a complet
 TEST("stage queue: a quest not started here keeps its stages; what it reached by itself is dropped once it starts")
 {
 	FakeGame game;
-	game.quests[SIDE].running = false;
+	game.quests[SIDE].flags = 0;
 	StageLog::Queue queue;
 	for (const auto stage : StageLog::Stages{ 10, 20, 30 }) {
 		queue.Add(SIDE, stage);
 	}
-	auto now = Clock::time_point{} + std::chrono::hours(1);
+	auto now = Start();
 	for (int i = 0; i < 10; ++i) {
 		game.Poll(queue, now);
-		now += std::chrono::seconds(1);
+		now += 1s;
 	}
 	CHECK(game.set.empty());
 	CHECK(queue.Size() == 3);
 	// The player starts it and gets to 20 on their own.
-	game.quests[SIDE].running = true;
+	game.quests[SIDE].flags = StageLog::QUEST_RUNNING;
 	game.SetStage(SIDE, 20);
 	game.Run(queue, now);
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 30 } }));
@@ -257,10 +326,10 @@ TEST("stage queue: nothing is set while the player is busy, and it waits")
 	game.busy = true;
 	StageLog::Queue queue;
 	queue.Add(SIDE, 10);
-	auto now = Clock::time_point{} + std::chrono::hours(1);
+	auto now = Start();
 	for (int i = 0; i < 20; ++i) {
 		game.Poll(queue, now);
-		now += std::chrono::seconds(1);
+		now += 1s;
 	}
 	CHECK(game.set.empty());
 	CHECK(queue.Size() == 1);
@@ -269,30 +338,99 @@ TEST("stage queue: nothing is set while the player is busy, and it waits")
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
 }
 
-TEST("stage queue: at most a few stages per poll, the quests taking turns")
+TEST("stage queue: stages are set in the order they came, a few per poll")
 {
 	FakeGame game;
 	StageLog::Queue queue;
-	for (std::uint32_t quest = 1; quest <= 6; ++quest) {
-		game.quests[quest];
-		queue.Add(quest, 10);
-		queue.Add(quest, 20);
+	// Reported as they were done: each quest's 10, then each quest's 20.
+	for (const auto stage : std::initializer_list<std::uint16_t>{ 10, 20 }) {
+		for (std::uint32_t quest = 6; quest >= 1; --quest) {
+			game.quests[quest];
+			queue.Add(quest, stage);
+		}
 	}
-	auto now = Clock::time_point{} + std::chrono::hours(1);
+	auto now = Start();
 	game.Poll(queue, now);
 	CHECK(game.set.size() == StageLog::Queue::MAX_PER_POLL);
-	CHECK((game.set == std::vector<Stage>{ { 1, 10 }, { 2, 10 }, { 3, 10 }, { 4, 10 } }));
+	CHECK((game.set == std::vector<Stage>{ { 6, 10 }, { 5, 10 }, { 4, 10 }, { 3, 10 } }));
 	game.Tick();
 	game.set.clear();
-	game.Poll(queue, now + std::chrono::milliseconds(500));
-	// 5 and 6 haven't had a turn: they go first.
-	CHECK((game.set == std::vector<Stage>{ { 5, 10 }, { 6, 10 }, { 1, 20 }, { 2, 20 } }));
+	game.Poll(queue, now + 500ms);
+	// 2 and 1 came before any 20.
+	CHECK((game.set == std::vector<Stage>{ { 2, 10 }, { 1, 10 }, { 6, 20 }, { 5, 20 } }));
 	game.Tick();
 	game.Run(queue, now);
 	CHECK(queue.Size() == 0);
 	for (std::uint32_t quest = 1; quest <= 6; ++quest) {
 		CHECK((game.quests[quest].done == std::set<std::uint16_t>{ 10, 20 }));
 	}
+}
+
+TEST("stage queue: after a stage whose script waits, nothing that came after it is set until it has run (MQ206 1000)")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 700;
+	game.quests[SIDE];
+	game.quests[MQ207].flags = 0;
+	game.holds[{ MQ206, 1000 }] = 5s;  // Wait 4, then the player goes through the door
+	game.holds[{ MQ206, 1050 }] = 3s;  // Wait 2, then 1200
+	StageLog::Queue queue;
+	queue.Add(MQ207, 10);  // came first; MQ207 isn't running yet, which holds nothing up
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);
+	queue.Add(MQ206, 1050);
+	queue.Add(MQ206, 1200);
+	queue.Add(SIDE, 20);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 } }));
+	game.Tick();
+	// 1000 reads done at the next poll, but its script runs for 5 s more: SIDE 10 came after it and waits.
+	for (int i = 1; i <= 10; ++i) {
+		game.Poll(queue, now + i * 500ms);
+		game.Tick();
+	}
+	CHECK(game.set.size() == 1);
+	// Then what came next, in order: SIDE 10, and MQ206's 1050 (its 3 s hold up the rest).
+	game.Poll(queue, now + 5500ms);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { SIDE, 10 }, { MQ206, 1050 } }));
+	game.Tick();
+	for (int i = 12; i < 18; ++i) {
+		game.Poll(queue, now + i * 500ms);
+		game.Tick();
+	}
+	CHECK(game.set.size() == 3);
+	auto later = now + 9s;
+	game.Run(queue, later);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { SIDE, 10 }, { MQ206, 1050 }, { MQ206, 1200 }, { SIDE, 20 } }));
+	CHECK((queue.Waiting(MQ207) == StageLog::Stages{ 10 }));
+}
+
+TEST("stage queue: a skipped stage is dropped and the next goes; one for later holds up what came after it")
+{
+	FakeGame game;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ105].current = 170;
+	game.verdicts[{ MQ105, 177 }] = StageLog::Set::kSkipped;  // a bribe
+	game.verdicts[{ SIDE, 10 }] = StageLog::Set::kLater;
+	StageLog::Queue queue;
+	queue.Add(MQ105, 177);
+	queue.Add(MQ105, 180);
+	queue.Add(SIDE, 10);
+	queue.Add(MQ105, 185);
+
+	auto now = Start();
+	game.Run(queue, now, 10);
+	// 177 is gone; 180 came before SIDE's 10, 185 after it.
+	CHECK((game.set == std::vector<Stage>{ { MQ105, 180 } }));
+	CHECK((queue.Waiting(MQ105) == StageLog::Stages{ 185 }));
+	CHECK(!game.quests[MQ105].done.contains(177));
+
+	game.verdicts.erase({ SIDE, 10 });
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { MQ105, 180 }, { SIDE, 10 }, { MQ105, 185 } }));
+	CHECK(queue.Size() == 0);
 }
 
 TEST("stage queue: a full queue refuses more, and clears")
