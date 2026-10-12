@@ -647,23 +647,21 @@ void Server::Run()
 		}
 		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
 		// or mischief (it would kill the NPC for everyone and be saved). Only the host's game is believed
-		// about one, and only that it was already dead in the host's save: the host's world is the
-		// session's, so it is dead for everyone, even though a joiner's game took it over because it was
-		// alive there (a joiner's game ran bloatflies the host's save had dead, and they fought the host's
-		// stand-in). Such a report says nobody killed it and gives no corpse position: the host's game
-		// didn't see it die (WorldSync's CheckFoundDead). And it counts only while the host's game hasn't
-		// had the NPC alive this session; if it has, the NPC died in the host's game during the session,
-		// after the runner had it alive, and of that the runner's game is the judge (the host's copy of an
-		// NPC another game runs can fall over by mistake; this report is then the same mistake found again
-		// after a reconnect or a load).
-		// No Protocol::VERSION bump for this: the message and its fields are as they were (a found-dead report
-		// is an ordinary death report), and only which reports are believed changed. The one sender believed
-		// more than a joiner is the host's own game, which is always this same build: the server runs in it.
+		// about one, and only that it was already dead in the host's save (a found-dead report: WorldSync's
+		// CheckFoundDead): the host's world is the session's, so it is dead for everyone, even though a
+		// joiner's game took it over because it was alive there (a joiner's game ran bloatflies the host's
+		// save had dead, and they fought the host's stand-in). The host's game sends those only for NPCs its
+		// story shares (with everyone on their own story, not a story character: FoundDead::Shared). A death
+		// it saw happen is no such report, even one without a corpse position (an NPC with no 3D there, killed
+		// by a quest's script): of that, the runner's game is the judge. And a found-dead report counts only
+		// while the host's game hasn't had the NPC alive this session; if it has, the NPC died in the host's
+		// game during the session, after the runner had it alive, which is again the runner's to judge (the
+		// host's copy of an NPC another game runs can fall over by mistake; this report is then the same
+		// mistake found again after a reconnect or a load).
 		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
-			const bool foundDead = a_player.local && !death->killed && death->x == 0.0f && death->y == 0.0f && death->z == 0.0f &&
-			                       !hostHadAlive.contains(death->refId);
+			const bool foundDead = a_player.local && death->foundDead && !hostHadAlive.contains(death->refId);
 			if (!foundDead) {
-				noteHostHadAlive(a_player, death->refId);  // the host's game saw it die
+				noteHostHadAlive(a_player, death->refId);  // the host's game had it alive, or saw it die
 				return;
 			}
 		}

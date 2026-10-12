@@ -15,6 +15,7 @@
 //           [--identity HEX]  (sent in Hello; the server gives the same identity the same player ID again)
 //           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
 //           [--hit-player ID:DAMAGE:ATTACKERHEX|p]  (reports hitting that player once they are in the game)
+//           [--found-dead REFHEX]  (reports this NPC found already dead in the bot's save, as the host's game does; only the host's game is believed over the NPC's runner)
 //
 // Exit codes: 0 ok, 2 bad arguments, 3 rejected, 4 disconnected by the server, 5 never welcomed
 // before --seconds ran out.
@@ -111,6 +112,7 @@ int main(int argc, char* argv[])
 	double        timeDays = 0.0;
 	std::uint32_t timeWeather = 0;
 	std::uint32_t killRef = 0;   // report this actor as killed once welcomed
+	std::uint32_t foundDeadRef = 0;  // report this actor as found dead in our save once welcomed (as the host's game does)
 	std::uint32_t healthRef = 0;  // report this actor's health as healthValue once welcomed
 	std::uint32_t pickupRef = 0;      // report picking up this world item once welcomed
 	Protocol::RefState doorState;     // report this door state once welcomed (refId 0 = none)
@@ -220,6 +222,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, world.containerFrom);
 		} else if (key == "--kill") {
 			ok = ParseNumber(value, killRef, 16);
+		} else if (key == "--found-dead") {
+			ok = ParseNumber(value, foundDeadRef, 16);
 		} else if (key == "--jump") {
 			jump = value == "1";
 		} else if (key == "--shoot") {
@@ -354,6 +358,10 @@ int main(int argc, char* argv[])
 								std::cout << "reporting kill of " << std::hex << killRef << std::dec << '\n';
 								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ killRef, 0, true }, Protocol::MessageType::kReportDeath), true);
 							}
+							if (foundDeadRef) {
+								std::cout << "reporting " << std::hex << foundDeadRef << std::dec << " found dead\n";
+								Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ .refId = foundDeadRef, .foundDead = true }, Protocol::MessageType::kReportDeath), true);
+							}
 						}
 						break;
 					case Protocol::MessageType::kReject:
@@ -375,7 +383,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kActorDied:
 						if (const auto msg = Protocol::DecodeActorDeath(data)) {
-							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << std::endl;
+							std::cout << "actor died: " << std::hex << msg->refId << std::dec << " reported by " << msg->playerId << (msg->killed ? " (killed it)" : "") << (msg->foundDead ? " (found dead)" : "") << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorHealth:

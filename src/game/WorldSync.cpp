@@ -121,8 +121,8 @@ namespace WorldSync
 		// again. An NPC another player's game takes over is checked too (OnActorOwners).
 		// Limit: only what is in our game's memory can be checked. Persistent actors always are, and so are
 		// those of cells loaded lately; an ordinary NPC of a cell our game hasn't loaded isn't, and lives on
-		// in a friend's game until ours loads it (then it dies there too: the server takes the host's word
-		// over its runner's for a death from our save, see Server.cpp handleDeath). It can only fight our
+		// in a friend's game until ours loads it (then it dies there too: the server takes our found-dead
+		// report over its runner's word, see Server.cpp handleDeath). It can only fight our
 		// stand-in where we are, and there our game has it loaded.
 		// With everyone on their own story, story characters are left out (FoundDead::Shared).
 		std::unordered_set<std::uint32_t>      loadedActors;  // their 3D is loaded, by the events (FoundDead::TrackLoad)
@@ -131,9 +131,9 @@ namespace WorldSync
 		std::uint32_t                          foundDead = 0;
 		std::uint32_t                          ownStoryDead = 0;  // found dead but left alone: a story character, with everyone on their own story
 
-		void ReportDead(std::uint32_t a_id, const RE::NiPoint3& a_at, bool a_byUs)
+		void ReportDead(const Protocol::ActorDeath& a_death)
 		{
-			outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ a_id, 0, a_byUs, a_at.x, a_at.y, a_at.z }, Protocol::MessageType::kReportDeath));
+			outgoing.push_back(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
 			++reported;
 		}
 
@@ -301,10 +301,11 @@ namespace WorldSync
 					continue;
 				}
 				dead.insert(id);
+				// Said to be found dead, so the server takes it over the NPC's runner (see Server.cpp, handleDeath).
 				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
 				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
-				// another. The server also tells a found-dead report by it (see Server.cpp, handleDeath).
-				ReportDead(id, RE::NiPoint3{}, false);
+				// another.
+				ReportDead({ .refId = id, .foundDead = true });
 				++foundDead;
 				pending.erase(id);
 				pendingHealth.erase(id);
@@ -942,8 +943,8 @@ namespace WorldSync
 		for (const auto id : newDeaths) {
 			if (dead.insert(id).second) {
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
-				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};
-				ReportDead(id, at, killedByUs.contains(id));
+				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
+				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
 			}
 			pending.erase(id);
 			pendingHealth.erase(id);

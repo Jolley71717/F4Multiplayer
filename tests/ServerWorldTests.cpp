@@ -113,6 +113,13 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed, a_x, 0.0f, 0.0f }, MT::kReportDeath);
 	}
 
+	// Found already dead in the reporter's save, not seen dying (the host's game sends these: WorldSync's
+	// CheckFoundDead).
+	auto FoundDeadReport(std::uint32_t a_ref)
+	{
+		return Protocol::Encode(Protocol::ActorDeath{ .refId = a_ref, .playerId = 999, .foundDead = true }, MT::kReportDeath);
+	}
+
 	auto Health(std::uint32_t a_ref, float a_health)
 	{
 		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
@@ -1530,16 +1537,19 @@ TEST("server trust: the host's game is believed about an NPC dead in its save th
 	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game
 	Clear(f, { 1, 2, 3, 4 });
 
-	f.fake->Deliver(3, Death(NPC2, false));  // Carol isn't the host
-	f.fake->Deliver(4, Death(NPC2, false));  // nor is the bot
+	f.fake->Deliver(3, FoundDeadReport(NPC2));  // Carol isn't the host
+	f.fake->Deliver(4, FoundDeadReport(NPC2));  // nor is the bot
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
 
-	f.fake->Deliver(1, Death(NPC, false));  // found dead in the host's save: nobody killed it there, no corpse position
+	f.fake->Deliver(1, FoundDeadReport(NPC));  // found dead in the host's save
 	const auto packets = Received(f, 2);
 	const auto deaths = Decoded(packets, MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].refId == NPC);
 	CHECK(deaths[0].playerId == host);
+	CHECK(deaths[0].foundDead);
+	CHECK(!deaths[0].killed);
+	CHECK(deaths[0].x == 0.0f && deaths[0].y == 0.0f && deaths[0].z == 0.0f);  // Bob's copy dies where it stands
 	CHECK(HasOwner(Owners(packets), NPC, 0));  // Bob's game gives it up
 	CHECK(Count(Received(f, 3), MT::kActorDied) == 1);
 
@@ -1560,11 +1570,35 @@ TEST("server trust: the host's game isn't believed about an NPC another player r
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
 
 	// The same death found again after a reconnect or a load: still Bob's game's to judge.
-	f.fake->Deliver(1, Death(NPC, false));
-	f.fake->Deliver(1, Death(NPC2, false));
+	f.fake->Deliver(1, FoundDeadReport(NPC));
+	f.fake->Deliver(1, FoundDeadReport(NPC2));
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
 
 	f.fake->Deliver(2, DeathAt(NPC, true, 100.0f));  // Bob's game, which runs it, is believed
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
+}
+
+TEST("server trust: a death the host's game saw happen without a corpse position isn't a found-dead report")
+{
+	Fixture f{ HostedOptions() };  // everyone on their own story
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game
+	Clear(f, { 1, 2 });
+
+	// A quest's script in the host's game kills a character with no 3D there: nobody killed it and no place
+	// is known, the same as a found-dead report but for the flag. The host's story doesn't decide Bob's.
+	f.fake->Deliver(1, Death(NPC, false));
+	f.fake->Deliver(1, Death(NPC2, true));  // or the host's own kill of one it can't see
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	CHECK(Owners(Received(f, 2)).empty());  // Bob's game keeps running them
+
+	// Found dead after a load, it is still the same death the host's game saw happen.
+	f.fake->Deliver(1, FoundDeadReport(NPC));
+	f.fake->Deliver(1, FoundDeadReport(NPC2));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	f.fake->Deliver(2, Death(NPC, false));  // Bob's game, which runs it, is believed
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
 }
 
@@ -1584,9 +1618,9 @@ TEST("server trust: nor about one it has had alive this session")
 	REQUIRE(HasOwner(owners, NPC3, bob));
 	Clear(f, { 2 });
 
-	f.fake->Deliver(1, Death(NPC, false));
-	f.fake->Deliver(1, Death(NPC2, false));
-	f.fake->Deliver(1, Death(NPC3, false));
+	f.fake->Deliver(1, FoundDeadReport(NPC));
+	f.fake->Deliver(1, FoundDeadReport(NPC2));
+	f.fake->Deliver(1, FoundDeadReport(NPC3));
 	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
 	CHECK(deaths[0].refId == NPC3);

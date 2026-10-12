@@ -119,6 +119,7 @@ namespace
 		s.push_back({ "PlayerStates", Encode(PlayerStates{ 99, { { 1, MakeState(1) }, { 2, MakeState(2) } } }), D(DecodePlayerStates) });
 		for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
+			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
 		}
 		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
 			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
@@ -1280,6 +1281,27 @@ TEST("protocol: a RefState carries its reporter and an ActorDeath where the corp
 	REQUIRE(back);
 	CHECK(*back == death);
 	CHECK(!DecodeActorDeath(Encode(ActorDeath{ REF_B, 3, true, std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f }, MT::kActorDied)));
+}
+
+TEST("protocol: an ActorDeath says whether it was found dead, and then that nobody saw it die")
+{
+	for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
+		const ActorDeath found{ .refId = REF_B, .playerId = 3, .foundDead = true };
+		const auto       back = DecodeActorDeath(Encode(found, type));
+		REQUIRE(back);
+		CHECK(*back == found);
+		CHECK(back->foundDead);
+
+		// A death with no place (a corpse with no 3D) is still one seen happening.
+		const auto seen = DecodeActorDeath(Encode(ActorDeath{ REF_B, 3, false }, type));
+		REQUIRE(seen);
+		CHECK(!seen->foundDead);
+
+		// Found dead but killed by the reporter, or lying somewhere: not a found-dead report.
+		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .killed = true, .foundDead = true }, type)));
+		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .x = 100.0f, .foundDead = true }, type)));
+		CHECK(!DecodeActorDeath(Encode(ActorDeath{ .refId = REF_B, .playerId = 3, .z = -1.0f, .foundDead = true }, type)));
+	}
 }
 
 TEST("protocol: Explosion round trips and needs a base")
