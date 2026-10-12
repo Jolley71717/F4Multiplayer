@@ -27,6 +27,12 @@ public:
 		// connect through Steam instead.
 		bool udpLoopbackOnly = false;
 
+		// The Hello::identity of the game this server runs in (0: none, a dedicated server). That game,
+		// connecting from this machine, is the host: its clock is the session's, and an NPC it finds
+		// already dead in its save is dead for everyone. Any other connection from this machine (a bot, a
+		// tunnel to another PC) is an ordinary player.
+		std::uint64_t hostIdentity = 0;
+
 		// Players can hurt each other (their hits on each other's stand-ins are passed on).
 		bool friendlyFire = false;
 

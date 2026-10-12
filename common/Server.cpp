@@ -105,7 +105,7 @@ namespace
 		Clock::time_point          lastLine{};
 		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
 		Clock::time_point          lastFace{};
-		bool                       local = false;  // on the server's machine
+		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
 		float                      xpReports = XP_REPORT_BURST;
 		Clock::time_point          xpRefilled{};
@@ -225,6 +225,9 @@ void Server::Run()
 	const auto questKey = [](const Protocol::QuestStage& a_stage) { return (static_cast<std::uint64_t>(a_stage.quest) << 16) | a_stage.stage; };
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
 	std::map<std::uint32_t, std::uint8_t>                 markers;      // discovered map markers (flags)
+	// NPCs the host's game has had alive in this session (it claimed them or reported their health) or seen
+	// die while another game ran them: its world can't be dead "from its save" about those (see handleDeath).
+	std::unordered_set<std::uint32_t>                     hostHadAlive;
 
 	// The saved session, if any: adopted as this run's session (the first player's load order must
 	// match, or the hello path starts a fresh one). Saved again every few seconds while it changes.
@@ -310,6 +313,7 @@ void Server::Run()
 		questStageKeys.clear();
 		worldTime.reset();
 		markers.clear();
+		hostHadAlive.clear();
 		sessionId = NewSessionId();
 	};
 
@@ -539,7 +543,11 @@ void Server::Run()
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
-		a_player.local = transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		// The host's own game: the game this server runs in, by its identity, connecting from this machine.
+		// The identity alone isn't enough (it isn't a secret), and nor is the address: a bot or a tunnel to
+		// another PC connects from this machine too.
+		a_player.local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
+		                 transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
 		a_player.xpRefilled = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
@@ -623,6 +631,12 @@ void Server::Run()
 		a_player.stateDirty = true;
 	};
 
+	const auto noteHostHadAlive = [&](const Player& a_player, std::uint32_t a_refId) {
+		if (a_player.local && hostHadAlive.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+			hostHadAlive.insert(a_refId);
+		}
+	};
+
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -632,12 +646,24 @@ void Server::Run()
 			return;
 		}
 		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
-		// or mischief (it would kill the NPC for everyone and be saved). The host's own game (a player on
-		// this machine) is believed all the same: its world is the session's, so an NPC dead in it is dead
-		// for everyone, even one a joiner's game took over because it was alive there (a joiner's game ran
-		// bloatflies the host's save had dead, and they fought the host's stand-in).
-		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id && !a_player.local) {
-			return;
+		// or mischief (it would kill the NPC for everyone and be saved). Only the host's game is believed
+		// about one, and only that it was already dead in the host's save (a found-dead report: WorldSync's
+		// CheckFoundDead): the host's world is the session's, so it is dead for everyone, even though a
+		// joiner's game took it over because it was alive there (a joiner's game ran bloatflies the host's
+		// save had dead, and they fought the host's stand-in). The host's game sends those only for NPCs its
+		// story shares (with everyone on their own story, not a story character: FoundDead::Shared). A death
+		// it saw happen is no such report, even one without a corpse position (an NPC with no 3D there, killed
+		// by a quest's script): of that, the runner's game is the judge. And a found-dead report counts only
+		// while the host's game hasn't had the NPC alive this session; if it has, the NPC died in the host's
+		// game during the session, after the runner had it alive, which is again the runner's to judge (the
+		// host's copy of an NPC another game runs can fall over by mistake; this report is then the same
+		// mistake found again after a reconnect or a load).
+		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+			const bool foundDead = a_player.local && death->foundDead && !hostHadAlive.contains(death->refId);
+			if (!foundDead) {
+				noteHostHadAlive(a_player, death->refId);  // the host's game had it alive, or saw it die
+				return;
+			}
 		}
 		if (!deadActors.insert(death->refId).second) {
 			return;
@@ -661,6 +687,7 @@ void Server::Run()
 		if (!health || !Protocol::IsShareableRef(health->refId) || deadActors.contains(health->refId)) {
 			return;
 		}
+		noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
 	};
 
@@ -745,6 +772,9 @@ void Server::Run()
 		for (const auto& claim : *claims) {
 			if (!Protocol::IsShareableRef(claim.refId) || deadActors.contains(claim.refId)) {
 				continue;
+			}
+			if (claim.reason != Reason::kInteract) {
+				noteHostHadAlive(a_player, claim.refId);  // offered because it is loaded and alive (a hit or a press can be on a corpse)
 			}
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
@@ -956,7 +986,7 @@ void Server::Run()
 		broadcast(Protocol::Encode(*status, Protocol::MessageType::kPlayerStatus), true, a_player.key);
 	};
 
-	// The session's clock is the host's: a player on this machine, else the one here longest.
+	// The session's clock is the host's: the host's own game, else the player here longest.
 	const auto handleTime = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;

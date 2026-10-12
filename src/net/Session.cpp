@@ -575,6 +575,7 @@ namespace Session
 		options.password = settings.password;
 		// With Steam, friends never connect over UDP, so only our own game may (no firewall prompt).
 		options.udpLoopbackOnly = steamMode;
+		options.hostIdentity = Identity::Get();  // our Hello says this: the server knows our connection as the host's
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
 		options.ignoredPlugins = settings.ignoredPlugins;

@@ -210,6 +210,10 @@ namespace Protocol
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
 		bool          killed = false;  // that player killed it
 		float         x = 0, y = 0, z = 0;  // where the corpse lies in the reporter's game (all zero: unknown)
+		// Found already dead in the reporter's save, not seen dying (the host's game reports those: WorldSync's
+		// CheckFoundDead). Nobody killed it there and it fell nowhere known, so killed is false and the place
+		// all zero. Only such a report, from the host's game, counts over the NPC's runner (Server's handleDeath).
+		bool          foundDead = false;
 
 		bool operator==(const ActorDeath&) const = default;
 	};
@@ -1025,6 +1029,7 @@ namespace Protocol
 		w.F32(a_msg.x);
 		w.F32(a_msg.y);
 		w.F32(a_msg.z);
+		w.U8(a_msg.foundDead ? 1 : 0);
 		return w.Data();
 	}
 
@@ -1039,8 +1044,12 @@ namespace Protocol
 		msg.x = r.F32();
 		msg.y = r.F32();
 		msg.z = r.F32();
+		msg.foundDead = r.U8() != 0;
 		if (!r.Ok() || !r.AtEnd() || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z)) {
 			return std::nullopt;
+		}
+		if (msg.foundDead && (msg.killed || msg.x != 0.0f || msg.y != 0.0f || msg.z != 0.0f)) {
+			return std::nullopt;  // nobody saw it die
 		}
 		return msg;
 	}

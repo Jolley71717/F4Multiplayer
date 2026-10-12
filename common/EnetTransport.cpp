@@ -114,9 +114,10 @@ bool EnetServerTransport::IsLocal(PeerId a_peer) const
 	if (it == peers.end()) {
 		return false;
 	}
+	// The host's game connects to 127.0.0.1 (Session::StartHosting), so that is where it comes from.
 	char ip[64]{};
 	enet_address_get_host_ip(&it->second->address, ip, sizeof(ip));
-	return std::string_view{ ip }.starts_with("127.") || std::string_view{ ip } == "::1";
+	return std::string_view{ ip } == "127.0.0.1" || std::string_view{ ip } == "::1";
 }
 
 std::string EnetServerTransport::Describe(PeerId a_peer) const
