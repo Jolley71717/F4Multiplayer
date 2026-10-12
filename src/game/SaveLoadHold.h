@@ -127,6 +127,31 @@ namespace SaveLoadHold
 			return work.size();
 		}
 
+		// Runs a_work here and now, on the frame's thread between frames (a save's message, or a load's
+		// that came there), after the work handed over before it, as a frame would: a save made before
+		// the first frame after a load must not take out the stand-ins from before that load. A piece of
+		// that earlier work which throws doesn't stop a_work; its exception is thrown on after a_work.
+		void RunNow(const Work& a_work)
+		{
+			std::exception_ptr failed;
+			try {
+				RunPosted();
+			} catch (...) {
+				failed = std::current_exception();
+			}
+			{
+				std::scoped_lock l{ lock };
+				++working;
+			}
+			{
+				const Done done{ *this };
+				a_work();
+			}
+			if (failed) {
+				std::rethrow_exception(failed);
+			}
+		}
+
 		// Whether this frame's game work may start: not while a hold is on (the frame is counted, for
 		// End). After true, Leave follows when the work is done (see Frame).
 		bool Enter(Clock::time_point a_now)

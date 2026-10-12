@@ -107,6 +107,47 @@ TEST("save/load hold: the end of a hold handed over runs even after a piece that
 	CHECK(hold.WaitForFrames(0ms));  // not left counted as working
 }
 
+// A save made on the main thread after a load's message but before the frame after it: the load's own
+// work (the session starting over) runs before the save's (the stand-ins taken out), not after it.
+TEST("save/load hold: a save before the frame after a load runs the load's work first")
+{
+	Hold             hold{ LIMIT };
+	std::vector<int> ran;
+	const auto       load = hold.Begin(START);
+	hold.Post([&] {
+		ran.push_back(1);
+		hold.End(load);
+	});
+	const auto save = hold.Begin(START + 1s);
+	bool       counted = false;
+	hold.RunNow([&] {
+		ran.push_back(2);
+		counted = !hold.WaitForFrames(0ms);  // counted as working, as handed-over work is
+	});
+	CHECK((ran == std::vector<int>{ 1, 2 }));
+	CHECK(counted);
+	CHECK(hold.RunPosted() == 0u);  // not run twice
+	CHECK(hold.Held(START + 1s));   // the load's end leaves the save's hold on
+	CHECK(hold.End(save).has_value());
+	CHECK(hold.WaitForFrames(0ms));
+}
+
+TEST("save/load hold: a save's work runs even after earlier work that throws")
+{
+	Hold hold{ LIMIT };
+	bool ran = false;
+	hold.Post([] { throw std::runtime_error("after the load"); });
+	bool threw = false;
+	try {
+		hold.RunNow([&] { ran = true; });
+	} catch (const std::runtime_error&) {
+		threw = true;
+	}
+	CHECK(ran);
+	CHECK(threw);
+	CHECK(hold.WaitForFrames(0ms));  // not left counted as working
+}
+
 TEST("save/load hold: work taken back is not run by the frame's side")
 {
 	Hold hold{ LIMIT };

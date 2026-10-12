@@ -94,7 +94,8 @@ namespace
 	}
 
 	// Game work a save's or load's message needs done before the engine goes on, done on the main thread
-	// between frames. A save's message comes on the main thread: it runs at once. A load's comes on the
+	// between frames. A save's message comes on the main thread: it runs at once, after the work an earlier
+	// message handed over (a load's, should the save come before the frame after it). A load's comes on the
 	// load's own thread while the main thread may be in a frame: that thread hands the work over and waits
 	// here, so the frame in progress finishes first, no game object is touched from two threads, and the
 	// stand-ins are out before the load starts. Should the main thread not come in MAIN_THREAD_WAIT (busy in
@@ -104,8 +105,7 @@ namespace
 	{
 		auto& hold = SaveLoadHold::Global();
 		if (OnMainThread()) {
-			hold.RunPosted();  // what an earlier message handed over goes first
-			a_work();
+			hold.RunNow(a_work);  // what an earlier message handed over goes first
 			return;
 		}
 		const auto start = std::chrono::steady_clock::now();
@@ -137,8 +137,7 @@ namespace
 	{
 		auto& hold = SaveLoadHold::Global();
 		if (OnMainThread()) {
-			hold.RunPosted();
-			a_work();
+			hold.RunNow(a_work);
 			return;
 		}
 		hold.Post(std::move(a_work));
@@ -189,9 +188,15 @@ namespace
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 			BeginSaveOrLoad();
-			// Remote players' actors must never be written into a save. (A save runs on the main thread.)
-			Session::OnBeforeSaveOrLoad();
-			SaveGuard::BeforeSave();
+			// Remote players' actors must never be written into a save. A save made before the first frame
+			// after a load runs that load's own work first (RunAfterLoad), or the stand-ins it took out
+			// would be the ones from before the load.
+			RunBeforeSaveOrLoad(
+				[] {
+					Session::OnBeforeSaveOrLoad();
+					SaveGuard::BeforeSave();
+				},
+				"save");
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
 			EndSaveOrLoad(SaveLoadHold::Global().Newest(), "save");
