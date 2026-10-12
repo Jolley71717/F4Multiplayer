@@ -7,7 +7,8 @@
 // plays in only one game. Main thread only.
 namespace Conversations
 {
-	// Watches who is talking and queues new lines (only while a_connected). Call every frame.
+	// Watches who is talking and queues new lines (only while a_connected), and ends a conversation
+	// left without its speaker (Dialogue::Frame). Call every frame.
 	void Frame(bool a_connected);
 
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing();

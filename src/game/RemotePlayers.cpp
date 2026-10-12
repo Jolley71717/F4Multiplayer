@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/DeferredDelete.h"
+#include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/Prediction.h"
 
@@ -93,9 +94,28 @@ namespace RemotePlayers
 			RE::ObjectRefHandle              actor;
 			Clock::time_point                spawnedAt;
 			std::optional<Clock::time_point> disabledAt;
+			Clock::time_point                buriedAt{};
+			bool                             held = false;  // has waited for the player's conversation
 		};
 		std::vector<Grave> graveyard;
 		std::uint32_t      flushedBeforeSave = 0;
+		std::uint32_t      heldForConversation = 0;
+
+		// A stand-in in the player's conversation stays (not even disabled) until the conversation ends
+		// (see DeferredDelete::Held). Deleting the one speaking to the player left the conversation open
+		// for good: no weapons, Pip-Boy or workshop for the host near Codsworth.
+		bool HeldForConversation(Grave& a_grave, RE::TESObjectREFR* a_ref, Clock::time_point a_now)
+		{
+			if (!DeferredDelete::Held(Dialogue::Holds(a_ref), a_now - a_grave.buriedAt)) {
+				return false;
+			}
+			if (!a_grave.held) {
+				a_grave.held = true;
+				++heldForConversation;
+				REX::INFO("RemotePlayers: {:08X} is in the player's conversation; it goes when that ends", a_ref->GetFormID());
+			}
+			return true;
+		}
 
 		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
 		void Bury(RE::ObjectRefHandle a_handle, Clock::time_point a_placedAt)
@@ -104,12 +124,13 @@ namespace RemotePlayers
 			if (!ref) {
 				return;
 			}
-			if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_placedAt)) {
+			const auto now = Clock::now();
+			Grave      grave{ a_handle, a_placedAt, std::nullopt, now };
+			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_placedAt) && !HeldForConversation(grave, ref.get(), now)) {
 				ref->Disable();
-				graveyard.push_back({ a_handle, a_placedAt, Clock::now() });
-			} else {
-				graveyard.push_back({ a_handle, a_placedAt, std::nullopt });
+				grave.disabledAt = now;
 			}
+			graveyard.push_back(grave);
 		}
 
 		// The first stand-in waits this long for the player's face, instead of being placed and then
@@ -697,7 +718,9 @@ namespace RemotePlayers
 		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now, so no
 		// stand-in, light or frame copy is written into the save. (A reference whose 3D is still loading
 		// is left alone: deleting it crashes the loader when it finishes; it is a stray in the save, not
-		// a crash.) The save runs between frames, so no physics job holds any of them.
+		// a crash.) The save runs between frames, so no physics job holds any of them. A stand-in kept
+		// for the player's conversation goes too: should it be the speaker, Dialogue ends the conversation
+		// it leaves open.
 		std::erase_if(graveyard, [&](const Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
@@ -806,7 +829,7 @@ namespace RemotePlayers
 				return true;
 			}
 			if (!a_grave.disabledAt) {
-				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt)) {
+				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now)) {
 					return false;
 				}
 				actor->Disable();
@@ -949,6 +972,9 @@ namespace RemotePlayers
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
+		}
+		if (heldForConversation) {
+			out += std::format(" heldForTalk={}", heldForConversation);
 		}
 		return out.empty() ? "none" : out;
 	}

@@ -3,6 +3,7 @@
 
 #include "Config.h"
 
+#include "game/Dialogue.h"
 #include "game/Hud.h"
 #include "game/NpcSync.h"
 #include "game/RemotePlayers.h"
@@ -174,6 +175,8 @@ namespace Conversations
 
 	void Frame(bool a_connected)
 	{
+		Dialogue::Frame();  // a conversation left without its speaker is ended
+
 		std::unordered_map<std::uint32_t, Speaking> now;
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
 			Watch(player, true, a_connected, now);
@@ -217,9 +220,10 @@ namespace Conversations
 		// for the topic by its conditions, which match the speaker's game in all but odd cases).
 		// Not while we're in a conversation or the NPC is in a scene: a Say into a running conversation
 		// or scene can leave it unfinished, and the game then holds the player as if still talking
-		// (no weapon, Pip-Boy or workshop until the NPC is spoken to again).
-		const auto topics = RE::MenuTopicManager::GetSingleton();
-		const bool busy = (topics && topics->menuOpen) || player->GetCurrentScene() || actor->GetCurrentScene();
+		// (no weapon, Pip-Boy or workshop until the NPC is spoken to again). Whether we're in a
+		// conversation is the engine's own test: RE::MenuTopicManager::GetSingleton() reads another
+		// object, whose "menuOpen" is part of a pointer and so always set, and no line was voiced.
+		const bool busy = RE::IsPlayerInDialogue() || player->GetCurrentScene() || actor->GetCurrentScene();
 		if (a_line.speaker != 0 && a_line.topic != 0 && !busy && Config::Get().voiceLines) {
 			const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic);
 			if (topic && Official::IsOfficialForm(topic)) {  // a mod's topic said here would run that mod's scripts out of place
@@ -240,6 +244,6 @@ namespace Conversations
 
 	std::string Describe()
 	{
-		return std::format("conversations: heard={} reported={} received={} shown={} voiced={}", heard, reported, received, displayed, voiced);
+		return std::format("conversations: heard={} reported={} received={} shown={} voiced={} {}", heard, reported, received, displayed, voiced, Dialogue::Describe());
 	}
 }
