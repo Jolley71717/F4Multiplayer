@@ -84,16 +84,15 @@ namespace
 	// The hang watch gives a save or load the same longer limit as a loading screen.
 	void BeginSaveOrLoad(HangWatch::Phase a_what)
 	{
-		SaveLoadHold::Global().Begin(std::chrono::steady_clock::now());
-		HangWatch::SetSaveOrLoad(a_what);
+		SaveLoadHold::Global().Begin(std::chrono::steady_clock::now(), [&] { HangWatch::SetSaveOrLoad(a_what); });
 	}
 
 	void EndSaveOrLoad(std::uint64_t a_hold, std::string_view a_what)
 	{
 		// Only the hold that ends tells the hang watch play is back: not the end of an older one (a game
-		// loaded again before the last load's own work had run), with the newer load still under way.
-		if (const auto held = SaveLoadHold::Global().End(a_hold)) {
-			HangWatch::SetSaveOrLoad(HangWatch::Phase::kPlay);
+		// loaded again before the last load's own work had run), with the newer load still under way. Both
+		// phases are set under the hold's lock, so a newer load's, begun in between, is never written over.
+		if (const auto held = SaveLoadHold::Global().End(a_hold, [] { HangWatch::SetSaveOrLoad(HangWatch::Phase::kPlay); })) {
 			if (*held) {
 				REX::INFO("Frame: {} frame(s) held during the {}", *held, a_what);
 			}

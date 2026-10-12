@@ -36,12 +36,16 @@ namespace SaveLoadHold
 
 		// The save's or load's side (F4SE's messages, any thread).
 
-		// No frame's game work starts from now on. Returns this hold's number, for End.
-		std::uint64_t Begin(Clock::time_point a_now)
+		// No frame's game work starts from now on. Returns this hold's number, for End. a_also runs under
+		// the hold's lock, as does End's: what they record (the hang watch's phase) goes in the holds' order.
+		std::uint64_t Begin(Clock::time_point a_now, const std::function<void()>& a_also = {})
 		{
 			std::scoped_lock l{ lock };
 			held = true;
 			since = a_now;
+			if (a_also) {
+				a_also();
+			}
 			return ++number;
 		}
 
@@ -54,13 +58,16 @@ namespace SaveLoadHold
 
 		// Ends hold a_number. A newer hold begun since (a game loaded again before the last load's own
 		// work had run) stays on. Returns how many frames it held, or nothing when no hold ended.
-		std::optional<std::uint32_t> End(std::uint64_t a_number)
+		std::optional<std::uint32_t> End(std::uint64_t a_number, const std::function<void()>& a_also = {})
 		{
 			std::scoped_lock l{ lock };
 			if (!held || a_number != number) {
 				return std::nullopt;
 			}
 			held = false;
+			if (a_also) {
+				a_also();  // only when this hold ended
+			}
 			return std::exchange(heldFrames, 0);
 		}
 
