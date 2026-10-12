@@ -110,8 +110,10 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 - **The story:** everyone plays the main story and the faction quests in their own game, and gets
   a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
   each of you talks to the characters yourself. The host can set `sStory = shared` to move
-  everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
-  faction choices become yours).
+  everyone's story along together instead: any player's progress moves the others forward, one
+  stage after another, so each stage runs in every game as it did in the first, achievements
+  included (the game only awards them without mods), and goes into each player's save when they
+  save. Scenes can play out where you aren't, and a friend's faction choices become yours.
 - **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
   relay, Mass Fusion's reactor) open for each player at their own stage with the default `own`
   story. A friend who is further along walks through; you are refused until you get there yourself,
@@ -137,7 +139,7 @@ want to keep your solo playthrough untouched.
 
 The host's game also keeps the shared world on disk (`bSaveSession`, on by default): the next time
 they host with the same load order, the session carries on where it stopped. Delete
-`DocumentsMy Gamesallout44se4multiplayer.session` to start over.
+`Documents\My Games\Fallout4\F4SE\F4Multiplayer.session` to start over.
 
 ## Dedicated server (optional)
 

@@ -183,7 +183,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
-| Quest stages | poll `TESQuest::currentStage` twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+) only with `sStory = shared` (Welcome::sharedStory); never misc. Forward changes only, 5 s settle after load, only of quests the reporter has started. Receivers `setstage` (only if higher) once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits, and never during dialogue or a scene |
+| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304) only with `sStory = shared` (Welcome::sharedStory); never misc. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h) and `setstage` per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), one at a time per quest and 4 per poll in all, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105), and never during dialogue or a scene. Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
 
 ### Catching up (join, reconnect, loading a save)
@@ -319,7 +319,8 @@ What a peer can now send that it could not before, and what checks it on the way
   <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
-  objectives with their state), `status` (cell, worldspace and location).
+  objectives with their state), `stages <quest>` (the stages done here and those from friends still
+  waiting), `status` (cell, worldspace and location).
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session
