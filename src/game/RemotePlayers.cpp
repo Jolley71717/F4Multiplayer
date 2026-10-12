@@ -17,7 +17,15 @@ namespace RemotePlayers
 
 		// Render remote players slightly in the past so there are always two states to blend.
 		// States arrive about every 33 ms; two of them, plus slack for the relay and network jitter.
-		constexpr auto INTERPOLATION_DELAY = 70ms;
+		// That is the least: a slow game reads the network once a frame, so it needs one of its frames
+		// more, and a friend in a slow game sends less often. Each player's delay is eased toward one gap
+		// between their states plus one of our frames plus slack, so the render time never jumps.
+		constexpr auto  INTERPOLATION_DELAY = 70ms;
+		constexpr auto  MAX_INTERPOLATION_DELAY = 250ms;
+		constexpr float DELAY_SLACK = 0.02f;  // seconds
+		constexpr float DELAY_SLEW = 0.002f;  // seconds per frame
+		float             frameSeconds = 1.0f / 60.0f;  // ours, smoothed
+		Clock::time_point lastFrame{};
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
 
@@ -48,6 +56,8 @@ namespace RemotePlayers
 			Clock::time_point    equipmentCheckAt{};
 			int                  equipmentFixes = 0;
 			std::deque<Snapshot> snapshots;
+			Prediction::ArrivalClock arrivals;     // even stamps for states read in bursts
+			float                delay = 0.07f;  // seconds behind now it is rendered
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
 			// if the game deletes the actor behind our back (its handle then no longer resolves).
@@ -212,7 +222,7 @@ namespace RemotePlayers
 				return std::nullopt;
 			}
 
-			const auto renderTime = a_now - INTERPOLATION_DELAY;
+			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(a_player.delay));
 			if (renderTime <= snaps.front().received) {
 				return Sampled{ snaps.front().state, snaps.front().state.heading };
 			}
@@ -360,8 +370,11 @@ namespace RemotePlayers
 		// come with their equipment. When they climb out, the stand-in activates the frame again and the
 		// frame is removed.
 		constexpr auto FRAME_ACTION_GAP = 4s;
-		constexpr float FRAME_FOLLOW_DISTANCE = 48.0f;  // a frame this far from its stand-in has been left behind
-		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
+		// The engine holds an actor in furniture at the furniture: a frame copy even a few units off pulled the
+		// stand-in back toward it on alternate frames (in a joiner's game it flipped between two spots 18 units
+		// apart while the host stood still). The copy is kept under the stand-in, where it is placed this frame.
+		constexpr float FRAME_FOLLOW_DISTANCE = 1.0f;
+		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
 		{
 			if (!a_actor || !a_actor->Get3D()) {
 				return;
@@ -375,9 +388,11 @@ namespace RemotePlayers
 				// While it is worn, the frame object itself is hidden (the stand-in's own armor is what shows,
 				// as for any actor in power armor); a visible one trailed the stand-in as a second, empty suit.
 				frame->Get3D()->SetAppCulled(true);
-				if (frame->data.location.GetDistance(a_actor->data.location) > FRAME_FOLLOW_DISTANCE) {
-					frame->data.location = a_actor->data.location;
-					frame->data.angle = a_actor->data.angle;
+				if (frame->data.location.GetDistance(a_at) > FRAME_FOLLOW_DISTANCE || std::abs(frame->data.angle.z - a_heading) > 0.02f) {
+					frame->data.location.x = a_at.x;
+					frame->data.location.y = a_at.y;
+					frame->data.location.z = a_at.z;
+					frame->data.angle = { 0.0f, 0.0f, a_heading };
 					frame->Update3DPosition(true);
 					++framesFollowed;
 				}
@@ -574,7 +589,8 @@ namespace RemotePlayers
 		if (!snaps.empty() && a_state.sequence <= snaps.back().state.sequence) {
 			return;
 		}
-		snaps.push_back({ Clock::now(), a_state });
+		const auto steps = snaps.empty() ? 1u : a_state.sequence - snaps.back().state.sequence;
+		snaps.push_back({ it->second.arrivals.Next(Clock::now(), steps), a_state });
 		while (snaps.size() > MAX_SNAPSHOTS) {
 			snaps.pop_front();
 		}
@@ -777,6 +793,13 @@ namespace RemotePlayers
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
 
 		const auto now = Clock::now();
+		if (lastFrame != Clock::time_point{}) {
+			const float seconds = std::chrono::duration<float>(now - lastFrame).count();
+			if (seconds < 0.5f) {  // a load or a pause is not the frame rate
+				frameSeconds = frameSeconds * 0.95f + seconds * 0.05f;
+			}
+		}
+		lastFrame = now;
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
@@ -803,6 +826,9 @@ namespace RemotePlayers
 			}
 
 			movingFrames += !remote.snapshots.empty() && remote.snapshots.back().state.speed > 0.0f && now - remote.snapshots.back().received < 1s;
+			const float delayWanted = std::clamp(remote.arrivals.gap + frameSeconds + DELAY_SLACK, std::chrono::duration<float>(INTERPOLATION_DELAY).count(),
+				std::chrono::duration<float>(MAX_INTERPOLATION_DELAY).count());
+			remote.delay += std::clamp(delayWanted - remote.delay, -DELAY_SLEW, DELAY_SLEW);
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
@@ -860,7 +886,7 @@ namespace RemotePlayers
 			}
 
 			UpdateLight(remote, actor, localCell, now);
-			UpdatePowerArmor(remote, actor, localCell, now);
+			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -913,9 +939,9 @@ namespace RemotePlayers
 			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
-			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} pa={}/{} frame={:08X}]",
+			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace, gap, remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame);
+				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);

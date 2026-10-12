@@ -1277,6 +1277,30 @@ TEST("server workshop: a late joiner gets everything built so far, moved objects
 	CHECK(items[0].position[0] == 20.0f);
 }
 
+TEST("server workshop: scrapping a piece of the world itself is relayed, and kept for late joiners")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	auto junk = Wall(0x0001A2B3);
+	junk.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(junk));
+	const auto items = Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem);
+	REQUIRE(items.size() == 1);
+	CHECK(items[0].refId == 0x0001A2B3);
+	CHECK(items[0].op == Protocol::WorkshopOp::kScrapped);
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	const auto batches = Decoded(Received(f, 3), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);
+	CHECK(batches[0][0].refId == 0x0001A2B3);
+	CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
+}
+
 TEST("server workshop: scrapping something nobody knew about is not relayed")
 {
 	Fixture f;

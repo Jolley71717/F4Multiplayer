@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 
 // Pure helpers behind stand-in motion, kept free of the game so they can be tested.
 namespace Prediction
@@ -55,6 +56,50 @@ namespace Prediction
 		{
 			distance = seconds = 0.0f;
 			speed = a_speed;
+		}
+	};
+
+	// States reach the game when it reads the network, once a frame. At 16 frames a second two or three
+	// arrive in the same frame, and stamped with that frame's time the blend between them moved the
+	// stand-in in spurts: a friend in a slow game saw the host run unevenly and bounce. Each state is
+	// stamped one usual gap after the last instead, eased toward when it really arrived; a silence, or a
+	// state far off the beat, starts the timeline over.
+	struct ArrivalClock
+	{
+		using Clock = std::chrono::steady_clock;
+		static constexpr auto  RESYNC = std::chrono::milliseconds(250);
+		static constexpr float EASE = 0.125f;    // of the distance to the real arrival, taken per state
+		static constexpr float GAP_KEEP = 0.9f;  // smoothing of the usual gap
+
+		float             gap = 0.033f;  // seconds between the sender's states (a guess until measured)
+		Clock::time_point stamp{};
+		Clock::time_point arrival{};
+		bool              started = false;
+
+		// The time to stamp a state that arrived at a_arrival with; a_steps is how many states the sender
+		// made since the last one we got (more than one when some were lost), 1 when unknown.
+		Clock::time_point Next(Clock::time_point a_arrival, std::uint32_t a_steps = 1)
+		{
+			const float steps = static_cast<float>((std::max)(a_steps, 1u));
+			if (!started) {
+				started = true;
+				stamp = arrival = a_arrival;
+				return stamp;
+			}
+			const float since = std::chrono::duration<float>(a_arrival - arrival).count() / steps;
+			arrival = a_arrival;
+			if (since < std::chrono::duration<float>(RESYNC).count()) {
+				gap = gap * GAP_KEEP + since * (1.0f - GAP_KEEP);
+			}
+			const auto predicted = stamp + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(gap * steps));
+			const auto error = a_arrival - predicted;
+			if (error > RESYNC || error < -RESYNC) {
+				stamp = a_arrival;
+				return stamp;
+			}
+			const auto eased = predicted + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(error) * EASE);
+			stamp = (std::max)(eased, stamp + std::chrono::milliseconds(1));
+			return stamp;
 		}
 	};
 }

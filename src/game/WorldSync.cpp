@@ -29,6 +29,8 @@ namespace WorldSync
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
 		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
+		// Actors whose 3D just loaded (the host checks them for deaths no event reported).
+		std::vector<std::uint32_t> loadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
@@ -109,6 +111,20 @@ namespace WorldSync
 		Clock::time_point                      nextApply{};
 		std::uint32_t                          applied = 0;
 		std::uint32_t                          reported = 0;
+		// The host's world is the session's: an actor already dead in it (killed before the session, or
+		// while nobody was joined, and saved that way) is dead for everyone, though no death event says so.
+		// A joiner's fresh world had bloatflies alive and fighting that the host's save had dead.
+		// They are checked as they load, once the loading screen is gone. The session starts after a
+		// save's cells have loaded, so until we know we host, the latest loads are kept.
+		constexpr std::size_t                  MAX_LOADED_ACTORS = 1024;
+		std::vector<std::uint32_t>             loadedActors;
+		std::uint32_t                          foundDead = 0;
+
+		void ReportDead(std::uint32_t a_id, const RE::NiPoint3& a_at, bool a_byUs)
+		{
+			outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ a_id, 0, a_byUs, a_at.x, a_at.y, a_at.z }, Protocol::MessageType::kReportDeath));
+			++reported;
+		}
 
 		// A loaded, real (not a stand-in) actor, or nullptr.
 		RE::Actor* LoadedActor(std::uint32_t a_refId)
@@ -199,6 +215,26 @@ namespace WorldSync
 		};
 
 		DeathWatcher deathWatcher;
+
+		// Only the ID is taken here: the event comes from whichever thread loaded the actor.
+		class LoadWatcher :
+			public RE::BSTEventSink<RE::TESObjectLoadedEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent& a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
+			{
+				if (a_event.loaded && IsShareableRef(a_event.formID)) {
+					const auto form = RE::TESForm::GetFormByID(a_event.formID);
+					if (form && form->GetFormType() == RE::ENUM_FORM_ID::kACHR) {
+						std::scoped_lock l{ inboxLock };
+						loadInbox.push_back(a_event.formID);
+					}
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		LoadWatcher loadWatcher;
 
 		const RE::ActorValueInfo* HealthInfo()
 		{
@@ -637,6 +673,9 @@ namespace WorldSync
 		} else {
 			REX::ERROR("WorldSync: death event source unavailable");
 		}
+		if (const auto source = RE::TESObjectLoadedEvent::GetEventSource()) {
+			source->RegisterSink(&loadWatcher);
+		}
 		if (const auto source = RE::TESHitEvent::GetEventSource()) {
 			source->RegisterSink(&hitWatcher);
 		}
@@ -787,7 +826,7 @@ namespace WorldSync
 		}
 	}
 
-	void Frame()
+	void Frame(bool a_hosting)
 	{
 		std::vector<std::uint32_t> newDeaths;
 		std::unordered_set<std::uint32_t> killedByUs;
@@ -798,6 +837,8 @@ namespace WorldSync
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
+			loadedActors.insert(loadedActors.end(), loadInbox.begin(), loadInbox.end());
+			loadInbox.clear();
 			killedByUs.swap(killInbox);
 			killInbox.clear();
 			newHits.swap(hitInbox);
@@ -815,11 +856,26 @@ namespace WorldSync
 			if (dead.insert(id).second) {
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};
-				outgoing.push_back(Protocol::Encode(Protocol::ActorDeath{ id, 0, killedByUs.contains(id), at.x, at.y, at.z }, Protocol::MessageType::kReportDeath));
-				++reported;
+				ReportDead(id, at, killedByUs.contains(id));
 			}
 			pending.erase(id);
 			pendingHealth.erase(id);
+		}
+
+		if (a_hosting && InWorld() && !Story::InOpening()) {
+			for (const auto id : loadedActors) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !dead.insert(id).second) {
+					continue;
+				}
+				ReportDead(id, actor->data.location, false);
+				++foundDead;
+				pending.erase(id);
+				pendingHealth.erase(id);
+			}
+			loadedActors.clear();
+		} else if (loadedActors.size() > MAX_LOADED_ACTORS) {
+			loadedActors.erase(loadedActors.begin(), loadedActors.end() - MAX_LOADED_ACTORS);
 		}
 
 		// Report the health of actors we hit last frame (damage has been applied by now).
@@ -972,8 +1028,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={}",
 			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped);
+			ownSkipped, foundDead);
 	}
 }

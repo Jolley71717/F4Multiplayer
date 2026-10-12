@@ -30,7 +30,8 @@ namespace WorldSync
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);
 
 	// Applies pending remote changes as references load, and collects local events. Call every frame.
-	void Frame();
+	// a_hosting: this game runs the session's server; its world is the session's (actors dead in it are dead for all).
+	void Frame(bool a_hosting);
 
 	// How many actors the player killed since the last call (any actor, shared or not).
 	[[nodiscard]] std::uint32_t TakePlayerKills();

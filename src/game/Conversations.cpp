@@ -215,7 +215,12 @@ namespace Conversations
 		++displayed;
 		// An NPC's line is said aloud by our copy when we know its topic (the engine picks the line
 		// for the topic by its conditions, which match the speaker's game in all but odd cases).
-		if (a_line.speaker != 0 && a_line.topic != 0 && Config::Get().voiceLines) {
+		// Not while we're in a conversation or the NPC is in a scene: a Say into a running conversation
+		// or scene can leave it unfinished, and the game then holds the player as if still talking
+		// (no weapon, Pip-Boy or workshop until the NPC is spoken to again).
+		const auto topics = RE::MenuTopicManager::GetSingleton();
+		const bool busy = (topics && topics->menuOpen) || player->GetCurrentScene() || actor->GetCurrentScene();
+		if (a_line.speaker != 0 && a_line.topic != 0 && !busy && Config::Get().voiceLines) {
 			const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic);
 			if (topic && Official::IsOfficialForm(topic)) {  // a mod's topic said here would run that mod's scripts out of place
 				// Through the console, not Papyrus: packing the call's arguments for the script VM crashed

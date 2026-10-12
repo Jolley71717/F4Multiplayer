@@ -7,7 +7,8 @@ namespace Compass
 	// Watches for loading screens: the markers are left alone while one is up.
 	void Install();
 
-	// Works out where each friend is and updates the markers (on the UI thread). Main thread, every frame.
+	// Works out where each friend is; the markers (and the HUD messages) are written from inside the HUD's
+	// own update, which this hooks the first time the HUD is up. Every frame.
 	void Frame();
 
 	// What a player's marker looks like ("pink diamond"), for the player list.

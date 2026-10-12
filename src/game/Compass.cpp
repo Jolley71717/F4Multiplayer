@@ -68,6 +68,33 @@ namespace Compass
 		// SetVisible on the render thread, no plugin frame).
 		std::atomic<bool>          loading{ false };
 		std::atomic<std::uint32_t> skippedLoading{ 0 };
+		// Nor while another menu is up (a conversation, the Pip-Boy, the workshop): the HUD hides and
+		// rearranges itself then, and a host crashed in the HUD's render tree as a conversation opened,
+		// with the markers being moved every frame by the dialogue camera turning the player.
+		std::atomic<std::uint32_t> skippedMenus{ 0 };
+		// Which threads the frame and the UI task ran on (distinct ids seen), for the crash reports.
+		std::mutex                 threadsLock;
+		std::set<std::thread::id>  frameThreads;
+		std::set<std::thread::id>  uiThreads;
+
+		void Seen(std::set<std::thread::id>& a_threads)
+		{
+			std::scoped_lock l{ threadsLock };
+			a_threads.insert(std::this_thread::get_id());
+		}
+
+		// Menus during which the HUD is left alone, one bit each, kept from the menus' open and close
+		// events. Asking the UI instead (GetMenuOpen) takes a reference to the menu; from the HUD's update,
+		// which runs beside the main thread's drawing, such a reference can decide which thread destroys a
+		// closing menu, and the workshop menu destroyed mid-draw deadlocks the game.
+		constexpr std::array OTHER_MENUS{ "DialogueMenu"sv, "PipboyMenu"sv, "WorkshopMenu"sv, "LooksMenu"sv, "PowerArmorModMenu"sv };
+		std::atomic<std::uint32_t> otherMenus{ 0 };
+
+		bool OtherMenuOpen()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return !ui || ui->menuMode != 0 || otherMenus.load() != 0;
+		}
 
 		class MenuWatcher :
 			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
@@ -77,6 +104,16 @@ namespace Compass
 			{
 				if (a_event.menuName == "LoadingMenu"sv) {
 					loading = a_event.opening;
+				}
+				for (std::size_t i = 0; i < OTHER_MENUS.size(); ++i) {
+					if (a_event.menuName == OTHER_MENUS[i]) {
+						const auto bit = 1u << i;
+						if (a_event.opening) {
+							otherMenus.fetch_or(bit);
+						} else {
+							otherMenus.fetch_and(~bit);
+						}
+					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -167,17 +204,19 @@ namespace Compass
 			return shape;
 		}
 
-		// UI thread.
-		void Apply(const std::vector<Target>& a_targets)
+		// Inside the HUD's own update (HudAdvance).
+		void Apply(RE::IMenu* a_hud, const std::vector<Target>& a_targets)
 		{
-			updateQueued = false;
+			Seen(uiThreads);
 			if (loading) {
 				++skippedLoading;
 				return;
 			}
-			const auto ui = RE::UI::GetSingleton();
-			const auto menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
-			const auto movie = menu ? menu->uiMovie.get() : nullptr;
+			if (OtherMenuOpen()) {
+				++skippedMenus;
+				return;
+			}
+			const auto movie = a_hud->uiMovie.get();
 			GValue     compass;
 			if (!movie || !movie->GetVariable(&compass, COMPASS_PATH) || !compass.IsDisplayObject()) {
 				return;
@@ -224,6 +263,56 @@ namespace Compass
 			shown = visible;
 		}
 
+		// The markers are written from inside the HUD menu's own AdvanceMovie, after the engine's update of
+		// it: our frame task and F4SE's UI tasks run on the game's job threads while the engine advances
+		// menus in a job of its own and the main thread draws them, and marker writes from there were
+		// behind the crashes in Scaleform's render tree (loads, a conversation opening). In the HUD's own
+		// update nothing else touches the HUD movie.
+		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;  // IMenu::AdvanceMovie
+		using AdvanceFn = void (*)(RE::IMenu*, float, std::uint64_t);
+		std::atomic<std::uintptr_t> hookedHudVtable{ 0 };
+		AdvanceFn                   originalAdvance = nullptr;
+		std::mutex                  targetsLock;
+		std::vector<Target>         latestTargets;  // from the frame task, for the next HUD update
+		std::atomic<std::uint32_t>  advances{ 0 };
+
+		void HudAdvance(RE::IMenu* a_this, float a_timeDelta, std::uint64_t a_time)
+		{
+			originalAdvance(a_this, a_timeDelta, a_time);
+			++advances;
+			if (loading) {
+				return;
+			}
+			Hud::OnHudAdvance();
+			if (!updateQueued.exchange(false)) {
+				return;
+			}
+			std::vector<Target> targets;
+			{
+				std::scoped_lock l{ targetsLock };
+				targets = latestTargets;
+			}
+			Apply(a_this, targets);
+		}
+
+		void HookHud()
+		{
+			if (hookedHudVtable != 0) {
+				return;  // one HUD class; never patched twice, and the HUD isn't looked up again
+			}
+			const auto ui = RE::UI::GetSingleton();
+			const auto menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
+			if (!menu) {
+				return;
+			}
+			const auto vtable = *reinterpret_cast<std::uintptr_t*>(menu.get());
+			const auto slot = vtable + sizeof(void*) * ADVANCE_MOVIE_INDEX;
+			originalAdvance = *reinterpret_cast<AdvanceFn*>(slot);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&HudAdvance));
+			hookedHudVtable = vtable;
+			REX::INFO("Compass: hooked the HUD's update (vtable {:X})", vtable);
+		}
+
 		std::vector<Target> FindTargets()
 		{
 			std::vector<Target> targets;
@@ -262,17 +351,26 @@ namespace Compass
 
 	void Frame()
 	{
+		if (!loading) {
+			HookHud();  // the HUD messages go out through it too, markers or not
+		}
 		if (!Config::Get().compassMarkers || loading || !Hud::IsSettled()) {
 			return;  // the HUD is being torn down or rebuilt (loading screen, or a game load just finished)
 		}
+		Seen(frameThreads);
+		if (OtherMenuOpen()) {
+			++skippedMenus;
+			return;  // the markers stay where they were until the menu has closed
+		}
 		auto targets = FindTargets();
 		if (targets.empty() && shown.load() == 0) {
-			return;  // nobody to show and nothing showing: the UI thread is not bothered at all (main menu, loads, playing alone)
+			return;  // nobody to show and nothing showing: the HUD is not touched at all (main menu, loads, playing alone)
 		}
-		if (updateQueued.exchange(true)) {
-			return;  // the last update hasn't reached the UI thread yet
+		{
+			std::scoped_lock l{ targetsLock };
+			latestTargets = std::move(targets);
 		}
-		F4SE::GetTaskInterface()->AddUITask([targets = std::move(targets)]() { Apply(targets); });
+		updateQueued = true;
 	}
 
 	std::string_view MarkerName(std::uint32_t a_playerId)
@@ -282,6 +380,8 @@ namespace Compass
 
 	std::string Describe()
 	{
-		return std::format("compass: shown={} made={} skippedLoading={}", shown.load(), made.load(), skippedLoading.load());
+		std::scoped_lock l{ threadsLock };
+		return std::format("compass: shown={} made={} skippedLoading={} skippedMenus={} frameThreads={} hudThreads={} hudAdvances={}", shown.load(), made.load(),
+			skippedLoading.load(), skippedMenus.load(), frameThreads.size(), uiThreads.size(), advances.load());
 	}
 }

@@ -20,8 +20,13 @@ namespace Hud
 		std::atomic<bool>        loading{ false };
 		std::atomic<bool>        everLoaded{ false };
 		Clock::time_point        loadedAt{};
-		std::deque<std::string>  queued;  // main thread only
+		// Messages wait here for the HUD's own update (OnHudAdvance). Our frame task runs on the game's
+		// job threads, twice a frame, while the main thread draws the HUD: a message written from there
+		// raced the HUD's own text layout (the crashes in Scaleform's TreeText with no plugin frame).
+		std::mutex               queueLock;
+		std::deque<std::string>  queued;
 		std::uint32_t            held = 0;
+		std::uint32_t            dropped = 0;
 
 		class MenuWatcher :
 			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
@@ -80,13 +85,18 @@ namespace Hud
 		}
 	}
 
-	void Frame()
+	void OnHudAdvance()
 	{
-		if (queued.empty() || !Settled()) {
-			return;
+		std::string message;
+		{
+			std::scoped_lock l{ queueLock };
+			if (queued.empty() || !Settled()) {
+				return;
+			}
+			message = std::move(queued.front());
+			queued.pop_front();
 		}
-		Show(queued.front());
-		queued.pop_front();
+		Show(message);
 	}
 
 	void Notify(const std::string& a_message)
@@ -101,18 +111,20 @@ namespace Hud
 			}
 		}
 		REX::INFO("Hud: {}", clean);
+		std::scoped_lock l{ queueLock };
 		if (!Settled()) {
-			if (queued.size() < MAX_QUEUED) {
-				queued.push_back(std::move(clean));
-			}
 			++held;
-			return;
 		}
-		Show(clean);
+		if (queued.size() < MAX_QUEUED) {
+			queued.push_back(std::move(clean));
+		} else {
+			++dropped;
+		}
 	}
 
 	std::string Describe()
 	{
-		return std::format("hud: queued={} held={}", queued.size(), held);
+		std::scoped_lock l{ queueLock };
+		return std::format("hud: queued={} held={} dropped={}", queued.size(), held, dropped);
 	}
 }

@@ -804,7 +804,15 @@ void Server::Run()
 		const auto key = std::pair{ a_player.id, item->refId };
 		if (item->op == Protocol::WorkshopOp::kScrapped) {
 			if (workshopItems.erase(key) == 0) {
-				return;  // nothing anyone knew about
+				if (!Protocol::IsShareableRef(item->refId)) {
+					return;  // nothing anyone knew about
+				}
+				// A piece of the world itself (the junk a settlement starts with): it's in every game, so
+				// it goes from everyone's world, including theirs who join later.
+				if (workshopItems.size() >= MAX_WORKSHOP_ITEMS) {
+					return;
+				}
+				workshopItems[key] = *item;
 			}
 		} else {
 			if (workshopItems.size() >= MAX_WORKSHOP_ITEMS && !workshopItems.contains(key)) {

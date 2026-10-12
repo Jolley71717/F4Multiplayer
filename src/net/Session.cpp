@@ -786,7 +786,7 @@ namespace Session
 				client->Send(std::move(packet), true);
 			}
 		}
-		WorldSync::Frame();
+		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
 
 		if (welcomed) {
 			NpcSync::Frame();
@@ -847,7 +847,6 @@ namespace Session
 		RemotePlayers::Update();
 		WeaponFire::Frame();
 		Compass::Frame();
-		Hud::Frame();
 		Puppets::Tick();
 	}
 

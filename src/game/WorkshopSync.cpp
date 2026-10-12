@@ -38,6 +38,7 @@ namespace WorkshopSync
 		std::uint32_t scrapped = 0;
 		std::uint32_t adopted = 0;
 		std::uint32_t refused = 0;  // outside their workbench's reach
+		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
 
 		// The form IDs of our copies, for the workshop event sinks (which may run off the game thread while
 		// the game thread changes `copies`): kept in step with `copies` under its own lock.
@@ -288,6 +289,34 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
+		// from our world too. False until it's loaded here. Only what workshop mode could have scrapped:
+		// the same object (base) as theirs, within its workbench's reach, and nothing alive or a quest's.
+		bool ScrapWorldRef(const Protocol::WorkshopItem& a_item)
+		{
+			if (!CellFor(a_item)) {
+				return false;
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId);
+			if (!ref) {
+				return false;  // its cell isn't loaded yet
+			}
+			if (ref->IsDisabled() || ref->IsDeleted()) {
+				return true;
+			}
+			const auto base = ref->GetObjectReference();
+			const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop);
+			const bool quest = ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+			if (!base || base->GetFormID() != a_item.base || ref->As<RE::Actor>() || !Buildable(base) || quest || !workshop ||
+				workshop->data.location.GetDistance(ref->data.location) > BUILD_REACH) {
+				++refused;
+				return true;
+			}
+			ref->Disable();
+			++worldScrapped;
+			return true;
+		}
+
 		void Remove(Copy& a_copy)
 		{
 			if (const auto ref = a_copy.ref.get()) {
@@ -332,7 +361,9 @@ namespace WorkshopSync
 			return;
 		}
 		nextPendingTry = now + PENDING_INTERVAL;
-		std::erase_if(pending, [&](const auto& a_entry) { return Place(a_entry.first, a_entry.second); });
+		std::erase_if(pending, [&](const auto& a_entry) {
+			return a_entry.second.op == Protocol::WorkshopOp::kScrapped ? ScrapWorldRef(a_entry.second) : Place(a_entry.first, a_entry.second);
+		});
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -351,6 +382,8 @@ namespace WorkshopSync
 				ForgetCopy(it->second.ref);
 				copies.erase(it);
 				++scrapped;
+			} else if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
+				pending[key] = a_item;
 			}
 			return;
 		}
@@ -381,6 +414,7 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped, adopted, refused, pending.size());
+		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
+			worldScrapped, adopted, refused, pending.size());
 	}
 }

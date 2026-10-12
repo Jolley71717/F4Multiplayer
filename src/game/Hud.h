@@ -12,10 +12,11 @@ namespace Hud
 	// Whether the HUD may be written to right now (no loading screen, and not just after one or a load).
 	[[nodiscard]] bool IsSettled();
 
-	// Shows what waited for the HUD to be back. Main thread, every frame.
-	void Frame();
+	// Shows the next waiting message. Called only from inside the HUD's own update (Compass hooks it),
+	// the one place the HUD is written without racing the engine.
+	void OnHudAdvance();
 
-	// Shows a notification and logs it. Main thread only.
+	// Queues a notification for the HUD and logs it. Any thread.
 	void Notify(const std::string& a_message);
 
 	[[nodiscard]] std::string Describe();

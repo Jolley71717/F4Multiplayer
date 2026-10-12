@@ -143,7 +143,14 @@ namespace DevCommands
 		// frames: frame times since the last call (mean, worst, hitches over 100 ms).
 		std::string Frames(std::string_view)
 		{
-			return FrameStats::Global().Take().Describe();
+			// The renderer's own count next to ours: a trace on a game at 60 fps sampled only every third
+			// frame, so either the game draws fewer frames than our task runs, or the task runs less.
+			static std::uint32_t lastDrawn = 0;
+			const auto           state = RE::BSGraphics::State::GetSingleton();
+			const std::uint32_t  drawn = state ? state->frameCount : 0;
+			auto                 result = std::format("{} drawn={} {}", FrameStats::Global().Take().Describe(), drawn - lastDrawn, FrameStats::TakeThreads());
+			lastDrawn = drawn;
+			return result;
 		}
 
 		std::string Pos(std::string_view)

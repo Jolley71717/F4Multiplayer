@@ -1,6 +1,7 @@
 #include "game/NpcSync.h"
 
 #include "game/Equipment.h"
+#include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
@@ -27,6 +28,11 @@ namespace NpcSync
 		constexpr auto  SLOW_DELAY = 150ms;
 		constexpr auto  FAST_GAP = 70ms;  // average time between states for FAST_DELAY
 		constexpr float DELAY_SLEW_MS = 2.0f;  // per frame
+		// A slow game reads the network once a frame: the delay also covers one of our frames.
+		constexpr float DELAY_SLACK_MS = 20.0f;
+		constexpr float MAX_DELAY_MS = 250.0f;
+		float           frameMs = 1000.0f / 60.0f;  // ours, smoothed
+		Clock::time_point lastFrame{};
 		constexpr auto STALE_AFTER = 1s;
 		// No states for this long (the owner's game is paused, loading or gone): our copy runs its
 		// own AI until they come back.
@@ -54,6 +60,7 @@ namespace NpcSync
 		struct Mirror
 		{
 			std::deque<Snapshot> snapshots;
+			Prediction::ArrivalClock arrivals{ .gap = 0.05f };  // even stamps for states read in bursts
 			RE::Actor*           registered = nullptr;  // as registered with Puppets
 			float                delayMs = std::chrono::duration<float, std::milli>(SLOW_DELAY).count();
 		};
@@ -76,6 +83,9 @@ namespace NpcSync
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::uint32_t                                        broughtIn = 0;       // unloaded copies moved into our cell after their owner's
+		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
+		std::unordered_map<std::uint32_t, Clock::time_point> switchedOnAt;
+		constexpr auto                                       SWITCH_ON_RETRY = 5s;
 		std::unordered_map<std::uint32_t, Clock::time_point> broughtInAt;
 		constexpr auto                                       BRING_IN_RETRY = 10s;
 		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell
@@ -443,7 +453,8 @@ namespace NpcSync
 				return;
 			}
 			const auto gap = (snaps.back().received - snaps[snaps.size() - 1 - GAPS].received) / GAPS;
-			const float target = std::chrono::duration<float, std::milli>(gap <= FAST_GAP ? FAST_DELAY : SLOW_DELAY).count();
+			const float usual = std::chrono::duration<float, std::milli>(gap <= FAST_GAP ? FAST_DELAY : SLOW_DELAY).count();
+			const float target = std::clamp(std::chrono::duration<float, std::milli>(gap).count() + frameMs + DELAY_SLACK_MS, usual, MAX_DELAY_MS);
 			a_mirror.delayMs += std::clamp(target - a_mirror.delayMs, -DELAY_SLEW_MS, DELAY_SLEW_MS);
 		}
 
@@ -521,6 +532,27 @@ namespace NpcSync
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_state.refId, at.x).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_state.refId, at.y).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", a_state.refId, at.z).c_str());
+		}
+
+		// The owner's game switched the NPC on (a script enabled it: the mole rats that burrow up at Red
+		// Rocket, an ambush), ours is still off: it is switched on here too, through the console's enable
+		// like the kills, else the friend fights something we never see. It is mirrored once it loads.
+		void SwitchOn(const Protocol::ActorState& a_state, Clock::time_point a_now)
+		{
+			if (!Protocol::IsShareableRef(a_state.refId)) {
+				return;
+			}
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
+			if (!actor || !actor->IsDisabled() || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
+				return;
+			}
+			if (const auto last = switchedOnAt.find(a_state.refId); last != switchedOnAt.end() && a_now - last->second < SWITCH_ON_RETRY) {
+				return;
+			}
+			switchedOnAt[a_state.refId] = a_now;
+			++switchedOn;
+			REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running", a_state.refId);
+			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
 		}
 
 		void UpdateMirrors(Clock::time_point a_now)
@@ -624,11 +656,13 @@ namespace NpcSync
 				continue;
 			}
 			if (!LoadedActor(state.refId)) {
+				SwitchOn(state, now);
 				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
 			}
-			auto& snaps = mirrors[state.refId].snapshots;
-			snaps.push_back({ now, state });
+			auto& mirror = mirrors[state.refId];
+			auto& snaps = mirror.snapshots;
+			snaps.push_back({ mirror.arrivals.Next(now), state });
 			while (snaps.size() > MAX_SNAPSHOTS) {
 				snaps.pop_front();
 			}
@@ -699,6 +733,10 @@ namespace NpcSync
 			return;
 		}
 		const auto now = Clock::now();
+		if (lastFrame != Clock::time_point{} && now - lastFrame < 500ms) {  // a load or a pause is not the frame rate
+			frameMs = frameMs * 0.95f + std::chrono::duration<float, std::milli>(now - lastFrame).count() * 0.05f;
+		}
+		lastFrame = now;
 		// In the opening our NPCs are nobody else's business, and nobody else's run ours: its
 		// scenes need every NPC on its own AI.
 		if (Story::InOpening()) {
@@ -826,7 +864,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }

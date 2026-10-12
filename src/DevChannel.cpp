@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "DevCommands.h"
+#include "MainThread.h"
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -71,7 +72,7 @@ namespace DevChannel
 		}
 
 		// Game state may only be touched on the main thread, so commands that need it
-		// are queued through F4SE's task interface and the listener waits for the result.
+		// are queued for it (MainThread::Post) and the listener waits for the result.
 		std::string RunOnMainThread(std::function<std::string()> a_fn)
 		{
 			auto promise = std::make_shared<std::promise<std::string>>();
@@ -81,7 +82,7 @@ namespace DevChannel
 			// that asked for them had moved on.
 			auto abandoned = std::make_shared<std::atomic<bool>>(false);
 
-			F4SE::GetTaskInterface()->AddTask([promise, abandoned, fn = std::move(a_fn)]() {
+			MainThread::Post([promise, abandoned, fn = std::move(a_fn)]() {
 				if (abandoned->load()) {
 					promise->set_value({});
 					return;
