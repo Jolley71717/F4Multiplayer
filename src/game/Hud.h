@@ -6,6 +6,9 @@ namespace Hud
 	// Watches for loading screens: nothing is written to the HUD while one is up or just closed.
 	void Install();
 
+	// A save is about to be loaded: nothing is written to the HUD until it has been, and has settled.
+	void OnLoadStarting();
+
 	// A save was loaded: the HUD is rebuilt over the next seconds; nothing is written to it meanwhile.
 	void OnGameLoaded();
 

@@ -280,7 +280,10 @@ namespace Compass
 		{
 			originalAdvance(a_this, a_timeDelta, a_time);
 			++advances;
-			if (loading) {
+			// An update queued before a load (or its loading screen) names a HUD that is being torn down
+			// and rebuilt; it is dropped, and Frame queues a fresh one once the HUD has settled.
+			if (loading || !Hud::IsSettled()) {
+				updateQueued = false;
 				return;
 			}
 			Hud::OnHudAdvance();

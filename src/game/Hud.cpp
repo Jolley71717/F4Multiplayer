@@ -13,13 +13,24 @@ namespace Hud
 		constexpr auto        SETTLE = 1500ms;
 		// A game load rebuilds every menu some seconds after its loading screen has closed: the old HUD
 		// movie is released while the new one comes up (a host crashed in the text layout, with
-		// Movie::Release on the stack, 3 s after a save was loaded). Longer hold after one.
+		// Movie::Release on the stack, 3 s after a save was loaded). Longer hold after one, counted from
+		// that loading screen closing: counted from the load's own end, a long loading screen used it up.
 		constexpr auto        SETTLE_AFTER_LOAD = 6s;
+		// A load's start is announced before its loading screen opens; a load whose end never came
+		// holds the HUD only this long.
+		constexpr auto        LOAD_LIMIT = 60s;
 		constexpr std::size_t MAX_QUEUED = 8;
 
-		std::atomic<bool>        loading{ false };
-		std::atomic<bool>        everLoaded{ false };
-		Clock::time_point        loadedAt{};
+		// Written by the menu event sink and the load messages, read from the HUD's update and any
+		// thread that queues a message.
+		std::atomic<bool>              loading{ false };
+		std::atomic<bool>              everLoaded{ false };
+		std::atomic<Clock::time_point> loadedAt{};
+		std::atomic<bool>              gameLoading{ false };        // from the load's start to its end
+		std::atomic<Clock::time_point> loadStartedAt{};
+		std::atomic<bool>              gameLoaded{ false };
+		std::atomic<bool>              awaitingLoadClose{ false };  // the load's loading screen is still up
+		std::atomic<Clock::time_point> gameLoadedAt{};
 		// Messages wait here for the HUD's own update (OnHudAdvance). Our frame task runs on the game's
 		// job threads, twice a frame, while the main thread draws the HUD: a message written from there
 		// raced the HUD's own text layout (the crashes in Scaleform's TreeText with no plugin frame).
@@ -39,6 +50,9 @@ namespace Hud
 					if (!a_event.opening) {
 						loadedAt = Clock::now();
 						everLoaded = true;
+						if (awaitingLoadClose.exchange(false)) {
+							gameLoadedAt = Clock::now();
+						}
 					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
@@ -46,19 +60,16 @@ namespace Hud
 		};
 		MenuWatcher watcher;
 
-		std::atomic<bool> gameLoaded{ false };
-		Clock::time_point gameLoadedAt{};
-
 		bool Settled()
 		{
-			if (loading) {
-				return false;
-			}
 			const auto now = Clock::now();
-			if (gameLoaded && now - gameLoadedAt < SETTLE_AFTER_LOAD) {
+			if (loading || (gameLoading && now - loadStartedAt.load() < LOAD_LIMIT)) {
 				return false;
 			}
-			return !everLoaded || now - loadedAt >= SETTLE;
+			if (gameLoaded && now - gameLoadedAt.load() < SETTLE_AFTER_LOAD) {
+				return false;
+			}
+			return !everLoaded || now - loadedAt.load() >= SETTLE;
 		}
 
 		void Show(const std::string& a_clean)
@@ -67,10 +78,18 @@ namespace Hud
 		}
 	}
 
+	void OnLoadStarting()
+	{
+		loadStartedAt = Clock::now();
+		gameLoading = true;
+	}
+
 	void OnGameLoaded()
 	{
 		gameLoadedAt = Clock::now();
 		gameLoaded = true;
+		awaitingLoadClose = true;
+		gameLoading = false;
 	}
 
 	bool IsSettled()
