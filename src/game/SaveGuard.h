@@ -17,9 +17,10 @@ namespace SaveGuard
 	// A stand-in was placed: one of these left in no cell is ours to keep out of saves (see BeforeSave).
 	void Track(RE::Actor* a_actor);
 
-	// Before a save: the created actors in no cell that are gone (deleted stand-ins, or actors whose base
-	// no longer exists, such as a stand-in an earlier version saved) are kept out of it. Searched for only
-	// once this run placed a stand-in or the last load brought strays back. Returns how many were kept out.
+	// Before a save: the created actors in no cell that are gone (deleted stand-ins, including ones an earlier
+	// version saved, or actors whose base no longer exists) are kept out of it. Searched for only once this
+	// run placed a stand-in or the last load brought back deleted actors in no cell. Returns how many were
+	// kept out.
 	std::uint32_t BeforeSave();
 
 	// After a load: logs the strays the save brought back, so a broken save can be told apart.

@@ -29,7 +29,7 @@ namespace SaveGuard
 		std::uint32_t searches = 0;      // of all forms, for strays
 
 		SaveStrays::Placed placed;
-		bool               loadBroughtStrays = false;
+		bool               loadBroughtGone = false;  // the last load brought back gone actors (SaveStrays::Gone)
 
 		void* SaveLoadGame()
 		{
@@ -51,34 +51,69 @@ namespace SaveGuard
 			return removed;
 		}
 
-		// The created actors in no cell that are gone (see SaveStrays::Stray). The engine writes such a
-		// reference's cell into the save without a check, a crash on every save.
-		std::vector<std::uint32_t> Strays()
+		// What an actor was placed from: a leveled one's own base is the game's copy, its leveled data
+		// names what was placed.
+		SaveStrays::Origin OriginOf(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			SaveStrays::Origin origin{ .base = a_base };
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+			const auto leveled = actor && actor->extraList ? actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
+			if (leveled) {
+				origin.leveled = true;
+				origin.leveledFrom = leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
+			}
+			return origin;
+		}
+
+		struct Search
+		{
+			std::vector<std::uint32_t> strays;
+			std::uint32_t              gone = 0;  // strays and the game's own (see SaveStrays::Gone)
+		};
+
+		// The created actors in no cell that are gone and ours (see SaveStrays::Stray). The engine writes
+		// such a reference's cell into the save without a check, a crash on every save.
+		Search Strays()
 		{
 			++searches;
-			std::vector<std::uint32_t> strays;
-			const auto& [map, lock] = RE::TESForm::GetAllForms();
-			const RE::BSAutoReadLock l{ lock };
-			if (!map) {
-				return strays;
-			}
-			for (const auto& [id, form] : *map) {
-				if (form && form->IsCreated() && form->Is(RE::ENUM_FORM_ID::kACHR)) {
-					const auto actor = static_cast<RE::Actor*>(form);
-					const auto base = actor->GetObjectReference();
-					const auto baseId = base ? base->GetFormID() : 0;
-					const SaveStrays::Actor seen{
-						.inCell = actor->GetParentCell() != nullptr,
-						.hasBase = base != nullptr,
-						.deleted = actor->IsDeleted(),
-						.ours = placed.Ours(id, baseId) || RemotePlayers::IsDefaultBase(baseId),
-					};
-					if (SaveStrays::Stray(seen)) {
-						strays.push_back(id);
+			struct Candidate
+			{
+				std::uint32_t     id;
+				std::uint32_t     base;
+				SaveStrays::Actor seen;
+			};
+			std::vector<Candidate> gone;
+			{
+				const auto& [map, lock] = RE::TESForm::GetAllForms();
+				const RE::BSAutoReadLock l{ lock };
+				if (!map) {
+					return {};
+				}
+				for (const auto& [id, form] : *map) {
+					if (form && form->IsCreated() && form->Is(RE::ENUM_FORM_ID::kACHR)) {
+						const auto actor = static_cast<RE::Actor*>(form);
+						const auto base = actor->GetObjectReference();
+						const SaveStrays::Actor seen{
+							.inCell = actor->GetParentCell() != nullptr,
+							.hasBase = base != nullptr,
+							.deleted = actor->IsDeleted(),
+						};
+						if (SaveStrays::Gone(seen)) {
+							gone.push_back({ id, base ? base->GetFormID() : 0, seen });
+						}
 					}
 				}
 			}
-			return strays;
+			// Whose the few gone ones are is looked at after the forms' lock is let go: their extra data
+			// has a lock of its own.
+			Search search{ .gone = static_cast<std::uint32_t>(gone.size()) };
+			for (auto& [id, base, seen] : gone) {
+				seen.ours = seen.hasBase && (placed.Ours(id, base) || SaveStrays::FromStandInBase(OriginOf(id, base), RemotePlayers::IsStandInBase));
+				if (SaveStrays::Stray(seen)) {
+					search.strays.push_back(id);
+				}
+			}
+			return search;
 		}
 
 		// Every read is guarded: the address may be anything.
@@ -129,11 +164,11 @@ namespace SaveGuard
 
 	std::uint32_t BeforeSave()
 	{
-		if (!SaveStrays::SearchBeforeSave(placed.Any(), loadBroughtStrays)) {
+		if (!SaveStrays::SearchBeforeSave(placed.Any(), loadBroughtGone)) {
 			return 0;
 		}
 		std::uint32_t kept = 0;
-		for (const auto id : Strays()) {
+		for (const auto id : Strays().strays) {
 			// One already kept out of an earlier save has no record left: nothing to do, nothing to count.
 			if (ExcludeId(id)) {
 				lastStray = id;
@@ -147,20 +182,20 @@ namespace SaveGuard
 
 	std::uint32_t AfterLoad()
 	{
-		const auto strays = Strays();
+		const auto [strays, gone] = Strays();
 		for (const auto id : strays) {
 			lastStray = id;
 			REX::INFO("SaveGuard: the save brought back {:08X} in no cell (a friend's stand-in saved by an earlier version?)", id);
 		}
 		placed.KeepOnly(strays);
-		loadBroughtStrays = !strays.empty();
+		loadBroughtGone = gone != 0;
 		straysLoaded += static_cast<std::uint32_t>(strays.size());
 		return static_cast<std::uint32_t>(strays.size());
 	}
 
 	std::uint32_t CountStrays()
 	{
-		return static_cast<std::uint32_t>(Strays().size());
+		return static_cast<std::uint32_t>(Strays().strays.size());
 	}
 
 	std::string TypeName(const void* a_object)

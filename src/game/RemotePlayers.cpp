@@ -92,6 +92,9 @@ namespace RemotePlayers
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
+		// The looks friends asked for this run (base NPCs; see Spawn), kept after they leave: a stand-in an
+		// earlier version saved may wear one (see IsStandInBase).
+		std::set<std::uint32_t> looks;
 
 		// Stand-ins to delete once their 3D is in (see DeferredDelete).
 		// A stand-in (or its light or frame) goes in two steps: disabled now, so the engine takes its 3D and
@@ -746,6 +749,9 @@ namespace RemotePlayers
 		}
 		player.name = std::move(a_name);
 		player.appearance = a_appearance;
+		if (a_appearance) {
+			looks.insert(a_appearance);
+		}
 	}
 
 	void Remove(std::uint32_t a_id)
@@ -874,9 +880,21 @@ namespace RemotePlayers
 		return 0;
 	}
 
-	bool IsDefaultBase(std::uint32_t a_base)
+	bool IsStandInBase(std::uint32_t a_base)
 	{
-		return a_base == FEMALE_SETTLER || a_base == MALE_SETTLER;
+		if (!a_base) {
+			return false;
+		}
+		const auto& settings = Config::Get();
+		if (a_base == FEMALE_SETTLER || a_base == MALE_SETTLER || a_base == settings.puppetBaseForm) {
+			return true;
+		}
+		if (a_base != settings.myAppearance && !looks.contains(a_base)) {
+			return false;
+		}
+		// A look is used only when it is an NPC here and not a unique one (see Spawn).
+		const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
+		return npc && !npc->IsUnique();
 	}
 
 	void DespawnAll()
