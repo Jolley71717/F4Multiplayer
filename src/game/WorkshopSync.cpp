@@ -375,10 +375,23 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// Whether something is stored in the reference in our game (a container we keep a stash in): its
+		// inventory, once our game has made one, is not empty.
+		bool HoldsItems(RE::TESObjectREFR* a_ref)
+		{
+			const auto list = a_ref->inventoryList;
+			if (!list) {
+				return false;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			return !list->data.empty();
+		}
+
 		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
 		// from our world too. False until it's loaded here. Only what workshop mode could have scrapped:
 		// the same object (base) as theirs, something the game lets a player scrap, within its
-		// workbench's reach, and nothing alive or a quest's.
+		// workbench's reach, and nothing alive or a quest's. Nor anything holding items in our game: their
+		// scrap gave them its contents, ours would vanish with it (a dresser we keep our stash in).
 		bool ScrapWorldRef(const Protocol::WorkshopItem& a_item)
 		{
 			if (!CellFor(a_item)) {
@@ -395,7 +408,7 @@ namespace WorkshopSync
 			const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop);
 			const bool quest = ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			if (!base || base->GetFormID() != a_item.base || ref->As<RE::Actor>() || !Buildable(base) || quest || !CanScrap(*ref) || !workshop ||
-				workshop->data.location.GetDistance(ref->data.location) > BUILD_REACH) {
+				workshop->data.location.GetDistance(ref->data.location) > BUILD_REACH || HoldsItems(ref)) {
 				++refused;
 				return true;
 			}
