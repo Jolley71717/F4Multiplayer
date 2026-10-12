@@ -12,11 +12,14 @@ namespace WorkshopSync
 	// Hooks the workshop's placed/moved/scrapped events. Call once the game is up; no-op after.
 	void Install();
 
-	// Places copies that were waiting for their settlement to load and, on the host (a_host), walks
-	// the loaded cells for junk scrapped before the session. Call every frame while in a session.
+	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
+	// the host (a_host), walks the loaded cells for junk scrapped before the session. Call every frame
+	// while in a session.
 	void Frame(bool a_host);
 
-	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing();
+	// The reports to send. a_sending: false while they can't be (not in a session): they are dropped,
+	// and a piece of the world they reported scrapped is reported again when the walk finds it.
+	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
 	// Another player built, moved or scrapped something.
 	void Apply(const Protocol::WorkshopItem& a_item);
@@ -32,7 +35,7 @@ namespace WorkshopSync
 
 	[[nodiscard]] std::string Describe();
 
-	// Dev: the workbenches the walk found (or this reference), with their workshop data's list of
-	// deleted items.
+	// Dev: the workbenches the walk found (or this one), with whether the player stands in each one's
+	// build area; for any other reference, what the walk makes of it.
 	[[nodiscard]] std::string DescribeBenches(RE::TESObjectREFR* a_ref = nullptr);
 }

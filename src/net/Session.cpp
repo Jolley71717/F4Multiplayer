@@ -826,10 +826,8 @@ namespace Session
 			MapShare::Frame();
 			WorkshopSync::Frame(hostedServer && hostedServer->Running());
 		}
-		for (auto& packet : WorkshopSync::TakeOutgoing()) {
-			if (welcomed) {
-				client->Send(packet, true);
-			}
+		for (auto& packet : WorkshopSync::TakeOutgoing(welcomed)) {
+			client->Send(std::move(packet), true);
 		}
 		for (auto& packet : MapShare::TakeOutgoing()) {
 			if (welcomed) {

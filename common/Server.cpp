@@ -3,6 +3,7 @@
 #include "EnetTransport.h"
 #include "Protocol.h"
 #include "SessionFile.h"
+#include "WorkshopStore.h"
 
 #include <array>
 #include <chrono>
@@ -43,6 +44,7 @@ namespace
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
 	constexpr std::size_t MAX_WORKSHOP_ITEMS = 20000;  // built objects remembered for joiners (a big settlement is a few thousand)
+	constexpr std::size_t MAX_WORLD_SCRAPS = 20000;    // pieces of the world scrapped, remembered apart from what's built
 	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
 	// (one more each XP_REPORT_INTERVAL).
 	constexpr auto XP_REFILL_TIME = std::chrono::seconds(10);
@@ -214,7 +216,9 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
-	std::map<std::pair<std::uint32_t, std::uint32_t>, Protocol::WorkshopItem> workshopItems;  // (player, ref) -> what they built, kept while they're away too
+	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
+	bool                                                  builtFullLogged = false;
+	bool                                                  scrapsFullLogged = false;
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
 	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
@@ -260,13 +264,14 @@ void Server::Run()
 				markers[ref] = flags;
 			}
 			for (const auto& item : saved->workshopItems) {
-				workshopItems[{ item.playerId, item.refId }] = item;
+				workshop.Restore(item);
 			}
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built)", deadActors.size(), containerChanges.size(), workshopItems.size()));
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped)", deadActors.size(), containerChanges.size(), workshop.Built().size(),
+				workshop.Scraps().size()));
 		}
 	}
 	std::size_t lastSavedSize = 0;  // a cheap change check: how much state there was at the last save
-	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshopItems.size() + (worldTime ? 1 : 0); };
+	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshop.Size() + (worldTime ? 1 : 0); };
 	const auto  saveSession = [&] {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
 			return;
@@ -289,9 +294,7 @@ void Server::Run()
 		for (const auto& [ref, flags] : markers) {
 			snapshot.markers.emplace_back(ref, flags);
 		}
-		for (const auto& [key, item] : workshopItems) {
-			snapshot.workshopItems.push_back(item);
-		}
+		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		if (!SessionFile::Save(sessionPath, snapshot)) {
 			log("server: could not save the session");
 		}
@@ -308,7 +311,7 @@ void Server::Run()
 		refStates.clear();
 		actorOwners.clear();
 		npcEquipment.clear();
-		workshopItems.clear();
+		workshop.Clear();
 		questStages.clear();
 		questStageKeys.clear();
 		worldTime.reset();
@@ -585,19 +588,19 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
-		// Everything built at settlements so far, by anyone (their builder may be gone), in batches.
+		// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in batches.
 		{
 			std::vector<Protocol::WorkshopItem> batch;
-			for (const auto& [key, item] : workshopItems) {
-				if (key.first == a_player.id) {
-					continue;
+			workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
+				if (a_key.first == a_player.id) {
+					return;
 				}
-				batch.push_back(item);
+				batch.push_back(a_item);
 				if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
 					send(a_player.key, Protocol::Encode(batch), true);
 					batch.clear();
 				}
-			}
+			});
 			if (!batch.empty()) {
 				send(a_player.key, Protocol::Encode(batch), true);
 			}
@@ -834,32 +837,15 @@ void Server::Run()
 			return;
 		}
 		item->playerId = a_player.id;
-		const auto key = std::pair{ a_player.id, item->refId };
-		if (item->op == Protocol::WorkshopOp::kScrapped) {
-			// Already gone for everyone. The host reports the junk its save had scrapped each time it
-			// hosts, and a saved session remembers the last report: forgetting it here would bring the
-			// junk back for whoever joins next.
-			if (const auto known = workshopItems.find(key); known != workshopItems.end() && known->second.op == Protocol::WorkshopOp::kScrapped) {
-				return;
-			}
-			if (workshopItems.erase(key) == 0) {
-				if (!Protocol::IsShareableRef(item->refId)) {
-					return;  // nothing anyone knew about
-				}
-				// A piece of the world itself (the junk a settlement starts with): it's in every game, so
-				// it goes from everyone's world, including theirs who join later.
-				if (workshopItems.size() >= MAX_WORKSHOP_ITEMS) {
-					return;
-				}
-				workshopItems[key] = *item;
-			}
-		} else {
-			if (workshopItems.size() >= MAX_WORKSHOP_ITEMS && !workshopItems.contains(key)) {
-				return;
-			}
-			workshopItems[key] = *item;
+		const auto outcome = workshop.Report(*item);
+		// Logged once a run: past the cap, every report would be.
+		if (const bool scrap = item->op == Protocol::WorkshopOp::kScrapped; outcome.full && !std::exchange(scrap ? scrapsFullLogged : builtFullLogged, true)) {
+			log(std::format("server: the session keeps at most {} {}; not keeping {:08X} from '{}', nor any more", scrap ? MAX_WORLD_SCRAPS : MAX_WORKSHOP_ITEMS,
+				scrap ? "scrapped pieces of the world" : "built objects", item->refId, a_player.name));
 		}
-		broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
+		if (outcome.relay) {
+			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
+		}
 	};
 
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
