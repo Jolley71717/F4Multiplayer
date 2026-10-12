@@ -1142,8 +1142,8 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
-		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this reference),
-		// with the first entries of their workshop data's deleted-items list.
+		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this one), and
+		// whether you stand in each one's build area; for any other reference, what the walk makes of it.
 		std::string WsBenches(std::string_view a_args)
 		{
 			const auto ref = a_args.empty() ? nullptr : LookupRef(a_args);

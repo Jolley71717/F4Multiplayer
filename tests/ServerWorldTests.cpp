@@ -1358,6 +1358,31 @@ TEST("server workshop: scrapping something nobody knew about is not relayed")
 	CHECK(Count(Received(f, 2), MT::kWorkshopItem) == 0);
 }
 
+TEST("server workshop: a piece of the world moved and then scrapped reaches a late joiner scrapped")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Built(Wall(0x0001A2B3, 20.0f)));  // moved: Bob gets a copy where it went
+	auto junk = Wall(0x0001A2B3, 20.0f);
+	junk.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(junk));
+	const auto items = Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem);
+	REQUIRE(items.size() == 2);
+	CHECK(items[1].op == Protocol::WorkshopOp::kScrapped);
+	Clear(f, { 1, 2 });
+
+	// Carol gets neither the copy nor the original.
+	JoinAs(f, 3, "Carol");
+	const auto batches = Decoded(Received(f, 3), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);
+	CHECK(batches[0][0].refId == 0x0001A2B3);
+	CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
+}
+
 // ---- the saved session --------------------------------------------------------------------
 
 TEST("server session file: the world survives a server restart with the same load order")
