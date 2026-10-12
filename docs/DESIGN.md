@@ -44,8 +44,9 @@
   window is "not responding" (`IsHungAppWindow`: the main thread hasn't read its messages for 5 s;
   nothing is sent to it, and a minimised game waiting for messages counts as answering). A stall of
   `iHangSeconds` (15; four times that during a save or a load, from F4SE's message before it to the
-  one after, and on a loading screen) is logged once with a short report, and the recovery is logged
-  too. For the report the watch suspends the main thread just long enough to read its instruction
+  one after, and on a loading screen; a stall seen in one of those keeps that limit and is reported
+  as one, even if the save ends before the game answers) is logged once with a short report, and the
+  recovery is logged too. For the report the watch suspends the main thread just long enough to read its instruction
   pointer and copy the top of its stack (system calls only: the main thread may be stopped holding
   the heap or loader lock), then resumes it and names the instruction and the return addresses it
   finds on the copy as module+offset, from `VirtualQuery` and the image's mapped file name (no

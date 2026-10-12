@@ -19,7 +19,8 @@ namespace HangWatch
 
 	// What the main thread is busy with, as far as the plugin hears from the engine's events. Anything
 	// but play gets the longer limit: a save, a load or a loading screen can hold the main thread far
-	// longer than a frame ever should.
+	// longer than a frame ever should. In order of how much they say about a stall: a stall keeps the
+	// furthest down this list it was seen in (Detector).
 	enum class Phase : std::uint8_t
 	{
 		kPlay,           // in play or in a menu
@@ -42,13 +43,16 @@ namespace HangWatch
 		}
 	}
 
-	// The phase now. A save or load counts until its end message, but at most a_stale after it began:
-	// F4SE sends both ends, and one that never came must not leave the longer limit on for good (a
-	// save or load stalled that long has been reported by then anyway). It outranks the loading screen
-	// a load puts up, since it says more.
-	inline Phase CurrentPhase(bool a_loadingScreen, Phase a_saveOrLoad, Clock::duration a_saveOrLoadFor, Clock::duration a_stale)
+	// How long a save or load counts at most, in long limits. F4SE sends both ends, and one that never
+	// came must not leave the longer limit on for good; but a slow save or load is one until it ends,
+	// so this is far past the point where a stall in it has been reported.
+	constexpr int SAVE_OR_LOAD_STALE = 10;
+
+	// The phase now. A save or load counts until its end message, or until SAVE_OR_LOAD_STALE times
+	// a_longLimit after it began. It outranks the loading screen a load puts up, since it says more.
+	inline Phase CurrentPhase(bool a_loadingScreen, Phase a_saveOrLoad, Clock::duration a_saveOrLoadFor, Clock::duration a_longLimit)
 	{
-		if ((a_saveOrLoad == Phase::kSave || a_saveOrLoad == Phase::kLoad) && a_saveOrLoadFor < a_stale) {
+		if ((a_saveOrLoad == Phase::kSave || a_saveOrLoad == Phase::kLoad) && a_saveOrLoadFor < a_longLimit * SAVE_OR_LOAD_STALE) {
 			return a_saveOrLoad;
 		}
 		return a_loadingScreen ? Phase::kLoadingScreen : Phase::kPlay;
@@ -75,7 +79,8 @@ namespace HangWatch
 		struct Result
 		{
 			Event           event = Event::kNone;
-			Clock::duration stalled{};  // how long the main thread has been (or, on kRecovered, was) stalled
+			Clock::duration stalled{};             // how long the main thread has been (or, on kRecovered, was) stalled
+			Phase           phase = Phase::kPlay;  // the stall's, which sets its limit
 		};
 
 		// a_longLimit: the limit while saving, loading or on a loading screen. a_lag: how long the main
@@ -92,9 +97,16 @@ namespace HangWatch
 				since.reset();
 				if (hung) {
 					hung = false;
-					return { Event::kRecovered, stalled };
+					return { Event::kRecovered, stalled, phase };
 				}
 				return {};
+			}
+			// A stall keeps the most telling phase it was seen in, and with it the longer limit. A save
+			// whose end message came before Windows saw the main thread answer again is a slow save that
+			// ended, not a hang in play; one that outlasts the long limit is a hang while saving, however
+			// the save or the stall ends.
+			if (!since || a_sample.phase > phase) {
+				phase = a_sample.phase;
 			}
 			// After a pause the main thread had no chance to answer yet, so its stall counts from now. Once
 			// a hang is reported, it stays the same hang until the game answers.
@@ -102,11 +114,11 @@ namespace HangWatch
 				since = a_sample.paused ? a_now : a_now - lag;
 			}
 			const auto stalled = a_now - *since;
-			if (!hung && stalled >= Limit(a_sample.phase)) {
+			if (!hung && stalled >= Limit(phase)) {
 				hung = true;
-				return { Event::kHang, stalled };
+				return { Event::kHang, stalled, phase };
 			}
-			return { Event::kNone, stalled };
+			return { Event::kNone, stalled, phase };
 		}
 
 		[[nodiscard]] Clock::duration Limit(Phase a_phase) const { return a_phase == Phase::kPlay ? limit : longLimit; }
@@ -116,7 +128,8 @@ namespace HangWatch
 		Clock::duration                  limit;
 		Clock::duration                  longLimit;
 		Clock::duration                  lag;
-		std::optional<Clock::time_point> since;  // when the current stall began (estimated)
+		std::optional<Clock::time_point> since;                 // when the current stall began (estimated)
+		Phase                            phase = Phase::kPlay;  // the current stall's
 		bool                             hung = false;
 	};
 

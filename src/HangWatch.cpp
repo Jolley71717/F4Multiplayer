@@ -310,13 +310,14 @@ namespace HangWatch
 				// as answering.
 				Sample sample;
 				sample.responsive = !IsHungAppWindow(a_watch.window);
-				sample.phase = CurrentPhase(loadingScreen, saveOrLoad, woke - saveOrLoadSince.load(), a_watch.longLimit);
+				const Phase saveOrLoadNow = saveOrLoad;  // read before its start time, which SetSaveOrLoad sets first
+				sample.phase = CurrentPhase(loadingScreen, saveOrLoadNow, woke - saveOrLoadSince.load(), a_watch.longLimit);
 				sample.paused = woke - asleep > TICK + OVERSLEPT;
 				// An exception must never end this thread (std::terminate would take the game with it).
 				try {
 					const auto result = a_detector.Tick(Clock::now(), sample);
 					if (result.event == Detector::Event::kHang) {
-						OnHang(a_watch, result.stalled, sample.phase, a_detector.Limit(sample.phase));
+						OnHang(a_watch, result.stalled, result.phase, a_detector.Limit(result.phase));
 					} else if (result.event == Detector::Event::kRecovered) {
 						REX::INFO("Hang: the game answers again, after about {} s", std::chrono::duration_cast<std::chrono::seconds>(result.stalled).count());
 					}

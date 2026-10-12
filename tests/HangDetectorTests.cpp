@@ -19,6 +19,13 @@ namespace
 
 	constexpr Sample Stalled(Phase a_phase) { return Sample{ .responsive = false, .phase = a_phase }; }
 
+	// One of the watch's looks, a_into a save, with the phase made the way the watch makes it (with the
+	// default long limit). a_saving: the save's end message hasn't come yet.
+	Sample Look(HangWatch::Clock::duration a_into, bool a_saving, bool a_responsive)
+	{
+		return Sample{ .responsive = a_responsive, .phase = HangWatch::CurrentPhase(false, a_saving ? Phase::kSave : Phase::kPlay, a_into, 60s) };
+	}
+
 	std::vector<std::uint8_t> Bytes(std::initializer_list<std::uint8_t> a_bytes) { return a_bytes; }
 }
 
@@ -87,32 +94,105 @@ TEST("hang watch: a loading screen, a save and a load get the longer limit")
 		CHECK(d.Tick(start, Stalled(phase)).event == Event::kNone);
 		CHECK(d.Tick(start + 30s, Stalled(phase)).event == Event::kNone);  // 35 s: a slow save or load, not a hang
 		CHECK(d.Tick(start + 54s, Stalled(phase)).event == Event::kNone);
-		CHECK(d.Tick(start + 55s, Stalled(phase)).event == Event::kHang);  // 60 s
+		const auto hang = d.Tick(start + 55s, Stalled(phase));  // 60 s
+		CHECK(hang.event == Event::kHang);
+		CHECK(hang.phase == phase);
 		CHECK(d.Tick(start + 56s, ANSWERS).event == Event::kRecovered);
 	}
 	CHECK(MakeDetector().Limit(Phase::kPlay) == 15s);
 }
 
-TEST("hang watch: a stall that outlasts its save is judged by the normal limit from then on")
+TEST("hang watch: a 70 s save is one hang while saving, at the longer limit")
+{
+	auto       d = MakeDetector();
+	const auto start = HangWatch::Clock::time_point{} + 1h;  // the save begins and the main thread stops reading its messages
+	std::vector<std::pair<HangWatch::Clock::duration, Detector::Result>> events;
+	for (auto t = 1s; t <= 80s; t += 1s) {
+		// Windows calls the game not responding 5 s in; the save's end message comes at 70 s, and
+		// Windows sees the game answer a look later.
+		const auto result = d.Tick(start + t, Look(t, t < 70s, t < 5s || t > 70s));
+		if (result.event != Event::kNone) {
+			events.emplace_back(t, result);
+		}
+	}
+	REQUIRE(events.size() == 2);
+	CHECK(events[0].first == 60s);
+	CHECK(events[0].second.event == Event::kHang);
+	CHECK(events[0].second.stalled == 60s);
+	CHECK(events[0].second.phase == Phase::kSave);
+	CHECK(d.Limit(events[0].second.phase) == 60s);
+	CHECK(events[1].first == 71s);
+	CHECK(events[1].second.event == Event::kRecovered);
+	CHECK(events[1].second.stalled == 71s);
+}
+
+TEST("hang watch: a slow save whose end comes before Windows sees the game answer is no hang")
 {
 	auto       d = MakeDetector();
 	const auto start = HangWatch::Clock::time_point{} + 1h;
-	CHECK(d.Tick(start, Stalled(Phase::kSave)).event == Event::kNone);         // 5 s
-	CHECK(d.Tick(start + 9s, Stalled(Phase::kSave)).event == Event::kNone);    // 14 s
-	CHECK(d.Tick(start + 10s, Stalled(Phase::kSave)).event == Event::kNone);   // 15 s: fine while saving
-	CHECK(d.Tick(start + 11s, STALLED).event == Event::kHang);                 // the save is over, the game still doesn't answer
+	for (auto t = 1s; t <= 60s; t += 1s) {
+		// A 50 s save; Windows still calls the game not responding for two looks after its end message.
+		CHECK(d.Tick(start + t, Look(t, t < 50s, t < 5s || t >= 52s)).event == Event::kNone);
+	}
+	CHECK(!d.Hung());
 }
 
-TEST("hang watch: the phase is the save or load until it ends or goes stale, then the loading screen")
+TEST("hang watch: a stall keeps the longer limit of a save it was seen in, but the next stall doesn't")
+{
+	const auto start = HangWatch::Clock::time_point{} + 1h;
+	{
+		// The save is over, the game still doesn't answer: a hang, but one that began in the save.
+		auto d = MakeDetector();
+		CHECK(d.Tick(start, Stalled(Phase::kSave)).event == Event::kNone);        // 5 s
+		CHECK(d.Tick(start + 10s, Stalled(Phase::kSave)).event == Event::kNone);  // 15 s: fine while saving
+		CHECK(d.Tick(start + 11s, STALLED).event == Event::kNone);
+		CHECK(d.Tick(start + 54s, STALLED).event == Event::kNone);                // 59 s
+		const auto hang = d.Tick(start + 55s, STALLED);
+		CHECK(hang.event == Event::kHang);
+		CHECK(hang.phase == Phase::kSave);
+	}
+	{
+		// The main thread was already stalled when the save's message came.
+		auto d = MakeDetector();
+		CHECK(d.Tick(start, STALLED).event == Event::kNone);                      // 5 s
+		CHECK(d.Tick(start + 9s, STALLED).event == Event::kNone);                 // 14 s
+		CHECK(d.Tick(start + 10s, Stalled(Phase::kSave)).event == Event::kNone);  // 15 s
+		CHECK(d.Tick(start + 54s, STALLED).event == Event::kNone);
+		CHECK(d.Tick(start + 55s, STALLED).phase == Phase::kSave);
+		// A load says more than the loading screen it put up.
+		auto load = MakeDetector();
+		CHECK(load.Tick(start, Stalled(Phase::kLoadingScreen)).phase == Phase::kLoadingScreen);
+		CHECK(load.Tick(start + 1s, Stalled(Phase::kLoad)).phase == Phase::kLoad);
+		CHECK(load.Tick(start + 2s, Stalled(Phase::kLoadingScreen)).phase == Phase::kLoad);
+	}
+	{
+		// A 20 s save the game answers right after, then a freeze in play: the normal limit again.
+		auto d = MakeDetector();
+		for (auto t = 1s; t <= 25s; t += 1s) {
+			CHECK(d.Tick(start + t, Look(t, t < 20s, t < 5s || t >= 21s)).event == Event::kNone);
+		}
+		CHECK(d.Tick(start + 40s, Look(40s, false, false)).event == Event::kNone);  // 5 s
+		CHECK(d.Tick(start + 49s, Look(49s, false, false)).event == Event::kNone);  // 14 s
+		const auto hang = d.Tick(start + 50s, Look(50s, false, false));               // 15 s
+		CHECK(hang.event == Event::kHang);
+		CHECK(hang.stalled == 15s);
+		CHECK(hang.phase == Phase::kPlay);
+	}
+}
+
+TEST("hang watch: the phase is the save or load until it ends, then the loading screen")
 {
 	using HangWatch::CurrentPhase;
 	CHECK(CurrentPhase(false, Phase::kPlay, 0s, 60s) == Phase::kPlay);
 	CHECK(CurrentPhase(true, Phase::kPlay, 0s, 60s) == Phase::kLoadingScreen);
 	CHECK(CurrentPhase(false, Phase::kSave, 10s, 60s) == Phase::kSave);
 	CHECK(CurrentPhase(true, Phase::kLoad, 10s, 60s) == Phase::kLoad);  // a load's own loading screen
+	// A save or load slower than the long limit is still one.
+	CHECK(CurrentPhase(false, Phase::kSave, 70s, 60s) == Phase::kSave);
+	CHECK(CurrentPhase(true, Phase::kLoad, 5min, 60s) == Phase::kLoad);
 	// An end message that never came doesn't keep the longer limit on for good.
-	CHECK(CurrentPhase(false, Phase::kSave, 60s, 60s) == Phase::kPlay);
-	CHECK(CurrentPhase(true, Phase::kLoad, 5min, 60s) == Phase::kLoadingScreen);
+	CHECK(CurrentPhase(false, Phase::kSave, 10min, 60s) == Phase::kPlay);
+	CHECK(CurrentPhase(true, Phase::kLoad, 1h, 60s) == Phase::kLoadingScreen);
 }
 
 TEST("hang watch: a paused game (the PC slept, a debugger) starts the stall over")
