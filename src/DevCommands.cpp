@@ -1910,9 +1910,15 @@ namespace DevCommands
 			return "ok";
 		}
 
+		// The reference poison disabled, and when: it is deleted only a while later.
+		std::uint32_t                         poisonId = 0;
+		std::chrono::steady_clock::time_point poisonDisabledAt{};
+
 		// saveguard [strays | rtti <global offset> | exclude <ref> | poison <ref> <save name>]
 		// rtti names the class of the object a global of the game's points to (checks an address).
-		// poison deletes the reference and saves at once, the way a stand-in reached saves.
+		// poison deletes a created reference and saves at once, the way a stand-in reached saves: the first
+		// call disables it, a call a second or more later deletes it and saves. (Disabling and deleting in
+		// one frame crashed a physics job still handling its collision; see RemotePlayers' graveyard.)
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1920,31 +1926,45 @@ namespace DevCommands
 				return SaveGuard::Describe();
 			}
 			if (args[0] == "strays") {
-				return std::format("strays={}", SaveGuard::AfterLoad());
+				return std::format("strays={}", SaveGuard::CountStrays());
 			}
 			if (args[0] == "rtti" && args.size() > 1) {
 				const auto offset = ParseHex(args[1]);
 				if (!offset) {
 					return "error: rtti <hex offset>";
 				}
-				const auto base = reinterpret_cast<std::uintptr_t>(REX::W32::GetModuleHandleW(nullptr));
-				const auto object = *reinterpret_cast<void* const*>(base + *offset);
-				return std::format("{:X} -> {} {}", *offset, object, SaveGuard::TypeName(object));
+				const auto object = SaveGuard::ReadGlobal(*offset);
+				if (!object) {
+					return "error: that address can't be read";
+				}
+				return std::format("{:X} -> {} {}", *offset, *object, SaveGuard::TypeName(*object));
 			}
 			if (args[0] == "exclude" && args.size() > 1) {
 				const auto ref = LookupRef(args[1]);
 				if (!ref) {
 					return "error: no such reference";
 				}
-				SaveGuard::Exclude(ref);
-				return "ok";
+				return SaveGuard::Exclude(ref) ? "removed" : "no record";
 			}
 			if (args[0] == "poison" && args.size() > 2) {
 				const auto ref = LookupRef(args[1]);
 				if (!ref) {
 					return "error: no such reference";
 				}
-				ref->Disable();
+				if (!ref->IsCreated()) {
+					return "error: refusing to delete a reference from a plugin file";
+				}
+				const auto now = std::chrono::steady_clock::now();
+				if (poisonId != ref->GetFormID() || !ref->IsDisabled()) {
+					ref->Disable();
+					poisonId = ref->GetFormID();
+					poisonDisabledAt = now;
+					return "disabled; poison it again in a second to delete it and save";
+				}
+				if (now - poisonDisabledAt < 1s) {
+					return "error: disabled less than a second ago; try again";
+				}
+				poisonId = 0;
 				ref->SetDelete(true);
 				RE::Console::ExecuteCommand(std::format("save {}", args[2]).c_str());
 				return "ok";

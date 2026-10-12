@@ -726,6 +726,7 @@ namespace RemotePlayers
 			}
 
 			Puppets::Register(actor);
+			SaveGuard::Track(actor);
 			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
 			// and hitting it isn't a crime.
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
@@ -873,11 +874,26 @@ namespace RemotePlayers
 		return 0;
 	}
 
+	bool IsDefaultBase(std::uint32_t a_base)
+	{
+		return a_base == FEMALE_SETTLER || a_base == MALE_SETTLER;
+	}
+
 	void DespawnAll()
 	{
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
 		}
+		// Marked for deletion earlier and still there: kept out of the save too. (Before the graveyard is
+		// flushed, so the ones it adds now are not excluded twice.)
+		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
+			const auto ref = a_handle.get();
+			if (!ref) {
+				return true;
+			}
+			SaveGuard::Exclude(ref.get());
+			return false;
+		});
 		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now. (A
 		// reference whose 3D is still loading is left alone: deleting it crashes the loader when it
 		// finishes.) The save runs between frames, so no physics job holds any of them. None of them may
@@ -899,14 +915,6 @@ namespace RemotePlayers
 			deleting.push_back(a_grave.actor);
 			++flushedBeforeSave;
 			return true;
-		});
-		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
-			const auto ref = a_handle.get();
-			if (!ref) {
-				return true;
-			}
-			SaveGuard::Exclude(ref.get());
-			return false;
 		});
 	}
 
@@ -932,9 +940,10 @@ namespace RemotePlayers
 	void OnGameLoaded()
 	{
 		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
-		// entry resolved after the load could delete some unrelated object, and a face base made before
-		// it may be gone.
+		// entry resolved after the load could delete some unrelated object, a stale one in deleting would
+		// keep an unrelated reference out of every save, and a face base made before it may be gone.
 		graveyard.clear();
+		deleting.clear();
 		for (auto& [id, player] : players) {
 			player.faceBaseId = 0;
 			player.faceTried = false;
