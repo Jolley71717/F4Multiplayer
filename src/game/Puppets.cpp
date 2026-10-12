@@ -1,6 +1,7 @@
 ﻿#include "game/Puppets.h"
 
 #include "game/IdleRelease.h"
+#include "game/MoveSync.h"
 #include "game/Prediction.h"
 
 #include "Protocol.h"
@@ -14,10 +15,6 @@ namespace Puppets
 
 		// The engine periodically re-evaluates AI packages, so the idle package is re-applied.
 		constexpr auto IDLE_REFRESH = 2s;
-
-		// Locomotion starts above MOVE_START and stops below MOVE_STOP (units/second).
-		constexpr float MOVE_START = 25.0f;
-		constexpr float MOVE_STOP = 10.0f;
 
 		struct Puppet
 		{
@@ -40,6 +37,10 @@ namespace Puppets
 			IdleRelease::Gate                     idleRelease;     // a mirrored NPC held by an idle (see ReleaseIdle)
 			std::uint32_t                         idleStops = 0;   // stops sent, and taken by the graph (dev: mirror)
 			std::uint32_t                         idleStopsTaken = 0;
+			std::uint32_t                         idleGiveUps = 0;   // stuck spells whose stops all went unheeded
+			std::chrono::steady_clock::time_point nextResync{};      // DriveAnimation tells the graph again then whether it moves
+			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
+			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 		};
 
 		std::mutex                                    lock;
@@ -95,19 +96,34 @@ namespace Puppets
 			}
 		}
 
+		// The furniture the NPC uses (sits or lies on, or still holds getting off it), or null.
+		RE::NiPointer<RE::TESObjectREFR> OccupiedFurniture(const RE::Actor* a_actor)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto middle = process ? process->middleHigh : nullptr;
+			return middle ? middle->occupiedFurniture.get() : RE::NiPointer<RE::TESObjectREFR>{};
+		}
+
+		// How often a mirror is stood up out of furniture before it is left to the idle stops below: once
+		// does it, and one that will not let go would only have its graph reset again and again.
+		constexpr std::uint32_t SEAT_EXIT_TRIES = 3;
+
 		// A mirrored NPC's graph refused "moveStart": something its own game started holds it. Dogmeat's
 		// graph starts moving only from its plain standing idle, and a dog left standing sits, lies down
 		// or turns on the spot after a few seconds, so the mirror slid after its owner's copy sitting
 		// down. The AI ends the idle before walking off; with the AI off, we do: "IdleStop" gets it up
 		// (the graph then plays its getting-up), "turnStop" ends a turn on the spot, and DriveAnimation's
-		// "moveStart" is taken once it stands. Called right after DriveAnimation asked it to move.
+		// "moveStart" is taken once it stands. How often is IdleRelease's. Called right after DriveAnimation
+		// asked it to move, in the engine's update of the actor.
 		void ReleaseIdle(RE::Actor* a_actor)
 		{
 			static const RE::BSFixedString idleStop{ "IdleStop" };
 			static const RE::BSFixedString turnStop{ "turnStop" };
 			static const RE::BSFixedString doNotInterrupt{ "bDoNotInterrupt" };
 
-			bool due = false;
+			bool          due = false;
+			bool          last = false;  // this stuck spell's last stop
+			std::uint32_t seatExits = 0;
 			{
 				std::scoped_lock l{ lock };
 				const auto entry = Find(a_actor);
@@ -115,8 +131,35 @@ namespace Puppets
 					return;
 				}
 				due = entry->idleRelease.Due(!entry->moving, std::chrono::steady_clock::now());
+				last = entry->idleRelease.Spent();
+				seatExits = entry->seatExits;
 			}
 			if (!due) {
+				return;
+			}
+			// Furniture holds it: while an actor uses furniture its race swaps in that furniture's own graph,
+			// which takes none of the stops below nor "moveStart" (Dogmeat's for its DogmeatBarJump markers, as
+			// on Red Rocket's counter: up on its hind legs, front paws raised), and only the AI walks it out; the
+			// do-nothing package we give a mirror leaves it there. A friend's Dogmeat slid after its owner's copy
+			// standing upright. It is stood up at once, the way the engine's AI clears furniture: let go and the
+			// graph back in its base state, so "moveStart" is taken next frame. Not moved to the furniture's exit,
+			// which can be far off (we place it every frame). Not a seat on another actor (a vertibird's) nor a
+			// power armor frame: letting go of that would take the armor's state off it. The engine makes the
+			// same call from the same place, its own update of the actor, when a furniture animation times out.
+			const auto furniture = OccupiedFurniture(a_actor);
+			const bool inArmor = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+			if (furniture && !furniture->As<RE::Actor>() && !inArmor && seatExits < SEAT_EXIT_TRIES) {
+				const auto sit = static_cast<int>(a_actor->DoGetSitSleepState());
+				const auto base = furniture->GetObjectReference();
+				a_actor->StopInteractingQuick(true, false, true);
+				const bool letGo = !OccupiedFurniture(a_actor);
+				{
+					std::scoped_lock l{ lock };
+					if (const auto entry = Find(a_actor)) {
+						++entry->seatExits;
+					}
+				}
+				REX::INFO("Puppets: {:08X} was in furniture {:08X} (base {:08X}, sit state {}) while its owner's copy moves; stood it up (let go={})", a_actor->GetFormID(), furniture->GetFormID(), base ? base->GetFormID() : 0, sit, letGo);
 				return;
 			}
 			const auto graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
@@ -124,17 +167,25 @@ namespace Puppets
 			if (bool keep = false; graph->GetGraphVariableImplBool(doNotInterrupt, keep) && keep) {
 				return;
 			}
-			const bool stood = graph->NotifyAnimationGraphImpl(idleStop);
-			const bool turned = graph->NotifyAnimationGraphImpl(turnStop);
+			const bool    stood = graph->NotifyAnimationGraphImpl(idleStop);
+			const bool    turned = graph->NotifyAnimationGraphImpl(turnStop);
+			const bool    gaveUp = last && !stood && !turned;
+			std::uint32_t taken = 0;
+			std::uint32_t giveUps = 0;
 			{
 				std::scoped_lock l{ lock };
 				if (const auto entry = Find(a_actor)) {
 					++entry->idleStops;
 					entry->idleStopsTaken += stood || turned;
+					entry->idleGiveUps += gaveUp;
+					taken = entry->idleStopsTaken;
+					giveUps = entry->idleGiveUps;
 				}
 			}
-			if (stood || turned) {
-				REX::INFO("Puppets: {:08X} was held by an idle while its owner's copy moves; stopped it (idle={} turn={})", a_actor->GetFormID(), stood, turned);
+			if ((stood || turned) && MoveSync::Loggable(taken)) {
+				REX::INFO("Puppets: {:08X} was held by an idle while its owner's copy moves; stopped it (idle={} turn={}, {} so far)", a_actor->GetFormID(), stood, turned, taken);
+			} else if (gaveUp && MoveSync::Loggable(giveUps)) {
+				REX::INFO("Puppets: {:08X} still refuses to move after {} idle stops while its owner's copy moves; left alone until it moves or its owner's copy stops ({} so far)", a_actor->GetFormID(), IdleRelease::TRIES, giveUps);
 			}
 		}
 
@@ -158,6 +209,10 @@ namespace Puppets
 			}
 		}
 
+		// Player stand-ins whose graph was found moving while they should stand, or the other way round, and
+		// put back (see DriveAnimation): for the dev status line.
+		std::atomic<std::uint64_t> standInResyncs{ 0 };
+
 		// With AI off nothing feeds the animation graph, so we do: Speed/Direction every frame,
 		// moveStart/moveStop when the remote player starts or stops, and jump events when they
 		// leave or reach the ground.
@@ -165,6 +220,7 @@ namespace Puppets
 		{
 			static const RE::BSFixedString speedVar{ "Speed" };
 			static const RE::BSFixedString directionVar{ "Direction" };
+			static const RE::BSFixedString idleLocomotionVar{ "iSyncIdleLocomotion" };
 			static const RE::BSFixedString moveStart{ "moveStart" };
 			static const RE::BSFixedString moveStop{ "moveStop" };
 			static const RE::BSFixedString jumpStart{ "jumpStart" };
@@ -175,14 +231,18 @@ namespace Puppets
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
+			const auto  now = std::chrono::steady_clock::now();
 
-			bool moving = a_puppet.moving;
-			if (!moving && motion.speed > MOVE_START) {
-				moving = graph->NotifyAnimationGraphImpl(moveStart);
-			} else if (moving && motion.speed < MOVE_STOP) {
-				graph->NotifyAnimationGraphImpl(moveStop);
-				moving = false;
-			}
+			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
+			// A mirrored NPC's refused start is ReleaseIdle's; a stand-in's is tested with a stop.
+			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, a_puppet.kind == Kind::kPlayer, now, [&](MoveSync::Event a_event) {
+				return graph->NotifyAnimationGraphImpl(a_event == MoveSync::Event::kStart ? moveStart : moveStop);
+			});
+			const bool moving = step.moving;
+			// What the engine's own move actions keep and our bare events do not: a jump's take-off and
+			// landing, sneaking and standing up, the end of a stagger and the attacks pick their standing or
+			// moving version by it. Set before the sneak and jump events below.
+			graph->SetGraphVariableInt(idleLocomotionVar, moving ? 1 : 0);
 
 			// Crouching: the graph takes "sneakStart"/"sneakStop" (an NPC has no sneak key).
 			const bool sneaking = (motion.flags & Protocol::kSneaking) != 0;
@@ -204,42 +264,27 @@ namespace Puppets
 			graph->SetGraphVariableFloat(speedVar, moving ? (std::max)(a_puppet.measured.speed, motion.speed) : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
 
-			if (moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
-				std::scoped_lock l{ lock };
-				if (const auto entry = Find(a_actor)) {
-					entry->moving = moving;
-					entry->appliedFlags = motion.flags;
+			if (step.nextResync != a_puppet.nextResync || moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
+				std::uint32_t resyncs = 0;
+				{
+					std::scoped_lock l{ lock };
+					if (const auto entry = Find(a_actor)) {
+						entry->nextResync = step.nextResync;
+						entry->resyncsTaken += step.resent != nullptr;
+						resyncs = entry->resyncsTaken;
+						entry->moving = moving;
+						entry->appliedFlags = motion.flags;
+					}
+				}
+				if (step.resent) {
+					if (a_puppet.kind == Kind::kPlayer) {
+						standInResyncs.fetch_add(1, std::memory_order_relaxed);
+					}
+					if (MoveSync::Loggable(resyncs)) {
+						REX::INFO("Puppets: {:08X}'s graph was out of step with its owner's copy (moving={}); sent {} again ({} so far)", a_actor->GetFormID(), moving, step.resent, resyncs);
+					}
 				}
 			}
-		}
-
-		// Moving frames of player stand-ins, how many of them the no-AI update had put its own desired
-		// speed on, and the last speed it put there: for the dev status line.
-		std::atomic<std::uint64_t> speedChecks{ 0 };
-		std::atomic<std::uint64_t> speedRestores{ 0 };
-		std::atomic<float>         lastEngineSpeed{ 0.0f };
-
-		// The no-AI update can set the desired speed itself: while the locomotion graph reports that it
-		// moves the actor (bAnimationDriven, bAllowRotation, bIsSynced or bPathingInterruptibleIdle),
-		// Actor::UpdateActor3DPosition sets it from the actor's own animated motion. The graph's Speed
-		// is read from that number later in the frame, so a stand-in that was walking was told it moved
-		// at a walk, and went on walking while it covered the ground at a run. Ours goes back on after
-		// the update: the last write before the graph reads it.
-		void RestoreDesiredSpeed(RE::Actor* a_actor, const Puppet& a_puppet, float a_speed)
-		{
-			const auto process = a_actor->currentProcess;
-			const auto middle = process ? process->middleHigh : nullptr;
-			if (!middle) {
-				return;
-			}
-			if (a_puppet.kind == Kind::kPlayer && a_puppet.moving) {
-				speedChecks.fetch_add(1, std::memory_order_relaxed);
-				if (Prediction::SpeedReplaced(a_speed, middle->desiredSpeed)) {
-					speedRestores.fetch_add(1, std::memory_order_relaxed);
-					lastEngineSpeed.store(middle->desiredSpeed, std::memory_order_relaxed);
-				}
-			}
-			middle->desiredSpeed = a_speed;
 		}
 
 		void UpdateHook(RE::Actor* a_this, float a_delta)
@@ -297,14 +342,13 @@ namespace Puppets
 					}
 				}
 			}
+			// The no-AI update only places the actor's 3D (Actor::UpdateActor3DPosition): it writes neither
+			// the desired speed above nor the graph's variables, which DriveAnimation sets below.
 			a_this->UpdateNoAI(a_delta);
-			// After the engine's own update, which can put its idea of the speed (the animation's own
-			// pace) in the desired speed and the graph: ours is the last word before the graph samples.
 			if (puppet->hasTarget) {
-				RestoreDesiredSpeed(a_this, *puppet, speed);
 				DriveAnimation(a_this, *puppet);
 				// It has just asked a standing NPC's graph to move; a refusal means an idle holds it.
-				if (puppet->kind == Kind::kNpc && !puppet->moving && puppet->target.speed > MOVE_START) {
+				if (puppet->kind == Kind::kNpc && !puppet->moving && puppet->target.speed > MoveSync::START) {
 					ReleaseIdle(a_this);
 				}
 			}
@@ -494,7 +538,9 @@ namespace Puppets
 			}
 			puppet = *entry;
 		}
-		auto out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops, puppet.idleStopsTaken);
+		const auto furniture = OccupiedFurniture(a_actor);
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
+			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits);
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
 		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run).
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
@@ -503,12 +549,13 @@ namespace Puppets
 			float                   f = 0.0f;
 			std::int32_t            n = 0;
 			bool                    b = false;
-			if (graph->GetGraphVariableImplFloat(var, f)) {
-				out += std::format(" {}={:.0f}", name, f);
-			} else if (graph->GetGraphVariableImplInt(var, n)) {
+			// The float getter copies any variable's raw bits, so an int or a bool read through it showed 0.
+			if (name[0] == 'i' && graph->GetGraphVariableImplInt(var, n)) {
 				out += std::format(" {}={}", name, n);
-			} else if (graph->GetGraphVariableImplBool(var, b)) {
+			} else if (name[0] == 'b' && graph->GetGraphVariableImplBool(var, b)) {
 				out += std::format(" {}={}", name, b);
+			} else if (graph->GetGraphVariableImplFloat(var, f)) {
+				out += std::format(" {}={:.0f}", name, f);
 			}
 		}
 		return out;
@@ -516,11 +563,11 @@ namespace Puppets
 
 	std::string Describe()
 	{
-		const auto checks = speedChecks.load(std::memory_order_relaxed);
-		if (checks == 0) {
+		const auto resyncs = standInResyncs.load(std::memory_order_relaxed);
+		if (resyncs == 0) {
 			return {};
 		}
-		return std::format("speedFixes={}/{} engineSpeed={:.0f}", speedRestores.load(std::memory_order_relaxed), checks, lastEngineSpeed.load(std::memory_order_relaxed));
+		return std::format("graphResyncs={}", resyncs);
 	}
 
 	void Tick()
