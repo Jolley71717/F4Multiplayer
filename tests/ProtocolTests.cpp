@@ -147,6 +147,7 @@ namespace
 		for (const auto type : { MT::kReportShot, MT::kShotFired }) {
 			s.push_back({ "Shot", Encode(Shot{ 3, REF_A }, type), D(DecodeShot) });
 			s.push_back({ "Shot(reload)", Encode(Shot{ 3, 0, ShotAction::kReload }, type), D(DecodeShot) });
+			s.push_back({ "Shot(sound)", Encode(Shot{ 3, 0, ShotAction::kShot, 0x0012A3B4 }, type), D(DecodeShot) });
 		}
 		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true, false, false, 0 }, type), D(DecodePlayerStatus) });
@@ -551,6 +552,16 @@ TEST("protocol: Shot round trips, for the player and for an NPC")
 		REQUIRE(npc);
 		CHECK(npc->refId == REF_B);
 		CHECK(npc->action == ShotAction::kShot);
+		CHECK(npc->sound == 0);  // none sent: the receiver uses its own copy's gun sound
+
+		// The shooter's gun sound (a keyword sound mapping) arrives as sent, for the player and an NPC.
+		const auto sounded = DecodeShot(Encode(Shot{ 4, 0, ShotAction::kShot, 0x0012A3B4 }, type));
+		REQUIRE(sounded);
+		CHECK(sounded->sound == 0x0012A3B4);
+		const auto npcSounded = DecodeShot(Encode(Shot{ 4, REF_B, ShotAction::kShot, 0x0100F00D }, type));
+		REQUIRE(npcSounded);
+		CHECK(npcSounded->refId == REF_B);
+		CHECK(npcSounded->sound == 0x0100F00D);
 
 		for (const auto action : { ShotAction::kReload, ShotAction::kAimStart, ShotAction::kAimStop, ShotAction::kLightOn, ShotAction::kLightOff, ShotAction::kPoint, ShotAction::kCheer, ShotAction::kClap, ShotAction::kThrow }) {
 			const auto other = DecodeShot(Encode(Shot{ 4, 0, action }, type));

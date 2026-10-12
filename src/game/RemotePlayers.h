@@ -52,8 +52,8 @@ namespace RemotePlayers
 	// Their health in percent, shown after their name when they're hurt or down.
 	void SetHealth(std::uint32_t a_id, std::uint8_t a_percent, bool a_downed);
 
-	// The player fired: their stand-in plays the firing animation.
-	void PlayShot(std::uint32_t a_id);
+	// The player fired: their stand-in plays the firing animation, with their gun's sound (Shot::sound).
+	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound);
 
 	// Replays a reload or aiming on their stand-in, or notes their Pip-Boy light (a ShotAction).
 	void PlayAction(std::uint32_t a_id, std::uint8_t a_action);

@@ -142,18 +142,25 @@
   and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack.
   We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
   NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
-- `ReportShot {refId}` (0 = the sender) goes to the server, which accepts NPC shots only from the
-  NPC's owner and relays `ShotFired {playerId, refId}` unreliably (60 shots/s per player).
+- `ReportShot {refId, sound}` (0 = the sender) goes to the server, which accepts NPC shots only from
+  the NPC's owner and relays `ShotFired {playerId, refId, sound}` unreliably (60 shots/s per player).
 - Replay: "attackStart" on the stand-in's or mirrored NPC's graph plays the full firing animation
   (recoil, aim pose). Nothing is launched: damage already arrives through health sync, and real
   projectiles from stand-ins would add friendly fire and kills nobody made.
 - A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
   rejects attacks, so after every equipment change it holsters and draws again.
 - Gunshot: the weapon's own attack sound fields are empty for vanilla guns. The game picks the
-  sound when the weapon is equipped (by its keywords, so a suppressor changes it) and keeps it in
-  the equipped item's `EquippedWeaponData::attackSoundData`. A replayed shot plays that
-  descriptor through `BSAudioManager` as a 3D sound following the shooter. (Papyrus `Sound.Play`
-  crashed the VM when called from here.)
+  sound when the weapon is equipped (by its keywords, which its mods add: a suppressor or an
+  automatic receiver changes it) and keeps it in the equipped item's
+  `EquippedWeaponData::attackSoundData`, a keyword sound mapping. The shooter's game sends that
+  mapping's form ID with every shot (`sound`): a stand-in's copy of the gun is a new one of the same
+  base weapon without the shooter's mods, so the mapping its own game picks can be another
+  receiver's (an automatic one's looping fire for a semi-automatic pistol) or miss the suppressor.
+  A replayed shot plays the shooter's mapping's descriptor, or the stand-in's own when the shooter
+  sent none we know, through `BSAudioManager` as a 3D sound following the shooter. The status line's
+  `theirs=` counts shots sounded with the shooter's mapping, `kssm=` is the last one played (with
+  `(loop)` for a looping, automatic sound); `weapsound <actor>` shows a gun's mapping in either game.
+  (Papyrus `Sound.Play` crashed the VM when called from here.)
 - Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
   the player.
 

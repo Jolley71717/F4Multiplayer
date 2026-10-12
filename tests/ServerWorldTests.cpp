@@ -999,6 +999,27 @@ TEST("server world: shots are relayed with the shooter's ID, NPC shots only from
 	CHECK(Count(Received(f, 1), MT::kShotFired) == 0);
 }
 
+TEST("server world: a shot is relayed with the shooter's gun sound")
+{
+	// Each game's copy of a gun lacks the shooter's mods, so only the shooter's game knows which
+	// sound it makes (a semi-automatic pistol's single shot, not an automatic receiver's loop).
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, 0x0012A3B4 }, MT::kReportShot));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Shot{ 0, NPC, Protocol::ShotAction::kShot, 0x0004F00D }, MT::kReportShot));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Shot{ 0, 0 }, MT::kReportShot));
+	const auto shots = Decoded(Received(f, 2), MT::kShotFired, Protocol::DecodeShot);
+	REQUIRE(shots.size() == 3);
+	CHECK(shots[0].sound == 0x0012A3B4);
+	CHECK(shots[1].refId == NPC);
+	CHECK(shots[1].sound == 0x0004F00D);
+	CHECK(shots[2].sound == 0);
+}
+
 TEST("server world: shots are capped per second")
 {
 	Fixture f;
