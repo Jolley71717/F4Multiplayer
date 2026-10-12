@@ -225,24 +225,27 @@ else skips this: the player is never in those places.
   Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
   armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
   such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
-  itself. The receiver places a copy of the base (only a power armor frame: furniture with the
-  engine's power armor furniture keyword) for the stand-in to climb into (`RemotePlayers.cpp`,
-  `ArmorClimb.h`): as soon as its 3D is in, the copy is put on the stand-in's spot and heading (or
-  placed again if it is in another place or over 256 units off) and the stand-in is sent in; the
-  copy stays drawn, solid and where it is until the engine has the stand-in in it, and only then
-  is hidden, made non-solid and kept under the stand-in; it is drawn again once the engine has the
-  stand-in out, solid once the stand-in is 70 units clear, and deleted 4 s later. Climb time is game
-  time (menus don't count), at most 15 s, 6 s if the engine shows no sign of it (none counted from
-  the furniture state the stand-in had when sent); a climb called off, cut short or failed first
-  takes the stand-in out of the furniture states (`Actor::StopInteractingQuick`, as the engine
-  calls off a climb into power armor), and one that fails deletes the copy and the next try gets a
-  fresh one. The receiver's own copy of a shared frame reference is hidden (not drawn, no
-  collision; the reference itself is never moved, used or deleted) while the friend wears theirs,
-  only when it is a power armor frame of the base they sent, nobody there is in it, it is not the
-  receiver's own suit (worn or last left) and it stands within 200 units of where the friend was
-  as they got in; otherwise, or once it has been elsewhere or used in that wear, it stays shown
-  until they get in anew. It is shown again once the friend is out and clear of it (when several
-  friends wear their copies of it, once the last of them is).
+  itself. The stand-in wears the pieces they wear from the moment the status says they are in
+  power armor (`RemotePlayers.cpp`, `ArmorFrames.h`), and the receiver keeps a copy of the base
+  (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
+  placed at once, hidden and without collision from the moment its 3D is in, and moved along with
+  the stand-in (placed again if it is in another place, over 256 units off or without 3D after
+  10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
+  nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
+  to them. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
+  (`TESFurniture::Activate` begins power armor use only for the player; an NPC gets in only through
+  its AI package), so the stand-in sent in never got in, and pieces that waited for it left the
+  friend shown without armor. The receiver's own copy of a shared frame reference is hidden (not
+  drawn, no collision; the reference itself is never moved, used or deleted) while the friend wears
+  theirs, only when it is a power armor frame of the base they sent, nobody there is in it, it is
+  not the receiver's own suit (worn or last left), no quest of the receiver's holds it (it fills no
+  quest alias: the museum's suit is the main quest's objective) and it stands within 200 units of
+  where the friend was as they got in (their newest state if it came within 0.5 s of the status,
+  else the next one); otherwise, or once it has been elsewhere or used in that wear, it stays shown
+  until they get in anew. It stays hidden through saves (only its 3D is touched) and is hidden again
+  at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
+  several friends wear their copies of it, once the last of them is), and solid again once nobody
+  stands within 70 units of it.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

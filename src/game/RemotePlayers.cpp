@@ -1,5 +1,5 @@
 ﻿#include "game/RemotePlayers.h"
-#include "game/ArmorClimb.h"
+#include "game/ArmorFrames.h"
 #include "game/DeferredDelete.h"
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
@@ -87,24 +87,20 @@ namespace RemotePlayers
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
 			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
-			bool                 inPowerArmor = false;   // the stand-in was sent into our frame (it may still be climbing in)
+			bool                 inPowerArmor = false;   // the stand-in is shown in its armor, its frame copy kept under it (see ArmorFrames)
 			RE::ObjectRefHandle  frame;                  // the frame we placed for it
 			Clock::time_point    framePlacedAt{};
-			Clock::time_point    frameActionAt{};        // when the stand-in last climbed in or out (the animation takes a moment)
+			Clock::time_point    frameActionAt{};        // when they last got out (the copy stands where they did a while)
 			const RE::NiAVObject* frameCollisionOff = nullptr;  // the frame's 3D whose collision we turned off; only compared
-			bool                 frameClimbed = false;   // the stand-in was sent into this copy before: the next climb in gets a fresh one
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
 			Clock::time_point    holdLoggedAt{};
-			std::optional<ArmorClimb::Climb> climb;      // a climb in or out under way (see ArmorClimb)
-			bool                 climbedIn = false;      // the engine has the stand-in in the frame: its armor pieces go on
-			int                  climbFailures = 0;      // climbs in that never got there (or fell out again), since they last got out
-			std::optional<Clock::time_point> outOfArmorSince;  // worn, but the engine has not had the stand-in in the armor since
 			RE::ObjectRefHandle  original;               // our copy of their pre-placed frame, hidden while they wear theirs
 			const RE::NiAVObject* originalHidden = nullptr;  // its 3D we stopped drawing; only compared
 			const RE::NiAVObject* originalCollisionOff = nullptr;  // its 3D whose collision we turned off; only compared
 			Clock::time_point    originalCheckAt{};
-			int                  originalChoice = -1;    // the last ArmorClimb::Original logged
+			int                  originalChoice = -1;    // the last ArmorFrames::Original logged
+			bool                 originalCounted = false;  // a hide counted for this wear (one hidden again after a load is not a new one)
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
@@ -183,10 +179,7 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
-		std::uint32_t   climbsDone = 0;      // climbs in or out of a frame the engine finished
-		std::uint32_t   climbsCutShort = 0;  // climbs that ran out of time (ArmorClimb::LIMIT)
-		std::uint32_t   climbsGivenUp = 0;   // friends left out of their armor after climbs in that never got there
-		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs
+		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
@@ -210,20 +203,20 @@ namespace RemotePlayers
 			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
 		}
 
-		// A power armor piece: put on a stand-in that is not in its frame, it hangs off a body of normal
-		// size (a report: "a dwarf in a frame with the parts in the air"). The engine sizes the actor
-		// for the pieces only once it is in the frame.
+		// A power armor piece.
 		bool PowerArmorPiece(std::uint32_t a_item)
 		{
 			const auto armor = RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_item);
 			return armor && armor->HasKeywordString("ArmorTypePower");
 		}
 
-		// What a stand-in should wear now: everything the owner has on, less the power armor pieces
-		// while the engine does not have the stand-in in a frame (sent in is not enough: see ArmorClimb).
+		// What a stand-in should wear now: everything the owner has on, less the power armor pieces once their status
+		// says they are out of their armor (their gear list can still name the pieces for a moment). In it, the pieces
+		// go on at once: the engine never puts the stand-in into a frame (see ArmorFrames), and waiting for it to left
+		// the friend shown without their armor.
 		std::vector<std::uint32_t> Outfit(const RemotePlayer& a_player)
 		{
-			if (a_player.climbedIn) {
+			if (a_player.powerArmorOn) {
 				return a_player.equipment;
 			}
 			std::vector<std::uint32_t> out;
@@ -454,78 +447,6 @@ namespace RemotePlayers
 			}
 		}
 
-		// The frame placed for the stand-in is removed once the stand-in is out of it (or gone).
-		void DeleteFrame(RemotePlayer& a_player)
-		{
-			if (const auto frame = a_player.frame.get()) {
-				// Our own player may have climbed into the friend's frame copy: then it stays (deleting it would
-				// leave them in nothing) and is simply no longer ours to manage. Only when it really is this frame
-				// they occupy: a player in their own armor standing next to a friend's frame copy used to count, and
-				// the copy was abandoned under its stand-in. Nothing of ours needs undoing then: a copy can only be
-				// got into while it is drawn and solid (a hidden one has no collision to aim at).
-				const auto player = RE::PlayerCharacter::GetSingleton();
-				const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-				if (occupied && occupied.get() == frame.get()) {
-					REX::INFO("RemotePlayers: the player is in '{}'s frame copy; leaving it", a_player.name);
-				} else {
-					Bury(a_player.frame, a_player.framePlacedAt);
-				}
-			}
-			a_player.frame = {};
-			a_player.frameCollisionOff = nullptr;
-			a_player.frameClimbed = false;
-			a_player.inPowerArmor = false;
-			a_player.climb.reset();  // a climb still under way ends with its frame (its AI runs out within a second)
-			a_player.climbedIn = false;
-			a_player.outOfArmorSince.reset();
-		}
-
-		// The actor's furniture state: ArmorClimb::SIT_NORMAL when it is done with a frame as furniture, else getting
-		// in, sitting or getting out.
-		std::int32_t SitState(RE::Actor* a_actor)
-		{
-			return static_cast<std::int32_t>(a_actor->DoGetSitSleepState());
-		}
-
-		// The engine's side of a stand-in and its armor, for the dev status and the climb log: in the armor,
-		// the race it is drawn as (PowerArmorRace 0001D31E once in), its furniture state (0 none, 1-4 getting
-		// in, sitting, getting out) and which animation graph it runs (each has a state variable the other lacks).
-		std::string DescribeArmor(RE::Actor* a_actor)
-		{
-			static const RE::BSFixedString powerArmorState{ "iState_PowerArmorNPCDefault" };
-			static const RE::BSFixedString humanState{ "iState_NPCDefault" };
-			const auto   graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
-			std::int32_t value = 0;
-			const char*  graphName = graph->GetGraphVariableImplInt(powerArmorState, value) ? "armor" :
-			                         graph->GetGraphVariableImplInt(humanState, value)      ? "human" :
-			                                                                                  "none";
-			const auto race = a_actor->GetVisualsRace();
-			return std::format("in={} race={:08X} sit={} graph={}", Equipment::InPowerArmor(a_actor), race ? race->GetFormID() : 0, static_cast<int>(a_actor->DoGetSitSleepState()), graphName);
-		}
-
-		// A climb called off, cut short or failed can leave the stand-in in the frame's furniture states (getting in,
-		// sitting, getting out) with the copy as its furniture. They are cleared the way the engine clears them when it
-		// calls off an actor's climb into power armor: Actor::StopInteractingQuick, with the arguments of the engine's
-		// own call there (at once, the actor not moved, its 3D updated). Before its AI stops and before the copy goes:
-		// left in them, the stand-in could stay mid-climb toward a copy that is gone, and the next climb could take the
-		// leftover state for a sign it had begun. From our update on the main thread, as the engine's own Disable calls it.
-		void StopClimb(const RemotePlayer& a_player, RE::Actor* a_actor)
-		{
-			const auto middle = a_actor->currentProcess ? a_actor->currentProcess->middleHigh : nullptr;
-			const auto furniture = middle ? middle->occupiedFurniture.get() : nullptr;
-			if (SitState(a_actor) == ArmorClimb::SIT_NORMAL && !furniture) {
-				return;
-			}
-			REX::INFO("RemotePlayers: '{}' stand-in is taken out of its frame's furniture states ({})", a_player.name, DescribeArmor(a_actor));
-			a_actor->StopInteractingQuick(true, false, true);
-		}
-
-		// Our copy of a pre-placed frame a friend wears (see ArmorClimb::ChooseOriginal): not drawn and without
-		// collision while they wear theirs, so there is one suit where they see one. Only its 3D is touched, never
-		// the reference itself: nothing of it goes into a save.
-		constexpr auto ORIGINAL_CHECK_INTERVAL = 1s;  // a frame not loaded yet, not ours to hide, or hidden, is looked at again this often
-
 		// Our own player is in this frame, or left it last: their own suit, wherever it stands.
 		bool OurFrame(RE::TESObjectREFR* a_frame)
 		{
@@ -556,6 +477,111 @@ namespace RemotePlayers
 			return false;
 		}
 
+		// Nobody stands in this frame: no living actor here (our player, a stand-in, a companion, a settler) within
+		// FRAME_CLEAR_DISTANCE of it. Its collision given back with someone in it (a hidden frame has none, so anyone can
+		// walk into its spot) shoved them aside or shut them in.
+		bool NobodyIn(RE::TESObjectREFR* a_frame)
+		{
+			const auto in = [&](RE::Actor* a_actor) {
+				return a_actor && !a_actor->IsDisabled() && !a_actor->IsDead(false) && !Clear(a_frame, a_actor);
+			};
+			if (in(RE::PlayerCharacter::GetSingleton())) {
+				return false;
+			}
+			if (std::ranges::any_of(players, [&](const auto& a_entry) { return in(GetActor(a_entry.second)); })) {
+				return false;
+			}
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
+				return true;
+			}
+			for (const auto* handles : { &lists->highActorHandles, &lists->middleHighActorHandles }) {
+				for (const auto& handle : *handles) {
+					if (in(handle.get().get())) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+
+		// Frames of our world given back (drawn again) whose collision waits until nobody stands in them.
+		struct PendingSolid
+		{
+			RE::ObjectRefHandle   ref;
+			const RE::NiAVObject* off = nullptr;  // its 3D whose collision we turned off; only compared
+		};
+		std::vector<PendingSolid> pendingSolid;
+
+		// A frame's collision back on: now if nobody stands in it, else as soon as nobody does (see UpdatePendingSolid).
+		void RestoreCollision(const RE::NiAVObject*& a_off, RE::TESObjectREFR* a_frame)
+		{
+			if (!a_off) {
+				return;
+			}
+			if (NobodyIn(a_frame)) {
+				SetCollision(a_off, a_frame, true);
+				return;
+			}
+			pendingSolid.push_back({ a_frame->GetHandle(), a_off });
+			a_off = nullptr;
+		}
+
+		void UpdatePendingSolid()
+		{
+			std::erase_if(pendingSolid, [](PendingSolid& a_pending) {
+				const auto ref = a_pending.ref.get();
+				if (!ref || ref->IsDeleted() || ref->Get3D() != a_pending.off) {
+					return true;  // gone, or a 3D loaded since, which comes with its own collision
+				}
+				if (!NobodyIn(ref.get())) {
+					return false;
+				}
+				SetCollision(a_pending.off, ref.get(), true);
+				return true;
+			});
+		}
+
+		// A frame of ours hidden again (another friend got into theirs): its collision is ours to keep off again, not
+		// to give back. Returns the 3D whose collision is already off, if any.
+		const RE::NiAVObject* TakePendingSolid(const RE::TESObjectREFR* a_frame)
+		{
+			const RE::NiAVObject* off = nullptr;
+			std::erase_if(pendingSolid, [&](const PendingSolid& a_pending) {
+				if (a_pending.ref.get().get() != a_frame) {
+					return false;
+				}
+				off = a_pending.off;
+				return true;
+			});
+			return off;
+		}
+
+		// The frame placed for the stand-in is removed once they are out of it a while (or the stand-in is gone).
+		void DeleteFrame(RemotePlayer& a_player)
+		{
+			if (const auto frame = a_player.frame.get()) {
+				// Someone here may have got into the friend's frame copy (it stands drawn and solid where they got out):
+				// our own player, or anyone else. Then it stays (deleting it would leave them in nothing) and is simply
+				// no longer ours to manage. Only when it really is this frame they are in, or our player's last suit: a
+				// player in their own armor standing next to a friend's frame copy used to count, and the copy was
+				// abandoned under its stand-in. Nothing of ours needs undoing then: a copy can only be got into while it
+				// is drawn and solid (a hidden one has no collision to aim at).
+				if (OurFrame(frame.get()) || FrameInUse(frame.get())) {
+					REX::INFO("RemotePlayers: someone here is in '{}'s frame copy {:08X}; leaving it", a_player.name, frame->GetFormID());
+				} else {
+					Bury(a_player.frame, a_player.framePlacedAt);
+				}
+			}
+			a_player.frame = {};
+			a_player.frameCollisionOff = nullptr;
+		}
+
+		// Our copy of a pre-placed frame a friend wears (see ArmorFrames::ChooseOriginal): not drawn and without
+		// collision while they wear theirs, so there is one suit where they see one. Only its 3D is touched, never
+		// the reference itself: nothing of it goes into a save.
+		constexpr auto ORIGINAL_CHECK_INTERVAL = 1s;  // a frame not loaded yet, not ours to hide, or hidden, is looked at again this often
+
 		// How far the reference stands from a spot a friend's state named; none when it is in another place.
 		std::optional<float> DistanceFrom(RE::TESObjectREFR* a_ref, const Spot& a_spot)
 		{
@@ -571,9 +597,9 @@ namespace RemotePlayers
 			return a_ref->data.location.GetDistance(a_spot.at);
 		}
 
-		ArmorClimb::OriginalFacts OriginalFactsOf(const RemotePlayer& a_player, RE::TESObjectREFR* a_ref)
+		ArmorFrames::OriginalFacts OriginalFactsOf(const RemotePlayer& a_player, RE::TESObjectREFR* a_ref)
 		{
-			ArmorClimb::OriginalFacts facts;
+			ArmorFrames::OriginalFacts facts;
 			facts.found = a_ref && !a_ref->IsDeleted() && !a_ref->IsDisabled();
 			if (!facts.found) {
 				return facts;
@@ -582,6 +608,9 @@ namespace RemotePlayers
 			facts.created = a_ref->IsCreated();
 			facts.base = base ? base->GetFormID() : 0;
 			facts.frame = Equipment::IsPowerArmorFrame(base);
+			// A quest of ours holds it: the museum's suit fills the main quest's power armor alias (the objective's
+			// target) until that step is done. The same rule as for items (WorldSync): every player keeps their own.
+			facts.quest = a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			facts.loaded = a_ref->Get3D() != nullptr;
 			facts.ours = OurFrame(a_ref);
 			facts.inUse = !facts.ours && FrameInUse(a_ref);
@@ -601,6 +630,7 @@ namespace RemotePlayers
 			});
 		}
 
+		// Ours drawn again at once, and solid again once nobody stands in it.
 		void ShowOriginal(RemotePlayer& a_player)
 		{
 			if (const auto original = a_player.original.get()) {
@@ -610,7 +640,7 @@ namespace RemotePlayers
 					if (const auto root = original->Get3D(); root && root == a_player.originalHidden) {
 						root->SetAppCulled(false);
 					}
-					SetCollision(a_player.originalCollisionOff, original.get(), true);
+					RestoreCollision(a_player.originalCollisionOff, original.get());
 					REX::INFO("RemotePlayers: our frame {:08X}, hidden while '{}' wore theirs, is back", original->GetFormID(), a_player.name);
 				}
 			}
@@ -619,7 +649,7 @@ namespace RemotePlayers
 			a_player.originalCollisionOff = nullptr;
 		}
 
-		void UpdateOriginal(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		void UpdateOriginal(RemotePlayer& a_player, Clock::time_point a_now)
 		{
 			const bool worn = a_player.powerArmorOn && a_player.powerArmorFrameRef != 0;
 			auto       original = a_player.original.get();
@@ -628,20 +658,11 @@ namespace RemotePlayers
 				original = nullptr;
 			}
 			if (original && (!worn || original->GetFormID() != a_player.powerArmorFrameRef)) {
-				// They are out of it. Ours is drawn again once their stand-in has climbed out and the frame copy it left is
-				// gone (it stands where they got out, often right on ours, for a few seconds: two suits in one spot), and
-				// is solid again once the stand-in stands clear of it. Not while another friend still has it hidden.
-				if (!HiddenByAnother(a_player, original.get())) {
-					if ((a_actor && a_player.climb) || !Clear(original.get(), a_player.frame.get().get())) {
-						return;
-					}
-					if (const auto root = original->Get3D(); root && root == a_player.originalHidden) {
-						root->SetAppCulled(false);
-						a_player.originalHidden = nullptr;
-					}
-					if (a_actor && !Clear(original.get(), a_actor)) {
-						return;
-					}
+				// They are out of it. Ours is shown again once the frame copy their stand-in leaves is gone or clear of it
+				// (it stands where they got out, often right on ours, for a few seconds: two suits in one spot), and is
+				// solid again once nobody stands in it. Not while another friend still has it hidden.
+				if (!HiddenByAnother(a_player, original.get()) && !Clear(original.get(), a_player.frame.get().get())) {
+					return;
 				}
 				ShowOriginal(a_player);
 				original = nullptr;
@@ -659,36 +680,41 @@ namespace RemotePlayers
 				a_player.originalCheckAt = a_now + ORIGINAL_CHECK_INTERVAL;
 				const auto ref = original ? original.get() : RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_player.powerArmorFrameRef);
 				const auto facts = OriginalFactsOf(a_player, ref);
-				const auto choice = ArmorClimb::ChooseOriginal(a_player.powerArmorFrameRef, a_player.powerArmorFrame, facts);
+				const auto choice = ArmorFrames::ChooseOriginal(a_player.powerArmorFrameRef, a_player.powerArmorFrame, facts);
 				if (static_cast<int>(choice) != a_player.originalChoice) {
 					a_player.originalChoice = static_cast<int>(choice);
 					REX::INFO("RemotePlayers: '{}' wears frame {:08X} (base {:08X}); ours, {:.0f} units from where they got in: {}", a_player.name, a_player.powerArmorFrameRef, a_player.powerArmorFrame, facts.fromSpot.value_or(-1.0f),
-						choice == ArmorClimb::Original::kHide      ? "hidden while they wear theirs" :
-						choice == ArmorClimb::Original::kMissing   ? "none here" :
-						choice == ArmorClimb::Original::kNotLoaded ? "not loaded" :
-						choice == ArmorClimb::Original::kOurs      ? "our player's own, left alone" :
-						choice == ArmorClimb::Original::kInUse     ? "in use here, left alone" :
-						choice == ArmorClimb::Original::kNotFrame  ? "not a power armor frame, left alone" :
-						choice == ArmorClimb::Original::kElsewhere ? "not where they got in, left alone while they wear theirs" :
-						                                             "-");
+						choice == ArmorFrames::Original::kHide      ? "hidden while they wear theirs" :
+						choice == ArmorFrames::Original::kMissing   ? "none here" :
+						choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
+						choice == ArmorFrames::Original::kOurs      ? "our player's own, left alone" :
+						choice == ArmorFrames::Original::kInUse     ? "in use here, left alone" :
+						choice == ArmorFrames::Original::kNotFrame  ? "not a power armor frame, left alone" :
+						choice == ArmorFrames::Original::kQuest     ? "a quest of ours holds it, left alone" :
+						choice == ArmorFrames::Original::kElsewhere ? "not where they got in, left alone while they wear theirs" :
+						                                              "-");
 				}
-				if (choice == ArmorClimb::Original::kElsewhere) {
+				if (choice == ArmorFrames::Original::kElsewhere) {
 					a_player.originalMoved = true;  // not hidden later in this wear, even should it come back to the spot
 				}
-				if (original && choice != ArmorClimb::Original::kHide && choice != ArmorClimb::Original::kNotLoaded) {
+				if (original && choice != ArmorFrames::Original::kHide && choice != ArmorFrames::Original::kNotLoaded) {
 					a_player.originalMoved = true;
 					ShowOriginal(a_player);
 					return;
 				}
 				if (!original) {
-					if (choice != ArmorClimb::Original::kHide) {
+					if (choice != ArmorFrames::Original::kHide) {
 						return;
 					}
 					a_player.original = ref->GetHandle();
 					a_player.originalHidden = nullptr;
-					a_player.originalCollisionOff = nullptr;
+					// Shown a moment ago for another friend and still waiting to be solid: its collision is still off.
+					a_player.originalCollisionOff = TakePendingSolid(ref);
 					original = RE::NiPointer<RE::TESObjectREFR>(ref);
-					++originalsHidden;
+					if (!a_player.originalCounted) {
+						a_player.originalCounted = true;
+						++originalsHidden;
+					}
 				}
 			}
 			if (!original) {
@@ -703,36 +729,21 @@ namespace RemotePlayers
 			SetCollision(a_player.originalCollisionOff, original.get(), false);
 		}
 
-		// Power armor: a friend in a frame is shown in one. A frame of their frame's base is placed at
-		// the stand-in and the stand-in activates it, the way an NPC takes power armor; the armor pieces
-		// come with their equipment once the engine has it in the frame. When they climb out, the stand-in
-		// activates the frame again and the frame is removed.
-		// Between one climb and the next (in, out, or another try), and before a copy they got out of goes. A fresh copy
-		// is climbed into as soon as its 3D is in: it once waited this long as well, while the friend walked on from it.
-		constexpr auto FRAME_ACTION_GAP = 4s;
-		// A copy further than this from its stand-in when the stand-in is to climb in is placed again rather than moved
-		// onto it: the stand-in gets this far from it only if the friend walks on while it loads.
-		constexpr float FRAME_MOVE_LIMIT = 256.0f;
-		// A climb's AI is kept on this much at a time while the climb lasts, so it runs out on its own if
-		// the stand-in stops being updated.
-		constexpr auto CLIMB_AI_SLICE = 1s;
-		// After this many climbs in that never got there (or that it fell out of again), the stand-in is left out of
-		// the armor until they get out and in again: in its own clothes rather than with the pieces hung on a body
-		// that is not in a frame.
-		constexpr int MAX_CLIMB_FAILURES = 2;
-		// Worn, but the engine has not had the stand-in in the armor for this long: it fell out.
-		constexpr auto FALL_OUT_GRACE = 1s;
-		// The engine holds an actor in furniture at the furniture: a frame copy even a few units off pulled the
-		// stand-in back toward it on alternate frames (in a joiner's game it flipped between two spots 18 units
-		// apart while the host stood still). The copy is kept under the stand-in, where it is placed this frame.
+		// Power armor: a friend in a frame is shown in their armor (see ArmorFrames). The stand-in wears the pieces they
+		// wear (Outfit), and a copy of their frame is kept under it, hidden and without collision, to stand where they
+		// get out. It is never sent into the copy: the engine starts nothing for an NPC that activates a frame.
+		// A copy further than ArmorFrames::MOVE_LIMIT from its stand-in is placed again rather than moved onto it.
+		// The engine holds an actor in furniture at the furniture, and a frame copy with collision a few units off
+		// shoved the stand-in aside (in a joiner's game it flipped between two spots 18 units apart while the host
+		// stood still). The copy is kept right under the stand-in, without collision.
 		constexpr float FRAME_FOLLOW_DISTANCE = 1.0f;
 		constexpr float FRAME_FOLLOW_TURN = 0.02f;  // radians
 
-		// The frame copy while the stand-in wears it: not drawn (the stand-in's own armor is what shows, as for any
-		// actor in power armor; a drawn one trailed it as a second, empty suit), without collision (moved onto the
-		// stand-in each time the friend walks or turns, it shoved the stand-in aside while we put it back every
-		// frame) and kept right under the stand-in, in whatever cell the copy was placed: the stand-in walks on in it
-		// across cell borders, and a copy left drawn and solid at a border stood there as an empty suit.
+		// The frame copy while it is worn: not drawn (the stand-in's own pieces are what shows; a drawn one trailed it as
+		// a second, empty suit), without collision (moved onto the stand-in each time the friend walks or turns, it
+		// shoved the stand-in aside while we put it back every frame) and kept right under the stand-in, in whatever cell
+		// the copy was placed: the stand-in walks on in it across cell borders, and a copy left drawn and solid at a
+		// border stood there as an empty suit.
 		void HoldWornFrame(RemotePlayer& a_player, RE::TESObjectREFR* a_frame, const RE::NiPoint3& a_at, float a_heading)
 		{
 			if (!a_frame->Get3D()) {
@@ -754,211 +765,82 @@ namespace RemotePlayers
 			}
 		}
 
-		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, bool a_paused, Clock::time_point a_now)
+		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
 		{
-			// A climb is followed even while the stand-in has no 3D: getting into the armor gives it the armor's
-			// body, which is loaded afresh, and its AI must not run out meanwhile.
-			if (!a_actor || (!a_actor->Get3D() && !a_player.climb)) {
+			if (!a_actor || !a_actor->Get3D()) {
 				return;
 			}
-			auto       frame = a_player.frame.get();
-			const bool engineIn = Equipment::InPowerArmor(a_actor);
+			const auto base = a_player.powerArmorOn ? RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame) : nullptr;
+			const bool worn = Equipment::IsPowerArmorFrame(base);  // a terminal is furniture too, but never a frame
+			if (worn != a_player.inPowerArmor) {
+				a_player.inPowerArmor = worn;
+				if (!worn) {
+					a_player.frameActionAt = a_now;  // the copy stands where they got out a while
+				}
+				REX::INFO("RemotePlayers: '{}' stand-in is shown {} power armor (frame {:08X})", a_player.name, worn ? "in" : "out of", a_player.powerArmorFrame);
+			}
 
-			// Worn: the engine has finished putting the stand-in in its frame copy, and only now is the copy hidden,
-			// made non-solid and held under the stand-in. Done from the moment the stand-in was sent in (the first
-			// 0.6.0 builds), the copy the engine was to walk the stand-in to and play it into was invisible, without
-			// collision and moved onto the friend's spot every frame: the engine never began the climb (no furniture
-			// state in 15 s, twice), and the friend was shown out of their armor beside it.
-			if (a_player.climbedIn && !a_player.climb) {
-				if (engineIn) {
-					a_player.outOfArmorSince.reset();
-				} else if (!a_player.outOfArmorSince) {
-					a_player.outOfArmorSince = a_now;
-				} else if (a_now - *a_player.outOfArmorSince >= FALL_OUT_GRACE) {
-					// Fell out while worn (the engine let go of it): the copy goes, its pieces come off (they would hang
-					// on a body out of the frame), and it climbs into a fresh copy after the usual gap.
-					REX::WARN("RemotePlayers: '{}' stand-in is no longer in its frame ({}); it climbs in again", a_player.name, DescribeArmor(a_actor));
-					++a_player.climbFailures;
-					StopClimb(a_player, a_actor);
-					DeleteFrame(a_player);
-					a_player.equipmentApplied = false;
-					a_player.frameActionAt = a_now;
-					return;
-				}
-				if (frame) {
-					HoldWornFrame(a_player, frame.get(), a_at, a_heading);
-				}
+			auto                     frame = a_player.frame.get();
+			ArmorFrames::CopyFacts facts;
+			facts.worn = worn;
+			facts.exists = frame != nullptr;
+			if (frame) {
+				facts.occupied = OurFrame(frame.get()) || FrameInUse(frame.get());
+				facts.loaded = frame->Get3D() != nullptr;
+				facts.samePlace = SamePlace(frame.get(), a_actor);
+				facts.distance = frame->data.location.GetDistance(a_actor->data.location);
+				facts.sincePlaced = a_now - a_player.framePlacedAt;
+				facts.sinceOut = a_now - a_player.frameActionAt;
 			}
-			// A climb under way: the stand-in's own AI runs until the engine has finished it (see ArmorClimb), and
-			// nothing moves it or its frame meanwhile. It is dressed only then, for in or out of the frame:
-			// stripped mid-climb (a gear fix) it fell out.
-			if (a_player.climb) {
-				auto& climb = *a_player.climb;
-				climb.Tick(a_now, a_paused);
-				// Out: the suit is the frame's to show again as soon as the engine has the stand-in out of the armor.
-				if (!climb.in && !engineIn && frame) {
-					SetShown(frame.get(), true);
-				}
-				// The owner got out again before the stand-in was in: the climb in is called off now rather than
-				// finished first (they were seen getting out only after it ended, up to 15 s later).
-				const bool calledOff = climb.in && !a_player.powerArmorOn && !engineIn;
-				const auto step = calledOff ? ArmorClimb::Step::kCutShort : climb.Next(engineIn, SitState(a_actor));
-				if (step == ArmorClimb::Step::kWait) {
-					Puppets::AllowAI(a_actor, CLIMB_AI_SLICE);
-					return;
-				}
-				const bool in = climb.in;
-				const bool done = step == ArmorClimb::Step::kDone;
-				// Called off, cut short or never there: out of the furniture states first, while its AI still runs and its
-				// copy still stands (one that ran out of time in the armor is kept in, below).
-				if (!done && !(in && engineIn)) {
-					StopClimb(a_player, a_actor);
-				}
-				Puppets::AllowAI(a_actor, 0ms);  // its own update ends now; it follows its owner again
-				if (done) {
-					++climbsDone;
-				} else if (!calledOff) {
-					++climbsCutShort;
-				}
-				REX::INFO("RemotePlayers: '{}' stand-in's climb {} its frame {} after {} ms ({})", a_player.name, in ? "into" : "out of",
-					done ? "finished" : calledOff ? "was called off (they got out)" : "was cut short", std::chrono::duration_cast<std::chrono::milliseconds>(climb.elapsed).count(), DescribeArmor(a_actor));
-				a_player.climb.reset();
-				a_player.frameActionAt = a_now;
-				if (in && engineIn) {
-					// In (if late): the pieces go on, without a strip first (a strip takes it out of the frame).
-					a_player.climbedIn = true;
-					a_player.equipmentApplied = false;
-				} else if (in) {
-					// It never got in. It still wears its own clothes, so it is not dressed again, and the copy goes: a
-					// retry gets a fresh one, not the one the engine would not take.
-					if (!calledOff && ++a_player.climbFailures >= MAX_CLIMB_FAILURES) {
-						++climbsGivenUp;
-						REX::WARN("RemotePlayers: '{}' stand-in did not get into its frame {} times; shown out of power armor until they get out and in again", a_player.name, a_player.climbFailures);
-					}
-					DeleteFrame(a_player);
-				} else {
-					// Out, or cut short getting out: its own clothes go back on (a strip, which also takes it out).
-					a_player.climbedIn = false;
-					a_player.equipmentApplied = false;
-				}
-				return;
-			}
-			if (!a_player.powerArmorOn) {
-				a_player.climbFailures = 0;  // a fresh start the next time they get in
-			}
-			// Out as soon as the owner is: a climb in that has just finished is turned round at once.
-			if (!a_player.powerArmorOn && a_player.inPowerArmor) {
-				a_player.inPowerArmor = false;
-				a_player.frameActionAt = a_now;
-				if (frame && frame->Get3D() && engineIn) {
-					// The copy stays hidden and without collision until the engine has the stand-in out: given back at the
-					// start of the climb, its collision shoved the stand-in still in it.
-					Puppets::AllowAI(a_actor, CLIMB_AI_SLICE);
-					frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
-					a_player.climb.emplace(false, a_now, SitState(a_actor));  // its own clothes go back on once the engine has it out
-				} else {
-					a_player.climbedIn = false;
-					a_player.equipmentApplied = false;
-				}
-				REX::INFO("RemotePlayers: '{}' stand-in gets out of power armor ({})", a_player.name, DescribeArmor(a_actor));
-				return;
-			}
-			// Out of it: the copy stands where they got out until it is deleted, drawn, and solid again once the
-			// stand-in stands clear of it.
-			if (frame && !a_player.inPowerArmor && !a_player.climbedIn) {
-				if (!engineIn) {
-					SetShown(frame.get(), true);
-				}
-				if (a_player.frameCollisionOff && Clear(frame.get(), a_actor)) {
-					SetCollision(a_player.frameCollisionOff, frame.get(), true);
-				}
-			}
-			if (a_now - a_player.frameActionAt < FRAME_ACTION_GAP) {
-				return;
-			}
-			if (a_player.powerArmorOn && !a_player.inPowerArmor && a_player.climbFailures < MAX_CLIMB_FAILURES) {
-				const auto base = RE::TESForm::GetFormByID<RE::TESFurniture>(a_player.powerArmorFrame);
-				if (!Equipment::IsPowerArmorFrame(base)) {
-					return;  // a terminal is furniture too, but never a frame
-				}
-				if (frame && engineIn) {
-					// In after all: dressed for it, not sent in again, since activating the frame it is in takes it out.
-					a_player.inPowerArmor = true;
-					a_player.climbedIn = true;
-					a_player.equipmentApplied = false;
-					a_player.frameActionAt = a_now;
-					REX::INFO("RemotePlayers: '{}' stand-in is in its frame after all ({})", a_player.name, DescribeArmor(a_actor));
-					return;
-				}
-				// A copy is climbed into once: the one they last got out of (back in within seconds) may stand away
-				// from the stand-in, still without collision.
-				if (frame && a_player.frameClimbed) {
-					DeleteFrame(a_player);
-					frame = nullptr;
-				}
-				// A copy left in another place (an interior we have left, another worldspace), or too far from the stand-in
-				// to move onto it, is no use: a fresh one is placed. One still attaching (no cell yet), or in a neighbouring
-				// cell outside, is kept: a copy placed on a cell seam was once deleted and placed again for ever.
-				if (frame) {
-					const auto  samePlace = SamePlace(frame.get(), a_actor);
-					const float distance = frame->data.location.GetDistance(a_actor->data.location);
-					if ((samePlace && !*samePlace) || distance > FRAME_MOVE_LIMIT) {
-						const auto frameCell = frame->GetParentCell();
-						const auto actorCell = a_actor->GetParentCell();
-						REX::INFO("RemotePlayers: '{}'s frame copy is in cell {:08X}, {:.0f} units from the stand-in in {:08X}: placing it again", a_player.name, frameCell ? frameCell->GetFormID() : 0, distance, actorCell ? actorCell->GetFormID() : 0);
-						DeleteFrame(a_player);
-						frame = nullptr;
-					}
-				}
-				if (!frame) {
+			switch (ArmorFrames::ChooseCopy(facts)) {
+			case ArmorFrames::Copy::kNone:
+				break;
+			case ArmorFrames::Copy::kPlace:
+				{
 					RE::NEW_REFR_DATA data;
 					data.location = a_actor->data.location;
-					data.direction = a_actor->data.angle;
+					data.direction = { 0.0f, 0.0f, a_actor->data.angle.z };
 					data.object = base;
 					data.interior = a_cell->IsInterior() ? a_cell : nullptr;
 					data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 					data.clearStillLoadingFlag = true;
 					const auto handle = EngineRefs::CreateReferenceAtLocation(data);
-					frame = handle.get().get();
-					if (!frame) {
-						return;
+					if (handle.get()) {
+						a_player.frame = handle;
+						a_player.framePlacedAt = a_now;
+						a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
+						++framesPlaced;
 					}
-					a_player.frame = handle;
-					a_player.framePlacedAt = a_now;
-					a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
-					a_player.frameClimbed = false;
-					++framesPlaced;
-					return;  // climbed into once its 3D is in
 				}
-				if (!frame->Get3D()) {
-					if (a_now - a_player.framePlacedAt > std::chrono::seconds(10)) {
-						const auto frameCell = frame->GetParentCell();
-						REX::INFO("RemotePlayers: '{}'s frame copy has had no 3D for ten seconds; placing it again (frame at ({:.0f},{:.0f},{:.0f}) cell {:08X} attached={}, stand-in at ({:.0f},{:.0f},{:.0f}) cell {:08X} 3d={}, we are in cell {:08X})", a_player.name, frame->data.location.x, frame->data.location.y, frame->data.location.z, frameCell ? frameCell->GetFormID() : 0, frameCell ? frameCell->IsAttached() : false, a_actor->data.location.x, a_actor->data.location.y, a_actor->data.location.z, a_actor->GetParentCell() ? a_actor->GetParentCell()->GetFormID() : 0, a_actor->Get3D() != nullptr, a_cell ? a_cell->GetFormID() : 0);
-						DeleteFrame(a_player);
-					}
-					return;
+				break;
+			case ArmorFrames::Copy::kHold:
+				HoldWornFrame(a_player, frame.get(), a_at, a_heading);
+				break;
+			case ArmorFrames::Copy::kReplace:
+				{
+					const auto frameCell = frame->GetParentCell();
+					const auto actorCell = a_actor->GetParentCell();
+					REX::INFO("RemotePlayers: '{}'s frame copy (cell {:08X}, 3d={}) is {:.0f} units from the stand-in in {:08X}, placed {} ms ago: placing it again", a_player.name, frameCell ? frameCell->GetFormID() : 0, facts.loaded, facts.distance,
+						actorCell ? actorCell->GetFormID() : 0, std::chrono::duration_cast<std::chrono::milliseconds>(facts.sincePlaced).count());
+					DeleteFrame(a_player);
 				}
-				// Put right where the stand-in stands now, facing its way, before it is sent in: the friend may have walked
-				// on since the copy was placed, and the engine walks an actor to its furniture before it plays it in. Then
-				// drawn and solid, and left there, while the engine plays the stand-in in: it is hidden and held under the
-				// stand-in only once the engine is done (above).
-				const float heading = a_actor->data.angle.z;
-				if (frame->data.location.GetDistance(a_actor->data.location) > FRAME_FOLLOW_DISTANCE || StandInHold::AngleBetween(frame->data.angle.z, heading) > FRAME_FOLLOW_TURN) {
-					frame->data.location = a_actor->data.location;
-					frame->data.angle = { 0.0f, 0.0f, heading };
-					frame->Update3DPosition(true);
-				}
+				break;
+			case ArmorFrames::Copy::kShow:
+				// Where they got out: drawn, and solid again once nobody stands in it (the stand-in starts out in it).
 				SetShown(frame.get(), true);
-				SetCollision(a_player.frameCollisionOff, frame.get(), true);
-				Puppets::AllowAI(a_actor, CLIMB_AI_SLICE);
-				frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
-				a_player.inPowerArmor = true;
-				a_player.frameClimbed = true;
-				a_player.climb.emplace(true, a_now, SitState(a_actor));  // the pieces go on once the engine has it in the frame
-				a_player.frameActionAt = a_now;
-				REX::INFO("RemotePlayers: '{}' stand-in gets into power armor (frame {:08X}; {})", a_player.name, a_player.powerArmorFrame, DescribeArmor(a_actor));
-			} else if (!a_player.powerArmorOn && frame) {
-				DeleteFrame(a_player);  // out of it and the animation is done
+				if (a_player.frameCollisionOff && NobodyIn(frame.get())) {
+					SetCollision(a_player.frameCollisionOff, frame.get(), true);
+				}
+				break;
+			case ArmorFrames::Copy::kDelete:
+				DeleteFrame(a_player);
+				break;
+			case ArmorFrames::Copy::kAbandon:
+				// Someone here got into it while it stood where they got out: theirs now (see DeleteFrame).
+				REX::INFO("RemotePlayers: someone here got into '{}'s frame copy {:08X}; it is theirs now", a_player.name, frame->GetFormID());
+				a_player.frame = {};
+				a_player.frameCollisionOff = nullptr;
+				break;
 			}
 		}
 
@@ -966,14 +848,11 @@ namespace RemotePlayers
 		// before; when it isn't, something in the engine moves it. Counted for net status, and logged now and
 		// then with what may be holding it, such as its power armor frame copy.
 		constexpr auto HOLD_LOG_INTERVAL = 10s;
-		// After a climb into or out of a frame, the stand-in is put back on its friend's spot: not a move by the engine.
-		constexpr auto HOLD_AFTER_CLIMB = 1s;
 		void CheckHold(RemotePlayer& a_player, RE::Actor* a_actor, const RE::NiPoint3& a_target, float a_speed, Clock::time_point a_now)
 		{
 			const auto last = a_player.lastTarget;
 			a_player.lastTarget = a_target;
-			// A climb into or out of a frame is the engine's to run; the stand-in isn't put anywhere meanwhile.
-			if (!last || !a_actor->Get3D() || a_player.climb || a_now - a_player.frameActionAt < HOLD_AFTER_CLIMB) {
+			if (!last || !a_actor->Get3D()) {
 				return;
 			}
 			const auto& at = a_actor->data.location;
@@ -992,7 +871,6 @@ namespace RemotePlayers
 		{
 			DeleteLight(a_player);
 			DeleteFrame(a_player);
-			a_player.climbFailures = 0;  // a new stand-in gets its own tries
 			if (a_player.registered) {
 				Puppets::Unregister(a_player.registered, a_player.registeredId);
 				a_player.registered = nullptr;
@@ -1125,7 +1003,7 @@ namespace RemotePlayers
 			snaps.pop_front();
 		}
 		if (it->second.wornAtWanted) {
-			TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a state of theirs
+			TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
 		}
 	}
 
@@ -1187,8 +1065,7 @@ namespace RemotePlayers
 
 	void PlayShot(std::uint32_t a_id, std::uint32_t a_sound)
 	{
-		// Not while the stand-in climbs into or out of its frame: an attack played then can break off the climb.
-		if (const auto it = players.find(a_id); it != players.end() && !it->second.climb) {
+		if (const auto it = players.find(a_id); it != players.end()) {
 			WeaponFire::PlayShot(GetActor(it->second), a_sound);
 		}
 	}
@@ -1203,9 +1080,6 @@ namespace RemotePlayers
 		if (a_action == Protocol::ShotAction::kLightOn || a_action == Protocol::ShotAction::kLightOff) {
 			player.lightOn = a_action == Protocol::ShotAction::kLightOn;
 			return;  // Update() keeps the light with the stand-in
-		}
-		if (player.climb) {
-			return;  // an idle, a throw or a reload played mid-climb can break it off (see PlayShot)
 		}
 		const auto actor = GetActor(player);
 		// The grenade the stand-in shows and throws is the one the owner holds; the last replayed
@@ -1228,11 +1102,10 @@ namespace RemotePlayers
 
 	void DespawnAll()
 	{
+		// A frame of ours hidden while a friend wears theirs stays hidden: only its 3D was touched, which no save keeps.
+		// Shown here, it stood in the world again until the next check put it away, and counted as hidden anew.
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
-			// Only its 3D was touched, which no save keeps; shown anyway, so nothing of ours is in place while it is
-			// written. Hidden again on the next update while the friend still wears theirs.
-			ShowOriginal(player);
 		}
 		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now. (A
 		// reference whose 3D is still loading is left alone: deleting it crashes the loader when it
@@ -1291,13 +1164,15 @@ namespace RemotePlayers
 		// entry resolved after the load could delete some unrelated object, and a face base made before
 		// it may be gone.
 		graveyard.clear();
+		pendingSolid.clear();
 		for (auto& [id, player] : players) {
 			player.faceBaseId = 0;
 			player.faceTried = false;
-			player.original = {};  // a hidden frame's 3D went with the old world; looked for again
+			player.original = {};  // a hidden frame's 3D went with the old world; looked for again at once (not a new hide)
 			player.originalHidden = nullptr;
 			player.originalCollisionOff = nullptr;
 			player.originalChoice = -1;
+			player.originalCheckAt = {};
 			player.originalMoved = false;  // moved in the old world; looked at afresh in this one
 		}
 	}
@@ -1321,17 +1196,22 @@ namespace RemotePlayers
 		if (const auto it = players.find(a_id); it != players.end()) {
 			auto& player = it->second;
 			// A pre-placed frame they have just got into: where they are now is where they got in (their status names the
-			// frame as they climb in), and ours is looked at afresh for this wear (see ArmorClimb::ChooseOriginal).
+			// frame as they climb in), and ours is looked at afresh for this wear (see ArmorFrames::ChooseOriginal). Where
+			// they are is their newest state if it came just now, else the next one.
 			if (a_on && a_frameBase && a_frameRef != 0 && (!player.powerArmorOn || a_frameRef != player.powerArmorFrameRef)) {
 				player.wornAt.reset();
 				player.wornAtWanted = true;
 				player.originalMoved = false;
 				player.originalChoice = -1;
-				if (!player.snapshots.empty()) {
+				player.originalCounted = false;
+				if (!player.snapshots.empty() && ArmorFrames::FreshEnough(Clock::now() - player.arrivals.arrival)) {
 					TakeWornAt(player, player.snapshots.back().state);
 				}
 			} else if (!a_on) {
 				player.wornAtWanted = false;
+			}
+			if (a_on != player.powerArmorOn) {
+				player.equipmentApplied = false;  // dressed again: with the pieces in, without them out (see Outfit)
 			}
 			player.powerArmorOn = a_on;
 			if (a_frameBase) {
@@ -1366,7 +1246,6 @@ namespace RemotePlayers
 		const auto localCell = player ? player->GetParentCell() : nullptr;
 		const auto ui = RE::UI::GetSingleton();
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
-		const bool paused = ui && ui->menuMode > 0;  // a menu stops the game: a climb's time stands still (see ArmorClimb)
 
 		const auto now = Clock::now();
 		if (lastFrame != Clock::time_point{}) {
@@ -1397,6 +1276,7 @@ namespace RemotePlayers
 			return true;
 		});
 		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) { return !a_handle.get(); });
+		UpdatePendingSolid();
 		for (auto& [id, remote] : players) {
 			// Drop snapshots that are too old to ever be rendered again.
 			while (remote.snapshots.size() > 2 && now - remote.snapshots[1].received > INTERPOLATION_DELAY + 1s) {
@@ -1418,7 +1298,7 @@ namespace RemotePlayers
 			}
 
 			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
-			UpdateOriginal(remote, GetActor(remote), now);
+			UpdateOriginal(remote, now);
 
 			auto actor = GetActor(remote);
 			if (!actor && remote.registered) {
@@ -1468,7 +1348,7 @@ namespace RemotePlayers
 			}
 
 			UpdateLight(remote, actor, localCell, now);
-			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, paused, now);
+			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
 			CheckHold(remote, actor, { state->x, state->y, state->z }, state->speed, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
@@ -1477,19 +1357,12 @@ namespace RemotePlayers
 				remote.shownName = std::move(label);
 			}
 
-			// Not while it climbs in or out of its frame: it is dressed for the result once the engine is done.
-			const bool climbing = remote.climb.has_value();
-			if (remote.hasEquipment && !remote.equipmentApplied && !climbing && actor->Get3D()) {
-				// In a frame it is dressed without a strip first: a strip takes it out of the frame.
-				if (remote.climbedIn) {
-					Equipment::Wear(actor, Outfit(remote));
-				} else {
-					Equipment::Apply(actor, Outfit(remote));
-				}
+			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
+				Equipment::Apply(actor, Outfit(remote));
 				Puppets::RedrawWeapon(actor);
 				remote.equipmentApplied = true;
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-			} else if (remote.equipmentApplied && !climbing && now >= remote.equipmentCheckAt && actor->Get3D()) {
+			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
 				if (Wearable(Equipment::Read(actor)) == Wearable(Outfit(remote))) {
 					remote.equipmentFixes = 0;
@@ -1529,12 +1402,13 @@ namespace RemotePlayers
 			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
-			// In power armor: whether its pieces are on (once the engine has it in the frame), how long the climb
-			// under way has taken, and the engine's own view of the stand-in (see DescribeArmor).
+			// In power armor: how many of the pieces it should wear it has on, and its frame copy (loading, hidden or shown).
 			std::string armor;
-			if (actor && (remote.powerArmorOn || remote.inPowerArmor || remote.climbedIn)) {
-				const auto climbMs = remote.climb ? std::chrono::duration_cast<std::chrono::milliseconds>(remote.climb->elapsed).count() : -1;
-				armor = std::format(" pieces={} climbMs={} {}", remote.climbedIn, climbMs, DescribeArmor(actor));
+			if (actor && (remote.powerArmorOn || remote.inPowerArmor)) {
+				const auto pieces = [](const std::vector<std::uint32_t>& a_items) { return std::ranges::count_if(Wearable(a_items), PowerArmorPiece); };
+				const auto frame = remote.frame.get();
+				const auto root = frame ? frame->Get3D() : nullptr;
+				armor = std::format(" pieces={}/{} copy={}", pieces(Equipment::Read(actor)), pieces(Outfit(remote)), !frame ? "none" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown");
 			}
 			// Their frame when every game has it, and whether ours is hidden while they wear theirs.
 			if (remote.powerArmorFrameRef || remote.original) {
@@ -1545,9 +1419,6 @@ namespace RemotePlayers
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
 				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
 				remote.hold.off, remote.hold.frames, remote.hold.worst, armor);
-		}
-		if (climbsDone || climbsCutShort) {
-			out += std::format(" climbs={}/{}/{}", climbsDone, climbsCutShort, climbsGivenUp);  // finished / cut short / friends left out of their armor
 		}
 		if (originalsHidden) {
 			out += std::format(" originalsHidden={}", originalsHidden);
