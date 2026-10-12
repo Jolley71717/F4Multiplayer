@@ -1,6 +1,7 @@
 #include "game/Dialogue.h"
 #include "game/StrandedDialogue.h"
 
+#include "game/NpcSync.h"
 #include "game/Puppets.h"
 
 namespace Dialogue
@@ -12,33 +13,28 @@ namespace Dialogue
 		// The engine's MenuTopicManager, the one IsPlayerInDialogue reads (next to PlayerCamera's 4796065).
 		// CommonLibF4's RE::MenuTopicManager::GetSingleton() reads ID 4796375, which is MenuControls'
 		// singleton (the same as ID::MenuControls::Singleton): read through it, menuOpen was always set
-		// and the speaker always none, whatever the player was doing.
+		// and the speaker always none, whatever the player was doing. The wrong ID is the library's
+		// (ID::MenuTopicManager::Singleton in RE/IDs.h); lib/commonlibf4 is a submodule kept as published,
+		// so the right one is used here instead.
 		constexpr REL::ID TOPIC_MANAGER{ 4796064 };
 
-		// MenuTopicManager::SpeakerShutMenu(TESObjectREFR*, BGSScene*, bool): how the engine ends a
-		// conversation (the player moving away, the speaker dying or starting a fight, its scene ending).
-		// It finds the speaker through its handle first and does nothing when that fails.
-		constexpr REL::ID SPEAKER_SHUT_MENU{ 2227155 };
-
 		// The reset every conversation ends with (SpeakerShutMenu's last step; starting one runs it too):
-		// it lets go of the conversation's input layer and clears menuOpen. It needs no speaker.
+		// it lets go of the conversation's input layer, which is what takes the player's weapons, Pip-Boy
+		// and workshop, and clears menuOpen. It needs no speaker and leaves scenes alone.
+		// MenuTopicManager::SpeakerShutMenu (2227155) is not used: before the reset it walks the player
+		// out of the dialogue scene they are in (BGSScene::SetPlayerWalkAway and StartWalkAway on the
+		// player's current scene, whichever scene it is passed), which can end a quest's scene.
 		constexpr REL::ID RESET_MENU{ 2227138 };
 
 		// Being in dialogue without the dialogue menu this long is logged, with what holds the player.
 		constexpr auto HELD_REPORT = std::chrono::seconds(10);
 
-		StrandedDialogue::Timer stranded;
-		std::uint32_t           ended = 0;
-		Clock::time_point       heldSince{};
-		bool                    heldReported = false;
-		bool                    wrongManagerReported = false;
-
-		void SpeakerShutMenu(RE::MenuTopicManager* a_manager, RE::TESObjectREFR* a_speaker, RE::BGSScene* a_scene, bool a_closeMenu)
-		{
-			using func_t = void (*)(RE::MenuTopicManager*, RE::TESObjectREFR*, RE::BGSScene*, bool);
-			static REL::Relocation<func_t> func{ SPEAKER_SHUT_MENU };
-			func(a_manager, a_speaker, a_scene, a_closeMenu);
-		}
+		StrandedDialogue::Timer   stranded;
+		StrandedDialogue::Speaker speakerOurs;
+		std::uint32_t             ended = 0;
+		Clock::time_point         heldSince{};
+		bool                      heldReported = false;
+		bool                      wrongManagerReported = false;
 
 		void ResetMenu(RE::MenuTopicManager* a_manager)
 		{
@@ -53,11 +49,36 @@ namespace Dialogue
 			return player ? player->GetCurrentScene() : nullptr;
 		}
 
-		// The player kept in dialogue (no weapons, Pip-Boy or workshop) with no dialogue menu to talk in
-		// is logged once, with what keeps them there, whatever the cause.
-		void ReportHeld(RE::MenuTopicManager* a_topics, RE::TESObjectREFR* a_speaker, bool a_menu, Clock::time_point a_now)
+		// The engine's own test: menuOpen, or the camera in its dialogue state. It reads the MenuTopicManager
+		// and the PlayerCamera without checking that they are there.
+		bool InDialogue()
 		{
-			if (a_menu || !RE::IsPlayerInDialogue()) {
+			return RE::PlayerCamera::GetSingleton() && RE::IsPlayerInDialogue();
+		}
+
+		// One of ours: a friend's stand-in (also one kept for this conversation after its friend left: see
+		// RemotePlayers), an NPC mirrored from another player's game, or one the session shares (it has an
+		// owner, which may be another player's game). Only a session makes them.
+		bool Ours(RE::TESObjectREFR* a_ref)
+		{
+			const auto actor = a_ref->As<RE::Actor>();
+			return actor && (Puppets::IsRegistered(actor) || NpcSync::Owner(actor->GetFormID()) != 0);
+		}
+
+		// Out of dialogue: nothing known, nothing waited for.
+		void Forget()
+		{
+			stranded.Reset();
+			speakerOurs.Reset();
+			heldSince = {};
+			heldReported = false;
+		}
+
+		// The player kept in dialogue (no weapons, Pip-Boy or workshop) with no dialogue menu to talk in
+		// is logged once, with what keeps them there, whatever the cause. Called while in dialogue.
+		void ReportHeld(RE::MenuTopicManager* a_topics, RE::TESObjectREFR* a_speaker, bool a_menu, bool a_ours, Clock::time_point a_now)
+		{
+			if (a_menu) {
 				heldSince = {};
 				heldReported = false;
 				return;
@@ -71,9 +92,9 @@ namespace Dialogue
 			heldReported = true;
 			const auto actor = a_speaker ? a_speaker->As<RE::Actor>() : nullptr;
 			const auto scene = PlayerScene();
-			REX::WARN("Dialogue: the player has been in dialogue without the dialogue menu for {} s: menuOpen={} speaker={:08X} disabled={} deleted={} standIn={} scene={:08X} quest={:08X}",
+			REX::WARN("Dialogue: the player has been in dialogue without the dialogue menu for {} s: menuOpen={} speaker={:08X} disabled={} deleted={} standIn={} ours={} scene={:08X} quest={:08X}",
 				std::chrono::duration_cast<std::chrono::seconds>(HELD_REPORT).count(), a_topics->menuOpen, a_speaker ? a_speaker->GetFormID() : 0,
-				a_speaker && a_speaker->IsDisabled(), a_speaker && a_speaker->IsDeleted(), actor && Puppets::IsPuppet(actor), scene ? scene->GetFormID() : 0,
+				a_speaker && a_speaker->IsDisabled(), a_speaker && a_speaker->IsDeleted(), actor && Puppets::IsPuppet(actor), a_ours, scene ? scene->GetFormID() : 0,
 				scene && scene->parentQuest ? scene->parentQuest->GetFormID() : 0);
 		}
 	}
@@ -112,29 +133,37 @@ namespace Dialogue
 
 	void Frame()
 	{
+		// Out of dialogue, as the player nearly always is, nothing more is looked at.
 		const auto topics = TopicManager();
+		if (!topics || !InDialogue()) {
+			Forget();
+			return;
+		}
+		// A loading screen is no part of the wait (it can last longer): it starts over once the screen is gone.
 		const auto ui = RE::UI::GetSingleton();
-		if (!topics || !ui || ui->GetMenuOpen("LoadingMenu"sv)) {
+		if (!ui || ui->GetMenuOpen("LoadingMenu"sv)) {
+			stranded.Reset();
+			heldSince = {};
 			return;
 		}
 		const auto now = Clock::now();
 		const auto speaker = topics->speaker.get();
 		const bool menu = ui->GetMenuOpen("DialogueMenu"sv);
-		ReportHeld(topics, speaker.get(), menu, now);
+		const bool ours = speakerOurs.Ours(speaker ? speaker->GetFormID() : 0, speaker && Ours(speaker.get()));
+		ReportHeld(topics, speaker.get(), menu, ours, now);
 
+		// Only a conversation with one of ours is ended: one the game itself left open is the game's.
 		const bool gone = !speaker || speaker->IsDeleted() || speaker->IsDisabled();
-		if (!stranded.Due(topics->menuOpen && gone && !menu, now)) {
+		if (!stranded.Due(topics->menuOpen && gone && ours && !menu, now)) {
 			return;
 		}
 		const auto id = speaker ? speaker->GetFormID() : 0;
-		if (speaker) {
-			// Disabled or deleted, but still there: the engine's own ending, as when the player moves away
-			// (their part in a scene is walked away from). Not closing the dialogue menu: it isn't open.
-			SpeakerShutMenu(topics, nullptr, PlayerScene(), false);
+		// The speaker's side first, as in the engine's own ending: it no longer talks with the player
+		// (SpeakerShutMenu does this before its reset). A deleted one is left alone.
+		if (speaker && !speaker->IsDeleted()) {
+			speaker->SetDialoguewithPlayer(false, false, nullptr);
 		}
-		if (topics->menuOpen) {
-			ResetMenu(topics);  // nothing to end it through: the reset it would have ended with
-		}
+		ResetMenu(topics);
 		++ended;
 		if (stranded.Ends() == 1) {
 			REX::INFO("Dialogue: ended a conversation left open without its speaker ({:08X}{}); the player had no weapons, Pip-Boy or workshop", id,

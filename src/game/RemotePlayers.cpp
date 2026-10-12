@@ -110,6 +110,15 @@ namespace RemotePlayers
 			std::optional<Clock::time_point> disabledAt;
 			Clock::time_point                buriedAt{};
 			bool                             held = false;  // has waited for the player's conversation
+			// A stand-in stays one of our puppets until it is disabled: its AI off, kept healthy, and not to be
+			// talked to. One kept for the player's conversation used to be let go first, so its AI ran and the
+			// player could press E on it, start another conversation, and have it deleted in the middle of
+			// that one. Never dereferenced (see RemotePlayer::registered); null for a light or frame.
+			const RE::Actor*                 puppet = nullptr;
+			std::uint32_t                    puppetId = 0;
+			// A frame copy whose stand-in is kept for the player's conversation while in it: it waits for the
+			// stand-in, instead of being deleted from under the actor held in it.
+			RE::ObjectRefHandle              wearer;
 		};
 		std::vector<Grave> graveyard;
 		std::uint32_t      flushedBeforeSave = 0;
@@ -117,6 +126,34 @@ namespace RemotePlayers
 		// would write them too.
 		std::vector<RE::ObjectRefHandle> deleting;
 		std::uint32_t      heldForConversation = 0;
+
+		// The stand-in is out of the world (or gone): no longer one of our puppets.
+		void Release(Grave& a_grave)
+		{
+			if (a_grave.puppet) {
+				Puppets::Unregister(a_grave.puppet, a_grave.puppetId);
+				a_grave.puppet = nullptr;
+				a_grave.puppetId = 0;
+			}
+		}
+
+		void Disable(Grave& a_grave, RE::TESObjectREFR* a_ref, Clock::time_point a_now)
+		{
+			Release(a_grave);
+			a_ref->Disable();
+			a_grave.disabledAt = a_now;
+		}
+
+		// What is kept for the player's conversation is not seen: its friend has left, or is shown by a new
+		// stand-in already, and the two stood side by side for up to a minute. Hidden rather than disabled
+		// or moved, which would take the conversation's speaker away; again each frame, since a 3D that is
+		// loaded again comes back shown.
+		void Hide(RE::TESObjectREFR* a_ref)
+		{
+			if (const auto root = a_ref->Get3D()) {
+				root->SetAppCulled(true);
+			}
+		}
 
 		// A stand-in in the player's conversation stays (not even disabled) until the conversation ends
 		// (see DeferredDelete::Held). Deleting the one speaking to the player left the conversation open
@@ -126,6 +163,7 @@ namespace RemotePlayers
 			if (!DeferredDelete::Held(Dialogue::Holds(a_ref), a_now - a_grave.buriedAt)) {
 				return false;
 			}
+			Hide(a_ref);
 			if (!a_grave.held) {
 				a_grave.held = true;
 				++heldForConversation;
@@ -134,20 +172,32 @@ namespace RemotePlayers
 			return true;
 		}
 
-		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
-		void Bury(RE::ObjectRefHandle a_handle, Clock::time_point a_placedAt)
+		// A frame copy waits while the stand-in in it is still there (see Grave::wearer), hidden with it.
+		bool WaitsForWearer(const Grave& a_grave, RE::TESObjectREFR* a_ref)
 		{
-			const auto ref = a_handle.get();
+			const auto wearer = a_grave.wearer.get();
+			if (!wearer || wearer->IsDisabled() || wearer->IsDeleted()) {
+				return false;
+			}
+			Hide(a_ref);
+			return true;
+		}
+
+		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
+		void Bury(Grave a_grave)
+		{
+			const auto ref = a_grave.actor.get();
 			if (!ref) {
+				Release(a_grave);
 				return;
 			}
 			const auto now = Clock::now();
-			Grave      grave{ a_handle, a_placedAt, std::nullopt, now };
-			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_placedAt) && !HeldForConversation(grave, ref.get(), now)) {
-				ref->Disable();
-				grave.disabledAt = now;
+			a_grave.buriedAt = now;
+			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt) && !HeldForConversation(a_grave, ref.get(), now) &&
+				!WaitsForWearer(a_grave, ref.get())) {
+				Disable(a_grave, ref.get(), now);
 			}
-			graveyard.push_back(grave);
+			graveyard.push_back(a_grave);
 		}
 
 		// The first stand-in waits this long for the player's face, instead of being placed and then
@@ -335,7 +385,7 @@ namespace RemotePlayers
 		void DeleteLight(RemotePlayer& a_player)
 		{
 			if (const auto light = a_player.light.get()) {
-				Bury(a_player.light, a_player.lightPlacedAt);
+				Bury({ .actor = a_player.light, .spawnedAt = a_player.lightPlacedAt });
 			}
 			a_player.light = {};
 		}
@@ -404,8 +454,9 @@ namespace RemotePlayers
 			}
 		}
 
-		// The frame placed for the stand-in is removed once the stand-in is out of it (or gone).
-		void DeleteFrame(RemotePlayer& a_player)
+		// The frame placed for the stand-in is removed once the stand-in is out of it (or gone). a_wearer: the
+		// stand-in kept for the player's conversation while in the frame, which the frame waits for.
+		void DeleteFrame(RemotePlayer& a_player, RE::ObjectRefHandle a_wearer = {})
 		{
 			if (const auto frame = a_player.frame.get()) {
 				// Our own player may have climbed into the friend's frame copy: then it stays (deleting it would
@@ -424,7 +475,7 @@ namespace RemotePlayers
 					a_player.climbedIn = false;
 					return;
 				}
-				Bury(a_player.frame, a_player.framePlacedAt);
+				Bury({ .actor = a_player.frame, .spawnedAt = a_player.framePlacedAt, .wearer = a_wearer });
 			}
 			a_player.frame = {};
 			a_player.frameCollisionOff = nullptr;
@@ -649,17 +700,24 @@ namespace RemotePlayers
 		void DeleteActor(RemotePlayer& a_player)
 		{
 			DeleteLight(a_player);
-			DeleteFrame(a_player);
+			// A stand-in kept for the player's conversation (see HeldForConversation) keeps its frame copy while
+			// it is in it, getting in or getting out: the frame goes with it.
+			const auto actor = GetActor(a_player);
+			const bool wearing = actor && Dialogue::Holds(actor) && (a_player.inPowerArmor || a_player.climbStartedAt || InArmor(actor));
+			DeleteFrame(a_player, wearing ? a_player.actor : RE::ObjectRefHandle{});
 			a_player.climbFailures = 0;  // a new stand-in gets its own tries
-			if (a_player.registered) {
-				Puppets::Unregister(a_player.registered, a_player.registeredId);
-				a_player.registered = nullptr;
-				a_player.registeredId = 0;
-			}
-			if (const auto actor = GetActor(a_player)) {
+			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
-				Bury(a_player.actor, a_player.spawnedAt);
+				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: a
+				// climb's turn of its own AI ends now, and no friend moves it any more.
+				Puppets::AllowAI(actor, 0ms);
+				Puppets::SetTarget(actor, { .position = actor->data.location, .heading = actor->data.angle.z });
+				Bury({ .actor = a_player.actor, .spawnedAt = a_player.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
+			} else if (a_player.registered) {
+				Puppets::Unregister(a_player.registered, a_player.registeredId);  // gone already
 			}
+			a_player.registered = nullptr;
+			a_player.registeredId = 0;
 			a_player.actor = {};
 		}
 
@@ -918,15 +976,17 @@ namespace RemotePlayers
 		// be written into the save, deleted or not: a stand-in saved as deleted comes back from the save in
 		// no cell, and every later save crashed on it. A stand-in kept for the player's
 		// conversation goes too: should it be the speaker, Dialogue ends the conversation it leaves open.
-		std::erase_if(graveyard, [&](const Grave& a_grave) {
+		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
+				Release(a_grave);
 				return true;
 			}
 			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_grave.spawnedAt)) {
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}
+			Release(a_grave);
 			ref->Disable();
 			ref->SetDelete(true);
 			SaveGuard::Exclude(ref.get());
@@ -959,7 +1019,11 @@ namespace RemotePlayers
 	{
 		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
 		// entry resolved after the load could delete some unrelated object, a stale one in deleting would
-		// keep an unrelated reference out of every save, and a face base made before it may be gone.
+		// keep an unrelated reference out of every save, and a face base made before it may be gone. A
+		// stand-in among the graveyard's is no longer a puppet either (forgotten without reading it).
+		for (auto& grave : graveyard) {
+			Release(grave);
+		}
 		graveyard.clear();
 		deleting.clear();
 		for (auto& [id, player] : players) {
@@ -1027,14 +1091,15 @@ namespace RemotePlayers
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
+				Release(a_grave);
 				return true;
 			}
 			if (!a_grave.disabledAt) {
-				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now)) {
+				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now) ||
+					WaitsForWearer(a_grave, actor.get())) {
 					return false;
 				}
-				actor->Disable();
-				a_grave.disabledAt = now;
+				Disable(a_grave, actor.get(), now);
 				return false;
 			}
 			if (now - *a_grave.disabledAt < DELETE_AFTER_DISABLE) {

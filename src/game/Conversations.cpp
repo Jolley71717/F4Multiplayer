@@ -223,6 +223,11 @@ namespace Conversations
 		// (no weapon, Pip-Boy or workshop until the NPC is spoken to again). Whether we're in a
 		// conversation is the engine's own test: RE::MenuTopicManager::GetSingleton() reads another
 		// object, whose "menuOpen" is part of a pointer and so always set, and no line was voiced.
+		// Even so the player can start talking to the NPC while it says the line, and a conversation
+		// left unfinished that way still has its speaker, so Dialogue::Frame (which ends only those
+		// whose speaker is gone) never ends it. So lines are voiced only when asked for under a key no
+		// shipped ini sets (bExperimentalVoiceLines, off; the old bVoiceLines, on in the ini until
+		// 0.8.6-rc2, is ignored): no voice, as while the test was always true.
 		const bool busy = RE::IsPlayerInDialogue() || player->GetCurrentScene() || actor->GetCurrentScene();
 		if (a_line.speaker != 0 && a_line.topic != 0 && !busy && Config::Get().voiceLines) {
 			const auto topic = RE::TESForm::GetFormByID<RE::TESTopic>(a_line.topic);

@@ -47,3 +47,41 @@ TEST("stranded dialogue: an end that didn't take is tried again after another gr
 	CHECK(!timer.Due(false, start + 5s));
 	CHECK(timer.Ends() == 0);
 }
+
+TEST("stranded dialogue: a loading screen starts the wait over")
+{
+	StrandedDialogue::Timer timer;
+	const auto              start = StrandedDialogue::Clock::now();
+	CHECK(!timer.Due(true, start));
+	timer.Reset();  // loading for longer than the grace time
+	CHECK(!timer.Due(true, start + 30s));
+	CHECK(!timer.Due(true, start + 31s));
+	CHECK(timer.Due(true, start + 32s));
+}
+
+TEST("stranded dialogue: a speaker that is ours is known as ours")
+{
+	StrandedDialogue::Speaker speaker;
+	CHECK(!speaker.Ours(0, false));
+	CHECK(!speaker.Ours(0x00001234, false));
+	CHECK(speaker.Ours(0xFF000800, true));
+}
+
+TEST("stranded dialogue: ours once, ours while the conversation lasts")
+{
+	StrandedDialogue::Speaker speaker;
+	CHECK(speaker.Ours(0xFF000800, true));
+	CHECK(speaker.Ours(0xFF000800, false));  // switched off and let go
+	CHECK(speaker.Ours(0, false));           // deleted: its handle no longer resolves
+	speaker.Reset();                         // the conversation is over
+	CHECK(!speaker.Ours(0, false));
+}
+
+TEST("stranded dialogue: another speaker that is not ours ends what was known")
+{
+	StrandedDialogue::Speaker speaker;
+	CHECK(speaker.Ours(0xFF000800, true));
+	CHECK(!speaker.Ours(0x0001CA7D, false));
+	CHECK(!speaker.Ours(0, false));
+	CHECK(!speaker.Ours(0xFF000800, false));  // the same ID again, no longer ours: not counted
+}

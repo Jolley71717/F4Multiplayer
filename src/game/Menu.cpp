@@ -301,6 +301,9 @@ namespace Menu
 			const char* onValue;
 			const char* offValue;
 		};
+		// Saying friends' NPC lines aloud (bExperimentalVoiceLines) is left out on purpose: it can leave
+		// the player held in dialogue with nothing to end it, so it is set only by hand in the ini, next
+		// to its warning.
 		constexpr std::array<Toggle, 5> TOGGLES{ {
 			{ "Friendly fire", "players can hurt each other (host's setting, from the next session hosted)", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
 			{ "Shared story", "the main story and factions move along together (host's setting, from the next session hosted)", &Config::Settings::sharedStory, "sStory", "shared", "own" },
