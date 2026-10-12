@@ -81,6 +81,10 @@ toggled (only that line changes; comments and the rest of the file stay):
 | Compass markers | `bCompassMarkers` | at once |
 | Fast loading | `bFastLoading` | the next loading screen |
 
+Saying friends' NPC lines aloud (`bExperimentalVoiceLines`) is not a switch here on purpose: it can
+leave the player held in dialogue (no weapons, Pip-Boy or workshop), so it is set only by hand in
+the ini, under its warning.
+
 ## Testing it
 
 The dev channel drives it without the keyboard: `mpmenu open` shows the main page, `mpmenu press

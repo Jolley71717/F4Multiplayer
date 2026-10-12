@@ -113,8 +113,15 @@ namespace Config
 				settings.syncTime = ParseBool(value);
 			} else if (key == "bSaveSession") {
 				settings.saveSession = ParseBool(value);
-			} else if (key == "bVoiceLines") {
+			} else if (key == "bExperimentalVoiceLines") {
 				settings.voiceLines = ParseBool(value);
+			} else if (key == "bVoiceLines") {
+				// Not read any more: the ini from 0.6.3 to 0.8.6-rc2 had it on, and a player's ini is kept
+				// across updates (the in-game menu writes to it), so it would stay on. Voicing NPC lines can
+				// leave the player held in dialogue: it takes bExperimentalVoiceLines, which no shipped ini sets.
+				if (ParseBool(value)) {
+					REX::INFO("Config: bVoiceLines is no longer read; NPC lines are said aloud only with bExperimentalVoiceLines = true");
+				}
 			} else if (key == "fXpShare") {
 				float share = settings.xpShare;
 				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);
