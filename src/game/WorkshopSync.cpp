@@ -221,6 +221,23 @@ namespace WorkshopSync
 			return cell->worldSpace ? WorkshopCells::Exterior(cell->worldSpace->GetFormID(), a_item.position[0], a_item.position[1]) : WorkshopCells::Where{};
 		}
 
+		// Where a scrapped piece of the world waits: the cell its reference stands in here, while the
+		// reference is in memory (a persistent one, or one whose cell is loaded). Its player may have moved
+		// it before scrapping it, and the scrap then tells where they moved it to, maybe cells away, while
+		// ours stands where it always stood. Otherwise, where the scrap tells.
+		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId);
+			const auto cell = ref ? ref->GetParentCell() : nullptr;
+			if (!cell) {
+				return WhereOf(a_item);
+			}
+			if (cell->IsInterior()) {
+				return WorkshopCells::Interior(cell->GetFormID());
+			}
+			return cell->worldSpace ? WorkshopCells::Exterior(cell->worldSpace->GetFormID(), ref->data.location.x, ref->data.location.y) : WhereOf(a_item);
+		}
+
 		void SetTransform(RE::TESObjectREFR* a_ref, const Protocol::WorkshopItem& a_item)
 		{
 			a_ref->SetLocationOnReference({ a_item.position[0], a_item.position[1], a_item.position[2] });
@@ -608,9 +625,48 @@ namespace WorkshopSync
 			return nullptr;
 		}
 
-		// The workbench whose build area the piece stands in (0 if none has been seen): the game's own
-		// test, Workshop::IsLocationWithinBuildableArea. That is inside one of the build-area volumes
-		// linked to the workbench, or, while none of them is loaded, within 5000 units of it.
+		// What links a build-area volume (a primitive) to its workbench: the form of the default object
+		// WorkshopLinkedPrimitiveKeyword, as Workshop::IsLocationWithinBuildableArea reads it.
+		constexpr REL::ID BUILD_AREA_KEYWORD{ 4797312 };
+		// How far a build area reaches from its workbench while none of its volumes is loaded.
+		constexpr float   BUILD_AREA_RADIUS = 5000.0f;
+
+		// Whether one of the build-area volumes linked to the workbench is loaded. The game's own test
+		// then decides by them alone. While none is, it falls back to a radius, but around the settlement
+		// the player is at in workshop mode (its location's marker and radius) whichever workbench it is
+		// asked about, and around the workbench only outside workshop mode.
+		bool BuildAreaLoaded(const RE::TESObjectREFR& a_bench)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ BUILD_AREA_KEYWORD };
+			const auto children = a_bench.extraList ? a_bench.extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+			if (!children || !*keyword) {
+				return false;
+			}
+			for (const auto& child : children->linkedChildren) {
+				if (child.keyword != *keyword) {
+					continue;
+				}
+				const auto volume = child.REFR.get();
+				if (volume && volume->extraList && volume->extraList->GetPrimitive()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Whether the spot is in the workbench's build area: inside one of the build-area volumes linked
+		// to it (the game's own test, Workshop::IsLocationWithinBuildableArea), or, while none of them is
+		// loaded, within BUILD_AREA_RADIUS of it (the game's fallback outside workshop mode, measured here
+		// so the settlement the player is building at doesn't stand in for every workbench).
+		bool InBuildArea(const RE::TESObjectREFR& a_bench, const RE::NiPoint3& a_at)
+		{
+			if (BuildAreaLoaded(a_bench)) {
+				return RE::Workshop::IsLocationWithinBuildableArea(a_bench, a_at);
+			}
+			return a_bench.data.location.GetDistance(a_at) <= BUILD_AREA_RADIUS;
+		}
+
+		// The workbench whose build area the piece stands in (0 if none has been seen).
 		std::uint32_t BenchFor(const RE::TESObjectREFR* a_ref, std::uint32_t a_space)
 		{
 			if (a_space == 0) {
@@ -621,7 +677,7 @@ namespace WorkshopSync
 					continue;
 				}
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(bench.id);
-				if (ref && RE::Workshop::IsLocationWithinBuildableArea(*ref, a_ref->data.location)) {
+				if (ref && InBuildArea(*ref, a_ref->data.location)) {
 					return bench.id;
 				}
 			}
@@ -878,7 +934,7 @@ namespace WorkshopSync
 			// A piece of the world itself goes from our world too (one its player had moved has a copy
 			// here as well, gone above).
 			if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
-				pending.Put(WhereOf(a_item), key, a_item);
+				pending.Put(WhereScrapped(a_item), key, a_item);
 			}
 			return;
 		}
@@ -950,7 +1006,7 @@ namespace WorkshopSync
 		std::string out = std::format("{} workbenches", refs.size());
 		for (const auto ref : refs) {
 			const auto& at = ref->data.location;
-			const bool  inside = player && SpaceOf(player->GetParentCell()) == SpaceOf(ref->GetParentCell()) && RE::Workshop::IsLocationWithinBuildableArea(*ref, player->data.location);
+			const bool  inside = player && SpaceOf(player->GetParentCell()) == SpaceOf(ref->GetParentCell()) && InBuildArea(*ref, player->data.location);
 			out += std::format("; {:08X} at {:.0f} {:.0f} {:.0f}, {:.0f} away{}", ref->GetFormID(), at.x, at.y, at.z, player ? at.GetDistance(player->data.location) : 0.0f,
 				inside ? ", you are in its build area" : "");
 		}
