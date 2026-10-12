@@ -125,21 +125,24 @@ namespace Menu
 			pendingJoin = PendingJoin{ a_page, Clock::now() + PRESENCE_WAIT, Steam::PresenceUpdates(), asked };
 		}
 
+		// The first button of every page is the harmless one (Back or Close): the game's back key, Tab,
+		// presses the first button of a message box, and a player who leaves this menu the way they
+		// leave every other menu must not host, leave or stop hosting by accident (two players did).
 		// A list longer than a page: two entries per page with "More" to turn it (three when they all
-		// fit on one), and "Back". a_page wraps around.
+		// fit on one), and "Back" first. a_page wraps around.
 		void ShowPaged(const std::string& a_body, std::vector<Button> a_entries, std::size_t a_page, void (*a_turn)(std::size_t), Button a_back)
 		{
 			const std::size_t perPage = a_entries.size() > MAX_BUTTONS - 1 ? MAX_BUTTONS - 2 : MAX_BUTTONS - 1;
 			const std::size_t pages = (std::max<std::size_t>)(1, (a_entries.size() + perPage - 1) / perPage);
 			const std::size_t page = a_page % pages;
 			std::vector<Button> shown;
+			shown.push_back(std::move(a_back));
 			for (std::size_t i = page * perPage; i < a_entries.size() && i < (page + 1) * perPage; ++i) {
 				shown.push_back(std::move(a_entries[i]));
 			}
 			if (pages > 1) {
 				shown.push_back({ std::format("More ({}/{})", page + 1, pages), [=] { a_turn(page + 1); } });
 			}
-			shown.push_back(std::move(a_back));
 			Show(a_body, std::move(shown));
 		}
 
@@ -233,6 +236,7 @@ namespace Menu
 		{
 			const auto          status = Session::GetStatus();
 			std::vector<Button> entries;
+			entries.push_back({ "Close", {} });  // first: Tab closes the menu (see ShowPaged)
 			if (status.hosting) {
 				if (status.steam && Steam::LobbyOpen()) {
 					entries.push_back({ "Invite friends", [] { Steam::OpenInviteDialog(); } });
@@ -246,7 +250,6 @@ namespace Menu
 				entries.push_back({ "Join a friend", [] { RequestJoin(0); } });
 			}
 			entries.push_back({ "Settings", [] { ShowSettings(0); } });
-			entries.push_back({ "Close", {} });
 			Show(MainBody(), std::move(entries));
 		}
 
@@ -281,7 +284,7 @@ namespace Menu
 								   } });
 			}
 			if (entries.empty()) {
-				Show(body, { { "Look again", [] { RequestJoin(0); } }, { "Back", ShowMain } });
+				Show(body, { { "Back", ShowMain }, { "Look again", [] { RequestJoin(0); } } });
 				return;
 			}
 			ShowPaged(body, std::move(entries), a_page, ShowJoin, { "Back", ShowMain });
