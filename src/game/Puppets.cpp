@@ -410,7 +410,9 @@ namespace Puppets
 		{
 			std::scoped_lock l{ lock };
 			for (auto& [actor, puppet] : puppets) {
-				if (now >= puppet.nextIdleRefresh) {
+				// Not while its own AI runs (a climb into or out of power armor): a new package mid-climb can
+				// break off the furniture use the AI is in the middle of. It gets one as soon as that is over.
+				if (now >= puppet.nextIdleRefresh && now >= puppet.aiUntil) {
 					puppet.nextIdleRefresh = now + IDLE_REFRESH;
 					due.emplace_back(actor, puppet.formId);
 				}
