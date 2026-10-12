@@ -41,6 +41,10 @@ namespace Puppets
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
+	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, and its locomotion
+	// variables.
+	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
+
 	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction
 	// such as getting into power armor; the stand-in is not warped meanwhile.
 	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for);
