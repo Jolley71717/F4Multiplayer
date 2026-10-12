@@ -407,9 +407,14 @@ namespace RemotePlayers
 				}
 				return;
 			}
-			// The stand-in walked into another cell: the light is remade there (a reference stays in the
-			// cell it was created in).
-			if (light && light->GetParentCell() != a_actor->GetParentCell()) {
+			// The stand-in went into another place (an interior, out of doors, another worldspace): the light is
+			// remade there (a reference stays in the cell it was created in). Outside, a neighbouring cell is the
+			// same place, as a stand-in's own cell isn't kept up to date while it walks (it was remade every frame
+			// once the stand-in had walked out of its first cell): there the light is remade only once its own
+			// cell has left the loaded area.
+			const auto lightCell = light ? light->GetParentCell() : nullptr;
+			const auto samePlace = light ? SamePlace(light.get(), a_actor) : std::nullopt;
+			if (light && lightCell && ((samePlace && !*samePlace) || !lightCell->IsAttached())) {
 				DeleteLight(a_player);
 				light = nullptr;
 			}
