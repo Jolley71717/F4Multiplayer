@@ -950,6 +950,9 @@ namespace RemotePlayers
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
 		}
+		if (const auto puppets = Puppets::Describe(); !puppets.empty()) {
+			out += " " + puppets;
+		}
 		return out.empty() ? "none" : out;
 	}
 }

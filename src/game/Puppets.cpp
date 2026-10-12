@@ -166,6 +166,35 @@ namespace Puppets
 			}
 		}
 
+		// Moving frames of player stand-ins, how many of them the no-AI update had put its own desired
+		// speed on, and the last speed it put there: for the dev status line.
+		std::atomic<std::uint64_t> speedChecks{ 0 };
+		std::atomic<std::uint64_t> speedRestores{ 0 };
+		std::atomic<float>         lastEngineSpeed{ 0.0f };
+
+		// The no-AI update can set the desired speed itself: while the locomotion graph reports that it
+		// moves the actor (bAnimationDriven, bAllowRotation, bIsSynced or bPathingInterruptibleIdle),
+		// Actor::UpdateActor3DPosition sets it from the actor's own animated motion. The graph's Speed
+		// is read from that number later in the frame, so a stand-in that was walking was told it moved
+		// at a walk, and went on walking while it covered the ground at a run. Ours goes back on after
+		// the update: the last write before the graph reads it.
+		void RestoreDesiredSpeed(RE::Actor* a_actor, const Puppet& a_puppet, float a_speed)
+		{
+			const auto process = a_actor->currentProcess;
+			const auto middle = process ? process->middleHigh : nullptr;
+			if (!middle) {
+				return;
+			}
+			if (a_puppet.kind == Kind::kPlayer && a_puppet.moving) {
+				speedChecks.fetch_add(1, std::memory_order_relaxed);
+				if (Prediction::SpeedReplaced(a_speed, middle->desiredSpeed)) {
+					speedRestores.fetch_add(1, std::memory_order_relaxed);
+					lastEngineSpeed.store(middle->desiredSpeed, std::memory_order_relaxed);
+				}
+			}
+			middle->desiredSpeed = a_speed;
+		}
+
 		void UpdateHook(RE::Actor* a_this, float a_delta)
 		{
 			if (puppetCount.load(std::memory_order_relaxed) == 0) {
@@ -201,6 +230,7 @@ namespace Puppets
 			if (puppet->kind == Kind::kPlayer) {
 				KeepHealthy(a_this);
 			}
+			const float speed = puppet->moving ? (std::max)(puppet->measured.speed, puppet->target.speed) : 0.0f;
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
@@ -210,7 +240,6 @@ namespace Puppets
 				// actor with no AI is a stale walk; tell it what the stand-in really does so the run
 				// cycle matches the ground covered.
 				if (const auto process = a_this->currentProcess) {
-					const float speed = puppet->moving ? (std::max)(puppet->measured.speed, puppet->target.speed) : 0.0f;
 					const RE::NiPoint3 velocity{ std::sin(puppet->target.heading) * speed, std::cos(puppet->target.heading) * speed, 0.0f };
 					if (const auto middle = process->middleHigh) {
 						middle->desiredSpeed = speed;
@@ -222,9 +251,10 @@ namespace Puppets
 				}
 			}
 			a_this->UpdateNoAI(a_delta);
-			// After the engine's own update, which writes its idea of the speed (half of what a
-			// teleported actor covers) into the graph: ours is the last word before the graph samples.
+			// After the engine's own update, which can put its idea of the speed (the animation's own
+			// pace) in the desired speed and the graph: ours is the last word before the graph samples.
 			if (puppet->hasTarget) {
+				RestoreDesiredSpeed(a_this, *puppet, speed);
 				DriveAnimation(a_this, *puppet);
 			}
 		}
@@ -400,6 +430,15 @@ namespace Puppets
 			entry->target = a_motion;
 			entry->hasTarget = true;
 		}
+	}
+
+	std::string Describe()
+	{
+		const auto checks = speedChecks.load(std::memory_order_relaxed);
+		if (checks == 0) {
+			return {};
+		}
+		return std::format("speedFixes={}/{} engineSpeed={:.0f}", speedRestores.load(std::memory_order_relaxed), checks, lastEngineSpeed.load(std::memory_order_relaxed));
 	}
 
 	void Tick()
