@@ -44,8 +44,9 @@ namespace Puppets
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
-	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, and its locomotion
-	// variables.
+	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
+	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how
+	// often it was stood up out of furniture), and its locomotion variables.
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
 
 	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction
@@ -56,8 +57,7 @@ namespace Puppets
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();
 
-	// For the dev status line: of the frames a player stand-in moved, how many the engine's no-AI update
-	// had put its own desired speed on (which we then replaced), and the last such speed. Empty until
-	// a stand-in has moved.
+	// For the dev status line: how often a stand-in's graph was found walking while it should stand, or
+	// the other way round, and put back. Empty until one has been.
 	[[nodiscard]] std::string Describe();
 }
