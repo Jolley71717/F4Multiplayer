@@ -25,6 +25,9 @@ namespace WorldSync
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId);  // another player pressed a button, switch or lever
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
+	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
+	// in ours is reported dead: our world is the session's.
+	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
 	void ApplyRemotePickup(std::uint32_t a_refId);
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);
