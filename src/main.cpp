@@ -8,6 +8,7 @@
 #include "game/FrameStats.h"
 #include "game/Menu.h"
 #include "MainThread.h"
+#include "game/SaveGuard.h"
 #include "net/Session.h"
 
 // user32 (windows.h clashes with CommonLibF4's names).
@@ -118,11 +119,18 @@ namespace
 			REX::INFO("Game data ready");
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
-		case F4SE::MessagingInterface::kPreLoadGame:
 			// Remote players' actors must never be written into a save.
+			Session::OnBeforeSaveOrLoad();
+			SaveGuard::BeforeSave();
+			break;
+		case F4SE::MessagingInterface::kPreLoadGame:
 			Session::OnBeforeSaveOrLoad();
 			break;
 		case F4SE::MessagingInterface::kPostLoadGame:
+			if (gameDataReady) {
+				SaveGuard::AfterLoad();
+			}
+			[[fallthrough]];
 		case F4SE::MessagingInterface::kNewGame:
 			if (gameDataReady) {
 				Session::OnGameLoaded();

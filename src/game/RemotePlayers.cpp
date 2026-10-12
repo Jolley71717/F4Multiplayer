@@ -1,6 +1,7 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/DeferredDelete.h"
 #include "game/EngineRefs.h"
+#include "game/SaveGuard.h"
 #include "game/Prediction.h"
 
 #include "game/Face.h"
@@ -96,6 +97,9 @@ namespace RemotePlayers
 		};
 		std::vector<Grave> graveyard;
 		std::uint32_t      flushedBeforeSave = 0;
+		// Marked for deletion, and still there until the engine lets go of them: a save in that moment
+		// would write them too.
+		std::vector<RE::ObjectRefHandle> deleting;
 
 		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
 		void Bury(RE::ObjectRefHandle a_handle, Clock::time_point a_placedAt)
@@ -694,22 +698,34 @@ namespace RemotePlayers
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
 		}
-		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now, so no
-		// stand-in, light or frame copy is written into the save. (A reference whose 3D is still loading
-		// is left alone: deleting it crashes the loader when it finishes; it is a stray in the save, not
-		// a crash.) The save runs between frames, so no physics job holds any of them.
+		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now. (A
+		// reference whose 3D is still loading is left alone: deleting it crashes the loader when it
+		// finishes.) The save runs between frames, so no physics job holds any of them. None of them may
+		// be written into the save, deleted or not: a stand-in saved as deleted comes back from the save in
+		// no cell, and every later save crashed on it.
 		std::erase_if(graveyard, [&](const Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
 				return true;
 			}
 			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_grave.spawnedAt)) {
+				SaveGuard::Exclude(ref.get());
 				return false;
 			}
 			ref->Disable();
 			ref->SetDelete(true);
+			SaveGuard::Exclude(ref.get());
+			deleting.push_back(a_grave.actor);
 			++flushedBeforeSave;
 			return true;
+		});
+		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
+			const auto ref = a_handle.get();
+			if (!ref) {
+				return true;
+			}
+			SaveGuard::Exclude(ref.get());
+			return false;
 		});
 	}
 
@@ -817,8 +833,10 @@ namespace RemotePlayers
 				return false;
 			}
 			actor->SetDelete(true);
+			deleting.push_back(a_grave.actor);
 			return true;
 		});
+		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) { return !a_handle.get(); });
 		for (auto& [id, remote] : players) {
 			// Drop snapshots that are too old to ever be rendered again.
 			while (remote.snapshots.size() > 2 && now - remote.snapshots[1].received > INTERPOLATION_DELAY + 1s) {

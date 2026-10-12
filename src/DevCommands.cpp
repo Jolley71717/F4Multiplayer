@@ -16,6 +16,7 @@
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/SaveGuard.h"
 #include "game/QuestSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
@@ -1883,6 +1884,48 @@ namespace DevCommands
 			return "ok";
 		}
 
+		// saveguard [strays | rtti <global offset> | exclude <ref> | poison <ref> <save name>]
+		// rtti names the class of the object a global of the game's points to (checks an address).
+		// poison deletes the reference and saves at once, the way a stand-in reached saves.
+		std::string SaveGuardCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return SaveGuard::Describe();
+			}
+			if (args[0] == "strays") {
+				return std::format("strays={}", SaveGuard::AfterLoad());
+			}
+			if (args[0] == "rtti" && args.size() > 1) {
+				const auto offset = ParseHex(args[1]);
+				if (!offset) {
+					return "error: rtti <hex offset>";
+				}
+				const auto base = reinterpret_cast<std::uintptr_t>(REX::W32::GetModuleHandleW(nullptr));
+				const auto object = *reinterpret_cast<void* const*>(base + *offset);
+				return std::format("{:X} -> {} {}", *offset, object, SaveGuard::TypeName(object));
+			}
+			if (args[0] == "exclude" && args.size() > 1) {
+				const auto ref = LookupRef(args[1]);
+				if (!ref) {
+					return "error: no such reference";
+				}
+				SaveGuard::Exclude(ref);
+				return "ok";
+			}
+			if (args[0] == "poison" && args.size() > 2) {
+				const auto ref = LookupRef(args[1]);
+				if (!ref) {
+					return "error: no such reference";
+				}
+				ref->Disable();
+				ref->SetDelete(true);
+				RE::Console::ExecuteCommand(std::format("save {}", args[2]).c_str());
+				return "ok";
+			}
+			return "error: saveguard [strays | rtti <offset> | exclude <ref> | poison <ref> <name>]";
+		}
+
 		struct Entry
 		{
 			std::string_view name;
@@ -1960,6 +2003,7 @@ namespace DevCommands
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
+			Entry{ "saveguard", SaveGuardCommand },
 		};
 	}
 
