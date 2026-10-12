@@ -365,9 +365,9 @@ namespace Session
 			case MessageType::kShotFired:
 				if (const auto msg = Protocol::DecodeShot(a_data)) {
 					if (msg->refId == 0) {
-						msg->action == Protocol::ShotAction::kShot ? RemotePlayers::PlayShot(msg->playerId) : RemotePlayers::PlayAction(msg->playerId, msg->action);
+						msg->action == Protocol::ShotAction::kShot ? RemotePlayers::PlayShot(msg->playerId, msg->sound) : RemotePlayers::PlayAction(msg->playerId, msg->action);
 					} else {
-						msg->action == Protocol::ShotAction::kShot ? NpcSync::ApplyShot(msg->refId) : NpcSync::ApplyAction(msg->refId, msg->action);
+						msg->action == Protocol::ShotAction::kShot ? NpcSync::ApplyShot(msg->refId, msg->sound) : NpcSync::ApplyAction(msg->refId, msg->action);
 					}
 				}
 				break;
@@ -708,22 +708,25 @@ namespace Session
 			}
 		}
 
-		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one.
+		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
+		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods).
 		const auto shots = WeaponFire::TakeShots();
 		const auto npcShots = WeaponFire::TakeNpcShots();
+		const auto sound = shots ? WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton()) : 0;
 		if (welcomed) {
 			for (std::uint32_t i = 0; i < shots; ++i) {
-				client->Send(Protocol::Encode(Protocol::Shot{}, Protocol::MessageType::kReportShot), false);
+				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound }, Protocol::MessageType::kReportShot), false);
 			}
 			for (const auto id : npcShots) {
 				if (NpcSync::RunsLocally(id)) {
-					client->Send(Protocol::Encode(Protocol::Shot{ 0, id }, Protocol::MessageType::kReportShot), false);
+					const auto npcSound = WeaponFire::ShotSound(RE::TESForm::GetFormByID<RE::Actor>(id));
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, id, Protocol::ShotAction::kShot, npcSound }, Protocol::MessageType::kReportShot), false);
 				}
 			}
 		}
 		if (echo) {
 			for (std::uint32_t i = 0; i < shots; ++i) {
-				RemotePlayers::PlayShot(ECHO_ID);
+				RemotePlayers::PlayShot(ECHO_ID, sound);
 			}
 		}
 

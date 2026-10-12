@@ -22,6 +22,9 @@ namespace WeaponFire
 		std::uint32_t              replayed = 0;  // shots received for a stand-in or mirrored NPC
 		std::uint32_t              played = 0;    // ... that its animation graph accepted
 		std::uint32_t              sounded = 0;   // ... with the gunshot played
+		std::uint32_t              theirs = 0;    // ... of which with the shooter's own gun sound
+		std::uint32_t              lastSound = 0;  // the keyword sound mapping last played
+		bool                       lastLooped = false;  // ... and whether its sound loops (automatic fire)
 
 		// Every reference receives its own animation graph's events through its
 		// BSTEventSink<BSAnimationGraphEvent> base (at 0x38). An actor's graph sends "WeaponFire"
@@ -219,24 +222,26 @@ namespace WeaponFire
 
 	namespace
 	{
-		// The gunshot the game picked for the actor's weapon when it was equipped (by the
-		// weapon's keywords: a suppressor changes it). The weapon's own sound fields are empty.
-		RE::BGSSoundDescriptorForm* FireSound(RE::Actor* a_actor)
+		// The gunshot the game picked for the actor's gun when it was equipped (by the gun's
+		// keywords, which its mods add: a suppressor or an automatic receiver changes it). The
+		// weapon's own sound fields are empty. Only a gun's counts: a grenade is equipped beside it.
+		const RE::BGSSoundKeywordMapping* FireSound(RE::Actor* a_actor)
 		{
-			const auto process = a_actor->currentProcess;
+			const auto process = a_actor ? a_actor->currentProcess : nullptr;
 			const auto middle = process ? process->middleHigh : nullptr;
 			if (!middle) {
 				return nullptr;
 			}
 			RE::BSAutoLock l{ middle->equippedItemsLock };
 			for (const auto& equipped : middle->equippedItems) {
-				if (!equipped.item.object || !equipped.item.object->Is(RE::ENUM_FORM_ID::kWEAP)) {
+				const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr;
+				if (!weapon || !AttackKind::ReplaysAsGun(std::to_underlying(weapon->weaponData.type.get()), true)) {
 					continue;
 				}
 				const auto data = static_cast<RE::EquippedWeaponData*>(equipped.data.get());
 				const auto mapping = data ? data->attackSoundData : nullptr;
 				if (mapping && mapping->descriptor) {
-					return mapping->descriptor;
+					return mapping;
 				}
 			}
 			return nullptr;
@@ -255,6 +260,7 @@ namespace WeaponFire
 		{
 			const auto now = std::chrono::steady_clock::now();
 			if (loopingShots.Extend(a_actor->GetFormID(), now)) {
+				lastLooped = true;
 				return true;
 			}
 			constexpr std::uint32_t POSITIONED = 0x10;  // a 3D sound, heard from where it is
@@ -270,11 +276,18 @@ namespace WeaponFire
 			if (!handle.Play()) {
 				return false;
 			}
-			if (handle.IsEnvelopeLoop()) {
+			lastLooped = handle.IsEnvelopeLoop();
+			if (lastLooped) {
 				loopingShots.Add(a_actor->GetFormID(), handle, now);
 			}
 			return true;
 		}
+	}
+
+	std::uint32_t ShotSound(RE::Actor* a_actor)
+	{
+		const auto mapping = FireSound(a_actor);
+		return mapping ? mapping->GetFormID() : 0;
 	}
 
 	void ScanExplosions();
@@ -336,7 +349,7 @@ namespace WeaponFire
 		}
 	}
 
-	void PlayShot(RE::Actor* a_actor)
+	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound)
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
 		++replayed;
@@ -359,9 +372,17 @@ namespace WeaponFire
 		if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
 		}
-		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter.
-		if (PlaySound(a_actor, FireSound(a_actor))) {
+		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
+		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one
+		// of the same base weapon, without those mods, so the sound picked here can belong to another
+		// receiver (an automatic one's looping fire, for a semi-automatic pistol's single shots) or
+		// miss the suppressor. This game's pick is only for a shooter that sent none we know.
+		const auto shooters = a_sound ? RE::TESForm::GetFormByID<RE::BGSSoundKeywordMapping>(a_sound) : nullptr;
+		const auto mapping = shooters && shooters->descriptor ? shooters : FireSound(a_actor);
+		if (mapping && PlaySound(a_actor, mapping->descriptor)) {
 			++sounded;
+			theirs += mapping == shooters;
+			lastSound = mapping->GetFormID();
 		}
 	}
 
@@ -429,7 +450,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={}", total.load(), played, replayed, swung, sounded, loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={}", total.load(), played, replayed, swung, sounded, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked());
 	}
 
 	std::string LogAnimationEvents(bool a_start)

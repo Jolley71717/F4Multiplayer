@@ -679,12 +679,12 @@ namespace NpcSync
 		return talkingTo;
 	}
 
-	void ApplyShot(std::uint32_t a_refId)
+	void ApplyShot(std::uint32_t a_refId, std::uint32_t a_sound)
 	{
 		const auto it = mirrors.find(a_refId);
 		const auto actor = it != mirrors.end() ? LoadedActor(a_refId) : nullptr;
 		if (actor && it->second.registered == actor) {
-			WeaponFire::PlayShot(actor);
+			WeaponFire::PlayShot(actor, a_sound);
 		}
 	}
 

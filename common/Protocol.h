@@ -17,7 +17,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 26;
+	inline constexpr std::uint16_t VERSION = 27;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -453,6 +453,9 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 		std::uint32_t refId = 0;
 		std::uint8_t  action = ShotAction::kShot;
+		// The sound the shooter's game picked for their gun (a keyword sound mapping's form ID, chosen
+		// by the gun's mods), 0 if none: the receiver's copy of the gun has none of those mods.
+		std::uint32_t sound = 0;
 	};
 
 	// playerId is ignored client -> server in all of these.
@@ -1637,6 +1640,7 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U32(a_msg.refId);
 		w.U8(a_msg.action);
+		w.U32(a_msg.sound);
 		return w.Data();
 	}
 
@@ -1648,6 +1652,7 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
 		msg.action = r.U8();
+		msg.sound = r.U32();
 		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId)) || msg.action > ShotAction::kMax) {
 			return std::nullopt;
 		}

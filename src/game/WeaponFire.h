@@ -20,8 +20,14 @@ namespace WeaponFire
 	// run; the caller filters.
 	[[nodiscard]] std::vector<std::uint32_t> TakeNpcShots();
 
-	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out).
-	void PlayShot(RE::Actor* a_actor);
+	// The sound the game picked for the actor's gun when it was equipped (a keyword sound mapping's
+	// form ID: the gun's mods decide it, an automatic receiver or a suppressor), or 0. Sent with
+	// every shot as Shot::sound.
+	[[nodiscard]] std::uint32_t ShotSound(RE::Actor* a_actor);
+
+	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out), with the
+	// shooter's gun sound (their ShotSound; 0 = the one this game picked for the stand-in's gun).
+	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound);
 
 	// Replays a reload or aiming (a ShotAction other than a shot) on a stand-in or mirrored NPC.
 	void PlayAction(RE::Actor* a_actor, std::uint8_t a_action);

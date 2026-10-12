@@ -926,7 +926,7 @@ void Server::Run()
 		if (shot->action == static_cast<std::uint8_t>(Protocol::ShotAction::kThrow)) {
 			a_player.lastThrow = Clock::now();
 		}
-		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action }, Protocol::MessageType::kShotFired), false, a_player.key);
+		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action, shot->sound }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
 
 	const auto handleStatus = [&](Player& a_player, std::span<const std::uint8_t> a_data) {

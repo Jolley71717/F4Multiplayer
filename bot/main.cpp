@@ -457,7 +457,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kShotFired:
 						if (const auto msg = Protocol::DecodeShot(data)) {
-							std::cout << "shot: player " << msg->playerId << " ref " << std::hex << msg->refId << std::dec << std::endl;
+							std::cout << "shot: player " << msg->playerId << " ref " << std::hex << msg->refId << " sound " << msg->sound << std::dec << std::endl;
 						}
 						break;
 					case Protocol::MessageType::kActorOwners:
