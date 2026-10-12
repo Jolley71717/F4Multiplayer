@@ -111,10 +111,12 @@ namespace Puppets
 		// A mirrored NPC's graph refused "moveStart": something its own game started holds it. Dogmeat's
 		// graph starts moving only from its plain standing idle, and a dog left standing sits, lies down
 		// or turns on the spot after a few seconds, so the mirror slid after its owner's copy sitting
-		// down. The AI ends the idle before walking off; with the AI off, we do: "IdleStop" gets it up
-		// (the graph then plays its getting-up), "turnStop" ends a turn on the spot, and DriveAnimation's
-		// "moveStart" is taken once it stands. How often is IdleRelease's. Called right after DriveAnimation
-		// asked it to move, in the engine's update of the actor.
+		// down. The AI ends the idle before walking off; with the AI off, we do: "IdleStop" ends an idle,
+		// "turnStop" a turn on the spot, and DriveAnimation's "moveStart" is taken once it stands. In
+		// Dogmeat's graph "turnStop" also ends a sit or a lie-down at once (NonCombatStandingBehavior's
+		// TurnStop wildcard leaves SitLayState too), cutting short the get-up "IdleStop" started: wanted, as
+		// its owner's copy already runs and a get-up would slide after it. How often is IdleRelease's. Called
+		// right after DriveAnimation asked it to move, in the engine's update of the actor.
 		void ReleaseIdle(RE::Actor* a_actor)
 		{
 			static const RE::BSFixedString idleStop{ "IdleStop" };
@@ -157,6 +159,11 @@ namespace Puppets
 					std::scoped_lock l{ lock };
 					if (const auto entry = Find(a_actor)) {
 						++entry->seatExits;
+						// Its graph is back in its base state, standing and not sneaking, whatever was sent
+						// before: DriveAnimation sends the sneak event again next frame if its owner's copy
+						// sneaks, and tests its start at once.
+						entry->appliedFlags = 0;
+						entry->nextResync = {};
 					}
 				}
 				REX::INFO("Puppets: {:08X} was in furniture {:08X} (base {:08X}, sit state {}) while its owner's copy moves; stood it up (let go={})", a_actor->GetFormID(), furniture->GetFormID(), base ? base->GetFormID() : 0, sit, letGo);
@@ -234,8 +241,9 @@ namespace Puppets
 			const auto  now = std::chrono::steady_clock::now();
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
-			// A mirrored NPC's refused start is ReleaseIdle's; a stand-in's is tested with a stop.
-			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, a_puppet.kind == Kind::kPlayer, now, [&](MoveSync::Event a_event) {
+			// A refused start is tested with a stop; a mirrored NPC's that the stop does not explain (an idle
+			// holds it) is ReleaseIdle's, right after.
+			const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, motion.speed, now, [&](MoveSync::Event a_event) {
 				return graph->NotifyAnimationGraphImpl(a_event == MoveSync::Event::kStart ? moveStart : moveStop);
 			});
 			const bool moving = step.moving;

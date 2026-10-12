@@ -33,10 +33,8 @@ TEST("idle release: the first refused start stops the idle at once")
 	CHECK(gate.Due(true, t0));
 }
 
-TEST("idle release: the next stop waits out the getting-up the last one started")
+TEST("idle release: a graph still refusing after the first stop gets the next only after RETRY")
 {
-	// Dogmeat's SitExit and LayExit play for 0.93 s; a stop sent meanwhile cut them short.
-	CHECK(IdleRelease::RETRY > 930ms);
 	IdleRelease::Gate gate;
 	CHECK(gate.Due(true, t0));
 	const auto due = Refusals(gate, t0 + FRAME, t0 + IdleRelease::RETRY);

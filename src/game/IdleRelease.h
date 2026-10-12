@@ -12,9 +12,10 @@ namespace IdleRelease
 {
 	using Clock = std::chrono::steady_clock;
 
-	// The first stop goes at once. The next waits out the getting-up it started: Dogmeat's SitExit and
-	// LayExit play for 0.93 s, refusing "moveStart" meanwhile, and a "turnStop" sent before they end cuts
-	// them short. Each one after waits twice as long as the one before, up to MAX_RETRY.
+	// The first stop goes at once, and normally frees it (for Dogmeat, its "turnStop" ends a sit or a
+	// lie-down at once, with no get-up). A graph still refusing after it is held by something the stops did
+	// not end at once (a flavor idle that ends by itself, a human's cower exit playing out), so the next
+	// waits RETRY, and each one after twice as long as the one before, up to MAX_RETRY.
 	constexpr auto RETRY = std::chrono::milliseconds(1500);
 	constexpr auto MAX_RETRY = std::chrono::seconds(12);
 	// Stops sent in one stuck spell. A graph that refuses them all is held by something the stops do not

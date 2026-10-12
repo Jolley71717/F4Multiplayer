@@ -39,20 +39,20 @@ namespace
 		MoveSync::Clock::time_point nextResync{};
 		int                         resent = 0;  // resends the graph took
 
-		void Frame(Graph& a_graph, float a_speed, MoveSync::Clock::time_point a_now, bool a_probe = true)
+		void Frame(Graph& a_graph, float a_speed, MoveSync::Clock::time_point a_now)
 		{
-			const auto step = MoveSync::Drive(moving, nextResync, a_speed, a_probe, a_now, a_graph);
+			const auto step = MoveSync::Drive(moving, nextResync, a_speed, a_now, a_graph);
 			moving = step.moving;
 			nextResync = step.nextResync;
 			resent += step.resent != nullptr;
 		}
 
 		// Frames from a_from for a_for at a_speed; returns the end time.
-		MoveSync::Clock::time_point Run(Graph& a_graph, float a_speed, MoveSync::Clock::time_point a_from, MoveSync::Clock::duration a_for, bool a_probe = true)
+		MoveSync::Clock::time_point Run(Graph& a_graph, float a_speed, MoveSync::Clock::time_point a_from, MoveSync::Clock::duration a_for)
 		{
 			auto t = a_from;
 			for (; t < a_from + a_for; t += FRAME) {
-				Frame(a_graph, a_speed, t, a_probe);
+				Frame(a_graph, a_speed, t);
 			}
 			return t;
 		}
@@ -112,10 +112,12 @@ TEST("move sync: a graph in step is told again only every RESYNC, and refuses")
 	CHECK(puppet.resent == 0);
 }
 
-TEST("move sync: a stand-in walking while its friend runs is stopped and started again")
+TEST("move sync: a puppet walking while its owner's copy runs is stopped and started again")
 {
 	// It walks (graph) while we think it stands, so every start is refused and Speed stays 0: a walk at
-	// a walk's pace while its friend ran. A stop it takes shows that, and a start puts it right.
+	// a walk's pace while its owner's copy ran. A stand-in back in its walk, or a mirror its own AI had
+	// walking when mirroring began (every puppet starts out standing, as far as we know). A stop it takes
+	// shows that, and a start puts it right, on the first frame.
 	Graph  graph{ .walking = true };
 	Puppet puppet;
 	puppet.Frame(graph, 300.0f, t0);
@@ -126,29 +128,21 @@ TEST("move sync: a stand-in walking while its friend runs is stopped and started
 
 TEST("move sync: a refused start is tested with a stop no more than every RESYNC")
 {
-	Graph  graph{ .jumping = true };  // takes nothing for a while
+	// Mid-jump, or held by an idle (a dog sitting, which IdleRelease deals with): it takes neither, so the
+	// test changes nothing.
+	Graph  graph{ .jumping = true };
 	Puppet puppet;
 	puppet.Run(graph, 300.0f, t0, 2s);
-	CHECK(!puppet.moving);
+	CHECK(!puppet.moving && !graph.walking);
 	CHECK(graph.starts >= 100);                   // asked every frame
 	CHECK(graph.stops >= 4 && graph.stops <= 5);  // tested every 500 ms
 	CHECK(puppet.resent == 0);
 }
 
-TEST("move sync: a mirrored NPC's refused start is not tested with a stop")
-{
-	// Its refusal is an idle holding it (a dog sitting), which IdleRelease deals with.
-	Graph  graph{ .jumping = true };
-	Puppet puppet;
-	puppet.Run(graph, 300.0f, t0, 2s, false);
-	CHECK(graph.stops == 0);
-	CHECK(!puppet.moving);
-}
-
 TEST("move sync: a resend that puts the graph right says what it sent")
 {
 	Graph      graph{ .walking = true };
-	const auto step = MoveSync::Drive(false, t0, 0.0f, true, t0, graph);
+	const auto step = MoveSync::Drive(false, t0, 0.0f, t0, graph);
 	REQUIRE(step.resent != nullptr);
 	CHECK(std::strcmp(step.resent, "moveStop") == 0);
 	CHECK(step.nextResync == t0 + MoveSync::RESYNC);

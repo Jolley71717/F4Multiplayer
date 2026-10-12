@@ -35,21 +35,21 @@ namespace MoveSync
 		const char*       resent = nullptr;  // a resend the graph took (it was in the other state), for the log
 	};
 
-	// One frame: a_moving and a_nextResync as the last step left them, a_speed the owner's copy's speed,
-	// a_probe whether a refused start may be tested with a stop (a stand-in's; a mirrored NPC's refusal is an
-	// idle holding it, which IdleRelease deals with). a_notify(Event) sends the event and says whether the
-	// graph took it.
+	// One frame: a_moving and a_nextResync as the last step left them, a_speed the owner's copy's speed.
+	// a_notify(Event) sends the event and says whether the graph took it.
 	template <class Notify>
-	Step Drive(bool a_moving, Clock::time_point a_nextResync, float a_speed, bool a_probe, Clock::time_point a_now, Notify&& a_notify)
+	Step Drive(bool a_moving, Clock::time_point a_nextResync, float a_speed, Clock::time_point a_now, Notify&& a_notify)
 	{
 		Step       step{ a_moving, a_nextResync };
 		const bool due = a_now >= a_nextResync;
 		bool       resync = false;
 		if (!a_moving && a_speed > START) {
 			step.moving = a_notify(Event::kStart);
-			// A stand-in's graph that walks already refuses the start too, and it went on walking at a walk's
-			// pace (Speed 0) while its friend ran: a stop it takes shows that, and it starts again.
-			if (!step.moving && a_probe && due) {
+			// A graph that walks already refuses the start too (a stand-in back in its walk, a mirror its own AI
+			// had walking when mirroring began), and it went on walking at a walk's pace (Speed 0) while its
+			// owner's copy ran: a stop it takes shows that, and it starts again. A graph held by an idle (a dog
+			// sitting) refuses the stop as well, only a locomotion state takes it, and is left to IdleRelease.
+			if (!step.moving && due) {
 				resync = true;
 				if (a_notify(Event::kStop)) {
 					step.moving = a_notify(Event::kStart);
