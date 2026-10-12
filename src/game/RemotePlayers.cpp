@@ -3,6 +3,7 @@
 #include "game/EngineRefs.h"
 #include "game/SaveGuard.h"
 #include "game/Prediction.h"
+#include "game/StandInHold.h"
 
 #include "game/Face.h"
 #include "Config.h"
@@ -79,6 +80,10 @@ namespace RemotePlayers
 			RE::ObjectRefHandle  frame;                  // the frame we placed for it
 			Clock::time_point    framePlacedAt{};
 			Clock::time_point    frameActionAt{};        // when the stand-in last climbed in or out (the animation takes a moment)
+			const RE::NiAVObject* frameCollisionOff = nullptr;  // the frame's 3D whose collision we turned off; only compared
+			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
+			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
+			Clock::time_point    holdLoggedAt{};
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -346,6 +351,29 @@ namespace RemotePlayers
 			light->SetLocationOnReference(at);
 		}
 
+		// While the stand-in wears its frame copy, the copy is kept right under it (see UpdatePowerArmor), and
+		// hiding it leaves its collision in place: moved onto the stand-in each time the friend walks or turns,
+		// it would shove the stand-in aside while we put it back every frame. So the copy has no collision while
+		// it is worn, and gets it back when the stand-in climbs out and leaves it standing.
+		void SetFrameCollision(RemotePlayer& a_player, RE::TESObjectREFR* a_frame, bool a_on)
+		{
+			const auto root = a_frame ? a_frame->Get3D() : nullptr;
+			if (!root) {
+				a_player.frameCollisionOff = nullptr;  // a new 3D comes with its collision
+				return;
+			}
+			if (a_on) {
+				if (a_player.frameCollisionOff == root) {
+					RE::bhkWorld::EnableCollision(root, true, true, true);
+				}
+				a_player.frameCollisionOff = nullptr;
+			} else if (a_player.frameCollisionOff != root) {
+				const bool done = RE::bhkWorld::EnableCollision(root, false, true, true);
+				a_player.frameCollisionOff = root;
+				REX::INFO("RemotePlayers: '{}'s frame copy has no collision while it is worn (done={})", a_player.name, done);
+			}
+		}
+
 		// The frame placed for the stand-in is removed once the stand-in is out of it (or gone).
 		void DeleteFrame(RemotePlayer& a_player)
 		{
@@ -359,6 +387,7 @@ namespace RemotePlayers
 				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
 				if (occupied && occupied.get() == frame.get()) {
 					REX::INFO("RemotePlayers: the player is in '{}'s frame copy; leaving it", a_player.name);
+					SetFrameCollision(a_player, frame.get(), true);  // theirs now, solid like any frame
 					a_player.frame = {};
 					a_player.inPowerArmor = false;
 					return;
@@ -366,6 +395,7 @@ namespace RemotePlayers
 				Bury(a_player.frame, a_player.framePlacedAt);
 			}
 			a_player.frame = {};
+			a_player.frameCollisionOff = nullptr;
 			a_player.inPowerArmor = false;
 		}
 
@@ -374,10 +404,12 @@ namespace RemotePlayers
 		// come with their equipment. When they climb out, the stand-in activates the frame again and the
 		// frame is removed.
 		constexpr auto FRAME_ACTION_GAP = 4s;
+		constexpr auto FRAME_AI_WINDOW = 6s;  // the stand-in's own AI runs the climb in or out this long
 		// The engine holds an actor in furniture at the furniture: a frame copy even a few units off pulled the
 		// stand-in back toward it on alternate frames (in a joiner's game it flipped between two spots 18 units
 		// apart while the host stood still). The copy is kept under the stand-in, where it is placed this frame.
 		constexpr float FRAME_FOLLOW_DISTANCE = 1.0f;
+		constexpr float FRAME_FOLLOW_TURN = 0.02f;  // radians
 		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
 		{
 			if (!a_actor || !a_actor->Get3D()) {
@@ -392,7 +424,10 @@ namespace RemotePlayers
 				// While it is worn, the frame object itself is hidden (the stand-in's own armor is what shows,
 				// as for any actor in power armor); a visible one trailed the stand-in as a second, empty suit.
 				frame->Get3D()->SetAppCulled(true);
-				if (frame->data.location.GetDistance(a_at) > FRAME_FOLLOW_DISTANCE || std::abs(frame->data.angle.z - a_heading) > 0.02f) {
+				SetFrameCollision(a_player, frame.get(), false);
+				// Headings are compared the short way round: one blended across north can be a full turn off the
+				// frame's while facing the same way.
+				if (frame->data.location.GetDistance(a_at) > FRAME_FOLLOW_DISTANCE || StandInHold::AngleBetween(frame->data.angle.z, a_heading) > FRAME_FOLLOW_TURN) {
 					frame->data.location.x = a_at.x;
 					frame->data.location.y = a_at.y;
 					frame->data.location.z = a_at.z;
@@ -444,7 +479,7 @@ namespace RemotePlayers
 					}
 					return;
 				}
-				Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
+				Puppets::AllowAI(a_actor, FRAME_AI_WINDOW);
 				frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
 				a_player.inPowerArmor = true;
 				a_player.frameActionAt = a_now;
@@ -452,8 +487,9 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: '{}' stand-in gets into power armor (frame {:08X})", a_player.name, a_player.powerArmorFrame);
 			} else if (!a_player.powerArmorOn && a_player.inPowerArmor) {
 				if (frame && frame->Get3D()) {
+					SetFrameCollision(a_player, frame.get(), true);
 					frame->Get3D()->SetAppCulled(false);  // it stands where they got out, until it is deleted
-					Puppets::AllowAI(a_actor, std::chrono::milliseconds(6000));
+					Puppets::AllowAI(a_actor, FRAME_AI_WINDOW);
 					frame->ActivateRef(a_actor, nullptr, 0, false, false, false);
 				}
 				a_player.inPowerArmor = false;
@@ -463,6 +499,30 @@ namespace RemotePlayers
 			} else if (!a_player.powerArmorOn && frame && a_now - a_player.frameActionAt >= FRAME_ACTION_GAP) {
 				DeleteFrame(a_player);  // out of it and the animation is done
 			}
+		}
+
+		// While the friend stands still, their stand-in should be found each frame where it was put the frame
+		// before; when it isn't, something in the engine moves it. Counted for net status, and logged now and
+		// then with what may be holding it, such as its power armor frame copy.
+		constexpr auto HOLD_LOG_INTERVAL = 10s;
+		void CheckHold(RemotePlayer& a_player, RE::Actor* a_actor, const RE::NiPoint3& a_target, Clock::time_point a_now)
+		{
+			const auto last = a_player.lastTarget;
+			a_player.lastTarget = a_target;
+			// A climb into or out of a frame is the engine's to run; the stand-in isn't put anywhere meanwhile.
+			if (!last || !a_actor->Get3D() || a_now - a_player.frameActionAt < FRAME_AI_WINDOW) {
+				return;
+			}
+			const auto& at = a_actor->data.location;
+			const float moved = std::hypot(a_target.x - last->x, a_target.y - last->y);
+			const float off = std::hypot(at.x - last->x, at.y - last->y);
+			if (!a_player.hold.Add(moved, off) || a_now - a_player.holdLoggedAt < HOLD_LOG_INTERVAL) {
+				return;
+			}
+			a_player.holdLoggedAt = a_now;
+			const auto frame = a_player.frame.get();
+			REX::INFO("RemotePlayers: '{}' stand-in stood {:.1f} units from where it was put ({:.0f},{:.0f}), at ({:.0f},{:.0f}); in power armor={}, frame copy {:.1f} units away; {} of {} still frames so", a_player.name, off, last->x, last->y, at.x, at.y,
+				a_player.inPowerArmor, frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
 		}
 
 		void DeleteActor(RemotePlayer& a_player)
@@ -901,10 +961,12 @@ namespace RemotePlayers
 				remote.equipmentApplied = false;
 				remote.equipmentFixes = 0;
 				remote.shownName.clear();
+				remote.lastTarget.reset();
 			}
 
 			UpdateLight(remote, actor, localCell, now);
 			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
+			CheckHold(remote, actor, { state->x, state->y, state->z }, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -957,9 +1019,10 @@ namespace RemotePlayers
 			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
-			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X}]",
+			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame);
+				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
+				remote.hold.off, remote.hold.frames, remote.hold.worst);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);

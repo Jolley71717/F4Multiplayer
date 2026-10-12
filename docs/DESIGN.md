@@ -59,8 +59,10 @@
   and blends between received states. `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
   was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
-  that connection. Before every save and load, all puppets are deleted so they never end up in a
-  save file.
+  that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still,
+  where the stand-in was found more than 2 units from where it was put (w the furthest): anything
+  but 0 means something in the engine is moving it, such as a power armor frame copy. Before every
+  save and load, all puppets are deleted so they never end up in a save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
