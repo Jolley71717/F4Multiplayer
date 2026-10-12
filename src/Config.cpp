@@ -147,6 +147,8 @@ namespace Config
 				ParseInt(value, settings.keyEmoteCheer, 16);
 			} else if (key == "iKeyEmoteClap") {
 				ParseInt(value, settings.keyEmoteClap, 16);
+			} else if (key == "iHangSeconds") {
+				ParseInt(value, settings.hangSeconds);
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {

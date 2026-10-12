@@ -89,6 +89,10 @@ namespace Config
 		// Locations a friend discovers show up on your map, ready for fast travel.
 		bool shareMap = true;
 
+		// A freeze this long (seconds without the game reading its window messages; a loading screen gets
+		// four times as long) is logged with a small dump of the threads (HangWatch.h). 0 = off.
+		std::uint32_t hangSeconds = 15;
+
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;

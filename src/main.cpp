@@ -7,6 +7,7 @@
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Menu.h"
+#include "HangWatch.h"
 #include "MainThread.h"
 #include "net/Session.h"
 
@@ -72,6 +73,7 @@ namespace
 		{
 			if (a_event.menuName == "LoadingMenu"sv) {
 				loading = a_event.opening;
+				HangWatch::SetLoading(a_event.opening);
 			}
 			return RE::BSEventNotifyControl::kContinue;
 		}
@@ -116,6 +118,7 @@ namespace
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
+			HangWatch::Start();
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 		case F4SE::MessagingInterface::kPreLoadGame:
