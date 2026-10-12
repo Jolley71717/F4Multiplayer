@@ -78,6 +78,35 @@ namespace
 	};
 	LoadingWatcher loadingWatcher;
 
+	// A save or a game load is under way: from F4SE's message before it to the one after. The engine may
+	// pump window messages inside either, and a load starts before its loading screen's event comes: game
+	// work then would spawn the stand-ins just taken out for the save (into it), or change the world
+	// under the load. It waits for the engine to finish; a message that never came stops it only for
+	// SAVE_OR_LOAD_LIMIT.
+	constexpr auto                                     SAVE_OR_LOAD_LIMIT = std::chrono::seconds(60);
+	std::atomic<bool>                                  savingOrLoading{ false };
+	std::atomic<std::chrono::steady_clock::time_point> saveOrLoadSince{};
+	std::atomic<std::uint32_t>                         heldForSaveOrLoad{ 0 };  // frames, logged after it
+
+	void BeginSaveOrLoad()
+	{
+		saveOrLoadSince = std::chrono::steady_clock::now();
+		savingOrLoading = true;
+	}
+
+	void EndSaveOrLoad(std::string_view a_what)
+	{
+		savingOrLoading = false;
+		if (const auto held = heldForSaveOrLoad.exchange(0)) {
+			REX::INFO("Frame: {} frame(s) held during the {}", held, a_what);
+		}
+	}
+
+	bool SaveOrLoadUnderWay()
+	{
+		return savingOrLoading && std::chrono::steady_clock::now() - saveOrLoadSince.load() < SAVE_OR_LOAD_LIMIT;
+	}
+
 	// Co-save records: which of the session's changes each save contains.
 	constexpr std::uint32_t SERIALIZATION_ID = 'F4MP';
 
@@ -117,13 +146,22 @@ namespace
 			gameDataReady = true;
 			REX::INFO("Game data ready");
 			break;
-		case F4SE::MessagingInterface::kPreSaveGame:
 		case F4SE::MessagingInterface::kPreLoadGame:
+			if (gameDataReady) {
+				Hud::OnLoadStarting();  // the HUD is torn down before the loading screen's event comes
+			}
+			[[fallthrough]];
+		case F4SE::MessagingInterface::kPreSaveGame:
+			BeginSaveOrLoad();
 			// Remote players' actors must never be written into a save.
 			Session::OnBeforeSaveOrLoad();
 			break;
+		case F4SE::MessagingInterface::kPostSaveGame:
+			EndSaveOrLoad("save");
+			break;
 		case F4SE::MessagingInterface::kPostLoadGame:
 		case F4SE::MessagingInterface::kNewGame:
+			EndSaveOrLoad("load");
 			if (gameDataReady) {
 				Session::OnGameLoaded();
 				Hud::OnGameLoaded();
@@ -163,6 +201,10 @@ namespace
 	void RunFrame(bool a_onMain)
 	{
 		if (a_onMain && loading) {
+			return;
+		}
+		if (a_onMain && SaveOrLoadUnderWay()) {
+			++heldForSaveOrLoad;
 			return;
 		}
 		CountFrameThread();
