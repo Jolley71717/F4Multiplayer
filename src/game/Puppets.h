@@ -51,4 +51,9 @@ namespace Puppets
 
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();
+
+	// For the dev status line: of the frames a player stand-in moved, how many the engine's no-AI update
+	// had put its own desired speed on (which we then replaced), and the last such speed. Empty until
+	// a stand-in has moved.
+	[[nodiscard]] std::string Describe();
 }

@@ -42,6 +42,16 @@ TEST("prediction: the speed window measures distance over time, whatever the cal
 	CHECK(w.speed == 100.0f && w.seconds == 0.0f);
 }
 
+TEST("prediction: a stand-in's desired speed counts as replaced only beyond a unit a second")
+{
+	CHECK(!Prediction::SpeedReplaced(373.0f, 373.0f));
+	CHECK(!Prediction::SpeedReplaced(373.0f, 373.6f));
+	CHECK(!Prediction::SpeedReplaced(0.0f, -0.5f));
+	CHECK(Prediction::SpeedReplaced(373.0f, 180.0f));  // the walk pace a walking graph feeds itself
+	CHECK(Prediction::SpeedReplaced(0.0f, 95.0f));
+	CHECK(Prediction::SpeedReplaced(373.0f, 500.0f));
+}
+
 TEST("prediction: states read in bursts by a slow game are stamped evenly")
 {
 	// The sender makes a state every 33 ms; a 16 fps game reads them at 62 ms frames, one or two at a time.

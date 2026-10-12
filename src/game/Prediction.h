@@ -59,6 +59,15 @@ namespace Prediction
 		}
 	};
 
+	// Whether the engine left a different desired speed on a stand-in than the one we wrote. Its
+	// number comes from the animation's own motion, so it is never exactly ours: within a unit a
+	// second it is the same.
+	constexpr bool SpeedReplaced(float a_written, float a_found)
+	{
+		constexpr float tolerance = 1.0f;
+		return a_found > a_written + tolerance || a_found < a_written - tolerance;
+	}
+
 	// States reach the game when it reads the network, once a frame. At 16 frames a second two or three
 	// arrive in the same frame, and stamped with that frame's time the blend between them moved the
 	// stand-in in spurts: a friend in a slow game saw the host run unevenly and bounce. Each state is
