@@ -803,6 +803,12 @@ void Server::Run()
 		item->playerId = a_player.id;
 		const auto key = std::pair{ a_player.id, item->refId };
 		if (item->op == Protocol::WorkshopOp::kScrapped) {
+			// Already gone for everyone. The host reports the junk its save had scrapped each time it
+			// hosts, and a saved session remembers the last report: forgetting it here would bring the
+			// junk back for whoever joins next.
+			if (const auto known = workshopItems.find(key); known != workshopItems.end() && known->second.op == Protocol::WorkshopOp::kScrapped) {
+				return;
+			}
 			if (workshopItems.erase(key) == 0) {
 				if (!Protocol::IsShareableRef(item->refId)) {
 					return;  // nothing anyone knew about

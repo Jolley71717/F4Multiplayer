@@ -1301,6 +1301,29 @@ TEST("server workshop: scrapping a piece of the world itself is relayed, and kep
 	CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
 }
 
+TEST("server workshop: a piece of the world reported scrapped again stays scrapped, and isn't relayed twice")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Alice's game reports the junk her save had scrapped, then again (it hosts again, or reconnects).
+	auto junk = Wall(0x0001A2B3);
+	junk.op = Protocol::WorkshopOp::kScrapped;
+	f.fake->Deliver(1, Built(junk));
+	f.fake->Deliver(1, Built(junk));
+	CHECK(Decoded(Received(f, 2), MT::kWorkshopItem, Protocol::DecodeWorkshopItem).size() == 1);
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	const auto batches = Decoded(Received(f, 3), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);
+	CHECK(batches[0][0].refId == 0x0001A2B3);
+	CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
+}
+
 TEST("server workshop: scrapping something nobody knew about is not relayed")
 {
 	Fixture f;
@@ -1365,6 +1388,34 @@ TEST("server session file: the world survives a server restart with the same loa
 		CHECK(welcome->sessionId != firstSession);
 		CHECK(f.Logged("load order changed"));
 		CHECK(WorldStates(Received(f, 3))[0].deadActors.empty());
+	}
+	std::filesystem::remove(path);
+}
+
+TEST("server session file: junk the host's save had scrapped, reported again after a restart, stays scrapped")
+{
+	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	std::filesystem::remove(path);
+	Server::Options options;
+	options.sessionFile = path;
+	auto junk = Wall(0x0001A2B3);
+	junk.op = Protocol::WorkshopOp::kScrapped;
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Built(junk));
+	}  // stopping saves
+
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+		f.fake->Deliver(1, Built(junk));  // her game walks its cells again in the new run
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+		REQUIRE(batches.size() == 1);
+		REQUIRE(batches[0].size() == 1);
+		CHECK(batches[0][0].refId == 0x0001A2B3);
+		CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
 	}
 	std::filesystem::remove(path);
 }

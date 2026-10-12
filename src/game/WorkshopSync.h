@@ -5,14 +5,16 @@
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
 // they can't scrap or power it; the builder keeps that). Copies are removed when the session
-// ends. Main thread only.
+// ends. The host also reports the settlement junk its save had scrapped before the session.
+// Main thread only.
 namespace WorkshopSync
 {
 	// Hooks the workshop's placed/moved/scrapped events. Call once the game is up; no-op after.
 	void Install();
 
-	// Places copies that were waiting for their settlement to load. Call every frame.
-	void Frame();
+	// Places copies that were waiting for their settlement to load and, on the host (a_host), walks
+	// the loaded cells for junk scrapped before the session. Call every frame while in a session.
+	void Frame(bool a_host);
 
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
@@ -25,5 +27,12 @@ namespace WorkshopSync
 	// Removes every copy (leaving the session).
 	void Reset();
 
+	// A save was loaded: its cells are walked again for scrapped junk.
+	void OnGameLoaded();
+
 	[[nodiscard]] std::string Describe();
+
+	// Dev: the workbenches the walk found (or this reference), with their workshop data's list of
+	// deleted items.
+	[[nodiscard]] std::string DescribeBenches(RE::TESObjectREFR* a_ref = nullptr);
 }

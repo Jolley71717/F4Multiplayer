@@ -1128,6 +1128,17 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
+		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this reference),
+		// with the first entries of their workshop data's deleted-items list.
+		std::string WsBenches(std::string_view a_args)
+		{
+			const auto ref = a_args.empty() ? nullptr : LookupRef(a_args);
+			if (!a_args.empty() && !ref) {
+				return "error: no such reference";
+			}
+			return WorkshopSync::DescribeBenches(ref);
+		}
+
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
 		std::string Mirror(std::string_view a_args)
 		{
@@ -1960,6 +1971,7 @@ namespace DevCommands
 			Entry{ "motion", MotionInfo },
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
+			Entry{ "wsbenches", WsBenches },
 		};
 	}
 
