@@ -30,6 +30,9 @@ namespace Puppets
 	// True for remote players' stand-ins (not mirrored NPCs).
 	[[nodiscard]] bool IsPuppet(const RE::Actor* a_actor);
 
+	// True for any puppet: a remote player's stand-in or a mirrored NPC.
+	[[nodiscard]] bool IsRegistered(const RE::Actor* a_actor);
+
 	// Unregisters a mirrored NPC and gives it back to its own AI.
 	void ReleaseNpc(RE::Actor* a_actor);
 

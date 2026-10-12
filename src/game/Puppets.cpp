@@ -435,6 +435,12 @@ namespace Puppets
 		return it != puppets.end() && it->second.kind == Kind::kPlayer && it->second.formId == a_actor->GetFormID();
 	}
 
+	bool IsRegistered(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		return Find(a_actor) != nullptr;
+	}
+
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsDeleted()) {

@@ -13,7 +13,8 @@ namespace Dialogue
 	[[nodiscard]] bool Holds(RE::TESObjectREFR* a_ref);
 
 	// Ends a conversation left open without its speaker (gone, disabled or deleted) and without its
-	// dialogue menu. Call every frame.
+	// dialogue menu, when that speaker was one of ours: a friend's stand-in, or an NPC the session
+	// shares. Call every frame; out of dialogue it only checks that.
 	void Frame();
 
 	[[nodiscard]] std::string Describe();

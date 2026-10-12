@@ -56,8 +56,10 @@ namespace Config
 		bool saveSession = true;
 
 		// Experimental: a friend's NPC lines are said aloud by your copy of the NPC (through the
-		// dialogue topic). Off: you see the line as text. It has crashed a mirrored NPC's game.
-		bool voiceLines = true;
+		// dialogue topic). Off: you see the line as text. It has crashed a mirrored NPC's game, and a
+		// line said as you start talking to that NPC can leave you held in the conversation (no
+		// weapons, Pip-Boy or workshop) with nothing to end it, so it is off by default.
+		bool voiceLines = false;
 
 		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
 		float xpShare = 0.5f;
