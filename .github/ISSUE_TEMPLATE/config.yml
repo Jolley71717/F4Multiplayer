@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support chat on Nexus Mods
+    url: https://www.nexusmods.com/fallout4/mods/109812?tab=posts
+    about: Questions, "does this work with X", and help getting a session going. Bugs and ideas go in the forms here.
+  - name: How to install and play
+    url: https://github.com/Jolley71717/F4Multiplayer/blob/main/dist/INSTALL.md
+    about: Requirements, settings, hotkeys, what is shared and the known limitations.

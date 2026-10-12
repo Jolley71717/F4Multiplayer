@@ -1,0 +1,36 @@
+name: Idea
+description: Something you want the mod to do, or do differently
+title: "[Idea] "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. Have a look at [the roadmap](https://github.com/Jolley71717/F4Multiplayer/blob/main/docs/ROADMAP.md)
+        and the "What is shared" and "Known limitations" sections of
+        [INSTALL](https://github.com/Jolley71717/F4Multiplayer/blob/main/dist/INSTALL.md) first;
+        some things are already planned or already a setting in `F4Multiplayer.ini`.
+
+        Please keep Steam names and ids out of the text.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should happen?
+      description: Describe it from the players' point of view, as if it already worked.
+      placeholder: When a friend picks a lock, I want to see the lockpicking animation on their stand-in...
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: What is annoying, confusing or missing today, and how often does it come up in a session?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you try?
+      description: Settings in `F4Multiplayer.ini`, other mods, workarounds, and what they did or did not do.
+    validations:
+      required: true

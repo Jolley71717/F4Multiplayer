@@ -1,0 +1,94 @@
+name: Bug report
+description: Something crashes, desyncs or does not work in a session
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. One bug per issue, please.
+
+        **Before you paste anything:** logs and screenshots can contain Steam names, Steam ids
+        (17-digit numbers starting with 7656), your Windows user name in file paths, and the names
+        of your friends. Remove whatever you do not want public. Issues on GitHub are visible to
+        everyone and stay in the history even after editing.
+
+        Need the log? It is at `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`. Its first
+        line names the build (for example `F4Multiplayer 0.8.5` or `F4Multiplayer 0.8.5 build rc1`).
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: The first line of `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`.
+      placeholder: "F4Multiplayer 0.8.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Were you the host or a joiner?
+      options:
+        - Host
+        - Joiner
+        - Both (it happened on both sides)
+        - Dedicated server (F4MPServer.exe)
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How were you connected?
+      description: Steam is the default (invites through the overlay, traffic through Steam's relays). Direct UDP is `sTransport = enet` with `sServerAddress` set.
+      options:
+        - Steam (default, invite or Join Game from the overlay)
+        - Direct UDP / ENet (sTransport = enet, LAN or VPN)
+        - Dedicated server (F4MPServer.exe)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: mods
+    attributes:
+      label: Mod list
+      description: Every plugin in your load order, or write "vanilla + DLC". Everyone in the session needs the same list, so say if it differed.
+      placeholder: vanilla + DLC
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What everyone did, in order, up to the moment it went wrong. Say which player did what.
+      placeholder: |
+        1. Host loads a save in Sanctuary, joiner accepts the invite
+        2. Both walk to Concord
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: plugin_log
+    attributes:
+      label: Plugin log
+      description: Paste `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log` from the game where it went wrong (from both games if you can). Names and Steam ids removed, please. Long logs can be attached as a file instead.
+      render: text
+  - type: textarea
+    id: crash_log
+    attributes:
+      label: Crash log
+      description: If the game crashed, paste the crash log from [Buffout 4](https://www.nexusmods.com/fallout4/mods/47359) or Addictol (`Documents\My Games\Fallout4\F4SE\` or the logger's own folder). Without a crash logger a crash leaves nothing to read, so install one before trying again.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Personal data
+      options:
+        - label: I removed Steam names, Steam ids and Windows user names that I do not want public from everything I pasted above.
+          required: true
+        - label: Everyone in the session ran the same version of the mod.
+          required: false
