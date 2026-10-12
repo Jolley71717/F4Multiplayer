@@ -224,7 +224,8 @@ namespace WorkshopSync
 		// Where a scrapped piece of the world waits: the cell its reference stands in here, while the
 		// reference is in memory (a persistent one, or one whose cell is loaded). Its player may have moved
 		// it before scrapping it, and the scrap then tells where they moved it to, maybe cells away, while
-		// ours stands where it always stood. Otherwise, where the scrap tells.
+		// ours stands where it always stood. Otherwise, where the scrap tells; the scrap waits for its
+		// reference too, and is tried again when a cell holding it attaches (TryPendingScrapsIn).
 		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item)
 		{
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId);
@@ -403,19 +404,50 @@ namespace WorkshopSync
 			return true;
 		}
 
-		// Tries again what waits in, or next to, a cell that just attached.
-		void TryPendingNear(const WorkshopCells::Where& a_cell)
+		void TryPending(const std::vector<Key>& a_keys)
 		{
-			for (const auto& key : pending.Near(a_cell)) {
+			for (const auto& key : a_keys) {
 				const auto found = pending.Find(key);
 				if (!found) {
-					continue;
+					continue;  // done with already (a key can come up twice)
 				}
 				const auto item = *found;
 				if (item.op == Protocol::WorkshopOp::kScrapped ? ScrapWorldRef(item) : Place(key, item)) {
 					pending.Erase(key);
 				}
 			}
+		}
+
+		// Tries again what waits in, or next to, a cell that just attached.
+		void TryPendingNear(const WorkshopCells::Where& a_cell)
+		{
+			TryPending(pending.Near(a_cell));
+		}
+
+		// Tries again the scraps that wait for one of the references of a cell that just attached,
+		// whatever cell they were filed under. A scrap tells where its player's piece stood when they
+		// scrapped it: if they had moved it first, maybe cells from where ours stands, and a reference
+		// that isn't persistent can't be looked up, to find where ours stands, until its cell loads.
+		void TryPendingScrapsIn(std::uint32_t a_cell)
+		{
+			if (!pending.WaitsForRefs()) {
+				return;
+			}
+			const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(a_cell);
+			if (!cell || !cell->IsAttached()) {
+				return;
+			}
+			std::vector<Key> keys;
+			{
+				const RE::BSAutoLock l{ cell->spinLock };
+				for (const auto& ref : cell->references) {
+					if (ref && Protocol::IsShareableRef(ref->GetFormID())) {
+						const auto waiting = pending.For(ref->GetFormID());
+						keys.insert(keys.end(), waiting.begin(), waiting.end());
+					}
+				}
+			}
+			TryPending(keys);  // outside the cell's lock: a scrap switches the reference off
 		}
 
 		// ---- Cells as they attach -----------------------------------------------------------------
@@ -894,6 +926,7 @@ namespace WorkshopSync
 			}
 			for (const auto& cell : fresh) {
 				TryPendingNear(cell.where);
+				TryPendingScrapsIn(cell.id);
 			}
 		}
 		if (a_host) {
@@ -934,7 +967,7 @@ namespace WorkshopSync
 			// A piece of the world itself goes from our world too (one its player had moved has a copy
 			// here as well, gone above).
 			if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
-				pending.Put(WhereScrapped(a_item), key, a_item);
+				pending.Put(WhereScrapped(a_item), key, a_item, a_item.refId);
 			}
 			return;
 		}

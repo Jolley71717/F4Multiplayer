@@ -99,3 +99,46 @@ TEST("workshop cells: what's erased is gone from its cell too")
 	CHECK(waiting.Empty());
 	CHECK(waiting.Near({ COMMONWEALTH, 0, 0 }).empty());
 }
+
+TEST("workshop cells: a scrap waiting for its reference is found by it, whatever cell it was filed under")
+{
+	Waiting waiting;
+	// Moved three cells before it was scrapped: filed where it was moved to, while ours stands at 0,0.
+	waiting.Put({ COMMONWEALTH, 3, 0 }, 1, "scrapped where it was moved to", 0x0001A2B3);
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 2, "a copy waiting for its settlement");
+	CHECK(waiting.Near({ COMMONWEALTH, 0, 0 }).size() == 1);  // not by its cell
+	const auto found = waiting.For(0x0001A2B3);
+	REQUIRE(found.size() == 1);
+	CHECK(found[0] == 1);
+	CHECK(waiting.For(0x0001A2B4).empty());
+	CHECK(waiting.For(0).empty());  // what waits for no reference isn't found by one
+	CHECK(waiting.WaitsForRefs());
+}
+
+TEST("workshop cells: two players' scraps of the same reference are both found by it")
+{
+	Waiting waiting;
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 1, "one player's", 0x0001A2B3);
+	waiting.Put({}, 2, "another's", 0x0001A2B3);
+	const auto found = waiting.For(0x0001A2B3);
+	CHECK(found.size() == 2);
+	CHECK(Has(found, 1));
+	CHECK(Has(found, 2));
+}
+
+TEST("workshop cells: what's erased, replaced or cleared isn't found by its reference any more")
+{
+	Waiting waiting;
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 1, "scrapped", 0x0001A2B3);
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 2, "scrapped too", 0x0001A2B4);
+	CHECK(waiting.Erase(1));
+	CHECK(waiting.For(0x0001A2B3).empty());
+	// Put again under its key, waiting for no reference.
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 2, "placed");
+	CHECK(waiting.For(0x0001A2B4).empty());
+	CHECK(!waiting.WaitsForRefs());
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 3, "scrapped", 0x0001A2B5);
+	waiting.Clear();
+	CHECK(waiting.For(0x0001A2B5).empty());
+	CHECK(!waiting.WaitsForRefs());
+}
