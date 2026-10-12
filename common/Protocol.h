@@ -471,6 +471,9 @@ namespace Protocol
 		bool          light = false;    // Pip-Boy light on
 		bool          powerArmor = false;     // in power armor
 		std::uint32_t powerArmorFrame = 0;   // base form of the frame they are in (0 = none): the hearer places one for the stand-in
+		// The frame reference itself when every game has it (placed in the world by a plugin, such as the museum's suit
+		// in Concord), 0 for one made in their game: the hearer hides its own copy of that frame while they wear theirs.
+		std::uint32_t powerArmorFrameRef = 0;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -1669,6 +1672,7 @@ namespace Protocol
 		w.U16(a_msg.level);
 		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0)));
 		w.U32(a_msg.powerArmorFrame);
+		w.U32(a_msg.powerArmorFrameRef);
 		return w.Data();
 	}
 
@@ -1688,7 +1692,8 @@ namespace Protocol
 		msg.light = (flags & 4) != 0;
 		msg.powerArmor = (flags & 8) != 0;
 		msg.powerArmorFrame = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100) {
+		msg.powerArmorFrameRef = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef))) {
 			return std::nullopt;
 		}
 		return msg;

@@ -59,10 +59,11 @@
   and blends between received states. `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
   was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
-  that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still,
-  where the stand-in was found more than 2 units from where it was put (w the furthest): anything
-  but 0 means something in the engine is moving it, such as a power armor frame copy. Before every
-  save and load, all puppets are deleted so they never end up in a save file.
+  that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still
+  (their state says speed 0: one held still only by a late state is not counted), where the
+  stand-in was found more than 2 units from where it was put (w the furthest): anything but 0
+  means something in the engine is moving it, such as a power armor frame copy. Before every save
+  and load, all puppets are deleted so they never end up in a save file.
 - **Puppets:** `src/game/Puppets.cpp` hooks `Actor::Update` (vtable slot 0xCF, taken from a live
   actor's vtable). For puppets it calls `UpdateNoAI` and forces position and heading. It sets
   `kMovementBlocked` and the like every frame (restoring only the bits it set on release), and
@@ -219,9 +220,20 @@ else skips this: the player is never in those places.
 
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
-- Status (location, interior cell, health %, level): sent when it changes (at most 4/s) and every
-  2 s; the server keeps the latest for newcomers. Receivers announce deaths (health 0) and put the
-  health on the stand-in's name tag.
+- Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor):
+  sent when it changes (at most 4/s) and every 2 s; the server keeps the latest for newcomers.
+  Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
+  armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
+  such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
+  itself. The receiver places a copy of the base for the stand-in to climb into (`RemotePlayers.cpp`,
+  `ArmorClimb.h`): the copy stays drawn, solid and where it was placed until the engine has the
+  stand-in in it, and only then is hidden, made non-solid and kept under the stand-in; it is drawn
+  again once the engine has the stand-in out, solid once the stand-in is 70 units clear, and deleted
+  4 s later. Climb time is game time (menus don't count), at most 15 s, 6 s if the engine shows no
+  sign of it; a climb that fails deletes the copy and the next try gets a fresh one. The receiver's
+  own copy of a shared frame reference is hidden (not drawn, no collision; the reference itself is
+  never moved, used or deleted) while the friend wears theirs, unless it is the receiver's own suit
+  or someone there is in it, and shown again once the friend is out and clear of it.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

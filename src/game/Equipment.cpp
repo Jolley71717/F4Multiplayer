@@ -79,6 +79,11 @@ namespace Equipment
 		HoldThrowable(a_actor, a_items);
 	}
 
+	bool InPowerArmor(const RE::Actor* a_actor)
+	{
+		return a_actor && a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+	}
+
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)
 	{
 		if (!a_puppet) {

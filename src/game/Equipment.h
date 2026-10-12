@@ -14,6 +14,11 @@ namespace Equipment
 	// its own).
 	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
 
+	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets
+	// into a frame and takes off as it gets out. (The engine's own PlayerInPowerArmor said false on a player
+	// visibly in a frame, 1.11.240.)
+	[[nodiscard]] bool InPowerArmor(const RE::Actor* a_actor);
+
 	// Puts the grenade or mine among these items in the actor's hand the way the combat AI does before
 	// a throw: through the equip manager, in the weapon's own slot. The console's equipitem leaves a
 	// throwable in an NPC's inventory but never in the engine's equipped list (the one the throw

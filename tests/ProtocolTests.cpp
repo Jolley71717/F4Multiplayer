@@ -151,6 +151,7 @@ namespace
 		}
 		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true, false, false, 0 }, type), D(DecodePlayerStatus) });
+			s.push_back({ "PlayerStatus(armor)", Encode(PlayerStatus{ 3, 0x0001D5E0, 0, 87, 42, false, false, false, true, 0x0017F6E4, REF_A }, type), D(DecodePlayerStatus) });
 		}
 		for (const auto type : { MT::kReportTime, MT::kWorldTime }) {
 			s.push_back({ "WorldTime", Encode(WorldTime{ 1, 13.5f, 21.75f, 0x3C, 0x0001F2A3 }, type), D(DecodeWorldTime) });
@@ -579,10 +580,11 @@ TEST("protocol: PlayerStatus round trips the downed, opening, light and power ar
 			for (const bool opening : { false, true }) {
 				const bool         light = downed != opening;
 				const bool         armor = downed && opening;
-				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light, armor, armor ? 0x0017F6E4u : 0u };
+				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light, armor, armor ? 0x0017F6E4u : 0u, armor ? REF_B : 0u };
 				const auto         packet = Encode(in, type);
-				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the frame base.
-				CHECK(packet[packet.size() - 5] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
+				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the
+				// frame base and the frame reference.
+				CHECK(packet[packet.size() - 9] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);
@@ -601,6 +603,7 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U16(10);
 	w.U8(0xFE);  // opening set, downed clear, unknown bits set
 	w.U32(0);  // no frame
+	w.U32(0);  // no frame reference
 	const auto out = DecodePlayerStatus(w.Data());
 	REQUIRE(out);
 	CHECK(!out->downed);
@@ -859,6 +862,18 @@ TEST("protocol: PlayerStatus health over 100 is rejected")
 	CHECK(DecodePlayerStatus(Encode(PlayerStatus{ 1, 0, 0, 100, 1 }, MT::kReportStatus)));
 	CHECK(!DecodePlayerStatus(Encode(PlayerStatus{ 1, 0, 0, 101, 1 }, MT::kReportStatus)));
 	CHECK(!DecodePlayerStatus(Encode(PlayerStatus{ 1, 0, 0, 255, 1 }, MT::kPlayerStatus)));
+}
+
+TEST("protocol: PlayerStatus frame reference is one every game shares, or none")
+{
+	PlayerStatus status{ 1, 0, 0, 100, 1, false, false, false, true, 0x0017F6E4, REF_A };
+	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
+	status.powerArmorFrameRef = 0;  // a frame made in their game
+	CHECK(DecodePlayerStatus(Encode(status, MT::kReportStatus)));
+	status.powerArmorFrameRef = RUNTIME_REF;  // another reference, or none, in every other game
+	CHECK(!DecodePlayerStatus(Encode(status, MT::kReportStatus)));
+	status.powerArmorFrameRef = PLAYER_REF_ID;
+	CHECK(!DecodePlayerStatus(Encode(status, MT::kPlayerStatus)));
 }
 
 TEST("protocol: WorldTime rejects bad hours and day counts")
