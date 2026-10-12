@@ -4,6 +4,7 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/SaveGuard.h"
+#include "game/SaveStrays.h"
 #include "game/Prediction.h"
 #include "game/StandInHold.h"
 
@@ -92,6 +93,9 @@ namespace RemotePlayers
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
+		// The looks friends asked for this run (base NPCs; see Spawn), kept after they leave: a stand-in an
+		// earlier version saved may wear one (see IsStandInBase).
+		std::set<std::uint32_t> looks;
 
 		// Stand-ins to delete once their 3D is in (see DeferredDelete).
 		// A stand-in (or its light or frame) goes in two steps: disabled now, so the engine takes its 3D and
@@ -219,8 +223,6 @@ namespace RemotePlayers
 			}
 			return out;
 		}
-
-		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
 
 		float LerpAngle(float a_from, float a_to, float a_t)
 		{
@@ -726,9 +728,11 @@ namespace RemotePlayers
 			}
 
 			Puppets::Register(actor);
+			SaveGuard::Track(actor);
 			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
-			// and hitting it isn't a crime.
-			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
+			// and hitting it isn't a crime. That faction and rank also tell SaveGuard a stand-in an
+			// earlier version saved, so they stay as every version since 0.4.0 set them.
+			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", actor->GetFormID(), SaveStrays::STAND_IN_FACTION, SaveStrays::STAND_IN_RANK).c_str());
 
 			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
 			return actor;
@@ -745,6 +749,9 @@ namespace RemotePlayers
 		}
 		player.name = std::move(a_name);
 		player.appearance = a_appearance;
+		if (a_appearance) {
+			looks.insert(a_appearance);
+		}
 	}
 
 	void Remove(std::uint32_t a_id)
@@ -873,11 +880,38 @@ namespace RemotePlayers
 		return 0;
 	}
 
+	bool IsStandInBase(std::uint32_t a_base)
+	{
+		if (!a_base) {
+			return false;
+		}
+		if (a_base == FEMALE_SETTLER || a_base == MALE_SETTLER || a_base == Config::Get().puppetBaseForm) {
+			return true;
+		}
+		// The ini's iMyAppearance is not one: it is only sent to friends, never placed here.
+		if (!looks.contains(a_base)) {
+			return false;
+		}
+		// A look is used only when it is an NPC here and not a unique one (see Spawn).
+		const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
+		return npc && !npc->IsUnique();
+	}
+
 	void DespawnAll()
 	{
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
 		}
+		// Marked for deletion earlier and still there: kept out of the save too. (Before the graveyard is
+		// flushed, so the ones it adds now are not excluded twice.)
+		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
+			const auto ref = a_handle.get();
+			if (!ref) {
+				return true;
+			}
+			SaveGuard::Exclude(ref.get());
+			return false;
+		});
 		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now. (A
 		// reference whose 3D is still loading is left alone: deleting it crashes the loader when it
 		// finishes.) The save runs between frames, so no physics job holds any of them. None of them may
@@ -899,14 +933,6 @@ namespace RemotePlayers
 			deleting.push_back(a_grave.actor);
 			++flushedBeforeSave;
 			return true;
-		});
-		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
-			const auto ref = a_handle.get();
-			if (!ref) {
-				return true;
-			}
-			SaveGuard::Exclude(ref.get());
-			return false;
 		});
 	}
 
@@ -932,9 +958,10 @@ namespace RemotePlayers
 	void OnGameLoaded()
 	{
 		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
-		// entry resolved after the load could delete some unrelated object, and a face base made before
-		// it may be gone.
+		// entry resolved after the load could delete some unrelated object, a stale one in deleting would
+		// keep an unrelated reference out of every save, and a face base made before it may be gone.
 		graveyard.clear();
+		deleting.clear();
 		for (auto& [id, player] : players) {
 			player.faceBaseId = 0;
 			player.faceTried = false;

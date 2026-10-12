@@ -18,6 +18,20 @@ namespace SessionFile
 {
 	inline constexpr std::uint32_t MAGIC = 0x53504D46;  // "FMPS"
 
+	// The file's own layout version, apart from the protocol's: a protocol change to a message the file
+	// doesn't hold (protocol 27 changed only the shot) must not throw away every host's saved session.
+	// Raise it when what Encode writes changes. Until the file had its own, its header carried the
+	// protocol version; the layout has not changed since the file came (protocol 23), and writing 26
+	// keeps it readable by 0.8.x (protocol 26) after a downgrade.
+	inline constexpr std::uint16_t FORMAT = 26;
+
+	// The header values that mean this layout: the protocol versions it was written under before it
+	// had its own, 23 to 27 (test builds of protocol 27 wrote 27). The next layout takes 28.
+	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
+	{
+		return a_format >= 23 && a_format <= 27;
+	}
+
 	struct Snapshot
 	{
 		std::uint32_t                                       contentHash = 0;
@@ -53,7 +67,7 @@ namespace SessionFile
 			out.insert(out.end(), a_packet.begin(), a_packet.end());
 		};
 		put(MAGIC);
-		put(Protocol::VERSION);
+		put(FORMAT);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
 		put(a_snapshot.nextId);
@@ -98,8 +112,8 @@ namespace SessionFile
 		return out;
 	}
 
-	// Nothing for a file from another protocol version, a truncated file, or a packet that doesn't
-	// decode: a damaged save is ignored rather than half-applied.
+	// Nothing for a file of another layout, a truncated file, or a packet that doesn't decode: a
+	// damaged save is ignored rather than half-applied.
 	inline std::optional<Snapshot> Decode(std::span<const std::uint8_t> a_data)
 	{
 		std::size_t offset = 0;
@@ -115,7 +129,7 @@ namespace SessionFile
 		std::uint16_t version = 0;
 		Snapshot      snapshot;
 		std::uint16_t identityCount = 0;
-		if (!take(magic) || !take(version) || !take(snapshot.contentHash) || !take(snapshot.sessionId) || !take(snapshot.nextId) || !take(identityCount) || magic != MAGIC || version != Protocol::VERSION) {
+		if (!take(magic) || !take(version) || !take(snapshot.contentHash) || !take(snapshot.sessionId) || !take(snapshot.nextId) || !take(identityCount) || magic != MAGIC || !Readable(version)) {
 			return std::nullopt;
 		}
 		for (std::uint16_t i = 0; i < identityCount; ++i) {

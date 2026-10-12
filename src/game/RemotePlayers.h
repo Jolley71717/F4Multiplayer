@@ -61,6 +61,11 @@ namespace RemotePlayers
 	// The player a stand-in actor belongs to, or 0.
 	std::uint32_t PlayerIdFor(std::uint32_t a_actorFormId);
 
+	// Whether stand-ins may be placed from this base: the default settlers, the ini's iPuppetBaseForm, and
+	// the looks friends asked for this run (non-unique NPCs; a friend's look is known only once that friend
+	// has joined). So SaveGuard can tell a stand-in an earlier version saved.
+	[[nodiscard]] bool IsStandInBase(std::uint32_t a_base);
+
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();
