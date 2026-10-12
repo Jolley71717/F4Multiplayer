@@ -81,7 +81,7 @@ body:
     id: crash_log
     attributes:
       label: Crash log
-      description: If the game crashed, paste the crash log from [Buffout 4](https://www.nexusmods.com/fallout4/mods/47359) or Addictol (`Documents\My Games\Fallout4\F4SE\` or the logger's own folder). Without a crash logger a crash leaves nothing to read, so install one before trying again.
+      description: If the game crashed, paste the crash log from [Buffout 4](https://www.nexusmods.com/fallout4/mods/47359) or Addictol (`Documents\My Games\Fallout4\F4SE\` or the logger's own folder). Without a crash logger a crash leaves nothing to read, so install one before trying again. If the game froze instead, paste the newest `F4Multiplayer-hang-<date>_<time>.txt` from the same folder (not a `.dmp`: that one holds your user name, so it only goes to the maintainer privately).
       render: text
   - type: checkboxes
     id: privacy

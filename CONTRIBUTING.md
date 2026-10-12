@@ -94,6 +94,9 @@ report; Nexus gets settled versions in batches, rarely. Details in [docs/RELEASI
 Commits, diffs, commit messages, logs in issues and pull request descriptions must not carry
 personal data: no Steam names or Steam ids, no Windows user names (watch for absolute paths like
 `C:\Users\...`), no machine names, no emails. Git history is forever and the repository is public.
+A hang minidump (`F4Multiplayer-hang-*.dmp`, written only with `bHangDump`) contains file paths and
+the Windows user name: it goes to the maintainer privately, never into an issue or a commit. The hang
+report (`.txt`) names modules only and is fine to attach.
 
 `tools/git-hooks` has a `pre-commit` and a `pre-push` hook that refuse a commit or push matching
 patterns you keep outside the repo (`~/.f4mp-private-patterns`, one regex per line). Turn them on
