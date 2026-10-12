@@ -1,5 +1,6 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/IdleRelease.h"
 #include "game/Prediction.h"
 
 #include "Protocol.h"
@@ -36,6 +37,9 @@ namespace Puppets
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
 			bool                                  redraw = false;  // holster (if drawn) and draw again
+			IdleRelease::Gate                     idleRelease;     // a mirrored NPC held by an idle (see ReleaseIdle)
+			std::uint32_t                         idleStops = 0;   // stops sent, and taken by the graph (dev: mirror)
+			std::uint32_t                         idleStopsTaken = 0;
 		};
 
 		std::mutex                                    lock;
@@ -88,6 +92,49 @@ namespace Puppets
 			const auto values = RE::ActorValue::GetSingleton();
 			if (values && values->health) {
 				static_cast<RE::ActorValueOwner*>(a_actor)->RestoreActorValue(*values->health, 100000.0f);
+			}
+		}
+
+		// A mirrored NPC's graph refused "moveStart": something its own game started holds it. Dogmeat's
+		// graph starts moving only from its plain standing idle, and a dog left standing sits, lies down
+		// or turns on the spot after a few seconds, so the mirror slid after its owner's copy sitting
+		// down. The AI ends the idle before walking off; with the AI off, we do: "IdleStop" gets it up
+		// (the graph then plays its getting-up), "turnStop" ends a turn on the spot, and DriveAnimation's
+		// "moveStart" is taken once it stands. Called right after DriveAnimation asked it to move.
+		void ReleaseIdle(RE::Actor* a_actor)
+		{
+			static const RE::BSFixedString idleStop{ "IdleStop" };
+			static const RE::BSFixedString turnStop{ "turnStop" };
+			static const RE::BSFixedString doNotInterrupt{ "bDoNotInterrupt" };
+
+			bool due = false;
+			{
+				std::scoped_lock l{ lock };
+				const auto entry = Find(a_actor);
+				if (!entry) {
+					return;
+				}
+				due = entry->idleRelease.Due(!entry->moving, std::chrono::steady_clock::now());
+			}
+			if (!due) {
+				return;
+			}
+			const auto graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+			// What the engine's own idle stop checks: a paired or scripted animation that must play out.
+			if (bool keep = false; graph->GetGraphVariableImplBool(doNotInterrupt, keep) && keep) {
+				return;
+			}
+			const bool stood = graph->NotifyAnimationGraphImpl(idleStop);
+			const bool turned = graph->NotifyAnimationGraphImpl(turnStop);
+			{
+				std::scoped_lock l{ lock };
+				if (const auto entry = Find(a_actor)) {
+					++entry->idleStops;
+					entry->idleStopsTaken += stood || turned;
+				}
+			}
+			if (stood || turned) {
+				REX::INFO("Puppets: {:08X} was held by an idle while its owner's copy moves; stopped it (idle={} turn={})", a_actor->GetFormID(), stood, turned);
 			}
 		}
 
@@ -226,6 +273,10 @@ namespace Puppets
 			// teleported actor covers) into the graph: ours is the last word before the graph samples.
 			if (puppet->hasTarget) {
 				DriveAnimation(a_this, *puppet);
+				// It has just asked a standing NPC's graph to move; a refusal means an idle holds it.
+				if (puppet->kind == Kind::kNpc && !puppet->moving && puppet->target.speed > MOVE_START) {
+					ReleaseIdle(a_this);
+				}
 			}
 		}
 
@@ -400,6 +451,37 @@ namespace Puppets
 			entry->target = a_motion;
 			entry->hasTarget = true;
 		}
+	}
+
+	std::string Describe(const RE::Actor* a_actor)
+	{
+		Puppet puppet;
+		{
+			std::scoped_lock l{ lock };
+			const auto entry = Find(a_actor);
+			if (!entry) {
+				return "puppet=no";
+			}
+			puppet = *entry;
+		}
+		auto out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops, puppet.idleStopsTaken);
+		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
+		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run).
+		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "bAnimationDriven", "bForceIdleStop" }) {
+			const RE::BSFixedString var{ name };
+			float                   f = 0.0f;
+			std::int32_t            n = 0;
+			bool                    b = false;
+			if (graph->GetGraphVariableImplFloat(var, f)) {
+				out += std::format(" {}={:.0f}", name, f);
+			} else if (graph->GetGraphVariableImplInt(var, n)) {
+				out += std::format(" {}={}", name, n);
+			} else if (graph->GetGraphVariableImplBool(var, b)) {
+				out += std::format(" {}={}", name, b);
+			}
+		}
+		return out;
 	}
 
 	void Tick()

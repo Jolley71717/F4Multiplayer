@@ -850,6 +850,9 @@ namespace NpcSync
 				out += std::format(" ours=({:.0f},{:.0f},{:.0f}) ourCell={:08X} ourWs={:08X} dist={:.0f} dead={}", actor->data.location.x, actor->data.location.y, actor->data.location.z, space.first, space.second, actor->data.location.GetDistance({ s.state.x, s.state.y, s.state.z }), actor->IsDead(false));
 			}
 		}
+		if (actor && m.registered == actor) {
+			out += " " + Puppets::Describe(actor);
+		}
 		return out;
 	}
 
