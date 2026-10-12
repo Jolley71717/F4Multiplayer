@@ -4,7 +4,8 @@
 // the HUD's compass widget (Scaleform), clamped to the edge when they're behind you.
 namespace Compass
 {
-	// Watches for loading screens: the markers are left alone while one is up.
+	// Watches for the menus the markers are left alone under (a conversation, the Pip-Boy, the
+	// workshop); loading screens are the HUD's to watch (Hud::LoadingScreenUp).
 	void Install();
 
 	// Works out where each friend is; the markers (and the HUD messages) are written from inside the HUD's
