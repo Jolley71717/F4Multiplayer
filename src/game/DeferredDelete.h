@@ -13,4 +13,14 @@ namespace DeferredDelete
 	{
 		return a_has3D || a_sinceSpawn >= MAX_WAIT;
 	}
+
+	// A stand-in in the player's conversation (the one speaking to them, or in the scene they are in)
+	// is kept until the conversation ends: with its speaker deleted the engine never ends it (see
+	// StrandedDialogue). Not for ever, though: a stand-in may not outlive its player for long.
+	constexpr auto MAX_HOLD = std::chrono::seconds(60);
+
+	constexpr bool Held(bool a_inConversation, std::chrono::steady_clock::duration a_sinceBuried)
+	{
+		return a_inConversation && a_sinceBuried < MAX_HOLD;
+	}
 }
