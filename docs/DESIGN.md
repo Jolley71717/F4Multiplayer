@@ -40,13 +40,24 @@
 - **Client:** `src/net/NetClient.cpp` keeps ENet (including DNS lookups) on its own thread, so the
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
-- **Hang watch:** `src/HangWatch.cpp`, one thread, touches no game object. Once a second it asks
-  Windows whether the game's window is "not responding" (`IsHungAppWindow`: the main thread hasn't
-  read its messages for 5 s; nothing is sent to it, and a minimised game waiting for messages
-  counts as answering). A stall of `iHangSeconds` (15; four times that on a loading screen) is
-  logged once with a minidump of the thread stacks (`F4Multiplayer-hang-<time>.dmp` next to the log,
-  the newest 3 kept), and the recovery is logged too. The judgement is `src/HangDetector.h`, unit
-  tested.
+- **Hang watch:** `src/HangWatch.cpp`, one thread. Once a second it asks Windows whether the game's
+  window is "not responding" (`IsHungAppWindow`: the main thread hasn't read its messages for 5 s;
+  nothing is sent to it, and a minimised game waiting for messages counts as answering). A stall of
+  `iHangSeconds` (15; four times that during a save or a load, from F4SE's message before it to the
+  one after, and on a loading screen) is logged once with a short report, and the recovery is logged
+  too. For the report the watch suspends the main thread just long enough to read its instruction
+  pointer and copy the top of its stack (system calls only: the main thread may be stopped holding
+  the heap or loader lock), then resumes it and names the instruction and the return addresses it
+  finds on the copy as module+offset, from `VirtualQuery` and the image's mapped file name (no
+  dbghelp, no loader lock). The report goes to the log and to `F4Multiplayer-hang-<time>.txt` next to
+  it (the newest 3 kept, leftovers of an interrupted write removed at start-up); it names modules,
+  never paths. A minidump (`.dmp`) is written too only with `bHangDump`: `MiniDumpWriteDump` in the
+  hung process suspends every thread and then needs the loader and heap locks, so it can turn a
+  freeze the game would have recovered from into a permanent one, and dbghelp may be in use by a
+  crash logger. The dump holds file paths and the Windows user name; it is for sending to the
+  maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
+  quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
+  The judgement is `src/HangDetector.h`, unit tested.
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
   (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
   transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.

@@ -91,15 +91,18 @@ namespace
 	std::atomic<std::chrono::steady_clock::time_point> saveOrLoadSince{};
 	std::atomic<std::uint32_t>                         heldForSaveOrLoad{ 0 };  // frames, logged after it
 
-	void BeginSaveOrLoad()
+	// The hang watch gives a save or load the same longer limit as a loading screen.
+	void BeginSaveOrLoad(HangWatch::Phase a_what)
 	{
 		saveOrLoadSince = std::chrono::steady_clock::now();
 		savingOrLoading = true;
+		HangWatch::SetSaveOrLoad(a_what);
 	}
 
 	void EndSaveOrLoad(std::string_view a_what)
 	{
 		savingOrLoading = false;
+		HangWatch::SetSaveOrLoad(HangWatch::Phase::kPlay);
 		if (const auto held = heldForSaveOrLoad.exchange(0)) {
 			REX::INFO("Frame: {} frame(s) held during the {}", held, a_what);
 		}
@@ -154,11 +157,11 @@ namespace
 			if (gameDataReady) {
 				Hud::OnLoadStarting();  // the HUD is torn down before the loading screen's event comes
 			}
-			BeginSaveOrLoad();
+			BeginSaveOrLoad(HangWatch::Phase::kLoad);
 			Session::OnBeforeSaveOrLoad();
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
-			BeginSaveOrLoad();
+			BeginSaveOrLoad(HangWatch::Phase::kSave);
 			// Remote players' actors must never be written into a save.
 			Session::OnBeforeSaveOrLoad();
 			SaveGuard::BeforeSave();

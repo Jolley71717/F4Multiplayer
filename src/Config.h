@@ -89,9 +89,13 @@ namespace Config
 		// Locations a friend discovers show up on your map, ready for fast travel.
 		bool shareMap = true;
 
-		// A freeze this long (seconds without the game reading its window messages; a loading screen gets
-		// four times as long) is logged with a small dump of the threads (HangWatch.h). 0 = off.
+		// A freeze this long (seconds without the game reading its window messages; a save, a load or a
+		// loading screen gets four times as long) is logged with a short report of where the game was
+		// stuck (HangWatch.h). 0 = off.
 		std::uint32_t hangSeconds = 15;
+		// Also write a minidump of every thread with each report. Off by default: writing it can turn a
+		// freeze the game would come out of into a permanent one, and it holds paths and the Windows user name.
+		bool hangDump = false;
 
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;

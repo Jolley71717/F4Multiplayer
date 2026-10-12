@@ -2,6 +2,18 @@
 
 using namespace TestServer;
 
+namespace
+{
+	// Join returns at Alice's Welcome, but the server tells Bob (peer 1) she joined only after it, so a
+	// Take right away could miss that and leave it to be mistaken for the PlayerJoined of her rejoin.
+	// Waiting for it first, then taking the rest, leaves Bob's queue empty for what comes next.
+	void TakeAliceJoined(Fixture& a_f)
+	{
+		REQUIRE(a_f.fake->WaitFor(1, Type(MT::kPlayerJoined)));
+		a_f.fake->Take(1);
+	}
+}
+
 TEST("server: a player who says hello is welcomed")
 {
 	Fixture f;
@@ -29,7 +41,7 @@ TEST("server: rejoining while the old connection is still open replaces it")
 	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
 	REQUIRE(bob);
 	REQUIRE(alice);
-	f.fake->Take(1);
+	TakeAliceJoined(f);
 
 	const auto again = f.Join(3, Fixture::MakeHello("Alice", 0xA11CE));
 	REQUIRE(again);
@@ -66,7 +78,7 @@ TEST("server: hello again on the same connection welcomes them again")
 	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
 	REQUIRE(bob);
 	REQUIRE(alice);
-	f.fake->Take(1);
+	TakeAliceJoined(f);
 
 	f.fake->Deliver(2, Protocol::Encode(Fixture::MakeHello("Alice", 0xA11CE)));
 	const auto packet = f.fake->WaitFor(2, Type(MT::kWelcome));
