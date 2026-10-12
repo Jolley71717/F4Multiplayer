@@ -209,7 +209,7 @@ namespace Protocol
 		std::uint32_t refId = 0;
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
 		bool          killed = false;  // that player killed it
-		float         x = 0, y = 0, z = 0;  // where the corpse lies in the reporter's game (all zero: unknown)
+		float         x = 0, y = 0, z = 0;  // where the corpse lies in the reporter's game (all zero: unknown, or the host's game found it dead: see Server's handleDeath)
 
 		bool operator==(const ActorDeath&) const = default;
 	};

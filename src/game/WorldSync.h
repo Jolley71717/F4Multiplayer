@@ -26,7 +26,8 @@ namespace WorldSync
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
 	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
-	// in ours is reported dead: our world is the session's.
+	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
+	// character: FoundDead::Shared).
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
 	void ApplyRemotePickup(std::uint32_t a_refId);

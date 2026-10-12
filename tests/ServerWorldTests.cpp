@@ -107,6 +107,12 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed }, MT::kReportDeath);
 	}
 
+	// A death seen happening: the corpse lies at (a_x, 0, 0) in the reporter's game.
+	auto DeathAt(std::uint32_t a_ref, bool a_killed, float a_x)
+	{
+		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 999, a_killed, a_x, 0.0f, 0.0f }, MT::kReportDeath);
+	}
+
 	auto Health(std::uint32_t a_ref, float a_health)
 	{
 		return Protocol::Encode(Protocol::ActorHealth{ a_ref, a_health }, MT::kReportHealth);
@@ -1494,20 +1500,41 @@ TEST("server trust: a death of an actor nobody runs is taken from anyone")
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
 }
 
-TEST("server trust: the host's game is believed about a death of an NPC another player runs")
+namespace
 {
-	Fixture f;
-	f.fake->SetLocal(1);
-	const auto host = JoinAs(f, 1, "Host");
+	constexpr std::uint64_t HOST_IDENTITY = 0x1111;
+
+	Server::Options HostedOptions()
+	{
+		Server::Options options;
+		options.hostIdentity = HOST_IDENTITY;
+		return options;
+	}
+
+	// The host's own game: on the server's machine, with the identity the server was started for.
+	std::uint32_t JoinAsHost(Fixture& a_f, PeerId a_peer)
+	{
+		a_f.fake->SetLocal(a_peer);
+		return JoinAs(a_f, a_peer, "Host", HOST_IDENTITY);
+	}
+}
+
+TEST("server trust: the host's game is believed about an NPC dead in its save that another player runs")
+{
+	Fixture    f{ HostedOptions() };
+	const auto host = JoinAsHost(f, 1);
 	JoinAs(f, 2, "Bob");
 	JoinAs(f, 3, "Carol");
+	f.fake->SetLocal(4);
+	JoinAs(f, 4, "Bot", 0x2222);  // on the server's machine, but not the host's game
 	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));  // alive in Bob's game
-	Clear(f, { 1, 2, 3 });
+	Clear(f, { 1, 2, 3, 4 });
 
 	f.fake->Deliver(3, Death(NPC2, false));  // Carol isn't the host
+	f.fake->Deliver(4, Death(NPC2, false));  // nor is the bot
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
 
-	f.fake->Deliver(1, Death(NPC, false));  // dead in the host's save
+	f.fake->Deliver(1, Death(NPC, false));  // found dead in the host's save: nobody killed it there, no corpse position
 	const auto packets = Received(f, 2);
 	const auto deaths = Decoded(packets, MT::kActorDied, Protocol::DecodeActorDeath);
 	REQUIRE(deaths.size() == 1);
@@ -1518,6 +1545,51 @@ TEST("server trust: the host's game is believed about a death of an NPC another 
 
 	f.fake->Deliver(2, Claim(NPC));
 	CHECK(Owners(Received(f, 2)).empty());
+}
+
+TEST("server trust: the host's game isn't believed about an NPC another player runs dying in front of it")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, DeathAt(NPC, false, 100.0f));  // the host's copy fell over: Bob's game runs it, alive
+	f.fake->Deliver(1, DeathAt(NPC2, true, 100.0f));  // or the host shot it before its game took it over
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	// The same death found again after a reconnect or a load: still Bob's game's to judge.
+	f.fake->Deliver(1, Death(NPC, false));
+	f.fake->Deliver(1, Death(NPC2, false));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+
+	f.fake->Deliver(2, DeathAt(NPC, true, 100.0f));  // Bob's game, which runs it, is believed
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 1);
+}
+
+TEST("server trust: nor about one it has had alive this session")
+{
+	Fixture    f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));  // the host's game ran it: alive there
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Release(NPC));
+	f.fake->Deliver(2, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned }, { NPC3, Reason::kUnowned } }));
+	f.fake->Deliver(1, Health(NPC2, 0.5f));  // the host hit it: alive there
+	f.fake->Deliver(1, Claim(NPC3, Reason::kInteract));  // the host hit its corpse: that says nothing (and Bob's game keeps it)
+	const auto owners = Owners(Received(f, 1));
+	REQUIRE(HasOwner(owners, NPC, bob));
+	REQUIRE(HasOwner(owners, NPC3, bob));
+	Clear(f, { 2 });
+
+	f.fake->Deliver(1, Death(NPC, false));
+	f.fake->Deliver(1, Death(NPC2, false));
+	f.fake->Deliver(1, Death(NPC3, false));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC3);
 }
 
 TEST("server trust: an NPC the session knows is dead hurts nobody")

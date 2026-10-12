@@ -850,19 +850,22 @@ TEST("server session: without a local player, the lowest ID's clock is used")
 	CHECK(OfType(Settle(f, 1), MT::kWorldTime).empty());
 }
 
-TEST("server session: a player on the server's machine owns the clock")
+TEST("server session: the host's own game owns the clock")
 {
-	Fixture f;
+	constexpr std::uint64_t HOST = 0x1111;
+	Server::Options         options;
+	options.hostIdentity = HOST;
+	Fixture    f{ options };
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
 	REQUIRE(alice);
 	f.fake->SetLocal(2);
-	const auto host = f.Join(2, Fixture::MakeHello("Host"));
+	const auto host = f.Join(2, Fixture::MakeHello("Host", HOST));
 	REQUIRE(host);
 	REQUIRE(alice->playerId < host->playerId);
 	f.fake->Take(1);
 	f.fake->Take(2);
 
-	// Alice has the lower ID, but the host is local.
+	// Alice has the lower ID, but the host is the host.
 	f.fake->Deliver(1, TimeReport(8.0f));
 	CHECK(OfType(Settle(f, 2), MT::kWorldTime).empty());
 
@@ -871,6 +874,48 @@ TEST("server session: a player on the server's machine owns the clock")
 	REQUIRE(packet);
 	CHECK(Protocol::DecodeWorldTime(*packet)->playerId == host->playerId);
 	CHECK(Protocol::DecodeWorldTime(*packet)->gameHour == 20.0f);
+}
+
+TEST("server session: another game on the server's machine, or the host's identity from elsewhere, isn't the host")
+{
+	constexpr std::uint64_t HOST = 0x1111;
+	Server::Options         options;
+	options.hostIdentity = HOST;
+	Fixture    f{ options };
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	f.fake->SetLocal(2);
+	const auto bot = f.Join(2, Fixture::MakeHello("Bot", 0x2222));  // a bot, or a tunnel to another PC
+	REQUIRE(bot);
+	const auto faker = f.Join(3, Fixture::MakeHello("Faker", HOST));  // not on this machine
+	REQUIRE(faker);
+	f.fake->Take(1);
+	f.fake->Take(2);
+	f.fake->Take(3);
+
+	// Neither is the host, so Alice, here longest, owns the clock.
+	f.fake->Deliver(2, TimeReport(20.0f));
+	f.fake->Deliver(3, TimeReport(21.0f));
+	CHECK(OfType(Settle(f, 1), MT::kWorldTime).empty());
+	f.fake->Deliver(1, TimeReport(8.0f));
+	const auto packet = f.fake->WaitFor(2, Type(MT::kWorldTime));
+	REQUIRE(packet);
+	CHECK(Protocol::DecodeWorldTime(*packet)->playerId == alice->playerId);
+}
+
+TEST("server session: a dedicated server has no host")
+{
+	Fixture    f;  // no host identity
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	f.fake->SetLocal(2);
+	const auto local = f.Join(2, Fixture::MakeHello("Local", 0x1111));
+	REQUIRE(local);
+	f.fake->Take(1);
+	f.fake->Take(2);
+
+	f.fake->Deliver(2, TimeReport(20.0f));
+	CHECK(OfType(Settle(f, 1), MT::kWorldTime).empty());
 }
 
 TEST("server session: when the clock's owner leaves, the next player's clock is used")

@@ -1,5 +1,6 @@
 #include "game/WorldSync.h"
 
+#include "game/FoundDead.h"
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
@@ -121,12 +122,14 @@ namespace WorldSync
 		// Limit: only what is in our game's memory can be checked. Persistent actors always are, and so are
 		// those of cells loaded lately; an ordinary NPC of a cell our game hasn't loaded isn't, and lives on
 		// in a friend's game until ours loads it (then it dies there too: the server takes the host's word
-		// over its runner's). It can only fight our stand-in where we are, and there our game has it loaded.
-		constexpr std::size_t                  MAX_LOADED_ACTORS = 1024;
-		std::unordered_set<std::uint32_t>      loadedActors;  // their 3D is loaded, by the events
+		// over its runner's for a death from our save, see Server.cpp handleDeath). It can only fight our
+		// stand-in where we are, and there our game has it loaded.
+		// With everyone on their own story, story characters are left out (FoundDead::Shared).
+		std::unordered_set<std::uint32_t>      loadedActors;  // their 3D is loaded, by the events (FoundDead::TrackLoad)
 		std::unordered_set<std::uint32_t>      toCheck;       // for a death no event reported, once we can
 		bool                                   checkAllLoaded = true;
 		std::uint32_t                          foundDead = 0;
+		std::uint32_t                          ownStoryDead = 0;  // found dead but left alone: a story character, with everyone on their own story
 
 		void ReportDead(std::uint32_t a_id, const RE::NiPoint3& a_at, bool a_byUs)
 		{
@@ -252,17 +255,24 @@ namespace WorldSync
 					continue;
 				}
 				toCheck.insert(id);
-				if (loadedActors.size() >= MAX_LOADED_ACTORS) {
-					// Unload events keep the set to what is loaded; should some go missing, it is pruned when full.
-					std::erase_if(loadedActors, [](std::uint32_t a_id) {
-						const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-						return !actor || !actor->Get3D();
-					});
-				}
-				if (loadedActors.size() < MAX_LOADED_ACTORS) {
-					loadedActors.insert(id);
-				}
+				FoundDead::TrackLoad(loadedActors, id, [](std::uint32_t a_id) {
+					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+					return actor && actor->Get3D();
+				});
 			}
+		}
+
+		// A quest holds the reference in an alias: a quest item, or a character a quest is about.
+		bool InQuestAlias(RE::TESObjectREFR* a_ref)
+		{
+			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+		}
+
+		FoundDead::Npc DescribeDead(RE::Actor* a_actor)
+		{
+			const auto base = a_actor->GetObjectReference();
+			const auto npc = base ? base->As<RE::TESNPC>() : nullptr;
+			return { npc && npc->IsUnique(), npc && (npc->IsEssential() || npc->IsProtected()), InQuestAlias(a_actor) };
 		}
 
 		// When we host, reports the actors to check that are dead in our world and not known to be yet.
@@ -283,12 +293,18 @@ namespace WorldSync
 			}
 			for (const auto id : toCheck) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || !dead.insert(id).second) {
+				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.contains(id)) {
 					continue;
 				}
-				// Where the corpse lies only when it is loaded here: one in a cell we don't have loaded may lie
-				// in another cell than the friend's copy, which would be moved there.
-				ReportDead(id, actor->Get3D() ? actor->data.location : RE::NiPoint3{}, false);
+				if (!FoundDead::Shared(Story::Shared(), DescribeDead(actor))) {
+					++ownStoryDead;
+					continue;
+				}
+				dead.insert(id);
+				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
+				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
+				// another. The server also tells a found-dead report by it (see Server.cpp, handleDeath).
+				ReportDead(id, RE::NiPoint3{}, false);
 				++foundDead;
 				pending.erase(id);
 				pendingHealth.erase(id);
@@ -701,7 +717,7 @@ namespace WorldSync
 			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference())) {
 				return true;
 			}
-			if (IsPersonalItem(ref->GetObjectReference()) || (ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray))) {
+			if (IsPersonalItem(ref->GetObjectReference()) || InQuestAlias(ref)) {
 				++personalSkipped;
 				return true;
 			}
@@ -1089,8 +1105,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} loadedActors={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={}",
 			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped, foundDead, loadedActors.size());
+			ownSkipped, foundDead, ownStoryDead, loadedActors.size());
 	}
 }
