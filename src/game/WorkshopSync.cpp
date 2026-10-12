@@ -67,6 +67,31 @@ namespace WorkshopSync
 			return copyIds.contains(a_ref->GetFormID());
 		}
 
+		// Pieces of the world itself reported scrapped this session, by the destroyed sink (which may run
+		// off the game thread) or found scrapped in the save: each is reported once. The server keeps one
+		// report, and a second would only be a message for nothing.
+		std::mutex                        sentScrapsLock;
+		std::unordered_set<std::uint32_t> sentScraps;
+
+		// False if it was already reported.
+		bool NoteWorldScrap(std::uint32_t a_id)
+		{
+			std::scoped_lock l{ sentScrapsLock };
+			return sentScraps.insert(a_id).second;
+		}
+
+		bool WorldScrapSent(std::uint32_t a_id)
+		{
+			std::scoped_lock l{ sentScrapsLock };
+			return sentScraps.contains(a_id);
+		}
+
+		void ForgetWorldScrap(std::uint32_t a_id)
+		{
+			std::scoped_lock l{ sentScrapsLock };
+			sentScraps.erase(a_id);
+		}
+
 		void Push(const Protocol::WorkshopItem& a_item)
 		{
 			std::scoped_lock l{ outLock };
@@ -125,7 +150,11 @@ namespace WorkshopSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemDestroyedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>*) override
 			{
-				ReportRef(a_event.objectDestroyed.get(), a_event.workshop.get(), Protocol::WorkshopOp::kScrapped);
+				const auto ref = a_event.objectDestroyed.get();
+				if (ref && Protocol::IsShareableRef(ref->GetFormID()) && !NoteWorldScrap(ref->GetFormID())) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				ReportRef(ref, a_event.workshop.get(), Protocol::WorkshopOp::kScrapped);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -317,6 +346,294 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// ---- Settlement junk the host scrapped before the session ------------------------------------
+		//
+		// The workshop's events only tell of scraps made while we watch. What the host scrapped earlier is
+		// in their save, and their friends would still see that junk. Scrapping a piece of the world itself
+		// switches it off and marks it deleted (a reference from the game's files can't really be deleted:
+		// the save keeps both flags). A switched-off reference sends no load event, so the host walks the
+		// references of the cells that attach, a few hundred a frame, and reports each piece it finds
+		// scrapped once, the way a scrap made in the session is reported; the server keeps it for whoever
+		// joins later. Switched off alone isn't scrapped: the game starts plenty of references off (quest
+		// props, things an enable marker turns on), and junk a friend scrapped is only switched off here.
+
+		constexpr std::size_t WALK_PER_FRAME = 512;  // references looked at per frame
+		constexpr auto        CELL_LOOK_INTERVAL = std::chrono::seconds(1);
+		constexpr double      SAVED_SCRAPS_PER_SECOND = 100.0;  // reports, well inside the server's event budget
+		constexpr double      SAVED_SCRAPS_BURST = 20.0;
+		constexpr std::size_t MAX_WAITING = 4096;
+
+		struct Bench
+		{
+			std::uint32_t id;
+			std::uint32_t space;  // its interior cell, or its worldspace
+			RE::NiPoint3  at;
+		};
+
+		struct CellWalk
+		{
+			std::uint32_t id;          // the cell; for a worldspace's persistent references, the worldspace
+			bool          persistent;  // only workbenches are looked for there (it holds the whole worldspace's)
+		};
+
+		std::set<std::uint32_t>                             attachedCells;  // the cells attached at the last look
+		std::set<std::uint32_t>                             walkedWorlds;   // worldspaces whose persistent references were walked
+		std::deque<CellWalk>                                toWalk;
+		std::uint32_t                                       walkFrom = 0;  // where in the first cell's references
+		std::vector<Bench>                                  benches;       // workbenches seen
+		std::unordered_set<std::uint32_t>                   waiting;       // scrapped, with no workbench in reach seen yet
+		std::deque<std::pair<std::uint32_t, std::uint32_t>> toSend;        // (reference, its workbench)
+		Clock::time_point                                   nextCellLook{};
+		Clock::time_point                                   lastRefill{};
+		double                                              sendTokens = 0.0;
+
+		std::uint32_t savedScraps = 0;  // reported from the walk
+		std::uint32_t walkedRefs = 0;
+		std::uint32_t seenDisabled = 0;  // references of the game's files found switched off...
+		std::uint32_t seenDeleted = 0;   // ... and marked deleted too
+		struct Round
+		{
+			std::uint32_t refs = 0, disabled = 0, deleted = 0, benches = 0;
+		} walkRound;  // since the walk's queue last ran dry, for the log
+
+		void ClearWalk()
+		{
+			attachedCells.clear();
+			walkedWorlds.clear();
+			toWalk.clear();
+			walkFrom = 0;
+			benches.clear();
+			waiting.clear();
+			for (const auto& [ref, bench] : toSend) {
+				ForgetWorldScrap(ref);
+			}
+			toSend.clear();
+			walkRound = {};
+		}
+
+		// The interior cell, or the worldspace: workbench and junk must share it.
+		std::uint32_t SpaceOf(const RE::TESObjectCELL* a_cell)
+		{
+			if (!a_cell) {
+				return 0;
+			}
+			if (a_cell->IsInterior()) {
+				return a_cell->GetFormID();
+			}
+			return a_cell->worldSpace ? a_cell->worldSpace->GetFormID() : 0;
+		}
+
+		// A settlement's workbench: it holds the workshop's own data (power grids and the like).
+		bool IsBench(RE::TESObjectREFR* a_ref)
+		{
+			return !a_ref->IsDisabled() && !a_ref->As<RE::Actor>() && a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop);
+		}
+
+		// Junk scrapped in workshop mode: switched off and deleted, and something a friend's game would
+		// take away (see ScrapWorldRef). Not loose items: taken or scrapped, we can't tell which, and
+		// what players pick up isn't the workshop's business. Not one an enable parent switches: its
+		// parent's state decides it.
+		bool LooksScrapped(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref->GetObjectReference();
+			const auto extra = a_ref->extraList.get();
+			return base && (base->GetFormID() >> 24) != 0xFF && !base->Is(RE::ENUM_FORM_ID::kMISC) && Buildable(base) && !a_ref->As<RE::Actor>() &&
+			       !(extra && (extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent) || extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray)));
+		}
+
+		// The nearest workbench the piece is within reach of, if one has been seen.
+		const Bench* BenchFor(const RE::TESObjectREFR* a_ref)
+		{
+			const auto   space = SpaceOf(a_ref->GetParentCell());
+			const Bench* nearest = nullptr;
+			float        best = BUILD_REACH;
+			for (const auto& bench : benches) {
+				if (space != 0 && bench.space == space) {
+					if (const float distance = bench.at.GetDistance(a_ref->data.location); distance <= best) {
+						nearest = &bench;
+						best = distance;
+					}
+				}
+			}
+			return nearest;
+		}
+
+		// Queues the piece for reporting if a workbench is in reach; true when it's done with (queued,
+		// or gone from the game: it's found again when its cell attaches).
+		bool QueueScrap(std::uint32_t a_id)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			if (!ref) {
+				return true;
+			}
+			const auto bench = BenchFor(ref);
+			if (!bench) {
+				return false;
+			}
+			if (NoteWorldScrap(a_id)) {
+				toSend.emplace_back(a_id, bench->id);
+			}
+			return true;
+		}
+
+		// a_space: the walked cell's (a worldspace's persistent references belong to the worldspace).
+		void Examine(RE::TESObjectREFR* a_ref, std::uint32_t a_space, bool a_benchesOnly)
+		{
+			const auto id = a_ref->GetFormID();
+			if (!Protocol::IsShareableRef(id)) {
+				return;  // made at runtime: ours, a copy, something dropped
+			}
+			++walkedRefs;
+			++walkRound.refs;
+			if (!a_ref->IsDisabled()) {
+				if (IsBench(a_ref) && std::ranges::none_of(benches, [&](const Bench& a_bench) { return a_bench.id == id; })) {
+					benches.push_back({ id, a_space, a_ref->data.location });
+					++walkRound.benches;
+				}
+				return;
+			}
+			if (a_benchesOnly) {
+				return;
+			}
+			++seenDisabled;
+			++walkRound.disabled;
+			if (!a_ref->IsDeleted()) {
+				return;
+			}
+			++seenDeleted;
+			++walkRound.deleted;
+			if (!LooksScrapped(a_ref) || WorldScrapSent(id) || waiting.contains(id)) {
+				return;
+			}
+			if (!QueueScrap(id) && waiting.size() < MAX_WAITING) {
+				waiting.insert(id);
+			}
+		}
+
+		// Queues the cells that attached since the last look (and, outdoors, the worldspace's persistent
+		// references once: the workbenches are among them).
+		void LookForNewCells()
+		{
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return;
+			}
+			std::set<std::uint32_t> attached;
+			if (tes->interiorCell) {
+				attached.insert(tes->interiorCell->GetFormID());
+			} else if (const auto grid = tes->gridCells) {
+				for (std::uint32_t x = 0; x < grid->dimension; ++x) {
+					for (std::uint32_t y = 0; y < grid->dimension; ++y) {
+						const auto gridCell = grid->Get(x, y);
+						const auto cell = gridCell ? gridCell->cell : nullptr;
+						if (cell && cell->IsAttached()) {
+							attached.insert(cell->GetFormID());
+						}
+					}
+				}
+				if (const auto world = tes->worldSpace; world && world->persistentCell && walkedWorlds.insert(world->GetFormID()).second) {
+					toWalk.push_back({ world->GetFormID(), true });
+				}
+			}
+			for (const auto id : attached) {
+				if (!attachedCells.contains(id)) {
+					toWalk.push_back({ id, false });
+				}
+			}
+			attachedCells = std::move(attached);
+		}
+
+		RE::TESObjectCELL* CellOf(const CellWalk& a_walk)
+		{
+			if (a_walk.persistent) {
+				const auto tes = RE::TES::GetSingleton();
+				const auto world = tes ? tes->worldSpace : nullptr;
+				return world && world->GetFormID() == a_walk.id ? world->persistentCell : nullptr;
+			}
+			const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(a_walk.id);
+			return cell && cell->IsAttached() ? cell : nullptr;  // it may have gone since the look
+		}
+
+		void FinishRound()
+		{
+			// Workbenches seen in this round may be in reach of pieces found before them.
+			std::erase_if(waiting, [](std::uint32_t a_id) { return QueueScrap(a_id); });
+			if (walkRound.deleted > 0 || walkRound.benches > 0) {
+				REX::INFO("WorkshopSync: walked {} references: {} switched off, {} of them deleted; {} new workbenches; {} scraps to report, {} with no workbench in reach",
+					walkRound.refs, walkRound.disabled, walkRound.deleted, walkRound.benches, toSend.size(), waiting.size());
+			}
+			walkRound = {};
+		}
+
+		// Walks up to WALK_PER_FRAME references. The cell's lock is held only to take its references: they
+		// are looked at after it's let go (each one held, so it can't go away meanwhile).
+		void WalkSome()
+		{
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> refs;
+			std::size_t                                   budget = WALK_PER_FRAME;
+			while (budget > 0 && !toWalk.empty()) {
+				const auto    walk = toWalk.front();
+				bool          done = true;
+				std::uint32_t space = 0;
+				refs.clear();
+				if (const auto cell = CellOf(walk)) {
+					space = walk.persistent ? walk.id : SpaceOf(cell);
+					const RE::BSAutoLock l{ cell->spinLock };
+					const std::size_t    size = cell->references.size();
+					const std::size_t    end = (std::min)(size, walkFrom + budget);
+					for (std::size_t i = walkFrom; i < end; ++i) {
+						refs.push_back(cell->references[static_cast<std::uint32_t>(i)]);
+					}
+					done = end >= size;
+					walkFrom = static_cast<std::uint32_t>(end);
+				}
+				budget -= (std::min)(budget, refs.size());
+				for (const auto& ref : refs) {
+					if (ref) {
+						Examine(ref.get(), space, walk.persistent);
+					}
+				}
+				if (done) {
+					toWalk.pop_front();
+					walkFrom = 0;
+					if (toWalk.empty()) {
+						FinishRound();
+					}
+				}
+			}
+		}
+
+		void SendSome(Clock::time_point a_now)
+		{
+			if (lastRefill != Clock::time_point{}) {
+				sendTokens = (std::min)(SAVED_SCRAPS_BURST, sendTokens + std::chrono::duration<double>(a_now - lastRefill).count() * SAVED_SCRAPS_PER_SECOND);
+			}
+			lastRefill = a_now;
+			while (sendTokens >= 1.0 && !toSend.empty()) {
+				const auto [refId, benchId] = toSend.front();
+				toSend.pop_front();
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(refId);
+				const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(benchId);
+				if (!ref || !bench) {
+					ForgetWorldScrap(refId);  // gone before its turn: found again when its cell attaches
+					continue;
+				}
+				ReportRef(ref, bench, Protocol::WorkshopOp::kScrapped);
+				++savedScraps;
+				sendTokens -= 1.0;
+			}
+		}
+
+		void FindSavedScraps(Clock::time_point a_now)
+		{
+			if (a_now >= nextCellLook) {
+				nextCellLook = a_now + CELL_LOOK_INTERVAL;
+				LookForNewCells();
+			}
+			WalkSome();
+			SendSome(a_now);
+		}
+
 		void Remove(Copy& a_copy)
 		{
 			if (const auto ref = a_copy.ref.get()) {
@@ -342,7 +659,7 @@ namespace WorkshopSync
 		REX::INFO("WorkshopSync: watching workshop placements");
 	}
 
-	void Frame()
+	void Frame(bool a_host)
 	{
 		const auto now = Clock::now();
 		std::erase_if(graveyard, [&](Copy& a_copy) {
@@ -357,6 +674,11 @@ namespace WorkshopSync
 			ref->SetDelete(true);
 			return true;
 		});
+		// The host's world is the session's: a friend's save may have scrapped other things, and those
+		// stay theirs.
+		if (a_host) {
+			FindSavedScraps(now);
+		}
 		if (pending.empty() || now < nextPendingTry) {
 			return;
 		}
@@ -408,13 +730,70 @@ namespace WorkshopSync
 			copyIds.clear();
 		}
 		pending.clear();
+		ClearWalk();
+		{
+			std::scoped_lock l{ sentScrapsLock };
+			sentScraps.clear();
+		}
 		std::scoped_lock l{ outLock };
 		outgoing.clear();
+	}
+
+	void OnGameLoaded()
+	{
+		ClearWalk();
 	}
 
 	std::string Describe()
 	{
 		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
-			worldScrapped, adopted, refused, pending.size());
+			       worldScrapped, adopted, refused, pending.size()) +
+		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, walkedRefs, seenDisabled, seenDeleted, benches.size(),
+				   waiting.size(), toSend.size());
+	}
+
+	std::string DescribeBenches(RE::TESObjectREFR* a_ref)
+	{
+		std::vector<RE::TESObjectREFR*> refs;
+		if (a_ref) {
+			refs.push_back(a_ref);
+		} else {
+			for (const auto& bench : benches) {
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(bench.id)) {
+					refs.push_back(ref);
+				}
+			}
+		}
+		std::string out = std::format("{} workbenches", refs.size());
+		for (const auto ref : refs) {
+			const auto  base = ref->GetObjectReference();
+			const auto& at = ref->data.location;
+			out += std::format("; {:08X} base={:08X} at {:.0f} {:.0f} {:.0f}", ref->GetFormID(), base ? base->GetFormID() : 0, at.x, at.y, at.z);
+			const auto data = ref->extraList ? ref->extraList->GetByType<RE::Workshop::ExtraData>() : nullptr;
+			if (!data) {
+				out += " (no workshop data)";
+				continue;
+			}
+			// What the list names isn't known yet (references, or base objects with a count): the first
+			// few entries, with what each turns out to be here.
+			const auto& items = data->deletedItems;
+			out += std::format(" deletedItems={}", items.size());
+			for (std::uint32_t i = 0; i < items.size() && i < 8; ++i) {
+				const auto info = items[i];
+				if (!info) {
+					continue;
+				}
+				const auto form = RE::TESForm::GetFormByID(info->formID);
+				const auto item = form ? form->As<RE::TESObjectREFR>() : nullptr;
+				std::string what = "not loaded";
+				if (item) {
+					what = std::format("reference disabled={} deleted={}", item->IsDisabled(), item->IsDeleted());
+				} else if (form) {
+					what = form->GetFormTypeString();
+				}
+				out += std::format(" [{:08X} x{} {}]", info->formID, info->count, what);
+			}
+		}
+		return out;
 	}
 }

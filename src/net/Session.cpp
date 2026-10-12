@@ -823,7 +823,7 @@ namespace Session
 		}
 		if (welcomed) {
 			MapShare::Frame();
-			WorkshopSync::Frame();
+			WorkshopSync::Frame(hostedServer && hostedServer->Running());
 		}
 		for (auto& packet : WorkshopSync::TakeOutgoing()) {
 			if (welcomed) {
@@ -871,6 +871,7 @@ namespace Session
 		Party::OnGameLoaded();
 		RemotePlayers::OnGameLoaded();
 		WorldClock::Rebaseline();
+		WorkshopSync::OnGameLoaded();
 		if (welcomed) {
 			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
