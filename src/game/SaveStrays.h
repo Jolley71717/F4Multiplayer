@@ -14,7 +14,7 @@ namespace SaveStrays
 		bool inCell = false;
 		bool hasBase = false;  // its base form still exists
 		bool deleted = false;
-		bool ours = false;     // a stand-in this run placed, or one placed as stand-ins are (see FromStandInBase)
+		bool ours = false;     // a stand-in this run placed, or one marked or placed as stand-ins are (see StandIn)
 	};
 
 	// In no cell, and deleted or without its base. Whether it is a stray or the game's own depends on whose it
@@ -40,13 +40,32 @@ namespace SaveStrays
 		return (a_id >> 24) == 0xFF;
 	}
 
-	// The base a created actor was placed from. A leveled actor's own base is a copy the game makes for
-	// it; what was placed is in its leveled data (0 when that names nothing).
+	// Every stand-in is put in the player's faction at this rank when it is placed (RemotePlayers::Spawn,
+	// every version since 0.4.0, with the console's addtofaction). On a base that is not unique (every
+	// stand-in's but a unique iPuppetBaseForm's) the engine keeps that change on the reference itself
+	// (ExtraFactionChanges, under change flag 0x80000000) and saves and loads it with the reference's other
+	// extra data, deleted or not. That is read from the game's code (1.11.240) and not yet seen in a game.
+	// So it marks a stand-in an earlier version saved without its friend's look having to be known.
+	inline constexpr std::uint32_t STAND_IN_FACTION = 0x0001C21C;  // PlayerFaction
+	inline constexpr int           STAND_IN_RANK = 1;
+
+	// Whether a faction change on a reference (the faction's form ID, the rank) is the stand-ins' one. One
+	// of the game's created actors that is deleted, in no cell and carries it is unlikely (a player's
+	// console addtofaction could give it one); it would lose only the record of an actor already gone.
+	constexpr bool StandInFaction(std::uint32_t a_faction, int a_rank)
+	{
+		return a_faction == STAND_IN_FACTION && a_rank == STAND_IN_RANK;
+	}
+
+	// What tells whose a created actor is. The base it was placed from: a leveled actor's own base is a
+	// copy the game makes for it; what was placed is in its leveled data (0 when that names nothing). And
+	// whether the reference carries the stand-ins' faction change (see StandInFaction).
 	struct Origin
 	{
 		std::uint32_t base = 0;
 		bool          leveled = false;
 		std::uint32_t leveledFrom = 0;
+		bool          standInFaction = false;
 	};
 
 	constexpr std::uint32_t PlacedFrom(const Origin& a_origin)
@@ -56,14 +75,23 @@ namespace SaveStrays
 
 	// Whether an actor not placed this run was placed as stand-ins are, by an earlier version or before
 	// a load: from a base stand-ins are placed from (a_standInBase says which: the default settlers, the
-	// ini's iPuppetBaseForm and iMyAppearance, the looks friends asked for), or from a base made at
-	// runtime (a face copy). The game makes runtime bases of its own for leveled actors; those count by
-	// what was placed (a leveled list or an NPC of the game's), so the game's leveled actors are not ours.
+	// ini's iPuppetBaseForm, the looks friends asked for this run), or from a base made at runtime (a face
+	// copy). The game makes runtime bases of its own for leveled actors; those count by what was placed (a
+	// leveled list or an NPC of the game's), so the game's leveled actors are not ours. A stand-in placed
+	// straight on a friend's look is known this way only once that friend has joined this run.
 	template <class F>
 	constexpr bool FromStandInBase(const Origin& a_origin, F&& a_standInBase)
 	{
 		const auto from = PlacedFrom(a_origin);
 		return from != 0 && (IsCreatedId(from) || a_standInBase(from));
+	}
+
+	// Whether an actor not placed this run is a stand-in all the same: it carries the stand-ins' faction
+	// change (which needs no friend to have joined), or it was placed from a stand-in base.
+	template <class F>
+	constexpr bool StandIn(const Origin& a_origin, F&& a_standInBase)
+	{
+		return a_origin.standInFaction || FromStandInBase(a_origin, a_standInBase);
 	}
 
 	// The stand-ins placed this game run, by form ID, with the base each was placed from. The game hands

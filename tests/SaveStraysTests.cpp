@@ -65,6 +65,31 @@ TEST("save strays: a leveled actor counts by what it was placed from, not its ow
 	CHECK(!SaveStrays::FromStandInBase({ .base = 0xFF002000, .leveled = true, .leveledFrom = 0 }, StandInBase));
 }
 
+TEST("save strays: the stand-ins' faction change is the player's faction at rank 1, as Spawn sets it")
+{
+	CHECK(SaveStrays::StandInFaction(0x0001C21C, 1));
+	CHECK(!SaveStrays::StandInFaction(0x0001C21C, 0));   // a script's AddToFaction
+	CHECK(!SaveStrays::StandInFaction(0x0001C21C, -1));  // taken out again
+	CHECK(!SaveStrays::StandInFaction(0x00023C01, 1));   // another faction
+	static_assert(SaveStrays::STAND_IN_FACTION == 0x0001C21C && SaveStrays::STAND_IN_RANK == 1);  // what every version set
+}
+
+TEST("save strays: one carrying the stand-ins' faction change is a stand-in before its friend's look is known")
+{
+	// Placed straight on a look no friend has asked for this run (0x0001A4D8): only the faction tells.
+	CHECK(!SaveStrays::FromStandInBase({ .base = 0x0001A4D8 }, StandInBase));
+	CHECK(SaveStrays::StandIn({ .base = 0x0001A4D8, .standInFaction = true }, StandInBase));
+	CHECK(!SaveStrays::StandIn({ .base = 0x0001A4D8 }, StandInBase));
+	// Either tells on its own.
+	CHECK(SaveStrays::StandIn({ .base = 0x0001A4D7 }, StandInBase));
+	CHECK(SaveStrays::StandIn({ .base = 0xFF002000, .leveled = true, .leveledFrom = 0x0002F3B8, .standInFaction = true }, StandInBase));
+	// So it is kept out of saves when deleted in no cell, and left alone otherwise.
+	const bool ours = SaveStrays::StandIn({ .base = 0x0001A4D8, .standInFaction = true }, StandInBase);
+	CHECK(SaveStrays::Stray({ .inCell = false, .hasBase = true, .deleted = true, .ours = ours }));
+	CHECK(!SaveStrays::Stray({ .inCell = false, .hasBase = true, .deleted = false, .ours = ours }));
+	CHECK(!SaveStrays::Stray({ .inCell = true, .hasBase = true, .deleted = true, .ours = ours }));
+}
+
 TEST("save strays: created ids are the FF ones")
 {
 	CHECK(SaveStrays::IsCreatedId(0xFF000001));

@@ -51,17 +51,37 @@ namespace SaveGuard
 			return removed;
 		}
 
-		// What an actor was placed from: a leveled one's own base is the game's copy, its leveled data
-		// names what was placed.
+		// Whether a reference carries the faction change every stand-in gets (see SaveStrays::STAND_IN_FACTION).
+		// The changes are the list's, so they are read under its lock.
+		bool InStandInFaction(const RE::ExtraDataList& a_list)
+		{
+			const RE::BSAutoReadLock l{ a_list.extraRWLock };
+			const auto changes = static_cast<const RE::ExtraFactionChanges*>(a_list.extraData.GetByType(RE::ExtraFactionChanges::TYPE));
+			if (!changes) {
+				return false;
+			}
+			for (const auto& change : changes->factionChanges) {
+				if (change.faction && SaveStrays::StandInFaction(change.faction->GetFormID(), change.rank)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// What an actor was placed from (a leveled one's own base is the game's copy, its leveled data names
+		// what was placed), and whether it carries the stand-ins' faction change.
 		SaveStrays::Origin OriginOf(std::uint32_t a_id, std::uint32_t a_base)
 		{
 			SaveStrays::Origin origin{ .base = a_base };
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-			const auto leveled = actor && actor->extraList ? actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
-			if (leveled) {
+			if (!actor || !actor->extraList) {
+				return origin;
+			}
+			if (const auto leveled = actor->extraList->GetByType<RE::ExtraLeveledCreature>()) {
 				origin.leveled = true;
 				origin.leveledFrom = leveled->originalBase ? leveled->originalBase->GetFormID() : 0;
 			}
+			origin.standInFaction = InStandInFaction(*actor->extraList);
 			return origin;
 		}
 
@@ -108,7 +128,7 @@ namespace SaveGuard
 			// has a lock of its own.
 			Search search{ .gone = static_cast<std::uint32_t>(gone.size()) };
 			for (auto& [id, base, seen] : gone) {
-				seen.ours = seen.hasBase && (placed.Ours(id, base) || SaveStrays::FromStandInBase(OriginOf(id, base), RemotePlayers::IsStandInBase));
+				seen.ours = seen.hasBase && (placed.Ours(id, base) || SaveStrays::StandIn(OriginOf(id, base), RemotePlayers::IsStandInBase));
 				if (SaveStrays::Stray(seen)) {
 					search.strays.push_back(id);
 				}

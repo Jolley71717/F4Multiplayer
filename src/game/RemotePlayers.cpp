@@ -4,6 +4,7 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/SaveGuard.h"
+#include "game/SaveStrays.h"
 #include "game/Prediction.h"
 #include "game/StandInHold.h"
 
@@ -222,8 +223,6 @@ namespace RemotePlayers
 			}
 			return out;
 		}
-
-		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;
 
 		float LerpAngle(float a_from, float a_to, float a_t)
 		{
@@ -731,8 +730,9 @@ namespace RemotePlayers
 			Puppets::Register(actor);
 			SaveGuard::Track(actor);
 			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
-			// and hitting it isn't a crime.
-			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 1", actor->GetFormID(), PLAYER_FACTION).c_str());
+			// and hitting it isn't a crime. That faction and rank also tell SaveGuard a stand-in an
+			// earlier version saved, so they stay as every version since 0.4.0 set them.
+			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", actor->GetFormID(), SaveStrays::STAND_IN_FACTION, SaveStrays::STAND_IN_RANK).c_str());
 
 			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
 			return actor;
@@ -885,11 +885,11 @@ namespace RemotePlayers
 		if (!a_base) {
 			return false;
 		}
-		const auto& settings = Config::Get();
-		if (a_base == FEMALE_SETTLER || a_base == MALE_SETTLER || a_base == settings.puppetBaseForm) {
+		if (a_base == FEMALE_SETTLER || a_base == MALE_SETTLER || a_base == Config::Get().puppetBaseForm) {
 			return true;
 		}
-		if (a_base != settings.myAppearance && !looks.contains(a_base)) {
+		// The ini's iMyAppearance is not one: it is only sent to friends, never placed here.
+		if (!looks.contains(a_base)) {
 			return false;
 		}
 		// A look is used only when it is an NPC here and not a unique one (see Spawn).
