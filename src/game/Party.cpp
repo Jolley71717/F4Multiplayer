@@ -69,6 +69,12 @@ namespace Party
 		int                                                 slowAnswers = 0;
 		Clock::time_point                                   nextPingWarning{};
 
+		// The frame our player wears (its base, and itself when every game has it), from the furniture occupied when
+		// the armor went on (see SampleStatus). Forgotten on a load: the loaded save may have our player in another
+		// frame, and the old one was sent for as long as the armor stayed on.
+		std::uint32_t frameInUse = 0;
+		std::uint32_t frameRefInUse = 0;
+
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
 		Clock::time_point    killWindowEnd{};
@@ -197,14 +203,12 @@ namespace Party
 			// The reference goes too when every game has it (a frame placed in the world by a plugin, such as the
 			// museum's suit in Concord): the others hide their own copy of it while we wear ours, else they saw
 			// two suits. One made in this game (0xFF......) is another reference, or none, in theirs.
-			static std::uint32_t frameInUse = 0;
-			static std::uint32_t frameRefInUse = 0;
 			if (status.powerArmor) {
 				if (frameInUse == 0) {
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 					const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
 					const auto base = frame ? frame->GetObjectReference() : nullptr;
-					if (base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN) {
+					if (Equipment::IsPowerArmorFrame(base)) {
 						frameInUse = base->GetFormID();
 						frameRefInUse = Protocol::IsShareableRef(frame->GetFormID()) ? frame->GetFormID() : 0;
 					}
@@ -693,6 +697,8 @@ namespace Party
 		unclaimedXp = 0.0f;
 		heldXp = 0.0f;
 		killWindowEnd = {};
+		frameInUse = 0;
+		frameRefInUse = 0;
 	}
 
 	void Reset()

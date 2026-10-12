@@ -225,15 +225,24 @@ else skips this: the player is never in those places.
   Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
   armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
   such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
-  itself. The receiver places a copy of the base for the stand-in to climb into (`RemotePlayers.cpp`,
-  `ArmorClimb.h`): the copy stays drawn, solid and where it was placed until the engine has the
-  stand-in in it, and only then is hidden, made non-solid and kept under the stand-in; it is drawn
-  again once the engine has the stand-in out, solid once the stand-in is 70 units clear, and deleted
-  4 s later. Climb time is game time (menus don't count), at most 15 s, 6 s if the engine shows no
-  sign of it; a climb that fails deletes the copy and the next try gets a fresh one. The receiver's
-  own copy of a shared frame reference is hidden (not drawn, no collision; the reference itself is
-  never moved, used or deleted) while the friend wears theirs, unless it is the receiver's own suit
-  or someone there is in it, and shown again once the friend is out and clear of it.
+  itself. The receiver places a copy of the base (only a power armor frame: furniture with the
+  engine's power armor furniture keyword) for the stand-in to climb into (`RemotePlayers.cpp`,
+  `ArmorClimb.h`): as soon as its 3D is in, the copy is put on the stand-in's spot and heading (or
+  placed again if it is in another place or over 256 units off) and the stand-in is sent in; the
+  copy stays drawn, solid and where it is until the engine has the stand-in in it, and only then
+  is hidden, made non-solid and kept under the stand-in; it is drawn again once the engine has the
+  stand-in out, solid once the stand-in is 70 units clear, and deleted 4 s later. Climb time is game
+  time (menus don't count), at most 15 s, 6 s if the engine shows no sign of it (none counted from
+  the furniture state the stand-in had when sent); a climb called off, cut short or failed first
+  takes the stand-in out of the furniture states (`Actor::StopInteractingQuick`, as the engine
+  calls off a climb into power armor), and one that fails deletes the copy and the next try gets a
+  fresh one. The receiver's own copy of a shared frame reference is hidden (not drawn, no
+  collision; the reference itself is never moved, used or deleted) while the friend wears theirs,
+  only when it is a power armor frame of the base they sent, nobody there is in it, it is not the
+  receiver's own suit (worn or last left) and it stands within 200 units of where the friend was
+  as they got in; otherwise, or once it has been elsewhere or used in that wear, it stays shown
+  until they get in anew. It is shown again once the friend is out and clear of it (when several
+  friends wear their copies of it, once the last of them is).
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

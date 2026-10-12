@@ -28,6 +28,9 @@ namespace ArmorClimb
 	constexpr auto SETTLE_GRACE = std::chrono::seconds(8);
 	// The most one update counts toward a climb: a hitch or a load is not climbing time.
 	constexpr auto MAX_STEP = std::chrono::milliseconds(250);
+	// The engine's furniture state (SIT_SLEEP_STATE) of an actor done with furniture; 1-4 are getting in,
+	// sitting and getting out.
+	constexpr std::int32_t SIT_NORMAL = 0;
 
 	enum class Step
 	{
@@ -41,14 +44,15 @@ namespace ArmorClimb
 	// when its owner opened the Pip-Boy as it started.
 	struct Climb
 	{
-		bool                    in = true;   // into the frame (else out of it)
-		Duration                elapsed{};   // game time since it started
-		std::optional<Duration> reached;     // elapsed when the engine had the stand-in where it was going
-		bool                    begun = false;  // the engine has shown a sign of it
+		bool                    in = true;                // into the frame (else out of it)
+		std::int32_t            sitAtStart = SIT_NORMAL;  // the stand-in's furniture state when it was sent
+		Duration                elapsed{};                // game time since it started
+		std::optional<Duration> reached;                  // elapsed when the engine had the stand-in where it was going
+		bool                    begun = false;            // the engine has shown a sign of it
 		TimePoint               last{};
 
-		constexpr Climb(bool a_in, TimePoint a_now) :
-			in(a_in), last(a_now)
+		constexpr Climb(bool a_in, TimePoint a_now, std::int32_t a_sitAtStart) :
+			in(a_in), sitAtStart(a_sitAtStart), last(a_now)
 		{}
 
 		// Once per update, before Next.
@@ -61,22 +65,28 @@ namespace ArmorClimb
 			}
 		}
 
-		// a_engineIn: the engine has the stand-in in power armor. a_settled: it is done with the frame as
-		// furniture (its sitting state is back to normal).
-		constexpr Step Next(bool a_engineIn, bool a_settled)
+		// a_engineIn: the engine has the stand-in in power armor. a_sit: its furniture state now (SIT_NORMAL
+		// once it is done with the frame as furniture).
+		// Begun once the engine has it where it was going, or has moved its furniture state on from the one it
+		// had when it was sent: a state left over from an earlier climb (one called off half way) is no sign of
+		// this one, and counting it gave a climb the engine never started the whole LIMIT instead of START_LIMIT.
+		constexpr Step Next(bool a_engineIn, std::int32_t a_sit)
 		{
 			const bool there = a_engineIn == in;
-			begun = begun || there || !a_settled;
+			const bool settled = a_sit == SIT_NORMAL;
+			begun = begun || there || a_sit != sitAtStart;
 			if (!there) {
 				reached.reset();
 			} else if (!reached) {
 				reached = elapsed;
 			}
-			if (there && (a_settled || elapsed - *reached >= SETTLE_GRACE)) {
+			if (there && (settled || elapsed - *reached >= SETTLE_GRACE)) {
 				return Step::kDone;
 			}
 			return elapsed >= LIMIT || (!begun && elapsed >= START_LIMIT) ? Step::kCutShort : Step::kWait;
 		}
+		// The furniture state itself, not whether it is settled: a bool would pass for a state.
+		Step Next(bool, bool) = delete;
 	};
 
 	// A friend in a frame every game has (one placed in the world by a plugin, such as the museum's suit in
@@ -86,14 +96,28 @@ namespace ArmorClimb
 	// used, moved or deleted: it is a reference of our own world, its pieces and scripts belong to our own
 	// game and save, and a stand-in in it would take its pieces with it each time it is deleted (before
 	// every save).
+	// Only when ours is the same suit in the same place: a frame by that ID that our player wears or left
+	// last, that someone here is in, or that stands anywhere but where they got into theirs is a suit of our
+	// own world they never touched, and hiding it took it from under our player (or out of sight for the
+	// whole wear, somewhere else).
+	// How near where they got in ours must stand, in game units. An actor is lined up on a frame's spot
+	// before it is in, so a friend in a pre-placed suit stands within a few units of where that suit stood;
+	// their status names the frame as they begin to climb in, possibly before they are lined up, from as far
+	// as a player activates something (fActivatePickLength, 180 by default in 1.11.240). A suit moved by
+	// anything a player would notice stands further off.
+	constexpr float ORIGINAL_RADIUS = 200.0f;
+
 	struct OriginalFacts
 	{
-		bool          found = false;     // a reference of that ID exists here and is not deleted or disabled
-		bool          created = false;   // ours is one made in this game (0xFF......): not the one they mean
-		std::uint32_t base = 0;          // its base form
-		bool          loaded = false;    // its 3D is in
-		bool          ours = false;      // our player is in it or last left it: our own suit, not theirs
-		bool          inUse = false;     // another actor of ours is in it
+		bool                 found = false;    // a reference of that ID exists here and is not deleted or disabled
+		bool                 created = false;  // ours is one made in this game (0xFF......): not the one they mean
+		std::uint32_t        base = 0;         // its base form
+		bool                 frame = false;    // its base is furniture the engine takes as a power armor frame
+		bool                 loaded = false;   // its 3D is in
+		bool                 ours = false;     // our player is in it or last left it: our own suit, not theirs
+		bool                 inUse = false;    // another actor of ours is in it
+		bool                 moved = false;    // earlier in this wear it was not where they got in (or moved, or was used)
+		std::optional<float> fromSpot;         // how far it stands from where they got in; none when that is another place
 	};
 
 	enum class Original
@@ -104,6 +128,8 @@ namespace ArmorClimb
 		kNotLoaded,  // not loaded yet: looked at again later
 		kOurs,       // our player's own suit
 		kInUse,      // someone here is in it
+		kNotFrame,   // not a power armor frame
+		kElsewhere,  // not where they got in: left alone for the rest of this wear
 	};
 
 	constexpr Original ChooseOriginal(std::uint32_t a_ref, std::uint32_t a_frameBase, const OriginalFacts& a_facts)
@@ -114,12 +140,24 @@ namespace ArmorClimb
 		if (!a_facts.found || a_facts.created || a_facts.base != a_frameBase) {
 			return Original::kMissing;
 		}
+		if (!a_facts.frame) {
+			return Original::kNotFrame;
+		}
 		if (a_facts.ours) {
 			return Original::kOurs;
 		}
 		if (a_facts.inUse) {
 			return Original::kInUse;
 		}
-		return a_facts.loaded ? Original::kHide : Original::kNotLoaded;
+		if (a_facts.moved) {
+			return Original::kElsewhere;
+		}
+		if (!a_facts.loaded) {
+			return Original::kNotLoaded;
+		}
+		if (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS)) {
+			return Original::kElsewhere;
+		}
+		return Original::kHide;
 	}
 }
