@@ -1,7 +1,8 @@
 // Fix-ups tried on an NPC a friend's game runs, when its owner's states say it is needed: switching on a copy that is
 // off here, bringing one in from a cell we have not loaded (NpcSync::SwitchOn, BringIn). Each is a console command,
 // and the states come many times a second; one that never takes used to be tried forever. The tests play the owner
-// against a real server and feed what it relays into the other games' budgets, as NpcSync does.
+// against a real server and feed what it relays into the other games' budgets through RetryBudget::Plan, the decision
+// NpcSync::ApplyStates makes for each state; what the copy looks like in the game (RetryBudget::Copy) is modelled.
 
 #include "ServerFixture.h"
 
@@ -20,8 +21,6 @@ namespace
 	constexpr std::uint32_t MOLE_RAT = 0x0001F201;
 	constexpr std::uint32_t MOLE_RAT2 = 0x0001F202;
 	constexpr std::uint32_t WORLD = 0x0000003C;
-	constexpr auto          SWITCH_ON_RETRY = 5s;  // NpcSync's switchOns
-	constexpr auto          BRING_IN_RETRY = 10s;  // and bringIns
 
 	void Sync(Fixture& a_f, PeerId a_peer)
 	{
@@ -67,43 +66,50 @@ namespace
 		}
 	}
 
-	// One NPC as a game that copies it holds it: off (or out of reach) until a fix-up takes. A stuck one (a quest
-	// keeps it off in this game, a cell it can't be moved from) never takes.
-	struct Copy
+	// One NPC as a game that copies it holds it (what NpcSync::CopyFor reads from the game). A stuck one never takes a
+	// fix-up: a quest keeps it off in this game, or it is in a cell it can't be moved from.
+	struct Held
 	{
-		bool needsFixing = true;
-		bool stuck = false;
+		RetryBudget::Copy copy;
+		bool              stuck = false;
 	};
 
-	// One game copying the owner's NPCs: what NpcSync::SwitchOn and BringIn do with each relayed state.
+	// Off here.
+	Held Off(bool a_stuck) { return { .copy = { .exists = true, .off = true }, .stuck = a_stuck }; }
+	// On, in a cell we have not loaded, while the owner's copy stands near us.
+	Held Away(bool a_stuck) { return { .copy = { .exists = true, .movable = true }, .stuck = a_stuck }; }
+	// On and here, where the owner's copy is.
+	Held Here() { return { .copy = { .exists = true, .here = true } }; }
+
+	// One game copying the owner's NPCs: RetryBudget::Plan for each relayed state, as NpcSync::ApplyStates does, and
+	// the fix-ups it says to run (SwitchOn, BringIn), which take unless the copy is stuck.
 	struct Game
 	{
-		RetryBudget::Budget                     budget;
-		std::unordered_map<std::uint32_t, Copy> copies;
+		RetryBudget::Budget                     switchOns{ 5s };  // as NpcSync's
+		RetryBudget::Budget                     bringIns{ 10s };
+		std::unordered_map<std::uint32_t, Held> npcs;
 		std::uint32_t                           commands = 0;  // fix-ups run
 		std::uint32_t                           logLines = 0;
 
-		explicit Game(Clock::duration a_interval) :
-			budget(a_interval)
-		{}
-
 		void Apply(const Protocol::ActorState& a_state, Clock::time_point a_now)
 		{
-			auto& copy = copies[a_state.refId];
-			if (!copy.needsFixing) {
-				budget.Forget(a_state.refId);  // it is on (or here): a later need starts afresh
+			auto&      held = npcs[a_state.refId];
+			const auto fixes = RetryBudget::Plan(switchOns, bringIns, a_state.refId, held.copy, a_now);
+			for (const auto verdict : { fixes.switchOn, fixes.bringIn }) {
+				if (RetryBudget::Go(verdict)) {
+					++commands;
+					logLines += verdict == Verdict::kFirst || verdict == Verdict::kLast ? 1 : 0;
+				}
+			}
+			if (held.stuck) {
 				return;
 			}
-			const auto verdict = budget.Ask(a_state.refId, a_now);
-			if (!RetryBudget::Go(verdict)) {
-				return;
+			if (RetryBudget::Go(fixes.switchOn)) {
+				held.copy.off = false;
 			}
-			++commands;
-			if (verdict == Verdict::kFirst || verdict == Verdict::kLast) {
-				++logLines;
-			}
-			if (!copy.stuck) {
-				copy.needsFixing = false;
+			if (RetryBudget::Go(fixes.bringIn)) {
+				held.copy.here = true;
+				held.copy.movable = false;
 			}
 		}
 
@@ -133,12 +139,12 @@ TEST("npc retries: a mole rat a quest keeps off in our game is switched on three
 	const auto states = Relayed(f, 2);
 	CHECK(states.size() == 90);
 
-	Game bob{ SWITCH_ON_RETRY };
-	bob.copies[MOLE_RAT].stuck = true;
+	Game bob;
+	bob.npcs[MOLE_RAT] = Off(true);
 	bob.ApplyAll(states, Clock::now(), 1s);
 	CHECK(bob.commands == RetryBudget::TRIES);
 	CHECK(bob.logLines == 2);  // the first try and the last, not one a try
-	CHECK(bob.budget.GaveUp() == 1);
+	CHECK(bob.switchOns.GaveUp() == 1);
 }
 
 TEST("npc retries: a burst of states switches a copy on once, not once a state")
@@ -152,8 +158,8 @@ TEST("npc retries: a burst of states switches a copy on once, not once a state")
 	REQUIRE(states.size() == 40);
 
 	// Two seconds of states at 20 a second: inside one retry interval.
-	Game bob{ SWITCH_ON_RETRY };
-	bob.copies[MOLE_RAT].stuck = true;
+	Game bob;
+	bob.npcs[MOLE_RAT] = Off(true);
 	bob.ApplyAll(states, Clock::now(), 50ms);
 	CHECK(bob.commands == 1);
 }
@@ -166,14 +172,15 @@ TEST("npc retries: a copy that comes on with the first try is left alone, and an
 	Claim(f, 1, MOLE_RAT);
 
 	SendStates(f, 1, { MOLE_RAT }, 30);
-	Game       bob{ SWITCH_ON_RETRY };
+	Game       bob;
+	bob.npcs[MOLE_RAT] = Off(false);
 	const auto now = bob.ApplyAll(Relayed(f, 2), Clock::now(), 1s);
 	CHECK(bob.commands == 1);
-	CHECK(!bob.copies[MOLE_RAT].needsFixing);
+	CHECK(!bob.npcs[MOLE_RAT].copy.off);
 
 	// A script in Bob's game switches it off again for a later ambush, and this time it stays off: the try it used
 	// before doesn't count against it.
-	bob.copies[MOLE_RAT] = { .needsFixing = true, .stuck = true };
+	bob.npcs[MOLE_RAT] = Off(true);
 	SendStates(f, 1, { MOLE_RAT }, 30);
 	bob.ApplyAll(Relayed(f, 2), now + 1s, 1s);
 	CHECK(bob.commands == 1 + RetryBudget::TRIES);
@@ -190,7 +197,9 @@ TEST("npc retries: someone who doesn't run an NPC can't make the others switch i
 
 	// Bob sends states for Alice's mole rat and for one nobody runs: neither reaches Carol.
 	SendStates(f, 2, { MOLE_RAT, MOLE_RAT2 }, 10);
-	Game carol{ SWITCH_ON_RETRY };
+	Game carol;
+	carol.npcs[MOLE_RAT] = Off(false);
+	carol.npcs[MOLE_RAT2] = Away(false);
 	carol.ApplyAll(Relayed(f, 3), Clock::now(), 1s);
 	CHECK(carol.commands == 0);
 
@@ -209,20 +218,38 @@ TEST("npc retries: a friend's companion stuck where we can't move it is brought 
 	Claim(f, 1, MOLE_RAT, Protocol::ClaimReason::kCompanion);
 
 	SendStates(f, 1, { MOLE_RAT }, 60);
-	Game bob{ BRING_IN_RETRY };
-	bob.copies[MOLE_RAT].stuck = true;
+	Game bob;
+	bob.npcs[MOLE_RAT] = Away(true);
 	auto now = bob.ApplyAll(Relayed(f, 2), Clock::now(), 1s);
 	CHECK(bob.commands == RetryBudget::TRIES);
 
 	// Bob walks over: the cell loads and the companion is here after all. When it is away again it can be brought in.
-	bob.copies[MOLE_RAT].needsFixing = false;
+	bob.npcs[MOLE_RAT] = Here();
 	SendStates(f, 1, { MOLE_RAT });
 	now = bob.ApplyAll(Relayed(f, 2), now, 1s);
-	bob.copies[MOLE_RAT] = { .needsFixing = true, .stuck = false };
+	bob.npcs[MOLE_RAT] = Away(false);
 	SendStates(f, 1, { MOLE_RAT });
 	bob.ApplyAll(Relayed(f, 2), now, 1s);
 	CHECK(bob.commands == RetryBudget::TRIES + 1);
-	CHECK(!bob.copies[MOLE_RAT].needsFixing);
+	CHECK(bob.npcs[MOLE_RAT].copy.here);
+	CHECK(bob.bringIns.GaveUp() == 1);
+	CHECK(bob.switchOns.GaveUp() == 0);
+}
+
+TEST("npc retries: a copy that is dead here is never switched on, however long its owner's game runs it")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	Claim(f, 1, MOLE_RAT);
+	SendStates(f, 1, { MOLE_RAT }, 30);
+
+	// Bob killed his copy, and the corpse was switched off (a script cleaned it up): it stays as it is.
+	Game bob;
+	bob.npcs[MOLE_RAT] = { .copy = { .exists = true, .off = true, .unusable = true } };
+	bob.ApplyAll(Relayed(f, 2), Clock::now(), 1s);
+	CHECK(bob.commands == 0);
+	CHECK(bob.switchOns.GaveUp() == 0);
 }
 
 TEST("retry budget: three tries an interval apart, then nothing, until forgotten or cleared")

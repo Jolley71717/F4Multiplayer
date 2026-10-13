@@ -511,39 +511,53 @@ namespace NpcSync
 		// console's moveto, which handles the cell change; it is mirrored from there. Left where it was,
 		// UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
 		// Never moved: the player, our own companion (it follows us here), the dead, one in a scene here, and one fighting us.
-		void BringIn(const Protocol::ActorState& a_state, Clock::time_point a_now)
+		// One loaded in our world already is mirrored, or UpdateMirrors brings it over if it went far.
+		bool MayBringIn(RE::Actor* a_actor, const Protocol::ActorState& a_state)
 		{
-			if (a_state.cell != 0 || !Protocol::IsShareableRef(a_state.refId)) {
-				return;
+			if (a_state.cell != 0) {
+				return false;
 			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto cell = player ? player->GetParentCell() : nullptr;
 			if (!cell || cell->IsInterior() || !cell->worldSpace || cell->worldSpace->GetFormID() != a_state.worldspace) {
+				return false;
+			}
+			if (RE::NiPoint3{ a_state.x, a_state.y, a_state.z }.GetDistance(player->data.location) > BRING_IN_RANGE) {
+				return false;
+			}
+			return !a_actor->IsDeleted() && !a_actor->IsDisabled() && !a_actor->IsDead(false) && !a_actor->IsPlayerRef() && !IsOurCompanion(a_actor) &&
+			       !a_actor->GetCurrentScene() && a_actor->currentCombatTarget.get().get() != player;
+		}
+
+		// Our copy of the NPC as one of its owner's states finds it: what RetryBudget::Plan decides the fix-ups on.
+		RetryBudget::Copy CopyFor(const Protocol::ActorState& a_state)
+		{
+			RetryBudget::Copy copy;
+			const auto        actor = Protocol::IsShareableRef(a_state.refId) ? RE::TESForm::GetFormByID<RE::Actor>(a_state.refId) : nullptr;
+			if (!actor) {
+				return copy;
+			}
+			copy.exists = true;
+			copy.off = actor->IsDisabled();
+			copy.unusable = actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef();
+			copy.here = actor->Get3D() && SpaceOf(actor) == std::pair{ a_state.cell, a_state.worldspace };
+			copy.movable = !copy.here && MayBringIn(actor, a_state);
+			return copy;
+		}
+
+		// Moves our copy to where the owner's stands (RetryBudget::Plan said to).
+		void BringIn(const Protocol::ActorState& a_state, RetryBudget::Verdict a_verdict)
+		{
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
+			if (!actor) {
 				return;
 			}
 			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
-			if (at.GetDistance(player->data.location) > BRING_IN_RANGE) {
-				return;
-			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || actor->IsPlayerRef() || IsOurCompanion(actor) ||
-				actor->GetCurrentScene() || actor->currentCombatTarget.get().get() == player) {
-				return;
-			}
-			// Loaded in our world already: it is mirrored, or UpdateMirrors brings it over if it went far.
-			const auto ours = SpaceOf(actor);
-			if (actor->Get3D() && ours == std::pair{ 0u, a_state.worldspace }) {
-				bringIns.Forget(a_state.refId);  // it is here: a later move starts with fresh tries
-				return;
-			}
-			const auto verdict = bringIns.Ask(a_state.refId, a_now);
-			if (!RetryBudget::Go(verdict)) {
-				return;
-			}
+			const auto         ours = SpaceOf(actor);
 			++broughtIn;
-			if (verdict == RetryBudget::Verdict::kLast) {
+			if (a_verdict == RetryBudget::Verdict::kLast) {
 				REX::INFO("NpcSync: bringing {:08X} in for the last time; after {} tries it stays where it is here", a_state.refId, RetryBudget::TRIES);
-			} else if (verdict == RetryBudget::Verdict::kFirst) {
+			} else if (a_verdict == RetryBudget::Verdict::kFirst) {
 				REX::INFO("NpcSync: bringing {:08X} in to ({:.0f},{:.0f},{:.0f}) where its owner's copy is; ours was {} (cell {:08X} ws {:08X})", a_state.refId, at.x, at.y, at.z,
 					actor->Get3D() ? "loaded elsewhere" : "in an unloaded cell", ours.first, ours.second);
 			}
@@ -557,27 +571,13 @@ namespace NpcSync
 		// The owner's game switched the NPC on (a script enabled it: the mole rats that burrow up at Red
 		// Rocket, an ambush), ours is still off: it is switched on here too, through the console's enable
 		// like the kills, else the friend fights something we never see. It is mirrored once it loads.
-		void SwitchOn(const Protocol::ActorState& a_state, Clock::time_point a_now)
+		// RetryBudget::Plan said to (never the player, the dead or a deleted one).
+		void SwitchOn(const Protocol::ActorState& a_state, RetryBudget::Verdict a_verdict)
 		{
-			if (!Protocol::IsShareableRef(a_state.refId)) {
-				return;
-			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-			if (actor && !actor->IsDisabled()) {
-				switchOns.Forget(a_state.refId);  // on here: if a script switches it off again, it gets fresh tries
-				return;
-			}
-			if (!actor || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
-				return;
-			}
-			const auto verdict = switchOns.Ask(a_state.refId, a_now);
-			if (!RetryBudget::Go(verdict)) {
-				return;
-			}
 			++switchedOn;
-			if (verdict == RetryBudget::Verdict::kFirst) {
+			if (a_verdict == RetryBudget::Verdict::kFirst) {
 				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running", a_state.refId);
-			} else if (verdict == RetryBudget::Verdict::kLast) {
+			} else if (a_verdict == RetryBudget::Verdict::kLast) {
 				REX::INFO("NpcSync: switching {:08X} on for the last time; after {} tries it stays off here", a_state.refId, RetryBudget::TRIES);
 			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
@@ -693,19 +693,19 @@ namespace NpcSync
 			if (owner == 0 || owner == localId) {
 				continue;
 			}
+			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
+			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
+			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
+			const auto fixes = RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state), now);
+			if (RetryBudget::Go(fixes.switchOn)) {
+				SwitchOn(state, fixes.switchOn);
+			}
+			if (RetryBudget::Go(fixes.bringIn)) {
+				BringIn(state, fixes.bringIn);
+			}
 			const auto actor = LoadedActor(state.refId);
 			if (!actor) {
-				SwitchOn(state, now);
-				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
-			}
-			switchOns.Forget(state.refId);  // on and loaded: a later switch-off gets fresh tries
-			// Loaded here but not where the owner's copy is (ours waits in an interior its own quest left it
-			// in): brought over the same way, and mirrored once it is here. The snapshot is kept meanwhile.
-			if (std::pair{ state.cell, state.worldspace } != SpaceOf(actor)) {
-				BringIn(state, now);
-			} else {
-				bringIns.Forget(state.refId);  // here, where the owner's copy is
 			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;

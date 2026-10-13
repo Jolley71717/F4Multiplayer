@@ -76,4 +76,41 @@ namespace RetryBudget
 		std::unordered_map<std::uint32_t, Entry>    entries;
 		std::uint32_t                               gaveUp = 0;  // NPCs given their last try
 	};
+
+	// Our copy of a friend's NPC as one of its owner's states finds it (NpcSync::ApplyStates reads it from the game).
+	struct Copy
+	{
+		bool exists = false;    // the NPC is in our game (a shareable ref)
+		bool off = false;       // switched off here (disabled)
+		bool unusable = false;  // deleted, dead or the player: never switched on
+		bool here = false;      // loaded, in the cell or world the owner's copy is in
+		bool movable = false;   // BringIn may move it: the owner's copy is outdoors near us in our world, and ours is on,
+		                        // alive, not our companion, not in a scene here and not fighting us
+	};
+
+	// What to do about one of the owner's states.
+	struct Fixes
+	{
+		Verdict switchOn = Verdict::kWait;
+		Verdict bringIn = Verdict::kWait;
+	};
+
+	// The fix-ups one of the owner's states calls for, asked of each budget. One that took (the copy is on, or here)
+	// is forgotten, so a later need (a script switches it off again, the companion is left behind again) starts
+	// with fresh tries; one with nothing to do (a copy that can't be switched on or moved) leaves its budget as it is.
+	inline Fixes Plan(Budget& a_switchOns, Budget& a_bringIns, std::uint32_t a_id, const Copy& a_copy, Clock::time_point a_now)
+	{
+		Fixes fixes;
+		if (a_copy.exists && !a_copy.off) {
+			a_switchOns.Forget(a_id);
+		} else if (a_copy.exists && !a_copy.unusable) {
+			fixes.switchOn = a_switchOns.Ask(a_id, a_now);
+		}
+		if (a_copy.here) {
+			a_bringIns.Forget(a_id);
+		} else if (a_copy.movable) {
+			fixes.bringIn = a_bringIns.Ask(a_id, a_now);
+		}
+		return fixes;
+	}
 }
