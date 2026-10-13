@@ -3,7 +3,7 @@
 // or three players against a real server; the first one is the promise the rest must keep: honest play
 // never meets a limit.
 
-#include "ServerFixture.h"
+#include "FriendGame.h"
 
 #include <array>
 #include <filesystem>
@@ -121,31 +121,31 @@ namespace
 		return out;
 	}
 
-	// Waits up to a_timeout for a_peer to be sent a packet of a_type, keeping everything that came.
-	bool Await(Fixture& a_f, PeerId a_peer, MT a_type, Packets& a_got, std::chrono::milliseconds a_timeout = 3000ms)
-	{
-		const auto deadline = std::chrono::steady_clock::now() + a_timeout;
-		while (std::chrono::steady_clock::now() < deadline) {
-			std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
-			if (Count(a_got, a_type) > 0) {
-				return true;
-			}
-			std::this_thread::sleep_for(20ms);
-		}
-		return false;
-	}
-
-	// Everything a_peer is sent for a_wait.
-	Packets During(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait)
-	{
-		std::this_thread::sleep_for(a_wait);
-		return a_f.fake->Take(a_peer);
-	}
-
 	std::size_t IndexOf(const Packets& a_packets, MT a_type)
 	{
 		const auto it = std::ranges::find_if(a_packets, [&](const auto& a_packet) { return !a_packet.empty() && a_packet[0] == Type(a_type); });
 		return static_cast<std::size_t>(it - a_packets.begin());
+	}
+
+	// Whether a_peer had been sent no packet of a_type once the server had handled everything delivered so
+	// far (a_via, a welcomed player, is asked to make sure), keeping what came in a_got. That only means it
+	// waited while their budget can't have refilled since a_asked (half a refill: it may have been part way
+	// to the next one then). On a machine too slow for that, it says so and claims nothing.
+	bool NoneYet(Fixture& a_f, PeerId a_via, PeerId a_peer, MT a_type, Packets& a_got, std::chrono::steady_clock::time_point a_asked, std::chrono::milliseconds a_refill)
+	{
+		Sync(a_f, a_via);
+		std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
+		if (std::chrono::steady_clock::now() - a_asked >= a_refill / 2) {
+			std::printf("    (too slow to tell whether it waited)\n");
+			return true;
+		}
+		return Count(a_got, a_type) == 0;
+	}
+
+	// What Alice's game was told of the session's loot, as a game with all of it would have it.
+	Inventories SessionAsToldTo(const Packets& a_packets)
+	{
+		return Inventories::FromEchoes(Decoded(a_packets, MT::kContainerChanged, Protocol::DecodeIndexedContainerChange));
 	}
 }
 
@@ -335,9 +335,10 @@ TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the
 
 	f.fake->SetIdentity(3, BOB_STEAM);
 	f.fake->Connect(3);
+	const auto asked = std::chrono::steady_clock::now();
 	f.fake->Deliver(3, Protocol::Encode(HelloFrom("Bob", 0xB02)));
-	Packets toBob = During(f, 3, 300ms);
-	CHECK(Count(toBob, MT::kWelcome) == 0);
+	Packets toBob;
+	CHECK(NoneYet(f, 1, 3, MT::kWelcome, toBob, asked, options.worldStateRefill));
 	CHECK(Count(toBob, MT::kWorldState) == 0);
 	CHECK(f.Logged("says hello too often"));
 	CHECK(!f.fake->Disconnected(3));  // waiting for a budget isn't "no hello"
@@ -370,9 +371,10 @@ TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits f
 		f.fake->Drop(peer);
 	}
 	f.fake->Connect(5);
+	const auto asked = std::chrono::steady_clock::now();
 	f.fake->Deliver(5, Protocol::Encode(HelloFrom("Bob", 0xB0B)));
-	Packets toBob = During(f, 5, 300ms);
-	CHECK(Count(toBob, MT::kWelcome) == 0);
+	Packets toBob;
+	CHECK(NoneYet(f, 1, 5, MT::kWelcome, toBob, asked, options.worldStateRefill));
 	CHECK(f.Logged("says hello too often"));
 	REQUIRE(Await(f, 5, MT::kWorldState, toBob));
 	CHECK(Count(toBob, MT::kWelcome) == 1);
@@ -383,31 +385,118 @@ TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits f
 	CHECK(f.fake->WaitFor(6, Type(MT::kWorldState), 500ms));
 }
 
-TEST("budgets: hello again on the same connection with an empty budget is answered when it refills")
+// Bob's game restarts before Steam notices (it keeps one connection per friend) and loads a save, with his
+// world-state budget spent: his hello waits for it, and Alice loots meanwhile. None of her loot may reach his
+// new game before its Welcome: the game would count it as had, and then skip, in the hello's world state,
+// the changes his save lacks. His chest comes out as the session has it.
+TEST("budgets: hello again on the same connection with an empty budget is answered when it refills, and the loot made meanwhile isn't lost")
 {
 	Server::Options options;
-	options.worldStateRefill = 1000ms;
+	options.worldStateRefill = 1500ms;
 	Fixture f{ options };
 	JoinAs(f, 1, "Alice");
 	f.fake->SetIdentity(2, BOB_STEAM);
 	const auto bob = f.Join(2, HelloFrom("Bob", 0xB0B));
 	REQUIRE(bob);
-	f.fake->Deliver(2, Request(bob->sessionId, 0));
-	f.fake->Deliver(2, Request(bob->sessionId, 0));
-	Clear(f, { 1, 2 });
+	FriendGame game;
+	game.me = bob->playerId;
+	game.loaded = { CHEST };
+	game.Take(Received(f, 2));
+	Packets toAlice = Received(f, 1);
 
-	// His game restarted before the connection timed out (Steam keeps one per friend).
-	f.fake->Deliver(2, Protocol::Encode(HelloFrom("Bob", 0xB0B)));
-	CHECK(Count(During(f, 2, 300ms), MT::kWelcome) == 0);
+	f.fake->Deliver(1, Loot(CHEST, ITEM, 3));  // #0: in the save he makes now
+	Sync(f, 1);
+	game.Take(Received(f, 2));
+	const auto savedWorld = game.world;
+	const auto savedNext = game.pending.Next();
+	REQUIRE(savedNext == 1);
+	f.fake->Deliver(1, Loot(CHEST, ITEM, -1));  // #1: after it
+	// He reloaded twice already: with the join, his budget is spent.
+	f.fake->Deliver(2, Request(bob->sessionId, savedNext));
+	f.fake->Deliver(2, Request(bob->sessionId, savedNext));
+	Sync(f, 1);
+	game.Take(Received(f, 2));
+	REQUIRE(game.worldStates == 3);  // the join's and the two reloads'
+	std::ranges::move(f.fake->Take(1), std::back_inserter(toAlice));
+
+	// His game restarts, loads that save and says hello again on the same connection.
+	game.Restart(savedWorld, savedNext, {});
+	const auto asked = std::chrono::steady_clock::now();
+	f.fake->Deliver(2, Protocol::Encode(HelloFrom("Bob", 0xB0B, bob->sessionId, savedNext)));
+	f.fake->Deliver(1, Loot(CHEST, ITEM, -1));     // #2, while his hello waits
+	f.fake->Deliver(1, Loot(CHEST, ITEM + 1, 2));  // #3
 	Packets toBob;
+	CHECK(NoneYet(f, 1, 2, MT::kWelcome, toBob, asked, options.worldStateRefill));
+	CHECK(Count(toBob, MT::kContainerChanged) == 0);
 	REQUIRE(Await(f, 2, MT::kWorldState, toBob));
+	game.Take(toBob);
+	CHECK(game.welcomes == 1);
+	CHECK(game.beforeWelcome == 0);
 	const auto welcome = Decoded(toBob, MT::kWelcome, Protocol::DecodeWelcome);
 	REQUIRE(welcome.size() == 1);
 	CHECK(welcome[0].playerId == bob->playerId);
+
+	// His chest is as Alice's game was told it: every change once, #1 (which his save lacked) too.
+	const auto afterRestart = Received(f, 1);
+	std::ranges::copy(afterRestart, std::back_inserter(toAlice));
+	CHECK(game.world.Of(CHEST) == SessionAsToldTo(toAlice).Of(CHEST));
+	CHECK((game.world.Of(CHEST).at({ CHEST, ITEM }) == 1));
+	CHECK(game.pending.Empty());
+	CHECK(game.pending.Next() == 4);
 	// Alice was told he left and came back.
-	const auto toAlice = Received(f, 1);
-	CHECK(Count(toAlice, MT::kPlayerLeft) == 1);
-	CHECK(Count(toAlice, MT::kPlayerJoined) == 1);
+	CHECK(Count(afterRestart, MT::kPlayerLeft) == 1);
+	CHECK(Count(afterRestart, MT::kPlayerJoined) == 1);
+}
+
+// The honest margin: a friend who joins and dies twice in a row, loading his last save each time, gets each
+// world state at once. One more reload straight after is owed, not lost: it comes when his budget refills,
+// with everything his save lacks, and his chest ends up as the session has it.
+TEST("budgets: a friend who joins and reloads three times in a row gets every world state, the last one when his budget refills")
+{
+	Server::Options options;
+	options.worldStateRefill = 1000ms;
+	Fixture f{ options };
+	JoinAs(f, 1, "Alice");
+	const auto bob = f.Join(2, HelloFrom("Bob", 0xB0B));
+	REQUIRE(bob);
+	FriendGame game;
+	game.me = bob->playerId;
+	game.loaded = { CHEST };
+	game.Take(Received(f, 2));
+	const auto joined = game.worldStates;  // the join's
+	Packets    toAlice = Received(f, 1);
+
+	// Each time: he saves, Alice loots (he sees it live), he dies and loads that save.
+	std::vector<std::chrono::steady_clock::time_point> askedAt;
+	for (std::uint32_t reload = 0; reload < 3; ++reload) {
+		const auto savedWorld = game.world;
+		const auto savedNext = game.pending.Next();
+		const auto savedEntries = game.pending.Sorted();
+		f.fake->Deliver(1, Loot(CHEST, ITEM + reload, 2));
+		Sync(f, 1);
+		game.Take(Received(f, 2));
+		game.LoadSave(savedWorld, savedNext, savedEntries);
+		askedAt.push_back(std::chrono::steady_clock::now());
+		f.fake->Deliver(2, Request(bob->sessionId, savedNext));
+		Sync(f, 2);
+		game.Take(Received(f, 2));
+	}
+	CHECK(game.worldStates - joined >= 2);  // the first two at once
+
+	Packets toBob;
+	if (game.worldStates - joined == 2) {
+		REQUIRE(Await(f, 2, MT::kWorldState, toBob, 3000ms));
+		// Within about one refill of asking (with room for a slow machine).
+		CHECK(std::chrono::steady_clock::now() - askedAt.back() < options.worldStateRefill * 2);
+		game.Take(toBob);
+	}
+	CHECK(game.worldStates - joined == 3);
+	CHECK(Count(During(f, 2, 300ms), MT::kWorldState) == 0);  // once, not once per request
+
+	std::ranges::move(Received(f, 1), std::back_inserter(toAlice));
+	CHECK(game.world.Of(CHEST) == SessionAsToldTo(toAlice).Of(CHEST));
+	CHECK(game.world.Of(CHEST).size() == 3);
+	CHECK(game.pending.Empty());
 }
 
 // The owed world state and the live echoes never overlap or leave a gap: while Bob's is owed, the

@@ -889,9 +889,12 @@ void Server::Run()
 		containerChanges.push_back({ index, a_player.id, *change });
 		noteFill(kContainers, containerChanges.size());
 		// Not to a player owed the world state: it carries this change, in order after the ones before it.
+		// Nor to one whose hello waits for their budget: their game restarted, and the hello's world state
+		// carries it. Their new game takes what comes before its Welcome too, and an echo would move its
+		// count of what it has past changes its save lacks.
 		const auto packet = Protocol::Encode(containerChanges.back());
 		for (const auto& [key, other] : players) {
-			if (other.welcomed && !other.worldStateOwed) {
+			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
 				send(key, packet, true);
 			}
 		}

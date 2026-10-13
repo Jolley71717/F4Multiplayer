@@ -91,32 +91,40 @@ TEST("server: hello again on the same connection welcomes them again")
 
 // Security review: a world state can be a megabyte, so a client asking for it over and over must
 // not be able to fill the host's outgoing queue. Hello again and kRequestWorldState share a budget.
-TEST("server: asking for the world state over and over gets only a few answers")
+// Every request is still answered in the end: the ones past the budget are owed, and all of them together get
+// one world state when it refills (a test refill of a second, not ten). Hello again and again is the same:
+// the latest one is answered then, once.
+TEST("server: asking for the world state over and over gets only a few answers, and the rest one when the budget refills")
 {
-	Fixture f;
+	Server::Options options;
+	options.worldStateRefill = std::chrono::milliseconds(1000);
+	Fixture f{ options };
 	REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
-	// The join's own world state (free, not from the bucket) is sent right after the Welcome, on the
-	// server's thread: Take alone could run before it arrives and leave it to be counted below.
+	// The join's own world state (from the same budget) is sent right after the Welcome, on the server's
+	// thread: Take alone could run before it arrives and leave it to be counted below.
 	REQUIRE(f.fake->WaitFor(1, Type(MT::kWorldState)));
 	f.fake->Take(1);
 
 	for (int i = 0; i < 20; ++i) {
 		f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{}));
 	}
-	int answered = 0;
-	while (f.fake->WaitFor(1, Type(MT::kWorldState), std::chrono::milliseconds(answered ? 100 : 2000))) {
-		++answered;
-	}
-	CHECK(answered >= 1);
-	CHECK(answered <= 3);  // a bucket of three, refilled one every ten seconds
+	const auto atOnce = WorldStates(Received(f, 1)).size();
+	CHECK(atOnce >= 1);
+	CHECK(atOnce <= 3);
+	CHECK(f.Logged("'Alice' has asked for the world too often"));
+	// The rest: one, owed.
+	std::vector<std::vector<std::uint8_t>> later;
+	CHECK(Await(f, 1, MT::kWorldState, later, std::chrono::milliseconds(3000)));
+	CHECK(WorldStates(later).size() == 1);
+	CHECK(WorldStates(During(f, 1, std::chrono::milliseconds(300))).empty());
 
 	for (int i = 0; i < 20; ++i) {
 		f.fake->Deliver(1, Protocol::Encode(Fixture::MakeHello("Alice", 0xA11CE)));
 	}
-	int welcomed = 0;
-	while (f.fake->WaitFor(1, Type(MT::kWelcome), std::chrono::milliseconds(100))) {
-		++welcomed;
-	}
-	CHECK(welcomed <= 4);
+	std::vector<std::vector<std::uint8_t>> rejoined;
+	CHECK(Await(f, 1, MT::kWelcome, rejoined, std::chrono::milliseconds(3000)));
+	std::ranges::move(During(f, 1, std::chrono::milliseconds(300)), std::back_inserter(rejoined));
+	CHECK(Count(rejoined, MT::kWelcome) >= 1);
+	CHECK(Count(rejoined, MT::kWelcome) <= 2);  // not one per hello
 	CHECK(!f.fake->Disconnected(1));
 }

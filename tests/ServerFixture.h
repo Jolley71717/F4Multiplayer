@@ -10,8 +10,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <format>
 #include <iterator>
 #include <random>
+#include <string_view>
+#include <thread>
 #include <type_traits>
 
 namespace TestServer
@@ -143,5 +148,35 @@ namespace TestServer
 	inline std::vector<Protocol::WorldState> WorldStates(const std::vector<std::vector<std::uint8_t>>& a_packets)
 	{
 		return Decoded(a_packets, MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
+	}
+
+	// Waits up to a_timeout for a_peer to be sent a packet of a_type, keeping everything that came in a_got.
+	inline bool Await(Fixture& a_f, PeerId a_peer, MT a_type, std::vector<std::vector<std::uint8_t>>& a_got,
+		std::chrono::milliseconds a_timeout = std::chrono::milliseconds(3000))
+	{
+		const auto deadline = std::chrono::steady_clock::now() + a_timeout;
+		while (std::chrono::steady_clock::now() < deadline) {
+			std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
+			if (Count(a_got, a_type) > 0) {
+				return true;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		return false;
+	}
+
+	// Everything a_peer is sent for a_wait.
+	inline std::vector<std::vector<std::uint8_t>> During(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait)
+	{
+		std::this_thread::sleep_for(a_wait);
+		return a_f.fake->Take(a_peer);
+	}
+
+	// A file in the temp directory that no other test, nor another worktree's test run at the same time, picks.
+	inline std::filesystem::path TempPath(std::string_view a_prefix, std::string_view a_extension)
+	{
+		std::random_device random;
+		const auto         unique = (static_cast<std::uint64_t>(random()) << 32) | random();
+		return std::filesystem::temp_directory_path() / std::format("{}-{:016x}{}", a_prefix, unique, a_extension);
 	}
 }
