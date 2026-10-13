@@ -1,5 +1,6 @@
 #include "game/WorldSync.h"
 
+#include "MainThread.h"
 #include "game/ContainerLedger.h"
 #include "game/FoundDead.h"
 #include "game/LootScope.h"
@@ -667,6 +668,7 @@ namespace WorldSync
 		// Applies another player's container change.
 		Applied TryApplyContainer(const Protocol::ContainerChange& a_change)
 		{
+			MainThread::Assert("WorldSync::TryApplyContainer");
 			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return Applied::kNotLoaded;
 			}
@@ -876,6 +878,7 @@ namespace WorldSync
 		// Removes an item another player picked up. Returns false to try again later.
 		bool TryApplyPickup(std::uint32_t a_refId)
 		{
+			MainThread::Assert("WorldSync::TryApplyPickup");
 			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
@@ -1013,6 +1016,7 @@ namespace WorldSync
 
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
+		MainThread::Assert("WorldSync::ApplyWorldState");
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
@@ -1066,6 +1070,7 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
+		MainThread::Assert("WorldSync::ApplyContainerChange");
 		loot.Live(a_change, Clock::now(), ApplyInOrder);
 	}
 
@@ -1108,6 +1113,7 @@ namespace WorldSync
 
 	void Frame(bool a_hosting)
 	{
+		MainThread::Assert("WorldSync::Frame");
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::unordered_set<std::uint32_t> killedByUs;
@@ -1210,6 +1216,16 @@ namespace WorldSync
 		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
 	}
 
+	void FlushLoot()
+	{
+		std::vector<Move> moves;
+		{
+			std::scoped_lock l{ inboxLock };
+			moves.swap(lootInbox);
+		}
+		ReportMoves(moves);
+	}
+
 	std::uint32_t TakePlayerKills()
 	{
 		return playerKills.exchange(0);
@@ -1305,9 +1321,9 @@ namespace WorldSync
 		const auto  kept = [](LootScope::Scope a_scope) { return keptByScope[static_cast<std::size_t>(a_scope)]; };
 		const auto& numbers = loot.Numbers();
 		const auto& counts = numbers.Stats();
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} dupRisk={} foundDead={} ownStoryDead={} loadedActors={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} loadedActors={}",
 			dead.size(), pending.size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, pendingContainer.size(), pendingDropped, lootSent, kept(LootScope::Scope::kWeaponArmor), kept(LootScope::Scope::kVendor), barterMoves.load(),
 			kept(LootScope::Scope::kPerPlayer), kept(LootScope::Scope::kNotYetDead), kept(LootScope::Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			loot.OwnSkipped(), loot.DupRisk(), foundDead, ownStoryDead, loadedActors.size());
+			loot.OwnSkipped(), loot.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size());
 	}
 }

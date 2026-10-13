@@ -42,6 +42,10 @@ namespace WorldSync
 	// a_hosting: this game runs the session's server; its world is the session's (actors dead in it are dead for all).
 	void Frame(bool a_hosting);
 
+	// Before a save or a load: the player's item moves since the last frame are looked at now, while the
+	// world they were made in stands, and those that are the session's join what TakeOutgoing returns.
+	void FlushLoot();
+
 	// How many actors the player killed since the last call (any actor, shared or not).
 	[[nodiscard]] std::uint32_t TakePlayerKills();
 

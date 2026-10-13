@@ -29,6 +29,8 @@ namespace
 
 	// The thread the plugin was loaded on: the game's main thread (WinMain).
 	std::thread::id mainThread;
+	std::atomic<bool>          mainThreadChecked{ false };  // MainThread::Capture
+	std::atomic<std::uint32_t> offThreadCalls{ 0 };
 
 	// Which threads run the frame's game work (see FrameStats::TakeThreads): plain counters behind a lock.
 	struct FrameThreads
@@ -367,6 +369,7 @@ namespace
 			REX::ERROR("Frame: couldn't hook the game window; game work runs on the task threads");
 		} else {
 			REX::INFO("Frame: game work runs on the main thread");
+			MainThread::Capture();
 		}
 		return gameWindow.load() != nullptr;
 	}
@@ -397,6 +400,26 @@ namespace MainThread
 	{
 		std::scoped_lock l{ postedLock };
 		posted.push_back(std::move(a_fn));
+	}
+
+	void Capture()
+	{
+		mainThreadChecked = true;  // the thread itself was taken at plugin load
+	}
+
+	void Assert(std::string_view a_where)
+	{
+		if (!mainThreadChecked || OnMainThread()) {
+			return;
+		}
+		if (offThreadCalls++ == 0) {
+			REX::ERROR("MainThread: {} ran off the main thread", a_where);
+		}
+	}
+
+	std::uint32_t OffThread()
+	{
+		return offThreadCalls;
 	}
 }
 

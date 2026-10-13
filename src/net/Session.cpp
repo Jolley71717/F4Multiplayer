@@ -535,6 +535,17 @@ namespace Session
 				SwitchServer(address);
 			}
 		}
+
+		// Events from our world go to the server only while we're in a session, and not from the
+		// opening (see Story::InOpening).
+		void SendWorldEvents()
+		{
+			for (auto& packet : WorldSync::TakeOutgoing()) {
+				if (welcomed && !Story::InOpening()) {
+					client->Send(std::move(packet), true);
+				}
+			}
+		}
 	}
 
 	void Initialize()
@@ -787,13 +798,7 @@ namespace Session
 			}
 		}
 
-		// Events from our world go to the server only while we're in a session, and not from the
-		// opening (see Story::InOpening).
-		for (auto& packet : WorldSync::TakeOutgoing()) {
-			if (welcomed && !Story::InOpening()) {
-				client->Send(std::move(packet), true);
-			}
-		}
+		SendWorldEvents();
 		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
 
 		if (welcomed) {
@@ -858,6 +863,11 @@ namespace Session
 
 	void OnBeforeSaveOrLoad()
 	{
+		// The player's last moves, and what the last frame left to send, go out now, while their world
+		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
+		// request they are in its answer, numbered before it.
+		WorldSync::FlushLoot();
+		SendWorldEvents();
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		Downed::OnBeforeSave();
