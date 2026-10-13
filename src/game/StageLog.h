@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -81,6 +82,12 @@ namespace StageLog
 	// scripts do: MQ104's 210 starts MQ105, so a friend who only got MQ104's last stage never got MQ105,
 	// and its stages waited for it forever. Scripts don't run while the game is paused (a menu, a
 	// loading screen), so a paused poll moves the holds and timeouts on by the time that passed.
+	//
+	// A stage set here can take the player's controls away until a later stage gives them back (MQ206's
+	// 500 until its 1200, StageRules::LOCKS). While it does (Lock), its quests' stages go first and
+	// nothing of other quests holds them up, and if they do nothing for LOCK_TIMEOUT of play (nothing
+	// being set, no script of theirs running on, the game not paused) the lock is overdue: its release
+	// is to be set outright rather than leave the player unable to move.
 	class Queue
 	{
 	public:
@@ -88,6 +95,8 @@ namespace StageLog
 		static constexpr auto        MAX_HOLD = std::chrono::seconds(30);  // the longest wait in StageRules is 25 s
 		static constexpr std::size_t MAX_PER_POLL = 4;
 		static constexpr std::size_t MAX_WAITING = 16384;  // stages in all; more are refused
+		// MQ206's teleport between its 500 and 1200 takes about 10 s, its loading screen not counted.
+		static constexpr auto LOCK_TIMEOUT = std::chrono::seconds(90);
 
 		struct Stage
 		{
@@ -116,7 +125,7 @@ namespace StageLog
 		// stage) -> Clock::duration: how long its script may run on once it reads done. A ready quest's
 		// settled stages are dropped, and all of a quest that is gone. Returns the stages given up on:
 		// set, but not done TIMEOUT later. While the game is paused nothing is set, and the time since
-		// the last poll doesn't count against any hold or timeout.
+		// the last poll doesn't count against any hold or timeout, nor the lock's.
 		template <class Game>
 		std::vector<Stage> Poll(Clock::time_point a_now, Game& a_game, bool a_paused = false)
 		{
@@ -129,9 +138,9 @@ namespace StageLog
 				}
 				return {};
 			}
-			std::vector<Stage>                                    gaveUp;
-			std::vector<std::pair<std::uint64_t, std::uint32_t>> ready;  // (when its first stage came, quest)
-			std::uint64_t                                         blockedFrom = NONE;  // what came from here on waits
+			std::vector<Stage>                                                gaveUp;
+			std::vector<std::tuple<bool, std::uint64_t, std::uint32_t>>      ready;  // (not the lock's, when its first stage came, quest)
+			std::uint64_t                                                     blockedFrom = NONE;  // what came from here on waits
 			for (auto it = quests.begin(); it != quests.end();) {
 				const auto id = it->first;
 				auto&      entry = it->second;
@@ -167,15 +176,17 @@ namespace StageLog
 					continue;
 				}
 				if (state == Quest::kReady && !entry.setting && !holding && !entry.stages.empty()) {
-					ready.emplace_back(First(entry), id);
+					ready.emplace_back(!Locks(id), First(entry), id);
 				}
 				++it;
 			}
 
 			std::ranges::sort(ready);
 			std::size_t set = 0;
-			for (const auto& [from, id] : ready) {
-				if (from >= blockedFrom || set >= MAX_PER_POLL) {
+			for (const auto& [other, from, id] : ready) {
+				// The lock's quests come first, and nothing of another quest holds them up: the player can't
+				// move until its release is set (a combat hold of a quest that came before it, say).
+				if ((other && from >= blockedFrom) || set >= MAX_PER_POLL) {
 					break;
 				}
 				auto&      entry = quests.at(id);
@@ -204,8 +215,25 @@ namespace StageLog
 				}
 			}
 			std::erase_if(quests, [&](const auto& a_entry) { return a_entry.second.stages.empty() && a_now >= a_entry.second.holdUntil; });
+
+			// The lock's time runs only while nothing of its quests is being set or running on.
+			if (lock) {
+				const bool trying = std::ranges::any_of(quests, [&](const auto& a_entry) {
+					return Locks(a_entry.first) && (a_entry.second.setting || a_now < a_entry.second.holdUntil);
+				});
+				lock->idle = trying ? Clock::duration::zero() : lock->idle + sinceLast;
+			}
 			return gaveUp;
 		}
+
+		// A stage of a_quest set here took the player's controls away; a stage of a_release gives them
+		// back. Until Unlock.
+		void Lock(std::uint32_t a_quest, std::uint32_t a_release) { lock = LockState{ a_quest, a_release }; }
+
+		void Unlock() { lock.reset(); }
+
+		// The lock's quests have done nothing for LOCK_TIMEOUT of play: set its release outright.
+		[[nodiscard]] bool LockOverdue() const { return lock && lock->idle >= LOCK_TIMEOUT; }
 
 		// The stages waiting for a quest, ascending (the one being set included).
 		[[nodiscard]] Stages Waiting(std::uint32_t a_quest) const
@@ -244,6 +272,7 @@ namespace StageLog
 		{
 			quests.clear();
 			count = 0;
+			lock.reset();
 		}
 
 		// Drops every quest but these (the one whose stage took the player's controls, and the one
@@ -279,6 +308,15 @@ namespace StageLog
 			std::uint64_t                          holdFrom = 0;
 		};
 
+		struct LockState
+		{
+			std::uint32_t   quest = 0;
+			std::uint32_t   release = 0;
+			Clock::duration idle{};  // play since a stage of its quests was last being set or running on
+		};
+
+		[[nodiscard]] bool Locks(std::uint32_t a_quest) const { return lock && (a_quest == lock->quest || a_quest == lock->release); }
+
 		// A quest's place in the order: when the first of its waiting stages came.
 		static std::uint64_t First(const Entry& a_entry)
 		{
@@ -293,5 +331,6 @@ namespace StageLog
 		std::size_t                      count = 0;
 		std::uint64_t                    next = 0;
 		std::optional<Clock::time_point> lastPoll;
+		std::optional<LockState>         lock;
 	};
 }

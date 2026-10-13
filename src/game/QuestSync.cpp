@@ -71,10 +71,6 @@ namespace QuestSync
 		constexpr auto MAX_SCENE_HOLD = 30s;
 		// After a warning that a stage will move the player, more such stages go without another one.
 		constexpr auto WARNING_COVERS = 60s;
-		// A stage set here took the player's controls away, and the one that gives them back hasn't
-		// come this long after: it is set outright (MQ206's 1200 after its 500; the teleport between
-		// them takes 10 s, a loading screen included).
-		constexpr auto LOCK_TIMEOUT = 90s;
 		// Stage reports kept while not connected (the welcome still to come, a reconnect), at most.
 		constexpr std::size_t MAX_UNSENT = 1024;
 		// The quests caught up with are named in one notice, once none came for a moment (or every so often).
@@ -102,14 +98,13 @@ namespace QuestSync
 		};
 		std::unordered_map<std::uint64_t, Live>          liveAt;  // friends' stages that came live (quest << 16 | stage)
 		// A stage set here took the player's controls away (StageRules::LOCKS), and the stage that gives
-		// them back is still to come.
+		// them back is still to come. How long that has taken is the queue's (Queue::Lock).
 		struct Locked
 		{
-			std::uint32_t     quest;
-			std::uint16_t     stage;
-			std::uint32_t     releaseQuest;
-			std::uint16_t     releaseStage;
-			Clock::time_point since;
+			std::uint32_t quest;
+			std::uint16_t stage;
+			std::uint32_t releaseQuest;
+			std::uint16_t releaseStage;
 		};
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
@@ -387,7 +382,8 @@ namespace QuestSync
 			SetStageHere(quest, a_stage);
 			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live ? "" : " (catching up)");
 			if (lock) {
-				locked = Locked{ a_quest, a_stage, releaseId, lock->releaseStage, a_now };
+				locked = Locked{ a_quest, a_stage, releaseId, lock->releaseStage };
+				waiting.Lock(a_quest, releaseId);
 			}
 			if (waited.erase(a_quest) > 0) {
 				++caughtUp;
@@ -397,28 +393,36 @@ namespace QuestSync
 			return StageLog::Set::kSet;
 		}
 
-		// The player has their controls back once the lock's release stage is done. If it hasn't come
-		// LOCK_TIMEOUT after the lock (its stage was given up on, or never ran), it is set outright
-		// rather than leave the player unable to move.
-		void CheckLock(Clock::time_point a_now)
+		void Unlock()
+		{
+			locked.reset();
+			waiting.Unlock();
+		}
+
+		// The player has their controls back once the lock's release stage is done. If its quests have
+		// done nothing for Queue::LOCK_TIMEOUT of play (a stage given up on, or one that can't be set),
+		// the release is set outright rather than leave the player unable to move. Not while the teleport
+		// is still to be tried: the time a stage of theirs is being set or its script runs on doesn't
+		// count, nor time paused (a menu, alt-tab, a loading screen), when no script runs.
+		void CheckLock()
 		{
 			if (!locked) {
 				return;
 			}
 			const auto release = RE::TESForm::GetFormByID<RE::TESQuest>(locked->releaseQuest);
 			if (!release || QuestStageLayout::IsStageDone(release, locked->releaseStage)) {
-				locked.reset();
+				Unlock();
 				return;
 			}
-			if (a_now - locked->since < LOCK_TIMEOUT) {
+			if (!waiting.LockOverdue()) {
 				return;
 			}
-			REX::WARN("QuestSync: {:08X} stage {} took the player's controls {} s ago and {:08X} stage {} hasn't given them back; setting it",
-				locked->quest, locked->stage, std::chrono::duration_cast<std::chrono::seconds>(LOCK_TIMEOUT).count(), locked->releaseQuest, locked->releaseStage);
+			REX::WARN("QuestSync: {:08X} stage {} took the player's controls, and nothing has given them back in {} s of play; setting {:08X} stage {}",
+				locked->quest, locked->stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::LOCK_TIMEOUT).count(), locked->releaseQuest, locked->releaseStage);
 			SetStageHere(release, locked->releaseStage);
 			++released;
 			Hud::Notify("Your friends' story step didn't finish; you have your controls back");
-			locked.reset();
+			Unlock();
 		}
 
 		// The game as the queue sees it.
@@ -552,14 +556,17 @@ namespace QuestSync
 			combatHold = CombatHold(now);
 			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= LIVE_FOR; });
 			Game game{ now };
-			for (const auto& stage : waiting.Poll(now, game, Paused())) {
+			const bool paused = Paused();
+			for (const auto& stage : waiting.Poll(now, game, paused)) {
 				++gaveUp;
 				REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next", stage.quest, stage.stage,
 					std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
 			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			FlushCaughtUp(now);
-			CheckLock(now);
+			if (!paused) {
+				CheckLock();
+			}
 		}
 
 		if (!reportFrom) {
@@ -673,7 +680,7 @@ namespace QuestSync
 		warnedAt.reset();
 		sceneSince.reset();
 		lockWaitLogged.clear();
-		locked.reset();  // the save says whether the player has their controls
+		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
 		outgoing.clear();  // progress of the game before the load
 	}
 

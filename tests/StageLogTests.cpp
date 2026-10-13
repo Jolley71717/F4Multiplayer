@@ -5,6 +5,7 @@
 #include <functional>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -545,4 +546,142 @@ TEST("stage queue: a full queue refuses more, and clears")
 	queue.Clear();
 	CHECK(queue.Size() == 0);
 	CHECK(queue.Add(0x00FFFFFF, 1));
+}
+
+TEST("stage queue: a 90 s pause between a lock stage and the teleport doesn't give the player their controls back (MQ206 500, 1000)")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 400;
+	game.holds[{ MQ206, 500 }] = 1100ms;
+	game.holds[{ MQ206, 1000 }] = 5s;  // FireTeleporter, Wait(4), the door
+	StageLog::Queue queue;
+	queue.Add(MQ206, 500);
+	queue.Add(MQ206, 1000);
+	queue.Add(MQ206, 1050);
+	queue.Add(MQ206, 1200);
+
+	auto now = Start();
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
+	queue.Lock(MQ206, MQ206);  // as QuestSync does once it sets 500
+	game.Tick();
+	now += 500ms;
+	game.Poll(queue, now);  // 500 reads done; its script runs on for 1.1 s
+
+	// The player alt-tabs (the pause menu) before 1000 is set, for 90 s.
+	for (int i = 0; i < 181; ++i) {
+		now += 500ms;
+		game.Poll(queue, now, true);
+		CHECK(!queue.LockOverdue());
+	}
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
+
+	// Back in the game: 1000 is set, and the Pip-Boy is open for 90 s while its script waits.
+	bool pausedInTeleport = false;
+	for (int i = 0; i < 60 && queue.Size() > 0; ++i) {
+		now += 500ms;
+		game.Poll(queue, now);
+		CHECK(!queue.LockOverdue());
+		game.Tick();
+		if (!pausedInTeleport && game.quests[MQ206].done.contains(1000)) {
+			pausedInTeleport = true;
+			for (int j = 0; j < 181; ++j) {
+				now += 500ms;
+				game.Poll(queue, now, true);
+				CHECK(!queue.LockOverdue());
+			}
+		}
+	}
+	CHECK(pausedInTeleport);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 }, { MQ206, 1000 }, { MQ206, 1050 }, { MQ206, 1200 } }));
+	CHECK(queue.Size() == 0);
+	CHECK(!queue.LockOverdue());
+}
+
+TEST("stage queue: a lock whose quest does nothing for 90 s of play is overdue, time paused not counted")
+{
+	// 1000 is set but never reads done (given up on after 5 s), and nothing else of MQ206 comes.
+	FakeGame game;
+	game.quests[MQ206].current = 400;
+	game.quests[MQ206].missing = { 1000 };
+	game.holds[{ MQ206, 500 }] = 1100ms;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 500);
+	queue.Add(MQ206, 1000);
+
+	const auto start = Start();
+	auto       now = start;
+	game.Poll(queue, now);
+	queue.Lock(MQ206, MQ206);
+	std::optional<Clock::time_point> overdueAt;
+	std::size_t                      gaveUp = 0;
+	while (now < start + 200s && !overdueAt) {
+		game.Tick();
+		now += 500ms;
+		const bool paused = now > start + 40s && now <= start + 100s;  // the pause menu for 60 s
+		gaveUp += game.Poll(queue, now, paused).size();
+		if (queue.LockOverdue()) {
+			overdueAt = now;
+		}
+	}
+	CHECK(gaveUp == 1);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 }, { MQ206, 1000 } }));
+	// 1000 set at 2 s, given up on at 7 s; 90 s of play after that, plus the 60 s paused.
+	CHECK(overdueAt.has_value());
+	CHECK(*overdueAt >= start + 156s && *overdueAt <= start + 157s);
+	queue.Unlock();
+	CHECK(!queue.LockOverdue());
+}
+
+TEST("stage queue: a lock whose next stage can never be set is overdue 90 s of play after its own script ran")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 400;
+	game.holds[{ MQ206, 500 }] = 1100ms;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 500);
+	queue.Add(MQ206, 1000);
+
+	const auto start = Start();
+	auto       now = start;
+	game.Poll(queue, now);
+	queue.Lock(MQ206, MQ206);
+	game.Tick();
+	game.busy = true;  // something keeps MQ206 from taking its 1000
+	std::optional<Clock::time_point> overdueAt;
+	while (now < start + 200s && !overdueAt) {
+		now += 500ms;
+		game.Poll(queue, now);
+		if (queue.LockOverdue()) {
+			overdueAt = now;
+		}
+	}
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 1000 }));
+	// 500's script ran on until 1.6 s.
+	CHECK(overdueAt.has_value());
+	CHECK(*overdueAt >= start + 91s && *overdueAt <= start + 92s);
+	queue.Clear();
+	CHECK(!queue.LockOverdue());
+}
+
+TEST("stage queue: while the player's controls are taken, another quest's stage that waits doesn't hold up the lock's")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 500;
+	game.quests[SIDE];
+	game.verdicts[{ SIDE, 10 }] = StageLog::Set::kLater;  // a combat hold, say
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);  // came before them
+	queue.Add(MQ206, 1000);
+	queue.Add(MQ206, 1200);
+
+	auto now = Start();
+	game.Run(queue, now, 10);
+	CHECK(game.set.empty());  // in the order they came, without a lock
+
+	queue.Lock(MQ206, MQ206);
+	game.Run(queue, now, 10);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { MQ206, 1200 } }));
+	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10 }));
 }
