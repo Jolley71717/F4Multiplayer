@@ -122,6 +122,11 @@ namespace WorkshopApply
 			return true;
 		case Placeable::kStocked:
 			++a_counts.refused;
+			// A copy an older version placed is left in the save with nobody to remove it: it goes now
+			// (what the player kept in it comes to them first).
+			if (const auto existing = a_world.FindExisting(a_item)) {
+				a_world.Discard(*existing);
+			}
 			return true;
 		}
 		if (const auto existing = a_world.FindExisting(a_item)) {

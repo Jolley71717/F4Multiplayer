@@ -101,6 +101,7 @@ namespace
 		std::set<std::uint32_t>                            benches{ BENCH };  // workbenches in memory here (WorkshopSync::WhereOf)
 		std::map<std::uint32_t, WorkshopApply::Kind>       kinds{ { TURRET, WorkshopApply::Kind::kActor }, { CRATE, WorkshopApply::Kind::kContainer } };
 		int                                                inventory = 0;  // the player's items
+		std::set<std::uint32_t>                            stocked;  // container bases that come with things in them
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem> inbox;
 		WorkshopApply::Counts                              counts;
 		int                                                nextId = 1;
@@ -119,7 +120,7 @@ namespace
 		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item) const { return WhereOf(a_item); }
 		bool                 InReach(const Protocol::WorkshopItem& a_item) const { return std::hypot(a_item.position[0] - BENCH_X, a_item.position[1] - BENCH_Y) <= REACH; }
 		void                 Keep(Copy) {}
-		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem&) const { return WorkshopApply::Placeable::kYes; }
+		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const { return stocked.contains(a_item.base) ? WorkshopApply::Placeable::kStocked : WorkshopApply::Placeable::kYes; }
 		bool                     ScrapWorldRef(const Protocol::WorkshopItem&) const { return true; }
 
 		std::optional<WorkshopApply::Standing> StandingOf(Copy a_copy) const
@@ -829,6 +830,35 @@ TEST("workshop session: what you keep in a friend's container comes to you when 
 	bob.Leave();
 	CHECK(bob.world.empty());
 	CHECK(bob.inventory == 7);
+}
+
+TEST("workshop session: a friend's container that comes stocked is never copied for you, and one an older version left in your save is cleared away")
+{
+	constexpr std::uint32_t VENDOR = 0x0010C3D0;  // a container whose base holds things of its own
+	Fixture                 f;
+	const auto              alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.stocked.insert(VENDOR);
+	bob.kinds[VENDOR] = WorkshopApply::Kind::kContainer;
+	bob.Receive(Received(f, 2));
+
+	// A copy an older version made of Alice's vending machine stands in Bob's save, with what he put in it.
+	auto vendor = Wall(0xFF000001, 300.0f);
+	vendor.base = VENDOR;
+	bob.Load({ { 99, { VENDOR, WorkshopMove::Of(vendor), { 0, 0 }, 4 } } });
+	f.fake->Deliver(1, Report(vendor));
+	auto fresh = Wall(0xFF000002, 600.0f);  // and one she builds now
+	fresh.base = VENDOR;
+	f.fake->Deliver(1, Report(fresh));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	CHECK(bob.world.empty());
+	CHECK(!bob.copies.contains({ alice, vendor.refId }));
+	CHECK(bob.inventory == 4);  // what he had in the old copy came to him
+	CHECK(bob.counts.refused == 2);
 }
 
 TEST("workshop apply: only a container's contents are handed over when its copy goes, never an actor's")
