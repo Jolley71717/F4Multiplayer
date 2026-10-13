@@ -6,7 +6,8 @@
 
 // Which item moves between the player and a container (or an NPC) are the session's, and which stay in
 // the game they were made in. One rule for both ends: the sender reports only what is shared, and the
-// receiver applies only what is shared, so a report from an older build that sends more is still dropped.
+// receiver applies only what is shared, so what a joiner reports anyway (a build from before the rule,
+// or a changed one) stays out.
 // Kept free of the game so it can be tested; WorldSync reads the facts from the engine.
 //
 // Per player: keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, vendors and
