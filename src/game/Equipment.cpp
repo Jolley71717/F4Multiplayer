@@ -153,6 +153,33 @@ namespace Equipment
 		return static_cast<std::uint32_t>(equip.size());
 	}
 
+	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	{
+		if (!a_actor) {
+			return;
+		}
+		const auto id = a_actor->GetFormID();
+		const auto wearing = Read(a_actor);
+		for (const auto item : a_items) {
+			const auto form = RE::TESForm::GetFormByID(item);
+			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) || std::ranges::binary_search(wearing, item)) {
+				continue;
+			}
+			// Given only when missing: every gear report used to add another copy.
+			if (!Has(a_actor, item)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
+		}
+		// What it wears that they don't comes off, so the two look the same.
+		for (const auto worn : Read(a_actor)) {
+			if (!std::ranges::contains(a_items, worn)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, worn).c_str());
+			}
+		}
+		HoldThrowable(a_actor, a_items);
+	}
+
 	bool InPowerArmor(const RE::Actor* a_actor)
 	{
 		return a_actor && a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
@@ -195,8 +222,11 @@ namespace Equipment
 		}
 		const auto id = a_actor->GetFormID();
 		const auto pieceOrWeapon = [](const RE::TESForm* a_form) { return a_form && (a_form->Is(RE::ENUM_FORM_ID::kWEAP) || IsPowerArmorPiece(a_form)); };
+		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
+		// (StandInGear draws it again only when it changed).
+		const auto wearing = Read(a_actor);
 		for (const auto item : a_items) {
-			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
+			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item)) || std::ranges::binary_search(wearing, item)) {
 				continue;
 			}
 			if (!Has(a_actor, item)) {

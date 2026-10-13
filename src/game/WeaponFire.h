@@ -27,6 +27,8 @@ namespace WeaponFire
 
 	// Plays a firing animation on a stand-in or mirrored NPC (if its weapon is out), with the
 	// shooter's gun sound (their ShotSound; 0 = the one this game picked for the stand-in's gun).
+	// A gun that is put away is still heard, without the animation; a swing waits for the weapon to
+	// be out (AttackKind::ReplayShot).
 	void PlayShot(RE::Actor* a_actor, std::uint32_t a_sound);
 
 	// Replays a reload or aiming (a ShotAction other than a shot) on a stand-in or mirrored NPC.

@@ -17,6 +17,12 @@ namespace Equipment
 	// Returns how many equip commands it issued.
 	std::uint32_t Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
 
+	// Dresses a friend's stand-in (a puppet of this game, not an NPC of its world) over what it wears: gives it these
+	// items if it doesn't have them and equips those it doesn't wear yet, and takes off any other armor or weapon it
+	// wears; the rest of its inventory is left alone. What it has on already is left alone too: two console scripts
+	// fewer for each, and the gun in its hand is not equipped over again.
+	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+
 	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets
 	// into a frame and takes off as it gets out. (The engine's own PlayerInPowerArmor said false on a player
 	// visibly in a frame, 1.11.240.)
@@ -35,10 +41,10 @@ namespace Equipment
 	// Whether this item is a power armor piece (armor with the ArmorTypePower keyword), the frame item aside.
 	[[nodiscard]] bool IsPowerArmorPiece(const RE::TESForm* a_item);
 
-	// In power armor: gives the actor these pieces and weapons (if it doesn't have them) and equips them, and takes off
-	// the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing leaves its inventory:
-	// Apply empties it first, which would take the frame the engine put on it, and clothes put on would go under the armor
-	// at best or into the frame's slots.
+	// In power armor: gives the actor these pieces and weapons (if it doesn't have them) and equips those it doesn't wear
+	// yet, and takes off the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing
+	// leaves its inventory: Apply empties it first, which would take the frame the engine put on it, and clothes put on
+	// would go under the armor at best or into the frame's slots.
 	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
 
 	// The frame the engine has the actor in (ExtraPowerArmor's frame), or none.

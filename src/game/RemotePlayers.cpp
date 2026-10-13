@@ -6,7 +6,9 @@
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/Prediction.h"
+#include "game/StandInGear.h"
 #include "game/StandInHold.h"
+#include "game/StandInRange.h"
 
 #include "game/Face.h"
 #include "Config.h"
@@ -35,14 +37,6 @@ namespace RemotePlayers
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
 
-		// Exterior puppets further than this are outside the loaded area and are despawned.
-		constexpr float MAX_EXTERIOR_DISTANCE = 9000.0f;
-
-		// The game sometimes puts the NPC's own outfit back on a stand-in (when its inventory is
-		// set up late, or its 3D reloads). What it wears is checked this often and put right.
-		constexpr auto EQUIPMENT_CHECK_INTERVAL = 3s;
-		constexpr int  MAX_EQUIPMENT_FIXES = 3;  // in a row without it sticking, then give up
-
 		struct Snapshot
 		{
 			Clock::time_point     received;
@@ -63,14 +57,10 @@ namespace RemotePlayers
 			std::string          name;
 			std::uint32_t        appearance = 0;
 			bool                 appearanceWarned = false;  // told the log once that their look is not one we place
-			std::vector<std::uint32_t> equipment;
 			std::optional<Protocol::Face> face;
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
-			bool                 hasEquipment = false;
-			bool                 equipmentApplied = false;
-			Clock::time_point    equipmentCheckAt{};
-			int                  equipmentFixes = 0;
+			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			std::deque<Snapshot> snapshots;
 			Prediction::ArrivalClock arrivals;     // even stamps for states read in bursts
 			float                delay = 0.07f;  // seconds behind now it is rendered
@@ -87,7 +77,7 @@ namespace RemotePlayers
 			bool                 lightOn = false;  // their Pip-Boy light
 			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
 			Clock::time_point    lightPlacedAt{};
-			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
+			StandInRange::Track  range;  // the current stand-in: when it was placed and whether it was drawn (see StandInRange::Frame)
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
 			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
@@ -100,7 +90,6 @@ namespace RemotePlayers
 			Clock::time_point    switchTriedAt{};
 			Clock::time_point    switchedAt{};           // when the switch-in took for this stand-in
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
-			ArmorFrames::Dress   dress = ArmorFrames::Dress::kClothes;  // how the stand-in was dressed last update
 			bool                 switchGaveUp = false;   // logged
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
@@ -227,8 +216,12 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
+		std::uint32_t   spawns = 0;          // stand-ins placed
+		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
+		std::uint32_t                         gearChanges = 0;  // reported changes put on over what a stand-in wore
+		std::uint32_t                         redraws = 0;      // stand-ins that put their gun away and drew it again for their gear
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
 		// this is more than a few percent.
@@ -290,7 +283,7 @@ namespace RemotePlayers
 		// pieces and weapons.
 		std::vector<std::uint32_t> Outfit(const RemotePlayer& a_player, ArmorFrames::Dress a_dress)
 		{
-			return Kept(a_player.equipment, a_dress);
+			return Kept(a_player.gear.items, a_dress);
 		}
 
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
@@ -303,6 +296,13 @@ namespace RemotePlayers
 				}
 			}
 			return out;
+		}
+
+		// A weapon held in the hand: not a grenade or mine (see Throwable), nor one this game does not have.
+		bool HandWeapon(std::uint32_t a_item)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			return form && form->Is(RE::ENUM_FORM_ID::kWEAP) && !Throwable(a_item);
 		}
 
 		float LerpAngle(float a_from, float a_to, float a_t)
@@ -1101,7 +1101,7 @@ namespace RemotePlayers
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
 				Puppets::SetTarget(actor, { .position = actor->data.location, .heading = actor->data.angle.z });
-				Bury({ .actor = a_player.actor, .spawnedAt = a_player.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
+				Bury({ .actor = a_player.actor, .spawnedAt = a_player.range.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
 			} else if (a_player.registered) {
 				Puppets::Unregister(a_player.registered, a_player.registeredId);  // gone already
 			}
@@ -1133,6 +1133,54 @@ namespace RemotePlayers
 				return a_state.cell == a_localCell->GetFormID();
 			}
 			return a_state.cell == 0 && a_localCell->worldSpace && a_state.worldspace == a_localCell->worldSpace->GetFormID();
+		}
+
+		// The game's uGridsToLoad (see StandInRange), read once the game has read its ini.
+		int GridsToLoad()
+		{
+			static std::optional<int> grids;
+			if (!grids) {
+				const auto setting = RE::GetINISetting("uGridsToLoad:General");
+				const auto type = setting ? setting->GetType() : RE::Setting::SETTING_TYPE::kNone;
+				grids = type == RE::Setting::SETTING_TYPE::kUInt ? static_cast<int>(setting->GetUInt()) :
+				        type == RE::Setting::SETTING_TYPE::kInt  ? setting->GetInt() :
+				                                                   StandInRange::DEFAULT_GRIDS;
+				const bool read = type == RE::Setting::SETTING_TYPE::kUInt || type == RE::Setting::SETTING_TYPE::kInt;
+				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, read ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
+			}
+			return *grids;
+		}
+
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kNotLoaded) == std::to_underlying(StandInRange::CellState::kNotLoaded));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kUnloading) == std::to_underlying(StandInRange::CellState::kUnloading));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoadingData) == std::to_underlying(StandInRange::CellState::kLoadingData));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoading) == std::to_underlying(StandInRange::CellState::kLoading));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoaded) == std::to_underlying(StandInRange::CellState::kLoaded));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kDetaching) == std::to_underlying(StandInRange::CellState::kDetaching));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttachQueued) == std::to_underlying(StandInRange::CellState::kAttachQueued));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttaching) == std::to_underlying(StandInRange::CellState::kAttaching));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttached) == std::to_underlying(StandInRange::CellState::kAttached));
+
+		// A friend's stand-in as StandInRange looks at it: its cell, as the engine has it, and whether its 3D is in.
+		std::optional<StandInRange::StandIn> StandInOf(RE::Actor* a_actor, const RE::TESObjectCELL* a_localCell)
+		{
+			if (!a_actor) {
+				return std::nullopt;
+			}
+			StandInRange::StandIn standIn;
+			const auto cell = a_actor->GetParentCell();
+			standIn.inOurCell = cell == a_localCell;
+			standIn.inCell = cell != nullptr;
+			if (cell) {
+				standIn.interior = cell->IsInterior();
+				standIn.state = static_cast<StandInRange::CellState>(std::to_underlying(cell->cellState));
+				if (const auto coords = cell->IsExterior() ? cell->GetCoordinates() : nullptr) {
+					standIn.x = coords->cellX;
+					standIn.y = coords->cellY;
+				}
+			}
+			standIn.has3D = a_actor->Get3D() != nullptr;
+			return standIn;
 		}
 
 		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
@@ -1281,10 +1329,8 @@ namespace RemotePlayers
 		if (it == players.end()) {
 			return;
 		}
-		it->second.equipment = std::move(a_items);
-		it->second.hasEquipment = true;
-		it->second.equipmentApplied = false;
-		it->second.equipmentFixes = 0;
+		// What they have on already changes nothing; a change is put on over what the stand-in wears (see Update).
+		StandInGear::Report(it->second.gear, std::move(a_items));
 	}
 
 	std::vector<Info> List()
@@ -1335,8 +1381,8 @@ namespace RemotePlayers
 		const auto actor = GetActor(player);
 		// The grenade the stand-in shows and throws is the one the owner holds; the last replayed
 		// throw spent the one it had.
-		if (a_action == Protocol::ShotAction::kThrow && player.hasEquipment) {
-			Equipment::HoldThrowable(actor, player.equipment);
+		if (a_action == Protocol::ShotAction::kThrow && player.gear.has) {
+			Equipment::HoldThrowable(actor, player.gear.items);
 		}
 		WeaponFire::PlayAction(actor, a_action);
 	}
@@ -1504,8 +1550,8 @@ namespace RemotePlayers
 				player.wornAtWanted = false;
 			}
 			if (a_on != player.powerArmorOn) {
-				player.equipmentApplied = false;  // dressed again (see Outfit)
-				player.switchTries = 0;           // a new wear: the stand-in is tried afresh
+				StandInGear::Redress(player.gear);  // dressed again (see Outfit)
+				player.switchTries = 0;             // a new wear: the stand-in is tried afresh
 				player.switchGaveUp = false;
 			}
 			player.powerArmorOn = a_on;
@@ -1584,13 +1630,6 @@ namespace RemotePlayers
 			remote.delay += std::clamp(delayWanted - remote.delay, -DELAY_SLEW, DELAY_SLEW);
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
-			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
-			if (visible && localCell->IsExterior()) {
-				const auto& p = player->data.location;
-				const float dx = state->x - p.x;
-				const float dy = state->y - p.y;
-				visible = dx * dx + dy * dy < MAX_EXTERIOR_DISTANCE * MAX_EXTERIOR_DISTANCE;
-			}
 
 			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
 			UpdateOriginal(remote, now);
@@ -1604,24 +1643,35 @@ namespace RemotePlayers
 				DeleteActor(remote);
 				actor = nullptr;
 			}
-			if (!visible) {
+			// Whether they are drawn here, and whether a stand-in left in a cell that is not ours (we went through a door, or
+			// the engine stopped drawing its cell) stays: always replaced when we are inside, and outside when its cell is an
+			// interior or the engine no longer draws it (a neighbouring exterior cell is fine, and so is one still attaching).
+			// A stand-in used to stay when we stepped from an interior into the open: stuck in the unloaded interior, never
+			// moving, with its power armor frame placed at that stale spot.
+			StandInRange::Sight sight;
+			sight.sameSpace = state && localCell && !loading && SameSpace(*state, localCell);
+			if (sight.sameSpace) {
+				sight.weInside = localCell->IsInterior();
+				sight.x = state->x;
+				sight.y = state->y;
+				sight.ourX = player->data.location.x;
+				sight.ourY = player->data.location.y;
+				sight.gridsToLoad = GridsToLoad();
+				sight.standIn = StandInOf(actor, localCell);
+			}
+			const auto look = StandInRange::Frame(remote.range, sight, now);
+			if (!look.visible) {
 				if (actor) {
 					DeleteActor(remote);
 				}
 				continue;
 			}
 
-			// A puppet left behind in another cell (we went through a door) is replaced: always when we are
-			// inside, and outside when its cell is an interior or not attached (a neighbouring exterior cell is
-			// fine). It used to stay when we stepped from an interior into the open: stuck in the unloaded
-			// interior, never moving, with its power armor frame placed at that stale spot.
-			if (actor && actor->GetParentCell() != localCell) {
-				const auto puppetCell = actor->GetParentCell();
-				if (localCell->IsInterior() || !puppetCell || puppetCell->IsInterior() || !puppetCell->IsAttached()) {
-					++leftBehind;
-					DeleteActor(remote);
-					actor = nullptr;
-				}
+			if (actor && look.left != StandInRange::Left::kKeep) {
+				++leftBehind;
+				respawnWaits += look.left == StandInRange::Left::kReplaceLater;
+				DeleteActor(remote);
+				actor = nullptr;
 			}
 
 			// Out of their armor while the stand-in is still in its frame: it goes, and a fresh one is placed just below. So
@@ -1650,16 +1700,19 @@ namespace RemotePlayers
 				if (!remote.face && now - remote.knownAt < FACE_GRACE) {
 					continue;  // their face is on its way
 				}
+				if (!look.mayPlace) {
+					continue;  // the last one was never drawn where it stood
+				}
 				actor = Spawn(remote, *state, localCell);
 				if (!actor) {
 					continue;
 				}
-				remote.spawnedAt = now;
+				++spawns;
+				StandInRange::Placed(remote.range, now);
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
-				remote.equipmentApplied = false;
-				remote.equipmentFixes = 0;
+				StandInGear::Placed(remote.gear);
 				remote.shownName.clear();
 				remote.lastTarget.reset();
 				// Still in their armor (it was replaced through a door, after a load, with a new look, or for a skeleton that
@@ -1668,7 +1721,6 @@ namespace RemotePlayers
 				remote.switchTriedAt = {};
 				remote.switchedAt = {};
 				remote.armorSkeleton = nullptr;
-				remote.dress = ArmorFrames::Dress::kClothes;
 				remote.switchGaveUp = false;
 			}
 
@@ -1682,44 +1734,42 @@ namespace RemotePlayers
 				remote.shownName = std::move(label);
 			}
 
-			// Dressed as the engine has it (ArmorFrames::ChooseDress): Apply empties the inventory first, which in its frame
-			// would take the frame the engine put on it, so in a frame only the pieces and weapons are put right; what it wears
-			// besides them is not looked at there. In its frame but still on its own body (the rebuild the switch-in queued
-			// has not run), nothing is put on or looked at: the pieces would hang off the wrong skeleton. Dressed anew as the
-			// dress changes: the pieces go on the update the power armor skeleton is found.
+			// Dressed as the engine has it (ArmorFrames::ChooseDress; StandInGear::Dress says what goes on). Apply empties the
+			// inventory first, which in its frame would take the frame the engine put on it, so in a frame only the pieces and
+			// weapons are put on; what it wears besides them is not looked at there. In its frame but still on its own body
+			// (the rebuild the switch-in queued has not run), nothing is put on or looked at: the pieces would hang off the
+			// wrong skeleton. A change they reported while it is dressed is put on over what it wears (WearOnStandIn takes off what
+			// they no longer have on and leaves the rest), at most once a StandInGear::CHANGE_GAP; its gun is put away and
+			// drawn again only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent.
 			const bool inArmor = Equipment::InPowerArmor(actor);
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
-			if (dress != remote.dress) {
-				remote.dress = dress;
-				remote.equipmentApplied = false;
-			}
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
-			if (dress == ArmorFrames::Dress::kWait) {
-				// waiting for the power armor skeleton
-			} else if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
-				if (dress == ArmorFrames::Dress::kArmor) {
-					Equipment::WearInArmor(actor, Outfit(remote, dress));
-				} else {
-					Equipment::Apply(actor, Outfit(remote, dress));
-				}
+			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
+				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });
+			switch (dressing.put) {
+			case StandInGear::Put::kApply:
+				Equipment::Apply(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kWear:
+				Equipment::WearOnStandIn(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kWearInArmor:
+				Equipment::WearInArmor(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kNone:
+				break;
+			}
+			gearChanges += dressing.change;
+			if (dressing.redraw) {
 				Puppets::RedrawWeapon(actor);
-				remote.equipmentApplied = true;
-				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
-				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-				if (Wearable(shown()) == Wearable(Outfit(remote, dress))) {
-					remote.equipmentFixes = 0;
-				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
-					++remote.equipmentFixes;
-					++equipmentFixesTotal;
-					remote.equipmentApplied = false;  // applied again next frame
-					{
-						std::string worn, wanted;
-						for (const auto id : Wearable(shown())) worn += std::format("{:08X} ", id);
-						for (const auto id : Wearable(Outfit(remote, dress))) wanted += std::format("{:08X} ", id);
-						REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
-					}
-				}
+				++redraws;
+			}
+			if (dressing.refit) {
+				++equipmentFixesTotal;
+				std::string worn, wanted;
+				for (const auto item : Wearable(shown())) worn += std::format("{:08X} ", item);
+				for (const auto item : Wearable(Kept(remote.gear.worn, dress))) wanted += std::format("{:08X} ", item);
+				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{
@@ -1755,7 +1805,7 @@ namespace RemotePlayers
 				const auto frame = remote.frame.get();
 				const bool engaged = in && frame && Equipment::PowerArmorFrameOf(actor).get() == frame.get();
 				const auto root = frame ? frame->Get3D() : nullptr;
-				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.equipment),
+				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.gear.items),
 					!frame ? "none" : engaged ? "worn" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown");
 			}
 			// Their frame when every game has it, and whether ours is hidden while they wear theirs.
@@ -1776,10 +1826,14 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{} leftBehind={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, leftBehind, graveyard.size(), flushedBeforeSave);
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} respawnWaits={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, respawnWaits, graveyard.size(),
+				flushedBeforeSave);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
+		}
+		if (gearChanges || redraws) {
+			out += std::format(" gearChanges={} redraws={}", gearChanges, redraws);
 		}
 		if (const auto puppets = Puppets::Describe(); !puppets.empty()) {
 			out += " " + puppets;

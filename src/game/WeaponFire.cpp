@@ -328,6 +328,7 @@ namespace WeaponFire
 		}
 
 		std::uint32_t swung = 0;
+		std::uint32_t unseen = 0;  // shots heard from a stand-in whose gun was put away (no firing animation)
 
 		// ActionRightAttack in Fallout4.esm (the default object manager's lookup crashes the game).
 		constexpr std::uint32_t RIGHT_ATTACK = 0x00013005;
@@ -356,10 +357,16 @@ namespace WeaponFire
 	{
 		static const RE::BSFixedString attackStart{ "attackStart" };
 		++replayed;
-		if (!a_actor || a_actor->IsDead(false) || !a_actor->GetWeaponMagicDrawn() || !a_actor->Get3D()) {
+		if (!a_actor || a_actor->IsDead(false) || !a_actor->Get3D()) {
 			return;
 		}
-		if (!HoldsGun(a_actor)) {
+		// A gun put away (the stand-in draws it again after it is dressed) still sounds: only the firing animation
+		// needs it out (AttackKind::ReplayShot).
+		const auto replay = AttackKind::ReplayShot(HoldsGun(a_actor), a_actor->GetWeaponMagicDrawn());
+		if (replay == AttackKind::Replay::kNone) {
+			return;
+		}
+		if (replay == AttackKind::Replay::kSwing) {
 			// A swing or a punch. The melee graph refuses "attackStart", so the engine is asked for the
 			// attack itself, as an NPC's AI would: the stand-in swings (with the weapon's own sound)
 			// but hurts nobody, its damage multiplier being zero (Puppets).
@@ -372,7 +379,9 @@ namespace WeaponFire
 		}
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
-		if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
+		if (replay == AttackKind::Replay::kSoundOnly) {
+			++unseen;
+		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
@@ -453,7 +462,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={}", total.load(), played, replayed, swung, sounded, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius);
 	}
 
 	std::string LogAnimationEvents(bool a_start)

@@ -174,6 +174,7 @@ namespace
 		std::string                name;
 		std::uint32_t              appearance = 0;
 		std::vector<std::uint32_t> equipment;
+		bool                       equipmentReported = false;  // equipment is what they last reported (not just none yet)
 		std::optional<Protocol::Face> face;
 		bool                       faceDirty = false;  // the latest face hasn't gone to the others yet (Options::faceInterval)
 		bool                       welcomed = false;
@@ -1600,8 +1601,14 @@ void Server::Run()
 		if (!equipment) {
 			return;
 		}
+		// The same as they reported last: nothing to tell anyone (a game sending it over and over had everyone else
+		// dress its stand-in again each time). A newcomer is sent their last report as they join.
+		if (a_player.equipmentReported && a_player.equipment == equipment->items) {
+			return;
+		}
 		equipment->playerId = a_player.id;
 		a_player.equipment = equipment->items;
+		a_player.equipmentReported = true;
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment), true, a_player.key);
 	};
 
