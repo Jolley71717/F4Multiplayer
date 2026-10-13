@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (28), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 28 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), a layout to come (29), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 29 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -149,8 +149,9 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	std::memcpy(&version, bytes.data() + 4, sizeof(version));
 	CHECK(version == SessionFile::FORMAT);
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
-	// The protocol versions that wrote this same layout before the file had its own version.
-	for (std::uint16_t written = 23; written <= 27; ++written) {
+	// The protocol versions that wrote this same layout before the file had its own version (28: the shared-quest
+	// test builds, before rc3 gave the file its own).
+	for (std::uint16_t written = 23; written <= 28; ++written) {
 		auto old = bytes;
 		std::memcpy(old.data() + 4, &written, sizeof(written));
 		CHECK(SessionFile::Decode(old));

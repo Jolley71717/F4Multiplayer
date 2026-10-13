@@ -23,17 +23,19 @@ namespace SessionFile
 	inline constexpr std::uint32_t MAGIC = 0x53504D46;  // "FMPS"
 
 	// The file's own layout version, apart from the protocol's: a protocol change to a message the file
-	// doesn't hold (protocol 27 changed only the shot) must not throw away every host's saved session.
-	// Raise it when what Encode writes changes. Until the file had its own, its header carried the
-	// protocol version; the layout has not changed since the file came (protocol 23), and writing 26
-	// keeps it readable by 0.8.x (protocol 26) after a downgrade.
+	// doesn't hold (protocol 27 changed only the shot, 28 only the live quest stage, which now says who
+	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
+	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
+	// the layout has not changed since the file came (protocol 23), and writing 26 keeps it readable by
+	// 0.8.x (protocol 26) after a downgrade.
 	inline constexpr std::uint16_t FORMAT = 26;
 
 	// The header values that mean this layout: the protocol versions it was written under before it
-	// had its own, 23 to 27 (test builds of protocol 27 wrote 27). The next layout takes 28.
+	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
+	// protocol 28 wrote 28). The next layout takes 29.
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return a_format >= 23 && a_format <= 27;
+		return a_format >= 23 && a_format <= 28;
 	}
 
 	struct Snapshot

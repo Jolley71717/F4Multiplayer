@@ -1582,13 +1582,19 @@ void Server::Run()
 		if (!allowEvent(a_player)) {
 			return;
 		}
-		const auto stage = Protocol::DecodeQuestStage(a_data);
+		auto stage = Protocol::DecodeQuestStage(a_data);
 		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= maxWorldEntries ||
 			questStageKeys.contains(questKey(*stage)) || !withinShare(a_player, kQuestStages)) {
 			return;
 		}
+		// Kept without a reporter: a WorldState (and so the session file) carries none, and a stage caught
+		// up from the session moves nobody along with whoever did it.
+		stage->playerId = 0;
 		questStages.push_back(*stage);
 		questStageKeys.insert(questKey(*stage));
+		// Who did it, stamped whatever the sender said: a stage that moves the player is only followed by a
+		// friend standing with the one who did it.
+		stage->playerId = a_player.id;
 		++budgetOf(a_player).added[kQuestStages];
 		noteFill(kQuestStages, questStages.size());
 		touched();

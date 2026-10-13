@@ -89,6 +89,10 @@ namespace SteamApi
 			api.GetFriendCount = nullptr;  // the menu checks this one
 		}
 
+		Accessor userStats{};
+		const bool achievements = Resolve(module, "SteamAPI_SteamUserStats_v012", userStats) &&
+		                          Resolve(module, "SteamAPI_ISteamUserStats_GetAchievementAndUnlockTime", api.GetAchievementAndUnlockTime);
+
 		reportedMissing = true;
 		if (!ok) {
 			return nullptr;
@@ -103,6 +107,7 @@ namespace SteamApi
 		if (!api.user || !api.friends || !api.matchmaking || !api.messages || !api.utils) {
 			return nullptr;
 		}
+		api.userStats = achievements ? userStats() : nullptr;
 
 		loaded = &api;
 		return &api;

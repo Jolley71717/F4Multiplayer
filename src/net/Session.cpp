@@ -5,6 +5,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
+#include "game/Achievements.h"
 #include "game/CharacterBinding.h"
 #include "game/Compass.h"
 #include "game/Conversations.h"
@@ -318,7 +319,7 @@ namespace Session
 				break;
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
-					QuestSync::Apply(*msg);
+					QuestSync::Apply(*msg, true);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -536,7 +537,7 @@ namespace Session
 			WorkshopSync::Reset();
 			Conversations::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
-			QuestSync::Reset();
+			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
@@ -909,10 +910,9 @@ namespace Session
 			NpcSync::Frame();
 		}
 		QuestSync::Frame(welcomed);
-		for (auto& packet : QuestSync::TakeOutgoing()) {
-			if (welcomed) {
-				client->Send(std::move(packet), true);
-			}
+		Achievements::Frame();
+		for (auto& packet : QuestSync::TakeOutgoing(welcomed)) {
+			client->Send(std::move(packet), true);
 		}
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
 		// WorldSync found this frame (see above).
@@ -1005,6 +1005,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		Achievements::OnGameLoaded();
 		MapShare::Rebaseline();
 		Downed::OnGameLoaded();
 		Party::OnGameLoaded();
@@ -1049,7 +1050,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

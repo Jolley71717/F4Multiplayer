@@ -573,10 +573,11 @@ TEST("protocol: Revive, QuestDone, QuestStage round trip")
 		CHECK(q->quest == 0x0001ED86);
 	}
 	for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
-		const QuestStage in{ 0x0001ED86, 65535 };
+		const QuestStage in{ 0x0001ED86, 65535, 9 };
 		const auto       q = DecodeQuestStage(Encode(in, type));
 		REQUIRE(q);
 		CHECK(*q == in);
+		CHECK(q->playerId == 9);
 	}
 }
 

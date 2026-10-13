@@ -180,6 +180,11 @@ namespace SteamApi
 		// Asks Steam for a friend's rich presence; it arrives through FriendRichPresenceUpdate.
 		void (*RequestFriendRichPresence)(void*, SteamId) = nullptr;
 		bool (*GetFriendGamePlayed)(void*, SteamId, FriendGameInfo*) = nullptr;
+
+		// This player's achievements, for the log (optional: userStats is nullptr if this Steam library
+		// lacks them). The game asks Steam for them at startup; until they arrive, every call fails.
+		void* userStats = nullptr;
+		bool (*GetAchievementAndUnlockTime)(void*, const char*, bool*, std::uint32_t*) = nullptr;
 	};
 
 	constexpr int VOICE_OK = 0;

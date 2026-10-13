@@ -308,7 +308,7 @@ namespace Menu
 		// to its warning.
 		constexpr std::array<Toggle, 5> TOGGLES{ {
 			{ "Friendly fire", "players can hurt each other (host's setting, from the next session hosted)", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
-			{ "Shared story", "the main story and factions move along together (host's setting, from the next session hosted)", &Config::Settings::sharedStory, "sStory", "shared", "own" },
+			{ "Shared story", "anyone's main story and faction progress moves everyone along, achievements included, and goes into each save (host's setting, from the next session hosted)", &Config::Settings::sharedStory, "sStory", "shared", "own" },
 			{ "Voice chat", "hold the voice key to talk to friends", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
 			{ "Compass markers", "friends on the compass", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
 			{ "Fast loading", "vsync off during loading screens", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },

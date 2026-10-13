@@ -19,6 +19,7 @@
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
@@ -854,6 +855,27 @@ namespace DevCommands
 				}
 			}
 			return out;
+		}
+
+		// stages <questHex>: the quest's stages done in this game, and the ones from friends still
+		// waiting to be set here (read only).
+		std::string Stages(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: stages <questHex>";
+			}
+			const auto list = [](const std::vector<std::uint16_t>& a_stages) {
+				std::string out;
+				for (const auto stage : a_stages) {
+					out += std::format("{}{}", out.empty() ? "" : ",", stage);
+				}
+				return out.empty() ? std::string("none") : out;
+			};
+			const auto done = QuestStageLayout::Done(quest);
+			return std::format("stage={} flags={:04X} type={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
+				QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -2033,6 +2055,7 @@ namespace DevCommands
 			Entry{ "draw", Draw },
 			Entry{ "quests", Quests },
 			Entry{ "objectives", Objectives },
+			Entry{ "stages", Stages },
 			Entry{ "combat", Combat },
 			Entry{ "equipped", Equipped },
 			Entry{ "refresh3d", Refresh3D },

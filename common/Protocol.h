@@ -17,7 +17,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 27;
+	inline constexpr std::uint16_t VERSION = 28;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -566,10 +566,12 @@ namespace Protocol
 		std::uint32_t quest = 0;
 	};
 
+	// playerId is ignored client -> server (the server stamps who reported it), and not kept in a WorldState.
 	struct QuestStage
 	{
 		std::uint32_t quest = 0;
 		std::uint16_t stage = 0;
+		std::uint32_t playerId = 0;
 
 		bool operator==(const QuestStage&) const = default;
 	};
@@ -1944,6 +1946,7 @@ namespace Protocol
 		Writer w{ a_type };
 		w.U32(a_msg.quest);
 		w.U16(a_msg.stage);
+		w.U32(a_msg.playerId);
 		return w.Data();
 	}
 
@@ -1954,6 +1957,7 @@ namespace Protocol
 		QuestStage msg;
 		msg.quest = r.U32();
 		msg.stage = r.U16();
+		msg.playerId = r.U32();
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}

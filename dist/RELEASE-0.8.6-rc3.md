@@ -2,7 +2,7 @@
 
 A candidate for 0.8.6. Install a crash logger (Buffout 4 or Addictol) before trying it, and report with the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`, or `F4Multiplayer.1.log` if you restarted the game since) and the crash log. The plugin log names players as "player N" and leaves Steam ids and addresses out; crash logs and screenshots can still hold names.
 
-Protocol 27: everyone needs this build (0.8.5 and the earlier 0.8.6 rcs can't join).
+Protocol 28: everyone needs this build (0.8.5 and the earlier 0.8.6 rcs can't join).
 
 Coming from 0.8.5 or rc2:
 

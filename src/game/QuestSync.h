@@ -2,13 +2,20 @@
 
 #include "Protocol.h"
 
-// Quest progress: when a side quest (or, with a shared story, a story or faction quest) reaches a
-// new stage in one player's game, the others' games set the same stage once they have started that
-// quest too, and not in the middle of a conversation or scene, nor in the opening. Misc quests
-// (radiant, ambient) are not shared because their targets differ per game. Main thread only.
+// Quest progress: each stage a side quest (or, with a shared story, a story or faction quest) gets
+// done in one player's game is set in the others' games too, in the order it was done, once they have
+// started that quest, and not in the middle of a conversation or scene, nor in the opening. A stage
+// that would move the player away, take their caps or move their own story on is left out (see
+// StageRules). Misc quests (radiant, ambient) are not shared because their targets differ per game.
+// Main thread only.
 namespace QuestSync
 {
-	void Apply(const Protocol::QuestStage& a_stage);
+	// A stage from another player: live (they just did it), or from the session after joining or
+	// loading. Waits its turn; some aren't set at all (see StageRules).
+	void Apply(const Protocol::QuestStage& a_stage, bool a_live);
+
+	// The stages from other players still waiting for this quest, ascending.
+	[[nodiscard]] std::vector<std::uint16_t> Waiting(std::uint32_t a_quest);
 
 	// The player has started this quest: one of its objectives has been shown. (A quest can be
 	// running long before that: a new game already runs some side quests in the background.)
@@ -17,18 +24,21 @@ namespace QuestSync
 	// Another player completed a quest: tell the player who did it.
 	void ApplyDone(const Protocol::QuestDone& a_done);
 
-	// Looks for stage changes (twice a second) and, while a_welcomed, applies stages that couldn't be applied yet.
-	void Frame(bool a_welcomed);
+	// Looks for stages done here (twice a second) and, during a session, sets the next waiting stages
+	// from other players.
+	void Frame(bool a_inSession);
 
-	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
+	// The stage reports to send. While not connected (a_sending false) they are kept for when the
+	// connection is back: a stage is reported only once.
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
-	// Forget the known stages; the next Frame takes a fresh baseline (after loading a save, which
-	// can move quests back; the session's stages are then applied again).
+	// The session ended: the stages still waiting from it are dropped, not set in the player's own
+	// game, except those that give the player their controls back after a stage set here took them.
+	void OnSessionEnded();
+
+	// Forget the known stages and the waiting ones; the next Frame takes a fresh baseline (after
+	// loading a save, which can move quests back; the session's stages then arrive again).
 	void Rebaseline();
-
-	// Left the session: stages from it still waiting, and what other players moved lately, belong to it.
-	// A quest started later in solo play must not be caught up to the session's stage.
-	void Reset();
 
 	// When a stage change of a quest that gives XP (shared and misc quests) was last seen here.
 	[[nodiscard]] std::chrono::steady_clock::time_point LastStageChange();

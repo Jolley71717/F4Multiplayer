@@ -1,6 +1,6 @@
 ## 0.8.6
 
-Everyone needs 0.8.6 to play together: it uses protocol 27, so a friend on 0.8.5 or on the 0.8.6-rc1 or rc2 test builds gets "Version mismatch".
+Everyone needs 0.8.6 to play together: it uses protocol 28, so a friend on 0.8.5 or on the 0.8.6-rc1 or rc2 test builds gets "Version mismatch".
 
 Coming from 0.8.5:
 
