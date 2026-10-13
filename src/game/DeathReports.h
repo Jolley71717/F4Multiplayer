@@ -11,6 +11,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 // The deaths other players' games report, as our game takes them: each is judged against our copy once
 // it is loaded (WorldSync kills it, or leaves a character of our own story alive), and held until then.
@@ -104,6 +105,29 @@ namespace DeathReports
 		void Retry(Try&& a_try)
 		{
 			std::erase_if(held, [&](const auto& a_entry) { return a_try(a_entry.first, a_entry.second); });
+		}
+
+		// Tries the report held for a_ref again, if there is one (as a_ref loads). True when it was done with.
+		template <class Try>
+		bool RetryOne(std::uint32_t a_ref, Try&& a_try)
+		{
+			const auto it = held.find(a_ref);
+			if (it == held.end() || !a_try(it->first, it->second)) {
+				return false;
+			}
+			held.erase(it);
+			return true;
+		}
+
+		// Every reference a report is held for.
+		[[nodiscard]] std::vector<std::uint32_t> Refs() const
+		{
+			std::vector<std::uint32_t> refs;
+			refs.reserve(held.size());
+			for (const auto& [ref, report] : held) {
+				refs.push_back(ref);
+			}
+			return refs;
 		}
 
 	private:

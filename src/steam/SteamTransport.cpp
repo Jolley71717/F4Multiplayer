@@ -232,6 +232,12 @@ std::string SteamServerTransport::Describe(PeerId a_peer) const
 	return it != peers.end() ? "steam " + Redact::Alias(it->second.id) : "steam ?";
 }
 
+std::uint64_t SteamServerTransport::Identity(PeerId a_peer) const
+{
+	const auto it = peers.find(a_peer);
+	return it != peers.end() ? it->second.id : 0;
+}
+
 void SteamClient::Run(std::string a_address, std::uint16_t)
 {
 	const auto api = SteamApi::Loaded();

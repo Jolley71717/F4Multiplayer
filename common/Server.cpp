@@ -13,8 +13,10 @@
 #include <format>
 #include <map>
 #include <random>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace
 {
@@ -31,15 +33,15 @@ namespace
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
 	// World states a player may ask for: a bucket of three (a join, a reload and one more right after),
-	// refilled one every ten seconds. It used to be four a second, every second: a client asking without
-	// pause could have the host send its whole session, up to a couple of megabytes, four times a second.
+	// refilled one every Options::worldStateRefill (ten seconds). It used to be four a second, every second:
+	// a client asking without pause could have the host send its whole session, up to a couple of
+	// megabytes, four times a second. Past the bucket the world state is owed, not refused: it goes when
+	// the bucket refills.
 	constexpr double WORLD_STATE_BUCKET = 3.0;
-	constexpr auto   WORLD_STATE_REFILL = std::chrono::seconds(10);
 	// What a client is believed about. These bound what one player (or one player's broken game) can do
 	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
 	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
 	constexpr float MAX_HIT_DAMAGE_PER_SECOND = 1500.0f;     // per reporter, across all victims
-	constexpr auto  FACE_INTERVAL = std::chrono::seconds(5); // each face change makes a new base form in every game
 	constexpr auto  EXPLOSION_AFTER_THROW = std::chrono::seconds(10);  // explosions are reported only after a throw
 	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
 	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
@@ -56,6 +58,9 @@ namespace
 	constexpr std::size_t MAX_COMPANIONS_PER_PLAYER = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
+	// Budgets remembered per server run (see Budget). Past this, the one unused longest goes; never one
+	// a connection still uses.
+	constexpr std::size_t MAX_BUDGET_KEYS = 1024;
 	constexpr std::size_t MAX_WORKSHOP_ITEMS = 20000;  // built objects remembered for joiners (a big settlement is a few thousand)
 	constexpr std::size_t MAX_WORLD_SCRAPS = 20000;    // pieces of the world scrapped, remembered apart from what's built
 	// Shared XP: at most MAX_XP_SHARE per XP_REFILL_TIME, in at most XP_REPORT_BURST reports
@@ -86,8 +91,6 @@ namespace
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
 		float             hitDamage = 0.0f;
-		double            worldStateTokens = WORLD_STATE_BUCKET;
-		Clock::time_point worldStateRefill{};
 
 		void Roll(Clock::time_point a_now)
 		{
@@ -99,44 +102,94 @@ namespace
 		}
 	};
 
+	// The session's shared tables a player's game adds to; each player has a share of each.
+	enum Table : std::size_t
+	{
+		kDeaths,
+		kPickups,
+		kRefStates,
+		kQuestStages,
+		kContainers,
+		kWorkshop,
+		kTables
+	};
+	// For log lines: "the session's {} table", "{} sharing".
+	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object" };
+	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building" };
+
+	// Whose budget: the transport's own name for the peer (a Steam ID, which a client can't choose), else
+	// the identity their game says hello with, else the connection itself.
+	enum class BudgetKind : std::uint8_t
+	{
+		kTransport,
+		kHello,
+		kConnection
+	};
+	using BudgetKey = std::pair<BudgetKind, std::uint64_t>;
+
+	// What a joiner may still report (the host's own game has no budget). A burst, then a few a second.
+	struct RateBudget
+	{
+		TokenBucket explosions;
+		TokenBucket deaths;
+
+		RateBudget() :
+			RateBudget(1.0)
+		{}
+		explicit RateBudget(double a_share) :
+			explosions(a_share * EXPLOSION_BURST, a_share * EXPLOSIONS_PER_SECOND), deaths(a_share * DEATH_BURST, a_share * DEATHS_PER_SECOND)
+		{}
+	};
+
+	// What a player may still do, kept apart from the connection so that leaving and coming back
+	// (or saying hello again under a made-up identity) doesn't renew it. Kept for the server's run.
+	struct Budget
+	{
+		double            worldStateTokens = WORLD_STATE_BUCKET;
+		Clock::time_point worldStateRefill{};
+		float             xpBudget = Protocol::MAX_XP_SHARE;
+		float             xpReports = XP_REPORT_BURST;
+		Clock::time_point xpRefilled{};
+		Clock::time_point lastFace{};
+		Clock::time_point lastThrow{};  // explosions are believed only for a while after one
+		Clock::time_point lastLine{};
+		bool              floodLogged = false;
+		RateBudget        rates;  // explosions and deaths
+		bool              explosionsLogged = false;  // the explosion budget ran out, and the log said so
+		bool              deathsLogged = false;
+		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
+		std::array<bool, kTables>        shareLogged{};
+		int               connections = 0;  // connections using it (it isn't forgotten while any do)
+		Clock::time_point lastSeen{};
+	};
+
 	struct Player
 	{
 		ConnectionKey              key = 0;
 		std::uint32_t              id = 0;
+		BudgetKey                  budgetKey{};
 		Clock::time_point          connectedAt{};
 		std::string                name;
 		std::uint32_t              appearance = 0;
 		std::vector<std::uint32_t> equipment;
 		std::optional<Protocol::Face> face;
+		bool                       faceDirty = false;  // the latest face hasn't gone to the others yet (Options::faceInterval)
 		bool                       welcomed = false;
 		bool                       kicked = false;
 		bool                       hasState = false;
 		bool                       stateDirty = false;
+		// Asked for the world state once too often: it goes when their budget refills, from owedFrom on.
+		// Until then their container changes aren't echoed to them (the world state carries them, in order).
+		bool                       worldStateOwed = false;
+		std::uint32_t              owedFrom = 0;
+		// A hello that came when their budget had no world state for it (a game rejoining over and over):
+		// handled when it refills, so each hello's welcome (who runs which NPC, what's built) is paid for too.
+		std::vector<std::uint8_t>  waitingHello;
 		Protocol::PlayerState      state;
 		RateWindow                 rate;
-		bool                       floodLogged = false;
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
-		Clock::time_point          lastLine{};
-		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
-		bool                       explosionsLogged = false;  // the explosion budget ran out, and the log said so
-		bool                       deathsLogged = false;
-		Clock::time_point          lastFace{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
-		float                      xpBudget = Protocol::MAX_XP_SHARE;
-		float                      xpReports = XP_REPORT_BURST;
-		Clock::time_point          xpRefilled{};
-	};
-
-	// What a joiner may still report (the host's own game has no budget). A burst, then a few a second.
-	struct Budget
-	{
-		TokenBucket explosions;
-		TokenBucket deaths;
-
-		explicit Budget(double a_share = 1.0) :
-			explosions(a_share * EXPLOSION_BURST, a_share * EXPLOSIONS_PER_SECOND), deaths(a_share * DEATH_BURST, a_share * DEATHS_PER_SECOND)
-		{}
 	};
 
 	struct Ownership
@@ -230,12 +283,15 @@ void Server::Run()
 	std::unordered_map<ConnectionKey, Player> players;
 	std::uint32_t                             nextId = 1;
 	std::unordered_map<std::uint64_t, std::uint32_t> identities;  // Hello::identity -> player ID, for this server run
+	std::map<BudgetKey, Budget>               budgets;                // for this server run (see Budget)
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
 	std::vector<std::string>                  sessionPlugins;          // their load order, to name the difference
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length).
 	const auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
+	// A world state can't carry more of a table than this.
+	const auto maxWorldEntries = (std::min)(options.maxWorldEntries, Protocol::MAX_WORLD_STATE_ACTORS);
 
 	// Shared world state for this session.
 	std::unordered_set<std::uint32_t>                     deadActors;
@@ -250,15 +306,8 @@ void Server::Run()
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
 	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
-	// Player id -> their budget. Kept while they are away if they can come back as themselves (by their Hello
-	// identity), so leaving and rejoining, or saying hello again, buys nothing; and one all joiners share.
-	std::unordered_map<std::uint32_t, Budget>             budgets;
-	Budget                                                joinersBudget{ JOINERS_SHARE };
-	// Spends one from a joiner's budget and all joiners': false when either is empty.
-	const auto spend = [&](const Player& a_player, TokenBucket Budget::*a_kind, Clock::time_point a_now) {
-		auto& own = budgets.try_emplace(a_player.id).first->second;
-		return (own.*a_kind).Take(a_now) && (joinersBudget.*a_kind).Take(a_now);
-	};
+	// What all joiners together may report, on top of each one's own (Budget::rates).
+	RateBudget                                            joinersBudget{ JOINERS_SHARE };
 	// Where an NPC fell, by the report that killed it; a joiner gets these before the dead list so its copy
 	// lies where the killer saw it. Not saved: after a restart the list alone is what there is.
 	std::unordered_map<std::uint32_t, std::array<float, 3>> deathPositions;
@@ -269,6 +318,23 @@ void Server::Run()
 	// NPCs the host's game has had alive in this session (it claimed them or reported their health) or seen
 	// die while another game ran them: its world can't be dead "from its save" about those (see handleDeath).
 	std::unordered_set<std::uint32_t>                     hostHadAlive;
+
+	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
+	// when one gets near, once at 80% and once full.
+	std::array<bool, kTables> nearFullLogged{};
+	std::array<bool, kTables> fullLogged{};
+	const auto noteFill = [&](Table a_table, std::size_t a_size) {
+		if (a_size >= maxWorldEntries) {
+			nearFullLogged[a_table] = true;
+			if (!std::exchange(fullLogged[a_table], true)) {
+				log(std::format("server: the session's {} table is 100% full ({}/{}); {} sharing has stopped for this session", TABLE_NAMES[a_table], a_size, maxWorldEntries,
+					SHARING_NAMES[a_table]));
+			}
+		} else if (a_size * 5 >= maxWorldEntries * 4 && !std::exchange(nearFullLogged[a_table], true)) {
+			log(std::format("server: the session's {} table is {}% full ({}/{}); {} sharing stops at 100%", TABLE_NAMES[a_table], a_size * 100 / maxWorldEntries, a_size,
+				maxWorldEntries, SHARING_NAMES[a_table]));
+		}
+	};
 
 	// The saved session, if any: adopted as this run's session (the first player's load order must
 	// match, or the hello path starts a fresh one). Saved again every few seconds while it changes.
@@ -305,6 +371,11 @@ void Server::Run()
 			}
 			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped)", deadActors.size(), containerChanges.size(), workshop.Built().size(),
 				workshop.Scraps().size()));
+			noteFill(kDeaths, deadActors.size());
+			noteFill(kPickups, pickedUp.size());
+			noteFill(kRefStates, refStates.size());
+			noteFill(kQuestStages, questStages.size());
+			noteFill(kContainers, containerChanges.size());
 		}
 	}
 	std::size_t lastSavedSize = 0;  // a cheap change check: how much state there was at the last save
@@ -354,6 +425,13 @@ void Server::Run()
 		worldTime.reset();
 		markers.clear();
 		hostHadAlive.clear();
+		nearFullLogged = {};
+		fullLogged = {};
+		// What each player added to the old session's tables is gone with it.
+		for (auto& [key, budget] : budgets) {
+			budget.added = {};
+			budget.shareLogged = {};
+		}
 		sessionId = NewSessionId();
 	};
 
@@ -372,6 +450,52 @@ void Server::Run()
 
 	const auto describe = [&](ConnectionKey a_key) {
 		return transports[static_cast<std::size_t>(a_key >> 32)]->Describe(static_cast<PeerId>(a_key));
+	};
+
+	// A player's connection stops using their budget (it is kept for when they come back).
+	const auto unbindBudget = [&](Player& a_player) {
+		if (const auto it = budgets.find(a_player.budgetKey); a_player.budgetKey != BudgetKey{} && it != budgets.end()) {
+			--it->second.connections;
+			it->second.lastSeen = Clock::now();
+		}
+		a_player.budgetKey = {};
+	};
+
+	// The player's connection uses the budget kept under a_key from now on: a fresh one the first time.
+	const auto bindBudget = [&](Player& a_player, BudgetKey a_key) {
+		if (a_player.budgetKey == a_key) {
+			return;
+		}
+		unbindBudget(a_player);
+		auto it = budgets.find(a_key);
+		if (it == budgets.end()) {
+			if (budgets.size() >= MAX_BUDGET_KEYS) {
+				// The one unused longest goes. There is always one: far fewer connections are let in.
+				auto oldest = budgets.end();
+				for (auto entry = budgets.begin(); entry != budgets.end(); ++entry) {
+					if (entry->second.connections == 0 && (oldest == budgets.end() || entry->second.lastSeen < oldest->second.lastSeen)) {
+						oldest = entry;
+					}
+				}
+				if (oldest != budgets.end()) {
+					budgets.erase(oldest);
+				}
+			}
+			it = budgets.emplace(a_key, Budget{}).first;
+		}
+		++it->second.connections;
+		it->second.lastSeen = Clock::now();
+		a_player.budgetKey = a_key;
+	};
+
+	// Looked up on every use. A connection's budget is never forgotten while it is connected, so this
+	// only makes one if something went wrong.
+	const auto budgetOf = [&](Player& a_player) -> Budget& {
+		const auto [it, added] = budgets.try_emplace(a_player.budgetKey);
+		if (added) {
+			it->second.connections = 1;
+		}
+		return it->second;
 	};
 
 	// Sends to every welcomed player except a_except (0 = nobody excepted).
@@ -405,28 +529,59 @@ void Server::Run()
 		if (++a_player.rate.events <= MAX_EVENTS_PER_SECOND) {
 			return true;
 		}
-		if (!a_player.floodLogged) {
-			a_player.floodLogged = true;
+		if (!std::exchange(budgetOf(a_player).floodLogged, true)) {
 			log(std::format("server: player {} sends too many events; dropping some", a_player.id));
 		}
 		return false;
 	};
 
-	// Counts a world state the player asked for (hello again or kRequestWorldState) against their budget.
-	const auto allowWorldState = [&](Player& a_player) {
-		auto&      rate = a_player.rate;
+	// Spends one from a joiner's own rate budget (kept across rejoins: see Budget) and all joiners': false
+	// when either is empty.
+	const auto spend = [&](Player& a_player, TokenBucket RateBudget::*a_kind, Clock::time_point a_now) {
+		return (budgetOf(a_player).rates.*a_kind).Take(a_now) && (joinersBudget.*a_kind).Take(a_now);
+	};
+
+	// Whether the player's budget has a world state for them now.
+	const auto worldStateReady = [&](Player& a_player) {
+		auto&      budget = budgetOf(a_player);
 		const auto now = Clock::now();
-		if (rate.worldStateRefill == Clock::time_point{}) {
-			rate.worldStateRefill = now;
+		if (budget.worldStateRefill == Clock::time_point{}) {
+			budget.worldStateRefill = now;
 		}
-		const auto elapsed = std::chrono::duration<double>(now - rate.worldStateRefill).count();
-		rate.worldStateTokens = (std::min)(WORLD_STATE_BUCKET, rate.worldStateTokens + elapsed / std::chrono::duration<double>(WORLD_STATE_REFILL).count());
-		rate.worldStateRefill = now;
-		if (rate.worldStateTokens < 1.0) {
+		const auto elapsed = std::chrono::duration<double>(now - budget.worldStateRefill).count();
+		const auto refill = std::chrono::duration<double>(options.worldStateRefill).count();
+		budget.worldStateTokens = (std::min)(WORLD_STATE_BUCKET, budget.worldStateTokens + (refill > 0.0 ? elapsed / refill : WORLD_STATE_BUCKET));
+		budget.worldStateRefill = now;
+		return budget.worldStateTokens >= 1.0;
+	};
+
+	// Counts a world state the player gets (a hello, or kRequestWorldState after a load) against their budget.
+	const auto allowWorldState = [&](Player& a_player) {
+		if (!worldStateReady(a_player)) {
 			return false;
 		}
-		rate.worldStateTokens -= 1.0;
+		budgetOf(a_player).worldStateTokens -= 1.0;
 		return true;
+	};
+
+	// Whether a_player's game may add one more entry to a_table this run. Everyone but the host's own
+	// game has a share of each table, kept in their budget, so one player (or a reconnect under a new
+	// identity) can't fill a table for everyone. Logged once per player and table.
+	const auto withinShare = [&](Player& a_player, Table a_table) {
+		auto& budget = budgetOf(a_player);
+		if (a_player.local) {
+			return true;
+		}
+		const auto share = a_table == kContainers ? options.maxContainerChangesPerPlayer :
+		                   a_table == kWorkshop   ? options.maxWorkshopItemsPerPlayer :
+		                                            options.maxWorldEntriesPerPlayer;
+		if (budget.added[a_table] < share) {
+			return true;
+		}
+		if (!std::exchange(budget.shareLogged[a_table], true)) {
+			log(std::format("server: '{}' has added {} {} entries this run, their share; no more of theirs are kept", a_player.name, budget.added[a_table], TABLE_NAMES[a_table]));
+		}
+		return false;
 	};
 
 	const auto sendMarkers = [&](ConnectionKey a_to) {
@@ -486,6 +641,23 @@ void Server::Run()
 		} while (offset < longest);
 	};
 
+	// A player gets the world state they need (on joining, after loading a save) now if their budget
+	// allows, else when it refills (the tick sends it): owed, never dropped, or their world would miss
+	// what happened. Asking again while it is owed only moves where it starts.
+	const auto giveWorldState = [&](Player& a_player, std::uint32_t a_containerFrom) {
+		if (a_player.worldStateOwed) {
+			a_player.owedFrom = (std::min)(a_player.owedFrom, a_containerFrom);
+			return;
+		}
+		if (allowWorldState(a_player)) {
+			sendWorldState(a_player.key, a_containerFrom);
+			return;
+		}
+		a_player.worldStateOwed = true;
+		a_player.owedFrom = a_containerFrom;
+		log(std::format("server: '{}' has asked for the world too often; sending it when their budget refills", a_player.name));
+	};
+
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -499,6 +671,7 @@ void Server::Run()
 		}
 	};
 
+	// (An NPC nobody runs has no gear kept: its next runner reports its own.)
 	const auto releaseAll = [&](std::uint32_t a_playerId) {
 		std::vector<Protocol::ActorOwner> released;
 		std::erase_if(actorOwners, [&](const auto& a_entry) {
@@ -506,6 +679,7 @@ void Server::Run()
 				return false;
 			}
 			released.push_back({ a_entry.first, 0 });
+			npcEquipment.erase(a_entry.first);
 			return true;
 		});
 		sendOwners(released, 0);
@@ -568,6 +742,7 @@ void Server::Run()
 					log(std::format("server: dropping the old connection of player {} ({})", stale->second.id, describe(stale->first)));
 					leave(stale->second);
 					disconnect(stale->second);
+					unbindBudget(stale->second);
 					players.erase(stale);
 				}
 				a_player.id = known->second;
@@ -590,9 +765,8 @@ void Server::Run()
 		// another PC connects from this machine too.
 		a_player.local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
 		                 transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
-		a_player.xpRefilled = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
-		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
+		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
 		for (auto& [key, other] : players) {
 			if (!other.welcomed || key == a_player.key) {
@@ -684,7 +858,7 @@ void Server::Run()
 			return;
 		}
 		auto death = Protocol::DecodeActorDeath(a_data);
-		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= maxWorldEntries || deadActors.contains(death->refId)) {
 			return;
 		}
 		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
@@ -707,21 +881,24 @@ void Server::Run()
 				return;
 			}
 		}
-		if (deadActors.contains(death->refId)) {
+		if (deadActors.contains(death->refId) || !withinShare(a_player, kDeaths)) {
 			return;
 		}
 		// Within the reporter's budget (what was refused or known already above costs nothing). One over it
 		// is dropped for good: the reporter's game counts it as sent.
 		if (!a_player.local) {
-			if (!spend(a_player, &Budget::deaths, Clock::now())) {
-				if (!std::exchange(a_player.deathsLogged, true)) {
+			auto& budget = budgetOf(a_player);
+			if (!spend(a_player, &RateBudget::deaths, Clock::now())) {
+				if (!std::exchange(budget.deathsLogged, true)) {
 					log(std::format("server: player {} reports deaths faster than any fight; dropping them until their budget refills", a_player.id));
 				}
 				return;
 			}
-			a_player.deathsLogged = false;
+			budget.deathsLogged = false;
 		}
 		deadActors.insert(death->refId);
+		++budgetOf(a_player).added[kDeaths];
+		noteFill(kDeaths, deadActors.size());
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
 		}
@@ -752,16 +929,35 @@ void Server::Run()
 			return;
 		}
 		const auto change = Protocol::DecodeContainerChange(a_data);
-		if (!change || !Protocol::IsValid(*change) || containerChanges.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+		if (!change || !Protocol::IsValid(*change) || containerChanges.size() >= maxWorldEntries) {
 			return;
 		}
-		if (containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
-			return;  // their share of the session's table is used up
+		// Their share of the session's table, by player ID (saved with the session) and by budget (this run).
+		// The host's own game has none (see withinShare).
+		if (!a_player.local && containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
+			if (!std::exchange(budgetOf(a_player).shareLogged[kContainers], true)) {
+				log(std::format("server: '{}' has made {} container changes this session, their share; no more of theirs are kept", a_player.name, containersAuthored[a_player.id]));
+			}
+			return;
+		}
+		if (!withinShare(a_player, kContainers)) {
+			return;
 		}
 		++containersAuthored[a_player.id];
+		++budgetOf(a_player).added[kContainers];
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
 		containerChanges.push_back({ index, a_player.id, *change });
-		broadcast(Protocol::Encode(containerChanges.back()), true, 0);
+		noteFill(kContainers, containerChanges.size());
+		// Not to a player owed the world state: it carries this change, in order after the ones before it.
+		// Nor to one whose hello waits for their budget: their game restarted, and the hello's world state
+		// carries it. Their new game takes what comes before its Welcome too, and an echo would move its
+		// count of what it has past changes its save lacks.
+		const auto packet = Protocol::Encode(containerChanges.back());
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+				send(key, packet, true);
+			}
+		}
 	};
 
 	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -769,10 +965,13 @@ void Server::Run()
 			return;
 		}
 		const auto pickup = Protocol::DecodeRefPickedUp(a_data);
-		if (!pickup || !Protocol::IsShareableRef(pickup->refId) || pickedUp.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
-			!pickedUp.insert(pickup->refId).second) {
+		if (!pickup || !Protocol::IsShareableRef(pickup->refId) || pickedUp.size() >= maxWorldEntries || pickedUp.contains(pickup->refId) ||
+			!withinShare(a_player, kPickups)) {
 			return;
 		}
+		pickedUp.insert(pickup->refId);
+		++budgetOf(a_player).added[kPickups];
+		noteFill(kPickups, pickedUp.size());
 		broadcast(Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp), true, a_player.key);
 	};
 
@@ -781,9 +980,16 @@ void Server::Run()
 			return;
 		}
 		const auto state = Protocol::DecodeRefState(a_data);
-		if (!state || !Protocol::IsShareableRef(state->refId) ||
-			(refStates.size() >= Protocol::MAX_WORLD_STATE_ACTORS && !refStates.contains(state->refId))) {
+		if (!state || !Protocol::IsShareableRef(state->refId)) {
 			return;
+		}
+		// A door the session doesn't know yet takes a place in the table, and from the player's share.
+		if (!refStates.contains(state->refId)) {
+			if (refStates.size() >= maxWorldEntries || !withinShare(a_player, kRefStates)) {
+				return;
+			}
+			++budgetOf(a_player).added[kRefStates];
+			noteFill(kRefStates, refStates.size() + 1);
 		}
 		auto& stored = refStates[state->refId];
 		if (stored.SameState(*state)) {
@@ -823,6 +1029,11 @@ void Server::Run()
 		const auto                        now = Clock::now();
 		std::vector<Protocol::ActorOwner> changed;
 		std::vector<Protocol::ActorOwner> current;
+		// How many NPCs (and companions) the player runs: counted once a packet, when a claim on an NPC
+		// nobody runs needs it, and kept up to date as claims are granted (counting for every claim made a
+		// packet of new IDs cost a scan of the whole table each).
+		std::optional<std::size_t> owned;
+		std::optional<std::size_t> companions;
 		for (const auto& claim : *claims) {
 			if (!Protocol::IsShareableRef(claim.refId) || deadActors.contains(claim.refId)) {
 				continue;
@@ -833,9 +1044,16 @@ void Server::Run()
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
 			if (it == actorOwners.end()) {
-				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && ownedBy(a_player.id) < Protocol::MAX_OWNED_PER_PLAYER &&
-				        (claim.reason != Reason::kCompanion || companionsOf(a_player.id) < MAX_COMPANIONS_PER_PLAYER);
+				if (!owned) {
+					owned = ownedBy(a_player.id);
+					companions = companionsOf(a_player.id);
+				}
+				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && *owned < Protocol::MAX_OWNED_PER_PLAYER &&
+				        (claim.reason != Reason::kCompanion || *companions < MAX_COMPANIONS_PER_PLAYER);
 			} else if (it->second.playerId == a_player.id) {
+				if (companions && it->second.reason != Reason::kCompanion && claim.reason == Reason::kCompanion) {
+					++*companions;
+				}
 				it->second.reason = (std::max)(it->second.reason, claim.reason);
 				// The owner talking to it: nobody takes it over mid-conversation.
 				if (claim.reason == Reason::kInteract) {
@@ -848,8 +1066,15 @@ void Server::Run()
 				grant = it->second.reason != Reason::kCompanion && now - it->second.since >= TAKEOVER_COOLDOWN;
 			}
 			if (grant) {
+				if (it != actorOwners.end()) {
+					npcEquipment.erase(claim.refId);  // the old runner's gear report; the new one reports its own
+				}
 				actorOwners[claim.refId] = { a_player.id, claim.reason, now };
 				changed.push_back({ claim.refId, a_player.id });
+				if (owned) {
+					++*owned;
+					*companions += claim.reason == Reason::kCompanion;
+				}
 			} else if (it != actorOwners.end()) {
 				current.push_back({ claim.refId, it->second.playerId });
 			}
@@ -869,12 +1094,15 @@ void Server::Run()
 		face->playerId = a_player.id;
 		a_player.face = *face;  // the latest is what a newcomer gets
 		// Every change makes a new base form in each game and respawns the stand-in, so the others hear
-		// about a change at most every few seconds.
+		// about a change at most every few seconds; the latest one follows when the time is up (the tick).
 		const auto now = Clock::now();
-		if (now - a_player.lastFace < FACE_INTERVAL) {
+		auto&      budget = budgetOf(a_player);
+		if (now - budget.lastFace < options.faceInterval) {
+			a_player.faceDirty = true;
 			return;
 		}
-		a_player.lastFace = now;
+		budget.lastFace = now;
+		a_player.faceDirty = false;
 		broadcast(Protocol::Encode(*face, Protocol::MessageType::kPlayerFace), true, a_player.key);
 	};
 
@@ -888,7 +1116,14 @@ void Server::Run()
 			return;
 		}
 		item->playerId = a_player.id;
+		// Past their share, what they already have kept can still move or go; nothing new is kept.
+		if (workshop.Adds(*item) && !withinShare(a_player, kWorkshop)) {
+			return;
+		}
+		const auto before = workshop.Size();
 		const auto outcome = workshop.Report(*item);
+		auto&      added = budgetOf(a_player).added[kWorkshop];
+		added = workshop.Size() >= before ? added + (workshop.Size() - before) : added - (std::min)(added, before - workshop.Size());
 		// Logged once a run: past the cap, every report would be.
 		if (const bool scrap = item->op == Protocol::WorkshopOp::kScrapped; outcome.full && !std::exchange(scrap ? scrapsFullLogged : builtFullLogged, true)) {
 			log(std::format("server: the session keeps at most {} {}; not keeping {:08X} from player {}, nor any more", scrap ? MAX_WORLD_SCRAPS : MAX_WORKSHOP_ITEMS,
@@ -929,6 +1164,7 @@ void Server::Run()
 		for (const auto ref : *refs) {
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
+				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
 				released.push_back({ ref, 0 });
 			}
 		}
@@ -1005,7 +1241,7 @@ void Server::Run()
 			}
 		}
 		if (shot->action == static_cast<std::uint8_t>(Protocol::ShotAction::kThrow)) {
-			a_player.lastThrow = Clock::now();
+			budgetOf(a_player).lastThrow = Clock::now();
 		}
 		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action, shot->sound }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
@@ -1080,7 +1316,7 @@ void Server::Run()
 		// is otherwise a way to set off anything at anyone. A player who hasn't said where they are yet
 		// is near nothing. (Each game also judges the explosion itself: WeaponFire's ApplyExplosion.)
 		const auto now = Clock::now();
-		if (now - a_player.lastThrow > EXPLOSION_AFTER_THROW || !a_player.hasState) {
+		if (now - budgetOf(a_player).lastThrow > EXPLOSION_AFTER_THROW || !a_player.hasState) {
 			return;
 		}
 		const float dx = explosion->x - a_player.state.x;
@@ -1090,13 +1326,13 @@ void Server::Run()
 			return;
 		}
 		if (!a_player.local) {
-			if (!spend(a_player, &Budget::explosions, now)) {
-				if (!std::exchange(a_player.explosionsLogged, true)) {
+			if (!spend(a_player, &RateBudget::explosions, now)) {
+				if (!std::exchange(budgetOf(a_player).explosionsLogged, true)) {
 					log(std::format("server: player {} reports explosions faster than anyone throws; dropping them until their budget refills", a_player.id));
 				}
 				return;
 			}
-			a_player.explosionsLogged = false;
+			budgetOf(a_player).explosionsLogged = false;
 		}
 		explosion->playerId = a_player.id;
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);
@@ -1104,14 +1340,14 @@ void Server::Run()
 
 	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
-		if (!allowEvent(a_player) || now - a_player.lastLine < std::chrono::milliseconds(250)) {
+		if (!allowEvent(a_player) || now - budgetOf(a_player).lastLine < std::chrono::milliseconds(250)) {
 			return;
 		}
 		auto line = Protocol::DecodeLine(a_data);
 		if (!line) {
 			return;
 		}
-		a_player.lastLine = now;
+		budgetOf(a_player).lastLine = now;
 		line->playerId = a_player.id;
 		broadcast(Protocol::Encode(*line, Protocol::MessageType::kLineSpoken), true, a_player.key);
 	};
@@ -1125,16 +1361,20 @@ void Server::Run()
 			return;
 		}
 		const auto now = Clock::now();
-		const float elapsed = std::chrono::duration<float>(now - a_player.xpRefilled).count();
-		a_player.xpRefilled = now;
-		a_player.xpBudget = (std::min)(Protocol::MAX_XP_SHARE, a_player.xpBudget + elapsed * Protocol::MAX_XP_SHARE / std::chrono::duration<float>(XP_REFILL_TIME).count());
-		a_player.xpReports = (std::min)(static_cast<float>(XP_REPORT_BURST), a_player.xpReports + elapsed / std::chrono::duration<float>(XP_REPORT_INTERVAL).count());
-		gain->xp = (std::min)(gain->xp, a_player.xpBudget);
-		if (a_player.xpReports < 1.0f || gain->xp < 1.0f) {
+		auto&      budget = budgetOf(a_player);  // kept across a reconnect: leaving and coming back doesn't refill it
+		if (budget.xpRefilled == Clock::time_point{}) {
+			budget.xpRefilled = now;
+		}
+		const float elapsed = std::chrono::duration<float>(now - budget.xpRefilled).count();
+		budget.xpRefilled = now;
+		budget.xpBudget = (std::min)(Protocol::MAX_XP_SHARE, budget.xpBudget + elapsed * Protocol::MAX_XP_SHARE / std::chrono::duration<float>(XP_REFILL_TIME).count());
+		budget.xpReports = (std::min)(static_cast<float>(XP_REPORT_BURST), budget.xpReports + elapsed / std::chrono::duration<float>(XP_REPORT_INTERVAL).count());
+		gain->xp = (std::min)(gain->xp, budget.xpBudget);
+		if (budget.xpReports < 1.0f || gain->xp < 1.0f) {
 			return;
 		}
-		a_player.xpReports -= 1.0f;
-		a_player.xpBudget -= gain->xp;
+		budget.xpReports -= 1.0f;
+		budget.xpBudget -= gain->xp;
 		gain->playerId = a_player.id;
 		broadcast(Protocol::Encode(*gain, Protocol::MessageType::kPartyXp), true, a_player.key);
 	};
@@ -1215,12 +1455,14 @@ void Server::Run()
 			return;
 		}
 		const auto stage = Protocol::DecodeQuestStage(a_data);
-		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
-			questStageKeys.contains(questKey(*stage))) {
+		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= maxWorldEntries ||
+			questStageKeys.contains(questKey(*stage)) || !withinShare(a_player, kQuestStages)) {
 			return;
 		}
 		questStages.push_back(*stage);
 		questStageKeys.insert(questKey(*stage));
+		++budgetOf(a_player).added[kQuestStages];
+		noteFill(kQuestStages, questStages.size());
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
@@ -1238,12 +1480,28 @@ void Server::Run()
 	};
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player) || !allowWorldState(a_player)) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
-			sendWorldState(a_player.key, request->sessionId == sessionId ? request->containerFrom : 0);
+			giveWorldState(a_player, request->sessionId == sessionId ? request->containerFrom : 0);
 		}
+	};
+
+	const auto welcome = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (a_player.welcomed) {
+			// Hello again on the same connection: their game restarted before it timed out
+			// (Steam keeps one connection per friend). Start over as a new arrival.
+			leave(a_player);
+			Player fresh;
+			fresh.key = a_player.key;
+			fresh.id = a_player.id;
+			fresh.budgetKey = a_player.budgetKey;  // saying hello again doesn't refill the budgets
+			fresh.connectedAt = Clock::now();
+			fresh.rate = a_player.rate;
+			a_player = std::move(fresh);
+		}
+		handleHello(a_player, a_data);
 	};
 
 	const auto handlePacket = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -1253,21 +1511,25 @@ void Server::Run()
 			if (a_player.kicked) {
 				break;
 			}
-			if (a_player.welcomed) {
-				// Hello again on the same connection: their game restarted before it timed out
-				// (Steam keeps one connection per friend). Start over as a new arrival.
-				if (!allowWorldState(a_player)) {
-					break;
+			// Every hello brings a world state and the rest of a welcome. A game saying hello again and again
+			// (rejoining in a loop) gets that no more often than its budget has world states: the latest
+			// hello waits until it refills (the tick). When the transport can't name them (UDP), the budget is the
+			// one kept for the identity their game says hello with, from their first hello on this connection
+			// (a new connection doesn't come with a fresh one; saying hello again under another identity
+			// doesn't renew it).
+			if (a_player.budgetKey.first == BudgetKind::kConnection) {
+				if (const auto hello = Protocol::DecodeHello(a_data); hello && hello->identity != 0) {
+					bindBudget(a_player, { BudgetKind::kHello, hello->identity });
 				}
-				leave(a_player);
-				Player fresh;
-				fresh.key = a_player.key;
-				fresh.id = a_player.id;
-				fresh.connectedAt = Clock::now();
-				fresh.rate = a_player.rate;  // saying hello again doesn't refill the budgets
-				a_player = std::move(fresh);
 			}
-			handleHello(a_player, a_data);
+			if (!a_player.waitingHello.empty() || !worldStateReady(a_player)) {
+				if (a_player.waitingHello.empty()) {
+					log(std::format("server: {} says hello too often; answering when their budget refills", describe(a_player.key)));
+				}
+				a_player.waitingHello.assign(a_data.begin(), a_data.end());
+				break;
+			}
+			welcome(a_player, a_data);
 			break;
 		case MessageType::kPlayerState:
 			handleState(a_player, a_data);
@@ -1379,10 +1641,15 @@ void Server::Run()
 				switch (event.type) {
 				case TransportEvent::Type::kConnect:
 					{
+						if (const auto old = players.find(key); old != players.end()) {
+							unbindBudget(old->second);
+						}
 						Player player;
 						player.key = key;
 						player.id = nextId++;
 						player.connectedAt = Clock::now();
+						const auto identity = transports[t]->Identity(event.peer);
+						bindBudget(player, identity ? BudgetKey{ BudgetKind::kTransport, identity } : BudgetKey{ BudgetKind::kConnection, key });
 						players.insert_or_assign(key, std::move(player));
 					}
 					break;
@@ -1394,10 +1661,7 @@ void Server::Run()
 				case TransportEvent::Type::kDisconnect:
 					if (const auto it = players.find(key); it != players.end()) {
 						leave(it->second);
-						// Only someone who can come back as themselves keeps a budget while away (the identities are capped).
-						if (std::ranges::none_of(identities, [&](const auto& a_entry) { return a_entry.second == it->second.id; })) {
-							budgets.erase(it->second.id);
-						}
+						unbindBudget(it->second);
 						players.erase(it);
 						// The clock belonged to someone who's gone; the next player brings their own.
 						if (welcomedCount() == 0) {
@@ -1417,9 +1681,38 @@ void Server::Run()
 		++tick;
 
 		for (auto& [key, player] : players) {
-			if (!player.welcomed && !player.kicked && now - player.connectedAt > HELLO_TIMEOUT) {
+			if (!player.welcomed && !player.kicked && player.waitingHello.empty() && now - player.connectedAt > HELLO_TIMEOUT) {
 				log(std::format("server: dropping {} (no hello)", describe(key)));
 				disconnect(player);
+			}
+		}
+
+		// What waits for a player's budget to refill: a hello, the world state, their latest face.
+		{
+			std::vector<ConnectionKey> waiting;
+			for (const auto& [key, player] : players) {
+				if (!player.waitingHello.empty()) {
+					waiting.push_back(key);
+				}
+			}
+			// (A hello can drop another connection, so each is looked up again.)
+			for (const auto key : waiting) {
+				if (const auto it = players.find(key); it != players.end() && !it->second.kicked && worldStateReady(it->second)) {
+					const auto hello = std::exchange(it->second.waitingHello, {});
+					welcome(it->second, hello);
+				}
+			}
+		}
+		for (auto& [key, player] : players) {
+			if (player.welcomed && player.worldStateOwed && allowWorldState(player)) {
+				player.worldStateOwed = false;
+				sendWorldState(key, player.owedFrom);
+				log(std::format("server: sent '{}' the world they asked for", player.name));
+			}
+			if (player.welcomed && player.faceDirty && player.face && now - budgetOf(player).lastFace >= options.faceInterval) {
+				player.faceDirty = false;
+				budgetOf(player).lastFace = now;
+				broadcast(Protocol::Encode(*player.face, Protocol::MessageType::kPlayerFace), true, key);
 			}
 		}
 

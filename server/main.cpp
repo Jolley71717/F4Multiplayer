@@ -1,4 +1,8 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH]
+//                                              [--max-world-entries N] [--max-share N] [--loopback-only]
+// --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
+// --max-share: how much one player other than the host may add to each table this run (kills, pickups,
+// doors, quest stages, loot and building alike). Both are for trying the limits (tools\soak.ps1 -Abuse).
 
 #include "Protocol.h"
 #include "Server.h"
@@ -60,8 +64,13 @@ int main(int argc, char* argv[])
 		} else if (arg == "--loopback-only") {
 			// This machine only (tests and soaks): nothing from outside can reach it, and Windows asks nothing.
 			options.udpLoopbackOnly = true;
+		} else if (arg == "--max-world-entries" && hasValue && ParseNumber(argv[i + 1], options.maxWorldEntries)) {
+			++i;
+		} else if (std::size_t share = 0; arg == "--max-share" && hasValue && ParseNumber(argv[i + 1], share)) {
+			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
+			++i;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
 			return 2;
 		}
 	}

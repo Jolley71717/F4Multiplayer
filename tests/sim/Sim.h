@@ -408,6 +408,12 @@ namespace Sim
 			if (options.hostIdentity == 0) {
 				options.hostIdentity = HOST_IDENTITY;
 			}
+			// A sim plays an evening in moments, so a player comes back far more often a second than a real
+			// one can. Unless a test sets it, the world-state budget refills at once: a rejoin isn't held back
+			// for the ten seconds a real game would wait (the server's budget tests try that).
+			if (options.worldStateRefill == Server::Options{}.worldStateRefill) {
+				options.worldStateRefill = std::chrono::milliseconds{ 0 };
+			}
 			std::filesystem::remove(options.sessionFile);
 			StartServer();
 		}

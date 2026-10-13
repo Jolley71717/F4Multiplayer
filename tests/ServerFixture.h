@@ -8,7 +8,16 @@
 #include "Protocol.h"
 #include "Server.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <format>
+#include <iterator>
 #include <random>
+#include <string_view>
+#include <thread>
+#include <type_traits>
 
 namespace TestServer
 {
@@ -80,8 +89,104 @@ namespace TestServer
 			return logLines;
 		}
 
+		// The log lines that contain a_text.
+		std::vector<std::string> LogLines(std::string_view a_text)
+		{
+			std::lock_guard          lock{ logMutex };
+			std::vector<std::string> out;
+			std::ranges::copy_if(logLines, std::back_inserter(out), [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; });
+			return out;
+		}
+
 	private:
 		std::mutex               logMutex;
 		std::vector<std::string> logLines;
 	};
+
+	inline std::uint32_t JoinAs(Fixture& a_f, PeerId a_peer, std::string a_name, std::uint64_t a_identity = 0)
+	{
+		const auto welcome = a_f.Join(a_peer, Fixture::MakeHello(std::move(a_name), a_identity));
+		REQUIRE(welcome);
+		return welcome->playerId;
+	}
+
+	// Returns once the server has handled everything delivered so far: it handles packets in the
+	// order they arrive, and answers a heartbeat right away. (At most 10 a second per player.) The
+	// answer is known by its token, because what a_peer already sent can hold heartbeats of its own,
+	// answered the same way. Those earlier answers are dropped here.
+	inline void Sync(Fixture& a_f, PeerId a_peer)
+	{
+		static std::atomic<std::uint32_t> token = 0x5C000000;  // no protocol sample's token, nor one byte off it
+		const auto                        mine = ++token;
+		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::Heartbeat{ mine }, MT::kHeartbeat));
+		for (;;) {
+			const auto ack = a_f.fake->WaitFor(a_peer, Type(MT::kHeartbeatAck));
+			REQUIRE(ack);
+			if (const auto beat = Protocol::DecodeHeartbeat(*ack); beat && beat->token == mine) {
+				return;
+			}
+		}
+	}
+
+	// Everything the server sent a_peer up to now.
+	inline std::vector<std::vector<std::uint8_t>> Received(Fixture& a_f, PeerId a_peer)
+	{
+		Sync(a_f, a_peer);
+		return a_f.fake->Take(a_peer);
+	}
+
+	inline void Clear(Fixture& a_f, std::initializer_list<PeerId> a_peers)
+	{
+		for (const auto peer : a_peers) {
+			Received(a_f, peer);
+		}
+	}
+
+	inline std::size_t Count(const std::vector<std::vector<std::uint8_t>>& a_packets, MT a_type)
+	{
+		return static_cast<std::size_t>(std::ranges::count_if(a_packets, [&](const auto& a_packet) { return !a_packet.empty() && a_packet[0] == Type(a_type); }));
+	}
+
+	// The packets of a_type, decoded.
+	template <class Decode>
+	auto Decoded(const std::vector<std::vector<std::uint8_t>>& a_packets, MT a_type, Decode a_decode)
+	{
+		using T = typename std::invoke_result_t<Decode, std::span<const std::uint8_t>>::value_type;
+		std::vector<T> out;
+		for (const auto& packet : a_packets) {
+			if (!packet.empty() && packet[0] == Type(a_type)) {
+				auto message = a_decode(std::span<const std::uint8_t>{ packet });
+				REQUIRE(message);
+				out.push_back(std::move(*message));
+			}
+		}
+		return out;
+	}
+
+	inline std::vector<Protocol::WorldState> WorldStates(const std::vector<std::vector<std::uint8_t>>& a_packets)
+	{
+		return Decoded(a_packets, MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
+	}
+
+	// Waits up to a_timeout for a_peer to be sent a packet of a_type, keeping everything that came in a_got.
+	inline bool Await(Fixture& a_f, PeerId a_peer, MT a_type, std::vector<std::vector<std::uint8_t>>& a_got,
+		std::chrono::milliseconds a_timeout = std::chrono::milliseconds(3000))
+	{
+		const auto deadline = std::chrono::steady_clock::now() + a_timeout;
+		while (std::chrono::steady_clock::now() < deadline) {
+			std::ranges::move(a_f.fake->Take(a_peer), std::back_inserter(a_got));
+			if (Count(a_got, a_type) > 0) {
+				return true;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		return false;
+	}
+
+	// Everything a_peer is sent for a_wait.
+	inline std::vector<std::vector<std::uint8_t>> During(Fixture& a_f, PeerId a_peer, std::chrono::milliseconds a_wait)
+	{
+		std::this_thread::sleep_for(a_wait);
+		return a_f.fake->Take(a_peer);
+	}
 }

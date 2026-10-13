@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <format>
+#include <random>
 
 // The host's saved session: everything the server remembers, through the file and back.
 namespace

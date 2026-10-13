@@ -108,6 +108,8 @@ public:
 
 	// What Describe says about a_peer in the server's log, e.g. a real transport's "udp 1.2.3.4:5678".
 	void SetAddress(PeerId a_peer, std::string a_address) { std::lock_guard lock{ mutex }; addresses[a_peer] = std::move(a_address); }
+	// Who a_peer is to the transport (as Steam knows a friend by their Steam ID); 0 = can't say.
+	void SetIdentity(PeerId a_peer, std::uint64_t a_identity) { std::lock_guard lock{ mutex }; identities[a_peer] = a_identity; }
 
 	// --- the server's side ---
 
@@ -159,6 +161,13 @@ public:
 		return it != local.end() && it->second;
 	}
 
+	[[nodiscard]] std::uint64_t Identity(PeerId a_peer) const override
+	{
+		std::lock_guard lock{ mutex };
+		const auto it = identities.find(a_peer);
+		return it != identities.end() ? it->second : 0;
+	}
+
 private:
 	void Push(TransportEvent a_event)
 	{
@@ -174,4 +183,5 @@ private:
 	std::map<PeerId, bool>        local;
 	std::uint64_t                 polls = 0;  // times the server came for events
 	std::map<PeerId, std::string> addresses;
+	std::map<PeerId, std::uint64_t> identities;
 };

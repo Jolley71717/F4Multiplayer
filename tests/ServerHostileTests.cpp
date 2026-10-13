@@ -23,29 +23,8 @@ namespace
 
 	constexpr std::uint32_t NPC = 0x0001F0A1;  // a plugin reference no sample uses
 
-	// Returns once the server has handled everything a_peer sent so far: it handles one player's
-	// packets in order and answers a heartbeat right away. The answer is known by its token, because
-	// what a_peer already sent can hold heartbeats of its own, answered the same way. Those earlier
-	// answers are dropped here.
-	void Sync(Fixture& a_f, PeerId a_peer)
-	{
-		static std::uint32_t token = 0x5C000000;  // no sample's token, nor one byte off it
-		const auto           mine = ++token;
-		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::Heartbeat{ mine }, MT::kHeartbeat));
-		for (;;) {
-			const auto ack = a_f.fake->WaitFor(a_peer, Type(MT::kHeartbeatAck));
-			REQUIRE(ack);
-			if (const auto beat = Protocol::DecodeHeartbeat(*ack); beat && beat->token == mine) {
-				return;
-			}
-		}
-	}
-
-	Packets Received(Fixture& a_f, PeerId a_peer)
-	{
-		Sync(a_f, a_peer);
-		return a_f.fake->Take(a_peer);
-	}
+	// Sync and Received (ServerFixture.h) wait for the answer to their own heartbeat: what a hostile
+	// joiner sent before can hold heartbeats of its own.
 
 	// What a client would make of each packet: the decoder its game uses for that type.
 	void CheckEveryPacketReads(const Packets& a_packets, std::string_view a_who)

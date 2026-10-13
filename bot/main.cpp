@@ -16,6 +16,12 @@
 //           [--npc-slow 1]  (with --own: the NPC sends 10 states a second, like one far from every player, instead of 20)
 //           [--hit-player ID:DAMAGE:ATTACKERHEX|p]  (reports hitting that player once they are in the game)
 //           [--found-dead REFHEX]  (reports this NPC found already dead in the bot's save, as the host's game does; only the host's game is believed over the NPC's runner)
+//           [--flood kills|loot|pickups|claims:COUNT[:FROMHEX]]  (abuse: once welcomed, reports COUNT made-up references (from FROMHEX on, default
+//                                                       00A00000; give each flooding bot its own) killed, looted
+//                                                       (one taken from each), picked up or claimed, 10 a send (300 a second;
+//                                                       claims 32 a packet), to show the server's per-player shares hold)
+//           [--rejoin-loop N]  (abuse: leaves and joins again N times, each as soon as it is welcomed; with --identity, to
+//                               show the server keeps its world-state budget across rejoins)
 //
 // Exit codes: 0 ok, 2 bad arguments, 3 rejected, 4 disconnected by the server, 5 never welcomed
 // before --seconds ran out.
@@ -134,6 +140,23 @@ int main(int argc, char* argv[])
 	std::int32_t  lootCount = 0;
 	float         healthValue = 0;
 	Protocol::WorldRequest world;  // what our "world" already has (--session, --from)
+	// --flood: made-up references reported, one after another, from floodFrom on.
+	enum class Flood
+	{
+		kNone,
+		kKills,
+		kLoot,
+		kPickups,
+		kClaims
+	};
+	std::uint32_t           floodFrom = 0x00A00000;
+	constexpr std::uint32_t FLOOD_PER_SEND = 10;
+	constexpr std::uint32_t FLOOD_CLAIMS_PER_PACKET = 32;
+	Flood         flood = Flood::kNone;
+	std::uint32_t floodCount = 0;
+	std::uint32_t floodSent = 0;
+	int           rejoins = 0;  // --rejoin-loop: joins still to make after this one
+	int           worldStates = 0;
 
 	if (argc % 2 == 0) {
 		std::cerr << "missing value for " << argv[argc - 1] << '\n';
@@ -259,6 +282,16 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, timeWeather, 16);
 		} else if (key == "--seconds") {
 			ok = ParseNumber(value, seconds);
+		} else if (key == "--flood") {
+			// kind:count[:fromhex]
+			const auto colon = value.find(':');
+			const auto kind = value.substr(0, colon);
+			flood = kind == "kills" ? Flood::kKills : kind == "loot" ? Flood::kLoot : kind == "pickups" ? Flood::kPickups : kind == "claims" ? Flood::kClaims : Flood::kNone;
+			const auto from = colon != std::string_view::npos ? value.find(':', colon + 1) : std::string_view::npos;
+			ok = colon != std::string_view::npos && flood != Flood::kNone && ParseNumber(value.substr(colon + 1, from == std::string_view::npos ? std::string_view::npos : from - colon - 1), floodCount) &&
+			     (from == std::string_view::npos || ParseNumber(value.substr(from + 1), floodFrom, 16));
+		} else if (key == "--rejoin-loop") {
+			ok = ParseNumber(value, rejoins) && rejoins >= 0;
 		} else {
 			ok = false;
 		}
@@ -280,7 +313,7 @@ int main(int argc, char* argv[])
 	}
 
 	const auto host = enet_host_create(nullptr, 1, Protocol::CHANNEL_COUNT, 0, 0);
-	const auto peer = enet_host_connect(host, &address, Protocol::CHANNEL_COUNT, 0);
+	auto       peer = enet_host_connect(host, &address, Protocol::CHANNEL_COUNT, 0);
 	if (!host || !peer) {
 		std::cerr << "enet connect failed\n";
 		return 1;
@@ -293,6 +326,7 @@ int main(int argc, char* argv[])
 	auto       lastStep = start;
 	float      angle = 0.0f;  // position on the circle, radians
 	bool       welcomed = false;
+	bool       everWelcomed = false;  // (--rejoin-loop can end waiting for a welcome)
 	std::uint32_t sequence = 0;
 
 	for (;;) {
@@ -311,6 +345,7 @@ int main(int argc, char* argv[])
 						if (const auto msg = Protocol::DecodeWelcome(data)) {
 							std::cout << "welcomed as player " << msg->playerId << " in session " << std::hex << msg->sessionId << std::dec << (msg->friendlyFire ? " (friendly fire)" : "") << (msg->sharedStory ? " (shared story)" : "") << std::endl;
 							welcomed = true;
+							everWelcomed = true;
 							if (shootWeapon) {
 								Net::Send(peer, Protocol::Encode(Protocol::Equipment{ 0, { shootWeapon } }, Protocol::MessageType::kEquipment), true);
 							}
@@ -512,6 +547,7 @@ int main(int argc, char* argv[])
 						break;
 					case Protocol::MessageType::kWorldState:
 						if (const auto msg = Protocol::DecodeWorldState(data)) {
+							++worldStates;
 							std::cout << "world state: " << msg->containerChanges.size() << " container changes from #" << msg->containerFirstIndex << ", " << msg->pickedUp.size() << " pickups, " << msg->refStates.size() << " ref states, " << msg->questStages.size() << " quest stages, " << msg->deadActors.size() << " dead actors:";
 							for (const auto id : msg->deadActors) {
 								std::cout << ' ' << std::hex << id << std::dec;
@@ -541,6 +577,20 @@ int main(int argc, char* argv[])
 		const auto now = Clock::now();
 		if (seconds > 0 && now - start > std::chrono::seconds(seconds)) {
 			break;
+		}
+
+		// --rejoin-loop: gone as soon as welcomed, and back (the hello is sent again on connecting).
+		if (welcomed && rejoins > 0) {
+			--rejoins;
+			std::cout << "leaving to join again (" << rejoins << " more after this)" << std::endl;
+			enet_peer_disconnect_now(peer, 0);
+			welcomed = false;
+			peer = enet_host_connect(host, &address, Protocol::CHANNEL_COUNT, 0);
+			if (!peer) {
+				std::cerr << "enet connect failed\n";
+				return 1;
+			}
+			continue;
 		}
 
 		if (welcomed && voiceSilence && now >= nextVoice) {
@@ -604,6 +654,28 @@ int main(int argc, char* argv[])
 			if (shoot) {
 				Net::Send(peer, Protocol::Encode(Protocol::Shot{ 0, ownRef }, Protocol::MessageType::kReportShot), false);
 			}
+			if (flood != Flood::kNone && floodSent < floodCount) {
+				if (flood == Flood::kClaims) {
+					std::vector<Protocol::ActorClaim> claims;
+					for (; claims.size() < FLOOD_CLAIMS_PER_PACKET && floodSent < floodCount; ++floodSent) {
+						claims.push_back({ floodFrom + floodSent, Protocol::ClaimReason::kUnowned });
+					}
+					Net::Send(peer, Protocol::Encode(claims), true);
+				}
+				for (std::uint32_t n = 0; flood != Flood::kClaims && n < FLOOD_PER_SEND && floodSent < floodCount; ++n, ++floodSent) {
+					const auto ref = floodFrom + floodSent;
+					if (flood == Flood::kKills) {
+						Net::Send(peer, Protocol::Encode(Protocol::ActorDeath{ ref, 0, true }, Protocol::MessageType::kReportDeath), true);
+					} else if (flood == Flood::kLoot) {
+						Net::Send(peer, Protocol::Encode(Protocol::ContainerChange{ ref, 0x0000000F, -1 }, Protocol::MessageType::kReportContainer), true);
+					} else {
+						Net::Send(peer, Protocol::Encode(Protocol::RefPickedUp{ ref }, Protocol::MessageType::kReportPickup), true);
+					}
+				}
+				if (floodSent == floodCount) {
+					std::cout << "flood: all " << floodCount << " sent" << std::endl;
+				}
+			}
 			if (ownRef) {
 				// We walk the NPC instead; our own player stays put far away.
 				Protocol::ActorState npc;
@@ -630,6 +702,9 @@ int main(int argc, char* argv[])
 	if (voiceBytes) {
 		std::cout << "voice: " << voiceBytes << " bytes heard" << std::endl;
 	}
+	if (worldStates) {
+		std::cout << "world states: " << worldStates << std::endl;
+	}
 	if (firstHeard) {
 		const float heardFor = std::chrono::duration<float>(std::chrono::steady_clock::now() - *firstHeard).count();
 		std::cout << "rates: player states " << std::lround(playerStatesHeard / heardFor) << "/s, npc states/s:";
@@ -642,7 +717,7 @@ int main(int argc, char* argv[])
 	enet_host_flush(host);
 	enet_host_destroy(host);
 	Net::Shutdown();
-	if (!welcomed) {
+	if (!everWelcomed) {
 		std::cout << "never welcomed" << std::endl;
 		return 5;
 	}

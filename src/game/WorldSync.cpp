@@ -3,7 +3,9 @@
 #include "game/ContainerLedger.h"
 #include "game/DeathReports.h"
 #include "game/FoundDead.h"
+#include "game/Hud.h"
 #include "game/NpcSync.h"
+#include "game/PendingContainers.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -18,7 +20,11 @@ namespace WorldSync
 		using Clock = std::chrono::steady_clock;
 		using Protocol::IsShareableRef;
 
-		constexpr auto APPLY_INTERVAL = 250ms;
+		// What waits for its reference to load is applied when the game says it loaded (refLoadInbox), with
+		// a full pass when the player comes out of a loading screen or changes cell. A slow sweep of a few
+		// entries at a time catches anything else (a reference that loaded before its change came).
+		constexpr auto        SWEEP_INTERVAL = 2s;
+		constexpr std::size_t SWEEP_ENTRIES = 256;
 
 		// Every actor known to be dead this session, and the deaths we still have to kill locally (they
 		// weren't loaded when we heard about them, or the reporter's position is still on its way), judged by
@@ -35,6 +41,9 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
 		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
 		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
+		// Every shareable reference whose 3D loaded (any kind: containers, loose items and doors too), for
+		// what waits for it to load.
+		std::vector<std::uint32_t> refLoadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
 		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
@@ -86,17 +95,15 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
 		// Container changes are numbered by the server. Everything before the ledger's Next() is in our
-		// world already or waiting in pendingContainer (its container isn't loaded). This belongs
+		// world already or waiting in pendingContainers (its container isn't loaded). This belongs
 		// to the world rather than the connection, so it is kept in the save (see SaveResyncPoint).
-		struct PendingChange
-		{
-			std::uint32_t             index;
-			Protocol::ContainerChange change;
-		};
-		ContainerLedger            ledger;
-		std::vector<PendingChange> pendingContainer;
+		ContainerLedger   ledger;
+		PendingContainers pendingContainers;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
+		// Every pickup we were told of this session (for how full its history is; see NoticeHistory).
+		std::unordered_set<std::uint32_t> pickedUpKnown;
+		bool                              historyNoticed = false;  // the player was told once this session
 		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
 		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
 		std::uint32_t                     containerRefused = 0;  // changes to a workbench or our own companion, left alone
@@ -108,7 +115,10 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, float> pendingHealth;
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
-		Clock::time_point                      nextApply{};
+		// When what waits (WaitingIds) is tried again.
+		RetrySchedule                          retrySchedule{ SWEEP_INTERVAL, SWEEP_ENTRIES };
+		std::uint32_t                          loadApplied = 0;  // waiting changes applied as their reference loaded
+		std::int64_t                           retryUs = 0, retryUsMax = 0;  // the last and longest retry pass, in microseconds
 		std::uint32_t                          applied = 0;
 		std::uint32_t                          reported = 0;
 		// The host's world is the session's: an actor already dead in it (killed before the session, or
@@ -164,10 +174,11 @@ namespace WorldSync
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be, or is not to be), false to try again later.
-		bool TryKill(std::uint32_t a_refId, const DeathReports::Report& a_death)
+		// a_inWorld (each Try* takes it): CanApply(), worked out once by the caller for all it tries.
+		bool TryKill(std::uint32_t a_refId, const DeathReports::Report& a_death, bool a_inWorld)
 		{
 			const RE::NiPoint3 at{ a_death.x, a_death.y, a_death.z };
-			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
+			if (!a_inWorld) {
 				return false;
 			}
 			const auto form = RE::TESForm::GetFormByID(a_refId);
@@ -229,9 +240,9 @@ namespace WorldSync
 			return true;
 		}
 
-		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death)
+		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death, bool a_inWorld)
 		{
-			if (IsShareableRef(a_refId) && dead.insert(a_refId).second && !TryKill(a_refId, a_death)) {
+			if (IsShareableRef(a_refId) && dead.insert(a_refId).second && !TryKill(a_refId, a_death, a_inWorld)) {
 				reports.Hold(a_refId, a_death);
 			}
 		}
@@ -279,6 +290,10 @@ namespace WorldSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent& a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>*) override
 			{
 				if (IsShareableRef(a_event.formID)) {
+					if (a_event.loaded) {
+						std::scoped_lock l{ inboxLock };
+						refLoadInbox.push_back(a_event.formID);
+					}
 					const auto form = RE::TESForm::GetFormByID(a_event.formID);
 					if (form && form->GetFormType() == RE::ENUM_FORM_ID::kACHR) {
 						std::scoped_lock l{ inboxLock };
@@ -364,13 +379,13 @@ namespace WorldSync
 		}
 
 		// Sets a loaded actor's current health to a fraction of its maximum. Returns false to try again later.
-		bool TrySetHealth(std::uint32_t a_refId, float a_fraction)
+		bool TrySetHealth(std::uint32_t a_refId, float a_fraction, bool a_inWorld)
 		{
-			if (Story::InOpening()) {
+			if (!a_inWorld) {
 				return false;
 			}
 			const auto info = HealthInfo();
-			const auto actor = InWorld() ? LoadedActor(a_refId) : nullptr;
+			const auto actor = LoadedActor(a_refId);
 			if (!info || !actor) {
 				return false;
 			}
@@ -559,9 +574,9 @@ namespace WorldSync
 		}
 
 		// Applies another player's container change. Returns false to try again later.
-		bool TryApplyContainer(const Protocol::ContainerChange& a_change)
+		bool TryApplyContainer(const Protocol::ContainerChange& a_change, bool a_inWorld)
 		{
-			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
+			if (!a_inWorld) {
 				return false;
 			}
 			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
@@ -592,33 +607,19 @@ namespace WorldSync
 		}
 
 		// A session container change, made by player a_playerId, reached us (live or in a WorldState).
-		ContainerLedger::Offer OfferContainerChange(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::uint32_t a_playerId)
+		ContainerLedger::Offer OfferContainerChange(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::uint32_t a_playerId, bool a_inWorld)
 		{
 			const auto offer = ledger.Take(a_index, a_playerId);
-			if (offer != ContainerLedger::Offer::kApply || !Protocol::IsValid(a_change)) {
-				return offer;  // already have it, or it's ours
-			}
-			// Changes to one container stay in order; different containers don't wait for each other.
-			const bool waiting = std::ranges::any_of(pendingContainer, [&](const PendingChange& a_pending) { return a_pending.change.container == a_change.container; });
-			if (waiting || !TryApplyContainer(a_change)) {
-				pendingContainer.push_back({ a_index, a_change });
+			if (offer != ContainerLedger::Offer::kHave) {
+				// Ours is in our world already; anyone else's is applied, or waits for its container.
+				pendingContainers.Offer(a_index, a_change, offer == ContainerLedger::Offer::kOurs, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
 			}
 			return offer;
 		}
 
-		void RetryPendingContainers()
+		std::size_t RetryContainer(std::uint32_t a_container, bool a_inWorld)
 		{
-			std::unordered_set<std::uint32_t> blocked;
-			std::erase_if(pendingContainer, [&](const PendingChange& a_pending) {
-				if (blocked.contains(a_pending.change.container)) {
-					return false;
-				}
-				if (TryApplyContainer(a_pending.change)) {
-					return true;
-				}
-				blocked.insert(a_pending.change.container);
-				return false;
-			});
+			return pendingContainers.Retry(a_container, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
 		}
 
 		// Pairs world pickups with the reference the player activated, and reports them.
@@ -675,9 +676,9 @@ namespace WorldSync
 		}
 
 		// Applies another player's door/lock state. Returns false to try again later.
-		bool TryApplyRefState(const Protocol::RefState& a_state)
+		bool TryApplyRefState(const Protocol::RefState& a_state, bool a_inWorld)
 		{
-			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
+			if (!a_inWorld) {
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
@@ -752,9 +753,9 @@ namespace WorldSync
 		}
 
 		// Removes an item another player picked up. Returns false to try again later.
-		bool TryApplyPickup(std::uint32_t a_refId)
+		bool TryApplyPickup(std::uint32_t a_refId, bool a_inWorld)
 		{
-			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
+			if (!a_inWorld) {
 				return false;
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
@@ -774,6 +775,68 @@ namespace WorldSync
 				ref->Disable();
 			}
 			return true;
+		}
+
+		// Whether remote changes can be applied now: in the world, and out of the opening (once they're out).
+		bool CanApply()
+		{
+			return InWorld() && !Story::InOpening();
+		}
+
+		// Applies whatever waits for reference a_id (an actor's death or health, changes to a container, a
+		// pickup, a door's state). A lookup in each queue; the game is asked only about what waits. Returns
+		// how many were applied.
+		std::size_t ApplyWaiting(std::uint32_t a_id, bool a_inWorld)
+		{
+			std::size_t done = 0;
+			if (reports.RetryOne(a_id, [&](std::uint32_t a_ref, const DeathReports::Report& a_death) { return TryKill(a_ref, a_death, a_inWorld); })) {
+				++done;
+			}
+			if (const auto it = pendingHealth.find(a_id); it != pendingHealth.end() && (dead.contains(a_id) || TrySetHealth(a_id, it->second, a_inWorld))) {
+				pendingHealth.erase(it);
+				++done;
+			}
+			done += RetryContainer(a_id, a_inWorld);
+			if (pendingPickups.contains(a_id) && TryApplyPickup(a_id, a_inWorld)) {
+				pendingPickups.erase(a_id);
+				++done;
+			}
+			if (const auto it = pendingRefStates.find(a_id); it != pendingRefStates.end() && TryApplyRefState(it->second, a_inWorld)) {
+				pendingRefStates.erase(it);
+				++done;
+			}
+			return done;
+		}
+
+		// Every reference something waits for.
+		std::vector<std::uint32_t> WaitingIds()
+		{
+			auto ids = pendingContainers.Containers();
+			const auto held = reports.Refs();
+			ids.reserve(ids.size() + held.size() + pendingHealth.size() + pendingPickups.size() + pendingRefStates.size());
+			ids.insert(ids.end(), held.begin(), held.end());
+			for (const auto& [id, health] : pendingHealth) {
+				ids.push_back(id);
+			}
+			ids.insert(ids.end(), pendingPickups.begin(), pendingPickups.end());
+			for (const auto& [id, state] : pendingRefStates) {
+				ids.push_back(id);
+			}
+			return ids;
+		}
+
+		// Once a session, when what our game was told of its shared history nears what a session can hold:
+		// past that, kills, pickups and loot stop being shared, and the player should know why.
+		void NoticeHistory()
+		{
+			const auto percent = SharedHistoryPercent(dead.size(), pickedUpKnown.size(), ledger.Next());
+			if (percent < 80 || std::exchange(historyNoticed, true)) {
+				return;
+			}
+			REX::WARN("WorldSync: the session's shared history is {}% full", percent);
+			Hud::Notify(std::format("Multiplayer: the session's shared history is {}% full; loot and kill sharing stop at 100%. "
+									"The host can start a fresh session by removing the session file (see the docs)",
+				(std::min)(percent, std::size_t{ 100 })));
 		}
 
 		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
@@ -816,7 +879,9 @@ namespace WorldSync
 	{
 		friendlyFire = a_friendlyFire;
 		if (ledger.Welcome(a_sessionId, a_localPlayerId)) {
-			pendingContainer.clear();  // a different session: none of its changes are in our world yet
+			// A different session: none of its changes are in our world yet.
+			pendingContainers.Clear();
+			historyNoticed = false;
 		}
 	}
 
@@ -825,9 +890,54 @@ namespace WorldSync
 		return ledger.ResyncPoint();
 	}
 
+	namespace
+	{
+		// The Apply* entry points, with CanApply() worked out by the caller (once for a whole world state).
+		void OfferPickup(std::uint32_t a_refId, bool a_inWorld)
+		{
+			if (!IsShareableRef(a_refId)) {
+				return;
+			}
+			pickedUpKnown.insert(a_refId);
+			if (!TryApplyPickup(a_refId, a_inWorld)) {
+				pendingPickups.insert(a_refId);
+			}
+		}
+
+		void OfferRefState(const Protocol::RefState& a_state, bool a_inWorld)
+		{
+			if (!IsShareableRef(a_state.refId)) {
+				return;
+			}
+			// A live report (one that names its reporter) counts only when they are near the thing, if the
+			// thing is here to measure against: a lock changed from across the map is a mistake or mischief.
+			// A world state names nobody and is taken as it is.
+			if (a_state.playerId != 0) {
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
+				if (ref && ref->Get3D()) {
+					const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
+					if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
+						++refStatesRefused;
+						REX::INFO("WorldSync: {:08X} state from player {} refused: they are {} away", a_state.refId, a_state.playerId, senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : "nowhere known");
+						return;
+					}
+				}
+			}
+			// So our own watcher doesn't report this change back.
+			if (const auto it = watched.find(a_state.refId); it != watched.end()) {
+				it->second.lastSent = a_state;
+			}
+			if (TryApplyRefState(a_state, a_inWorld)) {
+				pendingRefStates.erase(a_state.refId);
+			} else {
+				pendingRefStates[a_state.refId] = a_state;
+			}
+		}
+	}
+
 	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death)
 	{
-		TakeDeath(a_death.refId, reports.Received(a_death, Clock::now()));
+		TakeDeath(a_death.refId, reports.Received(a_death, Clock::now()), CanApply());
 	}
 
 	FoundDead::Npc DescribeStory(RE::Actor* a_actor)
@@ -863,20 +973,21 @@ namespace WorldSync
 
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
+		const bool inWorld = CanApply();
 		for (const auto id : a_state.deadActors) {
-			TakeDeath(id, DeathReports::Book::Replayed(Clock::now()));
+			TakeDeath(id, DeathReports::Book::Replayed(Clock::now()), inWorld);
 		}
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
 		// the container that isn't in our inventory any more (or duplicate what we put in).
 		for (const auto& change : a_state.containerChanges) {
-			ownSkipped += OfferContainerChange(change.index, change.change, change.playerId) == ContainerLedger::Offer::kOurs;
+			ownSkipped += OfferContainerChange(change.index, change.change, change.playerId, inWorld) == ContainerLedger::Offer::kOurs;
 		}
 		for (const auto id : a_state.pickedUp) {
-			ApplyRemotePickup(id);
+			OfferPickup(id, inWorld);
 		}
 		for (const auto& state : a_state.refStates) {
-			ApplyRemoteRefState(state);
+			OfferRefState(state, inWorld);
 		}
 		for (const auto& stage : a_state.questStages) {
 			QuestSync::Apply(stage);
@@ -884,6 +995,7 @@ namespace WorldSync
 		REX::INFO("WorldSync: session state: {} dead, {} container changes from #{}, {} pickups, {} doors, {} quest stages",
 			a_state.deadActors.size(), a_state.containerChanges.size(), a_state.containerFirstIndex, a_state.pickedUp.size(),
 			a_state.refStates.size(), a_state.questStages.size());
+		NoticeHistory();
 	}
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
@@ -891,7 +1003,7 @@ namespace WorldSync
 		if (!IsShareableRef(a_refId) || dead.contains(a_refId)) {
 			return;
 		}
-		if (TrySetHealth(a_refId, a_health)) {
+		if (TrySetHealth(a_refId, a_health, CanApply())) {
 			pendingHealth.erase(a_refId);
 		} else {
 			if (pendingHealth.size() >= MAX_PENDING_HEALTH && !pendingHealth.contains(a_refId)) {
@@ -914,50 +1026,24 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		OfferContainerChange(a_change.index, a_change.change, a_change.playerId);
+		OfferContainerChange(a_change.index, a_change.change, a_change.playerId, CanApply());
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)
 	{
-		if (IsShareableRef(a_refId) && !TryApplyPickup(a_refId)) {
-			pendingPickups.insert(a_refId);
-		}
+		OfferPickup(a_refId, CanApply());
 	}
 
 	void ApplyRemoteRefState(const Protocol::RefState& a_state)
 	{
-		if (!IsShareableRef(a_state.refId)) {
-			return;
-		}
-		// A live report (one that names its reporter) counts only when they are near the thing, if the
-		// thing is here to measure against: a lock changed from across the map is a mistake or mischief.
-		// A world state names nobody and is taken as it is.
-		if (a_state.playerId != 0) {
-			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
-			if (ref && ref->Get3D()) {
-				const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
-				if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
-					++refStatesRefused;
-					REX::INFO("WorldSync: {:08X} state from player {} refused: they are {} away", a_state.refId, a_state.playerId, senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : "nowhere known");
-					return;
-				}
-			}
-		}
-		// So our own watcher doesn't report this change back.
-		if (const auto it = watched.find(a_state.refId); it != watched.end()) {
-			it->second.lastSent = a_state;
-		}
-		if (TryApplyRefState(a_state)) {
-			pendingRefStates.erase(a_state.refId);
-		} else {
-			pendingRefStates[a_state.refId] = a_state;
-		}
+		OfferRefState(a_state, CanApply());
 	}
 
 	void Frame(bool a_hosting)
 	{
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
+		std::vector<std::uint32_t>                  newRefLoads;
 		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
 		std::vector<std::uint32_t> newPickups;
@@ -967,6 +1053,7 @@ namespace WorldSync
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
 			newLoads.swap(loadInbox);
+			newRefLoads.swap(refLoadInbox);
 			killedByUs.swap(killInbox);
 			killInbox.clear();
 			newHits.swap(hitInbox);
@@ -1033,21 +1120,28 @@ namespace WorldSync
 		std::erase_if(replayed, [&](const auto& a_entry) { return now - a_entry.second > REPLAY_ECHO; });
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
-		if ((reports.Empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
-			return;
+		// Remote changes waiting for their reference: tried as it loads; all of them when the player comes out
+		// of a loading screen (or the opening) or into another cell; otherwise a few at a time, slowly.
+		const bool inWorld = CanApply();
+		std::uint32_t cell = 0;
+		if (inWorld) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto parent = player ? player->GetParentCell() : nullptr;
+			cell = parent ? parent->GetFormID() : 0;
 		}
-		nextApply = now + APPLY_INTERVAL;
-		if (!InWorld()) {
-			return;
+		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !pendingContainers.Empty() || !pendingPickups.empty() || !pendingRefStates.empty();
+		const auto started = Clock::now();
+		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
+		for (const auto id : plan.loaded) {
+			loadApplied += static_cast<std::uint32_t>(ApplyWaiting(id, true));
 		}
-
-		reports.Retry(TryKill);
-		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
-			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
+		for (const auto id : plan.others) {
+			ApplyWaiting(id, true);
 		}
-		RetryPendingContainers();
-		std::erase_if(pendingPickups, [](std::uint32_t a_id) { return TryApplyPickup(a_id); });
-		std::erase_if(pendingRefStates, [](const auto& a_entry) { return TryApplyRefState(a_entry.second); });
+		if (inWorld && anyWaiting) {
+			retryUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
+			retryUsMax = (std::max)(retryUsMax, retryUs);
+		}
 	}
 
 	std::uint32_t TakePlayerKills()
@@ -1067,6 +1161,7 @@ namespace WorldSync
 		storyKillsLogged.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
+		pickedUpKnown.clear();
 		hitLastFrame.clear();
 		recentActivations.clear();
 		watched.clear();
@@ -1092,13 +1187,15 @@ namespace WorldSync
 		if (ledger.Session() == 0) {
 			return;
 		}
-		const auto count = static_cast<std::uint32_t>(pendingContainer.size());
+		// In session order, as before there was one queue per container (the record is unchanged).
+		const auto entries = pendingContainers.Sorted();
+		const auto count = static_cast<std::uint32_t>(entries.size());
 		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
 			!a_intfc->WriteRecordData(ledger.Session()) || !a_intfc->WriteRecordData(ledger.Next()) || !a_intfc->WriteRecordData(count)) {
 			REX::ERROR("WorldSync: failed to save the session record");
 			return;
 		}
-		for (const auto& entry : pendingContainer) {
+		for (const auto& entry : entries) {
 			a_intfc->WriteRecordData(entry.index);
 			a_intfc->WriteRecordData(entry.change.container);
 			a_intfc->WriteRecordData(entry.change.item);
@@ -1121,9 +1218,9 @@ namespace WorldSync
 			REX::WARN("WorldSync: ignoring an unreadable session record");
 			return;
 		}
-		std::vector<PendingChange> saved;
+		std::vector<PendingContainers::Entry> saved;
 		for (std::uint32_t i = 0; i < count; ++i) {
-			PendingChange entry{};
+			PendingContainers::Entry entry{};
 			a_intfc->ReadRecordData(entry.index);
 			a_intfc->ReadRecordData(entry.change.container);
 			a_intfc->ReadRecordData(entry.change.item);
@@ -1131,20 +1228,20 @@ namespace WorldSync
 			saved.push_back(entry);
 		}
 		ledger.Restore(savedSession, savedNext);
-		pendingContainer = std::move(saved);
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", ledger.Session(), ledger.Next(), pendingContainer.size());
+		pendingContainers.Load(savedNext, std::move(saved));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", ledger.Session(), ledger.Next(), pendingContainers.Size());
 	}
 
 	void RevertResyncPoint()
 	{
 		ledger.Revert();
-		pendingContainer.clear();
+		pendingContainers.Clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} containerRefused={} storyKillKept={}",
-			dead.size(), reports.Size(), reported, applied, ledger.Next(), pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), containerRefused, storyKillsKept);
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} containerRefused={} storyKillKept={} loadApplied={} retryUs={}/{}",
+			dead.size(), reports.Size(), reported, applied, ledger.Next(), pendingContainers.Size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
+			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), containerRefused, storyKillsKept, loadApplied, retryUs, retryUsMax);
 	}
 }
