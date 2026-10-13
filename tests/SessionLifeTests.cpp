@@ -210,7 +210,7 @@ TEST("session life: when everyone has left, a friend coming back waits for the h
 	CHECK(DeadIn(WorldStates(Received(f, 4))) == std::set<std::uint32_t>{ RAIDER2 });
 }
 
-TEST("session life: a dedicated server, with no host, still lets the first arrival decide")
+TEST("session life: a dedicated server, with no host, carries on the saved session for a first arrival with its load order")
 {
 	TempFile file;
 	REQUIRE(SessionFile::Save(file.path, PlayedSession()));
@@ -221,6 +221,39 @@ TEST("session life: a dedicated server, with no host, still lets the first arriv
 	REQUIRE(first);
 	CHECK(first->sessionId == 0x5E55);
 	CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
+}
+
+TEST("session life: on a dedicated server a first arrival with another load order starts the session over, and the others follow it")
+{
+	TempFile file;
+	REQUIRE(SessionFile::Save(file.path, PlayedSession()));
+	Server::Options options;
+	options.sessionFile = file.path.string();
+	std::uint64_t session = 0;
+	{
+		Fixture    f{ options };
+		const auto first = f.Join(1, Hello("Friend", FRIEND, OTHER_HASH));
+		REQUIRE(first);
+		session = first->sessionId;
+		CHECK(session != 0x5E55);
+		CHECK(f.Logged("load order changed"));
+		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
+
+		// The next player with the same mods joins that session; one with the saved session's mods is now the odd one out.
+		const auto second = f.Join(2, Hello("Other", 0x07E2, OTHER_HASH));
+		REQUIRE(second);
+		CHECK(second->sessionId == session);
+		const auto late = Refused(f, 3, Hello("Host", HOST));
+		REQUIRE(late);
+		CHECK(late->reason != Protocol::REJECT_HOST_NOT_READY);
+		f.fake->Deliver(2, Kill(RAIDER2));
+		Sync(f, 2);
+	}
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->sessionId == session);
+	CHECK(saved->contentHash == OTHER_HASH);
+	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER2 });
 }
 
 // ---- container changes through saves, reloads and restarts --------------------------------------
