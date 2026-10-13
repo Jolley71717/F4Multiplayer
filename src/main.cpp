@@ -186,6 +186,27 @@ namespace
 		WorldSync::RevertResyncPoint();
 	}
 
+	// bRunInBackground: the game runs on while its window is not focused (its own bAlwaysActive), or a player who
+	// alt-tabbed stood still for friends, with the NPCs their game runs. Only ever turned on: off leaves the game's
+	// setting as the player's ini has it.
+	void RunInBackground()
+	{
+		if (!Config::Get().runInBackground) {
+			return;
+		}
+		const auto setting = RE::GetINISetting("bAlwaysActive:General");
+		if (!setting || setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
+			REX::WARN("Config: the game's bAlwaysActive setting was not found; the game pauses while it is not focused");
+			return;
+		}
+		if (setting->GetBinary()) {
+			REX::INFO("Config: the game runs on while it is not focused (bAlwaysActive was on already)");
+			return;
+		}
+		setting->SetBinary(true);
+		REX::INFO("Config: the game runs on while it is not focused (bRunInBackground)");
+	}
+
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
 	{
 		switch (a_msg->type) {
@@ -194,6 +215,7 @@ namespace
 			Compass::Install();
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
+			RunInBackground();
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
