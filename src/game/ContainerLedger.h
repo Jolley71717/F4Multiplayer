@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -89,6 +90,18 @@ public:
 	// What to ask the server for (in the Hello, and after a load).
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint() const { return { recordSession, next }; }
 
+	// After a load, once the save's record is in (OnRevert, then OnRecordLoaded for a save that has one) and the
+	// game has left the session if the save isn't the session's world (CharacterBinding): still in a session, the
+	// world is bound to it (BindToLiveSession) and this is what to ask the server for.
+	[[nodiscard]] std::optional<Protocol::WorldRequest> AfterLoad()
+	{
+		if (liveSession == 0) {
+			return std::nullopt;
+		}
+		BindToLiveSession();
+		return ResyncPoint();
+	}
+
 	// Our player IDs in this session. A reconnect normally gets the old one back (the server knows us by
 	// Protocol::Hello::identity), but not while the server still holds the old connection; changes under
 	// either ID are ours.
@@ -140,6 +153,24 @@ public:
 			return Offered::kWaiting;
 		}
 		return Offered::kApplied;
+	}
+
+	struct Taken
+	{
+		bool          wasAhead = false;  // we counted more changes than the server has (see OnWorldState)
+		std::uint32_t ours = 0;          // changes of our own, skipped
+	};
+
+	// A world state's container changes (the answer to a Hello or to AfterLoad's request), offered in order.
+	template <class TryApply>
+	Taken TakeWorldState(const Protocol::WorldState& a_state, TryApply&& a_tryApply)
+	{
+		Taken taken;
+		taken.wasAhead = OnWorldState(a_state.containerFirstIndex, !a_state.containerChanges.empty());
+		for (const auto& change : a_state.containerChanges) {
+			taken.ours += Offer(change.index, change.playerId, change.change, a_tryApply) == Offered::kOurs;
+		}
+		return taken;
 	}
 
 	// Applies what waits, in order per container.

@@ -727,27 +727,14 @@ namespace WorldSync
 		}
 	}
 
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
+	void OnWelcome(bool a_friendlyFire)
 	{
 		friendlyFire = a_friendlyFire;
-		ledger.OnWelcome(a_sessionId, a_localPlayerId);
 	}
 
-	void OnDisconnected()
+	ContainerLedger& Ledger()
 	{
-		ledger.OnDisconnected();
-	}
-
-	void BindToLiveSession()
-	{
-		if (ledger.BindToLiveSession()) {
-			REX::INFO("WorldSync: the save has no record of session {:016X}; its container changes are counted from the first", ledger.RecordSession());
-		}
-	}
-
-	Protocol::WorldRequest ResyncPoint()
-	{
-		return ledger.ResyncPoint();
+		return ledger;
 	}
 
 	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer, float a_x, float a_y, float a_z)
@@ -795,12 +782,11 @@ namespace WorldSync
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
 		// the container that isn't in our inventory any more (or duplicate what we put in).
-		if (ledger.OnWorldState(a_state.containerFirstIndex, !a_state.containerChanges.empty())) {
+		const auto taken = ledger.TakeWorldState(a_state, TryApplyContainer);
+		ownSkipped += taken.ours;
+		if (taken.wasAhead) {
 			REX::WARN("WorldSync: the session's container changes end at #{}, before ours (the host's server lost its last ones); its next ones are new to us",
 				a_state.containerFirstIndex);
-		}
-		for (const auto& change : a_state.containerChanges) {
-			ownSkipped += OfferContainerChange(change) == ContainerLedger::Offered::kOurs;
 		}
 		for (const auto id : a_state.pickedUp) {
 			ApplyRemotePickup(id);

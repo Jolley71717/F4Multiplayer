@@ -29,40 +29,104 @@ namespace CharacterBinding
 		return std::format("F4Multiplayer.{}{:016X}.session", a_dev ? "dev." : "", a_character);
 	}
 
-	enum class HostStep
+	// What Session is to do.
+	enum class Step
 	{
 		kNone,
-		kStart,  // start hosting this character's session
-		kStop,   // stop: another character is loaded (hosting starts again with its session), or the opening
+		kStartHosting,  // host the loaded character's session
+		kStopHosting,   // another character is loaded, or a new game started: hosting starts again with its session
+		kLeave,         // leave the session we joined (or are trying to join)
 	};
 
-	// What the host's game does about hosting, checked once a second. A new game is hosted only once its
-	// opening is over: its character ID comes with the name, so before that it is still the last
-	// character's, and nothing of the opening's world is the session's anyway.
-	[[nodiscard]] constexpr HostStep ForHost(bool a_wantHost, bool a_hosting, bool a_inWorld, bool a_inOpening, std::uint64_t a_hostedCharacter,
-		std::uint64_t a_currentCharacter)
+	// The loaded game, as Session sees it.
+	struct Game
 	{
-		if (a_hosting) {
-			return a_inOpening || a_currentCharacter != a_hostedCharacter ? HostStep::kStop : HostStep::kNone;
+		std::uint64_t character = 0;  // the loaded character's ID (0 is an ordinary ID: many saves have it)
+		bool          inWorld = false;
+		bool          inOpening = false;  // Vault 111's opening (Story::InOpening)
+	};
+
+	// Session's side of it.
+	struct Link
+	{
+		bool wantHost = false;  // bHost
+		bool hosting = false;   // our own server runs
+		bool joining = false;   // set to reach a friend's server: joined, connecting, or waiting to try again
+	};
+
+	// Which character our hosting and our joining belong to, through loads, new games, reconnects and the menu.
+	// Session tells it what happens and does the steps it returns.
+	class Tracker
+	{
+	public:
+		// Once a second. With bHost, hosting starts once the game is in the world and out of the opening, never at the
+		// main menu: the first arrival decides the session (its load order), so a friend must not find a server before
+		// our own game can be first. A new game's character ID comes with its name, in the opening, and nothing of the
+		// opening's world is the session's anyway. Once hosting, the opening only pauses sharing (a host with an
+		// alternate start who walks into Vault 111 hosts on); another character stops it.
+		Step Check(const Link& a_link, const Game& a_game)
+		{
+			if (a_link.hosting) {
+				return a_game.character != hosted ? Step::kStopHosting : Step::kNone;
+			}
+			// A joined game's character changes with no load only when a new character's name is confirmed, in the
+			// opening: that character plays in the session from now on. (Anywhere else a change is a load: OnLoad.)
+			if (a_link.joining && bound && a_game.inWorld && a_game.inOpening) {
+				bound = a_game.character;
+			}
+			return a_link.wantHost && a_game.inWorld && !a_game.inOpening ? Step::kStartHosting : Step::kNone;
 		}
-		return a_wantHost && a_inWorld && !a_inOpening ? HostStep::kStart : HostStep::kNone;
-	}
 
-	// The host's game after a load (a_newGame: a new game started): another character's save, or a new game,
-	// isn't the hosted character's world.
-	[[nodiscard]] constexpr bool HostStopsOnLoad(bool a_hosting, bool a_newGame, std::uint64_t a_hostedCharacter, std::uint64_t a_currentCharacter)
-	{
-		return a_hosting && (a_newGame || a_currentCharacter != a_hostedCharacter);
-	}
+		// A save was loaded, or (a_newGame) a new game started. Another character's save, or a new game, isn't the hosted
+		// character's world. A joining game that loads another character's save than the one that joined leaves, welcomed
+		// yet or not (a friend waiting for the host who loads their solo save meanwhile would join with it): the session's
+		// changes would go into a world they don't belong to, and be saved there. A new game doesn't leave: a fresh
+		// character for co-op is what INSTALL.md suggests, and Check takes it once it has its name.
+		Step OnLoad(const Link& a_link, bool a_newGame, std::uint64_t a_character)
+		{
+			if (a_link.hosting) {
+				return a_newGame || a_character != hosted ? Step::kStopHosting : Step::kNone;
+			}
+			return a_link.joining && !a_newGame && bound && *bound != a_character ? Step::kLeave : Step::kNone;
+		}
 
-	// A joined friend's game after a load: a save of another character than the one that joined leaves the
-	// session (the session's changes would be applied to a world they don't belong to, and saved there). A new
-	// game doesn't: starting a fresh character for co-op is what INSTALL.md suggests, and its ID comes later,
-	// with its name, and Session then takes that character as the one that joined.
-	[[nodiscard]] constexpr bool JoinerLeavesOnLoad(bool a_joined, bool a_newGame, std::uint64_t a_boundCharacter, std::uint64_t a_currentCharacter)
-	{
-		return a_joined && !a_newGame && a_currentCharacter != a_boundCharacter;
-	}
+		void OnHostingStarted(std::uint64_t a_character) { hosted = a_character; }
+
+		// Our game said hello to the server. The first hello after choosing it says which character joins; a reconnect's
+		// is still that character's.
+		void OnHello(std::uint64_t a_character)
+		{
+			if (!bound) {
+				bound = a_character;
+			}
+		}
+
+		// The server let us in (a_hosting: our own). Let back in after a drop into another session than the one we
+		// joined (the host now plays another character, or started over), we leave: that session's dead and loot
+		// would go into this character's world and saves without the player choosing it.
+		Step OnWelcome(bool a_hosting, std::uint64_t a_session)
+		{
+			if (!a_hosting && joined && *joined != a_session) {
+				return Step::kLeave;
+			}
+			joined = a_session;
+			return Step::kNone;
+		}
+
+		// Another server was chosen, or none (leaving, a menu join, hosting started or stopped): no character has joined it.
+		void OnServerChanged()
+		{
+			bound.reset();
+			joined.reset();
+		}
+
+		[[nodiscard]] std::uint64_t Hosted() const { return hosted; }
+
+	private:
+		std::uint64_t                hosted = 0;  // the character whose session our server holds
+		std::optional<std::uint64_t> bound;       // the character that joined the server we're set to reach
+		std::optional<std::uint64_t> joined;      // the session it joined
+	};
 
 	enum class Legacy
 	{

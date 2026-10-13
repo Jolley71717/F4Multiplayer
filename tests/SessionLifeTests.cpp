@@ -1,123 +1,18 @@
 // A host's saved session through what players live through: friends arriving before the host's own
 // game, the host restarting from the session file, saves loaded, reconnects. Each test drives the real
-// Server with the messages real games send, as two or three players.
+// Server with the messages real games send, as two or three players (see PlayerGame.h).
 
-#include "ServerFixture.h"
-#include "SessionFile.h"
-#include "game/CharacterBinding.h"
-#include "game/ContainerLedger.h"
+#include "PlayerGame.h"
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <format>
 #include <fstream>
-#include <random>
 #include <set>
 #include <thread>
 
-using namespace TestServer;
-using namespace std::chrono_literals;
+using namespace TestGame;
 
-namespace
-{
-	using Packets = std::vector<std::vector<std::uint8_t>>;
-
-	constexpr std::uint64_t HOST = 0x40575;        // the host's game's Hello::identity
-	constexpr std::uint64_t FRIEND = 0xF41E2D;     // a friend's
-	constexpr std::uint32_t HOST_HASH = 0x1234;    // Fixture::MakeHello's load order
-	constexpr std::uint32_t OTHER_HASH = 0x9999;   // a friend with another mod list (an extra texture pack's esm)
-	constexpr std::uint32_t RAIDER = 0x0001F001;   // NPCs and things from plugin files (shareable)
-	constexpr std::uint32_t RAIDER2 = 0x0001F002;
-	constexpr std::uint32_t CHEST = 0x0002C001;
-	constexpr std::uint32_t STIMPAK = 0x00023736;
-
-	using TempFile = TempSessionFile;
-
-	Server::Options HostedOptions(const TempFile& a_file)
-	{
-		Server::Options options;
-		options.hostIdentity = HOST;
-		options.sessionFile = a_file.path.string();
-		return options;
-	}
-
-	Protocol::Hello Hello(std::string a_name, std::uint64_t a_identity, std::uint32_t a_hash = HOST_HASH)
-	{
-		auto hello = Fixture::MakeHello(std::move(a_name), a_identity);
-		hello.contentHash = a_hash;
-		return hello;
-	}
-
-	// The host's own game: its identity, from this machine.
-	std::optional<Protocol::Welcome> JoinHost(Fixture& a_f, PeerId a_peer, std::uint32_t a_hash = HOST_HASH)
-	{
-		a_f.fake->SetLocal(a_peer);
-		return a_f.Join(a_peer, Hello("Host", HOST, a_hash));
-	}
-
-	std::optional<Protocol::Reject> Refused(Fixture& a_f, PeerId a_peer, const Protocol::Hello& a_hello)
-	{
-		a_f.fake->Connect(a_peer);
-		a_f.fake->Deliver(a_peer, Protocol::Encode(a_hello));
-		const auto packet = a_f.fake->WaitFor(a_peer, Type(MT::kReject));
-		return packet ? Protocol::DecodeReject(*packet) : std::nullopt;
-	}
-
-	// Returns once the server has handled everything delivered so far (it answers a heartbeat at once).
-	void Sync(Fixture& a_f, PeerId a_peer)
-	{
-		static std::uint32_t token = 0;
-		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::Heartbeat{ ++token }, MT::kHeartbeat));
-		REQUIRE(a_f.fake->WaitFor(a_peer, Type(MT::kHeartbeatAck)));
-	}
-
-	Packets Received(Fixture& a_f, PeerId a_peer)
-	{
-		Sync(a_f, a_peer);
-		return a_f.fake->Take(a_peer);
-	}
-
-	std::vector<Protocol::WorldState> WorldStates(const Packets& a_packets)
-	{
-		std::vector<Protocol::WorldState> out;
-		for (const auto& packet : a_packets) {
-			if (!packet.empty() && packet[0] == Type(MT::kWorldState)) {
-				auto state = Protocol::DecodeWorldState(packet);
-				REQUIRE(state);
-				out.push_back(std::move(*state));
-			}
-		}
-		return out;
-	}
-
-	std::set<std::uint32_t> DeadIn(const std::vector<Protocol::WorldState>& a_states)
-	{
-		std::set<std::uint32_t> dead;
-		for (const auto& state : a_states) {
-			dead.insert(state.deadActors.begin(), state.deadActors.end());
-		}
-		return dead;
-	}
-
-	auto Kill(std::uint32_t a_ref)
-	{
-		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, true }, MT::kReportDeath);
-	}
-
-	// A session the host played before: one raider dead, one chest looted, by load order HOST_HASH.
-	SessionFile::Snapshot PlayedSession()
-	{
-		SessionFile::Snapshot saved;
-		saved.contentHash = HOST_HASH;
-		saved.sessionId = 0x5E55;
-		saved.nextId = 3;
-		saved.identities = { { HOST, 1 }, { FRIEND, 2 } };
-		saved.deadActors = { RAIDER };
-		saved.containerChanges = { { 0, 2, { CHEST, STIMPAK, -3 } } };
-		return saved;
-	}
-}
 
 // ---- the host's game is first ----------------------------------------------------------------
 
@@ -256,133 +151,53 @@ TEST("session life: on a dedicated server a first arrival with another load orde
 	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER2 });
 }
 
-// ---- container changes through saves, reloads and restarts --------------------------------------
-
-namespace
+TEST("session life: a friend whose Join lands before the host's game is told once, tries again within seconds, and gets in once the host is")
 {
-	constexpr std::int32_t STIMPAKS_IN_CHEST = 10;  // in every player's world, before anyone loots
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.password = "rad";
+	Machine machine;
+	machine.Start(options);
+	Game me{ machine, FRIEND, FRIEND_COOP };
+	me.password = "rad";
+	me.JoinFriend();
+	CHECK(!me.welcome);
+	REQUIRE(me.notices.size() == 1);
+	CHECK(me.notices[0] == Protocol::REJECT_HOST_NOT_READY);
+	const auto soon = me.lastRefusal.retryIn;
+	CHECK(!me.Retry());  // the host is still loading: not said again
+	CHECK(me.notices.size() == 1);
 
-	// A player's game as far as one chest goes: the stimpaks in it in this player's world, the ledger WorldSync
-	// keeps of the session's container changes, and what a save holds of both. What the server sends it goes
-	// where Session and WorldSync send it.
-	struct Game
-	{
-		struct Save
-		{
-			std::int32_t                          stimpaks = STIMPAKS_IN_CHEST;
-			std::uint64_t                         session = 0;  // the co-save record (WorldSync writes none for 0)
-			std::uint32_t                         next = 0;
-			std::vector<ContainerLedger::Pending> waiting;
-		};
+	// Anything else (a wrong password) is said at every try, and isn't tried every few seconds.
+	Game stranger{ machine, 0x57A, FRIEND_SOLO };
+	stranger.JoinFriend();
+	CHECK(!stranger.Retry());
+	CHECK(stranger.notices.size() == 2);
+	CHECK(stranger.lastRefusal.retryIn > soon);
 
-		Fixture*                         f;
-		PeerId                           peer;
-		std::uint64_t                    identity;
-		ContainerLedger                  ledger;
-		std::int32_t                     stimpaks = STIMPAKS_IN_CHEST;
-		std::uint32_t                    applied = 0;  // changes applied to this world, to catch one applied twice
-		std::optional<Protocol::Welcome> welcome;
-
-		bool Apply(const Protocol::ContainerChange& a_change)
-		{
-			if (a_change.container == CHEST && a_change.item == STIMPAK) {
-				stimpaks += a_change.count;
-				++applied;
-			}
-			return true;
-		}
-
-		// Connects and says hello with what the world holds, as Session does, and takes in what comes back.
-		std::optional<Protocol::Welcome> Join(bool a_local = false)
-		{
-			auto hello = Hello(identity == HOST ? "Host" : "Friend", identity);
-			hello.world = ledger.ResyncPoint();
-			if (a_local) {
-				f->fake->SetLocal(peer);
-			}
-			f->fake->Connect(peer);
-			f->fake->Deliver(peer, Protocol::Encode(hello));
-			Process();
-			return welcome;
-		}
-
-		// Everything the server sent so far, in order.
-		void Process()
-		{
-			const auto tryApply = [this](const Protocol::ContainerChange& a_change) { return Apply(a_change); };
-			for (const auto& packet : Received(*f, peer)) {
-				switch (static_cast<MT>(packet[0])) {
-				case MT::kWelcome:
-					welcome = Protocol::DecodeWelcome(packet);
-					REQUIRE(welcome);
-					ledger.OnWelcome(welcome->sessionId, welcome->playerId);
-					break;
-				case MT::kWorldState:
-					{
-						const auto state = Protocol::DecodeWorldState(packet);
-						REQUIRE(state);
-						ledger.OnWorldState(state->containerFirstIndex, !state->containerChanges.empty());
-						for (const auto& change : state->containerChanges) {
-							ledger.Offer(change.index, change.playerId, change.change, tryApply);
-						}
-					}
-					break;
-				case MT::kContainerChanged:
-					{
-						const auto change = Protocol::DecodeIndexedContainerChange(packet);
-						REQUIRE(change);
-						ledger.Offer(change->index, change->playerId, change->change, tryApply);
-					}
-					break;
-				default:
-					break;
-				}
-			}
-		}
-
-		// The player takes stimpaks from the chest (or puts some in): in their own world at once, then reported.
-		void Loot(std::int32_t a_count)
-		{
-			stimpaks += a_count;
-			f->fake->Deliver(peer, Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, a_count }, MT::kReportContainer));
-		}
-
-		[[nodiscard]] Save MakeSave() const { return { stimpaks, ledger.RecordSession(), ledger.Next(), ledger.Waiting() }; }
-
-		// Loads a save: the world goes back to the save's, the co-save record comes back (or none), and while
-		// connected Session asks for the session's changes since (WorldSync's Revert, Load and BindToLiveSession,
-		// then Session::OnGameLoaded). What the server sent meanwhile is still to be processed, as in the game.
-		void Load(const Save& a_save)
-		{
-			stimpaks = a_save.stimpaks;
-			ledger.OnRevert();
-			if (a_save.session != 0) {
-				ledger.OnRecordLoaded(a_save.session, a_save.next, a_save.waiting);
-			}
-			ledger.BindToLiveSession();
-			if (welcome) {
-				f->fake->Deliver(peer, Protocol::Encode(ledger.ResyncPoint()));
-			}
-		}
-
-		void Drop()
-		{
-			f->fake->Drop(peer);
-			ledger.OnDisconnected();
-			welcome.reset();
-		}
-	};
+	// The host's game comes in: the next try gets in, and the refusal is forgotten.
+	Game host{ machine, HOST, HOST_COOP };
+	host.password = "rad";
+	host.JoinOwnServer();
+	REQUIRE(host.welcome);
+	REQUIRE(me.Retry());
+	CHECK(me.refusals.Last().empty());
+	CHECK(me.notices.size() == 1);
 }
+
+// ---- container changes through saves, reloads and restarts --------------------------------------
 
 TEST("session life: loot a friend took is taken once in my world, through a death reload to before I joined and a reload of a later autosave")
 {
-	TempFile   file;
-	Fixture    f{ HostedOptions(file) };
-	Game       host{ &f, 1, HOST };
-	Game       me{ &f, 2, FRIEND };
+	TempFile file;
+	Machine  machine;
+	Game     host{ machine, HOST, HOST_COOP };
+	Game     me{ machine, FRIEND, FRIEND_COOP };
 	const auto beforeJoining = me.MakeSave();  // my own save, from before the session: no record of it
-	REQUIRE(host.Join(true));
-	REQUIRE(me.Join());
+	host.HostOn(HostedOptions(file));
+	REQUIRE(host.welcome);
+	me.JoinFriend();
+	REQUIRE(me.welcome);
 
 	host.Loot(-3);
 	host.Process();
@@ -408,8 +223,8 @@ TEST("session life: loot a friend took is taken once in my world, through a deat
 	CHECK(me.stimpaks == 5);
 
 	// My connection drops and comes back: nothing again.
-	me.Drop();
-	REQUIRE(me.Join());
+	me.ConnectionLost();
+	REQUIRE(me.Retry());
 	CHECK(me.stimpaks == 5);
 	CHECK(host.stimpaks == 5);
 	CHECK(me.applied == 4);  // 3 then 2 live, and each once more after the loads back to before them
@@ -418,19 +233,20 @@ TEST("session life: loot a friend took is taken once in my world, through a deat
 TEST("session life: a resent loot message, or a second hello's world state, doesn't take the loot again")
 {
 	TempFile file;
-	Fixture  f{ HostedOptions(file) };
-	Game     host{ &f, 1, HOST };
-	Game     me{ &f, 2, FRIEND };
-	REQUIRE(host.Join(true));
-	REQUIRE(me.Join());
+	Machine  machine;
+	Game     host{ machine, HOST, HOST_COOP };
+	Game     me{ machine, FRIEND, FRIEND_COOP };
+	host.HostOn(HostedOptions(file));
+	me.JoinFriend();
+	REQUIRE(me.welcome);
 	host.Loot(-3);
 	host.Process();
 	me.Process();
 	REQUIRE(me.stimpaks == 7);
 
-	const auto tryApply = [&](const Protocol::ContainerChange& a_change) { return me.Apply(a_change); };
-	CHECK(me.ledger.Offer(0, host.welcome->playerId, { CHEST, STIMPAK, -3 }, tryApply) == ContainerLedger::Offered::kHave);
-	f.fake->Deliver(2, Protocol::Encode(me.ledger.ResyncPoint()));  // asked again (a load with the same record)
+	// The same change again, as the server sent it (a resend after a lost ack), and the world asked for again.
+	me.Handle({ Protocol::Encode(Protocol::IndexedContainerChange{ 0, host.welcome->playerId, { CHEST, STIMPAK, -3 } }) });
+	me.Send(Protocol::Encode(me.ledger.ResyncPoint()));
 	me.Process();
 	CHECK(me.stimpaks == 7);
 	CHECK(me.applied == 1);
@@ -439,11 +255,12 @@ TEST("session life: a resent loot message, or a second hello's world state, does
 TEST("session life: loot taken while my save loads reaches me once, together with the loot before it")
 {
 	TempFile file;
-	Fixture  f{ HostedOptions(file) };
-	Game     host{ &f, 1, HOST };
-	Game     me{ &f, 2, FRIEND };
-	REQUIRE(host.Join(true));
-	REQUIRE(me.Join());
+	Machine  machine;
+	Game     host{ machine, HOST, HOST_COOP };
+	Game     me{ machine, FRIEND, FRIEND_COOP };
+	host.HostOn(HostedOptions(file));
+	me.JoinFriend();
+	REQUIRE(me.welcome);
 	host.Loot(-1);  // #0
 	host.Process();
 	me.Process();
@@ -469,17 +286,19 @@ TEST("session life: when the host's game quit before its last loot was saved, th
 	TempFile   file;
 	Game::Save mine;
 	{
-		Fixture f{ HostedOptions(file) };
-		Game    host{ &f, 1, HOST };
-		Game    me{ &f, 2, FRIEND };
-		REQUIRE(host.Join(true));
-		REQUIRE(me.Join());
+		Machine machine;
+		Game    host{ machine, HOST, HOST_COOP };
+		Game    me{ machine, FRIEND, FRIEND_COOP };
+		host.HostOn(HostedOptions(file));
+		me.JoinFriend();
+		REQUIRE(me.welcome);
 		host.Loot(-3);  // #0
 		host.Loot(-2);  // #1
 		host.Process();
 		me.Process();
 		REQUIRE(me.stimpaks == 5);
 		mine = me.MakeSave();  // I save with both
+		host.StopHosting();
 	}
 	// The host's game quit before the server wrote #1: the file has only #0.
 	auto saved = SessionFile::Load(file.path);
@@ -488,13 +307,14 @@ TEST("session life: when the host's game quit before its last loot was saved, th
 	saved->containerChanges.resize(1);
 	REQUIRE(SessionFile::Save(file.path, *saved));
 
-	Fixture f{ HostedOptions(file) };
-	Game    host{ &f, 1, HOST };
-	Game    me{ &f, 2, FRIEND };
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	Game    me{ machine, FRIEND, FRIEND_COOP };
 	me.Load(mine);  // next evening: I start my game from that save, and join
-	REQUIRE(host.Join(true));
-	REQUIRE(me.Join());
-	CHECK(f.Logged("has container changes up to #2, the session only 1"));
+	host.HostOn(HostedOptions(file));
+	me.JoinFriend();
+	REQUIRE(me.welcome);
+	CHECK(machine.server->Logged("has container changes up to #2, the session only 1"));
 	CHECK(me.stimpaks == 5);
 
 	// The server numbers the host's next loot #1, the number my game had counted for the lost one.
@@ -654,118 +474,6 @@ TEST("session life: a session file that can't be written is tried at every check
 	REQUIRE(saved);
 	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
 	CHECK(f.Logged("saved again"));
-}
-
-// ---- one session per character ----------------------------------------------------------------------
-
-namespace
-{
-	constexpr std::uint64_t CHARACTER_A = 0x00A1B2C3D4E5F601;  // the host's co-op character
-	constexpr std::uint64_t CHARACTER_B = 0x00A1B2C3D4E5F602;  // their solo one
-
-	// The F4SE folder under Documents, for one test.
-	struct TempFolder
-	{
-		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-life-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
-		TempFolder() { std::filesystem::create_directories(path); }
-		~TempFolder()
-		{
-			std::error_code error;
-			std::filesystem::remove_all(path, error);
-		}
-	};
-
-	// Session::StartHosting's server for the loaded character (a_saveSession: the session the loaded save's
-	// co-save record names).
-	Server::Options HostingCharacter(const TempFolder& a_folder, std::uint64_t a_character, std::uint64_t a_saveSession, std::vector<std::string>& a_log, bool a_dev = false)
-	{
-		Server::Options options;
-		options.hostIdentity = HOST;
-		options.sessionFile = CharacterBinding::PrepareFile(a_folder.path, a_character, a_dev, a_saveSession, [&](const std::string& a_line) { a_log.push_back(a_line); }).string();
-		return options;
-	}
-}
-
-TEST("session life: the host loading their solo character hosts that character's own session; the co-op character's dead stay in its own")
-{
-	TempFolder               folder;
-	std::vector<std::string> log;
-	std::uint64_t            coopSession = 0;
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_A, 0, log) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		coopSession = host->sessionId;
-		REQUIRE(f.Join(2, Hello("Friend", FRIEND)));
-		f.fake->Deliver(2, Kill(RAIDER));
-		Sync(f, 2);
-	}
-	// The host loads the solo character's save with bHost still on: hosting stops and starts again with it.
-	CHECK(CharacterBinding::HostStopsOnLoad(true, false, CHARACTER_A, CHARACTER_B));
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_B, 0, log) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		CHECK(host->sessionId != coopSession);
-		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
-		f.fake->Deliver(1, Kill(RAIDER2));
-		Sync(f, 1);
-	}
-	// And back to the co-op character: its session as it was.
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_A, coopSession, log) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		CHECK(host->sessionId == coopSession);
-		CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
-	}
-	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_A, false)));
-	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_B, false)));
-	CHECK(log.empty());  // no old shared file: nothing to say
-}
-
-TEST("session life: the old shared session file is taken over only by the character whose save played in it")
-{
-	TempFolder               folder;
-	std::vector<std::string> log;
-	REQUIRE(SessionFile::Save(folder.path / CharacterBinding::LEGACY_FILE, PlayedSession()));  // written by 0.8.5
-
-	// The solo character's save has no record of that session: it starts its own, and the old file waits.
-	ContainerLedger solo;  // what that save's co-save record says
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_B, solo.ResyncPoint().sessionId, log) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		CHECK(host->sessionId != 0x5E55);
-		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
-	}
-	REQUIRE(log.size() == 1);
-	CHECK(log[0].find("another save's session") != std::string::npos);
-	CHECK(std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
-
-	// The test rig (dev channel) never reads it.
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_A, 0x5E55, log, true) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		CHECK(host->sessionId != 0x5E55);
-	}
-	CHECK(std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
-
-	// The co-op character's save was played in it (its co-save record names the session): it carries on.
-	ContainerLedger coop;
-	coop.OnRecordLoaded(0x5E55, 1, {});
-	{
-		Fixture    f{ HostingCharacter(folder, CHARACTER_A, coop.ResyncPoint().sessionId, log) };
-		const auto host = JoinHost(f, 1);
-		REQUIRE(host);
-		CHECK(host->sessionId == 0x5E55);
-		CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
-	}
-	REQUIRE(log.size() == 2);
-	CHECK(log[1].find("continuing the saved co-op session") != std::string::npos);
-	CHECK(!std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
-	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_A, false)));
 }
 
 // ---- a session file that goes wrong on disk ---------------------------------------------------------
