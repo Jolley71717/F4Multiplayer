@@ -58,6 +58,7 @@ namespace RemotePlayers
 
 		struct RemotePlayer
 		{
+			std::uint32_t        id = 0;  // their player ID: what the log calls them (never by name)
 			std::string          name;
 			std::uint32_t        appearance = 0;
 			std::vector<std::uint32_t> equipment;
@@ -650,7 +651,7 @@ namespace RemotePlayers
 				// abandoned under its stand-in. Nothing of ours needs undoing then: a copy can only be got into while it
 				// is drawn and solid (a hidden one has no collision to aim at).
 				if (OurFrame(frame.get()) || FrameInUse(frame.get(), a_standIn)) {
-					REX::INFO("RemotePlayers: someone here is in '{}'s frame copy {:08X}; leaving it", a_player.name, frame->GetFormID());
+					REX::INFO("RemotePlayers: someone here is in player {}'s frame copy {:08X}; leaving it", a_player.id, frame->GetFormID());
 				} else {
 					BuryFrame(frame.get(), a_player.framePlacedAt);
 				}
@@ -731,13 +732,13 @@ namespace RemotePlayers
 		{
 			if (const auto original = a_player.original.get()) {
 				if (HiddenByAnother(a_player, original.get())) {
-					REX::INFO("RemotePlayers: our frame {:08X} stays hidden after '{}': another friend wears theirs", original->GetFormID(), a_player.name);
+					REX::INFO("RemotePlayers: our frame {:08X} stays hidden after player {}: another friend wears theirs", original->GetFormID(), a_player.id);
 				} else {
 					if (const auto root = original->Get3D(); root && root == a_player.originalHidden) {
 						root->SetAppCulled(false);
 					}
 					RestoreCollision(a_player.originalCollisionOff, original.get());
-					REX::INFO("RemotePlayers: our frame {:08X}, hidden while '{}' wore theirs, is back", original->GetFormID(), a_player.name);
+					REX::INFO("RemotePlayers: our frame {:08X}, hidden while player {} wore theirs, is back", original->GetFormID(), a_player.id);
 				}
 			}
 			a_player.original = {};
@@ -779,7 +780,7 @@ namespace RemotePlayers
 				const auto choice = ArmorFrames::ChooseOriginal(a_player.powerArmorFrameRef, a_player.powerArmorFrame, facts);
 				if (static_cast<int>(choice) != a_player.originalChoice) {
 					a_player.originalChoice = static_cast<int>(choice);
-					REX::INFO("RemotePlayers: '{}' wears frame {:08X} (base {:08X}); ours, {:.0f} units from where they got in and {:.0f} from where it first stood: {}", a_player.name, a_player.powerArmorFrameRef, a_player.powerArmorFrame,
+					REX::INFO("RemotePlayers: player {} wears frame {:08X} (base {:08X}); ours, {:.0f} units from where they got in and {:.0f} from where it first stood: {}", a_player.id, a_player.powerArmorFrameRef, a_player.powerArmorFrame,
 						facts.fromSpot.value_or(-1.0f), facts.fromStart,
 						choice == ArmorFrames::Original::kHide      ? "hidden while they wear theirs" :
 						choice == ArmorFrames::Original::kMissing   ? "none here" :
@@ -852,7 +853,7 @@ namespace RemotePlayers
 			}
 			SetShown(a_frame, false);
 			if (SetCollision(a_player.frameCollisionOff, a_frame, false)) {
-				REX::INFO("RemotePlayers: '{}'s frame copy has no collision while it is worn", a_player.name);
+				REX::INFO("RemotePlayers: player {}'s frame copy has no collision while it is worn", a_player.id);
 			}
 			// Headings are compared the short way round: one blended across north can be a full turn off the
 			// frame's while facing the same way.
@@ -919,12 +920,12 @@ namespace RemotePlayers
 				a_player.switchedAt = a_now;
 				a_player.armorSkeleton = nullptr;
 				++switchesIn;
-				REX::INFO("RemotePlayers: '{}' stand-in {:08X} is in its frame copy {:08X}; its power armor skeleton is on its way", a_player.name, a_actor->GetFormID(), a_frame->GetFormID());
+				REX::INFO("RemotePlayers: player {} stand-in {:08X} is in its frame copy {:08X}; its power armor skeleton is on its way", a_player.id, a_actor->GetFormID(), a_frame->GetFormID());
 				return;
 			}
 			++a_player.switchTries;
 			++switchFails;
-			REX::WARN("RemotePlayers: '{}' stand-in {:08X} did not get into its frame copy {:08X} (try {} of {}; in power armor={})", a_player.name, a_actor->GetFormID(), a_frame->GetFormID(), a_player.switchTries,
+			REX::WARN("RemotePlayers: player {} stand-in {:08X} did not get into its frame copy {:08X} (try {} of {}; in power armor={})", a_player.id, a_actor->GetFormID(), a_frame->GetFormID(), a_player.switchTries,
 				ArmorFrames::MAX_SWITCH_TRIES, Equipment::InPowerArmor(a_actor));
 		}
 
@@ -943,7 +944,7 @@ namespace RemotePlayers
 				return false;
 			}
 			a_player.armorSkeleton = root;
-			REX::INFO("RemotePlayers: '{}' stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.name, a_actor->GetFormID(),
+			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.id, a_actor->GetFormID(),
 				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
 			return true;
 		}
@@ -974,7 +975,7 @@ namespace RemotePlayers
 				if (!worn) {
 					a_player.frameActionAt = a_now;  // the copy stands where they got out a while
 				}
-				REX::INFO("RemotePlayers: '{}' is {} power armor (frame {:08X})", a_player.name, worn ? "in" : "out of", a_player.powerArmorFrame);
+				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame);
 			}
 
 			const bool has3D = a_actor->Get3D() != nullptr;
@@ -1009,7 +1010,7 @@ namespace RemotePlayers
 				{
 					const auto frameCell = frame->GetParentCell();
 					const auto actorCell = a_actor->GetParentCell();
-					REX::INFO("RemotePlayers: '{}'s frame copy (cell {:08X}, 3d={}) is {:.0f} units from the stand-in in {:08X}, placed {} ms ago: placing it again", a_player.name, frameCell ? frameCell->GetFormID() : 0, facts.loaded, facts.distance,
+					REX::INFO("RemotePlayers: player {}'s frame copy (cell {:08X}, 3d={}) is {:.0f} units from the stand-in in {:08X}, placed {} ms ago: placing it again", a_player.id, frameCell ? frameCell->GetFormID() : 0, facts.loaded, facts.distance,
 						actorCell ? actorCell->GetFormID() : 0, std::chrono::duration_cast<std::chrono::milliseconds>(facts.sincePlaced).count());
 					DeleteFrame(a_player, a_actor);
 				}
@@ -1025,7 +1026,7 @@ namespace RemotePlayers
 				break;
 			case ArmorFrames::Copy::kAbandon:
 				// Someone here got into it while it stood where they got out: theirs now (see DeleteFrame).
-				REX::INFO("RemotePlayers: someone here got into '{}'s frame copy {:08X}; it is theirs now", a_player.name, frame->GetFormID());
+				REX::INFO("RemotePlayers: someone here got into player {}'s frame copy {:08X}; it is theirs now", a_player.id, frame->GetFormID());
 				a_player.frame = {};
 				a_player.frameCollisionOff = nullptr;
 				break;
@@ -1042,7 +1043,7 @@ namespace RemotePlayers
 			case ArmorFrames::Switch::kGaveUp:
 				if (!a_player.switchGaveUp) {
 					a_player.switchGaveUp = true;
-					REX::WARN("RemotePlayers: '{}' stand-in {:08X} never got into its frame copy; shown out of power armor, the copy hidden under it", a_player.name, a_actor->GetFormID());
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} never got into its frame copy; shown out of power armor, the copy hidden under it", a_player.id, a_actor->GetFormID());
 				}
 				break;
 			case ArmorFrames::Switch::kNone:
@@ -1071,7 +1072,7 @@ namespace RemotePlayers
 			}
 			a_player.holdLoggedAt = a_now;
 			const auto frame = a_player.frame.get();
-			REX::INFO("RemotePlayers: '{}' stand-in stood {:.1f} units from where it was put ({:.0f},{:.0f}), at ({:.0f},{:.0f}); in power armor={}, frame copy {:.1f} units away; {} of {} still frames so", a_player.name, off, last->x, last->y, at.x, at.y,
+			REX::INFO("RemotePlayers: player {} stand-in stood {:.1f} units from where it was put ({:.0f},{:.0f}), at ({:.0f},{:.0f}); in power armor={}, frame copy {:.1f} units away; {} of {} still frames so", a_player.id, off, last->x, last->y, at.x, at.y,
 				a_player.inPowerArmor, frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
 		}
 
@@ -1116,7 +1117,7 @@ namespace RemotePlayers
 			const auto  base = frame ? frame->GetObjectReference() : nullptr;
 			const auto  at = a_actor->data.location;
 			const float heading = a_actor->data.angle.z;
-			REX::INFO("RemotePlayers: '{}' got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.name, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);
+			REX::INFO("RemotePlayers: player {} got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.id, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);
 			DeleteActor(a_player);
 			++switchesOut;
 			if (Equipment::IsPowerArmorFrame(base) && PlaceFrame(a_player, base, a_cell, at, heading, a_now)) {
@@ -1142,7 +1143,7 @@ namespace RemotePlayers
 			// Unique NPCs (companions, quest characters) would bring their scripts along, so not those.
 			auto npc = a_player.appearance ? RE::TESForm::GetFormByID<RE::TESNPC>(a_player.appearance) : nullptr;
 			if (npc && npc->IsUnique()) {
-				REX::WARN("RemotePlayers: '{}' asked to look like unique NPC {:08X}; using the default", a_player.name, a_player.appearance);
+				REX::WARN("RemotePlayers: player {} asked to look like unique NPC {:08X}; using the default", a_player.id, a_player.appearance);
 				npc = nullptr;
 			}
 			if (!npc) {
@@ -1184,7 +1185,7 @@ namespace RemotePlayers
 			const auto ref = handle.get();
 			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 			if (!actor) {
-				REX::ERROR("RemotePlayers: failed to spawn puppet for '{}'", a_player.name);
+				REX::ERROR("RemotePlayers: failed to spawn puppet for player {}", a_player.id);
 				return nullptr;
 			}
 
@@ -1195,7 +1196,7 @@ namespace RemotePlayers
 			// earlier version saved, so they stay as every version since 0.4.0 set them.
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", actor->GetFormID(), SaveStrays::STAND_IN_FACTION, SaveStrays::STAND_IN_RANK).c_str());
 
-			REX::INFO("RemotePlayers: spawned {:08X} for '{}'", actor->GetFormID(), a_player.name);
+			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);
 			return actor;
 		}
 	}
@@ -1208,6 +1209,7 @@ namespace RemotePlayers
 		if (player.knownAt == Clock::time_point{}) {
 			player.knownAt = Clock::now();
 		}
+		player.id = a_id;
 		player.name = std::move(a_name);
 		player.appearance = a_appearance;
 		if (a_appearance) {
@@ -1621,7 +1623,7 @@ namespace RemotePlayers
 				case ArmorFrames::Switch::kStuck:
 					++remote.switchTries;
 					++switchFails;
-					REX::WARN("RemotePlayers: '{}' stand-in {:08X} is still on its own skeleton {} ms after it was switched into its frame copy; placed again (try {} of {})", remote.name, actor->GetFormID(),
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} is still on its own skeleton {} ms after it was switched into its frame copy; placed again (try {} of {})", remote.id, actor->GetFormID(),
 						std::chrono::duration_cast<std::chrono::milliseconds>(now - remote.switchedAt).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES);
 					DeleteActor(remote);
 					actor = nullptr;
@@ -1702,7 +1704,7 @@ namespace RemotePlayers
 						std::string worn, wanted;
 						for (const auto id : Wearable(shown())) worn += std::format("{:08X} ", id);
 						for (const auto id : Wearable(Outfit(remote, dress))) wanted += std::format("{:08X} ", id);
-						REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
+						REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 					}
 				}
 			}
