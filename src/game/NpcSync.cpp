@@ -1,6 +1,7 @@
 #include "game/NpcSync.h"
 
 #include "game/Equipment.h"
+#include "game/NpcClaims.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -19,7 +20,6 @@ namespace NpcSync
 		// NPCs fighting or near a player send 20 states a second, the rest 10 (every other tick).
 		constexpr auto  STATE_INTERVAL = 50ms;
 		constexpr float FAST_RANGE = 3000.0f;  // game units from any player
-		constexpr auto CLAIM_RETRY = 3s;
 		constexpr auto TAKEOVER_COOLDOWN = 5s;  // between takeover requests for the same NPC
 		// While we talk to an NPC we run, we claim it again this often so nobody takes it over
 		// mid-conversation (the server refuses takeovers within 5 s of a claim).
@@ -77,7 +77,7 @@ namespace NpcSync
 		std::uint32_t localId = 0;
 
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
-		std::unordered_map<std::uint32_t, Clock::time_point> claimedAt;  // claims awaiting an answer
+		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
 		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		Clock::time_point                                    nextTalkClaim{};
@@ -263,25 +263,23 @@ namespace NpcSync
 						}
 						continue;
 					}
-					const auto claimed = claimedAt.find(id);
-					if (claimed != claimedAt.end() && a_now - claimed->second < CLAIM_RETRY) {
-						continue;
-					}
 					// Just handed to a nearer friend: give their game time to claim it.
 					if (const auto handed = handedOffAt.find(id); owner == 0 && handed != handedOffAt.end() && a_now - handed->second < HANDOFF_HOLD) {
 						continue;
 					}
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
 					// and nothing at all until its dead list is in after a load: the server would take a copy alive only in
-					// an older save for one that came back (WorldSync::MayClaim).
+					// an older save for one that came back (WorldSync::MayClaim). Not again while a claim awaits its answer, nor for a
+					// while after another player who has it as a companion too kept it (NpcClaims).
 					const bool companion = IsOurCompanion(actor);
-					if ((owner == 0 || companion) && WorldSync::MayClaim(id)) {
-						claims.push_back({ id, companion ? Protocol::ClaimReason::kCompanion : Protocol::ClaimReason::kUnowned });
-						claimedAt[id] = a_now;
+					const auto reason = companion ? Protocol::ClaimReason::kCompanion : Protocol::ClaimReason::kUnowned;
+					if ((owner == 0 || companion) && claimBook.Due(id, reason, a_now) && WorldSync::MayClaim(id)) {
+						claims.push_back({ id, reason });
+						claimBook.Claimed(id, reason, a_now);
 					}
 				}
 			}
-			std::erase_if(claimedAt, [&](const auto& a_entry) { return a_now - a_entry.second >= CLAIM_RETRY; });
+			claimBook.Expire(a_now);
 			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
@@ -343,7 +341,7 @@ namespace NpcSync
 				released.push_back(id);
 			}
 			owned.clear();
-			claimedAt.clear();
+			claimBook.Clear();
 			switchOns.Clear();
 			bringIns.Clear();
 			for (auto& [id, mirror] : mirrors) {
@@ -654,8 +652,9 @@ namespace NpcSync
 
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners)
 	{
+		const auto now = Clock::now();
 		for (const auto& entry : a_owners) {
-			claimedAt.erase(entry.refId);
+			claimBook.Answered(entry.refId, entry.playerId, localId, now);
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
@@ -690,10 +689,13 @@ namespace NpcSync
 				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
 			}
+			switchOns.Forget(state.refId);  // on and loaded: a later switch-off gets fresh tries
 			// Loaded here but not where the owner's copy is (ours waits in an interior its own quest left it
 			// in): brought over the same way, and mirrored once it is here. The snapshot is kept meanwhile.
 			if (std::pair{ state.cell, state.worldspace } != SpaceOf(actor)) {
 				BringIn(state, now);
+			} else {
+				bringIns.Forget(state.refId);  // here, where the owner's copy is
 			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;
@@ -748,7 +750,7 @@ namespace NpcSync
 			return;
 		}
 		lastTakeover[a_refId] = now;
-		claimedAt[a_refId] = now;
+		claimBook.Claimed(a_refId, Protocol::ClaimReason::kInteract, now);
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
 	}
 
@@ -858,7 +860,7 @@ namespace NpcSync
 		sentGear.clear();
 		knownGear.clear();
 		owners.clear();
-		claimedAt.clear();
+		claimBook.Clear();
 		lastTakeover.clear();
 		handedOffAt.clear();
 		talkingTo = 0;
@@ -904,7 +906,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} refusals={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, claimBook.Refusals(), localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }

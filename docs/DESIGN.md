@@ -116,7 +116,8 @@
 - Every loaded, living NPC from a plugin file has one owner, whose game runs its AI. The server decides:
   - nobody owns it: the first player to claim it (they have it loaded);
   - a player's current companion goes to that player, unless it is also another player's companion
-    (then the first keeps it, so two players with Dogmeat don't trade him forever);
+    (then the first keeps it, so two players with Dogmeat don't trade him forever; the other's game asks
+    again every 15 s rather than every 3 s, and at once when he is released: `NpcClaims`, `refusals=`);
   - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
     hands in the last 5 s.
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
