@@ -7,9 +7,10 @@
 // A friend in power armor, as their stand-in shows it. A copy of their frame (the base they sent) is placed at the
 // stand-in, and the stand-in is switched into it the way the game's own SwitchToPowerArmor switches an actor in
 // (PowerArmor's switch-in, Address Library 2219442 in 1.11.240): at once, with no climb and no AI. The engine moves the
-// frame's items onto the actor, puts the frame on it, gives it the power armor race, rebuilds its 3D there and then,
-// keeps the frame persistent for it and disables the frame. Their pieces go on only once the engine has it in its
-// frame: on the stand-in's own body they are a suit nobody wears.
+// frame's items onto the actor, puts the frame on it, gives it the power armor race, queues the rebuild of its 3D (a
+// task of the frame after), keeps the frame persistent for it and disables the frame. Their pieces go on only once
+// that rebuilt 3D is in, built on the power armor skeleton: on the stand-in's own body they are a suit nobody wears, and
+// the body it has as the switch-in returns is still its own.
 // Out of their armor, the stand-in is replaced rather than switched out. The engine's own exit (2252033) finishes, for an
 // actor near the player, over several frames as its animation graph allows, and with no room to step out it gives the
 // actor an AI package to walk out with, which a stand-in never runs. Its frame goes with it, and a copy of the frame is
@@ -80,19 +81,27 @@ namespace ArmorFrames
 	}
 
 	// A switch-in that does not take (the engine put no ExtraPowerArmor on the stand-in) is tried again this long after,
-	// this many times for one stand-in in all; then it is shown out of its armor for the rest of this wear: their clothes,
-	// the copy hidden under it, never the pieces on its own body.
+	// this many times for one friend's wear in all (a stand-in placed again for one that took but never got its power
+	// armor skeleton counts too); then it is shown out of its armor for the rest of this wear: their clothes, the copy
+	// hidden under it, never the pieces on its own body.
 	constexpr int  MAX_SWITCH_TRIES = 3;
 	constexpr auto SWITCH_RETRY = std::chrono::seconds(2);
+	// How long a stand-in the engine has in its frame may stay on its own skeleton. The switch-in only queues the rebuild
+	// of its 3D (TaskQueueInterface::QueueActorUpdateModel), which the task queue runs a frame or so later, longer when
+	// the skeleton and frame come from disk; and it queues nothing when the model loader already holds a load for the
+	// actor. One still on its own body this long after is placed again (Switch::kStuck), as a switch that never took.
+	constexpr auto SKELETON_LIMIT = std::chrono::seconds(5);
 
 	struct SwitchFacts
 	{
-		bool     worn = false;   // they are in power armor, and the frame they sent is a frame here
-		bool     in = false;     // the engine has the stand-in in power armor (ExtraPowerArmor)
-		bool     ready = false;  // the stand-in can be switched now: its 3D in, its process high (the engine rebuilds its 3D at once only then)
-		bool     held = false;   // its copy is held under it this update (Copy::kHold): loaded, in its place, nobody here in it
-		int      tries = 0;      // switch-ins tried for this stand-in that did not take
-		Duration sinceTried{};   // since the last of them
+		bool     worn = false;     // they are in power armor, and the frame they sent is a frame here
+		bool     in = false;       // the engine has the stand-in in power armor (ExtraPowerArmor)
+		bool     rebuilt = false;  // its 3D is built on the power armor skeleton
+		Duration sinceIn{};        // since the switch-in took (when in)
+		bool     ready = false;    // the stand-in can be switched now: its 3D in, its process high (the engine queues its 3D rebuild only then)
+		bool     held = false;     // its copy is held under it this update (Copy::kHold): loaded, in its place, nobody here in it
+		int      tries = 0;        // switch-ins tried for this wear that did not take
+		Duration sinceTried{};     // since the last of them
 	};
 
 	enum class Switch
@@ -100,13 +109,17 @@ namespace ArmorFrames
 		kNone,    // as it is
 		kIn,      // switched into its copy now
 		kOut,     // they are out and it is still in: replaced, a copy of the frame left where it stood
+		kStuck,   // in, but still on its own skeleton too long (see SKELETON_LIMIT): replaced, counted as a try
 		kGaveUp,  // the switch-in never took: shown out of its armor (see MAX_SWITCH_TRIES)
 	};
 
 	constexpr Switch ChooseSwitch(const SwitchFacts& a_facts)
 	{
 		if (a_facts.in) {
-			return a_facts.worn ? Switch::kNone : Switch::kOut;
+			if (!a_facts.worn) {
+				return Switch::kOut;
+			}
+			return !a_facts.rebuilt && a_facts.sinceIn > SKELETON_LIMIT ? Switch::kStuck : Switch::kNone;
 		}
 		if (!a_facts.worn) {
 			return Switch::kNone;
@@ -121,17 +134,22 @@ namespace ArmorFrames
 	}
 
 	// What the stand-in wears goes by what the engine says of it, never by their status alone: until the engine has it in
-	// its frame it is a body of the stand-in's own race.
+	// its frame it is a body of the stand-in's own race, and it keeps that body until the rebuild the switch-in queued
+	// has run (the pieces are modelled for the power armor skeleton: on the other body they hang in the air).
 	enum class Dress
 	{
 		kClothes,  // out of power armor: their gear put on afresh (Equipment::Apply empties its inventory first)
-		kArmor,    // in its frame: their pieces and weapons put on, its inventory left as it is (emptied, the frame the
-		           // engine put on it would go too)
+		kWait,     // in its frame, its 3D not rebuilt yet: nothing put on or looked at
+		kArmor,    // in its frame on the power armor skeleton: their pieces and weapons put on, its inventory left as it is
+		           // (emptied, the frame the engine put on it would go too)
 	};
 
-	constexpr Dress ChooseDress(bool a_in)
+	constexpr Dress ChooseDress(bool a_in, bool a_rebuilt)
 	{
-		return a_in ? Dress::kArmor : Dress::kClothes;
+		if (!a_in) {
+			return Dress::kClothes;
+		}
+		return a_rebuilt ? Dress::kArmor : Dress::kWait;
 	}
 
 	enum class Item
@@ -143,13 +161,19 @@ namespace ArmorFrames
 	};
 
 	// Whether the stand-in wears an item of theirs, dressed so. In its frame, clothes put on would go under the armor at
-	// best, or take the frame's slots; out of it, neither a piece nor the frame ever goes on its own body.
+	// best, or take the frame's slots; out of it, neither a piece nor the frame ever goes on its own body; waiting for
+	// the power armor skeleton, nothing at all.
 	constexpr bool Wears(Dress a_dress, Item a_item)
 	{
-		if (a_dress == Dress::kArmor) {
+		switch (a_dress) {
+		case Dress::kArmor:
 			return a_item == Item::kPiece || a_item == Item::kWeapon;
+		case Dress::kWait:
+			return false;
+		case Dress::kClothes:
+			return a_item != Item::kPiece && a_item != Item::kFrame;
 		}
-		return a_item != Item::kPiece && a_item != Item::kFrame;
+		return false;
 	}
 
 	// Where they were as they got into a pre-placed frame (see ChooseOriginal) is taken from their newest state only

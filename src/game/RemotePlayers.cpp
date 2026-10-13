@@ -93,8 +93,11 @@ namespace RemotePlayers
 			Clock::time_point    framePlacedAt{};
 			Clock::time_point    frameActionAt{};        // when they last got out (the copy stands where they did a while)
 			const RE::NiAVObject* frameCollisionOff = nullptr;  // the frame's 3D whose collision we turned off; only compared
-			int                  switchTries = 0;        // switch-ins of this stand-in into its copy that did not take (see ArmorFrames::ChooseSwitch)
+			int                  switchTries = 0;        // switch-ins into a copy that did not take in this wear (see ArmorFrames::ChooseSwitch)
 			Clock::time_point    switchTriedAt{};
+			Clock::time_point    switchedAt{};           // when the switch-in took for this stand-in
+			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
+			ArmorFrames::Dress   dress = ArmorFrames::Dress::kClothes;  // how the stand-in was dressed last update
 			bool                 switchGaveUp = false;   // logged
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
@@ -622,6 +625,17 @@ namespace RemotePlayers
 			return off;
 		}
 
+		// A frame made in this game goes: the persistence the engine gave it as a stand-in was switched into it is let go
+		// first (nothing is done to one no stand-in got into; see Equipment::ReleasePowerArmorFrame), then it is buried.
+		// Every frame of ours goes this way, whether or not its stand-in can still be found: the stand-in's own frame is
+		// known from the stand-in, and a copy buried after the game had taken the stand-in from under us used to keep its
+		// promotion in the persistence manager for the rest of the session.
+		void BuryFrame(RE::TESObjectREFR* a_frame, Clock::time_point a_placedAt)
+		{
+			Equipment::ReleasePowerArmorFrame(a_frame);
+			Bury({ .actor = a_frame->GetHandle(), .spawnedAt = a_placedAt });
+		}
+
 		// The frame placed for the stand-in is removed once they are out of it a while (or the stand-in is gone).
 		// a_standIn is the stand-in the copy was placed for: in it (the engine's, disabled) or standing in it where they
 		// got out, it is never someone here who got into it.
@@ -637,7 +651,7 @@ namespace RemotePlayers
 				if (OurFrame(frame.get()) || FrameInUse(frame.get(), a_standIn)) {
 					REX::INFO("RemotePlayers: someone here is in '{}'s frame copy {:08X}; leaving it", a_player.name, frame->GetFormID());
 				} else {
-					Bury({ .actor = a_player.frame, .spawnedAt = a_player.framePlacedAt });
+					BuryFrame(frame.get(), a_player.framePlacedAt);
 				}
 			}
 			a_player.frame = {};
@@ -814,8 +828,9 @@ namespace RemotePlayers
 
 		// Power armor: a friend in a frame is shown in it (see ArmorFrames). A copy of their frame is placed at the stand-in
 		// and held under it until both have their 3D, and the stand-in is switched into it; from then the engine has the copy
-		// (disabled, kept for the stand-in) until they get out, and their pieces go on (Outfit). Out of it, the stand-in is
-		// replaced and a copy is left where they got out (LeaveArmor).
+		// (disabled, kept for the stand-in) until they get out, and their pieces go on (Outfit) once the rebuild of its 3D
+		// the switch-in queued has given it the power armor skeleton. Out of it, the stand-in is replaced and a copy is left
+		// where they got out (LeaveArmor).
 		// A copy further than ArmorFrames::MOVE_LIMIT from its stand-in is placed again rather than moved onto it.
 		// A frame copy with collision a few units off shoved the stand-in aside (in a joiner's game it flipped between two
 		// spots 18 units apart while the host stood still). The copy is kept right under the stand-in, without collision.
@@ -872,9 +887,17 @@ namespace RemotePlayers
 			data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 			data.clearStillLoadingFlag = true;
 			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
-			if (!handle.get()) {
+			const auto frame = handle.get();
+			if (!frame) {
 				return false;
 			}
+			// Empty. A frame never looked into is filled from its base's container the first time its inventory is read
+			// (TESObjectREFR::RemoveAllItems does so itself, then clears it; the engine's switch-in does so too as it moves
+			// the frame's items onto the actor), and a pre-placed loot frame's base (the museum's T-45, 0019DED9) carries a
+			// whole set of pieces: the copy left where a friend got out rolled a fresh set for whoever here stepped into it,
+			// a suit nobody in the session ever had, and the copy the stand-in gets into would have had those pieces moved
+			// onto it. The friend's own pieces cannot go into a copy; it stands empty.
+			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", frame->GetFormID()).c_str());
 			a_player.frame = handle;
 			a_player.framePlacedAt = a_now;
 			a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
@@ -890,16 +913,53 @@ namespace RemotePlayers
 				// The engine disables it (its 3D, and the collision we turned off with it, go): never drawn or made solid by
 				// us again, it goes with the stand-in.
 				a_player.frameCollisionOff = nullptr;
-				a_player.equipmentApplied = false;  // their pieces go on now (see Outfit)
+				// Their pieces go on once the rebuild of its 3D the switch-in queued has run (see OnArmorSkeleton and Outfit):
+				// the 3D it has now is still its own body, which the queued task takes away.
+				a_player.switchedAt = a_now;
+				a_player.armorSkeleton = nullptr;
 				a_player.switchTries = 0;
 				++switchesIn;
-				REX::INFO("RemotePlayers: '{}' stand-in {:08X} is in its frame copy {:08X}", a_player.name, a_actor->GetFormID(), a_frame->GetFormID());
+				REX::INFO("RemotePlayers: '{}' stand-in {:08X} is in its frame copy {:08X}; its power armor skeleton is on its way", a_player.name, a_actor->GetFormID(), a_frame->GetFormID());
 				return;
 			}
 			++a_player.switchTries;
 			++switchFails;
 			REX::WARN("RemotePlayers: '{}' stand-in {:08X} did not get into its frame copy {:08X} (try {} of {}; in power armor={})", a_player.name, a_actor->GetFormID(), a_frame->GetFormID(), a_player.switchTries,
 				ArmorFrames::MAX_SWITCH_TRIES, Equipment::InPowerArmor(a_actor));
+		}
+
+		// Whether the stand-in's 3D is built on the power armor skeleton (Equipment::HasPowerArmorSkeleton): the rebuild
+		// the switch-in queued has run. Looked for once per 3D, and logged as it comes.
+		bool OnArmorSkeleton(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		{
+			const auto root = a_actor->Get3D();
+			if (!root) {
+				return false;
+			}
+			if (root == a_player.armorSkeleton) {
+				return true;
+			}
+			if (!Equipment::HasPowerArmorSkeleton(a_actor)) {
+				return false;
+			}
+			a_player.armorSkeleton = root;
+			REX::INFO("RemotePlayers: '{}' stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.name, a_actor->GetFormID(),
+				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
+			return true;
+		}
+
+		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest).
+		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		{
+			const bool in = Equipment::InPowerArmor(a_actor);
+			return {
+				.worn = WornFrame(a_player) != nullptr,
+				.in = in,
+				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_now),
+				.sinceIn = a_now - a_player.switchedAt,
+				.tries = a_player.switchTries,
+				.sinceTried = a_now - a_player.switchTriedAt,
+			};
 		}
 
 		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
@@ -972,14 +1032,9 @@ namespace RemotePlayers
 			}
 
 			const auto process = a_actor->currentProcess;
-			const ArmorFrames::SwitchFacts switchFacts{
-				.worn = worn,
-				.in = in,
-				.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false),
-				.held = copy == ArmorFrames::Copy::kHold,
-				.tries = a_player.switchTries,
-				.sinceTried = a_now - a_player.switchTriedAt,
-			};
+			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now);
+			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false);
+			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
 			case ArmorFrames::Switch::kIn:
 				SwitchIn(a_player, a_actor, frame.get(), a_now);
@@ -991,7 +1046,8 @@ namespace RemotePlayers
 				}
 				break;
 			case ArmorFrames::Switch::kNone:
-			case ArmorFrames::Switch::kOut:  // replaced before this (see LeaveArmor)
+			case ArmorFrames::Switch::kOut:    // replaced before this (see LeaveArmor)
+			case ArmorFrames::Switch::kStuck:  // replaced before this too (see Update)
 				break;
 			}
 		}
@@ -1019,18 +1075,14 @@ namespace RemotePlayers
 				a_player.inPowerArmor, frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
 		}
 
-		// A stand-in in its frame is about to go (never to get out of it): the engine lets go of the frame it keeps for it
-		// (Equipment::ReleasePowerArmorFrame), and that frame goes with it. It is the copy we hold for it (DeleteFrame
-		// buries that), unless something else happened; any other one made in this game is buried here.
+		// A stand-in in its frame is about to go (never to get out of it): that frame goes with it, let go of by the engine
+		// first (BuryFrame). It is the copy we hold for it (DeleteFrame buries that, stand-in or no stand-in), unless
+		// something else happened; any other one made in this game is buried here.
 		void ReleaseArmor(RemotePlayer& a_player, RE::Actor* a_actor)
 		{
 			const auto frame = a_actor ? Equipment::PowerArmorFrameOf(a_actor) : RE::NiPointer<RE::TESObjectREFR>{};
-			if (!frame) {
-				return;
-			}
-			Equipment::ReleasePowerArmorFrame(frame.get());
-			if (frame.get() != a_player.frame.get().get() && frame->IsCreated()) {
-				Bury({ .actor = frame->GetHandle(), .spawnedAt = a_player.framePlacedAt });
+			if (frame && frame.get() != a_player.frame.get().get() && frame->IsCreated()) {
+				BuryFrame(frame.get(), a_player.framePlacedAt);
 			}
 		}
 
@@ -1557,10 +1609,26 @@ namespace RemotePlayers
 				}
 			}
 
-			// Out of their armor while the stand-in is still in its frame: it goes, and a fresh one is placed just below.
-			if (actor && ArmorFrames::ChooseSwitch({ .worn = WornFrame(remote) != nullptr, .in = Equipment::InPowerArmor(actor) }) == ArmorFrames::Switch::kOut) {
-				LeaveArmor(remote, actor, localCell, now);
-				actor = nullptr;
+			// Out of their armor while the stand-in is still in its frame: it goes, and a fresh one is placed just below. So
+			// does one the engine has in its frame but never gave the power armor skeleton (the rebuild the switch-in queued
+			// did not come): the fresh one is tried afresh, and the tries of this wear add up (ArmorFrames::MAX_SWITCH_TRIES).
+			if (actor) {
+				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, now))) {
+				case ArmorFrames::Switch::kOut:
+					LeaveArmor(remote, actor, localCell, now);
+					actor = nullptr;
+					break;
+				case ArmorFrames::Switch::kStuck:
+					++remote.switchTries;
+					++switchFails;
+					REX::WARN("RemotePlayers: '{}' stand-in {:08X} is still on its own skeleton {} ms after it was switched into its frame copy; placed again (try {} of {})", remote.name, actor->GetFormID(),
+						std::chrono::duration_cast<std::chrono::milliseconds>(now - remote.switchedAt).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES);
+					DeleteActor(remote);
+					actor = nullptr;
+					break;
+				default:
+					break;
+				}
 			}
 
 			if (!actor) {
@@ -1579,10 +1647,13 @@ namespace RemotePlayers
 				remote.equipmentFixes = 0;
 				remote.shownName.clear();
 				remote.lastTarget.reset();
-				// Still in their armor (it was replaced through a door, after a load, or with a new look): this one goes
-				// into a copy as soon as both are loaded, tried afresh.
-				remote.switchTries = 0;
+				// Still in their armor (it was replaced through a door, after a load, with a new look, or for a skeleton that
+				// never came): this one goes into a copy as soon as both are loaded, at once. The tries that did not take in
+				// this wear are kept: placed again and again for a rebuild that never comes, it would never give up.
 				remote.switchTriedAt = {};
+				remote.switchedAt = {};
+				remote.armorSkeleton = nullptr;
+				remote.dress = ArmorFrames::Dress::kClothes;
 				remote.switchGaveUp = false;
 			}
 
@@ -1598,10 +1669,19 @@ namespace RemotePlayers
 
 			// Dressed as the engine has it (ArmorFrames::ChooseDress): Apply empties the inventory first, which in its frame
 			// would take the frame the engine put on it, so in a frame only the pieces and weapons are put right; what it wears
-			// besides them is not looked at there.
-			const auto dress = ArmorFrames::ChooseDress(Equipment::InPowerArmor(actor));
+			// besides them is not looked at there. In its frame but still on its own body (the rebuild the switch-in queued
+			// has not run), nothing is put on or looked at: the pieces would hang off the wrong skeleton. Dressed anew as the
+			// dress changes: the pieces go on the update the power armor skeleton is found.
+			const bool inArmor = Equipment::InPowerArmor(actor);
+			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
+			if (dress != remote.dress) {
+				remote.dress = dress;
+				remote.equipmentApplied = false;
+			}
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
-			if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
+			if (dress == ArmorFrames::Dress::kWait) {
+				// waiting for the power armor skeleton
+			} else if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
 				if (dress == ArmorFrames::Dress::kArmor) {
 					Equipment::WearInArmor(actor, Outfit(remote, dress));
 				} else {
@@ -1650,8 +1730,9 @@ namespace RemotePlayers
 			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
-			// In power armor: whether the engine has the stand-in in its frame (and switch-ins that did not take), how many of
-			// their pieces it has on, and its frame copy (worn by it, loading, hidden or shown).
+			// In power armor: whether the engine has the stand-in in its frame (and switch-ins that did not take), whether its
+			// 3D is on the power armor skeleton yet, how many of their pieces it has on, and its frame copy (worn by it,
+			// loading, hidden or shown).
 			std::string armor;
 			const bool  in = actor && Equipment::InPowerArmor(actor);
 			if (actor && (remote.powerArmorOn || remote.inPowerArmor || in)) {
@@ -1659,7 +1740,7 @@ namespace RemotePlayers
 				const auto frame = remote.frame.get();
 				const bool engaged = in && frame && Equipment::PowerArmorFrameOf(actor).get() == frame.get();
 				const auto root = frame ? frame->Get3D() : nullptr;
-				armor = std::format(" in={} tries={} pieces={}/{} copy={}", in, remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.equipment),
+				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.equipment),
 					!frame ? "none" : engaged ? "worn" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown");
 			}
 			// Their frame when every game has it, and whether ours is hidden while they wear theirs.

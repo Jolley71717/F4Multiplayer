@@ -15,12 +15,20 @@ namespace Equipment
 		// creates the actor's ExtraPowerArmor (state 1), sets the frame as its frame, unequips what the race's body slot
 		// conflicts with, gives it the power armor race, sounds the steal alarm if the frame or its cell has an owner the
 		// actor is not, moves the frame's items onto the actor (filling the frame from its base's container first if it was
-		// never looked into), equips the frame item and locks it on, rebuilds the actor's 3D at once (high or middle-high
-		// process only), promotes the frame to persist for the power armor race, queues the frame's disabling, and sets
-		// state 2. No package, no AI and no animation are involved.
+		// never looked into), equips the frame item and locks it on, queues the rebuild of the actor's 3D (high or
+		// middle-high process only: Set3DUpdateFlag(0x520) and AIProcess::Update3dModel with true, which clears the flags
+		// and hands the rebuild to TaskQueueInterface::QueueActorUpdateModel, or to nothing when the model loader already
+		// holds a load for the actor), promotes the frame to persist for the power armor race, queues the frame's
+		// disabling, and sets state 2. No package, no AI and no animation are involved. The power armor skeleton is on the
+		// actor only once that task has run, a frame or more later.
 		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 2219442 };
 		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
 		constexpr REL::ID SET_OWNER{ 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
+		// A bone the power armor skeleton has and the human one has not (Meshes\Actors\PowerArmor\CharacterAssets\
+		// skeleton.nif against Meshes\Actors\Character\CharacterAssets\skeleton.nif in Fallout4 - Meshes.ba2: the armor
+		// bones, Pelvis_Armor, Helmet_Armor, Tank_Armor and the rest, are the power armor skeleton's alone; the human one
+		// only has P-Armor connect points, which are no nodes).
+		constexpr const char* POWER_ARMOR_BONE = "Pelvis_Armor";
 
 		RE::BGSKeyword* FrameKeyword()
 		{
@@ -212,6 +220,16 @@ namespace Equipment
 		static REL::Relocation<void (*)(RE::Actor&, RE::TESObjectREFR*, bool)> switchIn{ SWITCH_INTO_POWER_ARMOR };
 		switchIn(*a_actor, a_frame, false);
 		return PowerArmorFrameOf(a_actor).get() == a_frame;
+	}
+
+	bool HasPowerArmorSkeleton(RE::Actor* a_actor)
+	{
+		const auto root = a_actor ? a_actor->Get3D() : nullptr;
+		if (!root) {
+			return false;
+		}
+		static const RE::BSFixedString bone{ POWER_ARMOR_BONE };
+		return root->GetObjectByName(bone) != nullptr;
 	}
 
 	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame)

@@ -295,6 +295,7 @@ TEST("armor frames: out of their armor, a stand-in still in its frame is replace
 	// The engine's own exit waits on the animation graph and, with no room to step out, on an AI package: never for a
 	// stand-in. Whatever else holds.
 	CHECK(ChooseSwitch({ .in = true }) == Switch::kOut);
+	CHECK(ChooseSwitch({ .in = true, .rebuilt = true, .sinceIn = 1h }) == Switch::kOut);
 	CHECK(ChooseSwitch({ .in = true, .ready = true, .held = true }) == Switch::kOut);
 	CHECK(ChooseSwitch({ .in = true, .tries = ArmorFrames::MAX_SWITCH_TRIES }) == Switch::kOut);
 	// Out, and the stand-in out too (it never got in, or is already the fresh one): nothing to do.
@@ -338,18 +339,70 @@ TEST("armor frames: the pieces go on only once the engine has the stand-in in it
 	using ArmorFrames::Wears;
 	// Out of a frame (whatever their status says: they may be in theirs, and the stand-in not in its own yet, or ever):
 	// never a piece or the frame on its own body.
-	CHECK(ChooseDress(false) == Dress::kClothes);
+	CHECK(ChooseDress(false, false) == Dress::kClothes);
+	CHECK(ChooseDress(false, true) == Dress::kClothes);
 	CHECK(!Wears(Dress::kClothes, Item::kPiece));
 	CHECK(!Wears(Dress::kClothes, Item::kFrame));
 	CHECK(Wears(Dress::kClothes, Item::kOther));
 	CHECK(Wears(Dress::kClothes, Item::kWeapon));
-	// In its frame: their pieces and their weapons; neither clothes (under the armor at best, or in the frame's slots) nor
-	// the frame, which the engine has put on it already.
-	CHECK(ChooseDress(true) == Dress::kArmor);
+	// In its frame, on the power armor skeleton: their pieces and their weapons; neither clothes (under the armor at best,
+	// or in the frame's slots) nor the frame, which the engine has put on it already.
+	CHECK(ChooseDress(true, true) == Dress::kArmor);
 	CHECK(Wears(Dress::kArmor, Item::kPiece));
 	CHECK(Wears(Dress::kArmor, Item::kWeapon));
 	CHECK(!Wears(Dress::kArmor, Item::kOther));
 	CHECK(!Wears(Dress::kArmor, Item::kFrame));
+}
+
+TEST("armor frames: the pieces wait for the power armor skeleton, which the switch-in only queues")
+{
+	using ArmorFrames::ChooseDress;
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Dress;
+	using ArmorFrames::Item;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	using ArmorFrames::Wears;
+	// The switch-in returns with the stand-in in its frame (ExtraPowerArmor, the power armor race) but still on its own
+	// body: the rebuild of its 3D is a task of a later frame. The pieces put on there and then hung in the air off the
+	// settler body until that task ran, on every entry.
+	CHECK(ChooseDress(true, false) == Dress::kWait);
+	CHECK(!Wears(Dress::kWait, Item::kPiece));
+	CHECK(!Wears(Dress::kWait, Item::kWeapon));
+	CHECK(!Wears(Dress::kWait, Item::kOther));
+	CHECK(!Wears(Dress::kWait, Item::kFrame));
+	// Nothing to do about it while the task is on its way; the pieces go on the update the skeleton is found.
+	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = false, .sinceIn = 0s };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceIn = ArmorFrames::SKELETON_LIMIT;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.rebuilt = true;
+	facts.sinceIn = 1h;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	CHECK(ChooseDress(true, true) == Dress::kArmor);
+}
+
+TEST("armor frames: a stand-in whose power armor skeleton never comes is placed again, and that counts as a try")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	// The switch-in queues nothing when the model loader already holds a load for the actor; and whatever else may keep
+	// the task from running. The stand-in is replaced, as for a switch that never took; the fresh one is tried at once
+	// (its copy held, nothing tried since), and after the limit for the wear the friend is shown in clothes.
+	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = false, .sinceIn = ArmorFrames::SKELETON_LIMIT + 1ms };
+	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+	facts.ready = true;
+	facts.held = true;
+	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;  // in it already: not given up on, replaced
+	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+	// Out of their armor meanwhile: out, whatever the skeleton.
+	facts.worn = false;
+	CHECK(ChooseSwitch(facts) == Switch::kOut);
+	// The fresh one, with the tries of this wear kept.
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = 1, .sinceTried = 1h }) == Switch::kIn);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = ArmorFrames::MAX_SWITCH_TRIES, .sinceTried = 1h }) == Switch::kGaveUp);
 }
 
 TEST("armor frames: a whole wear, from getting in to the frame left where they got out")
@@ -364,13 +417,16 @@ TEST("armor frames: a whole wear, from getting in to the frame left where they g
 	copy = held;
 	CHECK(ChooseCopy(copy) == Copy::kHold);
 	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = ChooseCopy(copy) == Copy::kHold }) == Switch::kIn);
-	CHECK(ArmorFrames::ChooseDress(true) == ArmorFrames::Dress::kArmor);
+	// In it, on its own body still: nothing put on. A frame or so later, on the power armor skeleton: the pieces.
+	CHECK(ArmorFrames::ChooseDress(true, false) == ArmorFrames::Dress::kWait);
+	CHECK(ChooseSwitch({ .worn = true, .in = true, .rebuilt = false, .sinceIn = 16ms }) == Switch::kNone);
+	CHECK(ArmorFrames::ChooseDress(true, true) == ArmorFrames::Dress::kArmor);
 	// In it, walking off: the copy (disabled, left behind) is the engine's.
 	copy.engaged = true;
 	copy.loaded = false;
 	copy.distance = 2000.0f;
 	CHECK(ChooseCopy(copy) == Copy::kNone);
-	CHECK(ChooseSwitch({ .worn = true, .in = true }) == Switch::kNone);
+	CHECK(ChooseSwitch({ .worn = true, .in = true, .rebuilt = true, .sinceIn = 1h }) == Switch::kNone);
 	// Out: the stand-in goes (a fresh one comes out of armor), and a copy is placed where it stood, shown a while.
 	CHECK(ChooseSwitch({ .worn = false, .in = true }) == Switch::kOut);
 	CopyFacts left{ .worn = false, .exists = true, .loaded = true, .samePlace = true, .distance = 0.0f, .sincePlaced = 0s, .sinceOut = 0s };

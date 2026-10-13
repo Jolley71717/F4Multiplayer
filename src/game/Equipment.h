@@ -44,13 +44,22 @@ namespace Equipment
 	// Switches the actor into the frame at once, as the game's SwitchToPowerArmor does (PowerArmor's switch-in,
 	// 2219442): no AI, no package, no climb. The frame's own items are taken out of it first (only the pieces it is told to
 	// wear go on), and it is given to the actor's base, so getting in is never a theft where the cell has an owner. Main
-	// thread; the actor must have its 3D, a high or middle-high process (the switch-in rebuilds its 3D at once only
-	// then) and no power armor yet. No AI, package or animation is involved. Whether the engine has it in that frame now.
+	// thread; the actor must have its 3D, a high or middle-high process (the switch-in queues the rebuild of its 3D only
+	// then: AIProcess::Update3dModel with true, which hands it to TaskQueueInterface::QueueActorUpdateModel) and no power
+	// armor yet. Whether the engine has it in that frame now. Its 3D on return is still the one it had: the power armor
+	// skeleton is there only once that task has run (HasPowerArmorSkeleton), so nothing of the new skeleton, biped or
+	// collision may be read right after this.
 	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
+
+	// Whether the actor's 3D is built on the power armor skeleton: the one the switch-in's queued rebuild gives an actor
+	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.
+	[[nodiscard]] bool HasPowerArmorSkeleton(RE::Actor* a_actor);
 
 	// The engine keeps a frame persistent while an actor is in it (BGSDynamicPersistenceManager::PromoteReference, owner
 	// the power armor race) and lets it go as the actor's exit finishes; an actor deleted in its frame never gets out, so
-	// the frame is let go here, as that exit does, before both are deleted.
+	// the frame is let go here, as that exit does, before both are deleted. Nothing is done to a frame no actor was
+	// switched into: DemoteReference finds no promotion by that owner on it and returns (ExtraDataList::
+	// RemovePromotedRefOwner false; read from disk, 1.11.240), so every frame of ours may be let go before it is deleted.
 	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame);
 
 	// Puts the grenade or mine among these items in the actor's hand the way the combat AI does before
