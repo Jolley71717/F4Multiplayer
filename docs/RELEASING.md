@@ -18,8 +18,10 @@ early can run it and say whether it holds. In this order:
      It stays on this PC (it is full of build paths) and is never uploaded.
 
    The plugin's log then says `F4Multiplayer build rcN <commit>` near its top: that is how a log
-   names the build it came from. `-AllowDirty` packages uncommitted work for trying things out; such
-   a build calls itself `<commit>-dirty` and can't be promoted.
+   names the build it came from. An untracked file under `src`, `common`, `bot` or `tests` counts as
+   uncommitted (xmake would compile it in). `-AllowDirty` packages uncommitted work for trying things
+   out; such a build calls itself `<commit>-dirty` and can't be promoted, and with `-Label` it needs
+   `-OutDir`, so it never replaces a real rc's zip in `dist/out/`.
 3. Tag the commit the manifest names: `git tag vX.Y.Z-rcN <commit>`. The tag follows the artifact.
 4. `gh release create vX.Y.Z-rcN dist/out/F4Multiplayer-X.Y.Z-rcN.zip --prerelease --title X.Y.Z-rcN
    --notes-file dist/RELEASE-X.Y.Z-rcN.md`.
