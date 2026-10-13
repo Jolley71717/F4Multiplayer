@@ -223,20 +223,80 @@ namespace ProtocolSamples
 		return s;
 	}
 
-	// Every message type, kept by hand: a new type that is left out of Samples() fails the protocol
-	// test that walks this list, so it cannot skip the prefix, trailing-byte and corruption checks.
-	inline constexpr MT ALL_TYPES[] = {
-		MT::kHello, MT::kPlayerState, MT::kReportDeath, MT::kReportHealth, MT::kReportContainer, MT::kReportPickup,
-		MT::kReportRefState, MT::kEquipment, MT::kClaimActors, MT::kReleaseActors, MT::kActorStates, MT::kPlayerHit,
-		MT::kReportQuestStage, MT::kRequestWorldState, MT::kReportShot, MT::kReportStatus, MT::kReportTime, MT::kPing,
-		MT::kReportXp, MT::kHeartbeat, MT::kReportQuestDone, MT::kRevive, MT::kVoice, MT::kReportMarkers,
-		MT::kReportLine, MT::kReportNpcEquipment, MT::kReportFace, MT::kReportWorkshopItem, MT::kReportExplosion,
-		MT::kReportActivation,
-		MT::kWelcome, MT::kReject, MT::kPlayerJoined, MT::kPlayerLeft, MT::kPlayerStates, MT::kActorDied,
-		MT::kWorldState, MT::kActorHealth, MT::kContainerChanged, MT::kRefPickedUp, MT::kRefStateChanged,
-		MT::kPlayerEquipment, MT::kActorOwners, MT::kActorStatesRelay, MT::kPlayerDamaged, MT::kQuestStage,
-		MT::kShotFired, MT::kPlayerStatus, MT::kWorldTime, MT::kPinged, MT::kPartyXp, MT::kHeartbeatAck,
-		MT::kQuestDone, MT::kRevived, MT::kVoiceRelay, MT::kMarkersFound, MT::kLineSpoken, MT::kNpcEquipment,
-		MT::kPlayerFace, MT::kWorkshopItem, MT::kWorkshopItems, MT::kExplosion, MT::kActivation,
-	};
+	// Whether a byte is a message type. The compiler keeps this list whole: a type added to the enum
+	// and not here stops the tests building (C4062, turned into an error just for this switch), and the
+	// protocol tests fail for a type here that has no entry in Samples().
+#pragma warning(push)
+#pragma warning(error : 4062)
+	constexpr bool IsMessageType(std::uint8_t a_byte)
+	{
+		switch (static_cast<MT>(a_byte)) {
+		case MT::kHello:
+		case MT::kPlayerState:
+		case MT::kReportDeath:
+		case MT::kReportHealth:
+		case MT::kReportContainer:
+		case MT::kReportPickup:
+		case MT::kReportRefState:
+		case MT::kEquipment:
+		case MT::kClaimActors:
+		case MT::kReleaseActors:
+		case MT::kActorStates:
+		case MT::kPlayerHit:
+		case MT::kReportQuestStage:
+		case MT::kRequestWorldState:
+		case MT::kReportShot:
+		case MT::kReportStatus:
+		case MT::kReportTime:
+		case MT::kPing:
+		case MT::kReportXp:
+		case MT::kHeartbeat:
+		case MT::kReportQuestDone:
+		case MT::kRevive:
+		case MT::kVoice:
+		case MT::kReportMarkers:
+		case MT::kReportLine:
+		case MT::kReportNpcEquipment:
+		case MT::kReportFace:
+		case MT::kReportWorkshopItem:
+		case MT::kReportExplosion:
+		case MT::kReportActivation:
+		case MT::kWelcome:
+		case MT::kReject:
+		case MT::kPlayerJoined:
+		case MT::kPlayerLeft:
+		case MT::kPlayerStates:
+		case MT::kActorDied:
+		case MT::kWorldState:
+		case MT::kActorHealth:
+		case MT::kContainerChanged:
+		case MT::kRefPickedUp:
+		case MT::kRefStateChanged:
+		case MT::kPlayerEquipment:
+		case MT::kActorOwners:
+		case MT::kActorStatesRelay:
+		case MT::kPlayerDamaged:
+		case MT::kQuestStage:
+		case MT::kShotFired:
+		case MT::kPlayerStatus:
+		case MT::kWorldTime:
+		case MT::kPinged:
+		case MT::kPartyXp:
+		case MT::kHeartbeatAck:
+		case MT::kQuestDone:
+		case MT::kRevived:
+		case MT::kVoiceRelay:
+		case MT::kMarkersFound:
+		case MT::kLineSpoken:
+		case MT::kNpcEquipment:
+		case MT::kPlayerFace:
+		case MT::kWorkshopItem:
+		case MT::kWorkshopItems:
+		case MT::kExplosion:
+		case MT::kActivation:
+			return true;
+		}
+		return false;
+	}
+#pragma warning(pop)
 }

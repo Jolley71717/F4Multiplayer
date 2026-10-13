@@ -49,20 +49,23 @@ TEST("protocol: every sample packet decodes")
 TEST("protocol: every message type has a sample packet")
 {
 	const auto samples = Samples();
-	for (const auto type : ALL_TYPES) {
-		const auto has = std::ranges::any_of(samples, [&](const Sample& a_s) { return a_s.packet[0] == std::to_underlying(type); });
+	int        types = 0;
+	for (int byte = 0; byte <= 0xFF; ++byte) {
+		if (!IsMessageType(static_cast<std::uint8_t>(byte))) {
+			continue;
+		}
+		++types;
+		const auto has = std::ranges::any_of(samples, [&](const Sample& a_s) { return a_s.packet[0] == byte; });
 		if (!has) {
-			Test::Fail(__FILE__, __LINE__, std::format("message type {} has no entry in Samples()", std::to_underlying(type)));
+			Test::Fail(__FILE__, __LINE__, std::format("message type {} has no entry in Samples()", byte));
 		}
 	}
 	for (const auto& sample : samples) {
-		if (!std::ranges::contains(ALL_TYPES, static_cast<MT>(sample.packet[0]))) {
-			Test::Fail(__FILE__, __LINE__, sample.name + ": its type is missing from ALL_TYPES");
+		if (!IsMessageType(sample.packet[0])) {
+			Test::Fail(__FILE__, __LINE__, sample.name + ": its type is not a message type");
 		}
 	}
-	for (std::size_t i = 0; i < std::size(ALL_TYPES); ++i) {
-		CHECK(std::ranges::count(ALL_TYPES, ALL_TYPES[i]) == 1);
-	}
+	CHECK(types > 0);
 }
 
 TEST("protocol: PeekType reads the type byte of every message")

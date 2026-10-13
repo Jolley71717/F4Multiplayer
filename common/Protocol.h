@@ -52,7 +52,7 @@ namespace Protocol
 	inline constexpr std::uint8_t CHANNEL_STATE = 1;  // unreliable, sequenced
 	inline constexpr std::uint8_t CHANNEL_COUNT = 2;
 
-	// A new type also goes in ALL_TYPES and Samples() in tests/ProtocolSamples.h, so the robustness tests reach its decoder.
+	// A new type also goes in IsMessageType() and Samples() in tests/ProtocolSamples.h (the tests fail to build or fail without them), so the robustness tests reach its decoder.
 	enum class MessageType : std::uint8_t
 	{
 		// client -> server
