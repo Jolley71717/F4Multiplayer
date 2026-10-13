@@ -5,14 +5,28 @@ email, so Nexus gets settled versions in batches, when the maintainer decides).
 
 ## Release candidates
 
-A version is first published as a GitHub pre-release tagged `vX.Y.Z-rcN`, built with
-`tools/package.ps1 -Label rcN` (the zip is `F4Multiplayer-X.Y.Z-rcN.zip` and the plugin logs
-`F4Multiplayer build rcN` at startup). Players who want the fixes early can run it and say whether it
-holds.
+A version is first published as a GitHub pre-release tagged `vX.Y.Z-rcN`. Players who want the fixes
+early can run it and say whether it holds. In this order:
 
-Gate for an rc, every time:
+1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes.
+2. `tools/package.ps1 -Label rcN` on that commit. It refuses uncommitted changes to tracked files and
+   notes that are not committed, builds every target, runs the unit tests (and stops if one fails),
+   checks that nothing in the zip names this PC or its user, and writes to `dist/out/`:
+   - `F4Multiplayer-X.Y.Z-rcN.zip`, laid out like a Data folder;
+   - `F4Multiplayer-X.Y.Z-rcN.manifest.txt`: the commit, the build label, the DLL's SHA-256;
+   - `symbols/F4Multiplayer-X.Y.Z-rcN-<commit>.pdb`, for reading crash logs from exactly this build.
+     It stays on this PC (it is full of build paths) and is never uploaded.
 
-1. the unit tests pass (`xmake build -y` builds them with everything else, then run `F4MPTests.exe`);
+   The plugin's log then says `F4Multiplayer build rcN <commit>` near its top: that is how a log
+   names the build it came from. `-AllowDirty` packages uncommitted work for trying things out; such
+   a build calls itself `<commit>-dirty` and can't be promoted.
+3. Tag the commit the manifest names: `git tag vX.Y.Z-rcN <commit>`. The tag follows the artifact.
+4. `gh release create vX.Y.Z-rcN dist/out/F4Multiplayer-X.Y.Z-rcN.zip --prerelease --title X.Y.Z-rcN
+   --notes-file dist/RELEASE-X.Y.Z-rcN.md`.
+
+Gate for an rc, every time, on the packaged zip installed on both machines (not a plain build DLL):
+
+1. the unit tests pass (`tools/package.ps1` runs them; `xmake build` builds them with everything else);
 2. the standing set passes once on the rig in both directions (host to joiner and joiner to host): movement
    trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, power armor in
    motion, the cell churn with a save reload, a VM restart and rejoin, fuzz on the host. `sweep.sh`,
@@ -30,4 +44,4 @@ GitHub release with `dist/RELEASE-X.Y.Z.md` as the notes.
 
 - Install a crash logger (Buffout 4 or Addictol) before testing, or a crash leaves nothing to read.
 - Report with the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) and the crash log;
-  the first line of the plugin log names the build.
+  the first lines of the plugin log name the build.
