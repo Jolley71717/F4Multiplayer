@@ -34,7 +34,7 @@ xmake build F4MPTests
 xmake run F4MPTests
 ```
 
-Unit tests for the protocol and the session server (a fake transport drives a real server). `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
+Unit tests for the protocol and the session server (a fake transport drives a real server). `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `tools/soak.ps1 -Abuse` floods it with made-up kills, loot, pickups and claims and a bot rejoining in a loop, and checks the limits hold without touching an honest player. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
 
 ## Bugs, ideas and pull requests
 
