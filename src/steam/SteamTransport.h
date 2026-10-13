@@ -33,6 +33,7 @@ public:
 	void Disconnect(PeerId a_peer) override;
 	void Close() override;
 	[[nodiscard]] std::string Describe(PeerId a_peer) const override;
+	[[nodiscard]] std::uint64_t Identity(PeerId a_peer) const override;
 
 private:
 	using Clock = std::chrono::steady_clock;

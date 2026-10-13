@@ -284,11 +284,13 @@ namespace NpcSync
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
 			// NPCs we run that are no longer loaded (or died) go back to the pool, and so do the
-			// ones a friend is much nearer to (their game claims them).
+			// ones a friend is much nearer to (their game claims them). What we said they wear is
+			// forgotten with them, as the server forgets it: when we run one again we report it afresh.
 			std::vector<std::uint32_t> released;
 			for (const auto id : handOff) {
 				owners.erase(id);
 				owned.erase(id);
+				sentGear.erase(id);
 				handedOffAt[id] = a_now;
 				released.push_back(id);
 				++handOffs;
@@ -298,6 +300,7 @@ namespace NpcSync
 				if (!loaded.contains(it->first)) {
 					released.push_back(it->first);
 					owners.erase(it->first);
+					sentGear.erase(it->first);
 					it = owned.erase(it);
 				} else {
 					++it;
@@ -642,6 +645,7 @@ namespace NpcSync
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
+				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
 				StopMirroring(entry.refId);
 				continue;
 			}

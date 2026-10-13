@@ -45,4 +45,8 @@ public:
 	// The peer connects from this machine, as the host's own game does (the server also checks that it
 	// is that game: Server::Options::hostIdentity).
 	[[nodiscard]] virtual bool IsLocal(PeerId) const { return false; }
+
+	// Who the peer is, as the transport itself knows them (a Steam ID), or 0 when it can't say (UDP). A
+	// client can't choose it, so the server keeps each player's budgets under it across reconnects.
+	[[nodiscard]] virtual std::uint64_t Identity(PeerId) const { return 0; }
 };

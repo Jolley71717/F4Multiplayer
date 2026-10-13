@@ -29,57 +29,6 @@ namespace
 	constexpr std::uint32_t QUEST2 = 0x0005B002;
 	constexpr std::uint32_t RUNTIME = 0xFF001234;
 
-	std::uint32_t JoinAs(Fixture& a_f, PeerId a_peer, std::string a_name, std::uint64_t a_identity = 0)
-	{
-		const auto welcome = a_f.Join(a_peer, Fixture::MakeHello(std::move(a_name), a_identity));
-		REQUIRE(welcome);
-		return welcome->playerId;
-	}
-
-	// Returns once the server has handled everything delivered so far: it handles packets in the
-	// order they arrive, and answers a heartbeat right away. (At most 10 a second per player.)
-	void Sync(Fixture& a_f, PeerId a_peer)
-	{
-		static std::uint32_t token = 0;
-		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::Heartbeat{ ++token }, MT::kHeartbeat));
-		REQUIRE(a_f.fake->WaitFor(a_peer, Type(MT::kHeartbeatAck)));
-	}
-
-	// Everything the server sent a_peer up to now.
-	Packets Received(Fixture& a_f, PeerId a_peer)
-	{
-		Sync(a_f, a_peer);
-		return a_f.fake->Take(a_peer);
-	}
-
-	void Clear(Fixture& a_f, std::initializer_list<PeerId> a_peers)
-	{
-		for (const auto peer : a_peers) {
-			Received(a_f, peer);
-		}
-	}
-
-	std::size_t Count(const Packets& a_packets, MT a_type)
-	{
-		return static_cast<std::size_t>(std::ranges::count_if(a_packets, [&](const auto& a_packet) { return !a_packet.empty() && a_packet[0] == Type(a_type); }));
-	}
-
-	// The packets of a_type, decoded.
-	template <class Decode>
-	auto Decoded(const Packets& a_packets, MT a_type, Decode a_decode)
-	{
-		using T = typename std::invoke_result_t<Decode, std::span<const std::uint8_t>>::value_type;
-		std::vector<T> out;
-		for (const auto& packet : a_packets) {
-			if (!packet.empty() && packet[0] == Type(a_type)) {
-				auto message = a_decode(std::span<const std::uint8_t>{ packet });
-				REQUIRE(message);
-				out.push_back(std::move(*message));
-			}
-		}
-		return out;
-	}
-
 	// All ownership changes in the packets, in order.
 	std::vector<Protocol::ActorOwner> Owners(const Packets& a_packets)
 	{
@@ -93,11 +42,6 @@ namespace
 	bool HasOwner(const std::vector<Protocol::ActorOwner>& a_owners, std::uint32_t a_ref, std::uint32_t a_player)
 	{
 		return std::ranges::any_of(a_owners, [&](const auto& a_owner) { return a_owner.refId == a_ref && a_owner.playerId == a_player; });
-	}
-
-	std::vector<Protocol::WorldState> WorldStates(const Packets& a_packets)
-	{
-		return Decoded(a_packets, MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
 	}
 
 	// --- what clients send ---
@@ -1688,7 +1632,7 @@ TEST("server trust: a hit is capped per hit and per second")
 	CHECK(total <= 1000.0f);  // 1500 a second, 500 already spent
 }
 
-TEST("server trust: a second face within five seconds is dropped")
+TEST("server trust: a second face within five seconds isn't passed on straight away")
 {
 	Fixture f;
 	JoinAs(f, 1, "Alice");

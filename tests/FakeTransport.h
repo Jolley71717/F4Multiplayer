@@ -72,6 +72,9 @@ public:
 
 	void SetLocal(PeerId a_peer) { std::lock_guard lock{ mutex }; local[a_peer] = true; }
 
+	// Who a_peer is to the transport (as Steam knows a friend by their Steam ID); 0 = can't say.
+	void SetIdentity(PeerId a_peer, std::uint64_t a_identity) { std::lock_guard lock{ mutex }; identities[a_peer] = a_identity; }
+
 	// --- the server's side ---
 
 	void Poll(std::vector<TransportEvent>& a_out, int) override
@@ -113,6 +116,13 @@ public:
 		return it != local.end() && it->second;
 	}
 
+	[[nodiscard]] std::uint64_t Identity(PeerId a_peer) const override
+	{
+		std::lock_guard lock{ mutex };
+		const auto it = identities.find(a_peer);
+		return it != identities.end() ? it->second : 0;
+	}
+
 private:
 	void Push(TransportEvent a_event)
 	{
@@ -126,4 +136,5 @@ private:
 	std::vector<Sent>           sent;
 	std::map<PeerId, bool>      disconnected;
 	std::map<PeerId, bool>      local;
+	std::map<PeerId, std::uint64_t> identities;
 };

@@ -60,6 +60,17 @@ public:
 		return { .relay = true };
 	}
 
+	// Whether the report would keep one more thing, rather than replace, drop or skip what is kept (a
+	// player's share of the store counts only these).
+	[[nodiscard]] bool Adds(const Protocol::WorkshopItem& a_item) const
+	{
+		const Key key{ a_item.playerId, a_item.refId };
+		if (a_item.op != Protocol::WorkshopOp::kScrapped) {
+			return !built.contains(key);
+		}
+		return Protocol::IsShareableRef(a_item.refId) && !scraps.contains(key) && !built.contains(key);
+	}
+
 	// An item from the saved session, kept as it was.
 	void Restore(const Protocol::WorkshopItem& a_item)
 	{

@@ -41,9 +41,45 @@ TEST("protocol: face rejects bad data")
 	face = SampleFace();
 	face.tints[0].type = 3;
 	CHECK(!Protocol::DecodeFace(Protocol::Encode(face, MT::kReportFace)));
+	face = SampleFace();
+	face.weight[1] = std::numeric_limits<float>::infinity();
+	CHECK(!Protocol::DecodeFace(Protocol::Encode(face, MT::kReportFace)));
 	// Truncated.
 	const auto bytes = Protocol::Encode(SampleFace(), MT::kReportFace);
 	CHECK(!Protocol::DecodeFace(std::span(bytes).first(bytes.size() - 1)));
+}
+
+// Body weight is the one part of a face every receiver applies to the stand-in's base form: a modified
+// game's weight of 7 would deform it in every game.
+TEST("protocol: a face's body weight outside the game's range is brought back into it")
+{
+	auto face = SampleFace();
+	face.weight[0] = 7.0f, face.weight[1] = -3.0f, face.weight[2] = 0.25f;
+	const auto decoded = Protocol::DecodeFace(Protocol::Encode(face, MT::kReportFace));
+	REQUIRE(decoded);
+	CHECK(decoded->weight[0] == 1.0f);
+	CHECK(decoded->weight[1] == 0.0f);
+	CHECK(decoded->weight[2] == 0.25f);
+}
+
+TEST("face: a weight out of range reaches the others in range, and newcomers too")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Take(2);
+	auto face = SampleFace();
+	face.weight[2] = 40.0f;
+	f.fake->Deliver(1, Protocol::Encode(face, MT::kReportFace));
+	const auto packet = f.fake->WaitFor(2, Type(MT::kPlayerFace));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodeFace(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->weight[2] == 1.0f);
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto told = f.fake->WaitFor(3, Type(MT::kPlayerFace));
+	REQUIRE(told);
+	CHECK(Protocol::DecodeFace(*told)->weight[2] == 1.0f);
 }
 
 TEST("face: the others get it with the sender's ID, the sender doesn't")

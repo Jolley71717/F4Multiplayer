@@ -1477,6 +1477,11 @@ namespace Protocol
 			!std::ranges::all_of(msg.bones, [&](const FaceBone& b) { return std::ranges::all_of(b.position, finite) && std::ranges::all_of(b.rotation, finite) && std::ranges::all_of(b.scale, finite); })) {
 			return std::nullopt;
 		}
+		// Body weight is a mix of three, each 0..1 in the game's own menus; it is what every receiver applies
+		// (Face::MakeBase), so a modified game's 7 or -3 is brought back into range rather than deforming bodies.
+		for (float& v : msg.weight) {
+			v = std::clamp(v, 0.0f, 1.0f);
+		}
 		return msg;
 	}
 

@@ -3,6 +3,7 @@
 #include "Transport.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -41,8 +42,27 @@ public:
 		bool sharedStory = false;
 
 		// Container changes one player may author in a session: one client cannot fill the shared table
-		// (60,000) on its own. Tests lower it.
+		// (60,000) on its own. Held per player ID and, for the server's run, per budget (a reconnect with a
+		// made-up identity doesn't renew it). Tests lower it.
 		std::size_t maxContainerChangesPerPlayer = 30000;
+
+		// The size of each of the session's shared tables (deaths, container changes, pickups, door
+		// states, quest stages); at most, and by default, Protocol::MAX_WORLD_STATE_ACTORS. Tests lower it.
+		std::size_t maxWorldEntries = 60000;
+
+		// What one player's game may add to each of those tables (container changes: the setting above)
+		// and to the settlements' built objects in one server run (until the host quits). The host's own
+		// game has no limit. Generous: a player picks up and kills a few hundred things an hour.
+		std::size_t maxWorldEntriesPerPlayer = 15000;
+		std::size_t maxWorkshopItemsPerPlayer = 10000;
+
+		// A player asking for the world state again (a reload, a rejoin) has a bucket of three, refilled
+		// one per this. Past it, theirs is sent when the bucket refills. Tests shorten it.
+		std::chrono::milliseconds worldStateRefill{ 10000 };
+
+		// A player's face goes to the others at most this often (each change makes a new base form in
+		// every game); the latest one follows when the time is up. Tests shorten it.
+		std::chrono::milliseconds faceInterval{ 5000 };
 
 		// Plugins that may differ between players (texture, sound or UI mods): a load order that
 		// matches once these are left out is accepted.
