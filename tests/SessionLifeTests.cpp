@@ -597,25 +597,30 @@ TEST("session life: the host's game dropping out writes what it did at once, not
 	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
 }
 
-TEST("session life: a session file that can't be written is tried again at the next check, not taken as written")
+TEST("session life: a session file that can't be written is tried at every check until it can, and said once, not at every check")
 {
 	TempFile file;
 	std::filesystem::create_directory(file.path);  // where the file should go is a folder: every write fails
 	auto options = HostedOptions(file);
-	options.saveInterval = 50ms;
-	{
-		Fixture f{ options };
-		REQUIRE(JoinHost(f, 1));
-		f.fake->Deliver(1, Kill(RAIDER));
-		Sync(f, 1);
-		const auto until = std::chrono::steady_clock::now() + 3s;
-		while (f.LoggedCount("could not save the session") < 2 && std::chrono::steady_clock::now() < until) {
-			std::this_thread::sleep_for(10ms);
-		}
-		CHECK(f.LoggedCount("could not save the session") >= 2);
+	options.saveInterval = 20ms;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	f.fake->Deliver(1, Kill(RAIDER));
+	Sync(f, 1);
+	const auto until = std::chrono::steady_clock::now() + 3s;
+	while (!f.Logged("could not save the session") && std::chrono::steady_clock::now() < until) {
+		std::this_thread::sleep_for(10ms);
 	}
-	std::filesystem::remove(file.path.string() + ".tmp");
+	REQUIRE(f.Logged("could not save the session"));
+	std::this_thread::sleep_for(200ms);  // ten more checks, each failing
+	CHECK(f.LoggedCount("could not save the session") == 1);
+
+	// The folder goes (the player moved it away): the next check writes the kill, with nothing new to write.
 	std::filesystem::remove(file.path);
+	const auto saved = WaitForFile(file, [](const auto& a_saved) { return !a_saved.deadActors.empty(); });
+	REQUIRE(saved);
+	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
+	CHECK(f.Logged("saved again"));
 }
 
 // ---- one session per character ----------------------------------------------------------------------

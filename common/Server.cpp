@@ -276,6 +276,7 @@ void Server::Run()
 	// written with any other change, on the host's game saves and when the server stops.
 	std::uint64_t revision = 0;
 	std::uint64_t lastSavedRevision = 0;
+	bool          saveFailing = false;  // said once, not at every check, until a save goes through
 	const auto    touched = [&] { ++revision; };
 	const auto    saveSession = [&] {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
@@ -302,8 +303,13 @@ void Server::Run()
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
-			log("server: could not save the session");
+			if (!std::exchange(saveFailing, true)) {
+				log(std::format("server: could not save the session to {}; trying again at every check", sessionPath.filename().string()));
+			}
 			return;  // tried again at the next check
+		}
+		if (std::exchange(saveFailing, false)) {
+			log("server: the session is saved again");
 		}
 		lastSavedRevision = saved;
 	};
