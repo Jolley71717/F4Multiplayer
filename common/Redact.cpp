@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <format>
+#include <iterator>
 #include <random>
 
 namespace Redact
@@ -140,6 +141,14 @@ namespace Redact
 			}
 			i = end;
 		}
+		return out;
+	}
+
+	std::string OneLine(std::string_view a_text)
+	{
+		std::string out;
+		out.reserve(a_text.size());
+		std::ranges::copy_if(a_text, std::back_inserter(out), [](unsigned char a_c) { return a_c >= 0x20 && a_c != 0x7F; });
 		return out;
 	}
 }

@@ -3,6 +3,8 @@
 #include "Redact.h"
 
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace
 {
@@ -24,13 +26,17 @@ namespace
 	}
 }
 
-TEST("Redact: an alias is a tilde and six hex digits, the same every time in one run")
+TEST("Redact: a maintainer can follow one Steam account through a log, line after line, and tell it from another")
 {
-	const auto alias = Redact::Alias(STEAM_ID);
+	// Lines a joiner's game writes over an evening (Steam.cpp's, through the log sink).
+	const auto first = Redact::Scrub("Steam: joined lobby 109775240917155841; host is 76561198012345678");
+	const auto later = Redact::Scrub("Steam: rich presence from 76561198012345678 arrived");
+	const auto other = Redact::Scrub("Steam: rich presence from 76561198087654321 arrived");
+	const auto alias = first.substr(first.rfind(' ') + 1);
 	CHECK(IsAliasShape(alias));
-	CHECK(Redact::Alias(STEAM_ID) == alias);
-	CHECK(Redact::Alias(STEAM_ID, Redact::Salt()) == alias);
-	CHECK(Redact::Salt() == Redact::Salt());
+	CHECK(later == "Steam: rich presence from " + alias + " arrived");
+	CHECK(other != later);
+	CHECK(IsAliasShape(other.substr(std::string_view{ "Steam: rich presence from " }.size(), 7)));
 }
 
 TEST("Redact: two accounts get two aliases, and another salt gives another alias")
@@ -106,4 +112,40 @@ TEST("Redact: MaskAddress masks the machine part and agrees with Scrub")
 	CHECK(Redact::Scrub(masked) == masked);
 	const auto alias = Redact::Alias(STEAM_ID);
 	CHECK(Redact::Scrub("steam " + alias) == "steam " + alias);
+}
+
+TEST("Redact: a host's and a joiner's logs can be matched by lobby id, never by account, at both ends of the account numbers")
+{
+	// A SteamID64 is 76561197960265728 plus the 32-bit account number; a lobby id is
+	// 109775240917155840 plus its own. Both kinds, at both ends of the range and between.
+	constexpr std::uint64_t INDIVIDUAL = 76561197960265728ull;
+	constexpr std::uint64_t LOBBY = 109775240917155840ull;
+	for (const std::uint64_t account : { 0ull, 1ull, 12345678ull, 0x7FFFFFFFull, 0xFFFFFFFFull }) {
+		const auto user = std::to_string(INDIVIDUAL + account);
+		const auto lobby = std::to_string(LOBBY + account);
+		// What the host's game and the joiner's write: the lobby id survives in both, the account in neither.
+		const auto host = Redact::Scrub("Steam: hosting lobby " + lobby);
+		const auto joiner = Redact::Scrub("Steam: joined lobby " + lobby + "; host is " + user);
+		CHECK(host == "Steam: hosting lobby " + lobby);
+		CHECK(joiner == "Steam: joined lobby " + lobby + "; host is " + Redact::Alias(INDIVIDUAL + account));
+		CHECK(joiner.find(user) == std::string::npos);
+	}
+}
+
+TEST("Redact: an address the transports mask reads the same after the log's own scrub, IPv6 included")
+{
+	for (const auto& [ip, port] : std::initializer_list<std::pair<std::string_view, std::uint16_t>>{
+			 { "198.51.100.7", 4321 }, { "127.0.0.1", 7779 }, { "2001:db8:85a3:8d3:1319:8a2e:370:7348", 7779 },
+			 { "2001:db8::1", 7779 }, { "::1", 7779 }, { "fe80::1:2:3", 50000 } }) {
+		const auto described = "udp " + Redact::MaskAddress(ip, port);
+		CHECK(Redact::Scrub("server: player 2 joined from " + described + " (2 online)") == "server: player 2 joined from " + described + " (2 online)");
+	}
+}
+
+TEST("Redact: OneLine keeps someone else's text on one line and leaves the rest of it alone")
+{
+	CHECK(Redact::OneLine("Wrong password\r\nserver: player 1 left") == "Wrong passwordserver: player 1 left");
+	CHECK(Redact::OneLine("tab\there\x7F, bell\a") == "tabhere, bell");
+	CHECK(Redact::OneLine("Caf\xC3\xA9 <b>bold</b> 100%") == "Caf\xC3\xA9 <b>bold</b> 100%");
+	CHECK(Redact::OneLine("").empty());
 }

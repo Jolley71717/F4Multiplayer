@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Protocol.h"
+#include "Redact.h"
 #include "Server.h"
 #include "game/Compass.h"
 #include "game/Conversations.h"
@@ -66,12 +67,11 @@ namespace Session
 
 		// The session's own messages (connected, refused and why, disconnected) name nobody, so they go to
 		// the log at INFO too; players joining and leaving go to the HUD by name and to the log by ID. A
-		// refusal's reason comes from the host: control characters are dropped so it stays one line.
+		// refusal's reason is the host's text: Redact::OneLine keeps it one line (the wire drops control
+		// characters too, but not every message here came over it).
 		void Notify(const std::string& a_message)
 		{
-			std::string line;
-			std::ranges::copy_if(a_message, std::back_inserter(line), [](unsigned char a_c) { return a_c >= 0x20 && a_c != 0x7F; });
-			REX::INFO("Session: {}", line);
+			REX::INFO("Session: {}", Redact::OneLine(a_message));
 			Hud::Notify(a_message);
 		}
 

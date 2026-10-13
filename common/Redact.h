@@ -25,4 +25,8 @@ namespace Redact
 	// The line with every SteamID64 (17 digits starting 7656) replaced by its alias and every IPv4
 	// address other than loopback masked. Lobby ids (18 digits), form ids and hex hashes stay.
 	std::string Scrub(std::string_view a_line);
+
+	// a_text without its control characters (line breaks among them): text someone else chose, such as a
+	// host's refusal reason with their plugin names in it, stays one log line and can't forge another.
+	std::string OneLine(std::string_view a_text);
 }
