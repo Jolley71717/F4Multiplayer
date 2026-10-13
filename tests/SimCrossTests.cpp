@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <regex>
 
 using namespace Sim;
 using Reason = Protocol::ClaimReason;
@@ -463,4 +464,164 @@ TEST("cross: a friend who reloads faster than the server answers gets, once it d
 	auto& carol = s.Player("Carol");
 	REQUIRE(carol.Join());
 	CHECK_AGREE({ &host, &bob, &carol });
+}
+
+// ---- the server's log against the soak scripts that read it ------------------------------------------
+
+namespace
+{
+	// How many of a_lines a soak script's pattern finds (std::regex reads the scripts' patterns as .NET does;
+	// their "(?i)" is a_icase here).
+	std::size_t CountMatches(const std::vector<std::string>& a_lines, const std::string& a_pattern, bool a_icase = false)
+	{
+		const std::regex re{ a_pattern, a_icase ? std::regex::ECMAScript | std::regex::icase : std::regex::ECMAScript };
+		return static_cast<std::size_t>(std::ranges::count_if(a_lines, [&](const std::string& a_line) { return std::regex_search(a_line, re); }));
+	}
+
+	// The lines a_lines has that a soak script stops on (tools/botsoak.ps1's error scan, tools/soak.ps1's
+	// "nothing about" list).
+	std::vector<std::string> ProblemLines(const std::vector<std::string>& a_lines)
+	{
+		const std::regex error{ R"(\b(error|assert\w*|failed|could not|exception)\b)", std::regex::ECMAScript | std::regex::icase };
+		const std::regex nothingAbout{ "too many|no hello|load order changed|Server is full|wrong password|error|failed", std::regex::ECMAScript | std::regex::icase };
+		std::vector<std::string> out;
+		std::ranges::copy_if(a_lines, std::back_inserter(out), [&](const std::string& a_line) { return std::regex_search(a_line, error) || std::regex_search(a_line, nothingAbout); });
+		return out;
+	}
+}
+
+// tools/soak.ps1 and tools/botsoak.ps1 judge a release by the server's log: they wait for these lines, count
+// them, and fail on anything that reads like an error. A rewording (as the log's privacy pass made) makes a
+// soak abort, or pass without checking, long after the change that did it.
+TEST("cross: an evening of joins, a leave, a crash and a server restart logs every line the soak scripts wait for and count, and nothing they fail on")
+{
+	Server::Options options;
+	options.maxPlayers = 8;
+	Session s{ options };
+	auto&   raider = s.Host("Raider");
+	auto&   owner = s.Player("Owner");
+	auto&   looter = s.Player("Looter");
+	auto&   rejoiner = s.Player("Rejoiner");
+	auto&   late = s.Player("Late");
+	REQUIRE(raider.Join());
+	REQUIRE(owner.Join());
+	REQUIRE(looter.Join());
+	REQUIRE(rejoiner.Join());
+	s.Settle();
+
+	looter.Loot(TRUNK, CAPS, -10);
+	looter.PickUp(0x0003C001);
+	raider.Kill(RAIDER_1);
+	s.Settle();
+
+	rejoiner.Leave();  // leaves
+	s.Settle();
+	REQUIRE(rejoiner.Join());  // comes back
+	s.Settle();
+	rejoiner.Vanish();  // their game crashes; the server still holds the old connection
+	REQUIRE(rejoiner.Join());
+	s.Settle();
+	REQUIRE(late.Join());
+	s.Settle();
+	for (auto* player : { &raider, &owner, &looter, &rejoiner, &late }) {
+		player->Leave();
+	}
+	s.Settle();
+	s.StopServer();
+	const auto firstRun = s.LogLines();
+
+	s.StartServer();
+	REQUIRE(raider.Join());
+	s.Settle();
+	raider.Leave();
+	s.Settle();
+	s.StopServer();
+	const auto all = s.LogLines();
+	const std::vector<std::string> secondRun(all.begin() + static_cast<std::ptrdiff_t>(firstRun.size()), all.end());
+
+	for (const auto* run : { &firstRun, &secondRun }) {
+		CHECK(CountMatches(*run, R"(listening on UDP port \d+)") == 1);
+		CHECK(CountMatches(*run, "server: stopped") == 1);
+	}
+	CHECK(CountMatches(secondRun, R"(server: loaded the saved session \()") == 1);
+
+	const auto back = rejoiner.Id();
+	for (const auto* player : { &raider, &owner, &looter, &late }) {
+		CHECK(CountMatches(firstRun, std::format("server: player {} joined from ", player->Id())) == 1);
+		CHECK(CountMatches(firstRun, std::format("server: player {} left", player->Id())) == 1);
+	}
+	CHECK(CountMatches(firstRun, std::format("server: player {} joined from ", back)) == 1);
+	CHECK(CountMatches(firstRun, std::format("server: player {} came back from ", back)) == 2);
+	CHECK(CountMatches(firstRun, std::format("dropping the old connection of player {} ", back)) == 1);
+	CHECK(CountMatches(firstRun, std::format("server: player {} left", back)) == 3);  // left, crashed, went home
+
+	CHECK(CountMatches(all, "Raider|Owner|Looter|Rejoiner|Late") == 0);
+	for (const auto& line : ProblemLines(all)) {
+		Test::Fail(__FILE__, __LINE__, "a soak script fails on this line: " + line);
+	}
+}
+
+// The abuse soak (tools/soak.ps1 -Abuse) floods the server from one bot after another and counts each limit
+// line once, by player number; the honest player must never be named in one.
+TEST("cross: a session of flooders, one after another, logs each limit once in the words the abuse soak counts, never one about the honest player, and names nobody")
+{
+	Server::Options options;
+	options.maxPlayers = 8;
+	options.maxWorldEntries = 10;  // the abuse soak's --max-world-entries 1200 --max-share 1000, scaled down
+	options.maxWorldEntriesPerPlayer = 8;
+	options.maxContainerChangesPerPlayer = 8;
+	options.maxWorkshopItemsPerPlayer = 8;
+	options.worldStateRefill = std::chrono::milliseconds(200);
+	Session s{ options };
+	auto&   host = s.Host();  // opens the session and does nothing else (the soak's server is a dedicated one)
+	auto&   honest = s.Player("Honest");
+	auto&   looper = s.Player("Looper");
+	REQUIRE(host.Join());
+	REQUIRE(honest.Join());
+	REQUIRE(looper.Join());
+	honest.Loot(TRUNK, CAPS, -10);
+	honest.Kill(RAIDER_1);
+	honest.PickUp(0x0003C001);
+	s.Settle();
+
+	// The looper's game says hello again and again (a rejoin loop), past the world-state budget.
+	for (int i = 0; i < 6; ++i) {
+		looper.HelloAgain();
+	}
+	s.Settle();
+
+	std::map<std::string, std::uint32_t> ids;
+	const auto flood = [&](const std::string& a_name, auto a_act) {
+		auto& bot = s.Player(a_name);
+		REQUIRE(bot.Join());
+		ids[a_name] = bot.Id();
+		a_act(bot);
+		s.Settle();
+		bot.Leave();
+		s.Settle();
+	};
+	flood("FloodKills", [](Client& a_bot) { for (std::uint32_t i = 0; i < 11; ++i) { a_bot.Kill(0x00A00000 + i); } });
+	flood("FloodKills2", [](Client& a_bot) { for (std::uint32_t i = 0; i < 3; ++i) { a_bot.Kill(0x00B00000 + i); } });
+	flood("FloodLoot", [](Client& a_bot) { for (int i = 0; i < 11; ++i) { a_bot.Loot(TRUNK, CAPS, -1); } });
+	flood("FloodPickups", [](Client& a_bot) { for (std::uint32_t i = 0; i < 11; ++i) { a_bot.PickUp(0x00A10000 + i); } });
+	flood("FloodClaims", [](Client& a_bot) { for (std::uint32_t i = 0; i < 50; ++i) { a_bot.Claim(0x00A20000 + i); } });
+	s.SettleAfter(std::chrono::milliseconds(500));  // the looper's last hello is answered as its budget refills
+	CHECK(looper.Welcomed());
+
+	const auto log = s.LogLines();
+	CHECK(CountMatches(log, std::format("server: player {} has added 8 dead NPC entries this run, their share", ids["FloodKills"])) == 1);
+	CHECK(CountMatches(log, R"(dead NPC table is \d+% full \(\d+/10\); kill sharing stops at 100%)") == 1);
+	CHECK(CountMatches(log, R"(dead NPC table is 100% full \(10/10\))") == 1);
+	CHECK(CountMatches(log, std::format("server: player {} has made 8 container changes this session, their share", ids["FloodLoot"])) == 1);
+	CHECK(CountMatches(log, std::format("server: player {} has added 8 picked-up item entries this run, their share", ids["FloodPickups"])) == 1);
+	CHECK(CountMatches(log, "says hello too often") >= 1);
+	CHECK(CountMatches(log, std::format("server: player {} .*(their share|too often|dropping some)", honest.Id())) == 0);
+	CHECK(CountMatches(log, "Honest|Looper|Flood") == 0);
+	CHECK(CountMatches(log, "too many events", true) == 0);
+
+	// What the honest player did is in every game, and they agree on everything kept.
+	// The honest take of 10 and the 8 of the loot flooder's that were kept, nothing past that share.
+	CHECK(honest.Count(TRUNK, CAPS) == -18);
+	CHECK(looper.Count(TRUNK, CAPS) == -18);
+	CHECK_AGREE({ &host, &honest, &looper });
 }

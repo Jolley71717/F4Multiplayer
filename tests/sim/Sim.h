@@ -485,6 +485,7 @@ namespace Sim
 			Deliver();
 			if (fixture) {
 				fixture->fake->Settle();
+				fixture->server.Stop();  // first, so its last line ("server: stopped") is kept
 				for (auto& line : fixture->LogLines()) {
 					pastLog.push_back(std::move(line));
 				}
