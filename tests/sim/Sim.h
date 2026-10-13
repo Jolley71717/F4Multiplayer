@@ -9,8 +9,10 @@
 // client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement,
 // FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor,
 // MoveSync::Drive every frame for a friend's stand-in, and StandInGear for what it wears (dressed every
-// frame as RemotePlayers::Update does, out of power armor). The rest is the model's own, written after the
-// plugin and only as good as that copy: applying doors, quest stages and pickups, dropping older
+// frame as RemotePlayers::Update does, out of power armor). For the quests a test gives a game
+// (GiveQuest), QuestSync's StageLog and StageRules set friends' stages and decide what is reported
+// (tests/sim/QuestGame.h). The rest is the model's own, written after the plugin and only as good as
+// that copy: applying doors, the stages of quests no test gave (only recorded) and pickups, dropping older
 // positions (RemotePlayers::PushState), keying copies of builds (WorkshopSync::Apply), the facts
 // ArmorFrames is given (found, ours, in use, distance; judged once a wear), and the stand-in's animation
 // graph that MoveSync drives (StandIn).
@@ -22,6 +24,7 @@
 
 #include "../ChestWorld.h"
 #include "../ServerFixture.h"
+#include "QuestGame.h"
 
 #include "game/ArmorFrames.h"
 #include "game/FoundDead.h"
@@ -139,6 +142,7 @@ namespace Sim
 		Protocol::WorldRequest                                      resync;
 		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;
 		std::set<WorkshopKey>                                       copyKeys;
+		QuestSave                                                   quests;  // the quests the test gave the game (QuestGame)
 	};
 
 	// Draws from the session's seed.
@@ -249,7 +253,13 @@ namespace Sim
 		void Loot(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
 		void PickUp(std::uint32_t a_ref);
 		void Door(std::uint32_t a_ref, std::uint8_t a_open, std::uint8_t a_locked);
+		// Reaches a quest stage. A quest given to this game (GiveQuest) is set in its QuestGame, which reports
+		// it at its next poll as QuestSync does; any other is reported at once, and only recorded.
 		void Stage(std::uint32_t a_quest, std::uint16_t a_stage);
+		// This game has the quest, in this state: its stages from friends go through QuestSync's rules.
+		void GiveQuest(std::uint32_t a_id, Quest a_quest) { questGame.Give(a_id, std::move(a_quest)); }
+		QuestGame&       Quests() { return questGame; }
+		[[nodiscard]] const QuestGame& Quests() const { return questGame; }
 		// Builds a_base at the settlement of workbench a_bench; returns the new object's reference ID in
 		// this player's game (a runtime ID, as the game gives).
 		std::uint32_t Build(std::uint32_t a_bench, std::uint32_t a_base, float a_x, float a_y, float a_z = 0.0f);
@@ -291,7 +301,7 @@ namespace Sim
 		// The save this game was loaded from had these dead before the session.
 		void DeadInSave(std::uint32_t a_ref) { world.dead.insert(a_ref); }
 
-		Save SaveGame() const { return { world, loot.Point(), copies, copyKeys }; }
+		Save SaveGame() const { return { world, loot.Point(), copies, copyKeys, questGame.Save() }; }
 		// Loads a save: the world goes back to it, and a game in a session asks for what changed since
 		// (Session::OnGameLoaded).
 		void LoadGame(const Save& a_save);
@@ -368,6 +378,8 @@ namespace Sim
 		void ApplyWorkshop(const Protocol::WorkshopItem& a_item);
 		void ApplyDoor(const Protocol::RefState& a_state);
 		void JudgeWear(std::uint32_t a_friend);
+		// One QuestSync poll (half a second of play), and what it reports.
+		void PollQuests();
 		Packet Hello();
 
 		Session&      session;
@@ -379,11 +391,13 @@ namespace Sim
 		PeerId        peer = 0;
 		bool          connected = false;
 		bool          welcomed = false;
+		bool          wantSession = false;  // joined, and not left: a lost connection is tried again
 		std::uint32_t playerId = 0;
 		std::uint64_t sessionId = 0;
 		bool          sharedStory = false;
 
 		World                                         world;
+		QuestGame                                     questGame;
 		LootSync::Loot                                loot;
 		TestServer::ChestWorld                        chests{ [](std::uint32_t) { return true; }, [this](const Protocol::ContainerChange& a_change) { Put(a_change); } };  // every container is loaded here
 		std::set<std::uint32_t>                       heardDead;  // dead as the session told us, or as we found and said (WorldSync's dead)
@@ -476,6 +490,7 @@ namespace Sim
 			for (auto& client : clients) {
 				client->Pump();
 				client->Frames(FRAMES_PER_SETTLE);
+				client->PollQuests();
 			}
 		}
 
@@ -529,6 +544,15 @@ namespace Sim
 				std::ranges::move(fixture->LogLines(), std::back_inserter(out));
 			}
 			return out;
+		}
+
+		// Play goes on for a while: each game polls its quests (QuestSync, twice a second) and the session
+		// is settled after each poll, so what one game reports reaches the others' queues on the way.
+		void PlayFor(std::chrono::milliseconds a_time)
+		{
+			for (auto played = std::chrono::milliseconds{ 0 }; played < a_time; played += QuestGame::POLL_INTERVAL) {
+				Settle();
+			}
 		}
 
 		// Time goes by on the server (a budget refills), and then the session is settled.
@@ -652,6 +676,7 @@ namespace Sim
 		}
 		peer = session.NewPeer();
 		connected = true;
+		wantSession = true;
 		if (host) {
 			session.fixture->fake->SetLocal(peer);  // the server's own machine
 		}
@@ -668,6 +693,7 @@ namespace Sim
 			return;
 		}
 		session.Queue({ this, Session::Kind::kDrop, peer, {}, true });
+		wantSession = false;  // playing alone now
 		OnDisconnected();
 		session.Settle();
 	}
@@ -707,6 +733,8 @@ namespace Sim
 		heardDead.clear();
 		toCheck.clear();
 		time.reset();
+		// QuestSync::OnSessionEnded, and the story is our own again (Story::SetShared(false)).
+		questGame.OnSessionEnded();
 	}
 
 	inline void Client::Send(Packet a_packet, bool a_reliable)
@@ -775,6 +803,10 @@ namespace Sim
 
 	inline void Client::Stage(std::uint32_t a_quest, std::uint16_t a_stage)
 	{
+		if (questGame.Modelled(a_quest)) {
+			questGame.Do(a_quest, a_stage);  // reported at the next poll, if it is to be
+			return;
+		}
 		world.questStages.insert({ a_quest, a_stage });
 		Send(Protocol::Encode(Protocol::QuestStage{ a_quest, a_stage }, MT::kReportQuestStage), true);
 	}
@@ -900,6 +932,7 @@ namespace Sim
 	inline void Client::LoadGame(const Save& a_save)
 	{
 		world = a_save.world;
+		questGame.Load(a_save.quests);  // and QuestSync::Rebaseline
 		// The save's copies are back where it had them; the session's building, sent again after the load,
 		// takes them over at their spots (WorkshopSync::OnGameLoaded, FindExisting).
 		copies = a_save.copies;
@@ -971,6 +1004,21 @@ namespace Sim
 		}
 	}
 
+	inline void Client::PollQuests()
+	{
+		const auto friendAt = [this](std::uint32_t a_id) -> std::optional<Position> {
+			const auto it = friends.find(a_id);
+			if (it == friends.end() || !it->second.state) {
+				return std::nullopt;  // RemotePlayers::PositionOf: no stand-in yet
+			}
+			return Position{ it->second.state->x, it->second.state->y, it->second.state->z };
+		};
+		// Session: QuestSync::Frame(welcomed), then TakeOutgoing(welcomed, in a session or joining one).
+		for (auto& packet : questGame.Poll(welcomed, welcomed || wantSession, { me.x, me.y, me.z }, friendAt)) {
+			Send(std::move(packet), true);
+		}
+	}
+
 	inline void Client::Pump()
 	{
 		if (!connected || !session.fixture) {
@@ -1004,7 +1052,11 @@ namespace Sim
 			ApplyDoor(state);
 		}
 		for (const auto& stage : a_state.questStages) {
-			world.questStages.insert({ stage.quest, stage.stage });
+			if (questGame.Modelled(stage.quest)) {
+				questGame.Apply(stage, false);  // caught up from the session
+			} else {
+				world.questStages.insert({ stage.quest, stage.stage });
+			}
 		}
 	}
 
@@ -1082,6 +1134,7 @@ namespace Sim
 				playerId = msg->playerId;
 				sessionId = msg->sessionId;
 				sharedStory = msg->sharedStory;
+				questGame.story = msg->sharedStory;
 				loot.OnWelcome(msg->sessionId, msg->playerId);
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
@@ -1212,7 +1265,11 @@ namespace Sim
 			break;
 		case MT::kQuestStage:
 			if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
-				world.questStages.insert({ msg->quest, msg->stage });
+				if (questGame.Modelled(msg->quest)) {
+					questGame.Apply(*msg, true);  // live: a friend just did it
+				} else {
+					world.questStages.insert({ msg->quest, msg->stage });
+				}
 			} else {
 				unless(false);
 			}
