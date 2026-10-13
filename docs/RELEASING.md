@@ -12,7 +12,7 @@ holds.
 
 Gate for an rc, every time:
 
-1. the unit tests pass (`xmake build -y F4MPTests`, then run it);
+1. the unit tests pass (`xmake build -y` builds them with everything else, then run `F4MPTests.exe`);
 2. the standing set passes once on the rig in both directions (host to joiner and joiner to host): movement
    trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, power armor in
    motion, the cell churn with a save reload, a VM restart and rejoin, fuzz on the host. `sweep.sh`,

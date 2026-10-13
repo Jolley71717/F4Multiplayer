@@ -43,13 +43,14 @@ If you already cloned without submodules: `git submodule update --init --recursi
 ## Tests
 
 ```bat
-xmake build -y F4MPTests
+xmake build -y
 build\windows\x64\releasedbg\F4MPTests.exe
 ```
 
-The tests cover the protocol and the session server (a fake transport drives a real server) and need
-no game. The exit code is the number of failed tests; pass a substring as the first argument to run
-only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
+`xmake build` builds the tests with everything else. They cover the protocol, the session server (a
+fake transport drives a real server, the test plays the players) and the parts of the plugin that
+need no game. The exit code is the number of failed tests; pass a substring as the first argument to
+run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
 `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin.
 `xmake config --analyze=y` turns on the MSVC code analyser for our own sources.
 

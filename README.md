@@ -30,11 +30,11 @@ Logs are written to `Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`.
 ## Tests
 
 ```bat
-xmake build F4MPTests
-xmake run F4MPTests
+xmake build -y
+build\windows\x64\releasedbg\F4MPTests.exe
 ```
 
-Unit tests for the protocol and the session server (a fake transport drives a real server). `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
+`xmake build` builds the unit tests with everything else: the protocol, the session server (a fake transport drives a real server) and the parts of the plugin that need no game. `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
 
 ## Bugs, ideas and pull requests
 
