@@ -6,6 +6,7 @@
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/Prediction.h"
+#include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
 
@@ -58,12 +59,10 @@ namespace RemotePlayers
 		{
 			std::string          name;
 			std::uint32_t        appearance = 0;
-			std::vector<std::uint32_t> equipment;
 			std::optional<Protocol::Face> face;
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
-			bool                 hasEquipment = false;
-			bool                 equipmentApplied = false;
+			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			Clock::time_point    equipmentCheckAt{};
 			int                  equipmentFixes = 0;
 			std::deque<Snapshot> snapshots;
@@ -228,6 +227,8 @@ namespace RemotePlayers
 		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
+		std::uint32_t                         gearChanges = 0;  // reported changes put on over what a stand-in wore
+		std::uint32_t                         redraws = 0;      // stand-ins that put their gun away and drew it again for their gear
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
 		// this is more than a few percent.
@@ -289,7 +290,7 @@ namespace RemotePlayers
 		// pieces and weapons.
 		std::vector<std::uint32_t> Outfit(const RemotePlayer& a_player, ArmorFrames::Dress a_dress)
 		{
-			return Kept(a_player.equipment, a_dress);
+			return Kept(a_player.gear.items, a_dress);
 		}
 
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
@@ -302,6 +303,13 @@ namespace RemotePlayers
 				}
 			}
 			return out;
+		}
+
+		// A weapon held in the hand: not a grenade or mine (see Throwable), nor one this game does not have.
+		bool HandWeapon(std::uint32_t a_item)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			return form && form->Is(RE::ENUM_FORM_ID::kWEAP) && !Throwable(a_item);
 		}
 
 		float LerpAngle(float a_from, float a_to, float a_t)
@@ -1330,10 +1338,10 @@ namespace RemotePlayers
 		if (it == players.end()) {
 			return;
 		}
-		it->second.equipment = std::move(a_items);
-		it->second.hasEquipment = true;
-		it->second.equipmentApplied = false;
-		it->second.equipmentFixes = 0;
+		// What they have on already changes nothing; a change is put on over what the stand-in wears (see Update).
+		if (StandInGear::Report(it->second.gear, std::move(a_items))) {
+			it->second.equipmentFixes = 0;
+		}
 	}
 
 	std::vector<Info> List()
@@ -1384,8 +1392,8 @@ namespace RemotePlayers
 		const auto actor = GetActor(player);
 		// The grenade the stand-in shows and throws is the one the owner holds; the last replayed
 		// throw spent the one it had.
-		if (a_action == Protocol::ShotAction::kThrow && player.hasEquipment) {
-			Equipment::HoldThrowable(actor, player.equipment);
+		if (a_action == Protocol::ShotAction::kThrow && player.gear.has) {
+			Equipment::HoldThrowable(actor, player.gear.items);
 		}
 		WeaponFire::PlayAction(actor, a_action);
 	}
@@ -1543,8 +1551,8 @@ namespace RemotePlayers
 				player.wornAtWanted = false;
 			}
 			if (a_on != player.powerArmorOn) {
-				player.equipmentApplied = false;  // dressed again (see Outfit)
-				player.switchTries = 0;           // a new wear: the stand-in is tried afresh
+				StandInGear::Redress(player.gear);  // dressed again (see Outfit)
+				player.switchTries = 0;             // a new wear: the stand-in is tried afresh
 				player.switchGaveUp = false;
 			}
 			player.powerArmorOn = a_on;
@@ -1705,7 +1713,7 @@ namespace RemotePlayers
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
-				remote.equipmentApplied = false;
+				StandInGear::Redress(remote.gear);
 				remote.equipmentFixes = 0;
 				remote.shownName.clear();
 				remote.lastTarget.reset();
@@ -1739,32 +1747,43 @@ namespace RemotePlayers
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
 			if (dress != remote.dress) {
 				remote.dress = dress;
-				remote.equipmentApplied = false;
+				StandInGear::Redress(remote.gear);
 			}
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
+			const auto step = StandInGear::Next(remote.gear, now);
 			if (dress == ArmorFrames::Dress::kWait) {
 				// waiting for the power armor skeleton
-			} else if (remote.hasEquipment && !remote.equipmentApplied && actor->Get3D()) {
+			} else if (step != StandInGear::Step::kNone && actor->Get3D()) {
+				// Dressed afresh (a new stand-in, in or out of its frame, or the gear check below): emptied and dressed. A change
+				// they reported while it is dressed is put on over what it wears instead (Wear takes off what they no longer
+				// have on and leaves the rest), at most once a StandInGear::CHANGE_GAP. Its gun is put away and drawn again
+				// only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent a second.
+				const auto outfit = Outfit(remote, dress);
 				if (dress == ArmorFrames::Dress::kArmor) {
-					Equipment::WearInArmor(actor, Outfit(remote, dress));
+					Equipment::WearInArmor(actor, outfit);
+				} else if (step == StandInGear::Step::kDress) {
+					Equipment::Apply(actor, outfit);
 				} else {
-					Equipment::Apply(actor, Outfit(remote, dress));
+					Equipment::Wear(actor, outfit);
 				}
-				Puppets::RedrawWeapon(actor);
-				remote.equipmentApplied = true;
+				gearChanges += step == StandInGear::Step::kChange;
+				if (StandInGear::Done(remote.gear, step, now, HandWeapon)) {
+					Puppets::RedrawWeapon(actor);
+					++redraws;
+				}
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-			} else if (remote.equipmentApplied && now >= remote.equipmentCheckAt && actor->Get3D()) {
+			} else if (remote.gear.dressed && now >= remote.equipmentCheckAt && actor->Get3D()) {
 				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
 				if (Wearable(shown()) == Wearable(Outfit(remote, dress))) {
 					remote.equipmentFixes = 0;
 				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
 					++remote.equipmentFixes;
 					++equipmentFixesTotal;
-					remote.equipmentApplied = false;  // applied again next frame
+					StandInGear::Redress(remote.gear);  // dressed afresh next frame
 					{
 						std::string worn, wanted;
-						for (const auto id : Wearable(shown())) worn += std::format("{:08X} ", id);
-						for (const auto id : Wearable(Outfit(remote, dress))) wanted += std::format("{:08X} ", id);
+						for (const auto item : Wearable(shown())) worn += std::format("{:08X} ", item);
+						for (const auto item : Wearable(Outfit(remote, dress))) wanted += std::format("{:08X} ", item);
 						REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
 					}
 				}
@@ -1803,7 +1822,7 @@ namespace RemotePlayers
 				const auto frame = remote.frame.get();
 				const bool engaged = in && frame && Equipment::PowerArmorFrameOf(actor).get() == frame.get();
 				const auto root = frame ? frame->Get3D() : nullptr;
-				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.equipment),
+				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.gear.items),
 					!frame ? "none" : engaged ? "worn" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown");
 			}
 			// Their frame when every game has it, and whether ours is hidden while they wear theirs.
@@ -1829,6 +1848,9 @@ namespace RemotePlayers
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
+		}
+		if (gearChanges || redraws) {
+			out += std::format(" gearChanges={} redraws={}", gearChanges, redraws);
 		}
 		if (const auto puppets = Puppets::Describe(); !puppets.empty()) {
 			out += " " + puppets;

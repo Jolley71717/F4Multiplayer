@@ -108,9 +108,12 @@ namespace Equipment
 			return;
 		}
 		const auto id = a_actor->GetFormID();
+		// What it has on already is left alone: two console scripts fewer for each, and the gun in its hand is not
+		// equipped over again.
+		const auto wearing = Read(a_actor);
 		for (const auto item : a_items) {
 			const auto form = RE::TESForm::GetFormByID(item);
-			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
+			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) || std::ranges::binary_search(wearing, item)) {
 				continue;
 			}
 			// Given only when missing: every gear report used to add another copy, so an NPC's

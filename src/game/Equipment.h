@@ -9,7 +9,7 @@ namespace Equipment
 	// Replaces everything the puppet carries with these items and equips them.
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items);
 
-	// Gives the actor these items (if it doesn't have them) and equips them, and takes off any other
+	// Gives the actor these items (if it doesn't have them) and equips those it doesn't wear yet, and takes off any other
 	// armor or weapon it wears; the rest of its inventory is left alone (a mirrored NPC's loot stays
 	// its own).
 	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
