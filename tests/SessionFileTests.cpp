@@ -5,6 +5,11 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <random>
+#include <string>
+#include <string_view>
+#include <vector>
 
 // The host's saved session: everything the server remembers, through the file and back.
 namespace
@@ -50,7 +55,7 @@ namespace
 
 	std::filesystem::path TempFile()
 	{
-		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{}.bin", std::rand());
+		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{:016X}.bin", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
 	}
 }
 
@@ -191,4 +196,37 @@ TEST("session file: save then load through a file; a missing file is nothing")
 	CHECK(back->deadActors.size() == 2);
 	CHECK(!std::filesystem::exists(path.string() + ".tmp"));
 	std::filesystem::remove(path);
+}
+
+TEST("session file: saving keeps the version before as a backup, and a damaged file is set aside for it")
+{
+	const auto path = TempFile();
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	auto       first = MakeSnapshot();
+	auto       second = MakeSnapshot();
+	second.deadActors.push_back(0x0001D420);
+	REQUIRE(SessionFile::Save(path, first));
+	REQUIRE(SessionFile::Save(path, second));
+	CHECK(SessionFile::Load(SessionFile::BackupOf(path))->deadActors == first.deadActors);
+	CHECK(SessionFile::Recover(path, say)->deadActors == second.deadActors);
+	CHECK(log.empty());
+
+	{
+		std::ofstream damaged{ path, std::ios::binary | std::ios::trunc };
+		damaged << "FMPS and then nothing";
+	}
+	const auto recovered = SessionFile::Recover(path, say);
+	REQUIRE(recovered);
+	CHECK(recovered->deadActors == first.deadActors);
+	CHECK(!std::filesystem::exists(path));
+	CHECK(std::filesystem::file_size(SessionFile::SetAsideOf(path)) == std::string_view{ "FMPS and then nothing" }.size());
+	CHECK(log.size() == 2);
+
+	// The next save doesn't turn the damaged file into the backup: the good one stays.
+	REQUIRE(SessionFile::Save(path, second));
+	CHECK(SessionFile::Load(SessionFile::BackupOf(path))->deadActors == first.deadActors);
+	for (const auto& file : { path, SessionFile::BackupOf(path), SessionFile::SetAsideOf(path) }) {
+		std::filesystem::remove(file);
+	}
 }

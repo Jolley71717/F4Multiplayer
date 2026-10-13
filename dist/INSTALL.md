@@ -144,7 +144,9 @@ character: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.<character>.session`.
 they host that character with the same load order, the session carries on where it stopped. Hosting
 another character (a solo playthrough, or a new one) hosts that character's own session, and the
 co-op character's is kept for later. A joined friend who loads a save of another character leaves
-the session. Delete a character's file to start its session over.
+the session. Delete a character's file to start its session over. The save before the last one is
+kept beside it (`.bak`): if the file is ever damaged, the host carries on from that, and the damaged
+file is kept as `.corrupt`.
 
 Coming from 0.8.5 or earlier: the old `F4Multiplayer.session` becomes the session of the first
 character that hosts with a save played in that session. A character with no such save starts a

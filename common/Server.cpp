@@ -238,7 +238,7 @@ void Server::Run()
 	// match, or the hello path starts a fresh one). Saved again every few seconds while it changes.
 	const std::filesystem::path sessionPath{ options.sessionFile };
 	if (!options.sessionFile.empty()) {
-		if (const auto saved = SessionFile::Load(sessionPath)) {
+		if (const auto saved = SessionFile::Recover(sessionPath, [&](const std::string& a_line) { log("server: " + a_line); })) {
 			sessionContentHash = saved->contentHash;
 			sessionId = saved->sessionId;
 			nextId = (std::max)(nextId, saved->nextId);

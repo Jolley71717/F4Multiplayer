@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <random>
 #include <set>
 #include <thread>
@@ -35,7 +36,13 @@ namespace
 	struct TempFile
 	{
 		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-life-{:016X}.session", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
-		~TempFile() { std::filesystem::remove(path); }
+		~TempFile()
+		{
+			std::error_code error;
+			for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
+				std::filesystem::remove(path.string() + suffix, error);
+			}
+		}
 	};
 
 	Server::Options HostedOptions(const TempFile& a_file)
@@ -732,4 +739,83 @@ TEST("session life: the old shared session file is taken over only by the charac
 	CHECK(log[1].find("continuing the saved co-op session") != std::string::npos);
 	CHECK(!std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
 	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_A, false)));
+}
+
+// ---- a session file that goes wrong on disk ---------------------------------------------------------
+
+namespace
+{
+	// Two sittings: RAIDER dies in the first, RAIDER2 in the second (the file is written when each ends).
+	std::uint64_t PlayTwoSittings(const TempFile& a_file)
+	{
+		std::uint64_t session = 0;
+		for (const auto raider : { RAIDER, RAIDER2 }) {
+			Fixture    f{ HostedOptions(a_file) };
+			const auto host = JoinHost(f, 1);
+			REQUIRE(host);
+			session = host->sessionId;
+			REQUIRE(f.Join(2, Hello("Friend", FRIEND)));
+			f.fake->Deliver(2, Kill(raider));
+			Sync(f, 2);
+		}
+		return session;
+	}
+}
+
+TEST("session life: a session file damaged on disk is kept aside, and the host carries on from the sitting before")
+{
+	TempFile   file;
+	const auto session = PlayTwoSittings(file);
+	{
+		std::ofstream damaged{ file.path, std::ios::binary | std::ios::trunc };
+		damaged << "FMPS";  // a disk that filled up, a sync tool that cut it short
+	}
+	{
+		Fixture    f{ HostedOptions(file) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId == session);
+		CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
+		CHECK(f.Logged("can't be read"));
+		CHECK(f.Logged("backup"));
+		// The friend is still who they were in it.
+		const auto friendWelcome = f.Join(2, Hello("Friend", FRIEND));
+		REQUIRE(friendWelcome);
+		f.fake->Deliver(2, Kill(RAIDER2));
+		Sync(f, 2);
+	}
+	CHECK(std::filesystem::file_size(SessionFile::SetAsideOf(file.path)) == 4);  // the damaged one, for a look
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK((std::set<std::uint32_t>(saved->deadActors.begin(), saved->deadActors.end()) == std::set<std::uint32_t>{ RAIDER, RAIDER2 }));
+}
+
+TEST("session life: a game that stopped while replacing the session file carries on from what it wrote")
+{
+	TempFile   file;
+	const auto session = PlayTwoSittings(file);
+	// Save's state between its two renames: the new file still temporary, the old one the backup.
+	std::filesystem::rename(file.path, file.path.string() + ".tmp");
+	{
+		Fixture    f{ HostedOptions(file) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId == session);
+		CHECK((DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER, RAIDER2 }));
+	}
+}
+
+TEST("session life: deleting the session file starts the session over, even with a backup beside it")
+{
+	TempFile   file;
+	const auto session = PlayTwoSittings(file);
+	REQUIRE(std::filesystem::exists(SessionFile::BackupOf(file.path)));
+	std::filesystem::remove(file.path);
+	{
+		Fixture    f{ HostedOptions(file) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId != session);
+		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
+	}
 }
