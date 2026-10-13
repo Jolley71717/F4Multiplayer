@@ -30,6 +30,8 @@ namespace
 	constexpr std::uint32_t COMMONWEALTH = 0x0000003C;
 	constexpr std::uint32_t WALL = 0x0001F2A1;
 	constexpr std::uint32_t BENCH = 0x000250FE;
+	constexpr std::uint32_t TURRET = 0x000B6E85;  // a machine-gun turret: an actor
+	constexpr std::uint32_t CRATE = 0x0010C3C3;   // a workshop container
 
 	// Returns once the server has handled everything delivered so far (it answers a heartbeat in order).
 	void Sync(Fixture& a_f, PeerId a_peer)
@@ -84,6 +86,7 @@ namespace
 			std::uint32_t                          base;
 			WorkshopMove::Transform                at;
 			std::pair<std::int32_t, std::int32_t> cell;  // the cell it was made in: the engine keeps it there
+			int                                    held = 0;  // items in its inventory
 		};
 
 		using Copy = int;  // a piece's ID in `world`: the stand-in's handle
@@ -96,6 +99,8 @@ namespace
 		std::map<Key, int>                                 copies;  // the copies this run knows, as handles
 		std::set<WorkshopCells::Where>                     loaded;
 		std::set<std::uint32_t>                            benches{ BENCH };  // workbenches in memory here (WorkshopSync::WhereOf)
+		std::map<std::uint32_t, WorkshopApply::Kind>       kinds{ { TURRET, WorkshopApply::Kind::kActor }, { CRATE, WorkshopApply::Kind::kContainer } };
+		int                                                inventory = 0;  // the player's items
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem> inbox;
 		WorkshopApply::Counts                              counts;
 		int                                                nextId = 1;
@@ -127,7 +132,24 @@ namespace
 
 		void MoveTo(Copy a_copy, const Protocol::WorkshopItem& a_item) { world[a_copy].at = WorkshopMove::Of(a_item); }
 
-		void Discard(Copy a_copy) { world.erase(a_copy); }
+		// WorkshopSync::Delete: what the player kept in it comes to them first, if WorkshopApply says so.
+		void Discard(Copy a_copy)
+		{
+			const auto it = world.find(a_copy);
+			if (it == world.end()) {
+				return;
+			}
+			if (WorkshopApply::Rescues(KindOf(it->second.base), it->second.held > 0)) {
+				inventory += it->second.held;
+			}
+			world.erase(it);
+		}
+
+		WorkshopApply::Kind KindOf(std::uint32_t a_base) const
+		{
+			const auto it = kinds.find(a_base);
+			return it != kinds.end() ? it->second : WorkshopApply::Kind::kOther;
+		}
 
 		// A piece of the same object at the spot that no copy of this run is.
 		std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item) const
@@ -145,6 +167,8 @@ namespace
 		{
 			const auto to = WorkshopMove::Of(a_item);
 			world[nextId] = { a_item.base, to, { WorkshopCells::Grid(to.position[0]), WorkshopCells::Grid(to.position[1]) } };
+			// A turret or a robot gets its gear from its record as it loads.
+			world[nextId].held = KindOf(a_item.base) == WorkshopApply::Kind::kActor ? 3 : 0;
 			return nextId++;
 		}
 
@@ -198,6 +222,9 @@ namespace
 			inbox.Retry(inbox.Pending().Near(a_cell));
 			inbox.Retry(inbox.Pending().Nowhere());
 		}
+
+		// Leaving the session (WorkshopSync::Reset).
+		void Leave() { WorkshopApply::RemoveAll(*this, copies, inbox); }
 
 		// A save is loaded (WorkshopSync::OnGameLoaded): the world is the save's again, and the handles of
 		// this run's copies mean nothing; what waits in line or for its cell is kept.
@@ -708,6 +735,67 @@ TEST("workshop session: a joiner who claims to scrap the host's piece, or to bui
 	CHECK(carol.At(60000.0f) == 0);
 	CHECK(carol.At(200.0f) == 1);  // left where it stood
 	CHECK(carol.counts.refused == 2);
+}
+
+// ---- what a copy held, when it goes ----------------------------------------------------------
+
+TEST("workshop session: what you keep in a friend's container comes to you when it goes, but their turrets never hand you their gun and ammo")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.loaded.insert(WorkshopCells::Exterior(COMMONWEALTH, 4300.0f, 1000.0f));
+	bob.Receive(Received(f, 2));
+
+	const auto turret = [](std::uint32_t a_ref, float a_x) {
+		auto item = Wall(a_ref, a_x);
+		item.base = TURRET;
+		return item;
+	};
+	auto crate = Wall(0xFF000010, 500.0f);
+	crate.base = CRATE;
+	f.fake->Deliver(1, Report(turret(0xFF000001, 100.0f)));
+	f.fake->Deliver(1, Report(turret(0xFF000002, 200.0f)));
+	f.fake->Deliver(1, Report(turret(0xFF000003, 300.0f)));
+	f.fake->Deliver(1, Report(crate));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.world.size() == 4);
+	bob.world[bob.copies.at({ alice, crate.refId })].held += 5;  // Bob keeps his stash in it
+
+	// Alice scraps one turret and drags another into the next cell (made again there).
+	f.fake->Deliver(1, Report(Scrapped(turret(0xFF000001, 100.0f))));
+	f.fake->Deliver(1, Report(turret(0xFF000002, 4300.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.recreated == 1);
+	CHECK(bob.inventory == 0);
+
+	// She drags the crate into the next cell too: its copy there is a new one, and Bob's stash comes to him.
+	crate.position[0] = 4400.0f;
+	f.fake->Deliver(1, Report(crate));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.inventory == 5);
+	CHECK(bob.world.at(bob.copies.at({ alice, crate.refId })).held == 0);
+
+	// He keeps a little in the new one, then leaves the session: every copy goes, and only the crate's
+	// contents come with him.
+	bob.world[bob.copies.at({ alice, crate.refId })].held += 2;
+	bob.Leave();
+	CHECK(bob.world.empty());
+	CHECK(bob.inventory == 7);
+}
+
+TEST("workshop apply: only a container's contents are handed over when its copy goes, never an actor's")
+{
+	using WorkshopApply::Kind;
+	CHECK(WorkshopApply::Rescues(Kind::kContainer, true));
+	CHECK(!WorkshopApply::Rescues(Kind::kContainer, false));
+	CHECK(!WorkshopApply::Rescues(Kind::kActor, true));  // a turret's ammo, a robot's parts
+	CHECK(!WorkshopApply::Rescues(Kind::kOther, true));
 }
 
 // ---- WorkshopMove's rules, alone ------------------------------------------------------------

@@ -56,6 +56,23 @@ namespace WorkshopApply
 		kStocked,  // a container whose base holds things of its own: loot, ours on opening the copy
 	};
 
+	// What a copy is, as far as what it holds goes.
+	enum class Kind
+	{
+		kContainer,
+		kActor,  // a turret, a robot
+		kOther,
+	};
+
+	// Whether what a copy holds comes to the player before it goes: only a container's, what they kept
+	// in it. A turret's or a robot's inventory is the game's own, filled from its record when it loads
+	// (its weapon, its ammo, its parts): handed over, it would be free gear on every scrap, every move to
+	// another cell and every session's end.
+	constexpr bool Rescues(Kind a_kind, bool a_holdsItems)
+	{
+		return a_kind == Kind::kContainer && a_holdsItems;
+	}
+
 	// Moves the copy to where the report puts it (see WorkshopMove); false if it has to be made again
 	// there instead (in another cell, or as another object).
 	template <class World>

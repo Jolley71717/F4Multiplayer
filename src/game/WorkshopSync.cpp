@@ -309,14 +309,24 @@ namespace WorkshopSync
 			return !list->data.empty();
 		}
 
+		WorkshopApply::Kind KindOf(RE::TESObjectREFR* a_ref)
+		{
+			if (a_ref->As<RE::Actor>()) {
+				return WorkshopApply::Kind::kActor;
+			}
+			const auto base = a_ref->GetObjectReference();
+			return base && base->Is(RE::ENUM_FORM_ID::kCONT) ? WorkshopApply::Kind::kContainer : WorkshopApply::Kind::kOther;
+		}
+
 		// Deletes a copy. What we kept in a copy of a friend's container comes to us first: it would have
-		// gone with the copy (their scrap, a move to another cell, or the session ending).
+		// gone with the copy (their scrap, a move to another cell, or the session ending). Only a
+		// container's (WorkshopApply::Rescues): a turret or a robot holds its own gear.
 		void Delete(RE::TESObjectREFR* a_ref)
 		{
-			if (HoldsItems(a_ref)) {
+			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
-				Hud::Notify("A friend's container is gone; what you kept in it is in your inventory");
+				Hud::Notify("What you kept in a friend's container is in your inventory");
 				++itemsRescued;
 			}
 			a_ref->Disable();
