@@ -1,7 +1,9 @@
 // The console commands the NPC sync runs in a frame, and how many copies it takes over from their own AI in one
-// (CommandMeter, as NpcSync::UpdateMirrors, StopMirroring and Frame use it). Taking a copy over and dressing it
-// happen in the game, so the tests model that part: a friend's game runs a settlement's settlers against a real
-// server, and what the server relays (owners, states, gear) drives our game's frames, dressed by GearPlan.
+// (CommandMeter, as NpcSync::UpdateMirrors, StopMirroring and Frame use it: TryRegister gates each takeover,
+// Released counts each hand-back's evp). Taking a copy over, handing it back and dressing it happen in the game, so
+// the tests model that part (the loop over the mirrors here is the tests' own, not UpdateMirrors): a friend's game
+// runs a settlement's settlers against a real server, and what the server relays (owners, states, gear) drives our
+// game's frames, dressed by GearPlan with a made-up slot table.
 
 #include "ServerFixture.h"
 
@@ -118,11 +120,10 @@ namespace
 				if (mirror.registered || mirror.snapshots == 0) {
 					continue;
 				}
-				if (!meter.MayRegister()) {
+				if (!meter.TryRegister()) {
 					continue;  // next frame; its snapshots stay
 				}
 				mirror.registered = true;
-				meter.Registered();
 				++taken;
 				if (mirror.gear) {
 					const auto plan = GearPlan::Equip(mirror.worn, *mirror.gear, false, [&](std::uint32_t a_item) { return mirror.carried.contains(a_item); },
@@ -140,7 +141,6 @@ namespace
 			for (auto& [id, mirror] : mirrors) {
 				if (mirror.registered) {
 					mirror.registered = false;
-					meter.Count(1);
 					meter.Released();
 				}
 			}
@@ -207,6 +207,7 @@ TEST("npc commands: arriving at a settlement a friend runs, its 40 settlers are 
 	CHECK(bob.logLines == 0);
 }
 
+// The meter's busy-frame log limit, with the hand-backs modelled: StopMirroring's own path is engine code.
 TEST("npc commands: a friend's pause menu hands every copy back in one frame: logged once, and again only 10 s later")
 {
 	Fixture f;
@@ -253,11 +254,18 @@ TEST("command meter: a frame is busy past 32 commands, and takeovers start again
 	CHECK(meter.Last() == 0);
 
 	for (std::uint32_t i = 0; i < CommandMeter::MAX_REGISTRATIONS_PER_FRAME; ++i) {
-		REQUIRE(meter.MayRegister());
-		meter.Registered();
+		REQUIRE(meter.TryRegister());
 	}
-	CHECK(!meter.MayRegister());
+	CHECK(!meter.TryRegister());
+	CHECK(meter.Registrations() == CommandMeter::MAX_REGISTRATIONS_PER_FRAME);  // a refused one isn't counted
 	meter.EndFrame(t0 + 3s);
-	CHECK(meter.MayRegister());
-	CHECK(meter.Registrations() == CommandMeter::MAX_REGISTRATIONS_PER_FRAME);
+	CHECK(meter.TryRegister());
+
+	// A hand-back is a command (its evp) in the frame it happens.
+	meter.EndFrame(t0 + 4s);
+	meter.Released();
+	meter.Released();
+	meter.EndFrame(t0 + 5s);
+	CHECK(meter.Last() == 2);
+	CHECK(meter.Releases() == 2);
 }

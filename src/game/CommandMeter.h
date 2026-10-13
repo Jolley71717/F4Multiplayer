@@ -23,16 +23,23 @@ namespace CommandMeter
 	public:
 		void Count(std::uint32_t a_commands) { frame += a_commands; }
 
-		// Whether one more copy may be taken over from its own AI this frame.
-		[[nodiscard]] bool MayRegister() const { return registrations < MAX_REGISTRATIONS_PER_FRAME; }
-
-		void Registered()
+		// One more copy taken over from its own AI this frame, if the frame allows; false: it waits for a later frame.
+		[[nodiscard]] bool TryRegister()
 		{
+			if (registrations >= MAX_REGISTRATIONS_PER_FRAME) {
+				return false;
+			}
 			++registrations;
 			++totalRegistered;
+			return true;
 		}
 
-		void Released() { ++totalReleased; }
+		// A copy handed back to its own AI: one console command (its evp).
+		void Released()
+		{
+			++frame;
+			++totalReleased;
+		}
 
 		// Ends the frame. True when it was busy and is worth a log line (at most one every LOG_INTERVAL).
 		bool EndFrame(Clock::time_point a_now)

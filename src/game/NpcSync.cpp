@@ -183,8 +183,7 @@ namespace NpcSync
 			WeaponFire::ReleaseSoundsOf(a_id);  // a replayed burst may still follow the actor's 3D
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
-				meter.Count(1);  // its evp
-				meter.Released();
+				meter.Released();  // and its evp
 			} else {
 				Puppets::Unregister(a_mirror.registered, a_id);  // the actor is gone; just forget it
 			}
@@ -633,14 +632,13 @@ namespace NpcSync
 				if (mirror.registered != actor) {
 					// A few a frame (after a pause menu, every copy at a busy settlement is taken over at once): the rest
 					// keep their snapshots and are taken over in the next frames.
-					if (!meter.MayRegister()) {
+					if (!meter.TryRegister()) {
 						++it;
 						continue;
 					}
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
-					meter.Registered();
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
@@ -925,7 +923,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} refusals={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{} cmds={}/{} busy={} rereg={} released={}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, claimBook.Refusals(), localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied, meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases());
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases());
 	}
 }
