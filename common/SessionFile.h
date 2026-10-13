@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -9,6 +10,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -203,26 +205,6 @@ namespace SessionFile
 	[[nodiscard]] inline std::filesystem::path BackupOf(const std::filesystem::path& a_path) { return a_path.string() + ".bak"; }
 	[[nodiscard]] inline std::filesystem::path SetAsideOf(const std::filesystem::path& a_path) { return a_path.string() + ".corrupt"; }
 
-	// Written to a temporary file first, so a crash mid-write leaves the old save intact; the old save
-	// then becomes the backup (a crash between the two renames leaves the backup, which Recover reads).
-	inline bool Save(const std::filesystem::path& a_path, const Snapshot& a_snapshot)
-	{
-		const auto bytes = Encode(a_snapshot);
-		const auto temp = a_path.string() + ".tmp";
-		{
-			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
-			if (!out || !out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
-				return false;
-			}
-		}
-		std::error_code error;
-		if (std::filesystem::is_regular_file(a_path, error)) {
-			std::filesystem::rename(a_path, BackupOf(a_path), error);  // no backup is no reason not to save
-		}
-		std::filesystem::rename(temp, a_path, error);
-		return !error;
-	}
-
 	inline std::optional<Snapshot> Load(const std::filesystem::path& a_path)
 	{
 		std::ifstream in{ a_path, std::ios::binary };
@@ -231,6 +213,43 @@ namespace SessionFile
 		}
 		std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 		return Decode(bytes);
+	}
+
+	// Written to a temporary file first, so a crash mid-write leaves the old save intact; the old save
+	// then becomes the backup (a crash between the two renames leaves the backup, which Recover reads).
+	// A write that fails or comes out short (a full disk) changes nothing, and is false. The file being
+	// replaced becomes the backup only when it reads back whole: a damaged one (Recover couldn't set it
+	// aside, or something cut it short since) must not push the good backup out.
+	inline bool Save(const std::filesystem::path& a_path, const Snapshot& a_snapshot)
+	{
+		const auto                  bytes = Encode(a_snapshot);
+		const std::filesystem::path temp = a_path.string() + ".tmp";
+		std::error_code             error;
+		const auto                  discard = [&] {
+			if (std::filesystem::is_regular_file(temp, error)) {
+				std::filesystem::remove(temp, error);
+			}
+			return false;
+		};
+		{
+			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
+			if (!out) {
+				return discard();
+			}
+			out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+			out.close();  // the last bytes are written here: a full disk shows now
+			if (out.fail()) {
+				return discard();
+			}
+		}
+		if (const auto size = std::filesystem::file_size(temp, error); error || size != bytes.size()) {
+			return discard();
+		}
+		if (Load(a_path)) {
+			std::filesystem::rename(a_path, BackupOf(a_path), error);  // no backup is no reason not to save
+		}
+		std::filesystem::rename(temp, a_path, error);  // (on failure the whole .tmp stays: Recover reads it)
+		return !error;
 	}
 
 	// The host's server at start: the session in a_path, or else what Save left of it. A file that is there
@@ -250,6 +269,10 @@ namespace SessionFile
 			return snapshot;
 		};
 		if (std::filesystem::is_regular_file(a_path, error)) {
+			// One another program holds for a moment (an antivirus or a sync tool) isn't damaged: it gets a second to let go.
+			for (int attempt = 0; attempt < 10 && !std::ifstream{ a_path, std::ios::binary }; ++attempt) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
 			if (auto snapshot = Load(a_path)) {
 				return snapshot;
 			}
