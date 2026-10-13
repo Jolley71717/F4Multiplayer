@@ -103,3 +103,20 @@ TEST("stage rules: a friend's stage is set, skipped, or waits")
 	// The stages after a lock stage go on as warned, and in a fight (the player can't fight anyway).
 	CHECK(Judge(&bridge, { .live = false, .held = false, .warned = WARNING }) == Verdict::kSet);
 }
+
+TEST("stage rules: starting a stuck main story's next quest (MQ105, whose start moves the player) warns first and waits out a fight")
+{
+	// QuestSync::RepairStory judges MQ105's stage 0 as a stage caught up from the session.
+	const auto rule = Find(0x0229E6, 0);
+	REQUIRE(rule);
+	StageRules::Situation now;
+	now.sharedStory = true;
+	CHECK(StageRules::Judge(rule, now) == Verdict::kWarn);
+	now.warned = 4s;
+	CHECK(StageRules::Judge(rule, now) == Verdict::kLater);
+	now.warned = StageRules::WARNING;
+	now.held = true;  // the player is fighting
+	CHECK(StageRules::Judge(rule, now) == Verdict::kLater);
+	now.held = false;
+	CHECK(StageRules::Judge(rule, now) == Verdict::kSet);
+}

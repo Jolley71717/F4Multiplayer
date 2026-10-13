@@ -201,17 +201,23 @@ namespace QuestSync
 			return dx * dx + dy * dy + dz * dz <= NEAR_FRIEND * NEAR_FRIEND;
 		}
 
-		// The main story and faction quests (their finales too) are shared only if the host chose a
-		// shared story. Quests from other mods are never shared (see Official.h).
+		// The main story and faction quests, their finales too.
+		bool IsStory(const RE::TESQuest* a_quest)
+		{
+			return IsFinale(a_quest) || Story::IsStoryType(a_quest->data.questType);
+		}
+
+		// Quests a session can share: the shared types and the factions' finales of the game's own files.
+		// Quests from other mods are never shared (see Official.h).
+		bool Shareable(const RE::TESQuest* a_quest)
+		{
+			return Official::IsOfficialForm(a_quest) && Watched(a_quest);
+		}
+
+		// Quests this session shares now: the story's only if the host chose a shared story.
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			if (!Official::IsOfficialForm(a_quest)) {
-				return false;
-			}
-			if (IsFinale(a_quest)) {
-				return Story::Shared();
-			}
-			return IsSharedType(a_quest->data.questType) && (Story::Shared() || !Story::IsStoryType(a_quest->data.questType));
+			return Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest));
 		}
 
 		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
@@ -389,36 +395,49 @@ namespace QuestSync
 			return StageLog::Set::kSet;
 		}
 
-		void Unlock()
+		// Out of a session only the lock kept its quests' stages (OnSessionEnded); once the player has
+		// their controls back, the rest of them are the session's and go too.
+		void Unlock(bool a_inSession)
 		{
 			locked.reset();
 			waiting.Unlock();
+			if (!a_inSession) {
+				waiting.Clear();
+			}
 		}
 
-		// The player has their controls back once the lock's release stage is done. If its quests have
-		// done nothing for Queue::LOCK_TIMEOUT of play (a stage given up on, or one that can't be set),
-		// the release is set outright rather than leave the player unable to move. Not while the teleport
-		// is still to be tried: the time a stage of theirs is being set or its script runs on doesn't
-		// count, nor time paused (a menu, alt-tab, a loading screen), when no script runs.
-		void CheckLock()
+		// The player has their controls back once the lock's release stage is done. Looked at before the
+		// queue's poll too: out of a session, the poll that finds the release done would go on to set the
+		// next of its quest's stages (one of the session's past MQ206's 1200).
+		void CheckReleased(bool a_inSession)
 		{
 			if (!locked) {
 				return;
 			}
 			const auto release = RE::TESForm::GetFormByID<RE::TESQuest>(locked->releaseQuest);
 			if (!release || QuestStageLayout::IsStageDone(release, locked->releaseStage)) {
-				Unlock();
+				Unlock(a_inSession);
+			}
+		}
+
+		// If the lock's quests have done nothing for Queue::LOCK_TIMEOUT of play (a stage given up on, or
+		// one that can't be set), the release is set outright rather than leave the player unable to move.
+		// Not while the teleport is still to be tried: the time a stage of theirs is being set or its
+		// script runs on doesn't count, nor time paused (a menu, alt-tab, a loading screen), when no
+		// script runs.
+		void CheckLock(bool a_inSession)
+		{
+			CheckReleased(a_inSession);
+			if (!locked || !waiting.LockOverdue()) {
 				return;
 			}
-			if (!waiting.LockOverdue()) {
-				return;
-			}
+			const auto release = RE::TESForm::GetFormByID<RE::TESQuest>(locked->releaseQuest);
 			REX::WARN("QuestSync: {:08X} stage {} took the player's controls, and nothing has given them back in {} s of play; setting {:08X} stage {}",
 				locked->quest, locked->stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::LOCK_TIMEOUT).count(), locked->releaseQuest, locked->releaseStage);
 			SetStageHere(release, locked->releaseStage);
 			++released;
 			Hud::Notify("Your friends' story step didn't finish; you have your controls back");
-			Unlock();
+			Unlock(a_inSession);
 		}
 
 		// The game as the queue sees it.
@@ -434,8 +453,10 @@ namespace QuestSync
 
 		// An older version set only the highest stage of a friend's quest. MQ104 went straight to 1000,
 		// its 210 never ran here, and so MQ105 never started: the main story stopped there, and the
-		// session file doesn't have 210 to send again. Starts MQ105 for a player left like that.
-		void RepairStory()
+		// session file doesn't have 210 to send again. Starts MQ105 for a player left like that, as a
+		// stage caught up from the session would be: starting it runs its stage 0, which moves the player
+		// (StageRules), so after a warning, not mid-fight, nor in a conversation or a menu.
+		void RepairStory(Clock::time_point a_now)
 		{
 			const auto mq104 = RE::TESForm::GetFormByID<RE::TESQuest>(MQ104);
 			const auto mq105 = RE::TESForm::GetFormByID<RE::TESQuest>(MQ105);
@@ -449,11 +470,32 @@ namespace QuestSync
 			if ((mq105->data.flags & (QUEST_RUNNING | QUEST_COMPLETED)) || !QuestStageLayout::Done(mq105).empty()) {
 				return;
 			}
+			if (busy || Paused()) {
+				return;
+			}
+			const char* name = mq105->GetFullName();
+			const auto  shown = name && *name ? name : "the next quest";
+			StageRules::Situation now;
+			now.sharedStory = true;
+			now.held = combatHold;
+			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
+				now.warned = a_now - *warnedAt;
+			}
+			switch (StageRules::Judge(RuleFor(MQ105, 0), now)) {
+			case StageRules::Verdict::kWarn:
+				warnedAt = a_now;
+				Hud::Notify(std::format("Your main story was stuck; it goes on with {} in {} s (it may move you)", shown,
+					std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count()));
+				return;
+			case StageRules::Verdict::kLater:
+				return;
+			default:
+				break;
+			}
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			++repaired;
-			const char* name = mq105->GetFullName();
-			Hud::Notify(std::format("Your main story was stuck; it goes on with {}", name && *name ? name : "the next quest"));
+			Hud::Notify(std::format("Your main story was stuck; it goes on with {}", shown));
 		}
 	}
 
@@ -554,6 +596,7 @@ namespace QuestSync
 			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= LIVE_FOR; });
 			Game game{ now };
 			const bool paused = Paused();
+			CheckReleased(a_inSession);
 			for (const auto& stage : waiting.Poll(now, game, paused)) {
 				++gaveUp;
 				REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next", stage.quest, stage.stage,
@@ -562,7 +605,7 @@ namespace QuestSync
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			FlushCaughtUp(now);
 			if (!paused) {
-				CheckLock();
+				CheckLock(a_inSession);
 			}
 		}
 
@@ -574,7 +617,7 @@ namespace QuestSync
 		// Every poll, not once: the catch-up itself can leave MQ104 past 210 without it (a session
 		// file from before 210 was reported), after this check first ran.
 		if (a_inSession && report && Story::Shared() && !Story::InOpening()) {
-			RepairStory();
+			RepairStory(now);
 		}
 
 		for (const auto quest : AllQuests()) {
@@ -622,11 +665,16 @@ namespace QuestSync
 			// and a new game sets up many while the player is still in the opening.
 			const auto remote = remoteStageAt.find(id);
 			const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
-			if (!report || reaction || (id >> 24) == 0xFF || !Shared(quest) || !PlayerStarted(quest) || Story::InOpening()) {
+			// The story's stages whatever the story is now while the connection is being remade: it is the
+			// player's own then (Story::SetShared(false)), and these stages are seen done only now. The outbox
+			// sends them only if the welcome says the session shares the story (StageLog::Outbox).
+			const bool story = IsStory(quest);
+			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || !PlayerStarted(quest) ||
+				Story::InOpening()) {
 				continue;
 			}
 			for (const auto stage : fresh) {
-				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage));
+				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story);
 				++reported;
 			}
 		}
@@ -634,7 +682,13 @@ namespace QuestSync
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
 	{
-		return outgoing.Take(a_sending, a_inSession);
+		// Welcomed, Story::Shared is the welcome's.
+		return outgoing.Take(Clock::now(), { a_sending, a_inSession, Story::Shared() });
+	}
+
+	void OnServerChanged()
+	{
+		outgoing.NewSession();
 	}
 
 	void OnSessionEnded()

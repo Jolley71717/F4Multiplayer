@@ -19,8 +19,10 @@ namespace
 	constexpr std::uint32_t SIDE2 = 0x0001ED87;  // another
 	constexpr std::uint32_t MS17 = 0x00022A08;   // a side quest whose 150 and 175 move the player, and whose 315 and 331 scripts wait
 	constexpr std::uint32_t MIN01 = 0x0005DEE4;  // When Freedom Calls: 1500, 2000, 2010 and 2100 move the Minutemen's story on
+	constexpr std::uint32_t MQ104 = 0x0001F25E;  // Unlikely Valentine: its 210 starts Getting a Clue (MQ105) at 10
 	constexpr std::uint32_t MQ105 = 0x000229E6;  // Getting a Clue: 177 pays a bribe out of the player's caps
 	constexpr std::uint32_t MQ206 = 0x000B1752;  // Molecular Level: 500 takes the controls, 1000 is the teleporter, 1200 gives them back
+	constexpr std::uint32_t LONG = 0x0001ED88;   // a side quest given hundreds of stages, none of which does anything to the player
 
 	constexpr const char* SIDE_ACHIEVEMENT = "the side quest's achievement";
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
@@ -67,6 +69,19 @@ namespace
 		auto quest = Started({ 10, 100, 177, 200 });
 		quest.story = true;
 		return quest;
+	}
+
+	// Unlikely Valentine, at the talk with Valentine; Getting a Clue is still to come (only MQ104's 210 starts it).
+	void AtValentine(Client& a_player)
+	{
+		auto valentine = Started({ 200, 210, 1000 });
+		valentine.story = true;
+		valentine.starts = { { 210, { MQ105, 10 } } };
+		a_player.GiveQuest(MQ104, std::move(valentine));
+		auto clue = GettingAClue();
+		clue.running = false;
+		clue.started = false;
+		a_player.GiveQuest(MQ105, std::move(clue));
 	}
 
 	// The player reaches these stages of a quest, one after another.
@@ -418,6 +433,175 @@ TEST("sim quests: a stage you reach while the connection is being remade reaches
 	CHECK(host.Quests().Has(SIDE, 10));
 }
 
+TEST("sim quests: with a shared story, the main story step you finish while your connection drops reaches your friends once it is back, and the next quest starts in their game too")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	AtValentine(host);
+	AtValentine(bob);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(0.0f, 0.0f);
+	bob.Move(100.0f, 0.0f);
+	Settled(s);
+
+	bob.Stage(MQ104, 200);
+	s.PlayFor(4s);
+	REQUIRE(host.Quests().Has(MQ104, 200));
+
+	bob.LoseConnection();  // a relay hiccup; his game keeps trying
+	bob.Stage(MQ104, 210);  // the talk with Valentine ends: its script starts Getting a Clue
+	bob.Stage(MQ104, 1000);
+	s.PlayFor(2s);
+	REQUIRE(bob.Join());
+	s.PlayFor(1s);
+	bob.Stage(MQ105, 100);
+	s.PlayFor(6s);
+	CHECK((Order(host, MQ104) == std::vector<std::uint16_t>{ 200, 210, 1000 }));
+	CHECK(host.Quests().Of(MQ105).running);  // 210's script ran in the host's game too
+	CHECK((Done(host, MQ105) == Stages{ 10, 100 }));
+	CHECK(host.Quests().WaitingCount() == 0);  // nothing left waiting for a quest that never starts
+}
+
+TEST("sim quests: with a shared story, the host's own story progress while their server restarts reaches the friends")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	s.StopServer();  // a restart: the host's own game loses its connection too
+	host.Stage(MQ105, 100);
+	s.PlayFor(2s);
+	s.StartServer();
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	s.PlayFor(3s);
+	CHECK(bob.Quests().Has(MQ105, 100));
+}
+
+TEST("sim quests: hundreds of stages reached while the connection was down all reach the host once it is back, none lost to the server's flood limit")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	Stages many;
+	for (std::uint16_t stage = 1; stage <= 600; ++stage) {
+		many.insert(stage);
+	}
+	host.GiveQuest(LONG, Started(many));
+	bob.GiveQuest(LONG, Started(many));
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	bob.LoseConnection();
+	for (const auto stage : many) {
+		bob.Stage(LONG, stage);
+	}
+	s.PlayFor(2s);
+	REQUIRE(bob.Join());
+	s.PlayInRealTime(4s);
+	CHECK(!s.Logged("sends too many events"));
+	auto arrived = Done(host, LONG);  // set in the host's game, or waiting their turn there
+	for (const auto stage : host.Quests().Waiting(LONG)) {
+		arrived.insert(stage);
+	}
+	CHECK(arrived == many);
+}
+
+TEST("sim quests: what you do alone for minutes while your game keeps trying a host who quit isn't sent when the host comes back")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	s.StopServer();  // the host quits for the night; Bob plays on, his game still trying the host
+	bob.Stage(SIDE, 10);
+	s.PlayFor(60s);
+	bob.Stage(SIDE2, 5);
+	s.PlayFor(10min);
+	s.StartServer();  // the host is back, and Bob's game, still trying, gets in
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	s.PlayFor(5s);
+	CHECK(!host.Quests().Has(SIDE, 10));
+	CHECK(!host.Quests().Has(SIDE2, 5));
+
+	bob.Stage(SIDE, 20);  // in the session again, his progress is shared again
+	s.PlayFor(3s);
+	CHECK(host.Quests().Has(SIDE, 20));
+}
+
+TEST("sim quests: what you do alone after your host quits never reaches the next friend's session you join")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	host.Stage(SIDE, 10);
+	s.PlayFor(2s);
+	REQUIRE(bob.Quests().Has(SIDE, 10));
+	s.StopServer();  // the host quits; Bob plays on, his game still trying the host
+	bob.Stage(SIDE, 20);
+	bob.Stage(SIDE2, 5);
+	s.PlayFor(30s);
+
+	s.ServeAnotherSession();  // Carol hosts a session of her own, and invites Bob
+	auto& carol = s.Host("Carol");
+	GiveQuests({ &carol });
+	REQUIRE(carol.Join());
+	REQUIRE(bob.SwitchServer());
+	s.PlayFor(5s);
+	CHECK(Done(carol, SIDE).empty());
+	CHECK(Done(carol, SIDE2).empty());
+	auto& dave = s.Player("Dave");  // the session's own record has none of it either
+	GiveQuests({ &dave });
+	REQUIRE(dave.Join());
+	s.PlayFor(5s);
+	CHECK(Done(dave, SIDE).empty());
+	CHECK(Done(dave, SIDE2).empty());
+
+	bob.Stage(SIDE, 30);  // what he does in Carol's session is shared there
+	s.PlayFor(3s);
+	CHECK(carol.Quests().Has(SIDE, 30));
+}
+
+TEST("sim quests: a host who stops hosting, plays alone and hosts again shares none of what they did alone")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	host.Leave();  // Session::StopHosting: its own connection first, then the server
+	s.StopServer();
+	host.Stage(SIDE, 10);
+	s.PlayFor(3s);
+	s.StartServer();
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	s.PlayFor(5s);
+	CHECK(!bob.Quests().Has(SIDE, 10));
+}
+
 TEST("sim quests: a friend who rejoins catches up on what the others did while they were away, and nothing twice")
 {
 	Session s;
@@ -649,4 +833,37 @@ TEST("sim quests: leaving the session in the middle of the Institute teleport st
 	CHECK((Done(bob, SIDE2) == Stages{ 5 }));  // the session's 10 stays out of his solo game
 	CHECK(!bob.Quests().Locked());
 	CHECK(bob.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: leaving mid-teleport with more of the session's Institute steps waiting gives your controls back, and nothing past that step is set in your solo game")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	for (const auto player : { &host, &bob }) {
+		auto quest = MolecularLevel();
+		quest.stages.insert(1300);  // a step of the session's after the one that gives the controls back
+		player->GiveQuest(MQ206, std::move(quest));
+	}
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(0.0f, 0.0f);
+	bob.Move(100.0f, 0.0f);
+	Settled(s);
+
+	Reach(host, MQ206, { 500, 1000, 1050, 1200, 1300 });
+	s.PlayFor(1s);
+	REQUIRE(bob.Quests().Has(MQ206, 500));
+	REQUIRE(!bob.Quests().Controls());
+	bob.Quests().paused = true;  // he alt-tabs at the teleporter
+	s.PlayFor(1s);
+
+	bob.Leave();
+	bob.Quests().paused = false;
+	s.PlayFor(15s);
+	CHECK((Order(bob, MQ206) == std::vector<std::uint16_t>{ 500, 1000, 1050, 1200 }));
+	CHECK(bob.Quests().Controls());
+	CHECK(!bob.Quests().Locked());
+	CHECK(bob.Quests().WaitingCount() == 0);  // nothing of the session is left to be set in the next one he joins
 }

@@ -686,49 +686,142 @@ TEST("stage queue: while the player's controls are taken, another quest's stage 
 	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10 }));
 }
 
+namespace
+{
+	template <class Report>
+	using Outbox = StageLog::Outbox<Report>;
+
+	constexpr Outbox<int>::Link SENDING{ true, true, true };
+	constexpr Outbox<int>::Link RECONNECTING{ false, true, false };
+	constexpr Outbox<int>::Link ALONE{ false, false, false };
+}
+
 TEST("stage outbox: a stage reached while the connection is being remade is sent once it is back, in order")
 {
-	StageLog::Outbox<int> outbox;
+	Outbox<int> outbox;
+	auto        now = Start();
 	outbox.Add(1);
 	outbox.Add(2);
-	CHECK(outbox.Take(false, true).empty());  // joining, or reconnecting
+	CHECK(outbox.Take(now, RECONNECTING).empty());  // joining, or reconnecting
 	CHECK(outbox.Size() == 2);
 	outbox.Add(3);
-	CHECK((outbox.Take(true, true) == std::vector<int>{ 1, 2, 3 }));
+	now += 30s;
+	CHECK((outbox.Take(now, SENDING) == std::vector<int>{ 1, 2, 3 }));
 	CHECK(outbox.Size() == 0);
-	CHECK(outbox.Take(true, true).empty());  // and not twice
+	CHECK(outbox.Take(now, SENDING).empty());  // and not twice
+}
+
+TEST("stage outbox: the story's stages reached while the connection is down are kept, and sent only into a session that shares the story")
+{
+	Outbox<int> outbox;
+	auto        now = Start();
+	outbox.Add(210, true);  // MQ104's 210, with the story the player's own while the connection is down
+	outbox.Add(10);
+	CHECK(outbox.Take(now, RECONNECTING).empty());
+	CHECK(outbox.Size() == 2);
+	CHECK((outbox.Take(now, SENDING) == std::vector<int>{ 210, 10 }));
+
+	outbox.Add(1000, true);
+	outbox.Add(20);
+	CHECK((outbox.Take(now + 2s, { true, true, false }) == std::vector<int>{ 20 }));  // each player's own story
+	CHECK(outbox.Size() == 0);
 }
 
 TEST("stage outbox: progress made playing alone never reaches a session joined later")
 {
-	StageLog::Outbox<int> outbox;
+	Outbox<int> outbox;
+	const auto  now = Start();
 	outbox.Add(1);
-	CHECK(outbox.Take(false, false).empty());  // no session
+	CHECK(outbox.Take(now, ALONE).empty());  // no session
 	CHECK(outbox.Size() == 0);
-	CHECK(outbox.Take(true, true).empty());  // then a join
+	CHECK(outbox.Take(now, SENDING).empty());  // then a join
 }
 
-TEST("stage outbox: a connection down for a long time keeps only the newest stages, without growing")
+TEST("stage outbox: what was kept for a host who stopped answering doesn't go to another host's session")
 {
-	StageLog::Outbox<std::size_t> outbox;
-	const auto total = StageLog::Outbox<std::size_t>::MAX_UNSENT + 10;
+	Outbox<int> outbox;
+	const auto  now = Start();
+	outbox.Add(1);
+	CHECK(outbox.Take(now, RECONNECTING).empty());
+	outbox.NewSession();  // a friend's invite accepted
+	CHECK(outbox.Take(now + 1s, SENDING).empty());
+}
+
+TEST("stage outbox: after minutes of trying a host who doesn't answer, the player is playing alone, and nothing of it is sent when the host is back")
+{
+	Outbox<int> outbox;
+	auto        now = Start();
+	outbox.Add(1);
+	CHECK(outbox.Take(now, RECONNECTING).empty());
+	now += Outbox<int>::RECONNECT_GRACE - 1s;
+	CHECK(outbox.Take(now, RECONNECTING).empty());
+	CHECK(outbox.Size() == 1);  // a slow reconnect still gets it
+	now += 1s;
+	outbox.Add(2);
+	CHECK(outbox.Take(now, RECONNECTING).empty());
+	CHECK(outbox.Size() == 0);
+	outbox.Add(3);  // still alone
+	CHECK(outbox.Take(now + 10min, RECONNECTING).empty());
+	CHECK(outbox.Take(now + 11min, SENDING).empty());
+
+	// Back in the session, a drop starts the grace again.
+	outbox.Add(4);
+	CHECK(outbox.Take(now + 12min, RECONNECTING).empty());
+	CHECK((outbox.Take(now + 13min, SENDING) == std::vector<int>{ 4 }));
+}
+
+TEST("stage outbox: a long backlog goes a couple of hundred a second, oldest first, under the server's budget of events")
+{
+	Outbox<std::size_t> outbox;
+	auto                now = Start();
+	const auto          total = Outbox<std::size_t>::MAX_PER_SECOND * 2 + 10;
 	for (std::size_t i = 0; i < total; ++i) {
 		outbox.Add(i);
 	}
-	CHECK(outbox.Take(false, true).empty());
-	CHECK(outbox.Size() == StageLog::Outbox<std::size_t>::MAX_UNSENT);
-	const auto sent = outbox.Take(true, true);
-	REQUIRE(sent.size() == StageLog::Outbox<std::size_t>::MAX_UNSENT);
-	CHECK(sent.front() == 10);
-	CHECK(sent.back() == total - 1);
+	CHECK(outbox.Take(now, { false, true, false }).empty());
+	std::vector<std::size_t> sent;
+	for (int frame = 0; frame < 60; ++frame) {  // a second of frames
+		const auto some = outbox.Take(now + frame * 16ms, { true, true, true });
+		sent.insert(sent.end(), some.begin(), some.end());
+	}
+	CHECK(sent.size() == Outbox<std::size_t>::MAX_PER_SECOND);
+	CHECK(sent.front() == 0);
+	now += 1s;
+	for (int second = 0; second < 2; ++second, now += 1s) {
+		const auto some = outbox.Take(now, { true, true, true });
+		sent.insert(sent.end(), some.begin(), some.end());
+	}
+	REQUIRE(sent.size() == total);
+	CHECK(std::ranges::is_sorted(sent));
+	static_assert(Outbox<std::size_t>::MAX_PER_SECOND <= 250, "half the server's 500 events a second, the rest for everything else");
+}
+
+TEST("stage outbox: a connection down for a long time keeps the oldest stages, without growing")
+{
+	Outbox<std::size_t> outbox;
+	const auto          total = Outbox<std::size_t>::MAX_UNSENT + 10;
+	for (std::size_t i = 0; i < total; ++i) {
+		outbox.Add(i);
+	}
+	auto now = Start();
+	CHECK(outbox.Take(now, { false, true, false }).empty());
+	CHECK(outbox.Size() == Outbox<std::size_t>::MAX_UNSENT);
+	std::vector<std::size_t> sent;
+	for (int second = 0; second < 10; ++second, now += 1s) {
+		const auto some = outbox.Take(now, { true, true, true });
+		sent.insert(sent.end(), some.begin(), some.end());
+	}
+	REQUIRE(sent.size() == Outbox<std::size_t>::MAX_UNSENT);
+	CHECK(sent.front() == 0);  // what came first starts what came after (MQ104's 210 starts MQ105)
+	CHECK(sent.back() == Outbox<std::size_t>::MAX_UNSENT - 1);
 }
 
 TEST("stage outbox: a save loaded drops the progress of the game before it")
 {
-	StageLog::Outbox<int> outbox;
+	Outbox<int> outbox;
 	outbox.Add(1);
 	outbox.Clear();
-	CHECK(outbox.Take(true, true).empty());
+	CHECK(outbox.Take(Start(), SENDING).empty());
 }
 
 TEST("stage queue: a friend's stage is set here when the session shares its quest, or when a lock begun in the session needs it after leaving")
@@ -737,4 +830,37 @@ TEST("stage queue: a friend's stage is set here when the session shares its ques
 	CHECK(StageLog::Settable(false, true));   // the teleport goes on with the story the player's own again
 	CHECK(StageLog::Settable(true, true));
 	CHECK(!StageLog::Settable(false, false));  // the story after leaving: nothing of the session's is set
+}
+
+TEST("stage queue: a lock's stage that has to wait doesn't let a stage overtake another quest's script still running")
+{
+	FakeGame game;
+	game.quests[SIDE];
+	game.quests[MQ105];
+	game.quests[MQ206].current = 500;
+	game.holds[{ SIDE, 10 }] = 10s;  // its script waits
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	queue.Add(MQ105, 100);  // came after SIDE's 10: waits for its script
+	queue.Add(MQ206, 1000);
+	queue.Lock(MQ206, MQ206);
+	game.verdicts[{ MQ206, 1000 }] = StageLog::Set::kQuestWaits;
+
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+
+	game.verdicts[{ MQ206, 1000 }] = StageLog::Set::kLater;  // its warning, say
+	for (int i = 0; i < 4; ++i) {
+		now += 500ms;
+		game.Poll(queue, now);
+		game.Tick();
+	}
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));  // MQ105's 100 still waits for SIDE's 10 to have run
+	CHECK((queue.Waiting(MQ105) == StageLog::Stages{ 100 }));
+
+	now += 10s;
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ105, 100 } }));
 }

@@ -8,11 +8,13 @@
 // story on, a lock whose release isn't coming); StageRules::Hold, Find and FindLock read the table
 // generated from the game's quest fragments; StageLog::Settable says which quests still take stages after
 // leaving; StageLog::NewlyDone finds what this game reports; and StageLog::Outbox keeps or drops those
-// reports while not connected. The glue between them is a copy of QuestSync.cpp's and only as good as that
-// copy: when a stage counts as live, the friend nearby, the combat hold, the warning and its cover, the
-// lock, what is dropped when the session ends (with Session's Story::SetShared(false)), and the 5 s
-// settle before reporting. Left out: scenes (only a conversation holds stages back), the MQ104/MQ105
-// repair, completion notices and the type checks (a test says which quests are the story).
+// reports while not connected (the story's sent only if the welcome shares it), at a pace the server takes.
+// The glue between them is a copy of QuestSync.cpp's and only as good as that copy: when a stage counts
+// as live, the friend nearby, the combat hold, the warning and its cover, the lock and its release (looked
+// at before the queue's poll), what is dropped when the session ends (with Session's
+// Story::SetShared(false)) or the server changes, and the 5 s settle before reporting. Left out: scenes
+// (only a conversation holds stages back), the MQ104/MQ105 repair, completion notices
+// and the type checks (a test says which quests are the story).
 //
 // The model of a quest: the stages it has, which are done, the current one, whether it is running and
 // started here (an objective shown), and what its stages' scripts do (start another quest, complete this
@@ -163,17 +165,18 @@ namespace Sim
 			if (loading) {
 				Game game{ *this };
 				waiting.Poll(now, game, true);
-				return outbox.Take(a_inSession, a_wanted);
+				return outbox.Take(now, { a_inSession, a_wanted, story });
 			}
 			if (a_inSession || locked) {
 				busy = talking;
 				combatHold = CombatHold();
 				std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= StageRules::LIVE_FOR; });
+				CheckReleased(a_inSession);
 				Game game{ *this };
 				gaveUp += waiting.Poll(now, game, paused).size();
 				std::erase_if(waited, [&](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 				if (!paused) {
-					CheckLock();
+					CheckLock(a_inSession);
 				}
 			}
 			// The console runs what was set a moment later.
@@ -195,15 +198,16 @@ namespace Sim
 				const auto fresh = StageLog::NewlyDone(known->second, std::move(done));
 				const auto remote = remoteStageAt.find(id);
 				const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
-				if (fresh.empty() || !report || reaction || !Shared(quest) || !quest.started || opening) {
+				// The story's too while not welcomed, whatever the story is then (the outbox sends them if the welcome shares it).
+				if (fresh.empty() || !report || reaction || (quest.story && a_inSession && !story) || !quest.started || opening) {
 					continue;
 				}
 				for (const auto stage : fresh) {
-					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage));
+					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
 					++reported;
 				}
 			}
-			return outbox.Take(a_inSession, a_wanted);
+			return outbox.Take(now, { a_inSession, a_wanted, story });
 		}
 
 		// Session::OnDisconnected: QuestSync::OnSessionEnded and Story::SetShared(false).
@@ -220,6 +224,9 @@ namespace Sim
 			remoteStageAt.clear();
 			story = false;
 		}
+
+		// Session::SwitchServer: QuestSync::OnServerChanged.
+		void OnServerChanged() { outbox.NewSession(); }
 
 		// A save is loaded: QuestSync::Rebaseline.
 		void Load(const QuestSave& a_save)
@@ -414,28 +421,32 @@ namespace Sim
 			return StageLog::Set::kSet;
 		}
 
-		void Unlock()
+		void Unlock(bool a_inSession)
 		{
 			locked.reset();
 			waiting.Unlock();
+			if (!a_inSession) {
+				waiting.Clear();
+			}
 		}
 
-		void CheckLock()
+		void CheckReleased(bool a_inSession)
 		{
-			if (!locked) {
-				return;
+			if (locked && (!Modelled(locked->releaseQuest) || Has(locked->releaseQuest, locked->releaseStage))) {
+				Unlock(a_inSession);
 			}
-			if (!Modelled(locked->releaseQuest) || Has(locked->releaseQuest, locked->releaseStage)) {
-				Unlock();
-				return;
-			}
-			if (!waiting.LockOverdue()) {
+		}
+
+		void CheckLock(bool a_inSession)
+		{
+			CheckReleased(a_inSession);
+			if (!locked || !waiting.LockOverdue()) {
 				return;
 			}
 			SetStageHere(locked->releaseQuest, locked->releaseStage);
 			++released;
 			notices.push_back("Your friends' story step didn't finish; you have your controls back");
-			Unlock();
+			Unlock(a_inSession);
 		}
 
 		std::map<std::uint32_t, Quest>                      quests;

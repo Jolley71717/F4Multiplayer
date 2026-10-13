@@ -28,10 +28,15 @@ namespace QuestSync
 	// from other players.
 	void Frame(bool a_inSession);
 
-	// The reports to send (a_sending: welcomed). While joining or rejoining a session (a_inSession) they
-	// are kept for when the connection is back, since a stage is reported only once; playing alone they
-	// are dropped (see StageLog::Outbox).
+	// The reports to send (a_sending: welcomed), a few hundred a second at most. While joining or
+	// rejoining a session (a_inSession) they are kept for when the connection is back, since a stage is
+	// reported only once, the story's too (sent if the welcome shares the story); playing alone, or after
+	// minutes of trying a host who doesn't answer, they are dropped (see StageLog::Outbox).
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession);
+
+	// The server address changed (a friend's invite accepted, hosting started or stopped, leaving):
+	// nothing kept for the last session is sent to the next.
+	void OnServerChanged();
 
 	// The session ended: the stages still waiting from it are dropped, not set in the player's own
 	// game, except those that give the player their controls back after a stage set here took them

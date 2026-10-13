@@ -560,6 +560,7 @@ namespace Session
 			client->Disconnect();
 			client->Poll();
 			OnDisconnected();
+			QuestSync::OnServerChanged();  // what was kept for the last session isn't the next one's
 			serverAddress = std::move(a_address);
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};

@@ -66,39 +66,99 @@ namespace StageLog
 	// Reports on their way to the server (the stages done here, the quests completed). A stage is seen
 	// done only once, so a report made while the connection is down in a session (the welcome still to
 	// come, a reconnect) is kept for when it is back: dropped, what its script starts (MQ104's 210 starts
-	// MQ105) would wait forever in the others' games. One made in no session, playing alone, is no
-	// session's: it is dropped, so a session joined later doesn't take the player's solo progress for a
-	// friend's and set it in everyone's game.
+	// MQ105) would wait forever in the others' games. That holds for the story's stages too, although the
+	// story is the player's own while the connection is down (Story::SetShared(false)): they are kept
+	// marked as the story's, and go only if the welcome says the session shares the story.
+	//
+	// One made in no session, playing alone, is no session's: it is dropped, so a session joined later
+	// doesn't take the player's solo progress for a friend's and set it in everyone's game. So is what was
+	// kept for a session the player then left for another (NewSession: a friend's invite accepted while
+	// the last host was being retried), and what a connection down for RECONNECT_GRACE kept: past that,
+	// the player is playing alone (their host quit), and nothing of it goes when the host is back.
+	//
+	// They go at most MAX_PER_SECOND a second, oldest first: the server drops whatever a player sends past
+	// its per-second budget of events, and a stage dropped there is never reported again.
 	template <class Report>
 	class Outbox
 	{
 	public:
-		static constexpr std::size_t MAX_UNSENT = 1024;  // the newest kept while the connection is down
+		static constexpr std::size_t MAX_UNSENT = 1024;  // kept, the oldest first (what came first starts what came after)
+		static constexpr auto        RECONNECT_GRACE = std::chrono::minutes(5);
+		static constexpr std::size_t MAX_PER_SECOND = 200;  // the server's budget is 500 events a second, all kinds together
 
-		void Add(Report a_report) { reports.push_back(std::move(a_report)); }
-
-		// The reports to send now. a_sending: connected and welcomed. a_inSession: in a session, or
-		// joining or rejoining one (a host's own game hosting one).
-		std::vector<Report> Take(bool a_sending, bool a_inSession)
+		// The connection, as the reports see it.
+		struct Link
 		{
-			if (a_sending) {
-				return std::exchange(reports, {});
+			bool sending = false;      // connected and welcomed
+			bool inSession = false;    // in a session, or joining or rejoining one (a host's own game hosting one)
+			bool sharedStory = false;  // the session shares the story (the welcome says)
+		};
+
+		// a_story: a stage of the main story or of a faction's quest, for a session that shares the story only.
+		void Add(Report a_report, bool a_story = false)
+		{
+			if (reports.size() < MAX_UNSENT) {
+				reports.push_back({ std::move(a_report), a_story });
 			}
-			if (!a_inSession) {
-				reports.clear();
-			} else if (reports.size() > MAX_UNSENT) {
-				reports.erase(reports.begin(), reports.end() - MAX_UNSENT);
+		}
+
+		// The reports to send now.
+		std::vector<Report> Take(Clock::time_point a_now, const Link& a_link)
+		{
+			if (!a_link.sending) {
+				if (!a_link.inSession) {
+					reports.clear();
+					downSince.reset();
+				} else if (!downSince) {
+					downSince = a_now;
+				} else if (a_now - *downSince >= RECONNECT_GRACE) {
+					reports.clear();
+				}
+				return {};
 			}
-			return {};
+			downSince.reset();
+			if (!a_link.sharedStory) {
+				std::erase_if(reports, [](const Entry& a_entry) { return a_entry.story; });
+			}
+			if (a_now - windowStart >= std::chrono::seconds(1)) {
+				windowStart = a_now;
+				sentThisSecond = 0;
+			}
+			const auto          count = (std::min)(reports.size(), MAX_PER_SECOND - sentThisSecond);
+			std::vector<Report> out;
+			out.reserve(count);
+			for (std::size_t i = 0; i < count; ++i) {
+				out.push_back(std::move(reports[i].report));
+			}
+			reports.erase(reports.begin(), reports.begin() + static_cast<std::ptrdiff_t>(count));
+			sentThisSecond += count;
+			return out;
 		}
 
 		// Progress of the game before a load.
 		void Clear() { reports.clear(); }
 
+		// The server address changed (an invite accepted, hosting started or stopped, leaving): nothing
+		// kept for the last session goes to the next.
+		void NewSession()
+		{
+			reports.clear();
+			downSince.reset();
+		}
+
 		[[nodiscard]] std::size_t Size() const { return reports.size(); }
 
 	private:
-		std::vector<Report> reports;
+		struct Entry
+		{
+			Report report;
+			bool   story = false;
+		};
+
+		std::vector<Entry>               reports;
+		std::optional<Clock::time_point> downSince;  // not sending since, in a session
+		Clock::time_point                windowStart{};
+		std::size_t                      sentThisSecond = 0;
 	};
 
 	// What a quest in this game says about the stages waiting for it.
@@ -246,7 +306,7 @@ namespace StageLog
 						entry.since = a_now;
 						++set;
 						if (hold > Clock::duration::zero()) {
-							blockedFrom = from;
+							blockedFrom = (std::min)(blockedFrom, from);
 						}
 						break;
 					}
@@ -255,7 +315,7 @@ namespace StageLog
 					--count;
 					break;
 				case Set::kLater:
-					blockedFrom = from;
+					blockedFrom = (std::min)(blockedFrom, from);  // a lock's stage, sorted first, can have come after a hold that still runs
 					break;
 				case Set::kQuestWaits:
 					break;

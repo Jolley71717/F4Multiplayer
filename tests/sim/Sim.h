@@ -239,6 +239,12 @@ namespace Sim
 		// The game crashes: our side of the connection is gone, but the server holds it until it times
 		// out (or we come back with the same identity first).
 		void Vanish();
+		// The connection drops (a Steam relay hiccup, a timeout in a long loading screen) while the game
+		// plays on and keeps trying the same address (Join comes back). The server holds it as for Vanish.
+		void LoseConnection() { Vanish(); }
+		// Accepts a friend's invite to the session the server runs now (Session::SwitchServer): a new
+		// address, so nothing kept for the last one goes there. True once welcomed.
+		bool SwitchServer();
 		// The hash of this game's load order, sent in its Hello (the same for everyone by default).
 		void LoadOrder(std::uint32_t a_hash) { contentHash = a_hash; }
 		// Says hello again on the same connection (a game restarted before Steam dropped the connection).
@@ -567,6 +573,20 @@ namespace Sim
 			StartServer();
 		}
 
+		// The server is another host's now, with a session of its own: the one it ran stops (everyone in it
+		// loses the connection) and is gone, and a new one starts, for a host of its own (Host then
+		// gives that host's game). Players get there by accepting an invite (Client::SwitchServer).
+		void ServeAnotherSession()
+		{
+			StopServer();
+			options.hostIdentity = HOST_IDENTITY + ++otherHosts;
+			std::error_code ignored;
+			for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
+				std::filesystem::remove(options.sessionFile + suffix, ignored);
+			}
+			StartServer();
+		}
+
 		[[nodiscard]] bool ServerRunning() const { return fixture != nullptr; }
 
 		// Whether the server logged a line containing a_text (this run or an earlier one).
@@ -592,6 +612,15 @@ namespace Sim
 		{
 			for (auto played = std::chrono::milliseconds{ 0 }; played < a_time; played += QuestGame::POLL_INTERVAL) {
 				Settle();
+			}
+		}
+
+		// As PlayFor, with the server's clock going by too: each poll's half second is waited for, so what
+		// the games send meets the server's per-second budgets as a real evening would.
+		void PlayInRealTime(std::chrono::milliseconds a_time)
+		{
+			for (auto played = std::chrono::milliseconds{ 0 }; played < a_time; played += QuestGame::POLL_INTERVAL) {
+				SettleAfter(QuestGame::POLL_INTERVAL);
 			}
 		}
 
@@ -697,6 +726,7 @@ namespace Sim
 		std::map<std::uint32_t, PlacedFrame>         frames;
 		PeerId                                       lastPeer = 100;
 		bool                                         moved = false;
+		std::uint64_t                                otherHosts = 0;  // sessions served for other hosts (ServeAnotherSession)
 	};
 
 	// ---- Client ----
@@ -748,6 +778,16 @@ namespace Sim
 		if (connected) {
 			OnDisconnected();
 		}
+	}
+
+	inline bool Client::SwitchServer()
+	{
+		if (connected) {
+			session.Queue({ this, Session::Kind::kDrop, peer, {}, true });
+			OnDisconnected();
+		}
+		questGame.OnServerChanged();  // QuestSync::OnServerChanged: the address changes
+		return Join();
 	}
 
 	inline void Client::HelloAgain()
