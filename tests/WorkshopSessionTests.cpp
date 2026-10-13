@@ -74,8 +74,8 @@ namespace
 
 	// A friend's game, as far as building goes. Its rules for a report follow WorkshopSync::ApplyNow: a
 	// scrap takes the copy away; a piece whose cell isn't loaded waits for it; a piece with a copy moves
-	// it (WorkshopMove: within its cell, or made again in the next); otherwise a copy the save left at the
-	// same spot is taken over, or a new one made.
+	// it (WorkshopMove: within its cell, or made again in the next or as another object); otherwise a copy
+	// the save left at the same spot is taken over, or a new one made.
 	struct Game
 	{
 		struct Piece
@@ -139,7 +139,7 @@ namespace
 			const auto to = WorkshopMove::Of(a_item);
 			const auto move = [&](int a_id) {
 				auto& piece = world[a_id];
-				switch (WorkshopMove::HowToMove(piece.at, to, piece.cell)) {
+				switch (WorkshopMove::HowToFollow(piece.base, piece.at, piece.cell, a_item)) {
 				case WorkshopMove::How::kStay:
 					return true;
 				case WorkshopMove::How::kInPlace:
@@ -470,6 +470,38 @@ TEST("workshop session: a friend's moved piece moves for you, and one moved into
 	bob.Receive(Received(f, 2));
 	bob.RunUntilIdle();
 	CHECK(bob.world.empty());
+}
+
+TEST("workshop session: a friend who loads their own save and builds something else gets it shown, not their old piece slid over")
+{
+	constexpr std::uint32_t CHAIR = 0x0001F3C4;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Receive(Received(f, 2));
+
+	// Alice quicksaves, builds a wall, loads the quicksave and builds a chair: her game gives the chair
+	// the wall's reference ID again.
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	auto chair = Wall(0xFF000001, 300.0f);
+	chair.base = CHAIR;
+	f.fake->Deliver(1, Report(chair));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.world.size() == 1);
+	CHECK(bob.world.begin()->second.base == CHAIR);
+	CHECK(bob.At(100.0f) == 0);
+	CHECK(bob.At(300.0f) == 1);
+
+	// Someone joining later is sent the chair alone.
+	JoinAs(f, 3, "Carol");
+	auto carol = GameAt(100.0f);
+	carol.Receive(Received(f, 3));
+	carol.RunUntilIdle();
+	REQUIRE(carol.world.size() == 1);
+	CHECK(carol.world.begin()->second.base == CHAIR);
 }
 
 // ---- WorkshopMove's rules, alone ------------------------------------------------------------

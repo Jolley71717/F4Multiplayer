@@ -49,6 +49,7 @@ namespace WorkshopSync
 		std::uint32_t refused = 0;  // outside their workbench's reach
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
 		std::uint32_t recreated = 0;      // copies made again where their piece was moved (to another cell)
+		std::uint32_t baseMismatch = 0;   // copies replaced by another object under the same ID (their builder loaded a save)
 		std::uint32_t itemsRescued = 0;   // copies of containers that held what we kept in them, emptied into our inventory first
 		std::unordered_set<std::uint32_t> stockedBases;  // container bases refused for what they hold (logged once each)
 		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
@@ -247,8 +248,9 @@ namespace WorkshopSync
 		}
 
 		// Moves the copy to where the report puts it (see WorkshopMove); false if it has to be made again
-		// there instead. The reference's place alone moves neither what is drawn nor what collides: the 3D
-		// is moved too, and an actor (a turret, a robot) through its character controller.
+		// there instead (in another cell, or as another object). The reference's place alone moves neither
+		// what is drawn nor what collides: the 3D is moved too, and an actor (a turret, a robot) through its
+		// character controller.
 		bool MoveCopy(RE::TESObjectREFR* a_ref, const Protocol::WorkshopItem& a_item)
 		{
 			const auto cell = a_ref->GetParentCell();
@@ -262,7 +264,8 @@ namespace WorkshopSync
 			const auto& location = a_ref->data.location;
 			const auto& angle = a_ref->data.angle;
 			const WorkshopMove::Transform now{ { location.x, location.y, location.z }, { angle.x, angle.y, angle.z }, a_ref->refScale / 100.0f };
-			switch (WorkshopMove::HowToMove(now, WorkshopMove::Of(a_item), at)) {
+			const auto base = a_ref->GetObjectReference();
+			switch (WorkshopMove::HowToFollow(base ? base->GetFormID() : 0, now, at, a_item)) {
 			case WorkshopMove::How::kStay:
 				return true;
 			case WorkshopMove::How::kRecreate:
@@ -409,6 +412,7 @@ namespace WorkshopSync
 				++refused;
 				return true;  // dropped, and a copy already standing is left where it was
 			}
+			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			if (const auto it = copies.find(a_key); it != copies.end()) {
 				const auto ref = it->second.ref.get();
 				if (ref && MoveCopy(ref.get(), a_item)) {
@@ -416,12 +420,13 @@ namespace WorkshopSync
 				}
 				ForgetCopy(it->second.ref);
 				if (ref) {
-					Remove(it->second);  // it went to another cell: made again there, below
-					++recreated;
+					// It went to another cell, or its builder's game made the ID again for something else:
+					// made again (or the new thing made), below.
+					++(ref->GetObjectReference() == base ? recreated : baseMismatch);
+					Remove(it->second);
 				}
 				copies.erase(it);  // (or the game dropped it)
 			}
-			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			if (!base || !Buildable(base)) {
 				return true;  // nothing we can show (a mod we don't have), or nothing we would
 			}
@@ -1099,8 +1104,8 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
-			       placed, moved, recreated, scrapped, itemsRescued, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
+			       placed, moved, recreated, baseMismatch, scrapped, itemsRescued, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size());
 	}

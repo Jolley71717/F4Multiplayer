@@ -76,4 +76,12 @@ namespace WorkshopMove
 		}
 		return How::kInPlace;
 	}
+
+	// How a copy of a_base follows the report for its key. A builder who loads a save of their own gets
+	// the reference IDs made since back, for whatever they build next: a report naming another base is
+	// another piece, made anew, not the old one slid over to it.
+	inline How HowToFollow(std::uint32_t a_base, const Transform& a_now, std::optional<std::pair<std::int32_t, std::int32_t>> a_cell, const Protocol::WorkshopItem& a_item)
+	{
+		return a_base != a_item.base ? How::kRecreate : HowToMove(a_now, Of(a_item), a_cell);
+	}
 }
