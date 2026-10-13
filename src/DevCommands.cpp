@@ -1915,6 +1915,7 @@ namespace DevCommands
 		std::chrono::steady_clock::time_point poisonDisabledAt{};
 
 		// saveguard [strays | rtti <global offset> | exclude <ref> | poison <ref> <save name>]
+		// strays lists each stray with whose it is and what a save and a load would do with it.
 		// rtti names the class of the object a global of the game's points to (checks an address).
 		// poison deletes a created reference and saves at once, the way a stand-in reached saves: the first
 		// call disables it, a call a second or more later deletes it and saves. (Disabling and deleting in
@@ -1926,7 +1927,7 @@ namespace DevCommands
 				return SaveGuard::Describe();
 			}
 			if (args[0] == "strays") {
-				return std::format("strays={}", SaveGuard::CountStrays());
+				return SaveGuard::ListStrays();
 			}
 			if (args[0] == "rtti" && args.size() > 1) {
 				const auto offset = ParseHex(args[1]);

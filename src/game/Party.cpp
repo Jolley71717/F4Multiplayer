@@ -644,7 +644,10 @@ namespace Party
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
 
-		// Same place: go straight there. Elsewhere: load their cell or worldspace first.
+		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins go first, in this
+		// frame (RemotePlayers::DespawnAll, as before a save): the engine clears the cells for the coc or cow later in this
+		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
+		// crashes the engine unloading it or the next save. They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			player->SetPosition(position, true);
 			Hud::Notify(std::format("Teleported to {}", target->name));
@@ -656,6 +659,7 @@ namespace Party
 				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
 				return;
 			}
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -664,6 +668,7 @@ namespace Party
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			Hud::Notify(std::format("Can't teleport to {}", target->name));

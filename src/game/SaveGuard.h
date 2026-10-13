@@ -14,20 +14,35 @@ namespace SaveGuard
 	// replaces the list). Whether there was a record and it is gone now.
 	bool Exclude(RE::TESForm* a_form);
 
-	// A stand-in was placed: one of these left in no cell is ours to keep out of saves (see BeforeSave).
-	void Track(RE::Actor* a_actor);
+	// Whether the engine's save code finds a cell or a worldspace to save the reference under (see SaveStrays::Doomed).
+	bool Anchored(RE::TESObjectREFR* a_ref);
 
-	// Before a save: the created actors in no cell that are gone (deleted stand-ins, including ones an earlier
-	// version saved, or actors whose base no longer exists) are kept out of it. Searched for only once this
-	// run placed a stand-in or the last load brought back deleted actors in no cell. Returns how many were
-	// kept out.
+	// Exclude, for a reference of ours as it is marked for deletion, or found on its way out with no cell: its record
+	// is dropped now, not at the next save, as the engine unloading a cell writes out the records of what was in it,
+	// and one with neither a cell nor a worldspace crashes it. Counted (excludedAtDelete).
+	bool ExcludeOurs(RE::TESObjectREFR* a_ref);
+
+	// A stand-in, frame copy or light was placed: one of these left in no cell is ours to keep out of saves (see
+	// BeforeSave).
+	void Track(RE::TESObjectREFR* a_ref);
+
+	// A reference of ours (Track) whose handle stopped resolving: the game took it from under us, and its form may
+	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is.
+	void Forget(std::uint32_t a_id);
+
+	// Once a frame.
+	void Frame();
+
+	// Before a save: the created references that are strays (SaveStrays::Stray) are kept out of it: ones with
+	// neither a cell nor a worldspace whoever placed them, and deleted ones in no cell that are ours or whose base
+	// no longer exists. Every save is searched. Returns how many were kept out.
 	std::uint32_t BeforeSave();
 
-	// After a load: logs the strays the save brought back, so a broken save can be told apart.
+	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.
 	std::uint32_t AfterLoad();
 
-	// How many strays there are now (counts nothing, changes nothing).
-	std::uint32_t CountStrays();
+	// The strays there are now, one after another, with what a save and a load would do with each (changes nothing).
+	std::string ListStrays();
 
 	// The class name the engine's type information gives the object at a_object, or empty.
 	std::string TypeName(const void* a_object);

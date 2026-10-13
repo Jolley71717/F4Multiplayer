@@ -2,20 +2,33 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
-// Which of the game's created actors SaveGuard keeps out of a save (no game needed, so it is tested).
+// Which of the game's created references SaveGuard keeps out of a save (no game needed, so it is tested).
 namespace SaveStrays
 {
-	// A created actor SaveGuard looked at.
+	// A created reference SaveGuard looked at: an actor, or anything else placed at runtime (a stand-in's
+	// frame copy or light, or one of the game's own).
 	struct Actor
 	{
 		bool inCell = false;
 		bool hasBase = false;  // its base form still exists
 		bool deleted = false;
-		bool ours = false;     // a stand-in this run placed, or one marked or placed as stand-ins are (see StandIn)
+		bool ours = false;     // a stand-in, frame copy or light this run placed, or one marked or placed as stand-ins are (see StandIn)
+		bool anchored = true;  // the engine's save code finds a cell or a worldspace for it (see Doomed)
 	};
+
+	// One the engine cannot save: for a created reference with a record of changes, the save (and the
+	// engine unloading it, as a demoted actor's cell goes) asks for its cell, or else its worldspace, and
+	// reads that without a check. With neither, it crashes, whoever made the reference and whether or not it
+	// is deleted. So it is a stray whoever made it: losing its record beats a save that cannot be written.
+	constexpr bool Doomed(const Actor& a_actor)
+	{
+		return !a_actor.anchored;
+	}
 
 	// In no cell, and deleted or without its base. Whether it is a stray or the game's own depends on whose it
 	// is (see Stray).
@@ -24,14 +37,14 @@ namespace SaveStrays
 		return !a_actor.inCell && (!a_actor.hasBase || a_actor.deleted);
 	}
 
-	// A created actor in no cell is a stray when its base is gone (a stand-in an earlier version saved,
-	// on a face copy no save keeps) or when it is ours and deleted. The rest are left alone: the game
-	// keeps created actors in no cell (leveled ones whose cell unloaded, disabled ones a quest holds
-	// back), and one the game or a script deleted keeps its record on purpose (its id stays taken while
-	// the record exists, so a script still holding it never finds another form under that id).
+	// A created reference is a stray when it is doomed (see Doomed), or in no cell and its base is gone (a
+	// stand-in an earlier version saved, on a face copy no save keeps) or ours and deleted. The rest are
+	// left alone: the game keeps created actors in no cell (leveled ones whose cell unloaded, disabled ones a
+	// quest holds back), and one the game or a script deleted keeps its record on purpose (its id stays
+	// taken while the record exists, so a script still holding it never finds another form under that id).
 	constexpr bool Stray(const Actor& a_actor)
 	{
-		return Gone(a_actor) && (!a_actor.hasBase || a_actor.ours);
+		return Doomed(a_actor) || (Gone(a_actor) && (!a_actor.hasBase || a_actor.ours));
 	}
 
 	// Form IDs the game hands out at runtime (FF......).
@@ -94,9 +107,9 @@ namespace SaveStrays
 		return a_origin.standInFaction || FromStandInBase(a_origin, a_standInBase);
 	}
 
-	// The stand-ins placed this game run, by form ID, with the base each was placed from. The game hands
-	// ids out again (after a load it counts on from the save's last one), so an id is only ours while
-	// the form under it has the base ours had.
+	// The stand-ins, their frame copies and their lights placed this game run, by form ID, with the base each was
+	// placed from. The game hands ids out again (after a load it counts on from the save's last one), so an id is
+	// only ours while the form under it has the base ours had.
 	class Placed
 	{
 	public:
@@ -110,6 +123,13 @@ namespace SaveStrays
 		{
 			const auto it = bases.find(a_id);
 			return it != bases.end() && it->second == a_base;
+		}
+
+		// The base the id was placed from, while it is ours.
+		[[nodiscard]] std::optional<std::uint32_t> BaseOf(std::uint32_t a_id) const
+		{
+			const auto it = bases.find(a_id);
+			return it != bases.end() ? std::optional{ it->second } : std::nullopt;
 		}
 
 		// Whether this run ever placed one (a load does not change that).
@@ -128,12 +148,69 @@ namespace SaveStrays
 		bool                                             any = false;
 	};
 
-	// Whether the forms are searched for strays before a save. Only once this run placed a stand-in, or
-	// when the last load brought back gone actors (strays from a save an earlier version broke, healed by
-	// the next save, or ones that turn out to be strays once a friend's look is known): for a game that
-	// never had a session, a save costs nothing.
-	constexpr bool SearchBeforeSave(bool a_placedAny, bool a_loadBroughtGone)
+	// When SaveGuard looks for strays: before a save, or right after a load.
+	enum class When
 	{
-		return a_placedAny || a_loadBroughtGone;
+		kSave,
+		kLoad,
+	};
+
+	enum class Verdict
+	{
+		kLeave,    // not a stray
+		kExclude,  // its record is dropped
+		kTell,     // only logged
+	};
+
+	// A stray is kept out of every save. Right after a load only ours are: one of the game's may be in the middle of
+	// getting its cell back as the load settles, so it is logged then and left to the sweep before the next save.
+	constexpr Verdict Judge(const Actor& a_actor, When a_when)
+	{
+		if (!Stray(a_actor)) {
+			return Verdict::kLeave;
+		}
+		return a_when == When::kSave || a_actor.ours ? Verdict::kExclude : Verdict::kTell;
 	}
+
+	// References of ours the game took from under us (their handle stopped resolving) while their form may still be
+	// there: kept out of saves for as long as it is, and is the one we placed (the game hands ids out again). The
+	// oldest go past MAX; a load forgets them all (the ids name other forms then).
+	class Forgotten
+	{
+	public:
+		static constexpr std::size_t MAX = 64;
+
+		void Add(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			if (a_id == 0 || std::ranges::find(entries, std::pair{ a_id, a_base }) != entries.end()) {
+				return;
+			}
+			if (entries.size() >= MAX) {
+				entries.erase(entries.begin());
+			}
+			entries.emplace_back(a_id, a_base);
+		}
+
+		// Keeps the ones whose form is still there with the base it was placed from: a_baseNow(id) gives the base of
+		// the form under the id now, or nothing when there is none. Calls a_kept(id) for each one kept.
+		template <class F, class G>
+		void Keep(F&& a_baseNow, G&& a_kept)
+		{
+			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
+				const std::optional<std::uint32_t> base = a_baseNow(a_entry.first);
+				if (!base || *base != a_entry.second) {
+					return true;
+				}
+				a_kept(a_entry.first);
+				return false;
+			});
+		}
+
+		void Clear() { entries.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return entries.size(); }
+
+	private:
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> entries;  // id, base
+	};
 }
