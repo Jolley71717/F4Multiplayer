@@ -464,6 +464,7 @@ namespace RemotePlayers
 				++lightsPlaced;
 			}
 			light->SetLocationOnReference(at);
+			light->Update3DPosition(true);  // the reference's place alone left the light shining where it was made
 		}
 
 		// A frame stands clear of another reference (its stand-in, or a frame copy) further than this, or when the two
