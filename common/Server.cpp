@@ -842,7 +842,9 @@ void Server::Run()
 			}
 			send(a_player.key, Protocol::Encode(Protocol::PlayerJoined{ other.id, other.name, other.appearance }), true);
 			send(key, Protocol::Encode(Protocol::PlayerJoined{ a_player.id, a_player.name, a_player.appearance }), true);
-			if (!other.equipment.empty()) {
+			// Their last report, even one with nothing on: without one, the newcomer's stand-in of them stays in the
+			// settler's own outfit (StandInGear dresses only from a report) while everyone else's is undressed.
+			if (other.equipmentReported) {
 				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
 			}
 			if (other.face) {

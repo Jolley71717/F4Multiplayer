@@ -275,6 +275,42 @@ TEST("cross: a friend's gear is on their stand-in in every game after a crash an
 	}
 }
 
+// A first report with nothing on is passed on (the stand-in is undressed), but a newcomer was sent a friend's
+// last report only when it named something: theirs stayed in the settler's own outfit.
+TEST("cross: a friend with nothing on is shown with nothing on to a friend who joins later, as to those already there")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	bob.Move(100.0f, 100.0f);
+	bob.Equip({});
+	s.Settle();
+	CHECK(StandInWears(host, bob.Id()) == Gear{});
+
+	auto& carol = s.Player("Carol");
+	REQUIRE(carol.Join());
+	bob.StandStill(1);
+	s.Settle();
+	CHECK(StandInWears(carol, bob.Id()) == Gear{});
+
+	// Dressed, then everything off again: the same for whoever joins after.
+	bob.Equip({ PISTOL, VAULT_SUIT });
+	s.Settle();
+	bob.Equip({});
+	s.Settle();
+	host.Frames(31);
+	carol.Frames(31);
+	auto& dave = s.Player("Dave");
+	REQUIRE(dave.Join());
+	bob.StandStill(1);
+	s.Settle();
+	for (const auto viewer : { &host, &carol, &dave }) {
+		CHECK(StandInWears(*viewer, bob.Id()) == Gear{});
+	}
+}
+
 // ---- the session file, a restart, the loot counts and who runs what ----------------------------------
 
 // The host's game writes the session every 15 s, and a file cut short is carried on from the backup before
