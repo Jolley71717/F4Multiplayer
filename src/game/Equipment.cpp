@@ -7,6 +7,52 @@ namespace Equipment
 	namespace
 	{
 		constexpr REL::ID POWER_ARMOR_FURNITURE_KEYWORD{ 2194741 };  // PowerArmor::GetFurnitureKeyword
+		constexpr REL::ID POWER_ARMOR_FRAME_KEYWORD{ 2194744 };      // PowerArmor::GetFrameKeyword (+374890)
+		constexpr REL::ID POWER_ARMOR_DEFAULT_FRAME{ 2194757 };      // PowerArmor::GetDefaultFrame (+374AB0)
+		constexpr REL::ID POWER_ARMOR_RACE{ 2194755 };               // PowerArmor::GetPowerArmorRace (+374A70)
+		// PowerArmor's switch-in (+989D90), the one the Papyrus native SwitchToPowerArmor (+10FC2E0) calls with false
+		// once the frame is furniture with the frame keyword and the actor is in no frame. With false it does, in order:
+		// creates the actor's ExtraPowerArmor (state 1), sets the frame as its frame, unequips what the race's body slot
+		// conflicts with, gives it the power armor race, sounds the steal alarm if the frame or its cell has an owner the
+		// actor is not, moves the frame's items onto the actor (filling the frame from its base's container first if it was
+		// never looked into), equips the frame item and locks it on, queues the rebuild of the actor's 3D (high or
+		// middle-high process only: Set3DUpdateFlag(0x520) and AIProcess::Update3dModel with true, which clears the flags
+		// and hands the rebuild to TaskQueueInterface::QueueActorUpdateModel, or to nothing when the model loader already
+		// holds a load for the actor), promotes the frame to persist for the power armor race, queues the frame's
+		// disabling, and sets state 2. No package, no AI and no animation are involved. The power armor skeleton is on the
+		// actor only once that task has run, a frame or more later.
+		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 2219442 };
+		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
+		constexpr REL::ID SET_OWNER{ 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
+		// A bone the power armor skeleton has and the human one has not (Meshes\Actors\PowerArmor\CharacterAssets\
+		// skeleton.nif against Meshes\Actors\Character\CharacterAssets\skeleton.nif in Fallout4 - Meshes.ba2: the armor
+		// bones, Pelvis_Armor, Helmet_Armor, Tank_Armor and the rest, are the power armor skeleton's alone; the human one
+		// only has P-Armor connect points, which are no nodes).
+		constexpr const char* POWER_ARMOR_BONE = "Pelvis_Armor";
+
+		RE::BGSKeyword* FrameKeyword()
+		{
+			static REL::Relocation<RE::BGSKeyword* (*)()> keyword{ POWER_ARMOR_FRAME_KEYWORD };
+			return keyword();
+		}
+
+		RE::TESObjectARMO* DefaultFrame()
+		{
+			static REL::Relocation<RE::TESObjectARMO* (*)()> frame{ POWER_ARMOR_DEFAULT_FRAME };
+			return frame();
+		}
+
+		// What an actor was placed from: a leveled one's own base is the game's copy, its leveled data names what was
+		// placed. The engine gives a frame to this as an NPC gets out of it (TESObjectREFR::GetOriginalObjectReference).
+		RE::TESForm* OriginalBase(RE::Actor* a_actor)
+		{
+			if (a_actor->extraList) {
+				if (const auto leveled = a_actor->extraList->GetByType<RE::ExtraLeveledCreature>(); leveled && leveled->originalBase) {
+					return leveled->originalBase;
+				}
+			}
+			return a_actor->GetObjectReference();
+		}
 	}
 
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor)
@@ -98,6 +144,102 @@ namespace Equipment
 		static REL::Relocation<RE::BGSKeyword* (*)()> furnitureKeyword{ POWER_ARMOR_FURNITURE_KEYWORD };
 		const auto keyword = furnitureKeyword();
 		return keyword && static_cast<const RE::BGSKeywordForm*>(furniture)->HasKeyword(keyword);
+	}
+
+	bool IsFrameItem(const RE::TESForm* a_item)
+	{
+		const auto armor = a_item && a_item->GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_item->As<RE::TESObjectARMO>() : nullptr;
+		if (!armor) {
+			return false;
+		}
+		if (armor == DefaultFrame()) {
+			return true;
+		}
+		const auto keyword = FrameKeyword();
+		return keyword && static_cast<const RE::BGSKeywordForm*>(armor)->HasKeyword(keyword);
+	}
+
+	bool IsPowerArmorPiece(const RE::TESForm* a_item)
+	{
+		const auto armor = a_item && a_item->GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_item->As<RE::TESObjectARMO>() : nullptr;
+		return armor && armor->HasKeywordString("ArmorTypePower") && !IsFrameItem(armor);
+	}
+
+	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	{
+		if (!a_actor) {
+			return;
+		}
+		const auto id = a_actor->GetFormID();
+		const auto pieceOrWeapon = [](const RE::TESForm* a_form) { return a_form && (a_form->Is(RE::ENUM_FORM_ID::kWEAP) || IsPowerArmorPiece(a_form)); };
+		for (const auto item : a_items) {
+			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
+				continue;
+			}
+			if (!Has(a_actor, item)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
+		}
+		for (const auto worn : Read(a_actor)) {
+			if (pieceOrWeapon(RE::TESForm::GetFormByID(worn)) && !std::ranges::contains(a_items, worn)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, worn).c_str());
+			}
+		}
+		HoldThrowable(a_actor, a_items);
+	}
+
+	RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor)
+	{
+		if (!InPowerArmor(a_actor)) {
+			return {};
+		}
+		static REL::Relocation<bool (*)(RE::ExtraDataList*, RE::ObjectRefHandle&)> powerArmorHandle{ GET_POWER_ARMOR_HANDLE };
+		RE::ObjectRefHandle handle;
+		if (!powerArmorHandle(a_actor->extraList.get(), handle)) {
+			return {};
+		}
+		return handle.get();
+	}
+
+	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame)
+	{
+		if (!a_actor || !a_frame || InPowerArmor(a_actor) || !IsPowerArmorFrame(a_frame->GetObjectReference())) {
+			return false;
+		}
+		// Empty, so that what goes on is only what the actor is told to wear: a frame never looked into is filled from its
+		// base's container as the actor gets in (the engine's own switch-in does so), and those pieces would be moved onto
+		// the actor.
+		RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", a_frame->GetFormID()).c_str());
+		// The actor's own: the engine's switch-in sounds the steal alarm when the frame, or else its cell, has an owner the
+		// actor is not. It gives a frame to the NPC getting out of it in the same way.
+		static REL::Relocation<void (*)(RE::TESObjectREFR*, RE::TESForm*)> setOwner{ SET_OWNER };
+		if (const auto owner = OriginalBase(a_actor)) {
+			setOwner(a_frame, owner);
+		}
+		static REL::Relocation<void (*)(RE::Actor&, RE::TESObjectREFR*, bool)> switchIn{ SWITCH_INTO_POWER_ARMOR };
+		switchIn(*a_actor, a_frame, false);
+		return PowerArmorFrameOf(a_actor).get() == a_frame;
+	}
+
+	bool HasPowerArmorSkeleton(RE::Actor* a_actor)
+	{
+		const auto root = a_actor ? a_actor->Get3D() : nullptr;
+		if (!root) {
+			return false;
+		}
+		static const RE::BSFixedString bone{ POWER_ARMOR_BONE };
+		return root->GetObjectByName(bone) != nullptr;
+	}
+
+	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame)
+	{
+		static REL::Relocation<RE::TESRace* (*)()> powerArmorRace{ POWER_ARMOR_RACE };
+		const auto manager = RE::BGSDynamicPersistenceManager::GetSingleton();
+		const auto race = powerArmorRace();
+		if (a_frame && manager && race) {
+			manager->DemoteReference(a_frame, race, false);
+		}
 	}
 
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)

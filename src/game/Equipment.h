@@ -24,6 +24,44 @@ namespace Equipment
 	// Actor::StopInteractingQuick do). A terminal or a chair is furniture too.
 	[[nodiscard]] bool IsPowerArmorFrame(const RE::TESForm* a_base);
 
+	// Whether this item is the frame itself as armor, which the engine puts on an actor as it gets into a frame and takes
+	// off as it gets out: armor with PowerArmor::GetFrameKeyword, or PowerArmor::GetDefaultFrame (what the engine itself
+	// looks for, 1.11.240).
+	[[nodiscard]] bool IsFrameItem(const RE::TESForm* a_item);
+
+	// Whether this item is a power armor piece (armor with the ArmorTypePower keyword), the frame item aside.
+	[[nodiscard]] bool IsPowerArmorPiece(const RE::TESForm* a_item);
+
+	// In power armor: gives the actor these pieces and weapons (if it doesn't have them) and equips them, and takes off
+	// the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing leaves its inventory:
+	// Apply empties it first, which would take the frame the engine put on it, and clothes put on would go under the armor
+	// at best or into the frame's slots.
+	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+
+	// The frame the engine has the actor in (ExtraPowerArmor's frame), or none.
+	[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor);
+
+	// Switches the actor into the frame at once, as the game's SwitchToPowerArmor does (PowerArmor's switch-in,
+	// 2219442): no AI, no package, no climb. The frame's own items are taken out of it first (only the pieces it is told to
+	// wear go on), and it is given to the actor's base, so getting in is never a theft where the cell has an owner. Main
+	// thread; the actor must have its 3D, a high or middle-high process (the switch-in queues the rebuild of its 3D only
+	// then: AIProcess::Update3dModel with true, which hands it to TaskQueueInterface::QueueActorUpdateModel) and no power
+	// armor yet. Whether the engine has it in that frame now. Its 3D on return is still the one it had: the power armor
+	// skeleton is there only once that task has run (HasPowerArmorSkeleton), so nothing of the new skeleton, biped or
+	// collision may be read right after this.
+	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame);
+
+	// Whether the actor's 3D is built on the power armor skeleton: the one the switch-in's queued rebuild gives an actor
+	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.
+	[[nodiscard]] bool HasPowerArmorSkeleton(RE::Actor* a_actor);
+
+	// The engine keeps a frame persistent while an actor is in it (BGSDynamicPersistenceManager::PromoteReference, owner
+	// the power armor race) and lets it go as the actor's exit finishes; an actor deleted in its frame never gets out, so
+	// the frame is let go here, as that exit does, before both are deleted. Nothing is done to a frame no actor was
+	// switched into: DemoteReference finds no promotion by that owner on it and returns (ExtraDataList::
+	// RemovePromotedRefOwner false; read from disk, 1.11.240), so every frame of ours may be let go before it is deleted.
+	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame);
+
 	// Puts the grenade or mine among these items in the actor's hand the way the combat AI does before
 	// a throw: through the equip manager, in the weapon's own slot. The console's equipitem leaves a
 	// throwable in an NPC's inventory but never in the engine's equipped list (the one the throw
