@@ -1028,7 +1028,8 @@ namespace WorkshopSync
 				TryPendingScrapsIn(cell.id);
 			}
 			if (!fresh.empty()) {
-				inbox.Retry(inbox.Pending().Nowhere());  // their workbench may have come with one of them
+				EngineWorld world;
+				inbox.Retry(WorkshopApply::FoundSomewhere(world, inbox));  // their workbench may have come with one of them
 			}
 		}
 		const auto applyStart = Clock::now();

@@ -108,6 +108,7 @@ namespace
 		std::function<Clock::duration()>                   placeCost = [] { return std::chrono::microseconds(10); };
 		std::size_t                                        mostInAFrame = 0;
 		int                                                frames = 0;
+		int                                                applied = 0;  // reports handed to WorkshopApply, waiting ones tried again included
 
 		static WorkshopCells::Where Cell(const Protocol::WorkshopItem& a_item) { return WorkshopCells::Exterior(COMMONWEALTH, a_item.position[0], a_item.position[1]); }
 
@@ -202,6 +203,7 @@ namespace
 			const auto done = inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [this] { return now; },
 				[this](const Key& a_key, const Protocol::WorkshopItem& a_item) {
 					now += placeCost();
+					++applied;
 					WorkshopApply::Apply(*this, copies, inbox, counts, a_key, a_item);
 				});
 			mostInAFrame = (std::max)(mostInAFrame, done);
@@ -215,12 +217,12 @@ namespace
 		}
 
 		// A cell attaches (WorkshopSync::Frame): what waits in it, or next to it, gets in line again, and
-		// what waits nowhere.
+		// what waits nowhere whose workbench has come.
 		void Attach(const WorkshopCells::Where& a_cell)
 		{
 			loaded.insert(a_cell);
 			inbox.Retry(inbox.Pending().Near(a_cell));
-			inbox.Retry(inbox.Pending().Nowhere());
+			inbox.Retry(WorkshopApply::FoundSomewhere(*this, inbox));
 		}
 
 		// Leaving the session (WorkshopSync::Reset).
@@ -453,6 +455,46 @@ TEST("workshop session: a friend's building that came while its workbench wasn't
 	bob.RunUntilIdle();
 	CHECK(bob.At(100.0f) == 1);
 	CHECK(bob.inbox.Pending().Empty());
+}
+
+TEST("workshop session: building at a friend's mod settlement your game doesn't have waits quietly, instead of going through the line again at every cell you pass")
+{
+	constexpr std::uint32_t MOD_BENCH = 0x0A00BE7C;  // a workbench from a mod Bob doesn't have
+	constexpr std::uint32_t PIECES = 200;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	Game bob;  // on the road: nothing of either settlement is loaded, nor the real one's workbench
+	bob.benches.clear();
+	bob.Receive(Received(f, 2));
+	for (std::uint32_t i = 0; i < PIECES; ++i) {
+		auto item = Wall(0xFF500000 + i, 100.0f + static_cast<float>(i) * 10.0f);
+		item.workshop = MOD_BENCH;
+		f.fake->Deliver(1, Report(item));
+	}
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.inbox.Pending().Nowhere().size() == PIECES + 1);
+
+	// Bob travels through twenty cells: none brings anything up.
+	const auto before = bob.applied;
+	for (int i = 0; i < 20; ++i) {
+		bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 30000.0f + static_cast<float>(i) * 4096.0f, 30000.0f));
+		CHECK(bob.inbox.Queued() == 0);
+		bob.RunUntilIdle();
+	}
+	CHECK(bob.applied == before);
+
+	// He reaches the settlement he does have: its piece is placed, the mod's go on waiting.
+	bob.benches.insert(BENCH);
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.applied == before + 1);
+	CHECK(bob.world.size() == 1);
+	CHECK(bob.At(100.0f) == 1);
+	CHECK(bob.inbox.Pending().Nowhere().size() == PIECES);
 }
 
 TEST("workshop session: a friend's save from an earlier run of the session keeps its copies after the host restarts")
