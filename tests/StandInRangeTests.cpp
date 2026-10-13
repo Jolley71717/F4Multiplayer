@@ -371,6 +371,45 @@ TEST("stand-in range: as we cross a cell edge, a friend's stand-in waits for its
 	CHECK(bob.spawns == 1);
 }
 
+TEST("stand-in range: a friend far behind us stays shown as we cross a cell edge, until the engine lets go of their cell")
+{
+	Session session;
+	Ours    bob;
+	bob.x = 4000.0f;  // cell 0
+	bob.y = 2000.0f;
+	// Alice stands two cells west, 8,200 units off, at the far edge of the loaded square.
+	auto alice = session.Send(Session::Outside(-4200.0f, 2000.0f));
+	REQUIRE(alice);
+	bob.Frames(alice, 10);
+	REQUIRE(bob.Shown());
+	// We step over our east edge: by our cell she is three cells off now, but the engine's square still covers her cell
+	// for a moment as it loads the new one. She stays where she is, drawn.
+	bob.engine.lagging = true;
+	bob.x = 4200.0f;
+	bob.Frames(alice, 30);
+	CHECK(bob.Shown());
+	CHECK(bob.spawns == 1);
+	// Should she step meanwhile into the next cell north, out of her stand-in's, she is gone as anyone three cells off is.
+	{
+		Ours further = bob;
+		const auto north = session.Send(Session::Outside(-4200.0f, 4200.0f));
+		REQUIRE(north);
+		further.Frames(north, 2);
+		CHECK(!further.standIn);
+	}
+	// The engine catches up and lets go of her cell: her stand-in goes, and none is placed while she is out of the square.
+	bob.engine.lagging = false;
+	bob.Frames(alice, 60);
+	CHECK(!bob.standIn);
+	CHECK(bob.spawns == 1);
+	CHECK(bob.leftBehind == 0);
+	// We walk back over the edge: she is shown again.
+	bob.x = 4000.0f;
+	bob.Frames(alice, 2);
+	CHECK(bob.Shown());
+	CHECK(bob.spawns == 2);
+}
+
 TEST("stand-in range: a friend in a cell the engine loads but never draws costs one stand-in every eleven seconds, and is shown within a second once it does")
 {
 	Session session;

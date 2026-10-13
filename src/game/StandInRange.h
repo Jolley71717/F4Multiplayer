@@ -200,7 +200,11 @@ namespace StandInRange
 
 		look.visible = a_sight.sameSpace;
 		if (look.visible && !a_sight.weInside) {
-			look.visible = Visible(a_sight.x, a_sight.y, a_sight.ourX, a_sight.ourY, a_sight.gridsToLoad);
+			// Just after our player crosses a cell edge, the engine's square lags behind ours for a moment: a friend still in
+			// the cell of a stand-in the engine draws stays drawn on the trailing edge until the engine lets go of that cell.
+			const bool stillDrawn = cell == Cell::kAttached && standIn->x == WorkshopCells::Grid(a_sight.x) && standIn->y == WorkshopCells::Grid(a_sight.y);
+			look.visible = Visible(a_sight.x, a_sight.y, a_sight.ourX, a_sight.ourY, a_sight.gridsToLoad) ||
+			               (stillDrawn && Near(a_sight.x, a_sight.y, a_sight.ourX, a_sight.ourY));
 		}
 		if (!look.visible) {
 			return look;
