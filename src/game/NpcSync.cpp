@@ -4,6 +4,7 @@
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/RetryBudget.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -85,10 +86,8 @@ namespace NpcSync
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::uint32_t                                        broughtIn = 0;       // copies moved to where their owner's stands: from an unloaded cell, or from another space ours was left in
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
-		std::unordered_map<std::uint32_t, Clock::time_point> switchedOnAt;
-		constexpr auto                                       SWITCH_ON_RETRY = 5s;
-		std::unordered_map<std::uint32_t, Clock::time_point> broughtInAt;
-		constexpr auto                                       BRING_IN_RETRY = 10s;
+		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
+		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell or an interior
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
@@ -345,6 +344,8 @@ namespace NpcSync
 			}
 			owned.clear();
 			claimedAt.clear();
+			switchOns.Clear();
+			bringIns.Clear();
 			for (auto& [id, mirror] : mirrors) {
 				StopMirroring(id, mirror);
 			}
@@ -533,15 +534,20 @@ namespace NpcSync
 			// Loaded in our world already: it is mirrored, or UpdateMirrors brings it over if it went far.
 			const auto ours = SpaceOf(actor);
 			if (actor->Get3D() && ours == std::pair{ 0u, a_state.worldspace }) {
+				bringIns.Forget(a_state.refId);  // it is here: a later move starts with fresh tries
 				return;
 			}
-			if (const auto last = broughtInAt.find(a_state.refId); last != broughtInAt.end() && a_now - last->second < BRING_IN_RETRY) {
+			const auto verdict = bringIns.Ask(a_state.refId, a_now);
+			if (!RetryBudget::Go(verdict)) {
 				return;
 			}
-			broughtInAt[a_state.refId] = a_now;
 			++broughtIn;
-			REX::INFO("NpcSync: bringing {:08X} in to ({:.0f},{:.0f},{:.0f}) where its owner's copy is; ours was {} (cell {:08X} ws {:08X})", a_state.refId, at.x, at.y, at.z,
-				actor->Get3D() ? "loaded elsewhere" : "in an unloaded cell", ours.first, ours.second);
+			if (verdict == RetryBudget::Verdict::kLast) {
+				REX::INFO("NpcSync: bringing {:08X} in for the last time; after {} tries it stays where it is here", a_state.refId, RetryBudget::TRIES);
+			} else if (verdict == RetryBudget::Verdict::kFirst) {
+				REX::INFO("NpcSync: bringing {:08X} in to ({:.0f},{:.0f},{:.0f}) where its owner's copy is; ours was {} (cell {:08X} ws {:08X})", a_state.refId, at.x, at.y, at.z,
+					actor->Get3D() ? "loaded elsewhere" : "in an unloaded cell", ours.first, ours.second);
+			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", a_state.refId).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_state.refId, at.x).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_state.refId, at.y).c_str());
@@ -557,15 +563,23 @@ namespace NpcSync
 				return;
 			}
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-			if (!actor || !actor->IsDisabled() || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
+			if (actor && !actor->IsDisabled()) {
+				switchOns.Forget(a_state.refId);  // on here: if a script switches it off again, it gets fresh tries
 				return;
 			}
-			if (const auto last = switchedOnAt.find(a_state.refId); last != switchedOnAt.end() && a_now - last->second < SWITCH_ON_RETRY) {
+			if (!actor || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
 				return;
 			}
-			switchedOnAt[a_state.refId] = a_now;
+			const auto verdict = switchOns.Ask(a_state.refId, a_now);
+			if (!RetryBudget::Go(verdict)) {
+				return;
+			}
 			++switchedOn;
-			REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running", a_state.refId);
+			if (verdict == RetryBudget::Verdict::kFirst) {
+				REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running", a_state.refId);
+			} else if (verdict == RetryBudget::Verdict::kLast) {
+				REX::INFO("NpcSync: switching {:08X} on for the last time; after {} tries it stays off here", a_state.refId, RetryBudget::TRIES);
+			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
 		}
 
@@ -849,6 +863,8 @@ namespace NpcSync
 		handedOffAt.clear();
 		talkingTo = 0;
 		owned.clear();
+		switchOns.Clear();
+		bringIns.Clear();
 		outgoing.clear();
 	}
 
@@ -888,7 +904,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied);
 	}
 }

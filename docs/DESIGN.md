@@ -141,6 +141,10 @@
   the host's armor, and a corpse holds only its own roll). An NPC in a power armor frame is left alone, and
   power armor pieces are never put on a body. Where its roll lacks the owner's item it wears its own; the
   one thing it is given is a grenade or mine to hold for a replayed throw, which the throw spends.
+- Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
+  standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
+  every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
+  then left as it is. The tries start over once the copy is on, or here (`net status`: `gaveUp=`).
 - An owner more than 6000 units from an NPC releases it when a friend in the same space is within
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
