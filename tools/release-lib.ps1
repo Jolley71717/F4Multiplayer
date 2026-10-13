@@ -44,7 +44,9 @@ function Expand-Zip([string]$Zip, [string]$Destination) {
 }
 
 # What no shipped file may contain: a Windows profile path, or this PC's user name, profile folder or
-# computer name. (Not the git author: xmake.lua puts it in the DLL's version block on purpose.)
+# computer name. (Not the git author: xmake.lua puts it in the DLL's version block on purpose.) A
+# short user name or one that is a common word ("dev", "game") can turn up in a binary by chance; the
+# scan then refuses the package, and the fix is to package from an account with a distinctive name.
 function Get-LeakPatterns {
 	@('Users\', 'Users/', $env:USERNAME, (Split-Path $env:USERPROFILE -Leaf), $env:COMPUTERNAME) |
 		Where-Object { $_ -and $_.Length -ge 3 } | Select-Object -Unique

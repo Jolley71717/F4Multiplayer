@@ -15,6 +15,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# A dirty build packaged under an rc's name in dist\out would replace that rc's zip and manifest, the
+# ones its soak verdict was given for.
+if ($AllowDirty -and $Label -and -not $OutDir) { throw "-AllowDirty with -Label needs -OutDir (a scratch folder), so it can't replace a real rc's package" }
+
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 . (Join-Path $PSScriptRoot 'release-lib.ps1')
@@ -31,11 +35,16 @@ $version = (Select-String -Path xmake.lua -Pattern 'set_version\("([^"]+)"\)').M
 # What is packaged is a commit: no changes to tracked files, and an rc's notes are part of it.
 $changed = @(git status --porcelain --untracked-files=no)
 Assert-Native 'git status'
-$untracked = @(git status --porcelain | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) } |
+$untracked = @(git status --porcelain | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3).Trim('"') } |
 	Where-Object { -not $_.StartsWith('.claude/') -and -not $_.StartsWith('dist/out/') })
+# xmake.lua compiles every source file under these folders by pattern, so an untracked one would be
+# built into the package although the commit doesn't have it.
+$compiled = @($untracked | Where-Object { $_ -match '^(src|common|bot|tests)/' })
+$untracked = @($untracked | Where-Object { $compiled -notcontains $_ })
 if ($untracked) { Write-Warning "Untracked files (not packaged, but check they belong nowhere): $($untracked -join ', ')" }
 $problems = @()
 if ($changed) { $problems += "uncommitted changes:`n  $($changed -join "`n  ")" }
+if ($compiled) { $problems += "untracked files that would be compiled in:`n  $($compiled -join "`n  ")" }
 if ($Label) {
 	$notes = "dist/RELEASE-$version-$Label.md"
 	if (-not (git ls-files -- $notes)) { $problems += "$notes is not committed (the rc's commit carries its notes)" }
@@ -64,9 +73,17 @@ xmake build -P . -y  # every default target, the unit tests included
 Assert-Native 'xmake build'
 
 $build = Join-Path $root "build\windows\x64\$Mode"
-$testOutput = & (Join-Path $build 'F4MPTests.exe')
-$testsFailed = $LASTEXITCODE
-$testOutput | Where-Object { -not $_.StartsWith('ok ') }
+# With a time limit: a server test that deadlocks would otherwise hang packaging for good.
+$testLog = [IO.Path]::GetTempFileName()
+$tests = Start-Process -FilePath (Join-Path $build 'F4MPTests.exe') -WorkingDirectory $root -NoNewWindow -PassThru -RedirectStandardOutput $testLog
+$null = $tests.Handle  # Windows PowerShell 5.1 loses the exit code of a process whose handle was never read
+if (-not $tests.WaitForExit(10 * 60 * 1000)) {
+	$tests.Kill()
+	throw "F4MPTests did not finish within 10 minutes (a test is stuck; its output so far is in $testLog)"
+}
+$testsFailed = $tests.ExitCode
+Get-Content -LiteralPath $testLog | Where-Object { -not $_.StartsWith('ok ') }
+Remove-Item -LiteralPath $testLog
 if ($testsFailed) { throw "F4MPTests: $testsFailed test(s) failed" }
 
 $suffix = ''
