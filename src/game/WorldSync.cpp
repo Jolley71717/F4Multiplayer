@@ -1,5 +1,6 @@
 #include "game/WorldSync.h"
 
+#include "game/DeathReports.h"
 #include "game/FoundDead.h"
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
@@ -18,17 +19,14 @@ namespace WorldSync
 
 		constexpr auto APPLY_INTERVAL = 250ms;
 
-		// Every actor known to be dead this session, and those we still have to kill locally
-		// (they weren't loaded when we heard about them).
+		// Every actor known to be dead this session, and the deaths we still have to kill locally (they
+		// weren't loaded when we heard about them, or the reporter's position is still on its way), judged by
+		// where each reporter is as their states reach us.
 		std::unordered_set<std::uint32_t> dead;
-		struct PendingDeath
-		{
-			std::uint32_t killer = 0;  // player (0 = none)
-			RE::NiPoint3  at;          // where the corpse lies in the reporter's game (zero: unknown)
-			std::uint32_t reporter = 0;  // the player whose game reported it (0: a replay, from the session)
-			std::optional<RemoteEdits::Spot> reporterAt;  // where they were when the report came
-		};
-		std::unordered_map<std::uint32_t, PendingDeath> pending;  // ref -> who and where, until the actor is loaded and can be killed
+		DeathReports::Book                reports{ [](std::uint32_t a_player) -> std::optional<RemoteEdits::Spot> {
+			const auto state = RemotePlayers::LastStateOf(a_player);
+			return state ? std::optional{ RemoteEdits::SpotOf(*state) } : std::nullopt;
+		} };
 
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
@@ -165,25 +163,14 @@ namespace WorldSync
 			return { 0, cell && cell->worldSpace ? cell->worldSpace->GetFormID() : 0, at.x, at.y, at.z };
 		}
 
-		// Whether the death kills our copy (RemoteEdits::KillsOurCopy): the reporter could have seen it, from
-		// where they were when the report came or from where they are now, or it is no character of our own story.
-		bool KillsOurCopy(const PendingDeath& a_death, RE::Actor* a_actor)
-		{
-			std::optional<RemoteEdits::Spot> now;
-			if (const auto state = a_death.reporter ? RemotePlayers::LastStateOf(a_death.reporter) : std::nullopt) {
-				now = RemoteEdits::SpotOf(*state);
-			}
-			return RemoteEdits::KillsOurCopy(Story::Shared(), DescribeDead(a_actor), a_death.reporterAt, now, SpotOf(a_actor));
-		}
-
 		std::uint32_t                     storyKillsKept = 0;  // story characters a friend killed away from us: alive here (own story)
 		std::unordered_set<std::uint32_t> storyKillsLogged;
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be, or is not to be), false to try again later.
-		bool TryKill(std::uint32_t a_refId, const PendingDeath& a_death)
+		bool TryKill(std::uint32_t a_refId, const DeathReports::Report& a_death)
 		{
-			const auto& at = a_death.at;
+			const RE::NiPoint3 at{ a_death.x, a_death.y, a_death.z };
 			if (!InWorld() || Story::InOpening()) {  // in the opening: once they're out
 				return false;
 			}
@@ -205,13 +192,19 @@ namespace WorldSync
 			// near the friend (a quest of theirs killed it, or the report is made up) lives on here: ours is then
 			// ours alone (the session has it dead, so nobody runs it for us and no health comes). It leaves the dead
 			// we know of, so if we kill it ourselves later our report goes out like any other.
-			if (!KillsOurCopy(a_death, actor)) {
+			// A report whose reporter seems nowhere near waits a moment first: their position may be behind it.
+			switch (reports.Judge(Story::Shared(), a_death, { DescribeDead(actor), SpotOf(actor) }, Clock::now())) {
+			case DeathReports::Verdict::kWait:
+				return false;
+			case DeathReports::Verdict::kKeepAlive:
 				dead.erase(a_refId);
 				++storyKillsKept;
 				if (storyKillsLogged.insert(a_refId).second) {
 					REX::INFO("WorldSync: {:08X} died in player {}'s game with them nowhere near it; a character of our own story, it lives on here", a_refId, a_death.reporter);
 				}
 				return true;
+			case DeathReports::Verdict::kKill:
+				break;
 			}
 
 			// The console kill goes through the engine's normal death path (death animation,
@@ -238,6 +231,13 @@ namespace WorldSync
 			}
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
+		}
+
+		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death)
+		{
+			if (IsShareableRef(a_refId) && dead.insert(a_refId).second && !TryKill(a_refId, a_death)) {
+				reports.Hold(a_refId, a_death);
+			}
 		}
 
 		class DeathWatcher :
@@ -355,7 +355,7 @@ namespace WorldSync
 				// another.
 				ReportDead({ .refId = id, .foundDead = true });
 				++foundDead;
-				pending.erase(id);
+				reports.Forget(id);
 				pendingHealth.erase(id);
 			}
 			toCheck.clear();
@@ -836,18 +836,9 @@ namespace WorldSync
 		return { session, containerNext };
 	}
 
-	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer, float a_x, float a_y, float a_z, std::uint32_t a_reporter)
+	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death)
 	{
-		if (!IsShareableRef(a_refId) || !dead.insert(a_refId).second) {
-			return;
-		}
-		PendingDeath death{ a_killer, { a_x, a_y, a_z }, a_reporter };
-		if (const auto state = a_reporter ? RemotePlayers::LastStateOf(a_reporter) : std::nullopt) {
-			death.reporterAt = RemoteEdits::SpotOf(*state);
-		}
-		if (!TryKill(a_refId, death)) {
-			pending[a_refId] = death;
-		}
+		TakeDeath(a_death.refId, reports.Received(a_death, Clock::now()));
 	}
 
 	FoundDead::Npc DescribeStory(RE::Actor* a_actor)
@@ -884,7 +875,7 @@ namespace WorldSync
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
 		for (const auto id : a_state.deadActors) {
-			ApplyRemoteDeath(id);
+			TakeDeath(id, DeathReports::Book::Replayed(Clock::now()));
 		}
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
@@ -1008,7 +999,7 @@ namespace WorldSync
 				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
 			}
-			pending.erase(id);
+			reports.Forget(id);
 			pendingHealth.erase(id);
 		}
 
@@ -1055,7 +1046,7 @@ namespace WorldSync
 		std::erase_if(replayed, [&](const auto& a_entry) { return now - a_entry.second > REPLAY_ECHO; });
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
-		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
+		if ((reports.Empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
 			return;
 		}
 		nextApply = now + APPLY_INTERVAL;
@@ -1063,9 +1054,7 @@ namespace WorldSync
 			return;
 		}
 
-		for (auto it = pending.begin(); it != pending.end();) {
-			it = TryKill(it->first, it->second) ? pending.erase(it) : std::next(it);
-		}
+		reports.Retry(TryKill);
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
 			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
 		}
@@ -1087,7 +1076,7 @@ namespace WorldSync
 	void Reset()
 	{
 		dead.clear();
-		pending.clear();
+		reports.Clear();
 		storyKillsLogged.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
@@ -1170,7 +1159,7 @@ namespace WorldSync
 	std::string Describe()
 	{
 		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} containerRefused={} ownSkipped={} foundDead={} ownStoryDead={} storyKillKept={} loadedActors={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped, containerRefused,
+			dead.size(), reports.Size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped, containerRefused,
 			ownSkipped, foundDead, ownStoryDead, storyKillsKept, loadedActors.size());
 	}
 }

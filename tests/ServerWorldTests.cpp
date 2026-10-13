@@ -3,6 +3,7 @@
 
 #include "ServerFixture.h"
 
+#include "game/DeathReports.h"
 #include "game/RemoteEdits.h"
 
 #include <cstdlib>
@@ -2075,6 +2076,9 @@ namespace
 	constexpr std::uint32_t RAIDER = 0x0001F0A1;          // one of his raiders
 	const RemoteEdits::Spot BOSS_HERE{ CORVEGA_INSIDE, 0, 1200.0f, -300.0f, 0.0f };  // where our copy of him stands
 	const RemoteEdits::Spot RAIDER_HERE{ CORVEGA_INSIDE, 0, 900.0f, 100.0f, 0.0f };
+	const RemoteEdits::Spot BESIDE_BOSS{ CORVEGA_INSIDE, 0, 1100.0f, -200.0f, 0.0f };
+	const RemoteEdits::Spot OUT_FRONT{ 0, 0x0000003C, 5000.0f, 5000.0f, 0.0f };
+	const RemoteEdits::Spot ACROSS_THE_MAP{ 0, 0x0000003C, -60000.0f, 80000.0f, 0.0f };
 	constexpr FoundDead::Npc UNIQUE{ .unique = true };
 	constexpr FoundDead::Npc GENERIC{};
 
@@ -2090,8 +2094,7 @@ namespace
 		}
 	}
 
-	// Player a_id (on a_peer) says where they stand; returns once the server has passed it on to a_watcher.
-	void Stand(Fixture& a_f, PeerId a_peer, std::uint32_t a_id, const RemoteEdits::Spot& a_at, PeerId a_watcher, Heard& a_heard)
+	std::vector<std::uint8_t> StateOf(const RemoteEdits::Spot& a_at)
 	{
 		static std::uint32_t sequence = 0;
 		Protocol::PlayerState state;
@@ -2099,46 +2102,114 @@ namespace
 		state.cell = a_at.cell;
 		state.worldspace = a_at.worldspace;
 		state.x = a_at.x, state.y = a_at.y, state.z = a_at.z;
-		a_f.fake->Deliver(a_peer, Protocol::Encode(state));
-		const auto deadline = std::chrono::steady_clock::now() + 3s;
-		while (!(a_heard.contains(a_id) && a_heard[a_id].x == a_at.x) && std::chrono::steady_clock::now() < deadline) {
-			if (const auto packet = a_f.fake->WaitFor(a_watcher, Type(MT::kPlayerStates), 200ms)) {
-				Note(a_heard, *packet);
-			}
-		}
-		REQUIRE(a_heard.contains(a_id));
+		return Protocol::Encode(state);
 	}
 
-	struct Seen
+	// Hands what the server sends a_peer to a_handle, in order, until a_done() or three seconds pass.
+	template <class Handle, class Done>
+	void Pump(Fixture& a_f, PeerId a_peer, Handle&& a_handle, Done&& a_done)
 	{
-		std::uint32_t                    reporter = 0;
-		std::optional<RemoteEdits::Spot> reporterThen;  // where our game had heard the reporter was when the death came
-	};
-
-	// Reads what a_peer is sent until the deaths of a_refs have come: as our game takes each report.
-	std::map<std::uint32_t, Seen> DeathsAsSeenBy(Fixture& a_f, PeerId a_peer, const std::set<std::uint32_t>& a_refs, Heard& a_heard)
-	{
-		std::map<std::uint32_t, Seen> out;
 		const auto deadline = std::chrono::steady_clock::now() + 3s;
-		while (out.size() < a_refs.size() && std::chrono::steady_clock::now() < deadline) {
-			for (const auto& packet : a_f.fake->Take(a_peer)) {
+		while (!a_done() && std::chrono::steady_clock::now() < deadline) {
+			a_handle(a_f.fake->Take(a_peer));
+			std::this_thread::sleep_for(10ms);
+		}
+		REQUIRE(a_done());
+	}
+
+	// Player a_id (on a_peer) says where they stand; returns once the server has passed it on to a_watcher.
+	void Stand(Fixture& a_f, PeerId a_peer, std::uint32_t a_id, const RemoteEdits::Spot& a_at, PeerId a_watcher, Heard& a_heard)
+	{
+		a_f.fake->Deliver(a_peer, StateOf(a_at));
+		Pump(
+			a_f, a_watcher,
+			[&](const Packets& a_packets) {
+				for (const auto& packet : a_packets) {
+					if (packet[0] == Type(MT::kPlayerStates)) {
+						Note(a_heard, packet);
+					}
+				}
+			},
+			[&] { return a_heard.contains(a_id) && a_heard[a_id].x == a_at.x && a_heard[a_id].cell == a_at.cell; });
+	}
+
+	// The receiving game, as far as other players' deaths go: what it has heard of where each player is (the
+	// states the server passes on), its loaded copies, and the real DeathReports judging each death as it
+	// comes and again on every frame after, as WorldSync does. The test moves its clock.
+	struct DeathsHere
+	{
+		bool                                           sharedStory = false;
+		Heard                                          heard;
+		std::map<std::uint32_t, DeathReports::Copy>    loaded;  // our copies, by ref
+		std::set<std::uint32_t>                        dead, killed, keptAlive;
+		std::map<std::uint32_t, DeathReports::Verdict> firstVerdict;  // when each death was first judged
+		DeathReports::Clock::time_point                now{ std::chrono::hours(1) };
+		DeathReports::Book                             book{ [this](std::uint32_t a_player) -> std::optional<RemoteEdits::Spot> {
+			const auto it = heard.find(a_player);
+			return it == heard.end() ? std::nullopt : std::optional{ it->second };
+		} };
+
+		// WorldSync's TryKill past the game's own checks: our copy must be loaded, then the judge decides.
+		bool TryKill(std::uint32_t a_ref, const DeathReports::Report& a_report)
+		{
+			const auto copy = loaded.find(a_ref);
+			if (copy == loaded.end()) {
+				return false;
+			}
+			const auto verdict = book.Judge(sharedStory, a_report, copy->second, now);
+			firstVerdict.try_emplace(a_ref, verdict);
+			switch (verdict) {
+			case DeathReports::Verdict::kKill:
+				killed.insert(a_ref);
+				return true;
+			case DeathReports::Verdict::kKeepAlive:
+				keptAlive.insert(a_ref);
+				dead.erase(a_ref);
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		void Take(std::uint32_t a_ref, const DeathReports::Report& a_report)
+		{
+			if (dead.insert(a_ref).second && !TryKill(a_ref, a_report)) {
+				book.Hold(a_ref, a_report);
+			}
+		}
+
+		// What the server sent, in the order it sent it (as Session hands it on); then a frame.
+		void Handle(const Packets& a_packets)
+		{
+			for (const auto& packet : a_packets) {
 				if (packet[0] == Type(MT::kPlayerStates)) {
-					Note(a_heard, packet);
+					Note(heard, packet);
 				} else if (packet[0] == Type(MT::kActorDied)) {
 					const auto death = Protocol::DecodeActorDeath(packet);
 					REQUIRE(death);
-					if (a_refs.contains(death->refId)) {
-						Seen seen{ death->playerId };
-						if (const auto it = a_heard.find(death->playerId); it != a_heard.end()) {
-							seen.reporterThen = it->second;
-						}
-						out[death->refId] = seen;
+					Take(death->refId, book.Received(*death, now));
+				} else if (packet[0] == Type(MT::kWorldState)) {
+					const auto world = Protocol::DecodeWorldState(packet);
+					REQUIRE(world);
+					for (const auto ref : world->deadActors) {
+						Take(ref, DeathReports::Book::Replayed(now));
 					}
 				}
 			}
-			std::this_thread::sleep_for(20ms);
+			Frame();
 		}
-		return out;
+
+		void Frame()
+		{
+			book.Retry([this](std::uint32_t a_ref, const DeathReports::Report& a_report) { return TryKill(a_ref, a_report); });
+		}
+
+		bool Judged(std::uint32_t a_ref) const { return killed.contains(a_ref) || keptAlive.contains(a_ref); }
+	};
+
+	auto Handler(DeathsHere& a_game)
+	{
+		return [&a_game](const Packets& a_packets) { a_game.Handle(a_packets); };
 	}
 }
 
@@ -2150,15 +2221,65 @@ TEST("host authority: a boss killed by a friend beside him dies in your game too
 	const auto bob = JoinAs(f, 2, "Bob");
 	f.fake->Deliver(2, Claim({ { BOSS, Reason::kUnowned }, { RAIDER, Reason::kUnowned } }));  // Bob's game runs the fight inside
 	Clear(f, { 1, 2 });
-	Heard heardByHost, heardByBob;
-	Stand(f, 1, host->playerId, { 0, 0x0000003C, 5000.0f, 5000.0f, 0.0f }, 2, heardByBob);  // the host waits out front
-	Stand(f, 2, bob, { CORVEGA_INSIDE, 0, 1100.0f, -200.0f, 0.0f }, 1, heardByHost);
+	DeathsHere hostGame;
+	hostGame.sharedStory = host->sharedStory;
+	f.fake->Deliver(1, StateOf(OUT_FRONT));  // the host waits out front: the boss isn't loaded in their game
+	f.fake->Deliver(2, StateOf(BESIDE_BOSS));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard.contains(bob); });
 	f.fake->Deliver(2, DeathAt(BOSS, true, 1150.0f));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.book.Size() == 1; });  // held until the boss loads
 
-	const auto seen = DeathsAsSeenBy(f, 1, { BOSS }, heardByHost);
-	REQUIRE(seen.contains(BOSS));
-	CHECK(seen.at(BOSS).reporter == bob);
-	CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heardByHost[bob], BOSS_HERE));
+	// Bob walks off; much later the host goes in, and the boss loads.
+	f.fake->Deliver(2, StateOf(ACROSS_THE_MAP));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard[bob].x == ACROSS_THE_MAP.x; });
+	hostGame.now += 30s;
+	hostGame.loaded[BOSS] = { UNIQUE, BOSS_HERE };
+	hostGame.Frame();
+	CHECK(hostGame.killed.contains(BOSS));  // where Bob was when he reported it counts
+	CHECK(hostGame.book.Empty());
+}
+
+TEST("host authority: a boss a friend kills just after walking in dies in your game, though the death overtakes their steps")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, Claim(BOSS));
+	Clear(f, { 1, 2 });
+	DeathsHere hostGame;
+	hostGame.loaded[BOSS] = { UNIQUE, BOSS_HERE };  // the host is inside already
+	f.fake->Deliver(2, StateOf(OUT_FRONT));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard.contains(bob); });
+
+	// Bob runs in and kills him at once. The death goes out reliably and at once, his position with the next
+	// batch of states: the death reaches the host first.
+	f.fake->Deliver(2, DeathAt(BOSS, true, 1150.0f));
+	f.fake->Deliver(2, StateOf(BESIDE_BOSS));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.firstVerdict.contains(BOSS); });
+	CHECK(hostGame.firstVerdict.at(BOSS) == DeathReports::Verdict::kWait);
+	CHECK(!hostGame.keptAlive.contains(BOSS));
+
+	hostGame.now += 500ms;
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.Judged(BOSS); });
+	CHECK(hostGame.killed.contains(BOSS));
+}
+
+TEST("host authority: a boss a friend kills beside him after their steps arrived dies in your game at once")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, Claim(BOSS));
+	Clear(f, { 1, 2 });
+	DeathsHere hostGame;
+	hostGame.loaded[BOSS] = { UNIQUE, BOSS_HERE };
+	f.fake->Deliver(2, StateOf(BESIDE_BOSS));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard.contains(bob); });
+	f.fake->Deliver(2, DeathAt(BOSS, true, 1150.0f));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.firstVerdict.contains(BOSS); });
+	CHECK(hostGame.firstVerdict.at(BOSS) == DeathReports::Verdict::kKill);
 }
 
 TEST("host authority: a friend's game reporting a story character dead from nowhere near leaves it alive in yours, but not a raider")
@@ -2170,44 +2291,70 @@ TEST("host authority: a friend's game reporting a story character dead from nowh
 		const auto host = f.Join(1, Fixture::MakeHello("Host"));
 		REQUIRE(host);
 		const auto mallory = JoinAs(f, 2, "Mallory");
-		Clear(f, { 1, 2 });
-		Heard heard;
-		Stand(f, 2, mallory, { 0, 0x0000003C, -60000.0f, 80000.0f, 0.0f }, 1, heard);  // across the map, outdoors
-		f.fake->Deliver(2, DeathAt(BOSS, true, 1200.0f));  // nobody runs either: the server takes the report from anyone
+		const auto bob = JoinAs(f, 3, "Bob");
+		Clear(f, { 1, 2, 3 });
+		DeathsHere hostGame;
+		hostGame.sharedStory = host->sharedStory;
+		hostGame.loaded[BOSS] = { UNIQUE, BOSS_HERE };
+		hostGame.loaded[RAIDER] = { GENERIC, RAIDER_HERE };
+		f.fake->Deliver(2, StateOf(ACROSS_THE_MAP));
+		f.fake->Deliver(3, StateOf(BESIDE_BOSS));
+		Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard.contains(mallory) && hostGame.heard.contains(bob); });
+
+		// Nobody runs either, so the server takes the report from anyone. She names Bob, who stands beside
+		// the boss, as the reporter: the server says who it really came from.
+		f.fake->Deliver(2, Protocol::Encode(Protocol::ActorDeath{ BOSS, bob, true, 1200.0f, 0.0f, 0.0f }, MT::kReportDeath));
 		f.fake->Deliver(2, DeathAt(RAIDER, true, 900.0f));
+		Pump(f, 1, Handler(hostGame), [&] { return hostGame.firstVerdict.size() == 2; });
+		CHECK(hostGame.killed.contains(RAIDER));
+		CHECK(hostGame.firstVerdict.at(BOSS) == (shared ? DeathReports::Verdict::kKill : DeathReports::Verdict::kWait));
 
-		const auto seen = DeathsAsSeenBy(f, 1, { BOSS, RAIDER }, heard);
-		REQUIRE(seen.size() == 2);
-		REQUIRE(seen.at(BOSS).reporterThen.has_value());
-		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heard[mallory], BOSS_HERE) == shared);
-		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, GENERIC, seen.at(RAIDER).reporterThen, heard[mallory], RAIDER_HERE));
-
-		// She walks over afterwards: where she is now counts, as the pending death is tried again.
-		Stand(f, 2, mallory, { CORVEGA_INSIDE, 0, 1000.0f, -300.0f, 0.0f }, 1, heard);
-		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heard[mallory], BOSS_HERE));
+		// Her position doesn't catch up with her claim: in the host's own story the boss lives on, for good.
+		hostGame.now += DeathReports::CATCH_UP;
+		hostGame.Frame();
+		CHECK(hostGame.killed.contains(BOSS) == shared);
+		CHECK(hostGame.keptAlive.contains(BOSS) == !shared);
+		CHECK(hostGame.book.Empty());
+		Stand(f, 2, mallory, BESIDE_BOSS, 1, hostGame.heard);  // walking over now changes nothing
+		hostGame.Frame();
+		CHECK(hostGame.killed.contains(BOSS) == shared);
 	}
 }
 
-TEST("host authority: a story character's death replayed from the session after a reload stays your own story's to decide")
+TEST("host authority: after loading a save from before the fight, a boss you both watched die is alive again in your own story, and dead in a shared one")
 {
-	Fixture    f;
-	const auto host = f.Join(1, Fixture::MakeHello("Host"));
-	REQUIRE(host);
-	JoinAs(f, 2, "Bob");
-	Clear(f, { 1, 2 });
-	f.fake->Deliver(2, DeathAt(BOSS, true, 1200.0f));
-	f.fake->Deliver(2, DeathAt(RAIDER, true, 900.0f));
-	Clear(f, { 1, 2 });
+	// The session keeps who died, not who saw it: a replay names no reporter, so in your own story its
+	// characters are your save's to decide. Generic enemies stay dead either way.
+	for (const bool shared : { false, true }) {
+		Server::Options options;
+		options.sharedStory = shared;
+		Fixture    f{ options };
+		const auto host = f.Join(1, Fixture::MakeHello("Host"));
+		REQUIRE(host);
+		const auto bob = JoinAs(f, 2, "Bob");
+		f.fake->Deliver(2, Claim({ { BOSS, Reason::kUnowned }, { RAIDER, Reason::kUnowned } }));
+		Clear(f, { 1, 2 });
+		DeathsHere hostGame;
+		hostGame.sharedStory = host->sharedStory;
+		hostGame.loaded[BOSS] = { UNIQUE, BOSS_HERE };
+		hostGame.loaded[RAIDER] = { GENERIC, RAIDER_HERE };
+		f.fake->Deliver(1, StateOf(BESIDE_BOSS));
+		f.fake->Deliver(2, StateOf(BESIDE_BOSS));
+		Pump(f, 1, Handler(hostGame), [&] { return hostGame.heard.contains(bob); });
+		f.fake->Deliver(2, DeathAt(BOSS, true, 1200.0f));
+		f.fake->Deliver(2, DeathAt(RAIDER, true, 900.0f));
+		Pump(f, 1, Handler(hostGame), [&] { return hostGame.killed.size() == 2; });  // both die as they watch
 
-	// The host loads a save from before the fight: the session's dead come back in the world state, with
-	// nobody known to have seen them die.
-	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
-	const auto world = WorldStates(Received(f, 1));
-	REQUIRE(world.size() == 1);
-	REQUIRE(world[0].deadActors.size() == 2);
-	for (const auto ref : world[0].deadActors) {
-		const bool boss = ref == BOSS;
-		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, boss ? UNIQUE : GENERIC, std::nullopt, std::nullopt, boss ? BOSS_HERE : RAIDER_HERE) == !boss);
+		// The host loads a save from before the fight: a fresh game with both alive, and the session's dead
+		// replayed to it.
+		DeathsHere reloaded;
+		reloaded.sharedStory = host->sharedStory;
+		reloaded.loaded = hostGame.loaded;
+		f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+		Pump(f, 1, Handler(reloaded), [&] { return reloaded.Judged(BOSS) && reloaded.Judged(RAIDER); });
+		CHECK(reloaded.killed.contains(RAIDER));
+		CHECK(reloaded.killed.contains(BOSS) == shared);
+		CHECK(reloaded.keptAlive.contains(BOSS) == !shared);
 	}
 }
 

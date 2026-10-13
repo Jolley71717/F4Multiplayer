@@ -21,12 +21,11 @@ namespace WorldSync
 	// What our world already contains, for Hello and after loading a save.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
 
-	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
-	// a_x/y/z: where the corpse lies in the reporter's game (all zero when unknown).
-	// a_reporter: the player whose game reported it (0: a replay from the session). With everyone on their
-	// own story, a unique or essential character dies here only if the reporter was there to see it
-	// (RemoteEdits::MayKill).
-	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0, float a_x = 0, float a_y = 0, float a_z = 0, std::uint32_t a_reporter = 0);
+	// Another player's game reported a death, or the server replays one it knows (no player named): killed
+	// here once loaded, the corpse put where it fell for them and pushed by their stand-in if theirs was the
+	// kill. With everyone on their own story, a unique or essential character dies here only if the reporter
+	// was there to see it (DeathReports).
+	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death);
 
 	// What makes the actor a character of a player's own story (unique, essential or protected, in a quest's alias).
 	[[nodiscard]] FoundDead::Npc DescribeStory(RE::Actor* a_actor);

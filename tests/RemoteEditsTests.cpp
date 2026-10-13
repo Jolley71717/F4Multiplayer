@@ -5,9 +5,11 @@
 #include "Test.h"
 
 #include "TokenBucket.h"
+#include "game/DeathReports.h"
 #include "game/RemoteEdits.h"
 
 #include <limits>
+#include <map>
 
 using namespace RemoteEdits;
 using FoundDead::Npc;
@@ -128,6 +130,47 @@ TEST("remote edits: a friend is shown as a settler or our own default, never as 
 	CHECK(AllowedAppearance(OUR_DEFAULT, OUR_DEFAULT));
 	CHECK(!AllowedAppearance(0x0024A381, OUR_DEFAULT));  // a plain NPC with scripts of its own
 	CHECK(!AllowedAppearance(0x0002268A, 0x0020A578));   // what another player's ini picked is not ours
+}
+
+TEST("death reports: a report is held against the player the server named, where they were when it came and where they are now")
+{
+	using namespace std::chrono_literals;
+	using DeathReports::Verdict;
+	std::map<std::uint32_t, Spot> heard{ { 2, { 0, 0x3C, 0.0f, 0.0f, 0.0f } } };
+	DeathReports::Book book{ [&](std::uint32_t a_player) -> std::optional<Spot> {
+		const auto it = heard.find(a_player);
+		return it == heard.end() ? std::nullopt : std::optional{ it->second };
+	} };
+	const DeathReports::Clock::time_point t0{ 1h };
+	const DeathReports::Copy jared{ JARED, { 0, 0x3C, 100.0f, 0.0f, 0.0f } };
+	const DeathReports::Copy farJared{ JARED, { 0, 0x3C, 50000.0f, 0.0f, 0.0f } };
+
+	const auto killed = book.Received({ .refId = 0x1F0B5, .playerId = 2, .killed = true, .x = 5.0f }, t0);
+	CHECK(killed.reporter == 2);
+	CHECK(killed.killer == 2);
+	CHECK(killed.x == 5.0f);
+	REQUIRE(killed.reporterThen.has_value());
+	CHECK(book.Judge(false, killed, jared, t0) == Verdict::kKill);
+
+	// Far from where they were then, and from where they are now: waits for their position, then is refused.
+	CHECK(book.Judge(false, killed, farJared, t0) == Verdict::kWait);
+	heard[2] = { 0, 0x3C, 49000.0f, 0.0f, 0.0f };  // they were on their way after all
+	CHECK(book.Judge(false, killed, farJared, t0 + 1s) == Verdict::kKill);
+	heard[2] = { 0, 0x3C, 0.0f, 0.0f, 0.0f };
+	CHECK(book.Judge(false, killed, farJared, t0 + DeathReports::CATCH_UP) == Verdict::kKeepAlive);
+	CHECK(book.Judge(true, killed, farJared, t0 + DeathReports::CATCH_UP) == Verdict::kKill);  // a shared story
+	CHECK(book.Judge(false, killed, { RAIDER, farJared.at }, t0 + DeathReports::CATCH_UP) == Verdict::kKill);
+
+	// Found dead, or died of something else: nobody's kill, and nobody's stand-in pushes it.
+	CHECK(book.Received({ .refId = 0x1F0B5, .playerId = 2 }, t0).killer == 0);
+	// A player we never heard from, and a replay from the session: no wait, nobody saw it.
+	const auto stranger = book.Received({ .refId = 0x1F0B5, .playerId = 7, .killed = true }, t0);
+	CHECK(!stranger.reporterThen);
+	CHECK(book.Judge(false, stranger, jared, t0) == Verdict::kWait);
+	const auto replay = DeathReports::Book::Replayed(t0);
+	CHECK(replay.reporter == 0);
+	CHECK(book.Judge(false, replay, jared, t0) == Verdict::kKeepAlive);
+	CHECK(book.Judge(false, book.Received({ .refId = 0x1F0B5, .playerId = 0, .x = 5.0f }, t0), jared, t0) == Verdict::kKeepAlive);  // a placed replay
 }
 
 TEST("token bucket: a burst, then one per refill, never more than the burst after a long quiet")
