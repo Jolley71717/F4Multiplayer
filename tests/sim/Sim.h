@@ -7,8 +7,9 @@
 // what was built at settlements, which quest stages are reached. Where the plugin's own rule for that
 // is free of the game, the model uses it rather than a copy, so a scenario tests the server and the
 // client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement,
-// FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor, and
-// MoveSync::Drive every frame for a friend's stand-in. The rest is the model's own, written after the
+// FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor,
+// MoveSync::Drive every frame for a friend's stand-in, and StandInGear for what it wears (dressed every
+// frame as RemotePlayers::Update does, out of power armor). The rest is the model's own, written after the
 // plugin and only as good as that copy: applying doors, quest stages and pickups, dropping older
 // positions (RemotePlayers::PushState), keying copies of builds (WorkshopSync::Apply), the facts
 // ArmorFrames is given (found, ours, in use, distance; judged once a wear), and the stand-in's animation
@@ -25,6 +26,7 @@
 #include "game/ArmorFrames.h"
 #include "game/FoundDead.h"
 #include "game/MoveSync.h"
+#include "game/StandInGear.h"
 #include "game/WorkshopCells.h"
 
 #include <cmath>
@@ -96,6 +98,10 @@ namespace Sim
 		// Their power armor wear, as ArmorFrames judged our copy of a frame every game has: decided once a
 		// wear, as soon as their status and a state are both in.
 		std::optional<ArmorFrames::Original> wear;
+		// Their gear as StandInGear keeps it, and what their stand-in wears: none while it is still in the
+		// settler's own outfit (nothing of theirs was put on it yet).
+		StandInGear::Gear                         gear;
+		std::optional<std::vector<std::uint32_t>> wearing;
 	};
 
 	// The world as this player's game has it, all of which a save keeps. Container contents count from
@@ -125,11 +131,14 @@ namespace Sim
 		}
 	};
 
-	// A save: the world, and where it stood in the session's container changes (WorldSync's save record).
+	// A save: the world, where it stood in the session's container changes (WorldSync's save record), and
+	// the copies of the others' builds it holds (references in the save like any other).
 	struct Save
 	{
-		World                  world;
-		Protocol::WorldRequest resync;
+		World                                                       world;
+		Protocol::WorldRequest                                      resync;
+		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;
+		std::set<WorkshopKey>                                       copyKeys;
 	};
 
 	// Draws from the session's seed.
@@ -282,7 +291,7 @@ namespace Sim
 		// The save this game was loaded from had these dead before the session.
 		void DeadInSave(std::uint32_t a_ref) { world.dead.insert(a_ref); }
 
-		Save SaveGame() const { return { world, loot.Point() }; }
+		Save SaveGame() const { return { world, loot.Point(), copies, copyKeys }; }
 		// Loads a save: the world goes back to it, and a game in a session asks for what changed since
 		// (Session::OnGameLoaded).
 		void LoadGame(const Save& a_save);
@@ -399,6 +408,7 @@ namespace Sim
 		std::uint32_t               sequence = 0;
 		Protocol::PlayerState       me;
 		Protocol::PlayerStatus      myStatus;
+		std::optional<std::vector<std::uint32_t>> myGear;  // what this player wears, once they put anything on or off
 		std::uint32_t               nextRef = 0;
 		Clock::time_point           frameClock{};  // this game's frames, 30 a second
 	};
@@ -432,7 +442,9 @@ namespace Sim
 			fixture.reset();
 			if (ownFile) {
 				std::error_code ignored;
-				std::filesystem::remove(options.sessionFile, ignored);
+				for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
+					std::filesystem::remove(options.sessionFile + suffix, ignored);
+				}
 			}
 		}
 
@@ -839,6 +851,7 @@ namespace Sim
 
 	inline void Client::Equip(std::vector<std::uint32_t> a_items)
 	{
+		myGear = a_items;
 		Send(Protocol::Encode(Protocol::Equipment{ 0, std::move(a_items) }, MT::kEquipment), true);
 	}
 
@@ -886,6 +899,10 @@ namespace Sim
 	inline void Client::LoadGame(const Save& a_save)
 	{
 		world = a_save.world;
+		// The save's copies are back where it had them; the session's building, sent again after the load,
+		// takes them over at their spots (WorkshopSync::OnGameLoaded, FindExisting).
+		copies = a_save.copies;
+		copyKeys = a_save.copyKeys;
 		heardDead.clear();  // WorldSync::Reset: what was known described the game before the load
 		// WorldSync's record of the save, then (Session) the world is bound to the session we're in and asks
 		// for what came since.
@@ -930,6 +947,12 @@ namespace Sim
 			for (auto& [id, f] : friends) {
 				if (!f.state) {
 					continue;  // no stand-in yet
+				}
+				// Dressed out of power armor, its 3D in; no weapon of the tests' is held in the hand.
+				const auto dressing = StandInGear::Dress(f.gear, ArmorFrames::Dress::kClothes, true, frameClock, [](std::uint32_t) { return false; },
+					[&](const std::vector<std::uint32_t>& a_worn) { return f.wearing == a_worn; });
+				if (dressing.put != StandInGear::Put::kNone) {
+					f.wearing = f.gear.items;  // emptied and dressed, or their change put on over what it wore
 				}
 				auto& graph = f.standIn;
 				if (graph.busy > 0 && --graph.busy == 0) {
@@ -1062,6 +1085,10 @@ namespace Sim
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
 				}
+				// Session forgets what gear it sent on a welcome, so its next check sends it again.
+				if (myGear) {
+					Send(Protocol::Encode(Protocol::Equipment{ 0, *myGear }, MT::kEquipment), true);
+				}
 			} else {
 				unless(msg.has_value());
 			}
@@ -1130,6 +1157,7 @@ namespace Sim
 		case MT::kPlayerEquipment:
 			if (auto msg = Protocol::DecodeEquipment(a_data)) {
 				if (const auto it = friends.find(msg->playerId); it != friends.end()) {
+					StandInGear::Report(it->second.gear, msg->items);
 					it->second.equipment = std::move(msg->items);
 				}
 			} else {
