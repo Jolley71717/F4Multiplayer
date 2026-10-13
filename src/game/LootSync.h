@@ -92,6 +92,7 @@ namespace LootSync
 					continue;
 				}
 				const Protocol::ContainerChange change{ move.holder, move.item, move.count };
+				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
 			}

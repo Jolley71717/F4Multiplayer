@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -195,14 +196,19 @@ namespace ContainerLedger
 	};
 
 	// The receiving end, as WorldSync runs it: which session our world belongs to, which player IDs are
-	// ours in it, and what of the changes that come goes into the world. Our own changes are in our world
-	// already: live, we made them; in a catch-up, the save we loaded is from before them, and replaying
-	// them would take loot from the container that isn't in our inventory any more (or put in a second
-	// copy of what we put in). Everything else goes to a_apply, in session order.
+	// ours in it, and what of the changes that come goes into the world. Our own changes never go in: made
+	// in the world we have, they are in it; made before the save we loaded, that save is from before them,
+	// and replaying them would take loot from the container that isn't in our inventory any more (or put
+	// in a second copy of what we put in). Those are counted (OwnSkipped, DupRisk). Everything else goes
+	// to a_apply, in session order.
 	class Receiver
 	{
 	public:
 		using Apply = std::function<void(const Protocol::IndexedContainerChange&)>;
+
+		// Our reports remembered until they come back numbered, at most. Past it the oldest is forgotten
+		// (its echo is then judged by how it came: see Deliver).
+		static constexpr std::size_t MAX_REPORTS = 4096;
 
 		// The server welcomed us. True when it is another session than our world's: none of its changes
 		// are in our world yet.
@@ -214,16 +220,30 @@ namespace ContainerLedger
 				ledger.Restart(0);
 				ownIds.clear();
 				dups.Clear();
+				reports.clear();
 			}
 			ownIds.insert(a_localId);
 			return fresh;
 		}
 
-		// A save's record was read (or the save has none: session 0).
+		// A save's record was read (or the save has none: session 0). The world is another one from here
+		// on: what we reported before it isn't in it, unless the save was made after it.
 		void Load(std::uint64_t a_session, std::uint32_t a_next)
 		{
 			session = a_session;
 			ledger.Restart(a_next);
+			++world;
+		}
+
+		// We reported one of our own moves. It comes back numbered (live, or in a catch-up when our world
+		// lacks its number), maybe after a load: a move made in the frame before one goes out ahead of the
+		// load's request (WorldSync::FlushLoot), and its echo can arrive after the load either way.
+		void Reported(const Protocol::ContainerChange& a_change)
+		{
+			if (reports.size() >= MAX_REPORTS) {
+				reports.pop_front();
+			}
+			reports.push_back({ a_change, world });
 		}
 
 		// After a load while connected: a save from no session (made alone, or another character's) or
@@ -285,7 +305,11 @@ namespace ContainerLedger
 		{
 			const auto& change = a_ready.change;
 			if (ownIds.contains(change.playerId)) {
-				if (a_ready.catchUp) {
+				// Made before the world we have: the save we loaded is from before it (or we don't remember
+				// making it, and it came in a catch-up). A move made in the moments before a save it was in
+				// is counted too when its echo is late (rare: the save would have to come within a round trip).
+				const auto made = MadeIn(change.change);
+				if (made ? *made != world : a_ready.catchUp) {
 					++ownSkipped;
 					dups.OwnSkipped(change.change);
 				}
@@ -297,7 +321,30 @@ namespace ContainerLedger
 			}
 		}
 
+		// The world our report a_change was made in, if we remember it; forgets it and the reports before it
+		// (those the server dropped, or whose number our world had already).
+		std::optional<std::uint32_t> MadeIn(const Protocol::ContainerChange& a_change)
+		{
+			const auto it = std::ranges::find_if(reports, [&](const Report& a_report) {
+				return a_report.change.container == a_change.container && a_report.change.item == a_change.item && a_report.change.count == a_change.count;
+			});
+			if (it == reports.end()) {
+				return std::nullopt;
+			}
+			const auto made = it->world;
+			reports.erase(reports.begin(), std::next(it));
+			return made;
+		}
+
+		struct Report
+		{
+			Protocol::ContainerChange change;
+			std::uint32_t             world = 0;
+		};
+
 		std::uint64_t                     session = 0;
+		std::uint32_t                     world = 0;  // which world (counted by loads) our game has now
+		std::deque<Report>                reports;    // ours, oldest first, not yet back
 		std::unordered_set<std::uint32_t> ownIds;  // a reconnect normally gets the old ID back, but not while the server still holds the old connection
 		Ledger                            ledger;
 		DupWatch                          dups;

@@ -92,20 +92,35 @@ TEST("container ledger: a friend's loot made while our save loads goes in after 
 	CHECK(receiver.Numbers().Stats().duplicates == 1);  // the reply's #151
 }
 
-TEST("container ledger: our own change echoed before the catch-up is skipped once, and isn't counted as made before the save")
+TEST("container ledger: our own move comes back as undone by a load whichever way its echo comes, and as ours when made after it")
 {
+	// The echo of a move made before a load can arrive live after it (the move went out ahead of the
+	// load's request), or in the catch-up. Either way the loaded world lacks it: counted once.
 	const Clock::time_point t0{};
+	const Protocol::ContainerChange deposit{ CHEST, CAPS, 100 };
 	ContainerLedger::Receiver receiver;
 	receiver.OnWelcome(1, 1);
-	receiver.Load(1, 151);
+	receiver.Reported(deposit);
+	receiver.Load(1, 0);  // a save from before it
 	(void)receiver.Request(t0);
 	Applied applied;
-	receiver.Live(Change(151, 1), t0, applied.Fn());  // our own, made after the load
-	CHECK(receiver.Numbers().Next() == 152);
-	CHECK(receiver.CatchUp(151, { Change(151, 1) }, t0, applied.Fn()) == 0);
+	receiver.Live({ 0, 1, deposit }, t0, applied.Fn());
+	CHECK(receiver.CatchUp(0, { { 0, 1, deposit } }, t0, applied.Fn()) == 0);
+	CHECK(receiver.OwnSkipped() == 1);
+
+	// A move made in the loaded world is in it: not counted, live or (a gap asked for again) caught up.
+	const Protocol::ContainerChange take{ CHEST, CAPS, -40 };
+	receiver.Reported(take);
+	receiver.Live({ 1, 1, take }, t0, applied.Fn());
+	receiver.Reported(take);
+	CHECK(receiver.CatchUp(2, { { 2, 1, take } }, t0, applied.Fn()) == 0);
+	CHECK(receiver.OwnSkipped() == 1);
 	CHECK(applied.indices.empty());
-	CHECK(receiver.Numbers().Next() == 152);
-	CHECK(receiver.OwnSkipped() == 0);
+
+	// A friend then takes what the undone deposit put in: they have it, and so do we.
+	receiver.Live({ 3, FRIEND, { CHEST, CAPS, -60 } }, t0, applied.Fn());
+	CHECK(receiver.DupRisk() == 1);
+	CHECK(applied.indices == std::vector<std::uint32_t>{ 3 });
 }
 
 TEST("container ledger: a change below the next one, or one already waiting, is dropped")
@@ -525,6 +540,71 @@ TEST("loot sync: a friend taking what a reloader put in after their save counts 
 	CHECK(bob.loot.Numbers().OwnSkipped() == 1);
 	CHECK(bob.loot.Numbers().DupRisk() == 1);
 	CHECK(alice.loot.Numbers().DupRisk() == 0);
+}
+
+TEST("loot sync: caps put in a safe the moment before a quickload reach the friend, and their taking them counts as a duplication risk")
+{
+	// The deposit is made in the last frame before the load: it goes out ahead of the load's request
+	// (FlushLoot), so the server numbers it before answering, and its echo reaches Bob live after the load.
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	bob.Receive(f);  // the answer to his hello
+	bob.carried[CAPS] = 100;
+	const auto save = bob.SaveGame(f);
+	bob.Put(f, SAFE, CAPS, 100, false);
+	bob.LoadGame(f, save);
+
+	const auto toBob = bob.Fetch(f);
+	const auto reply = CaughtUp(toBob);
+	REQUIRE(reply.size() == 1);
+	CHECK(reply[0].playerId == bob.localId);  // in the answer: numbered before the request was read
+	CHECK(reply[0].change.container == SAFE);
+	CHECK(std::ranges::find_if(toBob, [](const auto& a_packet) { return IsType(a_packet, MT::kContainerChanged); }) < std::ranges::find_if(toBob, [](const auto& a_packet) { return IsType(a_packet, MT::kWorldState); }));
+	bob.Handle(f, toBob);
+
+	// Bob's loaded world has the caps on him and none in the safe; the deposit isn't replayed, and it is
+	// counted as undone.
+	CHECK(bob.Carried(CAPS) == 100);
+	CHECK(bob.In(SAFE, CAPS) == 0);
+	CHECK(bob.loot.Numbers().OwnSkipped() == 1);
+
+	// Alice got the deposit, and takes it: she has the caps, and so does Bob.
+	alice.Receive(f);
+	CHECK(alice.In(SAFE, CAPS) == 100);
+	alice.Take(f, SAFE, CAPS, 100);
+	bob.Receive(f);
+	CHECK(bob.loot.Numbers().DupRisk() == 1);
+	CHECK(bob.In(SAFE, CAPS) == 0);
+
+	// What Bob does in the loaded world is his: a later deposit isn't counted as undone.
+	bob.Put(f, SAFE, CAPS, 30);
+	bob.Receive(f);
+	alice.Receive(f);
+	CHECK(bob.loot.Numbers().OwnSkipped() == 1);
+	CHECK(alice.In(SAFE, CAPS) == 30);
+	CHECK(bob.In(SAFE, CAPS) == 30);
+}
+
+TEST("loot sync: reloading a save made after a deposit counts nothing as undone, and a friend's later take still lands")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	bob.carried[CAPS] = 100;
+	bob.Put(f, SAFE, CAPS, 100);  // #0
+	bob.Receive(f);
+	const auto save = bob.SaveGame(f);  // the deposit is in it
+	alice.Receive(f);
+	alice.Take(f, SAFE, CAPS, 40);  // #1
+
+	bob.LoadGame(f, save);
+	bob.Receive(f);
+	CHECK(bob.In(SAFE, CAPS) == 60);
+	CHECK(bob.loot.Numbers().OwnSkipped() == 0);
+	CHECK(bob.loot.Numbers().DupRisk() == 0);
 }
 
 TEST("loot sync: a friend's take arriving just as our chest loads waits for the put before it, so the chest doesn't keep what was taken")
