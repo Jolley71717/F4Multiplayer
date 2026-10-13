@@ -488,6 +488,7 @@ namespace Session
 			localId = 0;
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
+			WorldSync::OnDisconnected();
 			NpcSync::Reset();
 			Party::Reset();
 			WorldClock::Reset();
@@ -886,6 +887,7 @@ namespace Session
 	{
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
+		WorldSync::BindToLiveSession();
 		QuestSync::Rebaseline();
 		MapShare::Rebaseline();
 		Downed::OnGameLoaded();

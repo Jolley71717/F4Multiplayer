@@ -4,6 +4,7 @@
 
 #include "ServerFixture.h"
 #include "SessionFile.h"
+#include "game/ContainerLedger.h"
 
 #include <algorithm>
 #include <chrono>
@@ -223,4 +224,252 @@ TEST("session life: a dedicated server, with no host, still lets the first arriv
 	REQUIRE(first);
 	CHECK(first->sessionId == 0x5E55);
 	CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
+}
+
+// ---- container changes through saves, reloads and restarts --------------------------------------
+
+namespace
+{
+	constexpr std::int32_t STIMPAKS_IN_CHEST = 10;  // in every player's world, before anyone loots
+
+	// A player's game as far as one chest goes: the stimpaks in it in this player's world, the ledger WorldSync
+	// keeps of the session's container changes, and what a save holds of both. What the server sends it goes
+	// where Session and WorldSync send it.
+	struct Game
+	{
+		struct Save
+		{
+			std::int32_t                          stimpaks = STIMPAKS_IN_CHEST;
+			std::uint64_t                         session = 0;  // the co-save record (WorldSync writes none for 0)
+			std::uint32_t                         next = 0;
+			std::vector<ContainerLedger::Pending> waiting;
+		};
+
+		Fixture*                         f;
+		PeerId                           peer;
+		std::uint64_t                    identity;
+		ContainerLedger                  ledger;
+		std::int32_t                     stimpaks = STIMPAKS_IN_CHEST;
+		std::uint32_t                    applied = 0;  // changes applied to this world, to catch one applied twice
+		std::optional<Protocol::Welcome> welcome;
+
+		bool Apply(const Protocol::ContainerChange& a_change)
+		{
+			if (a_change.container == CHEST && a_change.item == STIMPAK) {
+				stimpaks += a_change.count;
+				++applied;
+			}
+			return true;
+		}
+
+		// Connects and says hello with what the world holds, as Session does, and takes in what comes back.
+		std::optional<Protocol::Welcome> Join(bool a_local = false)
+		{
+			auto hello = Hello(identity == HOST ? "Host" : "Friend", identity);
+			hello.world = ledger.ResyncPoint();
+			if (a_local) {
+				f->fake->SetLocal(peer);
+			}
+			f->fake->Connect(peer);
+			f->fake->Deliver(peer, Protocol::Encode(hello));
+			Process();
+			return welcome;
+		}
+
+		// Everything the server sent so far, in order.
+		void Process()
+		{
+			const auto tryApply = [this](const Protocol::ContainerChange& a_change) { return Apply(a_change); };
+			for (const auto& packet : Received(*f, peer)) {
+				switch (static_cast<MT>(packet[0])) {
+				case MT::kWelcome:
+					welcome = Protocol::DecodeWelcome(packet);
+					REQUIRE(welcome);
+					ledger.OnWelcome(welcome->sessionId, welcome->playerId);
+					break;
+				case MT::kWorldState:
+					{
+						const auto state = Protocol::DecodeWorldState(packet);
+						REQUIRE(state);
+						ledger.OnWorldState(state->containerFirstIndex, !state->containerChanges.empty());
+						for (const auto& change : state->containerChanges) {
+							ledger.Offer(change.index, change.playerId, change.change, tryApply);
+						}
+					}
+					break;
+				case MT::kContainerChanged:
+					{
+						const auto change = Protocol::DecodeIndexedContainerChange(packet);
+						REQUIRE(change);
+						ledger.Offer(change->index, change->playerId, change->change, tryApply);
+					}
+					break;
+				default:
+					break;
+				}
+			}
+		}
+
+		// The player takes stimpaks from the chest (or puts some in): in their own world at once, then reported.
+		void Loot(std::int32_t a_count)
+		{
+			stimpaks += a_count;
+			f->fake->Deliver(peer, Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, a_count }, MT::kReportContainer));
+		}
+
+		[[nodiscard]] Save MakeSave() const { return { stimpaks, ledger.RecordSession(), ledger.Next(), ledger.Waiting() }; }
+
+		// Loads a save: the world goes back to the save's, the co-save record comes back (or none), and while
+		// connected Session asks for the session's changes since (WorldSync's Revert, Load and BindToLiveSession,
+		// then Session::OnGameLoaded). What the server sent meanwhile is still to be processed, as in the game.
+		void Load(const Save& a_save)
+		{
+			stimpaks = a_save.stimpaks;
+			ledger.OnRevert();
+			if (a_save.session != 0) {
+				ledger.OnRecordLoaded(a_save.session, a_save.next, a_save.waiting);
+			}
+			ledger.BindToLiveSession();
+			if (welcome) {
+				f->fake->Deliver(peer, Protocol::Encode(ledger.ResyncPoint()));
+			}
+		}
+
+		void Drop()
+		{
+			f->fake->Drop(peer);
+			ledger.OnDisconnected();
+			welcome.reset();
+		}
+	};
+}
+
+TEST("session life: loot a friend took is taken once in my world, through a death reload to before I joined and a reload of a later autosave")
+{
+	TempFile   file;
+	Fixture    f{ HostedOptions(file) };
+	Game       host{ &f, 1, HOST };
+	Game       me{ &f, 2, FRIEND };
+	const auto beforeJoining = me.MakeSave();  // my own save, from before the session: no record of it
+	REQUIRE(host.Join(true));
+	REQUIRE(me.Join());
+
+	host.Loot(-3);
+	host.Process();
+	me.Process();
+	CHECK(host.stimpaks == 7);
+	CHECK(me.stimpaks == 7);
+
+	// I die and the game loads my last save, from before I joined: the session's loot comes again, once.
+	me.Load(beforeJoining);
+	me.Process();
+	CHECK(me.stimpaks == 7);
+	const auto autosave = me.MakeSave();  // a door's autosave: it must say which of the session's loot it holds
+	CHECK(autosave.session == host.welcome->sessionId);
+
+	host.Loot(-2);
+	host.Process();
+	me.Process();
+	CHECK(me.stimpaks == 5);
+
+	// I die again and load the autosave: only what came after it comes again.
+	me.Load(autosave);
+	me.Process();
+	CHECK(me.stimpaks == 5);
+
+	// My connection drops and comes back: nothing again.
+	me.Drop();
+	REQUIRE(me.Join());
+	CHECK(me.stimpaks == 5);
+	CHECK(host.stimpaks == 5);
+	CHECK(me.applied == 4);  // 3 then 2 live, and each once more after the loads back to before them
+}
+
+TEST("session life: a resent loot message, or a second hello's world state, doesn't take the loot again")
+{
+	TempFile file;
+	Fixture  f{ HostedOptions(file) };
+	Game     host{ &f, 1, HOST };
+	Game     me{ &f, 2, FRIEND };
+	REQUIRE(host.Join(true));
+	REQUIRE(me.Join());
+	host.Loot(-3);
+	host.Process();
+	me.Process();
+	REQUIRE(me.stimpaks == 7);
+
+	const auto tryApply = [&](const Protocol::ContainerChange& a_change) { return me.Apply(a_change); };
+	CHECK(me.ledger.Offer(0, host.welcome->playerId, { CHEST, STIMPAK, -3 }, tryApply) == ContainerLedger::Offered::kHave);
+	f.fake->Deliver(2, Protocol::Encode(me.ledger.ResyncPoint()));  // asked again (a load with the same record)
+	me.Process();
+	CHECK(me.stimpaks == 7);
+	CHECK(me.applied == 1);
+}
+
+TEST("session life: loot taken while my save loads reaches me once, together with the loot before it")
+{
+	TempFile file;
+	Fixture  f{ HostedOptions(file) };
+	Game     host{ &f, 1, HOST };
+	Game     me{ &f, 2, FRIEND };
+	REQUIRE(host.Join(true));
+	REQUIRE(me.Join());
+	host.Loot(-1);  // #0
+	host.Process();
+	me.Process();
+	const auto save = me.MakeSave();  // holds #0
+	host.Loot(-1);  // #1
+	host.Loot(-1);  // #2
+	host.Process();
+	me.Process();
+	REQUIRE(me.stimpaks == 7);
+
+	// The host loots again (#3) while my save loads: #3 reaches me before the world state I ask for after the
+	// load, which brings #1 to #3.
+	host.Loot(-1);
+	host.Process();
+	me.Load(save);
+	me.Process();
+	CHECK(me.stimpaks == 6);
+	CHECK(me.applied == 3 + 1 + 2);  // #0 to #2 live; after the load #3 live, then #1 and #2
+}
+
+TEST("session life: when the host's game quit before its last loot was saved, the host's next loot still reaches a friend")
+{
+	TempFile   file;
+	Game::Save mine;
+	{
+		Fixture f{ HostedOptions(file) };
+		Game    host{ &f, 1, HOST };
+		Game    me{ &f, 2, FRIEND };
+		REQUIRE(host.Join(true));
+		REQUIRE(me.Join());
+		host.Loot(-3);  // #0
+		host.Loot(-2);  // #1
+		host.Process();
+		me.Process();
+		REQUIRE(me.stimpaks == 5);
+		mine = me.MakeSave();  // I save with both
+	}
+	// The host's game quit before the server wrote #1: the file has only #0.
+	auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	REQUIRE(saved->containerChanges.size() == 2);
+	saved->containerChanges.resize(1);
+	REQUIRE(SessionFile::Save(file.path, *saved));
+
+	Fixture f{ HostedOptions(file) };
+	Game    host{ &f, 1, HOST };
+	Game    me{ &f, 2, FRIEND };
+	me.Load(mine);  // next evening: I start my game from that save, and join
+	REQUIRE(host.Join(true));
+	REQUIRE(me.Join());
+	CHECK(f.Logged("has container changes up to #2, the session only 1"));
+	CHECK(me.stimpaks == 5);
+
+	// The server numbers the host's next loot #1, the number my game had counted for the lost one.
+	host.Loot(-4);
+	host.Process();
+	me.Process();
+	CHECK(me.stimpaks == 1);
 }

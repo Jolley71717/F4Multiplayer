@@ -15,6 +15,11 @@ namespace WorldSync
 
 	// The server welcomed us into session a_sessionId.
 	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire);
+	// The connection is gone (what our world contains of the session stays recorded).
+	void OnDisconnected();
+	// After a save was loaded while in a session (before asking for its changes): a save with no record of
+	// the session holds none of them, and from now on they are counted for it (see ContainerLedger).
+	void BindToLiveSession();
 
 	// What our world already contains, for Hello and after loading a save.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();

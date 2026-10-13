@@ -219,6 +219,7 @@ void Server::Run()
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
+	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
 	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
@@ -424,6 +425,13 @@ void Server::Run()
 		std::vector<Protocol::RefState>  states;
 		for (const auto& [id, state] : refStates) {
 			states.push_back(state);
+		}
+		// A player whose save has more of the session's container changes than we do: the last ones were never
+		// written (the host's game quit between saves). Our next ones take those numbers; the player's game
+		// sees in the world state where our table ends.
+		if (a_containerFrom > containerChanges.size() && !std::exchange(aheadLogged, true)) {
+			log(std::format("server: {} has container changes up to #{}, the session only {}; the last ones weren't saved", describe(a_to), a_containerFrom,
+				containerChanges.size()));
 		}
 		const std::size_t containerFrom = (std::min<std::size_t>)(a_containerFrom, containerChanges.size());
 
