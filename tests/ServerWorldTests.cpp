@@ -2190,3 +2190,74 @@ TEST("host authority: a story character's death replayed from the session after 
 		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, boss ? UNIQUE : GENERIC, std::nullopt, std::nullopt, boss ? BOSS_HERE : RAIDER_HERE) == !boss);
 	}
 }
+
+namespace
+{
+	constexpr std::uint32_t DOGMEAT = 0x0001D162;
+
+	std::vector<std::uint8_t> NpcAt(std::uint32_t a_ref, const RemoteEdits::Spot& a_at)
+	{
+		Protocol::ActorState state;
+		state.refId = a_ref;
+		state.cell = a_at.cell;
+		state.worldspace = a_at.worldspace;
+		state.x = a_at.x, state.y = a_at.y, state.z = a_at.z;
+		return Protocol::Encode(std::vector<Protocol::ActorState>{ state }, MT::kActorStates);
+	}
+
+	// Whether our game brings each NPC position the server passed on to it over to where the owner's game has
+	// it: the owner's stand-in must be beside it, by the states our game has heard (NpcSync's BringIn).
+	std::vector<bool> BroughtIn(const Packets& a_packets, Heard& a_heard, std::uint32_t a_owner)
+	{
+		std::vector<bool> out;
+		for (const auto& packet : a_packets) {
+			if (packet[0] == Type(MT::kPlayerStates)) {
+				Note(a_heard, packet);
+			} else if (packet[0] == Type(MT::kActorStatesRelay)) {
+				const auto states = Protocol::DecodeActorStates(packet);
+				REQUIRE(states);
+				for (const auto& state : *states) {
+					const auto owner = a_heard.find(a_owner);
+					out.push_back(RemoteEdits::OwnerNear(owner == a_heard.end() ? std::nullopt : std::optional{ owner->second }, RemoteEdits::SpotOf(state)));
+				}
+			}
+		}
+		return out;
+	}
+}
+
+TEST("host authority: a friend's companion walks in beside them, but no NPC is pulled to you on their game's word alone")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	f.fake->Deliver(2, Claim(DOGMEAT, Reason::kCompanion));
+	Clear(f, { 1, 2, 3 });
+	Heard heard;
+
+	// Bob's dog is reported before the host's game has heard where Bob is: not moved yet.
+	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 1200.0f, 1100.0f, 0.0f }));
+	auto brought = BroughtIn(Received(f, 1), heard, bob);
+	REQUIRE(brought.size() == 1);
+	CHECK(!brought[0]);
+
+	// Bob walks up to the host with his dog at heel: it comes in beside him.
+	Stand(f, 2, bob, { 0, 0x0000003C, 1000.0f, 1000.0f, 0.0f }, 1, heard);
+	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 1200.0f, 1100.0f, 0.0f }));
+	brought = BroughtIn(Received(f, 1), heard, bob);
+	REQUIRE(brought.size() == 1);
+	CHECK(brought[0]);
+
+	// Bob is across the map, and his game says the dog stands next to the host.
+	Stand(f, 2, bob, { 0, 0x0000003C, -60000.0f, 80000.0f, 0.0f }, 1, heard);
+	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f }));
+	brought = BroughtIn(Received(f, 1), heard, bob);
+	REQUIRE(brought.size() == 1);
+	CHECK(!brought[0]);
+
+	// Carol doesn't run the dog: her positions for it never reach the host.
+	f.fake->Deliver(3, NpcAt(DOGMEAT, { 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f }));
+	CHECK(Count(Received(f, 1), MT::kActorStatesRelay) == 0);
+}
