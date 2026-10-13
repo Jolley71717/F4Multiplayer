@@ -1697,7 +1697,7 @@ namespace RemotePlayers
 			// In power armor with no frame here to place a copy of, for a second (the first status of a wear names none):
 			// the stand-in wears their pieces as they are, and nothing else is logged of it (no "is in power armor").
 			if (remote.frameUnknown.Update(remote.powerArmorOn, WornFrame(remote) != nullptr, now)) {
-				REX::WARN("RemotePlayers: '{}' is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", remote.name, remote.powerArmorFrame,
+				REX::WARN("RemotePlayers: player {} is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", remote.id, remote.powerArmorFrame,
 					remote.powerArmorFrame ? "no frame in this game" : "none");
 			}
 

@@ -9,8 +9,16 @@
 #include "Redact.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
+#include <optional>
+#include <regex>
+#include <sstream>
 #include <string_view>
 #include <thread>
 
@@ -394,5 +402,128 @@ TEST("log privacy: over the real UDP transport, a wrong password, a join and a q
 	CHECK(LoggedSoon(f, std::format("server: player {} left", welcome->playerId)));
 	for (const std::string_view secret : { "Alice", "Mallory", "hunter2", "letmein" }) {
 		CHECK(NowhereInLog(f, secret));
+	}
+}
+
+// The game's own log (F4Multiplayer.log) can't be played in a test: its lines are written where the game runs. So
+// the guard is on the source. A line that names a friend by what they call themselves (their Steam name, by
+// default) slipped back in once with a merge; with this, the next one fails the tests instead of a bug report.
+namespace
+{
+	// The repository the tests were built in (they run from its build folder), or else the one they run inside.
+	std::optional<std::filesystem::path> SourceRoot()
+	{
+		std::vector<std::filesystem::path> starts;
+		if (char* exe = nullptr; _get_pgmptr(&exe) == 0 && exe && *exe) {
+			starts.emplace_back(std::filesystem::path{ exe }.parent_path());
+		}
+		starts.emplace_back(std::filesystem::current_path());
+		for (auto at : starts) {
+			for (;; at = at.parent_path()) {
+				std::error_code error;
+				if (std::filesystem::exists(at / "src" / "game" / "RemotePlayers.cpp", error) && std::filesystem::exists(at / "common" / "Server.cpp", error)) {
+					return at;
+				}
+				if (at == at.parent_path()) {
+					break;
+				}
+			}
+		}
+		return std::nullopt;
+	}
+
+	struct LogCall
+	{
+		int         line = 0;
+		std::string code;  // its arguments with the string and character literals left out
+	};
+
+	// Every call of one of a_calls in a_text (a whole name: "log(" is not "dialog("), with its arguments as far as
+	// the bracket that closes it.
+	std::vector<LogCall> LogCalls(std::string_view a_text, std::initializer_list<std::string_view> a_calls)
+	{
+		std::vector<LogCall> out;
+		const auto ident = [](char a_c) { return std::isalnum(static_cast<unsigned char>(a_c)) || a_c == '_' || a_c == ':'; };
+		for (std::size_t at = 0; at < a_text.size(); ++at) {
+			const auto call = std::ranges::find_if(a_calls, [&](std::string_view a_call) { return a_text.substr(at).starts_with(a_call) && (at == 0 || !ident(a_text[at - 1])); });
+			if (call == a_calls.end()) {
+				continue;
+			}
+			LogCall found{ .line = static_cast<int>(std::ranges::count(a_text.substr(0, at), '\n')) + 1 };
+			int depth = 1;
+			auto i = at + call->size();
+			for (; i < a_text.size() && depth > 0; ++i) {
+				const char c = a_text[i];
+				if (c == '"' || c == '\'') {
+					for (++i; i < a_text.size() && a_text[i] != c; ++i) {
+						i += a_text[i] == '\\';  // what a backslash escapes is skipped
+					}
+					continue;
+				}
+				depth += c == '(';
+				depth -= c == ')';
+				found.code += c;
+			}
+			out.push_back(std::move(found));
+			at = i;
+		}
+		return out;
+	}
+
+	// A player's name, as the code holds it: a member called name (a player's, a stand-in's, a hello's) or a Steam
+	// persona.
+	bool ReadsAName(const LogCall& a_call)
+	{
+		static const std::regex name{ R"((\.|->)\s*name\b(?!\s*\()|[Pp]ersona)" };
+		return std::regex_search(a_call.code, name);
+	}
+
+	std::vector<std::string> NamedInLog(const std::filesystem::path& a_folder, std::initializer_list<std::string_view> a_calls)
+	{
+		std::vector<std::string> out;
+		for (const auto& entry : std::filesystem::recursive_directory_iterator{ a_folder }) {
+			const auto ext = entry.path().extension();
+			if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
+				continue;
+			}
+			std::ifstream      file{ entry.path(), std::ios::binary };
+			std::ostringstream text;
+			text << file.rdbuf();
+			for (const auto& call : LogCalls(text.str(), a_calls)) {
+				if (ReadsAName(call)) {
+					out.push_back(std::format("{}:{}", std::filesystem::relative(entry.path(), a_folder.parent_path()).generic_string(), call.line));
+				}
+			}
+		}
+		return out;
+	}
+}
+
+TEST("log privacy: the guard on the game's log finds a line that names a friend, and lets one that says player N through")
+{
+	// The line that slipped back in, and the one it became.
+	const auto named = LogCalls(R"x(		REX::WARN("RemotePlayers: '{}' is in power armor, but the frame they told ({:08X}) is {}", remote.name, remote.powerArmorFrame,
+			remote.powerArmorFrame ? "no frame in this game" : "none");)x",
+		{ "REX::WARN(" });
+	REQUIRE(named.size() == 1);
+	CHECK(ReadsAName(named[0]));
+	const auto numbered = LogCalls(R"x(REX::WARN("RemotePlayers: player {} is in power armor (never their .name or ->name)", remote.id);)x", { "REX::WARN(" });
+	REQUIRE(numbered.size() == 1);
+	CHECK(!ReadsAName(numbered[0]));
+	// A persona read straight from Steam, a server line, and a file's name (not a player's).
+	CHECK(ReadsAName(LogCalls(R"x(REX::INFO("Steam: {}", friends->GetPersonaName());)x", { "REX::INFO(" }).at(0)));
+	CHECK(ReadsAName(LogCalls(R"x(log(std::format("server: '{}' left", a_player.name));)x", { "log(" }).at(0)));
+	CHECK(!ReadsAName(LogCalls(R"x(REX::INFO("Identity: couldn't write {}", path->filename().string());)x", { "REX::INFO(" }).at(0)));
+	CHECK(LogCalls(R"x(dialog(a_player.name);)x", { "log(" }).empty());
+}
+
+TEST("log privacy: no line the game or the server logs names a friend; they are \"player N\" (a bug report's log names nobody)")
+{
+	const auto root = SourceRoot();
+	REQUIRE(root);  // run the tests from the repository or its build folder
+	auto named = NamedInLog(*root / "src", { "REX::INFO(", "REX::WARN(", "REX::ERROR(", "REX::DEBUG(", "REX::TRACE(", "REX::CRITICAL(" });
+	std::ranges::move(NamedInLog(*root / "common", { "log(", "a_log(" }), std::back_inserter(named));
+	for (const auto& at : named) {
+		Test::Fail(__FILE__, __LINE__, std::format("a log line reads a player's name at {}", at));
 	}
 }
