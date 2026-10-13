@@ -21,7 +21,8 @@ game's own code can:
   sounds played, and so on.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Look inside the HUD:** `gfx` reads its Flash objects, and `gfxset` changes them. The compass
-  markers were found this way.
+  markers were found this way. Both reach into a menu's movie from an F4SE UI task (`gfxset`
+  writes to it), outside the plugin's own HUD timing: not for use during a crash soak.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.
