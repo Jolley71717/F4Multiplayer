@@ -1338,7 +1338,7 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		const auto count = r.U8();
-		if (count > MAX_ACTORS_PER_PACKET) {
+		if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
 			return std::nullopt;
 		}
 		std::vector<WorkshopItem> items(count);
