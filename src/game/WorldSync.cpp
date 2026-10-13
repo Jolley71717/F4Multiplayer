@@ -831,11 +831,6 @@ namespace WorldSync
 		ownIds.insert(a_localPlayerId);
 	}
 
-	bool FriendlyFire()
-	{
-		return friendlyFire;
-	}
-
 	Protocol::WorldRequest ResyncPoint()
 	{
 		return { session, containerNext };

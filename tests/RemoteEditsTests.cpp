@@ -80,20 +80,22 @@ TEST("remote edits: a corpse is moved to where it fell for the reporter only fro
 	CHECK(!MayMoveCorpse(INF));
 }
 
-TEST("remote edits: a friend's explosion is set off only if it is a thrown one, and away from us unless friendly fire is on")
+TEST("remote edits: a friend's explosion goes off near us whoever stands beside it, if a throw could make it")
 {
-	// Radii no throw has: refused whatever else.
-	CHECK(!MaySetOff(0.0f, 5000.0f, true));
-	CHECK(!MaySetOff(-1.0f, 5000.0f, true));
-	CHECK(!MaySetOff(NaN, 5000.0f, true));
-	CHECK(!MaySetOff(1025.0f, 5000.0f, true));  // a nuke, an artillery strike
-	CHECK(MaySetOff(1024.0f, 5000.0f, false));
+	const Spot us{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	CHECK(SetOff({ 0, 0x3C, 1050.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kSetOff);  // at our feet: the raiders beside us die here too
+	CHECK(SetOff({ 0, 0x3C, 7000.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kSetOff);  // 6000 away
+	CHECK(SetOff({ 0, 0x3C, 7001.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);
+	CHECK(SetOff({ 0x1F00, 0, 1000.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);  // inside somewhere, same numbers
+	CHECK(SetOff({ 0, 0x3C, NaN, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);
 
-	// A frag grenade (500): with friendly fire off, not within 500 + a body's width of us.
-	CHECK(!MaySetOff(500.0f, 600.0f, false));
-	CHECK(MaySetOff(500.0f, 1000.0f, false));
-	CHECK(MaySetOff(500.0f, 600.0f, true));
-	CHECK(!MaySetOff(500.0f, NaN, false));  // unknown counts as near
+	// Radii no throw has: refused wherever it is.
+	CHECK(SetOff(us, us, 1024.0f) == Blast::kSetOff);
+	CHECK(SetOff(us, us, 1025.0f) == Blast::kNotThrown);  // a nuke, an artillery strike
+	CHECK(SetOff(us, us, 0.0f) == Blast::kNotThrown);
+	CHECK(SetOff(us, us, -1.0f) == Blast::kNotThrown);
+	CHECK(SetOff(us, us, NaN) == Blast::kNotThrown);
+	CHECK(SetOff(us, us, INF) == Blast::kNotThrown);
 }
 
 TEST("remote edits: a friend's build is shown no smaller than a tenth and no bigger than ten times")

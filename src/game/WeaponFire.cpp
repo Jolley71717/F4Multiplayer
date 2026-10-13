@@ -4,9 +4,7 @@
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/AttackKind.h"
-#include "game/NpcSync.h"
 #include "game/RemoteEdits.h"
-#include "game/WorldSync.h"
 
 #include "game/ShotLoops.h"
 
@@ -88,8 +86,7 @@ namespace WeaponFire
 		std::atomic<bool>        logging{ false };
 		std::uint32_t            explosionsReported = 0;  // explosions seen after our throws and sent
 		std::uint32_t            explosionsSetOff = 0;    // explosions from other players set off here
-		std::uint32_t            explosionRefusedRadius = 0;  // ... not set off: no thrown explosion is that big (or it has no radius)
-		std::uint32_t            explosionSkippedNearUs = 0;  // ... not set off: it would reach us or our companion, with friendly fire off
+		std::uint32_t            explosionRefusedRadius = 0;  // ... not set off: no throw makes one that big (or it has no radius)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -456,7 +453,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} explosionRefusedRadius={} explosionSkippedNearUs={} ghosts={} attaches={} loads={}", total.load(), played, replayed, swung, sounded, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, explosionRefusedRadius, explosionSkippedNearUs, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={}", total.load(), played, replayed, swung, sounded, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius);
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -477,7 +474,7 @@ namespace WeaponFire
 		using Clock = std::chrono::steady_clock;
 		using namespace std::chrono_literals;
 		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
-		constexpr float EXPLOSION_RANGE = 6000.0f;    // from the player, both for reporting and for setting off
+		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		Clock::time_point                      nextScan{};
 		std::unordered_set<std::uint32_t>      seenExplosions;
@@ -612,42 +609,29 @@ namespace WeaponFire
 		if (!cell || !base) {
 			return;
 		}
-		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
-		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
-		// Written so that a NaN distance fails too (a comparison with NaN is always false).
-		if (space != std::pair{ a_explosion.cell, a_explosion.worldspace } || !(at.GetDistance(player->data.location) <= EXPLOSION_RANGE)) {
+		const auto&             us = player->data.location;
+		const RemoteEdits::Spot here = cell->IsInterior() ? RemoteEdits::Spot{ cell->GetFormID(), 0, us.x, us.y, us.z } :
+		                                                    RemoteEdits::Spot{ 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0, us.x, us.y, us.z };
+		// Near us, and only what a throw makes (a grenade, a mine, a Fat Man's shell), not a nuke or an artillery
+		// strike (RemoteEdits::SetOff). Near us or our companion it goes off all the same: it is what kills the
+		// enemies there in our game.
+		const float radius = base->data.outerRadius;
+		const auto  blast = RemoteEdits::SetOff(RemoteEdits::SpotOf(a_explosion), here, radius);
+		if (blast == RemoteEdits::Blast::kAway) {
 			return;
 		}
-		// Only what a throw makes (a grenade, a mine, a Fat Man's shell), not a nuke or an artillery strike;
-		// and with friendly fire off, nothing that reaches us or our companion (RemoteEdits::MaySetOff).
-		const float radius = base->data.outerRadius;
-		float       nearest = at.GetDistance(player->data.location);
-		if (radius > 0.0f && radius <= RemoteEdits::MAX_EXPLOSION_RADIUS) {
-			RE::TES::GetSingleton()->ForEachReferenceInRange(at, radius + RemoteEdits::EXPLOSION_SLACK, [&](RE::TESObjectREFR* a_ref) {
-				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
-				if (actor && !actor->IsDead(false) && NpcSync::IsOurCompanion(actor)) {
-					nearest = (std::min)(nearest, at.GetDistance(actor->data.location));
-				}
-				return RE::BSContainer::ForEachResult::kContinue;
-			});
-		}
-		const bool friendlyFire = WorldSync::FriendlyFire();
-		const bool setOff = RemoteEdits::MaySetOff(radius, nearest, friendlyFire);
 		// The radius is read from the explosion's record by its layout in CommonLib: the first ones go to the
 		// log, to show a grenade reads about 500.
 		if (explosionsLogged < 5) {
 			++explosionsLogged;
-			REX::INFO("WeaponFire: explosion {:08X} radius {:.0f} from player {}, {:.0f} from us or our companion: {}", a_explosion.base, radius, a_explosion.playerId, nearest,
-				setOff ? "set off" : "not set off");
+			REX::INFO("WeaponFire: explosion {:08X} radius {:.0f} from player {}: {}", a_explosion.base, radius, a_explosion.playerId,
+				blast == RemoteEdits::Blast::kSetOff ? "set off" : "not set off, no throw makes one that size");
 		}
-		if (!setOff) {
-			if (!(radius > 0.0f && radius <= RemoteEdits::MAX_EXPLOSION_RADIUS)) {
-				++explosionRefusedRadius;
-			} else {
-				++explosionSkippedNearUs;
-			}
+		if (blast != RemoteEdits::Blast::kSetOff) {
+			++explosionRefusedRadius;
 			return;
 		}
+		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
 		RE::NEW_REFR_DATA data;
 		data.location = at;
 		data.object = base;

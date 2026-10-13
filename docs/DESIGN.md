@@ -347,11 +347,26 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | Message | Who may send it | Server check | Receiver check | In the session file |
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second (the host's own game has none; refused or repeated deaths cost nothing) | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`KillsOurCopy`); the body is moved only within 4096 | yes, so a death the server dropped is never replayed |
-| `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second | the explosion's radius must be in (0, 1024]; with friendly fire off, nothing is set off within its radius (+128) of us or our companions | no |
+| `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | a friend's companion is moved over only while our copy of the friend is within 1500 units of it; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (`containerRefused`); other containers, vendors included, follow friends | yes |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in a loaded build area (`scrapRefused`, `scrapDeferred`) | yes |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
+
+A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our
+game it is the only thing that does the damage of their throw: the stand-in's own grenade is removed,
+the server refuses their reports of deaths of NPCs our game runs, and no health comes for one dead in
+theirs. Leaving it out near us would leave the enemies a friend's grenade
+killed in their game alive and fighting in ours. So with friendly fire off a friend's grenade at your
+feet still hurts you, as it always has; a forged one is bounded by the server (after a throw, within
+8000 units of the thrower, 16 at once and 4 a second). A copy of the explosion that hurts nobody but
+the enemies is not done.
+
+To check live before this ships (the tests cannot reach the game):
+
+- A friend's grenade thrown into a melee next to the other player and their companion kills the
+  enemies in both games, and the first explosions in the log read a radius of about 500 (a Fat Man's
+  shell under 1024) with `explosionRefusedRadius=0`.
 
 Not done yet: a single `Mutates(MessageType)` list the server and a CI check share, so a new message
 that changes the world cannot ship without a row here.

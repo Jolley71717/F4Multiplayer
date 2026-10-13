@@ -1993,30 +1993,34 @@ TEST("host authority: a friend's build saved a hundred times its size comes back
 
 namespace
 {
-	constexpr float FRAG_RADIUS = 500.0f;     // a frag grenade's outer radius
-	constexpr float MINI_NUKE_RADIUS = 3000.0f;
+	// Outer radii of explosion records, as the receiving game reads them.
+	constexpr float FRAG_RADIUS = 500.0f;
+	constexpr float FAT_MAN_RADIUS = 850.0f;
+	constexpr float NUKE_RADIUS = 3000.0f;  // nothing thrown is this big
 
-	// What the receiving game does with each explosion the server passes on: its own rule, with the friendly
-	// fire it was welcomed with, the radius of the explosion's record and where it stands itself.
-	std::vector<bool> SetOffBy(const Packets& a_packets, const Protocol::Welcome& a_welcome, const RemoteEdits::Spot& a_us, float a_radius)
+	// What the receiving game standing at a_us does with each explosion the server passed on to it: the rule
+	// WeaponFire's ApplyExplosion applies, with the radius of the explosion's record in that game.
+	std::vector<RemoteEdits::Blast> BlastsAt(const Packets& a_packets, const RemoteEdits::Spot& a_us, float a_radius)
 	{
-		std::vector<bool> out;
+		std::vector<RemoteEdits::Blast> out;
 		for (const auto& explosion : Decoded(a_packets, MT::kExplosion, Protocol::DecodeExplosion)) {
-			const RemoteEdits::Spot at{ explosion.cell, explosion.worldspace, explosion.x, explosion.y, explosion.z };
-			out.push_back(RemoteEdits::MaySetOff(a_radius, RemoteEdits::Distance(a_us, at), a_welcome.friendlyFire));
+			out.push_back(RemoteEdits::SetOff(RemoteEdits::SpotOf(explosion), a_us, a_radius));
 		}
 		return out;
 	}
 }
 
-TEST("host authority: a friend's grenade at your feet goes off in your game only with friendly fire on; away from you it always does")
+TEST("host authority: a friend's grenade into the fight beside you goes off in your game with friendly fire on or off, so the enemies there die for you too")
 {
+	// The host's game runs the raiders, so the joiner's game can't report their deaths: the relayed
+	// explosion is the only thing that kills them in the host's game.
 	for (const bool friendlyFire : { false, true }) {
 		Server::Options options;
 		options.friendlyFire = friendlyFire;
 		Fixture    f{ options };
 		const auto host = f.Join(1, Fixture::MakeHello("Host"));
 		REQUIRE(host);
+		CHECK(host->friendlyFire == friendlyFire);
 		JoinAs(f, 2, "Bob");
 		const RemoteEdits::Spot hostAt{ 0, 0x0000003C, 1000.0f, 1000.0f, 0.0f };
 		f.fake->Deliver(1, StateAt(1, hostAt.x, hostAt.y));
@@ -2024,28 +2028,44 @@ TEST("host authority: a friend's grenade at your feet goes off in your game only
 		f.fake->Deliver(2, Throw());
 		Clear(f, { 1, 2 });
 
-		f.fake->Deliver(2, ExplosionAt(1050.0f, 1000.0f, 0.0f));  // at the host's feet
-		f.fake->Deliver(2, ExplosionAt(2400.0f, 1000.0f, 0.0f));  // 1400 away from the host: past a grenade's reach
-		const auto setOff = SetOffBy(Received(f, 1), *host, hostAt, FRAG_RADIUS);
-		REQUIRE(setOff.size() == 2);  // the server can't tell who is standing where in the host's game: both reach it
-		CHECK(setOff[0] == friendlyFire);
-		CHECK(setOff[1]);
+		f.fake->Deliver(2, ExplosionAt(1050.0f, 1000.0f, 0.0f));  // into the raiders at the host's feet
+		f.fake->Deliver(2, ExplosionAt(1000.0f, 1300.0f, 0.0f));  // into the one biting the host's dog, 300 from the host
+		f.fake->Deliver(2, ExplosionAt(2400.0f, 1000.0f, 0.0f));  // past the host, 1400 away
+		const auto blasts = BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS);
+		REQUIRE(blasts.size() == 3);
+		for (const auto blast : blasts) {
+			CHECK(blast == RemoteEdits::Blast::kSetOff);
+		}
+		// A Fat Man's shell is thrown too.
+		f.fake->Deliver(2, ExplosionAt(1200.0f, 1000.0f, 0.0f, 0x000E98F0));
+		const auto shell = BlastsAt(Received(f, 1), hostAt, FAT_MAN_RADIUS);
+		REQUIRE(shell.size() == 1);
+		CHECK(shell[0] == RemoteEdits::Blast::kSetOff);
 	}
 }
 
-TEST("host authority: a friend's game reporting a mini nuke after a throw sets nothing off in yours")
+TEST("host authority: a friend's game reporting a nuke-sized blast, or one somewhere you are not, sets nothing off in yours")
 {
 	Fixture    f;
 	const auto host = f.Join(1, Fixture::MakeHello("Host"));
 	REQUIRE(host);
 	JoinAs(f, 2, "Bob");
+	const RemoteEdits::Spot hostAt{ 0, 0x0000003C, 0.0f, 3000.0f, 0.0f };
+	f.fake->Deliver(1, StateAt(1, hostAt.x, hostAt.y));
 	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
 	f.fake->Deliver(2, Throw());
 	Clear(f, { 1, 2 });
-	f.fake->Deliver(2, ExplosionAt(5000.0f, 0.0f, 0.0f, 0x000E98F0));  // near Bob, far from the host
-	const auto setOff = SetOffBy(Received(f, 1), *host, { 0, 0x0000003C, 0.0f, 9000.0f, 0.0f }, MINI_NUKE_RADIUS);
-	REQUIRE(setOff.size() == 1);
-	CHECK(!setOff[0]);
+
+	f.fake->Deliver(2, ExplosionAt(0.0f, 2000.0f, 0.0f, 0x000E98F0));  // after a throw and near Bob: the server passes it on
+	auto blasts = BlastsAt(Received(f, 1), hostAt, NUKE_RADIUS);
+	REQUIRE(blasts.size() == 1);
+	CHECK(blasts[0] == RemoteEdits::Blast::kNotThrown);
+
+	// The same numbers inside a building are nowhere near the host, who is outdoors.
+	f.fake->Deliver(2, Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, 0.0f, 3000.0f, 0.0f, 0x0001F00D, 0 }, MT::kReportExplosion));
+	blasts = BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS);
+	REQUIRE(blasts.size() == 1);
+	CHECK(blasts[0] == RemoteEdits::Blast::kAway);
 }
 
 namespace

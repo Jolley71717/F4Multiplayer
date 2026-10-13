@@ -18,9 +18,6 @@ namespace WorldSync
 	// The server welcomed us into session a_sessionId.
 	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire);
 
-	// The host lets players hurt each other (from the welcome).
-	[[nodiscard]] bool FriendlyFire();
-
 	// What our world already contains, for Hello and after loading a save.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
 

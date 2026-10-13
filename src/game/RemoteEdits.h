@@ -128,21 +128,42 @@ namespace RemoteEdits
 
 	// ---- Explosions (WeaponFire) ----------------------------------------------------------------
 	//
-	// A grenade is about 500 units across, a Fat Man's 850. Nothing bigger is thrown (a nuke or an
-	// artillery strike reaches thousands), and a radius of 0 or one that isn't a number is no explosion
-	// of a throw.
+	// A friend's explosion is set off in our game where their game says it went off. It is what does the
+	// damage here: the stand-in's own grenade is removed, a death their game reports for an NPC ours runs is
+	// not taken, and no health comes for one already dead in theirs. So it goes off whoever stands beside it,
+	// and with friendly fire off too: the enemies next to us or our companion die here as they did for the
+	// thrower, and a grenade at our feet hurts us as the thrower's own would have. (A copy that only looks
+	// like the explosion, hurting nobody but the enemies, is not done yet.)
+	//
+	// Only what a throw makes is set off. A grenade is about 500 units across, a Fat Man's shell 850; nothing
+	// bigger is thrown (a nuke or an artillery strike reaches thousands), and a radius of 0 or one that isn't
+	// a number is no explosion of a throw.
 	constexpr float MAX_EXPLOSION_RADIUS = 1024.0f;
-	constexpr float EXPLOSION_SLACK = 128.0f;  // a body is not a point
+	constexpr float EXPLOSION_RANGE = 6000.0f;  // from us: farther, nothing we'd see or feel
 
-	// a_distance: from the explosion to the nearest of us and our companions (NaN counts as near).
-	// a_friendlyFire: the host lets players hurt each other.
-	constexpr bool MaySetOff(float a_radius, float a_distance, bool a_friendlyFire)
+	inline Spot SpotOf(const Protocol::Explosion& a_explosion)
 	{
-		if (!(a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS)) {
-			return false;
+		return { a_explosion.cell, a_explosion.worldspace, a_explosion.x, a_explosion.y, a_explosion.z };
+	}
+
+	enum class Blast
+	{
+		kSetOff,
+		kAway,      // in another space than ours, or too far to matter
+		kNotThrown, // no throw makes an explosion that size
+	};
+
+	// a_at: where the friend's game says it went off; a_us: where we stand; a_radius: the explosion record's,
+	// as our game has it.
+	inline Blast SetOff(const Spot& a_at, const Spot& a_us, float a_radius)
+	{
+		if (!Within(Distance(a_at, a_us), EXPLOSION_RANGE)) {
+			return Blast::kAway;
 		}
-		const bool near = !(a_distance > a_radius + EXPLOSION_SLACK);
-		return a_friendlyFire || !near;
+		if (!(a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS)) {
+			return Blast::kNotThrown;
+		}
+		return Blast::kSetOff;
 	}
 
 	// ---- Workshop (WorkshopSync) ----------------------------------------------------------------
