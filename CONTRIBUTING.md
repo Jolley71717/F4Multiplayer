@@ -86,9 +86,10 @@ the wire. Protocol tests live in `tests/ProtocolTests.cpp`.
 ## Branches and releases
 
 Work for a version lands on a `release-X.Y.Z` branch and is first published as a GitHub
-pre-release tagged `vX.Y.Z-rcN` once the unit tests and a two-game test pass. The same commit
-becomes `vX.Y.Z`, fast-forwarded to `main`, after a multi-hour soak with no crash and no regression
-report; Nexus gets settled versions in batches, rarely. Details in [docs/RELEASING.md](docs/RELEASING.md).
+pre-release tagged `vX.Y.Z-rcN` once the unit tests and a two-game test pass. The same commit and
+the rc's own zip (`tools/promote.ps1`) become `vX.Y.Z`, fast-forwarded to `main`, after a multi-hour
+soak with no crash and no regression report; Nexus gets settled versions in batches, rarely. Details
+in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## No personal data
 

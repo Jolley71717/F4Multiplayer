@@ -35,10 +35,27 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
 
 ## Promotion to the release
 
-The same commit is tagged `vX.Y.Z` (no label) after a multi-hour soak (`soak.sh 3`: the standing set in
-a loop with periodic VM restarts) ends with no crash on either machine and no report against the rc
-that points at a regression. Package it again without a label, fast-forward `main`, create the
-GitHub release with `dist/RELEASE-X.Y.Z.md` as the notes.
+The release is the rc that held, not a new build. After a multi-hour soak of the rc's zip (`soak.sh 3`:
+the standing set in a loop with periodic VM restarts) ends with no crash on either machine and no
+report against the rc points at a regression, the soak's verdict goes in `dist/out/soak-verdict.txt`:
+
+```
+commit=<the rc's commit, as in its manifest>
+dll_sha256=<the SHA-256 of the DLL that was soaked>
+verdict=PASS
+```
+
+(other lines, such as the start, end, cycles and crash logs, are kept but not read). Then:
+
+1. `tools/promote.ps1 -Rc vX.Y.Z-rcN`. It refuses unless the rc's zip matches its manifest, the tag
+   `vX.Y.Z-rcN` is the manifest's commit, the rc was not packaged with `-AllowDirty`, and the verdict
+   is a PASS for that commit and that DLL. It writes `F4Multiplayer-X.Y.Z.zip` (and `-nexus.zip`,
+   without the dedicated server) holding the rc's files byte for byte, plus their manifest and the
+   `.pdb` under the release's name. Only `promote.ps1` makes a release zip; skipping the soak means
+   publishing by hand, as a deliberate and visible choice.
+2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub
+   release with `dist/RELEASE-X.Y.Z.md` as the notes (say there that the build is identical to rcN:
+   its log still names `rcN`). Commit those notes to the branch afterwards, and fast-forward `main`.
 
 ## Notes for testers (put in every rc's notes)
 
