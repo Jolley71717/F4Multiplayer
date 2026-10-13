@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <format>
+#include <random>
 
 // The host's saved session: everything the server remembers, through the file and back.
 namespace
@@ -50,7 +52,9 @@ namespace
 
 	std::filesystem::path TempFile()
 	{
-		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{}.bin", std::rand());
+		// Not std::rand: unseeded, it gives every test run (another worktree's too) the same names.
+		std::random_device random;
+		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{:08x}{:08x}.bin", random(), random());
 	}
 }
 

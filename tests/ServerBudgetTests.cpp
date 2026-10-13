@@ -548,6 +548,7 @@ TEST("budgets: shared XP spent before a rejoin isn't there again after it")
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob", 0xB0B);
 	Clear(f, { 1, 2 });
+	const auto spent = std::chrono::steady_clock::now();
 	f.fake->Deliver(2, Xp(Protocol::MAX_XP_SHARE));
 	const auto first = Decoded(Received(f, 1), MT::kPartyXp, Protocol::DecodeXpGain);
 	REQUIRE(first.size() == 1);
@@ -557,12 +558,17 @@ TEST("budgets: shared XP spent before a rejoin isn't there again after it")
 	JoinAs(f, 3, "Bob", 0xB0B);
 	Clear(f, { 1 });
 	f.fake->Deliver(3, Xp(Protocol::MAX_XP_SHARE));
-	// Only what refilled in the moment between: a tenth of the budget a second, not all of it again.
 	float again = 0.0f;
 	for (const auto& gain : Decoded(Received(f, 1), MT::kPartyXp, Protocol::DecodeXpGain)) {
 		again += gain.xp;
 	}
-	CHECK(again < Protocol::MAX_XP_SHARE / 4);
+	// Only what refilled in the time between, however long the rejoin took: a tenth of the budget a
+	// second (and a little for rounding), not all of it again.
+	const auto between = std::chrono::duration<float>(std::chrono::steady_clock::now() - spent).count();
+	CHECK(again <= Protocol::MAX_XP_SHARE * between / 10.0f + 1.0f);
+	if (between < 5.0f) {
+		CHECK(again < Protocol::MAX_XP_SHARE / 2);
+	}
 }
 
 // F13: a barber visit changes a face several times in a few seconds. The others used to keep the first
@@ -775,7 +781,7 @@ TEST("shares: past their share of building, nothing new of theirs is kept, but w
 // quits and hosts again from the session file; the host's own game is still not limited.
 TEST("shares: a friend's loot share holds after the host restarts from the session file")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-budget-{}.session", std::rand())).string();
+	const auto path = TempPath("f4mp-budget", ".session").string();
 	std::filesystem::remove(path);
 	auto options = HostedOptions();
 	options.sessionFile = path;
@@ -827,7 +833,7 @@ TEST("tables: a session table is logged once at 80% and once full, and past full
 
 TEST("tables: a saved session near full says so when the host starts again")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-tables-{}.session", std::rand())).string();
+	const auto path = TempPath("f4mp-tables", ".session").string();
 	std::filesystem::remove(path);
 	auto options = HostedOptions();
 	options.sessionFile = path;
