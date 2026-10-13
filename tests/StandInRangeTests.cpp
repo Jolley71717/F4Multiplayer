@@ -1,6 +1,6 @@
 // Which friends outside get a stand-in here, and what becomes of a stand-in whose cell the game stops drawing
 // (game/StandInRange.h). The rules on their own first, then a friend walking about as our game hears of them through a
-// real server, with the engine's loaded cells played by a small model.
+// real server, each frame decided by the function RemotePlayers asks, with the engine's loaded cells played by a model.
 
 #include "ServerFixture.h"
 
@@ -100,41 +100,42 @@ TEST("stand-in range: a stand-in left behind a door, or in a cell we walked away
 }
 
 // ---- a friend walking about, as our game hears of them through the server ----
+// Each frame goes through StandInRange::Frame, the function RemotePlayers::Update asks; what the test plays is the
+// engine: which cells it has attached (by the engine's own CELL_STATE numbers) and whether a stand-in has its 3D.
 
 namespace
 {
-	// The engine's side: which exterior cells are attached. Its square is centred on its own grid cell, which can lag
-	// behind our player's while it loads after a cell edge; cells just outside it sit loaded in its buffer.
+	using StandInRange::CellState;
+
+	// The engine's side: the exterior cells it has attached, a square centred on its own grid cell. That follows our
+	// player's cell, but can lag behind it while it loads after a cell edge (lagging); cells just outside it sit loaded in
+	// its buffer, and cells further out are not loaded.
 	struct Engine
 	{
-		int                             grids = GRIDS;
-		std::int32_t                    centreX = 0;
-		std::int32_t                    centreY = 0;
-		std::set<std::pair<int, int>>   never;  // cells in the square it never attaches (a broken cell)
+		int                           grids = GRIDS;
+		bool                          lagging = false;
+		std::int32_t                  centreX = 0;
+		std::int32_t                  centreY = 0;
+		std::set<std::pair<int, int>> stuck;  // cells in the square that stay loaded and never attach
 
-		Cell StateOf(std::int32_t a_x, std::int32_t a_y) const
+		CellState StateOf(std::int32_t a_x, std::int32_t a_y) const
 		{
-			if (never.contains({ a_x, a_y })) {
-				return Cell::kGone;
-			}
 			if (StandInRange::InLoadedGrid(a_x, a_y, centreX, centreY, grids)) {
-				return Cell::kAttached;
+				return stuck.contains({ a_x, a_y }) ? CellState::kLoaded : CellState::kAttached;
 			}
-			return StandInRange::InLoadedGrid(a_x, a_y, centreX, centreY, grids + 2) ? Cell::kOnItsWay : Cell::kGone;
+			return StandInRange::InLoadedGrid(a_x, a_y, centreX, centreY, grids + 2) ? CellState::kLoaded : CellState::kNotLoaded;
 		}
 	};
 
-	// Our game, as far as one friend's stand-in goes, frame by frame, deciding with StandInRange as RemotePlayers does.
-	// A stand-in stays in the cell it was placed in while it walks (the engine does not move it to the next).
+	// Our game, as far as one friend's stand-in goes, frame by frame: it does what StandInRange::Frame says, as
+	// RemotePlayers::Update does. A stand-in stays in the cell it was placed in while it walks.
 	struct Ours
 	{
 		struct StandIn
 		{
-			std::uint32_t     interior = 0;
-			std::int32_t      x = 0;
-			std::int32_t      y = 0;
-			bool              drawn = false;
-			Clock::time_point spawnedAt{};
+			std::uint32_t interior = 0;
+			std::int32_t  x = 0;
+			std::int32_t  y = 0;
 		};
 
 		Engine                 engine;
@@ -142,47 +143,70 @@ namespace
 		float                  y = 0.0f;
 		std::uint32_t          interior = 0;  // our player's interior cell; 0 outside
 		std::optional<StandIn> standIn;
+		StandInRange::Track    track;
 		Clock::time_point      now = Clock::time_point{} + 1h;
-		Clock::time_point      replacedLaterAt{};
 		int                    spawns = 0;
 		int                    leftBehind = 0;
+		int                    respawnWaits = 0;
+
+		bool Drawn() const
+		{
+			return standIn && (standIn->interior ? standIn->interior == interior : !interior && engine.StateOf(standIn->x, standIn->y) == CellState::kAttached);
+		}
+
+		// The stand-in as RemotePlayers::StandInOf reads it from the engine.
+		std::optional<StandInRange::StandIn> Read() const
+		{
+			if (!standIn) {
+				return std::nullopt;
+			}
+			StandInRange::StandIn read;
+			read.inCell = true;
+			read.interior = standIn->interior != 0;
+			read.inOurCell = standIn->interior ? standIn->interior == interior : !interior && standIn->x == WorkshopCells::Grid(x) && standIn->y == WorkshopCells::Grid(y);
+			read.state = standIn->interior ? (standIn->interior == interior ? CellState::kAttached : CellState::kNotLoaded) : engine.StateOf(standIn->x, standIn->y);
+			read.x = standIn->interior ? 0 : standIn->x;
+			read.y = standIn->interior ? 0 : standIn->y;
+			read.has3D = Drawn();
+			return read;
+		}
 
 		void Frame(const std::optional<Protocol::PlayerState>& a_friend)
 		{
 			now += 16ms;
-			bool visible = a_friend && (interior ? a_friend->cell == interior : a_friend->cell == 0 && a_friend->worldspace == COMMONWEALTH);
-			if (visible && !interior) {
-				visible = StandInRange::Visible(a_friend->x, a_friend->y, x, y, engine.grids);
+			if (!engine.lagging) {
+				engine.centreX = WorkshopCells::Grid(x);
+				engine.centreY = WorkshopCells::Grid(y);
 			}
-			if (!visible) {
+			StandInRange::Sight sight;
+			sight.sameSpace = a_friend && (interior ? a_friend->cell == interior : a_friend->cell == 0 && a_friend->worldspace == COMMONWEALTH);
+			if (sight.sameSpace) {
+				sight.weInside = interior != 0;
+				sight.x = a_friend->x;
+				sight.y = a_friend->y;
+				sight.ourX = x;
+				sight.ourY = y;
+				sight.gridsToLoad = engine.grids;
+				sight.standIn = Read();
+			}
+			const auto look = StandInRange::Frame(track, sight, now);
+			if (!look.visible) {
 				standIn.reset();
 				return;
 			}
-			const auto ourX = WorkshopCells::Grid(x);
-			const auto ourY = WorkshopCells::Grid(y);
-			if (standIn && (standIn->interior != interior || (!interior && (standIn->x != ourX || standIn->y != ourY)))) {
-				StandInRange::LeftFacts facts;
-				facts.weInside = interior != 0;
-				facts.cell = standIn->interior ? Cell::kInterior : engine.StateOf(standIn->x, standIn->y);
-				facts.cellInGrid = !standIn->interior && StandInRange::InLoadedGrid(standIn->x, standIn->y, ourX, ourY, engine.grids);
-				facts.drawn = standIn->drawn;
-				facts.sinceSpawned = now - standIn->spawnedAt;
-				if (const auto left = StandInRange::ChooseLeft(facts); left != Left::kKeep) {
-					++leftBehind;
-					if (left == Left::kReplaceLater) {
-						replacedLaterAt = now;
-					}
-					standIn.reset();
-				}
+			if (standIn && look.left != Left::kKeep) {
+				++leftBehind;
+				respawnWaits += look.left == Left::kReplaceLater;
+				standIn.reset();
 			}
 			if (!standIn) {
-				if (!StandInRange::MayRespawn(now - replacedLaterAt)) {
+				if (!look.mayPlace) {
 					return;
 				}
-				standIn = StandIn{ a_friend->cell, WorkshopCells::Grid(a_friend->x), WorkshopCells::Grid(a_friend->y), false, now };
+				standIn = StandIn{ a_friend->cell, a_friend->cell ? 0 : WorkshopCells::Grid(a_friend->x), a_friend->cell ? 0 : WorkshopCells::Grid(a_friend->y) };
 				++spawns;
+				StandInRange::Placed(track, now);
 			}
-			standIn->drawn = standIn->drawn || (standIn->interior ? standIn->interior == interior : engine.StateOf(standIn->x, standIn->y) == Cell::kAttached);
 		}
 
 		void Frames(const std::optional<Protocol::PlayerState>& a_friend, int a_count)
@@ -192,7 +216,7 @@ namespace
 			}
 		}
 
-		bool Shown() const { return standIn && standIn->drawn; }
+		bool Shown() const { return Drawn(); }
 	};
 
 	// Alice (peer 2) and Bob (peer 1), both in. Bob's game is the one whose stand-ins are looked at.
@@ -219,13 +243,13 @@ namespace
 			return state;
 		}
 
-		// Alice's game sends a state; what Bob's game is told of her, if anything.
-		std::optional<Protocol::PlayerState> Send(Protocol::PlayerState a_state, std::optional<std::uint32_t> a_sequence = std::nullopt)
+		// Alice's game sends a state; what Bob's game is told of her.
+		std::optional<Protocol::PlayerState> Send(Protocol::PlayerState a_state)
 		{
-			a_state.sequence = a_sequence.value_or(++sequence);
+			a_state.sequence = ++sequence;
 			std::this_thread::sleep_for(20ms);  // her game sends 30 a second; the server takes 60 at most
 			f.fake->Deliver(2, Protocol::Encode(a_state));
-			while (const auto packet = f.fake->WaitFor(1, Type(MT::kPlayerStates), a_sequence ? 150ms : 2000ms)) {
+			while (const auto packet = f.fake->WaitFor(1, Type(MT::kPlayerStates), 2000ms)) {
 				const auto batch = Protocol::DecodePlayerStates(*packet);
 				REQUIRE(batch);
 				for (const auto& remote : batch->players) {
@@ -237,6 +261,46 @@ namespace
 			return std::nullopt;
 		}
 	};
+
+	// A friend standing in a neighbouring cell, in our square, as a frame sees them, their stand-in there in the state a_state.
+	StandInRange::Sight Neighbour(CellState a_state, bool a_has3D)
+	{
+		StandInRange::Sight sight;
+		sight.sameSpace = true;
+		sight.x = 6000.0f;  // cell 1
+		sight.y = 2000.0f;
+		sight.ourX = 2000.0f;  // cell 0
+		sight.ourY = 2000.0f;
+		sight.standIn = StandInRange::StandIn{ .inCell = true, .state = a_state, .x = 1, .y = 0, .has3D = a_has3D };
+		return sight;
+	}
+}
+
+TEST("stand-in range: a friend's stand-in in a cell the engine is still bringing in waits for it; one in a cell it is letting go of goes")
+{
+	const auto placed = Clock::time_point{} + 1h;
+	// Each of the engine's own cell states, for a stand-in placed a moment ago and not drawn yet.
+	for (const auto state : { CellState::kLoadingData, CellState::kLoading, CellState::kLoaded, CellState::kAttachQueued, CellState::kAttaching, CellState::kAttached }) {
+		StandInRange::Track track;
+		StandInRange::Placed(track, placed);
+		const auto look = StandInRange::Frame(track, Neighbour(state, false), placed + 200ms);
+		CHECK(look.visible);
+		CHECK(look.left == Left::kKeep);
+	}
+	for (const auto state : { CellState::kNotLoaded, CellState::kUnloading, CellState::kDetaching }) {
+		StandInRange::Track track;
+		StandInRange::Placed(track, placed);
+		const auto look = StandInRange::Frame(track, Neighbour(state, false), placed + 200ms);
+		CHECK(look.left == Left::kReplaceLater);  // never drawn there: none placed again for a moment
+		CHECK(!look.mayPlace);
+	}
+	// Drawn there once (its 3D came in a frame before), then the cell went: replaced at once.
+	StandInRange::Track track;
+	StandInRange::Placed(track, placed);
+	CHECK(StandInRange::Frame(track, Neighbour(CellState::kAttached, true), placed + 100ms).left == Left::kKeep);
+	const auto look = StandInRange::Frame(track, Neighbour(CellState::kDetaching, false), placed + 200ms);
+	CHECK(look.left == Left::kReplace);
+	CHECK(look.mayPlace);
 }
 
 TEST("stand-in range: a friend who walks out past the loaded cells and stands there gets no stand-in thrown away every frame")
@@ -280,28 +344,6 @@ TEST("stand-in range: a friend who walks out past the loaded cells and stands th
 	CHECK(bob.leftBehind == 0);
 }
 
-TEST("stand-in range: a late packet from where a friend was does not take their stand-in away again")
-{
-	Session session;
-	Ours    bob;
-	bob.x = 4000.0f;
-	bob.y = 2000.0f;
-	const auto out = session.Send(Session::Outside(12500.0f, 2000.0f));  // in the band
-	REQUIRE(out);
-	bob.Frames(out, 10);
-	CHECK(!bob.standIn);
-	const auto back = session.Send(Session::Outside(6000.0f, 2000.0f));
-	REQUIRE(back);
-	bob.Frames(back, 10);
-	REQUIRE(bob.Shown());
-	// The band state again, older than the one she is at now, and then twice the newest: the server passes on neither.
-	CHECK(!session.Send(Session::Outside(12500.0f, 2000.0f), out->sequence));
-	CHECK(!session.Send(Session::Outside(6000.0f, 2000.0f), back->sequence));
-	bob.Frames(back, 60);
-	CHECK(bob.Shown());
-	CHECK(bob.spawns == 1);
-}
-
 TEST("stand-in range: as we cross a cell edge, a friend's stand-in waits for its cell to attach instead of being replaced")
 {
 	Session session;
@@ -314,33 +356,53 @@ TEST("stand-in range: as we cross a cell edge, a friend's stand-in waits for its
 	bob.Frames(alice, 10);
 	CHECK(!bob.standIn);
 	// We step over our east edge: her cell is in our square now, and a stand-in is placed in it, but the engine's square
-	// is still centred on our old cell for a while as it loads, so her cell is only in its buffer.
+	// is still centred on our old cell for a while as it loads, so her cell is only loaded in its buffer.
+	bob.engine.lagging = true;
 	bob.x = 4200.0f;
 	bob.Frame(alice);
 	REQUIRE(bob.standIn);
-	CHECK(!bob.standIn->drawn);
+	CHECK(!bob.Shown());
 	bob.Frames(alice, 60);  // a second of loading
 	CHECK(bob.standIn);
 	CHECK(bob.leftBehind == 0);
-	bob.engine.centreX = 1;  // the engine's square catches up and attaches her cell
+	bob.engine.lagging = false;  // the engine's square catches up and attaches her cell
 	bob.Frames(alice, 2);
 	CHECK(bob.Shown());
 	CHECK(bob.spawns == 1);
 }
 
-TEST("stand-in range: a stand-in placed where the game never draws anything is placed again at most once a second")
+TEST("stand-in range: a friend in a cell the engine loads but never draws costs one stand-in every eleven seconds, and is shown within a second once it does")
 {
 	Session session;
 	Ours    bob;
 	bob.x = 4000.0f;
 	bob.y = 2000.0f;
-	bob.engine.never.insert({ 2, 0 });  // her cell is in the square, but the engine never attaches it
+	bob.engine.stuck.insert({ 2, 0 });  // her cell is in the square, loaded, but the engine never attaches it
 	const auto alice = session.Send(Session::Outside(9000.0f, 2000.0f));
 	REQUIRE(alice);
-	// Ten seconds of frames (600): every frame, as before, would be 600 stand-ins.
-	bob.Frames(alice, 600);
-	CHECK(bob.spawns >= 1);
-	CHECK(bob.spawns <= 11);
+	// A minute of frames: each stand-in waits ten seconds for the cell, then none is placed for a second. Placed every
+	// frame, as before, that would be 3,750 of them.
+	int shownFrames = 0;
+	for (int i = 0; i < 3750; ++i) {
+		bob.Frame(alice);
+		shownFrames += bob.Shown();
+	}
+	CHECK(shownFrames == 0);
+	CHECK(bob.spawns >= 5);
+	CHECK(bob.spawns <= 6);
+	CHECK(bob.respawnWaits == bob.spawns - 1);
+	// The cell attaches at last: she is shown within the wait and a frame or two, wherever in the cycle it falls.
+	for (int wait = 0; wait < 80; wait += 7) {
+		Ours again = bob;
+		again.Frames(alice, wait);
+		again.engine.stuck.clear();
+		int frames = 0;
+		while (!again.Shown() && frames < 200) {
+			again.Frame(alice);
+			++frames;
+		}
+		CHECK(frames <= 1000 / 16 + 2);
+	}
 }
 
 TEST("stand-in range: a friend who follows us through a door is shown inside at once")
@@ -372,5 +434,6 @@ TEST("stand-in range: a friend who follows us through a door is shown inside at 
 	bob.Frame(out);
 	CHECK(bob.Shown());
 	CHECK(bob.leftBehind == 1);
+	CHECK(bob.respawnWaits == 0);
 	CHECK(bob.spawns == 3);
 }

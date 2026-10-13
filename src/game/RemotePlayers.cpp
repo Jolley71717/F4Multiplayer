@@ -81,9 +81,7 @@ namespace RemotePlayers
 			bool                 lightOn = false;  // their Pip-Boy light
 			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
 			Clock::time_point    lightPlacedAt{};
-			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
-			bool                 drawn = false;  // the current stand-in has had its 3D
-			Clock::time_point    replacedLaterAt{};  // when a stand-in never drawn where it was placed went (StandInRange::Left::kReplaceLater)
+			StandInRange::Track  range;  // the current stand-in: when it was placed and whether it was drawn (see StandInRange::Frame)
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
 			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
@@ -1108,7 +1106,7 @@ namespace RemotePlayers
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
 				Puppets::SetTarget(actor, { .position = actor->data.location, .heading = actor->data.angle.z });
-				Bury({ .actor = a_player.actor, .spawnedAt = a_player.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
+				Bury({ .actor = a_player.actor, .spawnedAt = a_player.range.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
 			} else if (a_player.registered) {
 				Puppets::Unregister(a_player.registered, a_player.registeredId);  // gone already
 			}
@@ -1157,41 +1155,36 @@ namespace RemotePlayers
 			return *grids;
 		}
 
-		StandInRange::Cell CellOf(const RE::TESObjectCELL* a_cell)
-		{
-			using State = RE::TESObjectCELL::CELL_STATE;
-			if (!a_cell) {
-				return StandInRange::Cell::kNone;
-			}
-			if (a_cell->IsInterior()) {
-				return StandInRange::Cell::kInterior;
-			}
-			switch (a_cell->cellState) {
-			case State::kAttached:
-				return StandInRange::Cell::kAttached;
-			case State::kLoadingData:
-			case State::kLoading:
-			case State::kLoaded:
-			case State::kAttachQueued:
-			case State::kAttaching:
-				return StandInRange::Cell::kOnItsWay;
-			default:
-				return StandInRange::Cell::kGone;
-			}
-		}
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kNotLoaded) == std::to_underlying(StandInRange::CellState::kNotLoaded));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kUnloading) == std::to_underlying(StandInRange::CellState::kUnloading));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoadingData) == std::to_underlying(StandInRange::CellState::kLoadingData));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoading) == std::to_underlying(StandInRange::CellState::kLoading));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kLoaded) == std::to_underlying(StandInRange::CellState::kLoaded));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kDetaching) == std::to_underlying(StandInRange::CellState::kDetaching));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttachQueued) == std::to_underlying(StandInRange::CellState::kAttachQueued));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttaching) == std::to_underlying(StandInRange::CellState::kAttaching));
+		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kAttached) == std::to_underlying(StandInRange::CellState::kAttached));
 
-		// What becomes of a stand-in whose cell is not ours (see StandInRange::ChooseLeft).
-		StandInRange::Left ChooseLeft(const RemotePlayer& a_player, RE::TESObjectCELL* a_cell, const RE::TESObjectCELL* a_localCell, const RE::NiPoint3& a_us, Clock::time_point a_now)
+		// A friend's stand-in as StandInRange looks at it: its cell, as the engine has it, and whether its 3D is in.
+		std::optional<StandInRange::StandIn> StandInOf(RE::Actor* a_actor, const RE::TESObjectCELL* a_localCell)
 		{
-			StandInRange::LeftFacts facts;
-			facts.weInside = a_localCell->IsInterior();
-			facts.cell = CellOf(a_cell);
-			if (const auto coords = a_cell && a_cell->IsExterior() ? a_cell->GetCoordinates() : nullptr) {
-				facts.cellInGrid = StandInRange::InLoadedGrid(coords->cellX, coords->cellY, WorkshopCells::Grid(a_us.x), WorkshopCells::Grid(a_us.y), GridsToLoad());
+			if (!a_actor) {
+				return std::nullopt;
 			}
-			facts.drawn = a_player.drawn;
-			facts.sinceSpawned = a_now - a_player.spawnedAt;
-			return StandInRange::ChooseLeft(facts);
+			StandInRange::StandIn standIn;
+			const auto cell = a_actor->GetParentCell();
+			standIn.inOurCell = cell == a_localCell;
+			standIn.inCell = cell != nullptr;
+			if (cell) {
+				standIn.interior = cell->IsInterior();
+				standIn.state = static_cast<StandInRange::CellState>(std::to_underlying(cell->cellState));
+				if (const auto coords = cell->IsExterior() ? cell->GetCoordinates() : nullptr) {
+					standIn.x = coords->cellX;
+					standIn.y = coords->cellY;
+				}
+			}
+			standIn.has3D = a_actor->Get3D() != nullptr;
+			return standIn;
 		}
 
 		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
@@ -1631,11 +1624,6 @@ namespace RemotePlayers
 			remote.delay += std::clamp(delayWanted - remote.delay, -DELAY_SLEW, DELAY_SLEW);
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
-			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
-			if (visible && localCell->IsExterior()) {
-				const auto& p = player->data.location;
-				visible = StandInRange::Visible(state->x, state->y, p.x, p.y, GridsToLoad());
-			}
 
 			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
 			UpdateOriginal(remote, now);
@@ -1649,29 +1637,35 @@ namespace RemotePlayers
 				DeleteActor(remote);
 				actor = nullptr;
 			}
-			if (!visible) {
+			// Whether they are drawn here, and whether a stand-in left in a cell that is not ours (we went through a door, or
+			// the engine stopped drawing its cell) stays: always replaced when we are inside, and outside when its cell is an
+			// interior or the engine no longer draws it (a neighbouring exterior cell is fine, and so is one still attaching).
+			// A stand-in used to stay when we stepped from an interior into the open: stuck in the unloaded interior, never
+			// moving, with its power armor frame placed at that stale spot.
+			StandInRange::Sight sight;
+			sight.sameSpace = state && localCell && !loading && SameSpace(*state, localCell);
+			if (sight.sameSpace) {
+				sight.weInside = localCell->IsInterior();
+				sight.x = state->x;
+				sight.y = state->y;
+				sight.ourX = player->data.location.x;
+				sight.ourY = player->data.location.y;
+				sight.gridsToLoad = GridsToLoad();
+				sight.standIn = StandInOf(actor, localCell);
+			}
+			const auto look = StandInRange::Frame(remote.range, sight, now);
+			if (!look.visible) {
 				if (actor) {
 					DeleteActor(remote);
 				}
 				continue;
 			}
 
-			// A puppet left behind in another cell (we went through a door) is replaced: always when we are
-			// inside, and outside when its cell is an interior or the engine no longer draws it (a neighbouring
-			// exterior cell is fine, and so is one still attaching; see StandInRange::ChooseLeft). It used to stay
-			// when we stepped from an interior into the open: stuck in the unloaded interior, never moving, with its
-			// power armor frame placed at that stale spot.
-			if (actor && actor->GetParentCell() != localCell) {
-				const auto left = ChooseLeft(remote, actor->GetParentCell(), localCell, player->data.location, now);
-				if (left != StandInRange::Left::kKeep) {
-					++leftBehind;
-					if (left == StandInRange::Left::kReplaceLater) {
-						++respawnWaits;
-						remote.replacedLaterAt = now;
-					}
-					DeleteActor(remote);
-					actor = nullptr;
-				}
+			if (actor && look.left != StandInRange::Left::kKeep) {
+				++leftBehind;
+				respawnWaits += look.left == StandInRange::Left::kReplaceLater;
+				DeleteActor(remote);
+				actor = nullptr;
 			}
 
 			// Out of their armor while the stand-in is still in its frame: it goes, and a fresh one is placed just below. So
@@ -1700,7 +1694,7 @@ namespace RemotePlayers
 				if (!remote.face && now - remote.knownAt < FACE_GRACE) {
 					continue;  // their face is on its way
 				}
-				if (!StandInRange::MayRespawn(now - remote.replacedLaterAt)) {
+				if (!look.mayPlace) {
 					continue;  // the last one was never drawn where it stood
 				}
 				actor = Spawn(remote, *state, localCell);
@@ -1708,8 +1702,7 @@ namespace RemotePlayers
 					continue;
 				}
 				++spawns;
-				remote.spawnedAt = now;
-				remote.drawn = false;
+				StandInRange::Placed(remote.range, now);
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
@@ -1727,7 +1720,6 @@ namespace RemotePlayers
 				remote.switchGaveUp = false;
 			}
 
-			remote.drawn = remote.drawn || actor->Get3D() != nullptr;
 			UpdateLight(remote, actor, localCell, now);
 			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
 			CheckHold(remote, actor, { state->x, state->y, state->z }, state->speed, now);
