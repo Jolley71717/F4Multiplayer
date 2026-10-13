@@ -1142,7 +1142,8 @@ namespace RemotePlayers
 				grids = type == RE::Setting::SETTING_TYPE::kUInt ? static_cast<int>(setting->GetUInt()) :
 				        type == RE::Setting::SETTING_TYPE::kInt  ? setting->GetInt() :
 				                                                   StandInRange::DEFAULT_GRIDS;
-				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, setting ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
+				const bool read = type == RE::Setting::SETTING_TYPE::kUInt || type == RE::Setting::SETTING_TYPE::kInt;
+				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, read ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
 			}
 			return *grids;
 		}
