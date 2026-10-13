@@ -12,6 +12,7 @@
 #include "Config.h"
 #include "game/Equipment.h"
 #include "game/Puppets.h"
+#include "game/RemoteEdits.h"
 #include "game/WeaponFire.h"
 
 namespace RemotePlayers
@@ -61,6 +62,7 @@ namespace RemotePlayers
 			std::uint32_t        id = 0;  // their player ID: what the log calls them (never by name)
 			std::string          name;
 			std::uint32_t        appearance = 0;
+			bool                 appearanceWarned = false;  // told the log once that their look is not one we place
 			std::vector<std::uint32_t> equipment;
 			std::optional<Protocol::Face> face;
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
@@ -1134,18 +1136,19 @@ namespace RemotePlayers
 		}
 
 		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
-		constexpr std::uint32_t FEMALE_SETTLER = 0x0020A578;
-		constexpr std::uint32_t MALE_SETTLER = 0x0020A57B;
+		using RemoteEdits::FEMALE_SETTLER;
+		using RemoteEdits::MALE_SETTLER;
 
 		RE::Actor* Spawn(RemotePlayer& a_player, const Protocol::PlayerState& a_state, RE::TESObjectCELL* a_localCell)
 		{
-			// Prefer the look the player picked; fall back to our default if it isn't a valid NPC here.
-			// Unique NPCs (companions, quest characters) would bring their scripts along, so not those.
-			auto npc = a_player.appearance ? RE::TESForm::GetFormByID<RE::TESNPC>(a_player.appearance) : nullptr;
-			if (npc && npc->IsUnique()) {
-				REX::WARN("RemotePlayers: player {} asked to look like unique NPC {:08X}; using the default", a_player.id, a_player.appearance);
-				npc = nullptr;
+			// The look the player picked, when it is one we place (a settler, or our own default): any other NPC
+			// would bring its scripts and factions into our world on their word, so they are shown as our default.
+			const auto look = RemoteEdits::LookToPlace(a_player.appearance, Config::Get().puppetBaseForm);
+			if (a_player.appearance && !look && !a_player.appearanceWarned) {
+				a_player.appearanceWarned = true;
+				REX::WARN("RemotePlayers: player {} asked to look like NPC {:08X}, which is not a settler or our default; using the default", a_player.id, a_player.appearance);
 			}
+			auto npc = look ? RE::TESForm::GetFormByID<RE::TESNPC>(look) : nullptr;
 			if (!npc) {
 				auto baseID = Config::Get().puppetBaseForm;
 				// With their face known, the base is a settler of their sex (unless the ini picked another base).
@@ -1360,7 +1363,8 @@ namespace RemotePlayers
 		if (!looks.contains(a_base)) {
 			return false;
 		}
-		// A look is used only when it is an NPC here and not a unique one (see Spawn).
+		// Earlier versions placed any look that was an NPC here and not a unique one: their stand-ins may be in a
+		// save still, and are recognised as ours to clear away (Spawn now places only the settlers or our default).
 		const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 		return npc && !npc->IsUnique();
 	}
@@ -1406,6 +1410,15 @@ namespace RemotePlayers
 			++flushedBeforeSave;
 			return true;
 		});
+	}
+
+	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end() || it->second.snapshots.empty()) {
+			return std::nullopt;
+		}
+		return it->second.snapshots.back().state;
 	}
 
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)

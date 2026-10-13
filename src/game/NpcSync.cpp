@@ -3,9 +3,11 @@
 #include "game/Equipment.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
+#include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
+#include "game/WorldSync.h"
 
 namespace NpcSync
 {
@@ -84,6 +86,11 @@ namespace NpcSync
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
 		std::uint32_t                                        broughtIn = 0;       // copies moved to where their owner's stands: from an unloaded cell, or from another space ours was left in
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
+		// Left alone, each counted once: characters of our own story off here (not switched on: MaySwitchOn), and
+		// copies not moved to their owner's because the owner's stand-in is not beside it (OwnerNear), by
+		// BringIn and by the bring-over of a far mirror.
+		std::uint32_t                                        keptOffStory = 0, notBroughtOwnerFar = 0, notBroughtOverOwnerFar = 0;
+		std::unordered_set<std::uint32_t>                    keptOff, notBrought, notBroughtOver;
 		std::unordered_map<std::uint32_t, Clock::time_point> switchedOnAt;
 		constexpr auto                                       SWITCH_ON_RETRY = 5s;
 		std::unordered_map<std::uint32_t, Clock::time_point> broughtInAt;
@@ -152,12 +159,6 @@ namespace NpcSync
 		{
 			return a_actor && !a_actor->IsPlayerRef() && Protocol::IsShareableRef(a_actor->GetFormID()) && !Puppets::IsPuppet(a_actor) &&
 			       !a_actor->IsDead(false) && !a_actor->IsDisabled() && a_actor->Get3D();
-		}
-
-		bool IsOurCompanion(RE::Actor* a_actor)
-		{
-			static const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(CURRENT_COMPANION_FACTION);
-			return faction && a_actor->IsInFaction(faction);
 		}
 
 		// Where an actor is, as sent in states: (interior cell, 0) or (0, worldspace).
@@ -501,6 +502,13 @@ namespace NpcSync
 			};
 		}
 
+		// Whether the owner's stand-in stands beside where their game has the NPC (RemoteEdits::OwnerNear): what
+		// follows its player, as a companion does. Their game saying it is somewhere far from them moves nothing here.
+		bool OwnerBeside(std::uint32_t a_owner, const Protocol::ActorState& a_state)
+		{
+			return RemoteEdits::OwnerBeside(RemotePlayers::LastStateOf, a_owner, a_state);
+		}
+
 		// The owner's copy stands near us outdoors, but ours is somewhere else: in a cell we have not loaded
 		// (a companion that walked here with its player from across the map, say), or loaded in an interior
 		// or another world its own quest left it in (the host finished Concord, so its Preston stands in
@@ -508,7 +516,9 @@ namespace NpcSync
 		// console's moveto, which handles the cell change; it is mirrored from there. Left where it was,
 		// UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
 		// Never moved: the player, our own companion (it follows us here), the dead, one in a scene here, and one fighting us.
-		void BringIn(const Protocol::ActorState& a_state, Clock::time_point a_now)
+		// Nor one whose owner's stand-in is not beside it: a companion walks with its player, and their game
+		// saying some NPC stands next to us is otherwise only their word for it.
+		void BringIn(const Protocol::ActorState& a_state, std::uint32_t a_owner, Clock::time_point a_now)
 		{
 			if (a_state.cell != 0 || !Protocol::IsShareableRef(a_state.refId)) {
 				return;
@@ -532,6 +542,14 @@ namespace NpcSync
 			if (actor->Get3D() && ours == std::pair{ 0u, a_state.worldspace }) {
 				return;
 			}
+			if (!OwnerBeside(a_owner, a_state)) {
+				if (notBrought.insert(a_state.refId).second) {
+					++notBroughtOwnerFar;
+					REX::INFO("NpcSync: not bringing {:08X} in: player {}'s stand-in is not beside where their game has it", a_state.refId, a_owner);
+				}
+				return;
+			}
+			notBrought.erase(a_state.refId);
 			if (const auto last = broughtInAt.find(a_state.refId); last != broughtInAt.end() && a_now - last->second < BRING_IN_RETRY) {
 				return;
 			}
@@ -557,12 +575,22 @@ namespace NpcSync
 			if (!actor || !actor->IsDisabled() || actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef()) {
 				return;
 			}
+			// A character of our own story stays as our story has it: a companion or quest character a friend's
+			// story has brought in, ours has not yet.
+			if (!RemoteEdits::MaySwitchOn(Story::Shared(), WorldSync::DescribeStory(actor))) {
+				if (keptOff.insert(a_state.refId).second) {
+					++keptOffStory;
+					REX::INFO("NpcSync: leaving {:08X} off: its owner's copy runs, but it is a character of our own story", a_state.refId);
+				}
+				return;
+			}
 			if (const auto last = switchedOnAt.find(a_state.refId); last != switchedOnAt.end() && a_now - last->second < SWITCH_ON_RETRY) {
 				return;
 			}
 			switchedOnAt[a_state.refId] = a_now;
 			++switchedOn;
-			REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running", a_state.refId);
+			REX::INFO("NpcSync: switching {:08X} on: it is off here but its owner's copy is running{}", a_state.refId,
+				actor->extraList && actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent) ? " (an enable parent switches it here)" : "");
 			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
 		}
 
@@ -597,11 +625,20 @@ namespace NpcSync
 				// outdoors next to us while ours is elsewhere is BringIn's case, from ApplyStates.)
 				const auto* latest = mirror.snapshots.empty() ? nullptr : &mirror.snapshots.back();
 				// Outdoors in the same world, the owner's copy went far (a companion ran after its player, or
-				// was moved): ours is brought over and mirrored from there, instead of being left behind.
+				// was moved): ours is brought over and mirrored from there, instead of being left behind; as
+				// long as that is beside its owner's stand-in (OwnerBeside), else ours runs its own AI here. That
+				// goes for any NPC their game runs, not only companions: a settler their game moved far from them
+				// stays here until they are beside it.
 				if (latest && a_now - latest->received <= LOST_AFTER && latest->state.cell == 0 && SpaceOf(actor) == std::pair{ 0u, latest->state.worldspace } &&
 					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
-					actor->SetPosition({ latest->state.x, latest->state.y, latest->state.z }, true);
-					++broughtOver;
+					if (OwnerBeside(owner, latest->state)) {
+						actor->SetPosition({ latest->state.x, latest->state.y, latest->state.z }, true);
+						++broughtOver;
+						notBroughtOver.erase(id);
+					} else if (notBroughtOver.insert(id).second) {
+						++notBroughtOverOwnerFar;
+						REX::INFO("NpcSync: not bringing {:08X} over: player {}'s stand-in is not beside where their game has it", id, owner);
+					}
 				}
 				if (!latest || SpaceOf(actor) != std::pair{ latest->state.cell, latest->state.worldspace } || a_now - latest->received > LOST_AFTER ||
 					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
@@ -670,13 +707,13 @@ namespace NpcSync
 			const auto actor = LoadedActor(state.refId);
 			if (!actor) {
 				SwitchOn(state, now);
-				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
+				BringIn(state, owner, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
 			}
 			// Loaded here but not where the owner's copy is (ours waits in an interior its own quest left it
 			// in): brought over the same way, and mirrored once it is here. The snapshot is kept meanwhile.
 			if (std::pair{ state.cell, state.worldspace } != SpaceOf(actor)) {
-				BringIn(state, now);
+				BringIn(state, owner, now);
 			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;
@@ -685,6 +722,12 @@ namespace NpcSync
 				snaps.pop_front();
 			}
 		}
+	}
+
+	bool IsOurCompanion(RE::Actor* a_actor)
+	{
+		static const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(CURRENT_COMPANION_FACTION);
+		return a_actor && faction && a_actor->IsInFaction(faction);
 	}
 
 	bool RunsLocally(std::uint32_t a_refId)
@@ -837,6 +880,9 @@ namespace NpcSync
 	void Reset()
 	{
 		ReleaseMirrors();
+		keptOff.clear();
+		notBrought.clear();
+		notBroughtOver.clear();
 		localId = 0;
 		sentGear.clear();
 		knownGear.clear();
@@ -885,7 +931,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar);
 	}
 }

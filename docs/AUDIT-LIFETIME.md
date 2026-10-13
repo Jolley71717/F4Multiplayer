@@ -105,7 +105,7 @@ runs an activation only from a player standing at the thing, gives an NPC an ite
 it, waits for a settlement's workbench to be loaded, and strips markup from other players' HUD text
 (0f1953d); a player's container changes stop at their share of the table, a joiner is told where each
 dead NPC fell, built actors are turrets and robots only (bd24f6a); a workshop piece is shown only
-within 12,000 units of its workbench (7f38a5c). Left as is: the world-state resend rate (955, four a
+within 12,000 units of its workbench (7f38a5c); each game now judges a friend's edits by its own state as well (docs/DESIGN.md, "Who may change your world"): a build or scrap must name a real workbench and stay in its build area (c3b2080), an explosion's radius is bounded (959ad7e; it goes off beside you with friendly fire off too, or the enemies there would live on in your game), a story character dies only from a reporter near it and the server budgets a joiner's deaths and explosions (60c7ef3), a companion is brought over only beside its owner (4fa0a9c), workbenches and your own companion keep their inventory (9459595), and a friend's look is a settler or your default (f736491). Left as is: the world-state resend rate (955, four a
 second of about 2 MB is the host's own bandwidth to spend) and quest stages, which the host already
 forces only from a player who has the quest.
 

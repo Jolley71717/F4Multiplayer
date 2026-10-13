@@ -1,6 +1,7 @@
 #include "game/WorkshopSync.h"
 
 #include "game/EngineRefs.h"
+#include "game/RemoteEdits.h"
 #include "game/WorkshopCells.h"
 
 #include "game/DeferredDelete.h"
@@ -45,12 +46,23 @@ namespace WorkshopSync
 		std::uint32_t adopted = 0;
 		std::uint32_t refused = 0;  // outside their workbench's reach
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
+		std::uint32_t anchorRefused = 0;  // named something that is no workbench here as their workbench
+		std::uint32_t scrapRefused = 0;   // scraps of the world refused: not junk workshop mode scraps, or outside the build area
+		// Scraps waiting for their workbench's build-area volumes to load (the game can't tell whether the
+		// piece is inside until they are): tried again as cells attach.
+		std::unordered_set<std::uint32_t> scrapsDeferred;
+		// Anchors that were no workbench, warned about once each (cleared when full, so it stays small).
+		std::unordered_set<std::uint32_t> badAnchorsWarned;
+		constexpr std::size_t             MAX_BAD_ANCHORS_WARNED = 64;
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
 		// the reference. Not one with the keyword that blocks scrapping; one whose base has a scrap
 		// recipe, or a misc item with components. The bool is false in the game's own scrap check
 		// (Workshop::CanScrapPlacementRef), which lets loose weapons, armor and misc items through.
 		constexpr REL::ID CAN_SCRAP_REF{ 2194959 };
+
+		// WorkshopKeyword: on the base of every settlement's workbench.
+		constexpr std::uint32_t WORKSHOP_KEYWORD = 0x00054BA7;
 
 		bool CanScrap(RE::TESObjectREFR& a_ref)
 		{
@@ -243,8 +255,8 @@ namespace WorkshopSync
 		{
 			a_ref->SetLocationOnReference({ a_item.position[0], a_item.position[1], a_item.position[2] });
 			a_ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
-			if (std::abs(a_ref->refScale / 100.0f - a_item.scale) > 0.01f) {
-				a_ref->SetScale(a_item.scale);
+			if (const auto scale = RemoteEdits::ScaleToApply(a_item, a_ref->refScale / 100.0f)) {  // a friend's message can say any size
+				a_ref->SetScale(*scale);
 			}
 		}
 
@@ -312,6 +324,21 @@ namespace WorkshopSync
 			}
 		}
 
+		// A friend named something that is no workbench here as the workbench of their build or scrap: a
+		// door, a vendor's chest, a building. Dropped, and the first of each said in the log.
+		void RefuseAnchor(const Protocol::WorkshopItem& a_item, const RE::TESObjectREFR* a_anchor)
+		{
+			++anchorRefused;
+			if (badAnchorsWarned.size() >= MAX_BAD_ANCHORS_WARNED) {
+				badAnchorsWarned.clear();
+			}
+			if (badAnchorsWarned.insert(a_item.workshop).second) {
+				const auto base = a_anchor ? a_anchor->GetObjectReference() : nullptr;
+				REX::WARN("WorkshopSync: player {} named {:08X} (base {:08X}) as a workbench; it is none here, so their {} of {:08X} is dropped", a_item.playerId, a_item.workshop,
+					base ? base->GetFormID() : 0, a_item.op == Protocol::WorkshopOp::kScrapped ? "scrap" : "build", a_item.refId);
+			}
+		}
+
 		// Whether the piece stands within its workbench's reach (the bench is known to be loaded here).
 		bool InReach(const Protocol::WorkshopItem& a_item)
 		{
@@ -329,6 +356,10 @@ namespace WorkshopSync
 			const auto cell = CellFor(a_item);
 			if (!cell) {
 				return false;
+			}
+			if (const auto anchor = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop); !IsWorkbenchAnchor(anchor)) {
+				RefuseAnchor(a_item, anchor);
+				return true;  // dropped, as one out of reach is
 			}
 			if (!InReach(a_item)) {
 				++refused;
@@ -366,8 +397,8 @@ namespace WorkshopSync
 			if (!ref) {
 				return true;
 			}
-			if (std::abs(a_item.scale - 1.0f) > 0.01f) {
-				ref->SetScale(a_item.scale);
+			if (const auto scale = RemoteEdits::ScaleToApply(a_item, 1.0f)) {
+				ref->SetScale(*scale);
 			}
 			copies[a_key] = { handle, Clock::now() };
 			NoteCopy(handle);
@@ -387,13 +418,20 @@ namespace WorkshopSync
 			return !list->data.empty();
 		}
 
+		// Defined with the walk below.
+		std::uint32_t          SpaceOf(const RE::TESObjectCELL* a_cell);
+		bool                   HasScripts(RE::TESObjectREFR* a_ref);
+		RemoteEdits::BuildArea BuildAreaState(const RE::TESObjectREFR& a_bench);
+
 		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
-		// from our world too. False until it's loaded here. Only what workshop mode could have scrapped:
-		// the same object (base) as theirs, something the game lets a player scrap, within its
-		// workbench's reach, and nothing alive or a quest's. What our copy holds goes to our copy of the
-		// workbench first, as the game's own scrap does: their scrap gave them its contents, ours would have
-		// vanished with it (a dresser we keep our stash in).
-		bool ScrapWorldRef(const Protocol::WorkshopItem& a_item)
+		// from our world too. False until it's loaded here (or, while its workbench's build-area volumes
+		// aren't, until they are). Only what workshop mode could have scrapped: named with a real workbench,
+		// in that workbench's cell or worldspace and inside its build area, the same object (base) as theirs,
+		// something the game lets a player scrap, and nothing alive, a quest's, switched by an enable parent
+		// or with a script on it (the same pieces the host's own walk leaves alone, WhyNotScrapped). What our
+		// copy holds goes to our copy of the workbench first, as the game's own scrap does: their scrap gave
+		// them its contents, ours would have vanished with it (a dresser we keep our stash in).
+		bool TryScrapWorldRef(const Protocol::WorkshopItem& a_item)
 		{
 			if (!CellFor(a_item)) {
 				return false;
@@ -405,13 +443,32 @@ namespace WorkshopSync
 			if (ref->IsDisabled() || ref->IsDeleted()) {
 				return true;
 			}
-			const auto base = ref->GetObjectReference();
 			const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop);
-			const bool quest = ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
-			if (!base || base->GetFormID() != a_item.base || ref->As<RE::Actor>() || !Buildable(base) || quest || !CanScrap(*ref) || !workshop ||
-				workshop->data.location.GetDistance(ref->data.location) > BUILD_REACH) {
-				++refused;
+			if (!IsWorkbenchAnchor(workshop)) {
+				RefuseAnchor(a_item, workshop);
 				return true;
+			}
+			const auto base = ref->GetObjectReference();
+			const auto extra = ref->extraList.get();
+			const bool quest = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+			const bool switched = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent);
+			if (!base || base->GetFormID() != a_item.base || ref->As<RE::Actor>() || !Buildable(base) || quest || switched || !CanScrap(*ref) ||
+				SpaceOf(workshop->GetParentCell()) != SpaceOf(ref->GetParentCell()) || HasScripts(ref)) {
+				++scrapRefused;
+				return true;
+			}
+			const auto area = BuildAreaState(*workshop);
+			const bool inArea = (area == RemoteEdits::BuildArea::kLoaded || area == RemoteEdits::BuildArea::kPartlyLoaded) &&
+			                    RE::Workshop::IsLocationWithinBuildableArea(*workshop, ref->data.location);
+			switch (RemoteEdits::ScrapReach(area, inArea, workshop->data.location.GetDistance(ref->data.location))) {
+			case RemoteEdits::Verdict::kWait:
+				scrapsDeferred.insert(a_item.refId);
+				return false;
+			case RemoteEdits::Verdict::kRefuse:
+				++scrapRefused;
+				return true;
+			default:
+				break;
 			}
 			if (HoldsItems(ref)) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems {:08X}", ref->GetFormID(), workshop->GetFormID()).c_str());
@@ -419,6 +476,15 @@ namespace WorkshopSync
 			}
 			ref->Disable();
 			++worldScrapped;
+			return true;
+		}
+
+		bool ScrapWorldRef(const Protocol::WorkshopItem& a_item)
+		{
+			if (!TryScrapWorldRef(a_item)) {
+				return false;
+			}
+			scrapsDeferred.erase(a_item.refId);
 			return true;
 		}
 
@@ -679,29 +745,38 @@ namespace WorkshopSync
 		// WorkshopLinkedPrimitiveKeyword, as Workshop::IsLocationWithinBuildableArea reads it.
 		constexpr REL::ID BUILD_AREA_KEYWORD{ 4797312 };
 		// How far a build area reaches from its workbench while none of its volumes is loaded.
-		constexpr float   BUILD_AREA_RADIUS = 5000.0f;
+		constexpr float   BUILD_AREA_RADIUS = RemoteEdits::BUILD_AREA_RADIUS;
 
-		// Whether one of the build-area volumes linked to the workbench is loaded. The game's own test
-		// then decides by them alone. While none is, it falls back to a radius, but around the settlement
-		// the player is at in workshop mode (its location's marker and radius) whichever workbench it is
-		// asked about, and around the workbench only outside workshop mode.
-		bool BuildAreaLoaded(const RE::TESObjectREFR& a_bench)
+		// Whether build-area volumes are linked to the workbench, and how many of them are loaded. The game's
+		// own test then decides by the loaded ones alone. While none is, it falls back to a radius, but around the
+		// settlement the player is at in workshop mode (its location's marker and radius) whichever workbench
+		// it is asked about, and around the workbench only outside workshop mode.
+		RemoteEdits::BuildArea BuildAreaState(const RE::TESObjectREFR& a_bench)
 		{
 			static REL::Relocation<RE::BGSKeyword**> keyword{ BUILD_AREA_KEYWORD };
 			const auto children = a_bench.extraList ? a_bench.extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
 			if (!children || !*keyword) {
-				return false;
+				return RemoteEdits::BuildArea::kNoVolumes;
 			}
+			std::size_t linked = 0, loaded = 0;
 			for (const auto& child : children->linkedChildren) {
 				if (child.keyword != *keyword) {
 					continue;
 				}
+				++linked;
 				const auto volume = child.REFR.get();
-				if (volume && volume->extraList && volume->extraList->GetPrimitive()) {
-					return true;
-				}
+				loaded += volume && volume->extraList && volume->extraList->GetPrimitive();
 			}
-			return false;
+			if (linked == 0) {
+				return RemoteEdits::BuildArea::kNoVolumes;
+			}
+			return loaded == 0 ? RemoteEdits::BuildArea::kNotLoaded : (loaded < linked ? RemoteEdits::BuildArea::kPartlyLoaded : RemoteEdits::BuildArea::kLoaded);
+		}
+
+		bool BuildAreaLoaded(const RE::TESObjectREFR& a_bench)
+		{
+			const auto area = BuildAreaState(a_bench);
+			return area == RemoteEdits::BuildArea::kLoaded || area == RemoteEdits::BuildArea::kPartlyLoaded;
 		}
 
 		// Whether the spot is in the workbench's build area: inside one of the build-area volumes linked
@@ -907,6 +982,20 @@ namespace WorkshopSync
 		}
 	}
 
+	bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref || a_ref->As<RE::Actor>()) {
+			return false;
+		}
+		if (a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop)) {
+			return true;
+		}
+		// A workbench of the game's files never visited in this save may not have its workshop data yet.
+		const auto base = a_ref->GetObjectReference();
+		const auto keywords = base ? base->As<RE::BGSKeywordForm>() : nullptr;
+		return keywords && keywords->HasKeywordID(WORKSHOP_KEYWORD);
+	}
+
 	void Install()
 	{
 		if (installed) {
@@ -1011,6 +1100,7 @@ namespace WorkshopSync
 		}
 		pending.Clear();
 		ClearWalk();
+		scrapsDeferred.clear();
 		{
 			std::scoped_lock l{ sentScrapsLock };
 			sentScraps.clear();
@@ -1029,7 +1119,8 @@ namespace WorkshopSync
 		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
 			       worldScrapped, adopted, refused, pending.Size()) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
-				   waiting.size(), toSend.size());
+				   waiting.size(), toSend.size()) +
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={}", anchorRefused, scrapRefused, scrapsDeferred.size());
 	}
 
 	std::string DescribeBenches(RE::TESObjectREFR* a_ref)

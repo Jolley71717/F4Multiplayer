@@ -113,7 +113,8 @@
 ## Remote player look
 
 - Body: a settler of the player's sex (0020A578 female / 0020A57B male) unless `iMyAppearance` is set.
-  Unique NPCs (companions, quest characters) are refused as appearances; their scripts would come along.
+  Only the two settlers, or the receiver's own `iPuppetBaseForm`, are placed: any other NPC (unique or
+  not) would bring its scripts and factions along, so it is shown as the receiver's default.
 - Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second).
   The puppet gets `removeallitems` + `additem`/`equipitem` via the console. Weapon mods and
   the player's face are not copied.
@@ -345,6 +346,42 @@ What a peer can now send that it could not before, and what checks it on the way
 - Hotkeys: the Alt/Ctrl/Win chord check reads the local keyboard only.
 - Dev commands (`turnto`, `frames`, `say`): dev channel only, which is off by default and token-protected (docs/DEV-CHANNEL.md).
 - Frame-time stats: local counters, nothing on the wire.
+
+### Who may change your world (0.8.6-rc3)
+
+The server is a relay with budgets; it has no copy of the world to check against. So each game also
+judges what a friend's game says happened in it, by its own state. The game-free rules are in
+`src/game/RemoteEdits.h` (tested in `tests/RemoteEditsTests.cpp` and, end to end through the real
+server, in `tests/ServerWorldTests.cpp` under "host authority").
+
+| Message | Who may send it | Server check | Receiver check | In the session file |
+|---|---|---|---|---|
+| `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
+| `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
+| `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
+| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (`containerRefused`); other containers, vendors included, follow friends | yes |
+| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there) | yes |
+| `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
+
+A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our
+game it is the only thing that does the damage of their throw: the stand-in's own grenade is removed,
+the server refuses their reports of deaths of NPCs our game runs, and no health comes for one dead in
+theirs. Leaving it out near us would leave the enemies a friend's grenade
+killed in their game alive and fighting in ours. So with friendly fire off a friend's grenade at your
+feet still hurts you, as it always has; a forged one is bounded by the server (after a throw, within
+8000 units of the thrower, 16 at once and 4 a second, and 32 at once for all joiners together). A copy of the explosion that hurts nobody but
+the enemies is not done.
+
+To check live before this ships (the tests cannot reach the game):
+
+- A friend's grenade thrown into a melee next to the other player and their companion kills the
+  enemies in both games, and the first explosions in the log read a radius of about 500 (a Fat Man's
+  shell under 1024) with `explosionRefusedRadius=0`.
+- Junk scrapped in one game is gone in the other, at a settlement whose build area is several
+  volumes too (scripted pieces are left alone in the other game, as the host's own walk leaves them).
+
+Not done yet: a single `Mutates(MessageType)` list the server and a CI check share, so a new message
+that changes the world cannot ship without a row here.
 
 ## Prior art
 

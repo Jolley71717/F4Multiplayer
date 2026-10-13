@@ -101,15 +101,21 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   the same raider in the same place. Its weapon and armor are copied from that game too, so a
   raider carries the same gun on every screen. Enemies can attack any player, and the damage reaches that
   player. Killing or hurting an NPC counts for everyone. Players can't hurt each other unless the
-  host sets `bFriendlyFire = true`.
+  host sets `bFriendlyFire = true`, with one exception: a friend's grenade or Fat Man shell that lands
+  at your feet hurts you, because in your game it is what kills the enemies beside you.
 - **World:** deaths, loot taken from or put into containers and bodies, items picked up off the
-  ground, doors opened/closed and locks picked.
+  ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
+  each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
+  what a friend gives your companion stays with the companion in their game.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
   backwards), once they have started that quest themselves (it's in their Pip-Boy). Turn this off
   with `bSyncQuests = false` if a quest misbehaves.
 - **The story:** everyone plays the main story and the faction quests in their own game, and gets
   a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
-  each of you talks to the characters yourself. The host can set `sStory = shared` to move
+  each of you talks to the characters yourself. A story character that a friend's game says died
+  where they were nowhere near, or that a friend's game switches on, stays as your own story has it.
+  So does one you both saw die, once you load a save from before it died: your save decides. The
+  host can set `sStory = shared` to move
   everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
   faction choices become yours).
 - **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute

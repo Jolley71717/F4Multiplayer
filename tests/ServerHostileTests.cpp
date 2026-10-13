@@ -391,6 +391,12 @@ TEST("server: a joiner's build, face or explosion with a broken number (NaN, inf
 		}
 		f.fake->Deliver(2, Protocol::Encode(badFace, MT::kReportFace));
 		f.fake->Deliver(2, Protocol::Encode(goodFace, MT::kReportFace));
+		// She says where she is first: an explosion is believed only near the player who threw it.
+		Protocol::PlayerState here;
+		here.sequence = 1;
+		here.worldspace = 0x0000003C;
+		here.x = 50.0f, here.y = 100.0f;
+		f.fake->Deliver(2, Protocol::Encode(here));
 		f.fake->Deliver(2, Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kThrow }, MT::kReportShot));
 		f.fake->Deliver(2, Protocol::Encode(badBlast, MT::kReportExplosion));
 		f.fake->Deliver(2, Protocol::Encode(goodBlast, MT::kReportExplosion));
