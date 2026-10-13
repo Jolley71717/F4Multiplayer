@@ -187,7 +187,9 @@ items, pickups only for loose inventory items that don't fill a quest alias.
 
 Which loot is the session's is one rule, `LootScope::Of` (src/game/LootScope.h, game-free and tested),
 run by the sender before reporting a move and by every receiver before applying one, so what an older
-build reports anyway stays out:
+build reports anyway stays out. WorldSync runs it through `LootSync` (src/game/LootSync.h, game-free):
+the sender's report, the receiver's check, and the changes that wait for a container or a death. The
+tests play two and three games through it against a real server (tests/LootGame.h).
 
 - Per player: keys, paper notes, holotapes, bobbleheads, magazines (`FeaturedItem`), quest items (a
   stack held in a quest alias), all weapons and armor, vendors and caps, what companions and settlers
@@ -199,11 +201,14 @@ Weapons and armor are per player because a move carries only the base form: anot
 plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
 corpse. A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
 for a second after, are trades and never reported. A corpse is shared once the session says it died: a
-change for an NPC still alive in this game waits for its kill (up to 10 minutes in the world). Loose
+change for an NPC still alive in this game waits for its kill, up to 10 minutes in the world, counted
+for all of that NPC's changes together (at most 4096 changes wait; when full, one waiting for a living
+NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
 stay (a loose weapon is taken from the friend's world as it is). The status line counts what each end
-kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupported=`, `personal=`,
-and on the sender `holderDropped=` and `lootSent=`.
+kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupported=` (both ends),
+`personal=` (other players' personal items left alone, pickups included, as in 0.8.5), and on the
+sender `personalSent=`, `holderDropped=` and `lootSent=`.
 
 Activators (buttons, switches, levers, a sink) a friend presses are pressed in our game by their
 stand-in, not our player, so a script that acts on whoever pressed it (rads from a sink, a teleport)
@@ -245,12 +250,14 @@ what waited past it and logs "the server's log is shorter than our save" (`rewou
 a request we sent can do that.
 
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
-save's record and asks for the session's changes again. The player's moves from the frame before the
-save or load are sent first, so they are in that answer. A save with no record of this session (made
+save's record and asks for the session's changes again. The deaths and the player's moves from the
+frame before the save or load are sent first (deaths first), so they are in that answer. A save with no record of this session (made
 alone, or in another session) takes this one from its first change, so the saves made from it on carry
-one. Container changes in a `WorldState` carry who made them; the player's own changes after the save
-are skipped (the save is from before them, so replaying them would empty the container without giving
-the loot back, or duplicate what they put in). One known way to duplicate remains: put something in a
+one. Container changes carry who made them; the player's own are never replayed. Those made before the
+loaded world (the save is from before them) are counted in `ownSkipped=`: replaying them would empty
+the container without giving the loot back, or duplicate what they put in. Each report is remembered
+with the world it was made in (counted by loads), so a move made just before a load counts whether its
+echo arrives live after the load or in the catch-up. One known way to duplicate remains: put something in a
 chest after saving, a friend takes it, reload: the reloaded game still carries it and the friend has it
 too. `dupRisk=` counts it (our skipped deposit, then a friend's take of the same item from the same
 container) until own changes are replayed as moves. A player who reconnects gets their old player ID back: Hello carries `identity`, a random
