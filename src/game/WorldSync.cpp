@@ -115,11 +115,8 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, float> pendingHealth;
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
-		Clock::time_point                      nextSweep{};
-		bool                                   wasInWorld = false;
-		std::uint32_t                          lastCell = 0;  // the player's parent cell at the last frame
-		// The slow sweep's place, by reference ID, over all that waits (WaitingIds).
-		RetryCursor<std::uint32_t>             sweepCursor{ SWEEP_ENTRIES };
+		// When what waits (WaitingIds) is tried again.
+		RetrySchedule                          retrySchedule{ SWEEP_INTERVAL, SWEEP_ENTRIES };
 		std::uint32_t                          loadApplied = 0;  // waiting changes applied as their reference loaded
 		std::int64_t                           retryUs = 0, retryUsMax = 0;  // the last and longest retry pass, in microseconds
 		std::uint32_t                          applied = 0;
@@ -1082,40 +1079,25 @@ namespace WorldSync
 		// Remote changes waiting for their reference: tried as it loads; all of them when the player comes out
 		// of a loading screen (or the opening) or into another cell; otherwise a few at a time, slowly.
 		const bool inWorld = CanApply();
-		if (!inWorld) {
-			wasInWorld = false;  // what loads meanwhile is tried in the full pass when they're out
-			return;
+		std::uint32_t cell = 0;
+		if (inWorld) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto parent = player ? player->GetParentCell() : nullptr;
+			cell = parent ? parent->GetFormID() : 0;
 		}
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		const auto parent = player ? player->GetParentCell() : nullptr;
-		const auto cell = parent ? parent->GetFormID() : 0;
 		const bool anyWaiting = !pending.empty() || !pendingHealth.empty() || !pendingContainers.Empty() || !pendingPickups.empty() || !pendingRefStates.empty();
-		if (!anyWaiting) {
-			wasInWorld = true;
-			lastCell = cell;
-			return;
-		}
 		const auto started = Clock::now();
-		if (!wasInWorld || cell != lastCell) {
-			for (const auto id : WaitingIds()) {
-				ApplyWaiting(id, true);
-			}
-			nextSweep = now + SWEEP_INTERVAL;
-		} else {
-			for (const auto id : newRefLoads) {
-				loadApplied += static_cast<std::uint32_t>(ApplyWaiting(id, true));
-			}
-			if (now >= nextSweep) {
-				nextSweep = now + SWEEP_INTERVAL;
-				for (const auto id : sweepCursor.Pass(WaitingIds())) {
-					ApplyWaiting(id, true);
-				}
-			}
+		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
+		for (const auto id : plan.loaded) {
+			loadApplied += static_cast<std::uint32_t>(ApplyWaiting(id, true));
 		}
-		wasInWorld = true;
-		lastCell = cell;
-		retryUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
-		retryUsMax = (std::max)(retryUsMax, retryUs);
+		for (const auto id : plan.others) {
+			ApplyWaiting(id, true);
+		}
+		if (inWorld && anyWaiting) {
+			retryUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
+			retryUsMax = (std::max)(retryUsMax, retryUs);
+		}
 	}
 
 	std::uint32_t TakePlayerKills()
@@ -1213,7 +1195,7 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} pendingRefs={} retryUs={}/{}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} loadApplied={} retryUs={}/{}",
 			dead.size(), pending.size(), reported, applied, pendingContainers.Next(), pendingContainers.Size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
 			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), loadApplied, retryUs, retryUsMax);
 	}

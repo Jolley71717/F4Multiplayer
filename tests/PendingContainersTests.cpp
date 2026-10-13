@@ -3,9 +3,7 @@
 // full the session's history is. The first test drives it with what a real server sends; the rest pin
 // down the promises it relies on.
 
-#include "ServerFixture.h"
-
-#include "game/PendingContainers.h"
+#include "FriendGame.h"
 
 #include <algorithm>
 #include <map>
@@ -27,91 +25,6 @@ namespace
 	constexpr std::uint32_t CHEST_D = 0x0002C004;  // somewhere Bob never goes
 	constexpr std::uint32_t ITEM = 0x0004A001;
 	constexpr std::uint32_t ITEM_2 = 0x0004A002;
-
-	// Containers as the game keeps them: taking what isn't there takes nothing, so the order of a
-	// container's changes matters (take one, then put one back, leaves one; the other way round, none).
-	struct Inventories
-	{
-		std::map<std::pair<std::uint32_t, std::uint32_t>, int> items;
-
-		void Change(const Protocol::ContainerChange& a_change)
-		{
-			auto& count = items[{ a_change.container, a_change.item }];
-			count = (std::max)(0, count + a_change.count);
-		}
-
-		[[nodiscard]] std::map<std::pair<std::uint32_t, std::uint32_t>, int> Of(std::uint32_t a_container) const
-		{
-			std::map<std::pair<std::uint32_t, std::uint32_t>, int> out;
-			for (const auto& [key, count] : items) {
-				if (key.first == a_container && count != 0) {
-					out[key] = count;
-				}
-			}
-			return out;
-		}
-	};
-
-	// A friend's game, as far as loot goes: what WorldSync does with each packet, against a world in which
-	// only some containers are loaded.
-	struct FriendGame
-	{
-		std::uint32_t            me = 0;
-		std::set<std::uint32_t>  loaded;
-		Inventories              world;
-		PendingContainers        pending;
-		std::size_t              worldStates = 0;
-
-		bool TryApply(const Change& a_change)
-		{
-			if (!loaded.contains(a_change.container)) {
-				return false;
-			}
-			world.Change(a_change);
-			return true;
-		}
-
-		void Offer(const Protocol::IndexedContainerChange& a_change)
-		{
-			pending.Offer(a_change.index, a_change.change, a_change.playerId == me, [&](const Change& a_next) { return TryApply(a_next); });
-		}
-
-		// Everything the server sent, in the order it came (Session hands each packet to WorldSync).
-		void Take(const Packets& a_packets)
-		{
-			for (const auto& packet : a_packets) {
-				if (packet.empty()) {
-					continue;
-				}
-				if (packet[0] == Type(MT::kWorldState)) {
-					const auto state = Protocol::DecodeWorldState(packet);
-					REQUIRE(state);
-					++worldStates;
-					for (const auto& change : state->containerChanges) {
-						Offer(change);
-					}
-				} else if (packet[0] == Type(MT::kContainerChanged)) {
-					const auto change = Protocol::DecodeIndexedContainerChange(packet);
-					REQUIRE(change);
-					Offer(*change);
-				}
-			}
-		}
-
-		// The game says the container's 3D loaded (WorldSync's refLoadInbox).
-		void Arrive(std::uint32_t a_container)
-		{
-			loaded.insert(a_container);
-			pending.Retry(a_container, [&](const Change& a_next) { return TryApply(a_next); });
-		}
-
-		// The player takes or puts something themselves: in their world at once, and reported.
-		void Loot(Fixture& a_f, PeerId a_peer, const Change& a_change)
-		{
-			world.Change(a_change);
-			a_f.fake->Deliver(a_peer, Protocol::Encode(a_change, MT::kReportContainer));
-		}
-	};
 
 	Protocol::Hello HelloFrom(std::string a_name, std::uint64_t a_identity)
 	{
@@ -288,6 +201,119 @@ TEST("pending loot: rejoining from an older save, only what the save lacks is ap
 	CHECK((bob.world.Of(CHEST_A) == std::map<std::pair<std::uint32_t, std::uint32_t>, int>{ { { CHEST_A, ITEM }, 1 } }));
 	CHECK((bob.world.Of(CHEST_B) == std::map<std::pair<std::uint32_t, std::uint32_t>, int>{ { { CHEST_B, ITEM }, 1 } }));
 	CHECK(bob.pending.Empty());
+}
+
+// Bob fast travels while a chest he is heading to has loot waiting. The chest loads during the loading
+// screen, where nothing can be applied and its load is not tried, and Alice loots it again meanwhile. On the
+// first frame back (the same cell: a reload looks just like this) all that waits is tried, and the chest is
+// as the session has it, without walking away and back.
+TEST("pending loot: a chest that loads during a loading screen gets its loot on the first frame back")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	const auto welcome = f.Join(2, HelloFrom("Bob", 0xB0B));
+	REQUIRE(welcome);
+	FriendGame bob;
+	bob.me = welcome->playerId;
+	bob.loaded = { CHEST_A };
+	bob.Take(Received(f, 2));
+	bob.Frame();
+	Packets toAlice = Received(f, 1);
+
+	f.fake->Deliver(1, Loot(CHEST_B, ITEM, 2));
+	f.fake->Deliver(1, Loot(CHEST_A, ITEM, 1));
+	Sync(f, 1);
+	bob.Take(Received(f, 2));
+	bob.Frame();
+	CHECK(bob.pending.Waiting(CHEST_B));
+	CHECK(!bob.pending.Waiting(CHEST_A));
+
+	bob.inWorld = false;
+	bob.Frame();
+	bob.Load(CHEST_B);
+	f.fake->Deliver(1, Loot(CHEST_B, ITEM, -1));
+	f.fake->Deliver(1, Loot(CHEST_B, ITEM_2, 1));
+	Sync(f, 1);
+	bob.Take(Received(f, 2));
+	for (int frame = 0; frame < 10; ++frame) {
+		const auto plan = bob.Frame(200ms);  // two seconds of loading screen: no sweep either
+		CHECK(plan.loaded.empty());
+		CHECK(plan.others.empty());
+	}
+	CHECK(bob.world.Of(CHEST_B).empty());
+
+	bob.inWorld = true;
+	const auto back = bob.Frame();
+	CHECK(back.full);
+	std::ranges::move(Received(f, 1), std::back_inserter(toAlice));
+	const auto session = Inventories::FromEchoes(Decoded(toAlice, MT::kContainerChanged, Protocol::DecodeIndexedContainerChange));
+	CHECK(bob.world.Of(CHEST_B) == session.Of(CHEST_B));
+	CHECK(bob.world.Of(CHEST_A) == session.Of(CHEST_A));
+	CHECK(bob.pending.Empty());
+}
+
+// A chest that loaded before its change came (the game said so then, and won't again) isn't tried every
+// frame, but the slow sweep gets to it.
+TEST("retry schedule: a chest loaded without a word from the game is applied by the slow sweep, not tried every frame")
+{
+	FriendGame bob;
+	bob.Frame();
+	bob.Offer({ .index = 0, .playerId = 9, .change = { CHEST_A, ITEM, 1 } });
+	CHECK(bob.pending.Waiting(CHEST_A));
+	CHECK(bob.Frame().others.size() == 1);  // a sweep, while it isn't loaded
+	bob.loaded.insert(CHEST_A);
+
+	const auto from = bob.now;
+	std::size_t tried = 0;
+	for (int frame = 0; frame < 1000 && bob.pending.Waiting(CHEST_A); ++frame) {
+		const auto plan = bob.Frame(50ms);
+		tried += plan.others.size() + plan.loaded.size();
+	}
+	CHECK(!bob.pending.Waiting(CHEST_A));
+	CHECK(tried == 1);
+	CHECK(bob.now - from >= 1900ms);  // the sweep's interval in FriendGame: two seconds
+	CHECK(bob.now - from <= 2100ms);
+	CHECK((bob.world.Of(CHEST_A).at({ CHEST_A, ITEM }) == 1));
+}
+
+TEST("retry schedule: everything waiting is tried on arriving in the world or in another cell; loads are tried as they come; nothing while loading")
+{
+	using namespace std::chrono;
+	RetrySchedule                    schedule{ 2s, 256 };
+	const std::vector<std::uint32_t> waiting{ CHEST_A, CHEST_B, CHEST_C };
+	int                              listed = 0;
+	const auto                       all = [&] { return ++listed, waiting; };
+	auto                             now = steady_clock::now();
+	constexpr std::uint32_t          SANCTUARY = 0x0000003C, DIAMOND_CITY = 0x0001F000;
+
+	auto plan = schedule.Frame(now, true, SANCTUARY, {}, true, all);
+	CHECK(plan.full);  // the first frame in the world
+	CHECK(plan.others == waiting);
+
+	plan = schedule.Frame(now += 16ms, true, SANCTUARY, { CHEST_B }, true, all);
+	CHECK(!plan.full);
+	CHECK((plan.loaded == std::vector<std::uint32_t>{ CHEST_B }));
+	CHECK(plan.others.empty());  // the sweep isn't due
+
+	plan = schedule.Frame(now += 16ms, true, DIAMOND_CITY, {}, true, all);
+	CHECK(plan.full);
+
+	plan = schedule.Frame(now += 16ms, false, 0, { CHEST_C }, true, all);
+	CHECK(plan.loaded.empty());
+	CHECK(plan.others.empty());
+	plan = schedule.Frame(now += 16ms, true, DIAMOND_CITY, {}, true, all);
+	CHECK(plan.full);  // out of the loading screen, though in the same cell
+
+	plan = schedule.Frame(now += 2100ms, true, DIAMOND_CITY, {}, true, all);
+	CHECK(!plan.full);
+	CHECK(plan.others == waiting);  // the sweep, a few at a time (all three, here)
+
+	// Nothing waits: nothing is tried, and the list isn't even made.
+	listed = 0;
+	plan = schedule.Frame(now += 3s, true, DIAMOND_CITY, { CHEST_A }, false, all);
+	CHECK(plan.loaded.empty());
+	CHECK(plan.others.empty());
+	CHECK(listed == 0);
 }
 
 // ---- what the client relies on --------------------------------------------------------------
