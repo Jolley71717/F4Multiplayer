@@ -1158,8 +1158,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} containerRefused={} ownSkipped={} foundDead={} ownStoryDead={} storyKillKept={} loadedActors={}",
-			dead.size(), reports.Size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped, containerRefused,
-			ownSkipped, foundDead, ownStoryDead, storyKillsKept, loadedActors.size());
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} containerRefused={} storyKillKept={}",
+			dead.size(), reports.Size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
+			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), containerRefused, storyKillsKept);
 	}
 }

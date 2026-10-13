@@ -931,7 +931,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar);
 	}
 }

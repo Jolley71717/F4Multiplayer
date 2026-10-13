@@ -1116,10 +1116,11 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={} anchorRefused={} scrapRefused={} scrapDeferred={}", reported, copies.size(), placed, moved, scrapped,
-			       worldScrapped, adopted, refused, pending.Size(), anchorRefused, scrapRefused, scrapsDeferred.size()) +
+		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
+			       worldScrapped, adopted, refused, pending.Size()) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
-				   waiting.size(), toSend.size());
+				   waiting.size(), toSend.size()) +
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={}", anchorRefused, scrapRefused, scrapsDeferred.size());
 	}
 
 	std::string DescribeBenches(RE::TESObjectREFR* a_ref)
