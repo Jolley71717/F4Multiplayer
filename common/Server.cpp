@@ -704,11 +704,6 @@ void Server::Run()
 				identities[hello->identity] = a_player.id;
 			}
 		}
-		// Their budget goes by their game's identity when the transport can't name them (UDP), once per
-		// connection: saying hello again under another identity doesn't renew it.
-		if (a_player.budgetKey.first == BudgetKind::kConnection && hello->identity != 0) {
-			bindBudget(a_player, { BudgetKind::kHello, hello->identity });
-		}
 		// (After dropping a stale connection: it doesn't take up a place.)
 		if (welcomedCount() >= options.maxPlayers) {
 			reject(a_player, "Server is full");
@@ -1445,7 +1440,15 @@ void Server::Run()
 			}
 			// Every hello brings a world state and the rest of a welcome. A game saying hello again and again
 			// (rejoining in a loop) gets that no more often than its budget has world states: the latest
-			// hello waits until it refills (the tick).
+			// hello waits until it refills (the tick). When the transport can't name them (UDP), the budget is the
+			// one kept for the identity their game says hello with, from their first hello on this connection
+			// (a new connection doesn't come with a fresh one; saying hello again under another identity
+			// doesn't renew it).
+			if (a_player.budgetKey.first == BudgetKind::kConnection) {
+				if (const auto hello = Protocol::DecodeHello(a_data); hello && hello->identity != 0) {
+					bindBudget(a_player, { BudgetKind::kHello, hello->identity });
+				}
+			}
 			if (!a_player.waitingHello.empty() || !worldStateReady(a_player)) {
 				if (a_player.waitingHello.empty()) {
 					log(std::format("server: {} says hello too often; answering when their budget refills", describe(a_player.key)));

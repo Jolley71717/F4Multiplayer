@@ -357,6 +357,32 @@ TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the
 	CHECK(IndexOf(toBob, MT::kContainerChanged) > IndexOf(toBob, MT::kWorldState));  // no echo of it before
 }
 
+// The dedicated server over UDP can't name a player by Steam ID: the identity their game says hello with
+// keeps the budget instead, so a new connection doesn't bring a fresh one.
+TEST("budgets: over UDP, a friend rejoining in a loop under one identity waits for the budget the last connection spent")
+{
+	Server::Options options;
+	options.worldStateRefill = 1000ms;
+	Fixture f{ options };
+	JoinAs(f, 1, "Alice");
+	for (PeerId peer = 2; peer <= 4; ++peer) {  // three joins: the bucket
+		REQUIRE(f.Join(peer, HelloFrom("Bob", 0xB0B)));
+		f.fake->Drop(peer);
+	}
+	f.fake->Connect(5);
+	f.fake->Deliver(5, Protocol::Encode(HelloFrom("Bob", 0xB0B)));
+	Packets toBob = During(f, 5, 300ms);
+	CHECK(Count(toBob, MT::kWelcome) == 0);
+	CHECK(f.Logged("says hello too often"));
+	REQUIRE(Await(f, 5, MT::kWorldState, toBob));
+	CHECK(Count(toBob, MT::kWelcome) == 1);
+
+	// Someone else's game, on a connection of its own, isn't held up by Bob's budget.
+	f.fake->Connect(6);
+	f.fake->Deliver(6, Protocol::Encode(HelloFrom("Carol", 0xCA201)));
+	CHECK(f.fake->WaitFor(6, Type(MT::kWorldState), 500ms));
+}
+
 TEST("budgets: hello again on the same connection with an empty budget is answered when it refills")
 {
 	Server::Options options;
