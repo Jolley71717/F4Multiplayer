@@ -136,6 +136,7 @@ namespace QuestSync
 		if (!quest || !IsSharedType(quest->data.questType) || !Official::IsOfficialForm(quest) || !name || !*name) {
 			return;
 		}
+		REX::INFO("QuestSync: player {} completed {:08X} '{}'", a_done.playerId, a_done.quest, name);
 		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));
 	}
 
