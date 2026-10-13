@@ -1856,6 +1856,61 @@ TEST("server trust: the host's own game reports any number of deaths")
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 90);
 }
 
+TEST("server trust: a joiner who leaves and comes back as themselves gets no new budget of deaths")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	const auto start = std::chrono::steady_clock::now();
+	JoinAs(f, 2, "Mallory", 0x0BAD);
+	DeliverAll(f, 2, Deaths(0x00100000, 60));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 60);
+	f.fake->Drop(2);
+	Sync(f, 1);
+
+	JoinAs(f, 3, "Mallory", 0x0BAD);  // the same game, a new connection
+	DeliverAll(f, 3, Deaths(0x00200000, 60));
+	const auto again = Count(Received(f, 1), MT::kActorDied);
+	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	CHECK(again <= static_cast<std::size_t>(2.0 * seconds) + 1);  // only what came back with time
+
+	// Saying hello again on the same connection starts her over as a new arrival, with the same budget.
+	f.fake->Deliver(3, Protocol::Encode(Fixture::MakeHello("Mallory", 0x0BAD)));
+	REQUIRE(f.fake->WaitFor(3, Type(MT::kWelcome)));
+	DeliverAll(f, 3, Deaths(0x00300000, 60));
+	const auto seconds2 = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	CHECK(again + Count(Received(f, 1), MT::kActorDied) <= static_cast<std::size_t>(2.0 * seconds2) + 1);
+}
+
+TEST("server trust: a joiner who comes back as someone new each time gets no more deaths than all joiners' budget")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	const auto  start = std::chrono::steady_clock::now();
+	std::size_t relayed = 0;
+	for (PeerId mallory = 2; mallory < 6; ++mallory) {
+		JoinAs(f, mallory, "Mallory", 0x0BAD0000 + mallory);  // a made-up identity each time
+		DeliverAll(f, mallory, Deaths(0x00100000 + 0x1000 * mallory, 60));
+		relayed += Count(Received(f, 1), MT::kActorDied);
+		f.fake->Drop(mallory);
+		Sync(f, 1);
+	}
+	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	CHECK(relayed >= 120);  // all joiners' 120 at once
+	CHECK(relayed <= 120 + static_cast<std::size_t>(4.0 * seconds) + 1);  // not 60 for every rejoin
+}
+
+TEST("server trust: two honest joiners in a big fight each get their own budget of deaths")
+{
+	Fixture f;
+	JoinAs(f, 1, "Host");
+	JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	Clear(f, { 1, 2, 3 });
+	DeliverAll(f, 2, Deaths(0x00100000, 60));
+	DeliverAll(f, 3, Deaths(0x00200000, 60));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 120);
+}
+
 TEST("server trust: a death refused, or known already, costs nothing from the budget")
 {
 	Fixture f;
@@ -2067,6 +2122,34 @@ TEST("host authority: a friend's game reporting a nuke-sized blast, or one somew
 	blasts = BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS);
 	REQUIRE(blasts.size() == 1);
 	CHECK(blasts[0] == RemoteEdits::Blast::kAway);
+}
+
+TEST("host authority: a friend's game making up grenades at your feet sets off no more than the joiners' budget, however often it rejoins")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const RemoteEdits::Spot hostAt{ 0, 0x0000003C, 3000.0f, 0.0f, 0.0f };
+	f.fake->Deliver(1, StateAt(1, hostAt.x, hostAt.y));
+	const auto  start = std::chrono::steady_clock::now();
+	std::size_t setOff = 0;
+	for (PeerId mallory = 2; mallory < 6; ++mallory) {  // she leaves and comes back, as someone new each time
+		REQUIRE(f.Join(mallory, Fixture::MakeHello("Mallory", 0x0BAD0000 + mallory)));
+		f.fake->Deliver(mallory, StateAt(1, 0.0f, 0.0f));
+		for (int i = 0; i < 20; ++i) {
+			f.fake->Deliver(mallory, Throw());
+			f.fake->Deliver(mallory, ExplosionAt(hostAt.x, hostAt.y, 0.0f));
+		}
+		for (const auto blast : BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS)) {
+			setOff += blast == RemoteEdits::Blast::kSetOff;
+		}
+		f.fake->Drop(mallory);
+		Sync(f, 1);
+	}
+	// Each comes with 16 of its own, but all joiners share 32 at once: not 16 for every rejoin.
+	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	CHECK(setOff >= 32);
+	CHECK(setOff <= 32 + static_cast<std::size_t>(8.0 * seconds) + 1);
 }
 
 namespace

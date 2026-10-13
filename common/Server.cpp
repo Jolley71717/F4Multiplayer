@@ -49,6 +49,9 @@ namespace
 	// is shared and saved with the session; a client making them up could otherwise empty the map.
 	constexpr double DEATH_BURST = 60.0;
 	constexpr double DEATHS_PER_SECOND = 2.0;
+	// All joiners together, on top of each one's own: a client that leaves and comes back as someone new
+	// starts a new budget of its own, but not of this one.
+	constexpr double JOINERS_SHARE = 2.0;
 	constexpr std::size_t MAX_COMPANIONS_PER_PLAYER = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
@@ -115,15 +118,24 @@ namespace
 		Clock::time_point          lastPing{};
 		Clock::time_point          lastLine{};
 		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
-		TokenBucket                explosions{ EXPLOSION_BURST, EXPLOSIONS_PER_SECOND };  // not for the host's own game
-		bool                       explosionsLogged = false;  // the budget ran out, and the log said so
-		TokenBucket                deaths{ DEATH_BURST, DEATHS_PER_SECOND };  // not for the host's own game
+		bool                       explosionsLogged = false;  // the explosion budget ran out, and the log said so
 		bool                       deathsLogged = false;
 		Clock::time_point          lastFace{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
 		float                      xpReports = XP_REPORT_BURST;
 		Clock::time_point          xpRefilled{};
+	};
+
+	// What a joiner may still report (the host's own game has no budget). A burst, then a few a second.
+	struct Budget
+	{
+		TokenBucket explosions;
+		TokenBucket deaths;
+
+		explicit Budget(double a_share = 1.0) :
+			explosions(a_share * EXPLOSION_BURST, a_share * EXPLOSIONS_PER_SECOND), deaths(a_share * DEATH_BURST, a_share * DEATHS_PER_SECOND)
+		{}
 	};
 
 	struct Ownership
@@ -235,6 +247,15 @@ void Server::Run()
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
 	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
+	// Player id -> their budget. Kept while they are away if they can come back as themselves (by their Hello
+	// identity), so leaving and rejoining, or saying hello again, buys nothing; and one all joiners share.
+	std::unordered_map<std::uint32_t, Budget>             budgets;
+	Budget                                                joinersBudget{ JOINERS_SHARE };
+	// Spends one from a joiner's budget and all joiners': false when either is empty.
+	const auto spend = [&](const Player& a_player, TokenBucket Budget::*a_kind, Clock::time_point a_now) {
+		auto& own = budgets.try_emplace(a_player.id).first->second;
+		return (own.*a_kind).Take(a_now) && (joinersBudget.*a_kind).Take(a_now);
+	};
 	// Where an NPC fell, by the report that killed it; a joiner gets these before the dead list so its copy
 	// lies where the killer saw it. Not saved: after a restart the list alone is what there is.
 	std::unordered_map<std::uint32_t, std::array<float, 3>> deathPositions;
@@ -687,7 +708,7 @@ void Server::Run()
 		// Within the reporter's budget (what was refused or known already above costs nothing). One over it
 		// is dropped for good: the reporter's game counts it as sent.
 		if (!a_player.local) {
-			if (!a_player.deaths.Take(Clock::now())) {
+			if (!spend(a_player, &Budget::deaths, Clock::now())) {
 				if (!std::exchange(a_player.deathsLogged, true)) {
 					log(std::format("server: '{}' reports deaths faster than any fight; dropping them until their budget refills", a_player.name));
 				}
@@ -1064,7 +1085,7 @@ void Server::Run()
 			return;
 		}
 		if (!a_player.local) {
-			if (!a_player.explosions.Take(now)) {
+			if (!spend(a_player, &Budget::explosions, now)) {
 				if (!std::exchange(a_player.explosionsLogged, true)) {
 					log(std::format("server: '{}' reports explosions faster than anyone throws; dropping them until their budget refills", a_player.name));
 				}
@@ -1368,6 +1389,10 @@ void Server::Run()
 				case TransportEvent::Type::kDisconnect:
 					if (const auto it = players.find(key); it != players.end()) {
 						leave(it->second);
+						// Only someone who can come back as themselves keeps a budget while away (the identities are capped).
+						if (std::ranges::none_of(identities, [&](const auto& a_entry) { return a_entry.second == it->second.id; })) {
+							budgets.erase(it->second.id);
+						}
 						players.erase(it);
 						// The clock belonged to someone who's gone; the next player brings their own.
 						if (welcomedCount() == 0) {
