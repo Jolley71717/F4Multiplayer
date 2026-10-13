@@ -90,6 +90,7 @@ namespace
 	}
 
 	void WakeMainThread();  // with the window, below
+	bool WindowFailed();    // likewise: the window could not be hooked, and nothing serves work handed over
 
 	// The hang watch gives a save or load the same longer limit as a loading screen.
 	void BeginSaveOrLoad(HangWatch::Phase a_what)
@@ -124,6 +125,12 @@ namespace
 			hold.RunNow(a_work);  // what an earlier message handed over goes first
 			return;
 		}
+		if (WindowFailed()) {
+			// No frame runs to take it (multiplayer is off this run): this thread does it at once, as it would after
+			// MAIN_THREAD_WAIT, rather than hold every load up for it.
+			hold.RunNow(a_work);
+			return;
+		}
 		const auto start = std::chrono::steady_clock::now();
 		const auto waited = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count(); };
 		hold.Post(std::move(a_work));
@@ -152,8 +159,8 @@ namespace
 	void RunAfterLoad(SaveLoadHold::Hold::Work a_work)
 	{
 		auto& hold = SaveLoadHold::Global();
-		if (OnMainThread()) {
-			hold.RunNow(a_work);
+		if (OnMainThread() || WindowFailed()) {
+			hold.RunNow(a_work);  // with no window hooked, nothing else would: the hold would never end
 			return;
 		}
 		hold.Post(std::move(a_work));
@@ -450,6 +457,11 @@ namespace
 			REX::INFO("Frame: game work runs on the main thread");
 		}
 		return gameWindow.load() != nullptr;
+	}
+
+	bool WindowFailed()
+	{
+		return windowFailed;
 	}
 
 	// The F4SE permanent task (see NewFrame for when it runs).
