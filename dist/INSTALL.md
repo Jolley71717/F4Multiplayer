@@ -150,7 +150,10 @@ file is kept as `.corrupt`.
 
 Coming from 0.8.5 or earlier: the old `F4Multiplayer.session` becomes the session of the first
 character that hosts with a save played in that session. A character with no such save starts a
-fresh session and leaves the old file where it is. Going back to an older version starts that
+fresh session and leaves the old file where it is. To give the old session to a character by hand,
+quit the game and rename `F4Multiplayer.session` to the file name the game's log names for that
+character (`F4Multiplayer.log`: "this character starts its own in F4Multiplayer.<character>.session"),
+replacing that character's file if it has one. Going back to an older version starts that
 version's session afresh.
 
 ## Dedicated server (optional)
@@ -184,3 +187,8 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
   opening. Your game keeps trying and joins once the host is in.
 - "you loaded another character": the session belongs to the character you played it with. Load
   that character's save (and join again, if you're a friend).
+- "the host is in another session now": your game lost its connection and, trying again, found the
+  host playing another character (or a fresh session). It leaves rather than mix that session into
+  your save; join again from the menu if you want to play in it.
+- "this game hosts once you're in the world": `bHost` is on, so this game can't join friends. Pick
+  Stop hosting in the menu (or set `bHost = false`) first.
