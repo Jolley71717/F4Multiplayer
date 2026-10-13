@@ -10,6 +10,7 @@
 #include "game/Menu.h"
 #include "HangWatch.h"
 #include "MainThread.h"
+#include "NestedPump.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
 #include "net/Session.h"
@@ -21,6 +22,12 @@ __declspec(dllimport) std::intptr_t __stdcall SetWindowLongPtrW(void* a_window, 
 __declspec(dllimport) std::intptr_t __stdcall CallWindowProcW(std::intptr_t a_proc, void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) int __stdcall PostMessageW(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) unsigned int __stdcall RegisterWindowMessageW(const wchar_t* a_name);
+}
+
+// kernel32, for the stack check (see NestedPump).
+extern "C" {
+__declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTrace(unsigned long a_skip, unsigned long a_count, void** a_frames, unsigned long* a_hash);
+__declspec(dllimport) void* __stdcall RtlLookupFunctionEntry(std::uint64_t a_address, std::uint64_t* a_imageBase, void* a_history);
 }
 
 namespace
@@ -38,6 +45,8 @@ namespace
 		std::uint32_t             mainDrawing = 0, otherDrawing = 0;   // the renderer was inside a frame
 		std::uint32_t             lastDrawn = 0;
 		std::set<std::thread::id> others;
+		std::uint32_t             deferred = 0;  // frame messages put off inside the engine's pump (see NestedPump)
+		NestedPump::Check         pumpCheck = NestedPump::Check::kUnknown;
 	};
 	std::mutex   frameThreadsLock;
 	FrameThreads frameThreads;
@@ -304,6 +313,7 @@ namespace
 	unsigned int             frameMessage = 0;
 	bool                     windowFailed = false;
 	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
+	NestedPump::Check        pumpCheck = NestedPump::Check::kUnknown;  // main thread only
 	std::atomic<bool>        framePosted{ false };
 	std::chrono::steady_clock::time_point postedAt{};
 
@@ -316,18 +326,66 @@ namespace
 		}
 	}
 
+	// The code of the function at a_address, from the game's unwind table (none when it has no entry, or a_address is
+	// not where its entry begins).
+	NestedPump::Range FunctionAt(std::uintptr_t a_address)
+	{
+		struct RuntimeFunction
+		{
+			std::uint32_t begin;
+			std::uint32_t end;
+			std::uint32_t unwind;
+		};
+		std::uint64_t base = 0;
+		const auto    entry = static_cast<const RuntimeFunction*>(RtlLookupFunctionEntry(a_address, &base, nullptr));
+		if (!entry || base + entry->begin != a_address) {
+			return {};
+		}
+		return { base + entry->begin, base + entry->end };
+	}
+
+	// Where on the main thread's stack our frame message is being dispatched from (see NestedPump), by Address Library
+	// ID (1.11.240): PositionPlayerJob::Run (+C3B030), the engine's pump while it moves the player; the game's message
+	// loop, Main::Run_WindowsMessageLoop (+C336B0), and Main::Run (+C314F0), which calls it.
+	NestedPump::Seen WhereDispatched()
+	{
+		static const NestedPump::Range pump = FunctionAt(REL::ID(2228998).address());
+		static const std::array<NestedPump::Range, 2> outer{ FunctionAt(REL::ID(2228915).address()), FunctionAt(REL::ID(4484191).address()) };
+		void*      frames[48];
+		const auto count = RtlCaptureStackBackTrace(1, static_cast<unsigned long>(std::size(frames)), frames, nullptr);
+		std::array<std::uintptr_t, std::size(frames)> addresses{};
+		for (unsigned short i = 0; i < count; ++i) {
+			addresses[i] = reinterpret_cast<std::uintptr_t>(frames[i]);
+		}
+		const auto seen = NestedPump::Classify(std::span{ addresses.data(), count }, pump, outer);
+		if (NestedPump::Decide(pumpCheck, seen)) {
+			if (pumpCheck == NestedPump::Check::kOk) {
+				REX::INFO("Frame: the stack check finds the game's message loop; frame messages inside the engine's own pump are put off");
+			} else {
+				REX::WARN("Frame: the stack check finds neither the game's message loop nor the engine's pump ({} frames); no frame is put off", count);
+			}
+			std::scoped_lock l{ frameThreadsLock };
+			frameThreads.pumpCheck = pumpCheck;
+		}
+		return seen;
+	}
+
 	std::intptr_t __stdcall WndProc(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam)
 	{
 		if (a_msg == frameMessage && frameMessage != 0) {
 			const bool wake = a_wparam == WAKE;
 			if (!wake) {
-				framePosted = false;
+				framePosted = false;  // the next drawn frame posts another
 			}
-			if (!inFrame) {
+			const auto action = NestedPump::Choose(wake, inFrame, wake || inFrame ? NestedPump::Seen::kNeither : WhereDispatched());
+			if (action == NestedPump::Action::kDefer) {
+				std::scoped_lock l{ frameThreadsLock };
+				++frameThreads.deferred;
+			} else if (action != NestedPump::Action::kSkip) {
 				inFrame = true;
 				// An exception must never escape into the game's message loop.
 				try {
-					if (wake) {
+					if (action == NestedPump::Action::kRunPosted) {
 						SaveLoadHold::Global().RunPosted();
 					} else {
 						RunFrame(true);
@@ -453,8 +511,8 @@ namespace FrameStats
 	std::string TakeThreads()
 	{
 		std::scoped_lock l{ frameThreadsLock };
-		const auto t = std::exchange(frameThreads, FrameThreads{ .lastDrawn = frameThreads.lastDrawn });
-		return std::format("main={} (repeats={} drawing={}) other={} (repeats={} drawing={} threads={})", t.mainCalls, t.mainRepeats, t.mainDrawing, t.otherCalls,
-			t.otherRepeats, t.otherDrawing, t.others.size());
+		const auto t = std::exchange(frameThreads, FrameThreads{ .lastDrawn = frameThreads.lastDrawn, .pumpCheck = frameThreads.pumpCheck });
+		return std::format("main={} (repeats={} drawing={}) other={} (repeats={} drawing={} threads={}) deferred={} pumpCheck={}", t.mainCalls, t.mainRepeats, t.mainDrawing, t.otherCalls,
+			t.otherRepeats, t.otherDrawing, t.others.size(), t.deferred, NestedPump::Name(t.pumpCheck));
 	}
 }
