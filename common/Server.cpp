@@ -498,10 +498,21 @@ void Server::Run()
 			reject(a_player, "Wrong password");
 			return;
 		}
+		// The host's own game: the game this server runs in, by its identity, connecting from this machine.
+		// The identity alone isn't enough (it isn't a secret), and nor is the address: a bot or a tunnel to
+		// another PC connects from this machine too.
+		const bool local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
+		                   transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
 		if (welcomedCount() == 0) {
-			// A different mod list makes the stored form IDs meaningless: start a fresh session. (The first
-			// arrival decides; a dedicated server has no local player, and over Steam the host's own game
-			// is always first.)
+			// A server in a host's game waits for that game: the first arrival decides the session's load
+			// order (and a different one wipes the saved session), so a friend whose Join lands while the
+			// host is still at the main menu or loading would decide it for the host.
+			if (options.hostIdentity != 0 && !local) {
+				reject(a_player, Protocol::REJECT_HOST_NOT_READY);
+				return;
+			}
+			// A different mod list makes the stored form IDs meaningless: start a fresh session. (On a
+			// dedicated server, which has no local player, the first arrival decides.)
 			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
 				log("server: load order changed; starting a new session");
 				resetWorld();
@@ -546,11 +557,7 @@ void Server::Run()
 		a_player.name = SanitizeName(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
-		// The host's own game: the game this server runs in, by its identity, connecting from this machine.
-		// The identity alone isn't enough (it isn't a secret), and nor is the address: a bot or a tunnel to
-		// another PC connects from this machine too.
-		a_player.local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
-		                 transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		a_player.local = local;
 		a_player.xpRefilled = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);

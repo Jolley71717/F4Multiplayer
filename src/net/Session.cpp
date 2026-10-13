@@ -60,6 +60,8 @@ namespace Session
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		std::string       lastRejectReason;
+		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
+		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
@@ -219,9 +221,14 @@ namespace Session
 				break;
 			case MessageType::kReject:
 				if (const auto msg = Protocol::DecodeReject(a_data)) {
+					// The host's game will be in soon (it is loading, or at the main menu): try again in a few
+					// seconds, and say so once rather than at every try.
+					const bool hostNotReady = msg->reason == Protocol::REJECT_HOST_NOT_READY;
+					if (!hostNotReady || lastRejectReason != msg->reason) {
+						Notify("Multiplayer: " + msg->reason);
+					}
 					lastRejectReason = msg->reason;
-					nextConnectAttempt = Clock::now() + REJECTED_RETRY_DELAY;
-					Notify("Multiplayer: " + msg->reason);
+					nextConnectAttempt = Clock::now() + (hostNotReady ? RECONNECT_DELAY : REJECTED_RETRY_DELAY);
 				}
 				break;
 			case MessageType::kPlayerJoined:
@@ -525,7 +532,8 @@ namespace Session
 			if (!target) {
 				return;
 			}
-			if (hostedServer) {
+			// (Also while bHost waits for our world: the hosting would take us back from the friend's game.)
+			if (hostedServer || Config::Get().host) {
 				Notify("Multiplayer: you're hosting. Set bHost = false to join friends.");
 				return;
 			}
@@ -553,20 +561,19 @@ namespace Session
 		}
 		REX::INFO("Session: transport '{}' -> {}", settings.transport, steamMode ? "steam" : "udp");
 
-		serverAddress = settings.host ? std::format("127.0.0.1:{}", settings.port) : settings.serverAddress;
+		// With bHost, hosting starts once our own world is there (see Frame), and StartHosting points us at it.
+		serverAddress = settings.host ? std::string{} : settings.serverAddress;
 		client = &ConnectionFor(serverAddress);
-
-		if (settings.host) {
-			if (const auto error = StartHosting(); !error.empty()) {
-				Notify("Multiplayer: " + error);
-			}
-		}
 	}
 
 	std::string StartHosting()
 	{
 		if (hostedServer) {
 			return {};
+		}
+		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
+		if (Story::InOpening()) {
+			return "you can host once you're out of Vault 111";
 		}
 		const auto& settings = Config::Get();
 		hostedServer = std::make_unique<Server>([](std::string_view a_line) {
@@ -598,9 +605,8 @@ namespace Session
 		if (steamMode) {
 			Steam::StartHosting(settings.maxPlayers);
 		}
-		// Started from the menu mid-game: leave whatever we were joining and connect to our own server
-		// (at startup this is where Initialize already pointed us, so nothing changes). Steam's
-		// StartHosting has left any lobby we were in.
+		// Connect to our own server, leaving whatever we were joining (started from the menu mid-game).
+		// Steam's StartHosting has left any lobby we were in.
 		const auto own = std::format("127.0.0.1:{}", settings.port);
 		if (serverAddress != own) {
 			SwitchServer(own);
@@ -687,6 +693,19 @@ namespace Session
 				HandlePacket(event.data);
 				break;
 			}
+		}
+
+		// bHost: the server starts once our world is there and out of the opening, never at the main menu.
+		// Whoever arrives first decides the session (its load order; a different one wipes the saved
+		// session), so a friend's Join must not find a server before our own game can be first. Steam's
+		// lobby and rich presence come with it, so friends can't even try until then.
+		if (Config::Get().host && !hostedServer && now >= nextHostAttempt && InGame() && !Story::InOpening()) {
+			nextHostAttempt = now + RECONNECT_DELAY;
+			auto error = StartHosting();
+			if (!error.empty() && error != lastHostError) {
+				Notify("Multiplayer: " + error);
+			}
+			lastHostError = std::move(error);
 		}
 
 		if (!serverAddress.empty() && client->GetStatus() == ClientConnection::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {

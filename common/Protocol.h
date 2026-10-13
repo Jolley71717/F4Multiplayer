@@ -26,6 +26,11 @@ namespace Protocol
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
 	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
 
+	// A Reject's reason when a hosted server's own game hasn't joined yet: the host's world decides the
+	// session, so nobody else may arrive first. The client knows this one and tries again soon, not in a
+	// minute. (Only the text: older clients show it and retry as for any refusal.)
+	inline constexpr std::string_view REJECT_HOST_NOT_READY = "The host isn't in the game yet";
+
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 

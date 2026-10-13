@@ -4,7 +4,8 @@
 // All functions run on the game's main thread.
 namespace Session
 {
-	// Called once game data is loaded: computes the load-order hash and starts hosting if enabled.
+	// Called once game data is loaded: computes the load-order hash. With bHost, Frame starts hosting once
+	// the player is in the world and out of the opening.
 	void Initialize();
 
 	// Per-frame update: connection management, sending our state, applying remote states.
@@ -20,8 +21,8 @@ namespace Session
 	[[nodiscard]] std::string Describe();
 
 	// The in-game menu: hosting and leaving while playing, and what to show.
-	// Starts the session server in this game (as bHost does at startup) and connects to it. Returns
-	// what went wrong, or "" when it's up.
+	// Starts the session server in this game (as bHost does once in the world) and connects to it. Returns
+	// what went wrong, or "" when it's up. Not in the opening.
 	[[nodiscard]] std::string StartHosting();
 	// Stops the hosted server; everyone in it is disconnected.
 	void StopHosting();
