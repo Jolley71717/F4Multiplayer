@@ -70,12 +70,8 @@ namespace Party
 		int                                                 slowAnswers = 0;
 		Clock::time_point                                   nextPingWarning{};
 
-		// The frame our player wears (its base, and itself when every game has it), from the furniture occupied when
-		// the armor went on (see SampleStatus). Forgotten on a load: the loaded save may have our player in another
-		// frame, and the old one was sent for as long as the armor stayed on.
-		std::uint32_t frameInUse = 0;
-		std::uint32_t frameRefInUse = 0;
-		ArmorFrames::UnknownFrame unknownFrame;  // a wear whose frame friends are never told (the log says so once)
+		// The frame our player wears, as friends are told it (see ArmorFrames::OwnWear). Forgotten on a load.
+		ArmorFrames::OwnWear ownWear;
 
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
@@ -199,33 +195,21 @@ namespace Party
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = Equipment::InPowerArmor(player);
-			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on:
-			// the occupied furniture changes with every terminal or chair used in the armor (a terminal was once
-			// sent as the frame, and the others placed a terminal copy and sat the stand-in at it).
-			// The reference goes too when every game has it (a frame placed in the world by a plugin, such as the
-			// museum's suit in Concord): the others hide their own copy of it while we wear ours, else they saw
-			// two suits. One made in this game (0xFF......) is another reference, or none, in theirs.
-			std::uint32_t occupied = 0;  // the furniture's base, when the frame is not known yet
-			if (status.powerArmor) {
-				if (frameInUse == 0) {
+			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on (see
+			// ArmorFrames::OwnWear).
+			const auto wear = ownWear.Update(
+				status.powerArmor,
+				[&] {
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-					const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
-					const auto base = frame ? frame->GetObjectReference() : nullptr;
-					if (Equipment::IsPowerArmorFrame(base)) {
-						frameInUse = base->GetFormID();
-						frameRefInUse = Protocol::IsShareableRef(frame->GetFormID()) ? frame->GetFormID() : 0;
-					} else {
-						occupied = base ? base->GetFormID() : 0;
-					}
-				}
-				status.powerArmorFrame = frameInUse;
-				status.powerArmorFrameRef = frameRefInUse;
-			} else {
-				frameInUse = 0;
-				frameRefInUse = 0;
-			}
-			if (unknownFrame.Update(status.powerArmor, status.powerArmorFrame, Clock::now())) {
-				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", occupied);
+					const auto seat = middle ? middle->occupiedFurniture.get() : nullptr;
+					const auto base = seat ? seat->GetObjectReference() : nullptr;
+					return ArmorFrames::Seat{ .ref = seat ? seat->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+				},
+				Clock::now());
+			status.powerArmorFrame = wear.frame;
+			status.powerArmorFrameRef = wear.frameRef;
+			if (wear.unknown) {
+				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", wear.seat);
 			}
 			return status;
 		}
@@ -710,8 +694,7 @@ namespace Party
 		unclaimedXp = 0.0f;
 		heldXp = 0.0f;
 		killWindowEnd = {};
-		frameInUse = 0;
-		frameRefInUse = 0;
+		ownWear.Forget();
 	}
 
 	void Reset()
