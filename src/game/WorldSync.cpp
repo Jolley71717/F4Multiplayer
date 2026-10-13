@@ -89,10 +89,8 @@ namespace WorldSync
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
-		// Activators (buttons, switches, levers) pressed in another player's game are pressed here
-		// too. A press we replayed is remembered briefly so our own watcher doesn't report it back.
-		constexpr auto                                         REPLAY_ECHO = 2s;
-		std::unordered_map<std::uint32_t, Clock::time_point> replayed;
+		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
+		// their stand-in (so our own watcher, which takes only the player's presses, never reports it back).
 		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
 		std::uint32_t                                          refStatesRefused = 0, corpsesMoved = 0;
 		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
@@ -982,12 +980,11 @@ namespace WorldSync
 
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId)
 	{
-		if (!InWorld() || !IsShareableRef(a_refId)) {
+		if (!InWorld() || Story::InOpening() || !IsShareableRef(a_refId)) {
 			return;
 		}
 		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!ref || !player || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell()) {
+		if (!ref || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell()) {
 			return;  // not where we are: whatever it drives reaches us as a door state, or not at all
 		}
 		const auto base = ref->GetObjectReference();
@@ -1001,8 +998,16 @@ namespace WorldSync
 			++activationsRefused;
 			return;
 		}
-		replayed[a_refId] = Clock::now();
-		ref->ActivateRef(player, nullptr, 0, false, false, false);
+		// The friend's stand-in presses it, not our player: an activator's script acts on whoever pressed it
+		// (a sink's drink gave our player rads, a teleport marker moved them). Without a stand-in here (not
+		// spawned yet, or gone) it isn't pressed: the door or lock it drives is on the friend's watch and
+		// arrives as its state.
+		const auto standIn = RE::TESForm::GetFormByID<RE::Actor>(RemotePlayers::ActorIdOf(a_playerId));
+		if (!standIn || standIn->IsDeleted() || !standIn->Get3D() || !standIn->GetParentCell()) {
+			++activationsRefused;
+			return;
+		}
+		ref->ActivateRef(standIn, nullptr, 0, false, false, false);
 		++activationsApplied;
 	}
 
@@ -1165,7 +1170,7 @@ namespace WorldSync
 			NpcSync::OnActivated(activation.ref);
 			// A button, switch or lever: the others press it too, so what it drives happens in their games.
 			const auto base = RE::TESForm::GetFormByID(activation.base);
-			if (base && base->Is(RE::ENUM_FORM_ID::kACTI) && !replayed.erase(activation.ref)) {
+			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
 				outgoing.push_back(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
 				++activationsSent;
 			}
@@ -1177,7 +1182,6 @@ namespace WorldSync
 		}
 
 		const auto now = Clock::now();
-		std::erase_if(replayed, [&](const auto& a_entry) { return now - a_entry.second > REPLAY_ECHO; });
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
@@ -1227,7 +1231,6 @@ namespace WorldSync
 		watched.clear();
 		pendingRefStates.clear();
 		unmatchedPickups.clear();
-		replayed.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
 		checkAllLoaded = true;
