@@ -333,7 +333,7 @@ namespace
 	std::atomic<void*>       gameWindow{ nullptr };                   // also read by a load's thread (WakeMainThread)
 	std::intptr_t            originalWndProc = 0;
 	unsigned int             frameMessage = 0;
-	bool                     windowFailed = false;
+	std::atomic<bool>        windowFailed{ false };                 // read by net status (MainThread::HookState)
 	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
 	NestedPump::Check        pumpCheck = NestedPump::Check::kUnknown;  // main thread only
 	std::atomic<bool>        framePosted{ false };
@@ -444,7 +444,7 @@ namespace
 			gameWindow = window;
 		}
 		if (windowFailed) {
-			REX::ERROR("Frame: couldn't hook the game window; game work runs on the task threads");
+			REX::ERROR("Frame: couldn't hook the game window; multiplayer is off this run");
 		} else {
 			REX::INFO("Frame: game work runs on the main thread");
 		}
@@ -459,7 +459,13 @@ namespace
 			return;
 		}
 		if (!HookWindow()) {
-			RunFrame(false);  // no window yet (startup), or it couldn't be hooked
+			// The window could not be hooked: nothing runs. Game work on this job thread raced the engine (reading the
+			// actor lists crashed leaving Red Rocket), and what a save or load hands over would take the stand-ins out
+			// beside a frame. The log said so once; net status says so too.
+			if (windowFailed) {
+				return;
+			}
+			RunFrame(false);  // no window yet: startup, which comes before the game's data is ready
 			return;
 		}
 		if (!framePosted.exchange(true) || now - postedAt > REPOST_AFTER) {
@@ -477,6 +483,11 @@ namespace MainThread
 	{
 		std::scoped_lock l{ postedLock };
 		posted.push_back(std::move(a_fn));
+	}
+
+	const char* HookState()
+	{
+		return gameWindow.load() ? "hooked" : (windowFailed ? "failed" : "pending");
 	}
 }
 
