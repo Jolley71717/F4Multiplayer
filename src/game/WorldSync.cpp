@@ -577,17 +577,24 @@ namespace WorldSync
 			if (!data) {
 				return;
 			}
+			std::size_t unknown = 0;
 			for (const auto faction : data->GetFormArray<RE::TESFaction>()) {
 				const auto chest = faction ? faction->vendorData.merchantContainer : nullptr;
 				// Like a linked reference (see LinkedTarget), the field may still hold the form ID the engine
 				// read from the file rather than the reference.
 				const auto raw = reinterpret_cast<std::uintptr_t>(chest);
 				const auto id = raw <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(raw) : chest->GetFormID();
-				if (IsShareableRef(id)) {
-					vendorChests.insert(id);
+				if (!IsShareableRef(id)) {
+					continue;
 				}
+				// No reference by that ID: a reference the engine put below 4 GB would look like this, and
+				// its chest would be missing from the set (its trades are still kept by the barter menu).
+				if (raw <= 0xFFFFFFFFull && !RE::TESForm::GetFormByID<RE::TESObjectREFR>(id)) {
+					++unknown;
+				}
+				vendorChests.insert(id);
 			}
-			REX::INFO("WorldSync: {} vendor chests", vendorChests.size());
+			REX::INFO("WorldSync: {} vendor chests ({} not found as references)", vendorChests.size(), unknown);
 		}
 
 		// Whether a container holds the item as part of a quest (it's in a quest alias).
