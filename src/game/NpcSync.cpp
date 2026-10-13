@@ -6,6 +6,7 @@
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
+#include "game/WorldSync.h"
 
 namespace NpcSync
 {
@@ -271,9 +272,11 @@ namespace NpcSync
 					if (const auto handed = handedOffAt.find(id); owner == 0 && handed != handedOffAt.end() && a_now - handed->second < HANDOFF_HOLD) {
 						continue;
 					}
-					// Companions follow their own player, so that player's game must run them.
+					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
+					// and nothing at all until its dead list is in after a load: the server would take a copy alive only in
+					// an older save for one that came back (WorldSync::MayClaim).
 					const bool companion = IsOurCompanion(actor);
-					if (owner == 0 || companion) {
+					if ((owner == 0 || companion) && WorldSync::MayClaim(id)) {
 						claims.push_back({ id, companion ? Protocol::ClaimReason::kCompanion : Protocol::ClaimReason::kUnowned });
 						claimedAt[id] = a_now;
 					}

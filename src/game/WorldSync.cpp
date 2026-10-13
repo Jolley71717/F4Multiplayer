@@ -1,6 +1,7 @@
 #include "game/WorldSync.h"
 
 #include "game/FoundDead.h"
+#include "game/SessionDeaths.h"
 #include "game/NpcSync.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
@@ -16,9 +17,9 @@ namespace WorldSync
 
 		constexpr auto APPLY_INTERVAL = 250ms;
 
-		// Every actor known to be dead this session, and those we still have to kill locally
-		// (they weren't loaded when we heard about them).
-		std::unordered_set<std::uint32_t> dead;
+		// Every actor known to be dead this session (and whether our game may offer to run an NPC: SessionDeaths), and
+		// those we still have to kill locally (they weren't loaded when we heard about them).
+		SessionDeaths::Ledger deaths;
 		struct PendingDeath
 		{
 			std::uint32_t killer = 0;  // player (0 = none)
@@ -249,12 +250,20 @@ namespace WorldSync
 
 		void TrackLoads(const std::vector<std::pair<std::uint32_t, bool>>& a_events)
 		{
+			const auto now = Clock::now();
 			for (const auto& [id, isLoaded] : a_events) {
 				if (!isLoaded) {
 					loadedActors.erase(id);
 					continue;
 				}
 				toCheck.insert(id);
+				// Killed here a while ago and loaded alive: its cell reset (days away, or a long sleep). It is no longer
+				// dead for us, so our game offers to run it again; the host's game doing so brings it back for everyone.
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				const bool alive = actor && !actor->IsDeleted() && actor->Get3D() && !actor->IsDead(false);
+				if (deaths.OnLoaded(id, alive, pending.contains(id) || pendingHealth.contains(id), now)) {
+					REX::INFO("WorldSync: {:08X} is alive again here (its cell reset); no longer dead for us", id);
+				}
 				FoundDead::TrackLoad(loadedActors, id, [](std::uint32_t a_id) {
 					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
 					return actor && actor->Get3D();
@@ -293,14 +302,14 @@ namespace WorldSync
 			}
 			for (const auto id : toCheck) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.contains(id)) {
+				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || deaths.Contains(id)) {
 					continue;
 				}
 				if (!FoundDead::Shared(Story::Shared(), DescribeDead(actor))) {
 					++ownStoryDead;
 					continue;
 				}
-				dead.insert(id);
+				deaths.Add(id, Clock::now());
 				// Said to be found dead, so the server takes it over the NPC's runner (see Server.cpp, handleDeath).
 				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
 				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
@@ -767,6 +776,7 @@ namespace WorldSync
 	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
 	{
 		friendlyFire = a_friendlyFire;
+		deaths.Expect(Clock::now());  // the session's world state follows the welcome
 		if (a_sessionId != session) {
 			// A different session: none of its changes are in our world yet.
 			session = a_sessionId;
@@ -784,7 +794,7 @@ namespace WorldSync
 
 	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer, float a_x, float a_y, float a_z)
 	{
-		if (!IsShareableRef(a_refId) || !dead.insert(a_refId).second) {
+		if (!IsShareableRef(a_refId) || !deaths.Add(a_refId, Clock::now())) {
 			return;
 		}
 		const RE::NiPoint3 at{ a_x, a_y, a_z };
@@ -824,6 +834,7 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			ApplyRemoteDeath(id);
 		}
+		deaths.Settle();
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
 		// the container that isn't in our inventory any more (or duplicate what we put in).
@@ -848,7 +859,7 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		if (!IsShareableRef(a_refId) || dead.contains(a_refId)) {
+		if (!IsShareableRef(a_refId) || deaths.Contains(a_refId)) {
 			return;
 		}
 		if (TrySetHealth(a_refId, a_health)) {
@@ -859,6 +870,11 @@ namespace WorldSync
 			}
 			pendingHealth[a_refId] = a_health;
 		}
+	}
+
+	bool MayClaim(std::uint32_t a_refId)
+	{
+		return deaths.MayClaim(a_refId, Clock::now());
 	}
 
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners)
@@ -941,7 +957,7 @@ namespace WorldSync
 
 		// Deaths we caused because someone else reported them are already known and don't go back out.
 		for (const auto id : newDeaths) {
-			if (dead.insert(id).second) {
+			if (deaths.Add(id, Clock::now())) {
 				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
@@ -957,7 +973,7 @@ namespace WorldSync
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
 			for (const auto id : hitLastFrame) {
 				const auto actor = LoadedActor(id);
-				if (actor && !actor->IsDead(false) && !dead.contains(id)) {
+				if (actor && !actor->IsDead(false) && !deaths.Contains(id)) {
 					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 					const float maximum = values.GetPermanentActorValue(*info);
 					if (maximum > 0.0f) {
@@ -1005,7 +1021,7 @@ namespace WorldSync
 			it = TryKill(it->first, it->second.killer, it->second.at) ? pending.erase(it) : std::next(it);
 		}
 		for (auto it = pendingHealth.begin(); it != pendingHealth.end();) {
-			it = (dead.contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
+			it = (deaths.Contains(it->first) || TrySetHealth(it->first, it->second)) ? pendingHealth.erase(it) : std::next(it);
 		}
 		RetryPendingContainers();
 		std::erase_if(pendingPickups, [](std::uint32_t a_id) { return TryApplyPickup(a_id); });
@@ -1024,7 +1040,7 @@ namespace WorldSync
 
 	void Reset()
 	{
-		dead.clear();
+		deaths.Reset(Clock::now());
 		pending.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
@@ -1106,8 +1122,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped, foundDead, ownStoryDead, loadedActors.size());
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} revived={} settled={}",
+			deaths.Size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
+			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), deaths.Revived(), deaths.Settled(Clock::now()));
 	}
 }

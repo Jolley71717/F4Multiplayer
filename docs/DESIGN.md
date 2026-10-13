@@ -227,6 +227,22 @@ number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and t
 which ID each identity had during its run (not while the old connection is still open; the client
 also remembers every ID it had in the session).
 
+Until the session's world state has come after a welcome or a load (or 15 s have passed), the client
+offers to run no NPC, and never one the session has dead (`WorldSync::MayClaim`, `SessionDeaths`): its game
+can have it alive from a save older than the kill.
+
+### Deaths that end (cell resets)
+
+A killed NPC is dead in the session, but the game brings a cleared cell's NPCs back after days away. A
+game that killed an NPC here at least 10 s ago and then loads it alive takes that as a respawn and forgets
+it was dead (`revived=` in `net status`), so it may offer to run it again. Only the host's game is believed
+about it: its kUnowned claim on a dead NPC, at least `Options::aliveAgainGrace` (10 s) after its last hello or
+world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
+it to the host's game ("alive again in the host's world" in the server log); it can fight and hurt players
+again. A joiner's claim on a dead NPC is dropped, so a joiner whose cell reset first sees its copy run by its
+own AI until the host's game brings it back; one whose copy is still a corpse keeps the corpse (its
+`AttackerHere` drops that NPC's hits). A dedicated server has no host's game, so nothing comes back there.
+
 ### The opening (src/game/Story.cpp)
 
 From a new game until "Exit Vault 111" (Out of Time, objective 1) is done, while the player is in the

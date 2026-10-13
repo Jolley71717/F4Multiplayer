@@ -116,6 +116,7 @@ namespace
 		// NPCs this player hurt or tried to take over, and when last: a kill of one another player's game runs is
 		// believed for a while after (Options::deathGrace). At most MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
+		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 	};
 
 	struct Ownership
@@ -237,6 +238,10 @@ void Server::Run()
 	// NPCs the host's game has had alive in this session (it claimed them or reported their health) or seen
 	// die while another game ran them: its world can't be dead "from its save" about those (see handleDeath).
 	std::unordered_set<std::uint32_t>                     hostHadAlive;
+	// When each NPC died in this run (one from the saved session died long ago), and how many came back in the host's
+	// world (see handleClaims). Not saved.
+	std::unordered_map<std::uint32_t, Clock::time_point>  diedAt;
+	std::size_t                                           aliveAgain = 0;
 
 	// The saved session, if any: adopted as this run's session (the first player's load order must
 	// match, or the hello path starts a fresh one). Saved again every few seconds while it changes.
@@ -276,7 +281,7 @@ void Server::Run()
 		}
 	}
 	std::size_t lastSavedSize = 0;  // a cheap change check: how much state there was at the last save
-	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshop.Size() + (worldTime ? 1 : 0); };
+	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshop.Size() + (worldTime ? 1 : 0) + aliveAgain; };
 	const auto  saveSession = [&] {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
 			return;
@@ -312,6 +317,7 @@ void Server::Run()
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
+		diedAt.clear();
 		pickedUp.clear();
 		refStates.clear();
 		actorOwners.clear();
@@ -557,6 +563,7 @@ void Server::Run()
 		a_player.local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
 		                 transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
 		a_player.xpRefilled = Clock::now();
+		a_player.worldAskedAt = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		sendWorldState(a_player.key, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
@@ -707,6 +714,9 @@ void Server::Run()
 		if (!deadActors.insert(death->refId).second) {
 			return;
 		}
+		if (diedAt.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+			diedAt[death->refId] = Clock::now();
+		}
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
 		}
@@ -810,8 +820,29 @@ void Server::Run()
 		std::vector<Protocol::ActorOwner> changed;
 		std::vector<Protocol::ActorOwner> current;
 		for (const auto& claim : *claims) {
-			if (!Protocol::IsShareableRef(claim.refId) || deadActors.contains(claim.refId)) {
+			if (!Protocol::IsShareableRef(claim.refId)) {
 				continue;
+			}
+			// The dead can't be claimed, except by the host's game when a cell reset brought them back: the raiders of
+			// a camp cleared days ago. Its game offers one only alive and loaded (NpcSync, never one it has dead:
+			// WorldSync::MayClaim), and the host's world is the session's, so it is alive again for everyone and runs
+			// in the host's game. Only well after the host's game last asked for the world and after the death, so a
+			// copy alive only in an older save, or one the news of its death has not reached yet, is not taken for it.
+			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server.
+			if (deadActors.contains(claim.refId)) {
+				const auto died = diedAt.find(claim.refId);
+				const bool cameBack = a_player.local && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
+				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
+				if (!cameBack) {
+					continue;
+				}
+				deadActors.erase(claim.refId);
+				deathPositions.erase(claim.refId);
+				if (died != diedAt.end()) {
+					diedAt.erase(died);
+				}
+				++aliveAgain;
+				log(std::format("server: {:08X} is alive again in the host's world (its cell reset); no longer dead in the session", claim.refId));
 			}
 			if (claim.reason != Reason::kInteract) {
 				noteHostHadAlive(a_player, claim.refId);  // offered because it is loaded and alive (a hit or a press can be on a corpse)
@@ -1216,6 +1247,10 @@ void Server::Run()
 	};
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// Its world was just loaded, whether or not it is answered (see handleClaims).
+		if (a_player.welcomed) {
+			a_player.worldAskedAt = Clock::now();
+		}
 		if (!allowEvent(a_player) || !allowWorldState(a_player)) {
 			return;
 		}

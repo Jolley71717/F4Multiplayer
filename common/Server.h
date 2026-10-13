@@ -50,6 +50,12 @@ public:
 		// be lost). Tests shorten it.
 		std::chrono::milliseconds deathGrace{ 10000 };
 
+		// The host's game offering to run an NPC the session has dead brings it back for everyone (its cell reset:
+		// the raiders of a camp cleared days ago). Believed only once this long has passed since the host's game
+		// last asked for the session's world, and since the death: before that, its game may still have it alive
+		// from a save older than the kill, or not have heard of the kill yet. Tests shorten it.
+		std::chrono::milliseconds aliveAgainGrace{ 10000 };
+
 		// Plugins that may differ between players (texture, sound or UI mods): a load order that
 		// matches once these are left out is accepted.
 		std::vector<std::string> ignoredPlugins;

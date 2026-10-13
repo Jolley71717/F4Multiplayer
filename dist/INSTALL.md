@@ -152,6 +152,8 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
+  there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied.
 
 ## Problems
