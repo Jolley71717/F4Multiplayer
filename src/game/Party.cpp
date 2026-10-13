@@ -1,4 +1,5 @@
 #include "game/Party.h"
+#include "game/ArmorFrames.h"
 
 #include "game/WeaponFire.h"
 
@@ -74,6 +75,7 @@ namespace Party
 		// frame, and the old one was sent for as long as the armor stayed on.
 		std::uint32_t frameInUse = 0;
 		std::uint32_t frameRefInUse = 0;
+		ArmorFrames::UnknownFrame unknownFrame;  // a wear whose frame friends are never told (the log says so once)
 
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
@@ -203,6 +205,7 @@ namespace Party
 			// The reference goes too when every game has it (a frame placed in the world by a plugin, such as the
 			// museum's suit in Concord): the others hide their own copy of it while we wear ours, else they saw
 			// two suits. One made in this game (0xFF......) is another reference, or none, in theirs.
+			std::uint32_t occupied = 0;  // the furniture's base, when the frame is not known yet
 			if (status.powerArmor) {
 				if (frameInUse == 0) {
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
@@ -211,6 +214,8 @@ namespace Party
 					if (Equipment::IsPowerArmorFrame(base)) {
 						frameInUse = base->GetFormID();
 						frameRefInUse = Protocol::IsShareableRef(frame->GetFormID()) ? frame->GetFormID() : 0;
+					} else {
+						occupied = base ? base->GetFormID() : 0;
 					}
 				}
 				status.powerArmorFrame = frameInUse;
@@ -218,6 +223,9 @@ namespace Party
 			} else {
 				frameInUse = 0;
 				frameRefInUse = 0;
+			}
+			if (unknownFrame.Update(status.powerArmor, status.powerArmorFrame, Clock::now())) {
+				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", occupied);
 			}
 			return status;
 		}

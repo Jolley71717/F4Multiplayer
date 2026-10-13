@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 // A friend in power armor, as their stand-in shows it. A copy of their frame (the base they sent) is placed at the
 // stand-in, and the stand-in is switched into it the way the game's own SwitchToPowerArmor switches an actor in
@@ -185,6 +186,60 @@ namespace ArmorFrames
 	{
 		return a_age <= WORN_AT_MAX_AGE;
 	}
+
+	// Our own wear, as friends are told it: in power armor while the furniture we sit in is not a frame, friends hear
+	// we are in power armor with no frame to place, and their stand-in of us wears the pieces on a body of normal size,
+	// with no frame copy. Told in the log once a wear, once it has gone on this long (the armor goes on a moment before
+	// the furniture is known).
+	constexpr auto UNKNOWN_FRAME_AFTER = std::chrono::seconds(1);
+
+	class UnknownFrame
+	{
+	public:
+		// a_on: in power armor; a_frame: the frame base told to friends (0 when not known). True the one update it is
+		// to be told.
+		bool Update(bool a_on, std::uint32_t a_frame, std::chrono::steady_clock::time_point a_now)
+		{
+			if (!a_on) {
+				since.reset();
+				told = false;
+				return false;
+			}
+			if (!since) {
+				since = a_now;
+			}
+			if (a_frame != 0 || told || a_now - *since < UNKNOWN_FRAME_AFTER) {
+				return false;
+			}
+			told = true;
+			return true;
+		}
+
+	private:
+		std::optional<std::chrono::steady_clock::time_point> since;  // the wear began
+		bool                                                 told = false;
+	};
+
+	// A friend's wear, as they told it: in power armor and the frame base they named is no frame here (none was named,
+	// or one from a plugin this game lacks). Their stand-in then wears the pieces with no frame copy, and the log says
+	// nothing else of it. Told once each time what they tell changes, not with every status that repeats it.
+	class MissingFrame
+	{
+	public:
+		// a_frameHere: the frame the stand-in would go into is a frame in this game.
+		bool Update(bool a_on, std::uint32_t a_frame, bool a_frameHere)
+		{
+			const std::pair told{ a_on, a_frame };
+			if (last == told) {
+				return false;
+			}
+			last = told;
+			return a_on && !a_frameHere;
+		}
+
+	private:
+		std::optional<std::pair<bool, std::uint32_t>> last;
+	};
 
 	// A friend in a frame every game has (one placed in the world by a plugin, such as the museum's suit in
 	// Concord): our copy of that very frame still stands where it was placed while they wear theirs, two suits

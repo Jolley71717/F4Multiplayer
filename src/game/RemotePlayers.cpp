@@ -108,6 +108,7 @@ namespace RemotePlayers
 			Clock::time_point    originalCheckAt{};
 			int                  originalChoice = -1;    // the last ArmorFrames::Original logged
 			bool                 originalCounted = false;  // a hide counted for this wear (one hidden again after a load is not a new one)
+			ArmorFrames::MissingFrame frameTold;         // what they told of their frame, for the log (see SetPowerArmor)
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
@@ -1529,6 +1530,12 @@ namespace RemotePlayers
 				player.powerArmorFrameRef = a_frameRef;
 			} else if (!a_on) {
 				player.powerArmorFrameRef = 0;  // the next frame is told with its base
+			}
+			// In power armor with no frame here to place a copy of: the stand-in wears their pieces as they are, and
+			// nothing else is logged of it (no "is in power armor").
+			if (player.frameTold.Update(a_on, a_frameBase, WornFrame(player) != nullptr)) {
+				REX::WARN("RemotePlayers: '{}' is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", player.name, a_frameBase,
+					a_frameBase ? "no frame in this game" : "none");
 			}
 		}
 	}
