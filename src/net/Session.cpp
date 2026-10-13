@@ -850,7 +850,6 @@ namespace Session
 		}
 
 		RemotePlayers::Update();
-		WeaponFire::Frame();
 		Compass::Frame();
 		Puppets::Tick();
 	}

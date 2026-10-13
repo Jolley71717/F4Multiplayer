@@ -132,10 +132,14 @@ namespace WeaponFire
 			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
 			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
 				std::scoped_lock l{ actionLock };
-				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
-					npcActions.push_back({ id, Protocol::ShotAction::kThrow });
+				// Only an NPC we run: one mirrored from a friend's game threw in theirs, and their game reports what
+				// went off. Watched here too, the same explosion could be reported from both games.
+				if (ownedNpcs.contains(id)) {
+					if (npcActions.size() < MAX_PENDING_ACTIONS) {
+						npcActions.push_back({ id, Protocol::ShotAction::kThrow });
+					}
+					ArmExplosionWatch();
 				}
-				ArmExplosionWatch();
 			} else if (Protocol::IsShareableRef(id) && IsAttackEvent(npcTag)) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
@@ -492,6 +496,9 @@ namespace WeaponFire
 		};
 		std::unordered_map<std::uint32_t, ThrowWatch>  ghostWatch;  // stand-in -> watch
 		std::uint32_t                                  ghostsRemoved = 0;
+		// The references around a throwing stand-in are walked this often, not every frame: a grenade lives far longer.
+		constexpr auto                                 GHOST_CHECK_INTERVAL = 50ms;
+		Clock::time_point                              nextGhostCheck{};
 	}
 
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId)
@@ -555,6 +562,10 @@ namespace WeaponFire
 			return;
 		}
 		const auto now = Clock::now();
+		if (now < nextGhostCheck) {
+			return;
+		}
+		nextGhostCheck = now + GHOST_CHECK_INTERVAL;
 		std::erase_if(ghostWatch, [&](const auto& a_entry) { return now > a_entry.second.until; });
 		const auto tes = RE::TES::GetSingleton();
 		if (!tes) {
