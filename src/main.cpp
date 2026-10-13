@@ -248,6 +248,8 @@ namespace
 					if (gameDataReady) {
 						if (loaded) {
 							SaveGuard::AfterLoad();
+						} else {
+							SaveGuard::NewGame();
 						}
 						Session::OnGameLoaded();
 						Hud::OnGameLoaded();

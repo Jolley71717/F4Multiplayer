@@ -33,13 +33,17 @@ namespace SaveGuard
 	// Once a frame.
 	void Frame();
 
-	// Before a save: the created references that are strays (SaveStrays::Stray) are kept out of it: ones with
-	// neither a cell nor a worldspace whoever placed them, and deleted ones in no cell that are ours or whose base
-	// no longer exists. Every save is searched. Returns how many were kept out.
+	// Before a save: the created references that are strays (SaveStrays::Stray) are kept out of it (SaveStrays::Judge):
+	// ones with neither a cell nor a worldspace (the game's own only once this run placed a stand-in, frame copy or
+	// light), and deleted ones in no cell that are ours or whose base no longer exists. Every save is searched.
+	// Returns how many were kept out.
 	std::uint32_t BeforeSave();
 
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.
 	std::uint32_t AfterLoad();
+
+	// A new game: what was placed before it is gone, and its ids name the new game's references (as after a load).
+	void NewGame();
 
 	// The strays there are now, one after another, with what a save and a load would do with each (changes nothing).
 	std::string ListStrays();

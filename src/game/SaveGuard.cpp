@@ -39,8 +39,7 @@ namespace SaveGuard
 		std::uint32_t lastStray = 0;
 		std::uint32_t searches = 0;          // of all forms, for strays
 
-		SaveStrays::Placed    placed;
-		SaveStrays::Forgotten forgotten;
+		SaveStrays::Book      book;  // what we placed, and what of it the game took from under us
 		constexpr auto        FORGOTTEN_CHECK_INTERVAL = std::chrono::seconds(1);
 		Clock::time_point     forgottenCheckAt{};
 
@@ -114,25 +113,15 @@ namespace SaveGuard
 			return origin;
 		}
 
-		// A created reference a sweep looked at, with what the log says of it.
-		struct Candidate
-		{
-			std::uint32_t     id = 0;
-			std::uint32_t     base = 0;
-			std::uint32_t     formType = 0;
-			std::uint32_t     formFlags = 0;
-			SaveStrays::Actor seen;
-		};
-
-		// The created references that are strays (see SaveStrays::Stray): of every kind, as the mod places frame copies
-		// and lights besides stand-ins, and the engine's save crashes on any created reference with a record and
-		// neither a cell nor a worldspace, whoever placed it.
-		std::vector<Candidate> Strays()
+		// The created references in no cell (only those can be strays: with a cell, that is what the engine saves them
+		// under), of every kind, as the mod places frame copies and lights besides stand-ins, and the engine's save
+		// crashes on any created reference with a record and neither a cell nor a worldspace, whoever placed it. Which
+		// of them are strays, and whose, is SaveStrays::Book's to say.
+		std::vector<SaveStrays::Found> Sweep()
 		{
 			++searches;
-			// Only one in no cell can be a stray (with a cell, that is what the engine saves it under). Those are picked
-			// under the forms' lock and looked at after it is let go: the anchor and whose they are read extra data, which
-			// has a lock of its own.
+			// Picked under the forms' lock and looked at after it is let go: the anchor reads extra data, which has a
+			// lock of its own.
 			std::vector<std::uint32_t> loose;
 			{
 				const auto& [map, lock] = RE::TESForm::GetAllForms();
@@ -148,34 +137,39 @@ namespace SaveGuard
 					}
 				}
 			}
-			std::vector<Candidate> strays;
+			std::vector<SaveStrays::Found> found;
 			for (const auto id : loose) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
 				if (!ref || ref->GetParentCell()) {
 					continue;
 				}
 				const auto base = ref->GetObjectReference();
-				Candidate c{
+				found.push_back({
 					.id = id,
 					.base = base ? base->GetFormID() : 0,
-					.formType = static_cast<std::uint32_t>(std::to_underlying(ref->GetFormType())),
-					.formFlags = ref->formFlags,
+					.actor = ref->Is(RE::ENUM_FORM_ID::kACHR),
 					.seen = { .inCell = false, .hasBase = base != nullptr, .deleted = ref->IsDeleted(), .anchored = Anchored(ref) },
-				};
-				if (!SaveStrays::Gone(c.seen) && !SaveStrays::Doomed(c.seen)) {
-					continue;  // held back by the game, and saved under its worldspace
-				}
-				c.seen.ours = c.seen.hasBase && (placed.Ours(id, c.base) || (ref->Is(RE::ENUM_FORM_ID::kACHR) && SaveStrays::StandIn(OriginOf(id, c.base), RemotePlayers::IsStandInBase)));
-				if (SaveStrays::Stray(c.seen)) {
-					strays.push_back(c);
-				}
+				});
 			}
-			return strays;
+			return found;
 		}
 
-		std::string Describe(const Candidate& a_c, bool a_hasChanges)
+		// Whether an actor not placed this run was placed as stand-ins are (SaveStrays::StandIn).
+		bool StandIn(std::uint32_t a_id, std::uint32_t a_base)
 		{
-			return std::format("{:08X} (form type {}, base {:08X}, flags {:08X}, deleted={} anchored={} ours={} record={})", a_c.id, a_c.formType, a_c.base, a_c.formFlags, a_c.seen.deleted,
+			return SaveStrays::StandIn(OriginOf(a_id, a_base), RemotePlayers::IsStandInBase);
+		}
+
+		// The form type and flags of the reference under the id, for the log.
+		std::pair<std::uint32_t, std::uint32_t> FormInfo(std::uint32_t a_id)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			return ref ? std::pair{ static_cast<std::uint32_t>(std::to_underlying(ref->GetFormType())), ref->formFlags } : std::pair{ 0u, 0u };
+		}
+		std::string Describe(const SaveStrays::Found& a_c, bool a_hasChanges)
+		{
+			const auto [type, flags] = FormInfo(a_c.id);
+			return std::format("{:08X} (form type {}, base {:08X}, flags {:08X}, deleted={} anchored={} ours={} record={})", a_c.id, type, a_c.base, flags, a_c.seen.deleted,
 				a_c.seen.anchored, a_c.seen.ours, a_hasChanges);
 		}
 
@@ -234,43 +228,50 @@ namespace SaveGuard
 	{
 		if (a_ref) {
 			const auto base = a_ref->GetObjectReference();
-			placed.Add(a_ref->GetFormID(), base ? base->GetFormID() : 0);
+			book.Track(a_ref->GetFormID(), base ? base->GetFormID() : 0);
 		}
 	}
 
 	void Forget(std::uint32_t a_id)
 	{
-		if (const auto base = placed.BaseOf(a_id)) {
-			forgotten.Add(a_id, *base);
-		}
+		book.Forget(a_id);
 	}
 
 	void Frame()
 	{
 		const auto now = Clock::now();
-		if (forgotten.Size() == 0 || now < forgottenCheckAt) {
+		if (book.ForgottenCount() == 0 || now < forgottenCheckAt) {
 			return;
 		}
 		forgottenCheckAt = now + FORGOTTEN_CHECK_INTERVAL;
-		forgotten.Keep(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); });
+		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); });
 	}
 
 	std::uint32_t BeforeSave()
 	{
 		std::uint32_t kept = 0;
 		// Ours the game took from under us: one that still has a cell is not a stray, and would be saved.
-		forgotten.Keep(BaseNow, [&](std::uint32_t a_id) {
-			if (ExcludeId(a_id)) {
-				++kept;
-				REX::INFO("SaveGuard: {:08X}, ours, was taken from us by the game; keeping it out of the save", a_id);
-			}
-		});
-		for (const auto& c : Strays()) {
+		const auto strays = book.BeforeSave(
+			BaseNow,
+			[&](std::uint32_t a_id) {
+				if (ExcludeId(a_id)) {
+					++kept;
+					REX::INFO("SaveGuard: {:08X}, ours, was taken from us by the game; keeping it out of the save", a_id);
+				}
+			},
+			Sweep(), StandIn);
+		for (const auto& [c, verdict] : strays) {
 			const bool doomed = SaveStrays::Doomed(c.seen);
 			const bool hasChanges = HasChanges(c.id);
 			foreignDoomed += doomed && !c.seen.ours && hasChanges;
+			if (verdict == SaveStrays::Verdict::kTell) {
+				if (hasChanges) {
+					REX::WARN("SaveGuard: {} has neither a cell nor a worldspace; not ours and no friend's stand-in was placed this run, so it is left to the game", Describe(c, hasChanges));
+				}
+				continue;
+			}
 			// One already kept out of an earlier save has no record left: nothing to do, nothing to count.
-			if (SaveStrays::Judge(c.seen, SaveStrays::When::kSave) != SaveStrays::Verdict::kExclude || !ExcludeId(c.id)) {
+			if (verdict != SaveStrays::Verdict::kExclude || !ExcludeId(c.id)) {
 				continue;
 			}
 			lastStray = c.id;
@@ -288,16 +289,15 @@ namespace SaveGuard
 
 	std::uint32_t AfterLoad()
 	{
-		forgotten.Clear();  // the ids from before the load name other forms now, or none
-		const auto                 strays = Strays();
-		std::vector<std::uint32_t> ids;
-		for (const auto& c : strays) {
-			ids.push_back(c.id);
+		// What we placed before the load is gone, and its ids name the loaded game's references now (see
+		// SaveStrays::Book::AfterLoad).
+		const auto strays = book.AfterLoad(Sweep(), StandIn);
+		for (const auto& [c, verdict] : strays) {
 			lastStray = c.id;
 			const bool doomed = SaveStrays::Doomed(c.seen);
 			const bool hasChanges = HasChanges(c.id);
 			doomedLoaded += doomed;
-			if (SaveStrays::Judge(c.seen, SaveStrays::When::kLoad) == SaveStrays::Verdict::kExclude) {
+			if (verdict == SaveStrays::Verdict::kExclude) {
 				ExcludeId(c.id);
 				REX::WARN("SaveGuard: the save brought back {}, a stand-in or one of its things; its record is dropped", Describe(c, hasChanges));
 			} else if (doomed) {
@@ -307,19 +307,23 @@ namespace SaveGuard
 				REX::INFO("SaveGuard: the save brought back {:08X} in no cell (a friend's stand-in saved by an earlier version?)", c.id);
 			}
 		}
-		placed.KeepOnly(ids);
 		straysLoaded += static_cast<std::uint32_t>(strays.size());
 		return static_cast<std::uint32_t>(strays.size());
 	}
 
+	void NewGame()
+	{
+		book.AfterLoad({}, StandIn);  // what was placed before it is gone, as after a load
+	}
+
 	std::string ListStrays()
 	{
-		const auto  strays = Strays();
-		std::string out = std::format("strays={}", strays.size());
-		for (const auto& c : strays) {
-			const auto save = SaveStrays::Judge(c.seen, SaveStrays::When::kSave);
-			const auto load = SaveStrays::Judge(c.seen, SaveStrays::When::kLoad);
-			out += std::format("; {} doomed={} at save: {} after a load: {}", Describe(c, HasChanges(c.id)), SaveStrays::Doomed(c.seen), save == SaveStrays::Verdict::kExclude ? "kept out" : "left",
+		const auto  strays = book.List(Sweep(), StandIn);
+		std::string out = std::format("strays={} session={}", strays.size(), book.Session());
+		for (const auto& [judged, load] : strays) {
+			const auto& c = judged.found;
+			const auto  save = judged.verdict;
+			out += std::format("; {} doomed={} at save: {} after a load: {}", Describe(c, HasChanges(c.id)), SaveStrays::Doomed(c.seen), save == SaveStrays::Verdict::kExclude ? "kept out" : (save == SaveStrays::Verdict::kTell ? "logged" : "left"),
 				load == SaveStrays::Verdict::kExclude ? "dropped" : (load == SaveStrays::Verdict::kTell ? "logged" : "left"));
 		}
 		return out;
@@ -348,6 +352,6 @@ namespace SaveGuard
 	std::string Describe()
 	{
 		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} lastStray={:08X} placed={} forgotten={} searches={}", excluded,
-			straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, lastStray, placed.Size(), forgotten.Size(), searches);
+			straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, lastStray, book.PlacedCount(), book.ForgottenCount(), searches);
 	}
 }

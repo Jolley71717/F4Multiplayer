@@ -113,17 +113,17 @@ TEST("save strays: an id is ours only with the base it was placed from")
 	CHECK(!placed.Ours(0xFF001235, 0x0020A578));
 }
 
-TEST("save strays: a load keeps only the stand-ins it brought back, and remembers there were some")
+TEST("save strays: a load forgets what was placed before it, and remembers there were some")
 {
 	SaveStrays::Placed placed;
 	placed.Add(0xFF000010, 0x0020A578);
 	placed.Add(0xFF000011, 0xFF000F00);
-	placed.KeepOnly({ 0xFF000011, 0xFF000099 });
-	CHECK(placed.Size() == 1);
+	placed.Erase(0xFF000010);  // its form went: the id may be handed out again
 	CHECK(!placed.Ours(0xFF000010, 0x0020A578));
 	CHECK(placed.Ours(0xFF000011, 0xFF000F00));
-	placed.KeepOnly({});
+	placed.Clear();
 	CHECK(placed.Size() == 0);
+	CHECK(!placed.Ours(0xFF000011, 0xFF000F00));
 	CHECK(placed.Any());
 }
 
@@ -145,7 +145,7 @@ TEST("save strays: with a worldspace to be saved under, the old rules stand")
 	CHECK(!SaveStrays::Gone({ .inCell = false, .hasBase = true, .deleted = false, .anchored = false }));  // doomed is not gone
 }
 
-TEST("save strays: a save keeps every stray out; right after a load only ours are dropped, the game's only logged")
+TEST("save strays: a save keeps every stray of ours out, the game's once this run had a session; right after a load only ours are dropped")
 {
 	using SaveStrays::Judge;
 	using SaveStrays::Verdict;
@@ -154,124 +154,224 @@ TEST("save strays: a save keeps every stray out; right after a load only ours ar
 	const SaveStrays::Actor doomedGames{ .inCell = false, .hasBase = true, .ours = false, .anchored = false };
 	const SaveStrays::Actor baseGone{ .inCell = false, .hasBase = false, .deleted = true };
 	const SaveStrays::Actor heldBack{ .inCell = false, .hasBase = true, .deleted = false };
-	CHECK(Judge(doomedOurs, When::kSave) == Verdict::kExclude);
-	CHECK(Judge(doomedGames, When::kSave) == Verdict::kExclude);
-	CHECK(Judge(baseGone, When::kSave) == Verdict::kExclude);
-	CHECK(Judge(heldBack, When::kSave) == Verdict::kLeave);
-	CHECK(Judge(doomedOurs, When::kLoad) == Verdict::kExclude);
-	CHECK(Judge(doomedGames, When::kLoad) == Verdict::kTell);  // its cell may be on its way as the load settles
-	CHECK(Judge(baseGone, When::kLoad) == Verdict::kTell);
-	CHECK(Judge(heldBack, When::kLoad) == Verdict::kLeave);
+	for (const bool session : { false, true }) {
+		CHECK(Judge(doomedOurs, When::kSave, session) == Verdict::kExclude);
+		CHECK(Judge(baseGone, When::kSave, session) == Verdict::kExclude);
+		CHECK(Judge(heldBack, When::kSave, session) == Verdict::kLeave);
+		CHECK(Judge(doomedOurs, When::kLoad, session) == Verdict::kExclude);
+		CHECK(Judge(doomedGames, When::kLoad, session) == Verdict::kTell);  // its cell may be on its way as the load settles
+		CHECK(Judge(baseGone, When::kLoad, session) == Verdict::kTell);
+		CHECK(Judge(heldBack, When::kLoad, session) == Verdict::kLeave);
+	}
+	CHECK(Judge(doomedGames, When::kSave, true) == Verdict::kExclude);
+	CHECK(Judge(doomedGames, When::kSave, false) == Verdict::kTell);  // a solo game's own: as it is without the mod
 }
 
 namespace
 {
-	// A game's created references as SaveGuard sees them through a session: a stand-in, its frame copy and light as
-	// RemotePlayers places and tracks them, one of the game's own, and the game handing ids out again after a load.
-	// Saved the way SaveGuard's sweep and then the engine's save go.
-	struct World
+	constexpr std::uint32_t FACE_COPY = 0xFF0009A8;   // a stand-in's base, made at runtime: no save keeps it
+	constexpr std::uint32_t FRAME = 0x0017F6E4;       // a power armor frame every game has: the game's own suits have it too
+	constexpr std::uint32_t LIGHT = 0x0001ED2D;       // the friends' Pip-Boy light
+	constexpr std::uint32_t SETTLER = 0x0002F3B8;
+
+	// A game's created references as the engine keeps them, and what its save does with them: every reference with a
+	// record of changes is written, under its cell, else its worldspace, and one with neither is the crash (10-11).
+	// SaveGuard's part is the real SaveStrays::Book, called as SaveGuard calls it, with what a sweep reads.
+	struct Engine
 	{
 		struct Ref
 		{
 			std::uint32_t base = 0;
+			bool          baseExists = true;
+			bool          actor = false;
 			bool          inCell = true;
-			bool          worldspace = true;  // the engine's anchor besides the cell
+			bool          worldspace = true;
 			bool          deleted = false;
 			bool          record = true;
+			bool          standInMark = false;  // carries the stand-ins' faction change
 		};
 		std::map<std::uint32_t, Ref> refs;
-		SaveStrays::Placed           placed;
-		SaveStrays::Forgotten        forgotten;
 		std::uint32_t                nextId = 0xFF000EB0;
+		SaveStrays::Book             book;
 
-		std::uint32_t Place(std::uint32_t a_base, bool a_ours)
+		struct Saved
+		{
+			std::vector<std::uint32_t> written;
+			std::vector<std::uint32_t> told;  // logged, left as they were
+			bool                       crashed = false;
+		};
+
+		std::uint32_t Place(Ref a_ref)
 		{
 			const auto id = nextId++;
-			refs[id] = { .base = a_base };
-			if (a_ours) {
-				placed.Add(id, a_base);
-			}
+			refs[id] = a_ref;
 			return id;
 		}
 
-		std::optional<std::uint32_t> BaseNow(std::uint32_t a_id) const
+		// RemotePlayers places one and tells SaveGuard (Track).
+		std::uint32_t PlaceOurs(std::uint32_t a_base, bool a_actor)
 		{
-			const auto it = refs.find(a_id);
-			return it != refs.end() ? std::optional{ it->second.base } : std::nullopt;
+			const auto id = Place({ .base = a_base, .actor = a_actor, .standInMark = a_actor });
+			book.Track(id, a_base);
+			return id;
 		}
 
-		SaveStrays::Actor Seen(std::uint32_t a_id) const
+		// What SaveGuard::Sweep reads: the created references in no cell.
+		std::vector<SaveStrays::Found> Sweep() const
 		{
-			const auto& ref = refs.at(a_id);
-			return { .inCell = ref.inCell, .hasBase = true, .deleted = ref.deleted, .ours = placed.Ours(a_id, ref.base), .anchored = ref.inCell || ref.worldspace };
-		}
-
-		// The sweep, then what the engine writes: every reference left with a record. Returns the ids written.
-		std::vector<std::uint32_t> Save()
-		{
-			forgotten.Keep([&](std::uint32_t a_id) { return BaseNow(a_id); }, [&](std::uint32_t a_id) { refs[a_id].record = false; });
-			for (auto& [id, ref] : refs) {
-				if (SaveStrays::Judge(Seen(id), SaveStrays::When::kSave) == SaveStrays::Verdict::kExclude) {
-					ref.record = false;
+			std::vector<SaveStrays::Found> found;
+			for (const auto& [id, ref] : refs) {
+				if (!ref.inCell) {
+					found.push_back({ .id = id, .base = ref.base, .actor = ref.actor, .seen = { .inCell = false, .hasBase = ref.baseExists, .deleted = ref.deleted, .anchored = ref.worldspace } });
 				}
 			}
-			std::vector<std::uint32_t> written;
+			return found;
+		}
+
+		auto StandIn()
+		{
+			return [this](std::uint32_t a_id, std::uint32_t) { return refs.at(a_id).standInMark; };
+		}
+
+		auto BaseNow()
+		{
+			return [this](std::uint32_t a_id) -> std::optional<std::uint32_t> {
+				const auto it = refs.find(a_id);
+				return it != refs.end() && it->second.baseExists ? std::optional{ it->second.base } : std::nullopt;
+			};
+		}
+
+		Saved Save()
+		{
+			Saved saved;
+			for (const auto& [stray, verdict] : book.BeforeSave(BaseNow(), [&](std::uint32_t a_id) { refs[a_id].record = false; }, Sweep(), StandIn())) {
+				if (verdict == SaveStrays::Verdict::kExclude) {
+					refs[stray.id].record = false;
+				} else if (verdict == SaveStrays::Verdict::kTell) {
+					saved.told.push_back(stray.id);
+				}
+			}
 			for (const auto& [id, ref] : refs) {
 				if (ref.record) {
-					written.push_back(id);
+					saved.written.push_back(id);
+					saved.crashed |= !ref.inCell && !ref.worldspace;
 				}
 			}
-			return written;
+			return saved;
 		}
 
-		// A doomed reference written is the crash.
-		bool WritesDoomed(const std::vector<std::uint32_t>& a_written) const
+		// A load: the save's references are every created one now, and the game counts on from the save's last id.
+		void Load(std::map<std::uint32_t, Ref> a_saved, std::uint32_t a_nextId)
 		{
-			return std::ranges::any_of(a_written, [&](std::uint32_t a_id) { return SaveStrays::Doomed(Seen(a_id)); });
+			refs = std::move(a_saved);
+			nextId = a_nextId;
+			for (const auto& [stray, verdict] : book.AfterLoad(Sweep(), StandIn())) {
+				if (verdict == SaveStrays::Verdict::kExclude) {
+					refs[stray.id].record = false;
+				}
+			}
 		}
 
-		static bool Has(const std::vector<std::uint32_t>& a_ids, std::uint32_t a_id) { return std::ranges::find(a_ids, a_id) != a_ids.end(); }
+		bool Written(std::uint32_t a_id) const
+		{
+			const auto it = refs.find(a_id);
+			return it != refs.end() && it->second.record;
+		}
 	};
+
+	bool Has(const std::vector<std::uint32_t>& a_ids, std::uint32_t a_id)
+	{
+		return std::ranges::find(a_ids, a_id) != a_ids.end();
+	}
 }
 
-TEST("save strays: a session's stand-in, frame copy and light never reach a save, and ids a load hands out again stay the game's")
+TEST("save strays: a session's stand-in, frame copy and light the cells were cleared under stay out of the save, which is written; the game's own keep their records")
 {
-	World world;
-	const auto standIn = world.Place(0xFF0009A8, true);   // on a face copy
-	const auto frame = world.Place(0x0017F6E4, true);     // the frame copy it got into
-	const auto light = world.Place(0x0001ED2D, true);     // its Pip-Boy light
-	const auto settler = world.Place(0x0002F3B8, false);  // one of the game's, in a cell
-	// The host follows a friend (coc), and the cells are cleared before the stand-in could be taken out: ours are
-	// left with neither a cell nor a worldspace, alive and not deleted.
+	Engine engine;
+	const auto standIn = engine.PlaceOurs(FACE_COPY, true);
+	const auto frame = engine.PlaceOurs(FRAME, false);
+	const auto light = engine.PlaceOurs(LIGHT, false);
+	const auto settler = engine.Place({ .base = SETTLER, .actor = true });
+	const auto heldBack = engine.Place({ .base = SETTLER, .actor = true, .inCell = false });          // a quest holds it, under its worldspace
+	const auto droppedSuit = engine.Place({ .base = FRAME, .inCell = false, .deleted = true });       // the game's, deleted: its record keeps its id taken
+	// The host follows a friend (coc), and the cells are cleared before ours could be taken out: left with neither a
+	// cell nor a worldspace, alive and not deleted.
 	for (const auto id : { standIn, frame, light }) {
-		world.refs[id].inCell = false;
-		world.refs[id].worldspace = false;
+		engine.refs[id].inCell = false;
+		engine.refs[id].worldspace = false;
 	}
-	auto written = world.Save();
-	CHECK(!world.WritesDoomed(written));
-	CHECK(World::Has(written, settler));
-	CHECK(!World::Has(written, standIn));
-	CHECK(!World::Has(written, frame));
+	auto saved = engine.Save();
+	CHECK(!saved.crashed);
+	CHECK(!Has(saved.written, standIn));
+	CHECK(!Has(saved.written, frame));
+	CHECK(!Has(saved.written, light));
+	CHECK(Has(saved.written, settler));
+	CHECK(Has(saved.written, heldBack));
+	CHECK(Has(saved.written, droppedSuit));
+	CHECK(saved.told.empty());
 
-	// The game took the light from under us (its handle stopped resolving) while it was still in a cell, and a change
-	// made it a record again. Forgotten, it stays out of the save, though no sweep sees it as a stray.
-	world.refs[light] = { .base = 0x0001ED2D };
-	world.forgotten.Add(light, 0x0001ED2D);
-	written = world.Save();
-	CHECK(!World::Has(written, light));
-	CHECK(World::Has(written, settler));
+	// The game takes the light from under us (its handle stops resolving) while it is back in a cell, and a change
+	// makes it a record again: no sweep sees it as a stray, but it was ours, and stays out.
+	engine.refs[light] = { .base = LIGHT };
+	engine.book.Forget(light);
+	CHECK(!Has(engine.Save().written, light));
 
-	// A load: what was placed before it is gone, and the game hands the same ids out to references of its own.
-	world.refs.clear();
-	world.forgotten.Clear();
-	world.placed.KeepOnly({});
-	world.nextId = 0xFF000EB0;
-	const auto reused = world.Place(0x0001D41F, false);
-	CHECK(reused == standIn);
-	world.refs[reused].inCell = false;  // held back by a quest, saved under its worldspace
-	written = world.Save();
-	CHECK(World::Has(written, reused));  // the game's own: its record is kept
-	CHECK(!world.WritesDoomed(written));
+	// Then its form goes, and the game hands its id to a light of its own, in no cell and deleted, a record kept on
+	// purpose: it is the game's, and saved.
+	engine.refs.erase(light);
+	engine.Save();
+	engine.refs[light] = { .base = LIGHT, .inCell = false, .deleted = true };
+	saved = engine.Save();
+	CHECK(Has(saved.written, light));
+	CHECK(!saved.crashed);
+}
+
+TEST("save strays: after a load, an id a frame copy or light had before it names the loaded game's own reference, whose record stays, though it has the same base")
+{
+	Engine engine;
+	const auto frame = engine.PlaceOurs(FRAME, false);
+	const auto light = engine.PlaceOurs(LIGHT, false);
+	const auto standIn = engine.PlaceOurs(FACE_COPY, true);
+	engine.book.Forget(light);  // taken from under us, its form still there
+	CHECK(engine.book.PlacedCount() == 3);
+
+	// An older save is loaded. In it, the frame copy's id is a power armor suit of the game's, deleted and in no cell,
+	// with the very frame base; the light's id is a light of the game's in a cell; the stand-in's id is a stand-in an
+	// earlier version saved, on a face copy no save keeps; and a stand-in placed from a settler base carries the
+	// stand-ins' faction change.
+	std::map<std::uint32_t, Engine::Ref> older;
+	older[frame] = { .base = FRAME, .inCell = false, .deleted = true };
+	older[light] = { .base = LIGHT };
+	older[standIn] = { .base = FACE_COPY, .baseExists = false, .actor = true, .inCell = false, .deleted = true };
+	const std::uint32_t marked = 0xFF000E00;
+	older[marked] = { .base = SETTLER, .actor = true, .inCell = false, .deleted = true, .standInMark = true };
+	engine.Load(older, 0xFF000EC0);
+	CHECK(engine.book.PlacedCount() == 0);
+	CHECK(engine.book.ForgottenCount() == 0);
+	CHECK(engine.Written(frame));    // the game's suit: not ours, deleted on purpose
+	CHECK(!engine.Written(marked));  // a stand-in all the same: dropped as the load brings it back
+
+	const auto saved = engine.Save();
+	CHECK(Has(saved.written, frame));
+	CHECK(Has(saved.written, light));     // no longer forgotten: the id is the game's light now
+	CHECK(!Has(saved.written, standIn));  // its base is gone: it could only come back broken
+	CHECK(!saved.crashed);
+	CHECK(engine.book.Session());  // the load does not change that this run had a session
+}
+
+TEST("save strays: a solo game's own reference with neither a cell nor a worldspace is only logged; once a stand-in was placed this run, it is kept out")
+{
+	Engine engine;
+	const auto doomed = engine.Place({ .base = 0x0020A578, .inCell = false, .worldspace = false });  // a script's, held in no cell
+	auto saved = engine.Save();
+	CHECK(saved.told == std::vector<std::uint32_t>{ doomed });
+	CHECK(Has(saved.written, doomed));  // left as the game has it, as without the mod
+
+	engine.PlaceOurs(FACE_COPY, true);
+	saved = engine.Save();
+	CHECK(saved.told.empty());
+	CHECK(!Has(saved.written, doomed));
+	CHECK(!saved.crashed);
 }
 
 TEST("save strays: a forgotten reference is kept out only while its id still names the one we placed")
