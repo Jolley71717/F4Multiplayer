@@ -31,6 +31,8 @@ namespace WorkshopSync
 		bool                                                installed = false;
 		std::mutex                                          outLock;
 		std::vector<Outgoing>                               outgoing;
+		std::uint32_t                                       dropped = 0;  // reports dropped with the queue full (under outLock)
+		bool                                                droppedWarned = false;  // since the queue was last taken (under outLock)
 		std::map<Key, Copy>                                 copies;
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
 		std::vector<Copy>                                   graveyard;
@@ -121,6 +123,10 @@ namespace WorkshopSync
 			const auto worldScrap = a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) ? a_item.refId : 0;
 			std::scoped_lock l{ outLock };
 			if (outgoing.size() >= MAX_OUTGOING) {
+				++dropped;
+				if (!std::exchange(droppedWarned, true)) {
+					REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.size());
+				}
 				return false;
 			}
 			outgoing.push_back({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap });
@@ -1044,6 +1050,7 @@ namespace WorkshopSync
 		{
 			std::scoped_lock l{ outLock };
 			taken = std::exchange(outgoing, {});
+			droppedWarned = false;
 		}
 		std::vector<std::vector<std::uint8_t>> packets;
 		for (auto& out : taken) {
@@ -1104,7 +1111,12 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
+		std::uint32_t droppedNow = 0;
+		{
+			std::scoped_lock l{ outLock };
+			droppedNow = dropped;
+		}
+		return std::format("workshop: reported={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, droppedNow, copies.size(),
 			       placed, moved, recreated, baseMismatch, scrapped, itemsRescued, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size());
