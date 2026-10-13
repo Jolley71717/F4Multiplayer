@@ -507,7 +507,7 @@ namespace NpcSync
 		// Sanctuary; ours still waits in the museum). Ours is moved to where theirs is, through the
 		// console's moveto, which handles the cell change; it is mirrored from there. Left where it was,
 		// UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
-		// Never moved: the player, our own companion (it follows us here), the dead, and one fighting us.
+		// Never moved: the player, our own companion (it follows us here), the dead, one in a scene here, and one fighting us.
 		void BringIn(const Protocol::ActorState& a_state, Clock::time_point a_now)
 		{
 			if (a_state.cell != 0 || !Protocol::IsShareableRef(a_state.refId)) {
@@ -524,7 +524,7 @@ namespace NpcSync
 			}
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
 			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || actor->IsPlayerRef() || IsOurCompanion(actor) ||
-				actor->currentCombatTarget.get().get() == player) {
+				actor->GetCurrentScene() || actor->currentCombatTarget.get().get() == player) {
 				return;
 			}
 			// Loaded in our world already: it is mirrored, or UpdateMirrors brings it over if it went far.
