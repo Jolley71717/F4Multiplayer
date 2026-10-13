@@ -2,7 +2,6 @@
 
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
-#include "game/Prediction.h"
 
 #include "Protocol.h"
 
@@ -26,11 +25,6 @@ namespace Puppets
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
-			// What the stand-in actually covers per frame, smoothed: the animation runs at this speed so
-			// the feet match the ground (the reported speed can lag behind).
-			RE::NiPoint3                          lastTargetPosition;
-			std::chrono::steady_clock::time_point lastTargetTime{};
-			Prediction::SpeedWindow               measured;  // .speed is what the stand-in really covers
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
 			bool                                  redraw = false;  // holster (if drawn) and draw again
@@ -267,9 +261,9 @@ namespace Puppets
 				graph->NotifyAnimationGraphImpl(jumpLand);
 			}
 
-			// The animation runs at the speed the stand-in really moves; the reported speed decides
-			// only whether it is moving at all.
-			graph->SetGraphVariableFloat(speedVar, moving ? (std::max)(a_puppet.measured.speed, motion.speed) : 0.0f);
+			// The animation runs at the speed the owner reported (their game measures it from the ground they covered
+			// between two states), and only while the graph is in its moving state.
+			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
 
 			if (step.nextResync != a_puppet.nextResync || moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
@@ -330,7 +324,7 @@ namespace Puppets
 			if (puppet->kind == Kind::kPlayer) {
 				KeepHealthy(a_this);
 			}
-			const float speed = puppet->moving ? (std::max)(puppet->measured.speed, puppet->target.speed) : 0.0f;
+			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
