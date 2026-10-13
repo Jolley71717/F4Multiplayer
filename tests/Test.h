@@ -38,17 +38,35 @@ namespace Test
 		return failures;
 	}
 
-	// A known bug's test is running: its failures are the bug, not news.
+	// A known bug's test is running.
 	inline bool& RunningKnownBug()
 	{
 		static bool running = false;
 		return running;
 	}
 
+	// Failures of a known bug's KNOWN_CHECKs: the bug itself, still there.
+	inline int& KnownFailures()
+	{
+		static int failures = 0;
+		return failures;
+	}
+
 	inline void Fail(const char* a_file, int a_line, const std::string& a_what)
 	{
 		++Failures();
-		std::printf("  %s %s:%d: %s\n", RunningKnownBug() ? "still fails" : "FAILED", a_file, a_line, a_what.c_str());
+		std::printf("  FAILED %s:%d: %s\n", a_file, a_line, a_what.c_str());
+	}
+
+	// A KNOWN_CHECK failed: in a known bug's test that is the bug, anywhere else a plain failure.
+	inline void FailKnown(const char* a_file, int a_line, const std::string& a_what)
+	{
+		if (!RunningKnownBug()) {
+			Fail(a_file, a_line, a_what);
+			return;
+		}
+		++KnownFailures();
+		std::printf("  still fails %s:%d: %s\n", a_file, a_line, a_what.c_str());
 	}
 }
 
@@ -59,8 +77,10 @@ namespace Test
 	static const Test::Register TEST_CONCAT(test_reg_, __LINE__){ name, TEST_CONCAT(test_body_, __LINE__) }; \
 	static void TEST_CONCAT(test_body_, __LINE__)()
 
-// A test of a bug not fixed yet: written for the right behaviour, so today it fails. Its failures are
-// printed but not counted; once it passes, that counts as a failure until the mark is taken off.
+// A test of a bug not fixed yet: written for the right behaviour, so today it fails. The bug's symptom
+// is checked with KNOWN_CHECK, whose failures are printed but not counted. Any other failure in it (a
+// CHECK, a REQUIRE, an exception) counts as usual, and so does the symptom going away, until the mark
+// is taken off.
 #define TEST_KNOWN_BUG(name, bug)                                                                    \
 	static void TEST_CONCAT(test_body_, __LINE__)();                                                 \
 	static const Test::Register TEST_CONCAT(test_reg_, __LINE__){ name, TEST_CONCAT(test_body_, __LINE__), bug }; \
@@ -71,6 +91,14 @@ namespace Test
 	do {                                                    \
 		if (!(expr)) {                                      \
 			Test::Fail(__FILE__, __LINE__, #expr);          \
+		}                                                   \
+	} while (false)
+
+// The symptom of a known bug (TEST_KNOWN_BUG): expected to fail until the bug is fixed.
+#define KNOWN_CHECK(expr)                                   \
+	do {                                                    \
+		if (!(expr)) {                                      \
+			Test::FailKnown(__FILE__, __LINE__, #expr);     \
 		}                                                   \
 	} while (false)
 

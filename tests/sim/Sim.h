@@ -5,9 +5,14 @@
 // real reports, encoded by Protocol), decodes everything the server sends back, and keeps what its
 // game would now show: who is there and where, who runs which NPC, what is dead, what containers hold,
 // what was built at settlements, which quest stages are reached. Where the plugin's own rule for that
-// is free of the game, the model uses it rather than a copy (ContainerLedger for loot, MoveSync for a
-// friend's stand-in, WorkshopCells for what waits at a settlement, FoundDead for the host's save,
-// ArmorFrames for a friend's power armor), so a scenario tests the server and the client side together.
+// is free of the game, the model uses it rather than a copy, so a scenario tests the server and the
+// client side together: ContainerLedger for loot, WorkshopCells for what waits at a settlement,
+// FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor, and
+// MoveSync::Drive every frame for a friend's stand-in. The rest is the model's own, written after the
+// plugin and only as good as that copy: applying doors, quest stages and pickups, dropping older
+// positions (RemotePlayers::PushState), keying copies of builds (WorkshopSync::Apply), the facts
+// ArmorFrames is given (found, ours, in use, distance; judged once a wear), and the stand-in's animation
+// graph that MoveSync drives (StandIn).
 //
 // Players leave and come back with the same identity, crash, reload a save, and can lose, repeat or
 // reorder packets; the server can stop and start again from its session file. Everything random comes
@@ -65,6 +70,17 @@ namespace Sim
 		float         x = 0.0f, y = 0.0f, z = 0.0f;
 	};
 
+	// A friend's stand-in's animation graph, as the game has it: walking or standing, and taking only the
+	// event that changes that. While busy (mid-jump, mid-landing, mid-stagger) it refuses every event, and
+	// once done it comes out walking or standing as the game decides (iSyncIdleLocomotion), not as it was
+	// last told.
+	struct StandIn
+	{
+		bool walking = false;
+		int  busy = 0;  // frames left
+		bool landsWalking = false;
+	};
+
 	// Another player, as this player's game shows them.
 	struct Friend
 	{
@@ -73,7 +89,8 @@ namespace Sim
 		std::optional<Protocol::PlayerState>  state;  // the newest that came
 		std::optional<Protocol::PlayerStatus> status;
 		std::vector<std::uint32_t>            equipment;
-		MoveSync::Step                        graph;  // what their stand-in's animation graph was last told (moving or not)
+		MoveSync::Step                        graph;    // what MoveSync last told their stand-in's animation graph
+		StandIn                               standIn;  // what that graph does
 		// Their power armor wear, as ArmorFrames judged our copy of a frame every game has: decided once a
 		// wear, as soon as their status and a state are both in.
 		std::optional<ArmorFrames::Original> wear;
@@ -242,6 +259,19 @@ namespace Sim
 		// Anything at all, as a broken or hostile game might send it.
 		void Raw(Packet a_packet, bool a_reliable = true) { Send(std::move(a_packet), a_reliable); }
 
+		// Frames go by in this player's game (30 a second): each friend's stand-in is driven by MoveSync from
+		// the newest state of theirs, as Puppets does every frame. Settle runs a few.
+		void Frames(int a_count);
+		// A friend's stand-in in this game is caught mid-jump (or mid-stagger) for a_frames frames, and comes
+		// out of it walking or standing.
+		void Stumble(std::uint32_t a_friend, int a_frames, bool a_landsWalking)
+		{
+			if (const auto it = friends.find(a_friend); it != friends.end()) {
+				it->second.standIn.busy = a_frames;
+				it->second.standIn.landsWalking = a_landsWalking;
+			}
+		}
+
 		// The host's game: the NPCs others run that are dead in its own world (its save had them dead) are
 		// reported found dead, as WorldSync's CheckFoundDead does, story characters as FoundDead::Shared says.
 		void CheckFoundDead();
@@ -288,6 +318,8 @@ namespace Sim
 		}
 		// Everything built at settlements as this game shows it: its own, and copies of the others'.
 		[[nodiscard]] std::map<WorkshopKey, Protocol::WorkshopItem> Settlements() const;
+		// Only the copies of builds the server sent (WorkshopSync's copies and pending), whoever it named.
+		[[nodiscard]] const std::set<WorkshopKey>& Copies() const { return copyKeys; }
 		// What stands at one settlement in this game: what waits for its cell (WorkshopCells), and its own.
 		[[nodiscard]] std::set<WorkshopKey> At(std::uint32_t a_bench) const;
 		[[nodiscard]] bool               Hides(std::uint32_t a_frameRef) const { return hiddenFrames.contains(a_frameRef); }
@@ -359,6 +391,7 @@ namespace Sim
 		Protocol::PlayerState       me;
 		Protocol::PlayerStatus      myStatus;
 		std::uint32_t               nextRef = 0;
+		Clock::time_point           frameClock{};  // this game's frames, 30 a second
 	};
 
 	class Session
@@ -415,6 +448,7 @@ namespace Sim
 			}
 			for (auto& client : clients) {
 				client->Pump();
+				client->Frames(FRAMES_PER_SETTLE);
 			}
 		}
 
@@ -529,6 +563,9 @@ namespace Sim
 				}
 			}
 		}
+
+		// Frames each game runs while a Settle goes by (as the server's tick does, about 0.1 s).
+		static constexpr int FRAMES_PER_SETTLE = 3;
 
 		void Queue(Outgoing a_out) { outbox.push_back(std::move(a_out)); }
 
@@ -854,6 +891,30 @@ namespace Sim
 		return out;
 	}
 
+	inline void Client::Frames(int a_count)
+	{
+		for (int i = 0; i < a_count; ++i) {
+			frameClock += std::chrono::milliseconds(33);
+			for (auto& [id, f] : friends) {
+				if (!f.state) {
+					continue;  // no stand-in yet
+				}
+				auto& graph = f.standIn;
+				if (graph.busy > 0 && --graph.busy == 0) {
+					graph.walking = graph.landsWalking;
+				}
+				f.graph = MoveSync::Drive(f.graph.moving, f.graph.nextResync, f.state->speed, frameClock, [&](MoveSync::Event a_event) {
+					const bool start = a_event == MoveSync::Event::kStart;
+					if (graph.busy > 0 || graph.walking == start) {
+						return false;  // refused
+					}
+					graph.walking = start;
+					return true;
+				});
+			}
+		}
+	}
+
 	inline void Client::Pump()
 	{
 		if (!connected || !session.fixture) {
@@ -1014,7 +1075,6 @@ namespace Sim
 						continue;  // older than what we have (RemotePlayers::PushState)
 					}
 					f.state = entry.state;
-					f.graph = MoveSync::Drive(f.graph.moving, f.graph.nextResync, entry.state.speed, Clock::now(), [](MoveSync::Event) { return true; });
 					JudgeWear(entry.playerId);
 				}
 			} else {

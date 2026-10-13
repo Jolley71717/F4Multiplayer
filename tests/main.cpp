@@ -15,6 +15,7 @@ int main(int a_argc, char** a_argv)
 		}
 		++run;
 		const int before = Test::Failures();
+		const int knownBefore = Test::KnownFailures();
 		Test::RunningKnownBug() = test.knownBug != nullptr;
 		try {
 			test.body();
@@ -24,11 +25,12 @@ int main(int a_argc, char** a_argv)
 		}
 		Test::RunningKnownBug() = false;
 		const bool ok = Test::Failures() == before;
-		if (test.knownBug) {
-			// Still failing is what is expected; passing means the bug is gone and the mark should go too.
-			Test::Failures() = before + ok;
-			failed += ok;
-			if (ok) {
+		if (test.knownBug && ok) {
+			// The symptom still failing is what is expected; its passing means the bug is gone and the mark
+			// should go too. A failure of anything else is a plain failure (below).
+			if (Test::KnownFailures() == knownBefore) {
+				++Test::Failures();
+				++failed;
 				std::printf("FIXED? %s: passes now; make it a plain TEST (known bug: %s)\n", test.name, test.knownBug);
 			} else {
 				std::printf("known  %s (bug: %s)\n", test.name, test.knownBug);

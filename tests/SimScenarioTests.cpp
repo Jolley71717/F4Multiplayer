@@ -69,11 +69,11 @@ TEST("sim: a whole evening: two friends explore, fight, loot, build; one leaves 
 		const auto seen = bob.FriendById(hostId);
 		REQUIRE(seen && seen->state);
 		CHECK(seen->state->x == 1000.0f);
-		CHECK(seen->graph.moving);  // the stand-in runs
+		CHECK(seen->standIn.walking);  // the stand-in runs
 	}
 	host.StandStill();
 	s.Settle();
-	CHECK(!bob.FriendById(hostId)->graph.moving);  // ... and stops when they do
+	CHECK(!bob.FriendById(hostId)->standIn.walking);  // ... and stops when they do
 
 	// A fight: the host's game runs the raider it is near; bob sees it move and fall.
 	host.Claim(RAIDER_1);
@@ -257,7 +257,8 @@ TEST("sim: whatever three players do, however they come and go and however often
 					Act(s, player, i, truth, touched);
 				}
 			}
-			if (restarts < 2 && dice.Chance(0.02)) {
+			// At least one restart a seed, halfway if the dice gave none before.
+			if (restarts < 2 && (dice.Chance(0.02) || (round == 60 && restarts == 0))) {
 				++restarts;
 				s.RestartServer();
 			}
@@ -268,6 +269,8 @@ TEST("sim: whatever three players do, however they come and go and however often
 		}
 		s.Settle();
 		const int failuresBefore = Test::Failures();
+		CHECK(restarts > 0);
+		CHECK(s.Logged("loaded the saved session"));
 		CHECK_AGREE(players);
 		const auto& world = players[0]->WorldNow();
 		CHECK(world.dead == truth.dead);
@@ -289,6 +292,8 @@ TEST("sim: whatever three players do, however they come and go and however often
 				keys.insert(key);
 			}
 			CHECK(keys == built);
+			// ... and none of its own came back as a copy (a second wall on top of its own).
+			CHECK(std::ranges::none_of(player->Copies(), [&](const WorkshopKey& a_key) { return a_key.first == player->Id(); }));
 			CHECK(player->Undecodable() == 0);
 		}
 		if (Test::Failures() != failuresBefore) {
@@ -316,7 +321,9 @@ TEST("sim: a friend whose game crashes and comes back before the server notices 
 	CHECK(bob.Id() == bobId);
 	CHECK(s.Logged("dropping the old connection of 'Bob'"));
 	REQUIRE(host.FriendById(bobId));
-	// His own wall isn't sent back to him as someone else's, and his loot isn't counted again.
+	// His own wall isn't sent back to him as someone else's (his game would build a second one on top of
+	// it), and his loot isn't counted again.
+	CHECK(bob.Copies().empty());
 	CHECK(bob.Settlements().size() == 1);
 	CHECK((bob.Settlements().contains({ bobId, wall })));
 	CHECK(bob.Count(TRUNK, CAPS) == -7);
@@ -524,15 +531,44 @@ TEST("sim: a friend who says they wear the museum's suit from across the map doe
 	bob.WearFrame(MUSEUM_SUIT);
 	s.Settle();
 	CHECK(!host.Hides(MUSEUM_SUIT));
-	// Nor does one naming a frame of another kind at its spot.
+	// Out again, and in once more at the suit itself: now it is theirs, and goes from the host's world.
+	bob.WearFrame(0);
+	s.Settle();
+	bob.Move(1000.0f, 1010.0f);
+	s.Settle();  // walks over to it first
+	bob.WearFrame(MUSEUM_SUIT);
+	s.Settle();
+	CHECK(host.Hides(MUSEUM_SUIT));
+}
+
+TEST("sim: a friend who says they wear the museum's suit at its spot, but names a frame of another kind, doesn't make anyone's copy of it vanish")
+{
+	// A fresh session: their wear is judged on its own, not left over from an earlier one.
+	Session s;
+	s.PlaceFrame(MUSEUM_SUIT, { FRAME_BASE, COMMONWEALTH, 1000.0f, 1000.0f, 0.0f });
+	auto& host = s.Host();
+	auto& bob = s.Player("Bob");
+	auto& carol = s.Player("Carol");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	bob.Move(1000.0f, 1010.0f);
+	s.Settle();
 	auto status = Protocol::PlayerStatus{};
 	status.powerArmor = true;
 	status.powerArmorFrameRef = MUSEUM_SUIT;
 	status.powerArmorFrame = FRAME_BASE + 1;
-	bob.Move(1000.0f, 1000.0f);
 	bob.Status(status);
 	s.Settle();
+	REQUIRE(host.FriendById(bob.Id()) && host.FriendById(bob.Id())->wear);  // judged
 	CHECK(!host.Hides(MUSEUM_SUIT));
+	CHECK(!carol.Hides(MUSEUM_SUIT));
+	// A late joiner judges it the same way.
+	auto& dave = s.Player("Dave");
+	REQUIRE(dave.Join());
+	s.Settle();
+	REQUIRE(dave.FriendById(bob.Id()) && dave.FriendById(bob.Id())->wear);
+	CHECK(!dave.Hides(MUSEUM_SUIT));
 }
 
 // ---- adversarial ------------------------------------------------------------------------------------
@@ -567,6 +603,14 @@ TEST("sim: a joiner's game that claims what isn't its own changes nothing in any
 	mallory.RunNpc(DOGMEAT, 90000.0f, 90000.0f);
 	mallory.NpcGear(DOGMEAT, { 0x000DEAD1 });
 	mallory.Scrap(SANCTUARY, wall);
+	{
+		Protocol::WorkshopItem scrap;  // naming the host as its builder
+		scrap.playerId = host.Id();
+		scrap.refId = wall;
+		scrap.op = Protocol::WorkshopOp::kScrapped;
+		scrap.workshop = SANCTUARY;
+		mallory.Raw(Protocol::Encode(scrap, MT::kReportWorkshopItem));
+	}
 	auto spoof = status;
 	spoof.playerId = host.Id();
 	spoof.level = 99;
@@ -659,9 +703,9 @@ TEST("sim: positions lost, repeated and out of order still leave each player see
 		const auto bobSeen = host.FriendById(bob.Id());
 		REQUIRE(hostSeen && hostSeen->state && bobSeen && bobSeen->state);
 		CHECK(hostSeen->state->x == 3000.0f);
-		CHECK(!hostSeen->graph.moving);
+		CHECK(!hostSeen->standIn.walking);
 		CHECK(bobSeen->state->y == 1500.0f);
-		CHECK(!bobSeen->graph.moving);
+		CHECK(!bobSeen->standIn.walking);
 		REQUIRE(host.NpcStates().contains(DOGMEAT));
 		CHECK(host.NpcStates().at(DOGMEAT).y == 1500.0f);
 		CHECK_AGREE({ &host, &bob });
@@ -669,6 +713,51 @@ TEST("sim: positions lost, repeated and out of order still leave each player see
 			std::printf("  (seed %u)\n", seed);
 		}
 	}
+}
+
+TEST("sim: a friend who stops while their stand-in is mid-jump isn't left walking on the spot, nor standing while they run on")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	host.Move(100.0f, 0.0f, 0.0f, 300.0f);
+	s.Settle();
+	const auto standIn = [&](const Client& a_viewer) -> const StandIn& {
+		const auto seen = a_viewer.FriendById(host.Id());
+		REQUIRE(seen && seen->state);
+		return seen->standIn;
+	};
+	REQUIRE(standIn(bob).walking);
+	REQUIRE(standIn(carol).walking);
+
+	// In Bob's game the host's stand-in is mid-jump when the host stops: the stop is refused, and it lands
+	// back in its walk. Carol's takes the stop.
+	bob.Stumble(host.Id(), 5, true);
+	host.StandStill();
+	s.Settle();
+	CHECK(!standIn(carol).walking);
+	bob.Frames(3);
+	REQUIRE(standIn(bob).walking);  // landed walking on the spot
+	bob.Frames(30);  // a second
+	CHECK(!standIn(bob).walking);   // told again, and it stops
+	CHECK(!standIn(carol).walking);
+
+	// The host runs on; in Carol's game their stand-in staggers just then and comes out standing.
+	host.Move(500.0f, 0.0f, 0.0f, 300.0f);
+	s.Settle();
+	REQUIRE(standIn(carol).walking);
+	carol.Stumble(host.Id(), 5, false);
+	host.Move(600.0f, 0.0f, 0.0f, 300.0f);
+	s.Settle();
+	carol.Frames(3);
+	REQUIRE(!standIn(carol).walking);  // standing while the host runs
+	carol.Frames(30);
+	CHECK(standIn(carol).walking);
+	CHECK(standIn(bob).walking);
 }
 
 TEST("sim: kills, quest stages, pickups and scraps that arrive twice or out of order still leave every world the same")
@@ -724,10 +813,20 @@ TEST_KNOWN_BUG("sim: two friends working the same door at the same moment end up
 	auto&   bob = s.Player("Bob");
 	REQUIRE(host.Join());
 	REQUIRE(bob.Join());
-	host.Door(DOOR, Protocol::RefState::kYes, Protocol::RefState::kNo);  // both act before either hears of the other
-	bob.Door(DOOR, Protocol::RefState::kNo, Protocol::RefState::kNo);
+	using Door = std::pair<std::uint8_t, std::uint8_t>;
+	const Door opened{ Protocol::RefState::kYes, Protocol::RefState::kNo };
+	const Door shut{ Protocol::RefState::kNo, Protocol::RefState::kNo };
+	host.Door(DOOR, opened.first, opened.second);  // both act before either hears of the other
+	bob.Door(DOOR, shut.first, shut.second);
 	s.Settle();
 	auto& carol = s.Player("Carol");
 	REQUIRE(carol.Join());
-	CHECK_AGREE({ &host, &bob, &carol });
+	const auto doorOf = [](const Client& a_player) { return a_player.WorldNow().doors.contains(DOOR) ? a_player.WorldNow().doors.at(DOOR) : Door{}; };
+	// The server heard the host first and Bob last, so the session (and a late joiner) has Bob's shut
+	// door, and the host was told of it.
+	CHECK(doorOf(carol) == shut);
+	CHECK(doorOf(host) == shut);
+	// The bug: Bob was told of the host's open door after shutting it, and nothing ever tells him the
+	// session kept his own.
+	KNOWN_CHECK(doorOf(bob) == shut);
 }
