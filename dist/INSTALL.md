@@ -137,7 +137,7 @@ want to keep your solo playthrough untouched.
 
 The host's game also keeps the shared world on disk (`bSaveSession`, on by default): the next time
 they host with the same load order, the session carries on where it stopped. Delete
-`DocumentsMy Gamesallout44se4multiplayer.session` to start over.
+`Documents\My Games\Fallout4\F4SE\F4Multiplayer.session` to start over.
 
 ## Dedicated server (optional)
 

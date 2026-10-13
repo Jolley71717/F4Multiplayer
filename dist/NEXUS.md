@@ -32,7 +32,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*][b]How friends appear:[/b] a friend is a character standing next to you, wherever you both are in the world (not in a settlement). They have their own face, body and sex, wear the armor and weapons from their own save, and carry their name and health over their head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F9 point, F10 cheer, F11 clap), and their Pip-Boy light at night.
+[*][b]How friends appear:[/b] a friend is a character standing next to you, wherever you both are in the world (not in a settlement). They have their own body shape and sex (their face and hair aren't copied yet), wear the armor and weapons from their own save, and carry their name and health over their head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F2 point, F3 cheer, F4 clap), and their Pip-Boy light at night.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
