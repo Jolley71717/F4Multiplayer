@@ -20,9 +20,10 @@ namespace WorldSync
 	// call it only for a request that is sent.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
 
-	// After loading a save while in a session: a save with no session's record, or another session's,
-	// takes this one (from its first change), so the saves made from it on carry a record.
-	void AdoptSession(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId);
+	// After loading a save while in session a_sessionId: a save with no session's record, or another
+	// session's, takes this one (from its first change), so the saves made from it on carry a record.
+	// Returns the request for what the loaded world lacks, to send now.
+	[[nodiscard]] Protocol::WorldRequest AfterLoad(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId);
 
 	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
 	// a_x/y/z: where the corpse lies in the reporter's game (all zero when unknown).

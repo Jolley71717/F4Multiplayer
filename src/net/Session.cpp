@@ -887,8 +887,7 @@ namespace Session
 		if (welcomed) {
 			// A save from no session (made alone, or another character's) or another one joins ours from its
 			// first change, so the saves made from it on carry a record.
-			WorldSync::AdoptSession(sessionId, localId);
-			const auto request = WorldSync::ResyncPoint();
+			const auto request = WorldSync::AfterLoad(sessionId, localId);
 			client->Send(Protocol::Encode(request), true);
 			REX::INFO("Session: save loaded; asking for the session's changes since #{}", request.containerFrom);
 		}

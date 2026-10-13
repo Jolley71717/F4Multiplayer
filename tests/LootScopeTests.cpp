@@ -137,19 +137,18 @@ namespace
 	// The same game data in every game: what the forms are.
 	void Describe(Game& a_game)
 	{
-		auto& w = a_game.world;
-		w.items[PIPE_PISTOL] = { .kind = Item::kWeapon };
-		w.items[LEATHER_ARM] = { .kind = Item::kArmor };
-		w.items[AMMO_38] = { .kind = Item::kAmmo };
-		w.items[STEEL] = { .kind = Item::kComponent };
-		w.items[CAPS] = { .kind = Item::kMisc };
-		w.items[PAPER_NOTE] = { .kind = Item::kBook };
-		w.items[CORE] = { .kind = Item::kAmmo };
-		w.holders[WORKBENCH_REF] = { .kind = Holder::kContainer, .workshop = true };
-		w.holders[VENDOR_REF] = { .kind = Holder::kContainer, .vendorChest = true };
-		w.holders[FRAME_REF] = { .kind = Holder::kFurniture };
-		w.holders[RAIDER] = { .kind = Holder::kActor, .alive = true };
-		w.holders[SETTLER] = { .kind = Holder::kActor, .alive = true };
+		a_game.items[PIPE_PISTOL] = { .kind = Item::kWeapon };
+		a_game.items[LEATHER_ARM] = { .kind = Item::kArmor };
+		a_game.items[AMMO_38] = { .kind = Item::kAmmo };
+		a_game.items[STEEL] = { .kind = Item::kComponent };
+		a_game.items[CAPS] = { .kind = Item::kMisc };
+		a_game.items[PAPER_NOTE] = { .kind = Item::kBook };
+		a_game.items[CORE] = { .kind = Item::kAmmo };
+		a_game.holderFacts[WORKBENCH_REF] = { .kind = Holder::kContainer, .workshop = true };
+		a_game.holderFacts[VENDOR_REF] = { .kind = Holder::kContainer, .vendorChest = true };
+		a_game.holderFacts[FRAME_REF] = { .kind = Holder::kFurniture };
+		a_game.holderFacts[RAIDER] = { .kind = Holder::kActor, .alive = true };
+		a_game.holderFacts[SETTLER] = { .kind = Holder::kActor, .alive = true };
 	}
 
 	// A joiner that reports every move it makes (a build from before the rule, or one changed to): the move is made in its own world too.
@@ -177,15 +176,15 @@ TEST("loot sync: a weapon or armor put in a shared chest stays out of a friend's
 	alice.Put(f, CHEST_REF, PIPE_PISTOL, 1);
 	alice.Put(f, CHEST_REF, LEATHER_ARM, 1);
 	alice.Put(f, CHEST_REF, AMMO_38, 50);
-	CHECK(alice.sent == 1);
-	CHECK(alice.notShared == 2);
+	CHECK(alice.loot.Stats().sent == 1);
+	CHECK(alice.KeptHere() == 2);
 	UncheckedMove(f, carol, CHEST_REF, PIPE_PISTOL, 1);  // a legendary pistol, reported anyway
 	bob.Receive(f);
 
 	CHECK(bob.In(CHEST_REF, AMMO_38) == 50);
 	CHECK(bob.In(CHEST_REF, PIPE_PISTOL) == 0);
 	CHECK(bob.In(CHEST_REF, LEATHER_ARM) == 0);
-	CHECK(bob.notShared == 1);
+	CHECK(bob.LeftOut() == 1);
 
 	// Taking one out is not shared either: the friend's copy stays where it is.
 	bob.holders[CHEST_REF][PIPE_PISTOL] = 1;  // the chest's own pistol, in every game
@@ -193,7 +192,7 @@ TEST("loot sync: a weapon or armor put in a shared chest stays out of a friend's
 	alice.Take(f, CHEST_REF, PIPE_PISTOL, 2);
 	bob.Receive(f);
 	CHECK(bob.In(CHEST_REF, PIPE_PISTOL) == 1);
-	CHECK(alice.sent == 1);
+	CHECK(alice.loot.Stats().sent == 1);
 }
 
 TEST("loot sync: workbench storage, a vendor's chest and a power armor frame stay each player's, even when a joiner reports the moves")
@@ -210,7 +209,7 @@ TEST("loot sync: workbench storage, a vendor's chest and a power armor frame sta
 	alice.Put(f, WORKBENCH_REF, STEEL, 200);
 	alice.Put(f, VENDOR_REF, CAPS, 100);
 	alice.Take(f, FRAME_REF, CORE, 1);
-	CHECK(alice.sent == 0);
+	CHECK(alice.loot.Stats().sent == 0);
 	UncheckedMove(f, carol, WORKBENCH_REF, STEEL, 200);
 	UncheckedMove(f, carol, VENDOR_REF, CAPS, -500);
 	UncheckedMove(f, carol, FRAME_REF, CORE, -1);
@@ -219,7 +218,7 @@ TEST("loot sync: workbench storage, a vendor's chest and a power armor frame sta
 	CHECK(bob.In(WORKBENCH_REF, STEEL) == 0);
 	CHECK(bob.In(VENDOR_REF, CAPS) == 500);  // Bob's vendor still has the caps to pay him
 	CHECK(bob.In(FRAME_REF, CORE) == 1);     // and his frame its core
-	CHECK(bob.notShared == 3);
+	CHECK(bob.LeftOut() == 3);
 }
 
 TEST("loot sync: a corpse looted after its kill is looted for the friend too, though their game hasn't killed it yet; a living NPC's pockets aren't")
@@ -234,14 +233,13 @@ TEST("loot sync: a corpse looted after its kill is looted for the friend too, th
 	}
 
 	// Alice kills the raider; her game reports the death, then her looting.
-	alice.world.holders[RAIDER].alive = false;
-	f.fake->Deliver(alice.peer, DeathOf(RAIDER));
+	alice.Kill(f, RAIDER);
 	alice.Take(f, RAIDER, AMMO_38, 20);
 	alice.Take(f, RAIDER, PIPE_PISTOL, 1);
-	CHECK(alice.sent == 1);  // the gun is hers alone
+	CHECK(alice.loot.Stats().sent == 1);  // the gun is hers alone
 	// Alice pickpockets the settler: not reported.
 	alice.Take(f, SETTLER, CAPS, 30);
-	CHECK(alice.sent == 1);
+	CHECK(alice.loot.Stats().sent == 1);
 	bob.Receive(f);
 
 	// Bob's raider still stands (not loaded here, its kill waits), but the session says it died.
@@ -254,11 +252,11 @@ TEST("loot sync: a corpse looted after its kill is looted for the friend too, th
 	UncheckedMove(f, carol, SETTLER, CAPS, -30);
 	bob.Receive(f);
 	CHECK(bob.In(SETTLER, CAPS) == 30);
-	CHECK(bob.waiting.size() == 1);
+	CHECK(bob.loot.Waiting().size() == 1);
 	// Should the settler die, the caps had gone with the pickpocket: the corpse has none.
 	f.fake->Deliver(carol.peer, DeathOf(SETTLER));
 	bob.Receive(f);
-	CHECK(bob.waiting.empty());
+	CHECK(bob.loot.Waiting().empty());
 	CHECK(bob.In(SETTLER, CAPS) == 0);
 }
 
@@ -272,7 +270,7 @@ TEST("loot sync: a paper note taken from a chest stays in the friend's chest for
 		game->holders[CHEST_REF] = { { PAPER_NOTE, 1 } };
 	}
 	alice.Take(f, CHEST_REF, PAPER_NOTE, 1);
-	CHECK(alice.sent == 0);
+	CHECK(alice.loot.Stats().sent == 0);
 	UncheckedMove(f, carol, CHEST_REF, PAPER_NOTE, -1);
 	bob.Receive(f);
 	CHECK(bob.In(CHEST_REF, PAPER_NOTE) == 1);

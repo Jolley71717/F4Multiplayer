@@ -3,9 +3,10 @@
 
 #include "LootGame.h"
 
-#include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <random>
+#include <string_view>
 
 using namespace std::chrono_literals;
 using ContainerLedger::Ledger;
@@ -21,6 +22,8 @@ namespace
 	constexpr std::uint32_t STIMPAK = 0x00023736;
 	constexpr std::uint32_t AMMO = 0x0001F278;
 	constexpr std::uint32_t CAPS = 0x0000000F;
+	constexpr std::uint32_t RAIDER = 0x0001F001;
+	constexpr std::uint32_t SETTLER = 0x0001F002;
 	constexpr std::uint32_t FRIEND = 7;
 
 	Protocol::IndexedContainerChange Change(std::uint32_t a_index, std::uint32_t a_player = FRIEND, std::int32_t a_count = -1)
@@ -227,6 +230,40 @@ TEST("container ledger: a different session starts our world from nothing; the s
 
 // ---- two and three games, a real server -------------------------------------------------------------
 
+namespace
+{
+	using LootTest::IsType;
+
+	// A session file of this run's own: test runs (several at once on one machine) don't share one.
+	std::string SessionPath(std::string_view a_name)
+	{
+		return (std::filesystem::temp_directory_path() / std::format("f4mp-{}-{:08x}.session", a_name, std::random_device{}())).string();
+	}
+
+	// The container changes in a_packets' WorldStates, in order.
+	std::vector<Protocol::IndexedContainerChange> CaughtUp(const LootTest::Packets& a_packets)
+	{
+		std::vector<Protocol::IndexedContainerChange> out;
+		for (const auto& packet : a_packets) {
+			if (IsType(packet, MT::kWorldState)) {
+				if (const auto msg = Protocol::DecodeWorldState(packet)) {
+					out.insert(out.end(), msg->containerChanges.begin(), msg->containerChanges.end());
+				}
+			}
+		}
+		return out;
+	}
+
+	// a_packets' container changes as the server relays them live (kContainerChanged), at a_index first.
+	auto FindLive(LootTest::Packets& a_packets, std::uint32_t a_index)
+	{
+		return std::ranges::find_if(a_packets, [&](const std::vector<std::uint8_t>& a_packet) {
+			const auto msg = IsType(a_packet, MT::kContainerChanged) ? Protocol::DecodeIndexedContainerChange(a_packet) : std::nullopt;
+			return msg && msg->index == a_index;
+		});
+	}
+}
+
 TEST("loot sync: two players looting one chest in turns, with a change lost on the way and another arriving twice, end with the same chest and no copies")
 {
 	Fixture f;
@@ -249,38 +286,35 @@ TEST("loot sync: two players looting one chest in turns, with a change lost on t
 	auto more = bob.Fetch(f);
 
 	// Bob's copy of #2 is lost, and #3 comes twice.
-	const auto isChange = [](const std::vector<std::uint8_t>& a_packet, std::uint32_t a_index) {
-		const auto msg = !a_packet.empty() && a_packet[0] == TestServer::Type(MT::kContainerChanged) ? Protocol::DecodeIndexedContainerChange(a_packet) : std::nullopt;
-		return msg && msg->index == a_index;
-	};
-	const auto lost = std::ranges::find_if(more, [&](const auto& a_packet) { return isChange(a_packet, 2); });
+	const auto lost = FindLive(more, 2);
 	REQUIRE(lost != more.end());
 	more.erase(lost);
-	const auto twice = std::ranges::find_if(more, [&](const auto& a_packet) { return isChange(a_packet, 3); });
+	const auto twice = FindLive(more, 3);
 	REQUIRE(twice != more.end());
 	more.push_back(*twice);
 	std::ranges::move(more, std::back_inserter(toBob));
-	bob.Handle(toBob);
+	bob.Handle(f, toBob);
 
 	// #3 and #4 wait for #2; nothing of Alice's after the gap is in Bob's chest yet.
-	CHECK(bob.loot.Numbers().Next() == 2);
-	CHECK(bob.loot.Numbers().Waiting() == 2);
+	CHECK(bob.loot.Numbers().Numbers().Next() == 2);
+	CHECK(bob.loot.Numbers().Numbers().Waiting() == 2);
 	CHECK(bob.In(CHEST, AMMO) == 70);
 
 	// Bob's game asks again after a quiet 15 s; the server sends from #2.
-	CHECK(!bob.Tick(f, 14s));
-	CHECK(bob.Tick(f, 1s));
+	CHECK(!bob.Wait(f, 14s));
+	CHECK(bob.Wait(f, 1s));
 	bob.Receive(f);
 
-	CHECK(bob.loot.Numbers().Next() == 5);
-	CHECK(bob.loot.Numbers().Waiting() == 0);
-	CHECK(alice.loot.Numbers().Next() == 5);
+	CHECK(bob.loot.Numbers().Numbers().Next() == 5);
+	CHECK(bob.loot.Numbers().Numbers().Waiting() == 0);
+	CHECK(alice.loot.Numbers().Numbers().Next() == 5);
 	CHECK(alice.holders[CHEST] == bob.holders[CHEST]);
 	CHECK(alice.In(CHEST, STIMPAK) == 3);
 	CHECK(alice.In(CHEST, AMMO) == 50);
 	// Nothing made or lost: what the chest holds and the two carry adds up to what it held.
 	CHECK(alice.In(CHEST, STIMPAK) + alice.Carried(STIMPAK) + bob.Carried(STIMPAK) == 5);
 	CHECK(alice.In(CHEST, AMMO) + alice.Carried(AMMO) + bob.Carried(AMMO) == 100);
+	CHECK(alice.loot.Numbers().OwnSkipped() + bob.loot.Numbers().OwnSkipped() == 0);
 }
 
 TEST("loot sync: a friend's loot during our reload goes into our world after what they took before it, so the chest isn't full again")
@@ -295,7 +329,7 @@ TEST("loot sync: a friend's loot during our reload goes into our world after wha
 	}
 	alice.Take(f, CHEST, STIMPAK, 1);  // #0
 	bob.Receive(f);
-	const auto save = bob.SaveGame();  // Bob saves: #0 is in it
+	const auto save = bob.SaveGame(f);  // Bob saves: #0 is in it
 	CHECK(save.point.containerFrom == 1);
 
 	alice.Take(f, CHEST, STIMPAK, 4);  // #1..#3, while Bob plays on
@@ -312,8 +346,8 @@ TEST("loot sync: a friend's loot during our reload goes into our world after wha
 	bob.Receive(f);
 	alice.Receive(f);
 
-	CHECK(bob.loot.Numbers().Next() == 5);
-	CHECK(bob.loot.Numbers().Waiting() == 0);
+	CHECK(bob.loot.Numbers().Numbers().Next() == 5);
+	CHECK(bob.loot.Numbers().Numbers().Waiting() == 0);
 	CHECK(bob.In(CHEST, STIMPAK) == 3);
 	CHECK(bob.In(SAFE, CAPS) == 150);
 	CHECK(bob.holders == alice.holders);
@@ -321,7 +355,7 @@ TEST("loot sync: a friend's loot during our reload goes into our world after wha
 
 TEST("loot sync: after the host's game stops without writing its last changes, a friend's next loot still reaches the others")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-ledger-{}.session", std::rand())).string();
+	const auto path = SessionPath("ledger");
 	const auto kept = path + ".15s-ago";
 	std::filesystem::remove(path);
 	Server::Options options;
@@ -350,7 +384,7 @@ TEST("loot sync: after the host's game stops without writing its last changes, a
 		host.Take(f, CHEST, AMMO, 5);
 		host.Take(f, CHEST, AMMO, 5);
 		joiner.Receive(f);
-		CHECK(joiner.loot.Numbers().Next() == 5);
+		CHECK(joiner.loot.Numbers().Numbers().Next() == 5);
 	}
 	// The host's game froze and was ended: the file it last wrote has only #0 and #1.
 	std::filesystem::copy_file(kept, path, std::filesystem::copy_options::overwrite_existing);
@@ -360,18 +394,81 @@ TEST("loot sync: after the host's game stops without writing its last changes, a
 		joiner.Join(f, "Joiner");  // asks from #5; the server has 2
 		host.Receive(f);
 		joiner.Receive(f);
-		CHECK(joiner.loot.Numbers().Stats().rewinds == 1);
-		CHECK(joiner.loot.Numbers().Next() == 2);
+		CHECK(joiner.loot.Numbers().Numbers().Stats().rewinds == 1);
+		CHECK(joiner.loot.Numbers().Numbers().Next() == 2);
 
 		// The next loot by either side reaches the other, though it takes a number the joiner had seen.
 		host.Take(f, CHEST, AMMO, 7);    // #2 again
 		joiner.Take(f, CHEST, AMMO, 3);  // #3
 		host.Receive(f);
 		joiner.Receive(f);
-		CHECK(joiner.loot.Numbers().Next() == 4);
-		CHECK(host.loot.Numbers().Next() == 4);
+		CHECK(joiner.loot.Numbers().Numbers().Next() == 4);
+		CHECK(host.loot.Numbers().Numbers().Next() == 4);
 		CHECK(joiner.In(CHEST, AMMO) == 55);
 		CHECK(host.In(CHEST, AMMO) == 55);
+	}
+	std::filesystem::remove(path);
+	std::filesystem::remove(kept);
+}
+
+TEST("loot sync: a change the host's game lost, still waiting for its chest in a friend's game, never lands there once the host is back")
+{
+	// The joiner's safe isn't loaded when the host takes caps from it. The host's game then freezes before
+	// writing that to the session file, and starts again from its save: in the session the caps were never
+	// taken, and the number goes to the host's next loot. The joiner's safe must end as the host's.
+	const auto path = SessionPath("lost");
+	const auto kept = path + ".15s-ago";
+	std::filesystem::remove(path);
+	Server::Options options;
+	options.sessionFile = path;
+	Game host{ 1, 0xA11CE }, joiner{ 2, 0xB0B };
+	for (auto* game : { &host, &joiner }) {
+		game->holders[CHEST] = { { AMMO, 100 } };
+		game->holders[SAFE] = { { CAPS, 300 } };
+	}
+	joiner.away.insert(SAFE);
+	Game::Save hostSave;
+	{
+		Fixture f{ options };
+		host.Join(f, "Host");
+		joiner.Join(f, "Joiner");
+		host.Take(f, CHEST, AMMO, 10);  // #0, #1
+		host.Take(f, CHEST, AMMO, 10);
+		host.Receive(f);
+		joiner.Receive(f);
+		hostSave = host.SaveGame(f);
+	}
+	std::filesystem::copy_file(path, kept, std::filesystem::copy_options::overwrite_existing);
+	{
+		Fixture f{ options };
+		host.Join(f, "Host");
+		joiner.Join(f, "Joiner");
+		host.Take(f, SAFE, CAPS, 50);  // #2
+		joiner.Receive(f);
+		CHECK(joiner.loot.Waiting().size() == 1);
+		CHECK(joiner.In(SAFE, CAPS) == 300);
+	}
+	std::filesystem::copy_file(kept, path, std::filesystem::copy_options::overwrite_existing);
+	host.Restart(hostSave);
+	{
+		Fixture f{ options };
+		host.Join(f, "Host");
+		joiner.Join(f, "Joiner");  // asks from #3; the server has 2
+		host.Receive(f);
+		joiner.Receive(f);
+		CHECK(joiner.loot.Numbers().Numbers().Stats().rewinds == 1);
+		CHECK(joiner.loot.Waiting().empty());
+
+		host.Take(f, CHEST, AMMO, 5);  // #2 again: another change
+		joiner.away.clear();           // the joiner walks to the safe
+		joiner.Receive(f);
+		CHECK(joiner.In(SAFE, CAPS) == 300);
+		CHECK(host.In(SAFE, CAPS) == 300);
+		CHECK(joiner.In(CHEST, AMMO) == 75);
+		CHECK(joiner.holders == host.holders);
+
+		// The joiner's save made now carries no trace of the lost change either.
+		CHECK(joiner.SaveGame(f).waiting.empty());
 	}
 	std::filesystem::remove(path);
 	std::filesystem::remove(kept);
@@ -391,11 +488,11 @@ TEST("loot sync: a save with no session's record, loaded in a session, catches u
 	bob.Receive(f);
 
 	// Bob loads a save he made alone: no record.
-	Game::Save solo{ { { CHEST, { { STIMPAK, 10 } } } }, {}, {} };
+	Game::Save solo{ { { CHEST, { { STIMPAK, 10 } } } }, {}, {}, {} };
 	bob.LoadGame(f, solo);
 	bob.Receive(f);
 	CHECK(bob.In(CHEST, STIMPAK) == 4);
-	const auto resaved = bob.SaveGame();
+	const auto resaved = bob.SaveGame(f);
 	CHECK(resaved.point.sessionId == bob.sessionId);
 	CHECK(resaved.point.containerFrom == 2);
 
@@ -405,7 +502,7 @@ TEST("loot sync: a save with no session's record, loaded in a session, catches u
 	bob.LoadGame(f, resaved);
 	bob.Receive(f);
 	CHECK(bob.In(CHEST, STIMPAK) == 3);
-	CHECK(bob.loot.Numbers().Next() == 3);
+	CHECK(bob.loot.Numbers().Numbers().Next() == 3);
 }
 
 TEST("loot sync: a friend taking what a reloader put in after their save counts as a duplication risk")
@@ -416,16 +513,78 @@ TEST("loot sync: a friend taking what a reloader put in after their save counts 
 	alice.Join(f, "Alice");
 	bob.Join(f, "Bob");
 	bob.carried[CAPS] = 100;
-	const auto save = bob.SaveGame();
-	bob.Put(f, SAFE, CAPS, 100);   // #0, after his save
+	const auto save = bob.SaveGame(f);
+	bob.Put(f, SAFE, CAPS, 100);  // #0, after his save
 	alice.Receive(f);
 	alice.Take(f, SAFE, CAPS, 100);  // #1
 	bob.Receive(f);
-	CHECK(bob.loot.DupRisk() == 0);  // live: the caps really left Bob
+	CHECK(bob.loot.Numbers().DupRisk() == 0);  // live: the caps really left Bob
 
 	bob.LoadGame(f, save);
 	bob.Receive(f);
-	CHECK(bob.loot.OwnSkipped() == 1);
-	CHECK(bob.loot.DupRisk() == 1);
-	CHECK(alice.loot.DupRisk() == 0);
+	CHECK(bob.loot.Numbers().OwnSkipped() == 1);
+	CHECK(bob.loot.Numbers().DupRisk() == 1);
+	CHECK(alice.loot.Numbers().DupRisk() == 0);
+}
+
+TEST("loot sync: a friend's take arriving just as our chest loads waits for the put before it, so the chest doesn't keep what was taken")
+{
+	// Alice puts stimpaks in a chest Bob's game hasn't loaded; Carol takes them out. Bob walks in, and
+	// Carol's take reaches him before his game has tried Alice's put again.
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
+	for (auto* game : { &alice, &bob, &carol }) {
+		game->Join(f, "P");
+		game->Receive(f);
+	}
+	bob.away.insert(CHEST);
+	alice.carried[STIMPAK] = 2;
+	alice.Put(f, CHEST, STIMPAK, 2);  // #0
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 1);
+	carol.Receive(f);
+	carol.Take(f, CHEST, STIMPAK, 2);  // #1
+	CHECK(carol.Carried(STIMPAK) == 2);
+
+	bob.away.clear();
+	bob.Handle(nullptr, bob.Fetch(f));  // the packets, before the frame that tries again
+	CHECK(bob.In(CHEST, STIMPAK) == 0);
+	bob.Frame(f);
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST, STIMPAK) == 0);
+	CHECK(bob.holders[CHEST] == carol.holders[CHEST]);
+}
+
+TEST("loot sync: a corpse a friend looted before its kill reached us keeps its loot until the kill comes, then loses it")
+{
+	// The server sends the kill first; here it comes late (a reordering, or the kill lost and resent).
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	for (auto* game : { &alice, &bob }) {
+		game->holderFacts[RAIDER] = { .kind = LootScope::Holder::kActor, .alive = true };
+		game->holders[RAIDER] = { { AMMO, 20 }, { STIMPAK, 2 } };
+	}
+	alice.Kill(f, RAIDER);
+	alice.Take(f, RAIDER, AMMO, 20);
+	alice.Take(f, RAIDER, STIMPAK, 1);
+	CHECK(alice.loot.Stats().sent == 2);
+
+	auto       toBob = bob.Fetch(f);
+	const auto death = std::ranges::find_if(toBob, [](const auto& a_packet) { return IsType(a_packet, MT::kActorDied); });
+	REQUIRE(death != toBob.end());
+	const auto kill = *death;
+	toBob.erase(death);
+	bob.Handle(f, toBob);
+	CHECK(bob.In(RAIDER, AMMO) == 20);  // alive here: its pockets wait
+	CHECK(bob.loot.Waiting().size() == 2);
+	bob.Wait(f, 5s);
+	CHECK(bob.In(RAIDER, AMMO) == 20);
+
+	bob.Handle(f, { kill });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(RAIDER, AMMO) == 0);
+	CHECK(bob.In(RAIDER, STIMPAK) == 1);
+	CHECK(bob.holders[RAIDER] == alice.holders[RAIDER]);
 }
