@@ -606,7 +606,9 @@ void Server::Run()
 			}
 		}
 
-		if (worldTime) {
+		// Not to the host's own game: its clock is the session's, and a saved time would turn its clock back to
+		// when the session was last saved. (A dedicated server has no such game; it restores the saved time.)
+		if (worldTime && !a_player.local) {
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
 		}
 

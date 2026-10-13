@@ -488,6 +488,9 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
+			QuestSync::Reset();
+			Story::SetShared(false);
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -796,7 +799,7 @@ namespace Session
 		if (welcomed) {
 			NpcSync::Frame();
 		}
-		QuestSync::Frame();
+		QuestSync::Frame(welcomed);
 		for (auto& packet : QuestSync::TakeOutgoing()) {
 			if (welcomed) {
 				client->Send(std::move(packet), true);

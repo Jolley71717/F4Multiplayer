@@ -2,9 +2,13 @@
 // other, and the per-player relays (state, status, clock, XP, pings, heartbeats, rate limits).
 
 #include "ServerFixture.h"
+#include "SessionFile.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
 #include <limits>
 #include <thread>
 
@@ -962,6 +966,35 @@ TEST("server session: the session's time is forgotten when everyone has left")
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	CHECK(!f.fake->WaitFor(2, Type(MT::kWorldTime), 300ms));
+}
+
+TEST("server session: the host's own game isn't sent the saved time; a friend is")
+{
+	constexpr std::uint64_t HOST = 0x1111;
+	const auto path = std::filesystem::temp_directory_path() / std::format("f4mp-time-{}.session", std::rand());
+	SessionFile::Snapshot saved;
+	saved.contentHash = 0x1234;
+	saved.sessionId = 0x5E55;
+	Protocol::WorldTime time;
+	time.gameHour = 9.0f;
+	saved.worldTime = time;
+	REQUIRE(SessionFile::Save(path, saved));
+
+	Server::Options options;
+	options.hostIdentity = HOST;
+	options.sessionFile = path.string();
+	{
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		REQUIRE(f.Join(1, Fixture::MakeHello("Host", HOST)));
+		CHECK(!f.fake->WaitFor(1, Type(MT::kWorldTime), 300ms));  // its own clock is the session's
+
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto packet = f.fake->WaitFor(2, Type(MT::kWorldTime));
+		REQUIRE(packet);
+		CHECK(Protocol::DecodeWorldTime(*packet)->gameHour == 9.0f);
+	}
+	std::filesystem::remove(path);
 }
 
 TEST("server session: a time report that doesn't decode is ignored")

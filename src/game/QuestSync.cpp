@@ -139,7 +139,7 @@ namespace QuestSync
 		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));
 	}
 
-	void Frame()
+	void Frame(bool a_welcomed)
 	{
 		const auto now = Clock::now();
 		if (now < nextPoll) {
@@ -172,7 +172,9 @@ namespace QuestSync
 			}
 			return;
 		}
-		std::erase_if(pending, [](const auto& a_entry) { return TrySet(a_entry.first, a_entry.second, true) == Outcome::kDone; });
+		if (a_welcomed) {
+			std::erase_if(pending, [](const auto& a_entry) { return TrySet(a_entry.first, a_entry.second, true) == Outcome::kDone; });
+		}
 
 		if (!reportFrom) {
 			reportFrom = now + SETTLE_TIME;
@@ -231,6 +233,13 @@ namespace QuestSync
 		remoteStageAt.clear();
 		reportFrom.reset();
 		pending.clear();
+	}
+
+	void Reset()
+	{
+		pending.clear();
+		remoteStageAt.clear();
+		reportFrom.reset();
 	}
 
 	Clock::time_point LastStageChange()
