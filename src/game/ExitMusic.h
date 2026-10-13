@@ -9,4 +9,8 @@
 namespace ExitMusic
 {
 	void Install();
+
+	// Also runs a_work at the shutdown stage, after the music is stopped: the one moment the game is surely
+	// quitting while the world, Steam and the network are all still there (the session's last save).
+	void AtShutdown(void (*a_work)());
 }

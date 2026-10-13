@@ -60,6 +60,7 @@ namespace Session
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		std::string       lastRejectReason;
+		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
 
@@ -661,6 +662,9 @@ namespace Session
 
 	void Frame()
 	{
+		if (shuttingDown) {
+			return;
+		}
 		const auto now = Clock::now();
 		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
 		Story::Frame();  // first: the rest of the session checks it
@@ -881,6 +885,28 @@ namespace Session
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		Downed::OnBeforeSave();
+		// The session file is never older than our save. (A load asks too; it costs a write.)
+		if (hostedServer) {
+			hostedServer->RequestSave();
+		}
+	}
+
+	void Shutdown()
+	{
+		if (std::exchange(shuttingDown, true)) {
+			return;
+		}
+		// Only what must happen before the game is gone: the world is being torn down, so no stand-ins or HUD.
+		client->Disconnect();
+		const bool hosting = hostedServer != nullptr;
+		if (hostedServer) {
+			hostedServer->Stop();  // its thread writes the session file before it ends
+			hostedServer.reset();
+		}
+		if (steamMode) {
+			Steam::StopHosting();
+		}
+		REX::INFO("Session: game shutting down{}", hosting ? "; session saved" : "");
 	}
 
 	void OnGameLoaded()

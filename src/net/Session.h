@@ -14,6 +14,11 @@ namespace Session
 	// Before a save is written or another save is loaded.
 	void OnBeforeSaveOrLoad();
 
+	// The game is quitting (its shutdown stage, on the main thread, before the world is deleted): the hosted
+	// server writes the session file and stops, and the connections close while Steam and the network are
+	// still there. Nothing else runs after it.
+	void Shutdown();
+
 	// A save was loaded (or a new game started): the world went back in time, so the session's
 	// changes are requested and applied again.
 	void OnGameLoaded();

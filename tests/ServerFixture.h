@@ -71,6 +71,12 @@ namespace TestServer
 			return std::ranges::any_of(logLines, [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; });
 		}
 
+		std::size_t LoggedCount(std::string_view a_text)
+		{
+			std::lock_guard lock{ logMutex };
+			return static_cast<std::size_t>(std::ranges::count_if(logLines, [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; }));
+		}
+
 	private:
 		std::mutex               logMutex;
 		std::vector<std::string> logLines;

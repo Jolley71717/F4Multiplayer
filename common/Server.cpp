@@ -271,9 +271,13 @@ void Server::Run()
 				workshop.Scraps().size()));
 		}
 	}
-	std::size_t lastSavedSize = 0;  // a cheap change check: how much state there was at the last save
-	const auto  stateSize = [&] { return deadActors.size() + containerChanges.size() + pickedUp.size() + refStates.size() + questStages.size() + markers.size() + workshop.Size() + (worldTime ? 1 : 0); };
-	const auto  saveSession = [&] {
+	// Counts every change to what is saved, so one that leaves the counts as they were (a door closed again, a
+	// settlement object moved) is saved too. The time of day isn't counted: it changes every second, and is
+	// written with any other change, on the host's game saves and when the server stops.
+	std::uint64_t revision = 0;
+	std::uint64_t lastSavedRevision = 0;
+	const auto    touched = [&] { ++revision; };
+	const auto    saveSession = [&] {
 		if (options.sessionFile.empty() || sessionContentHash == 0) {
 			return;
 		}
@@ -296,12 +300,14 @@ void Server::Run()
 			snapshot.markers.emplace_back(ref, flags);
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
+		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
 			log("server: could not save the session");
+			return;  // tried again at the next check
 		}
-		lastSavedSize = stateSize();
+		lastSavedRevision = saved;
 	};
-	Clock::time_point nextSave = Clock::now() + std::chrono::seconds(15);
+	Clock::time_point nextSave = Clock::now() + options.saveInterval;
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
@@ -319,6 +325,7 @@ void Server::Run()
 		markers.clear();
 		hostHadAlive.clear();
 		sessionId = NewSessionId();
+		touched();
 	};
 
 	const auto send = [&](ConnectionKey a_key, const std::vector<std::uint8_t>& a_packet, bool a_reliable) {
@@ -554,6 +561,7 @@ void Server::Run()
 				returning = true;
 			} else if (identities.size() < MAX_IDENTITIES) {
 				identities[hello->identity] = a_player.id;
+				touched();
 			}
 		}
 		// (After dropping a stale connection: it doesn't take up a place.)
@@ -688,6 +696,7 @@ void Server::Run()
 		if (!deadActors.insert(death->refId).second) {
 			return;
 		}
+		touched();
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
 		}
@@ -727,6 +736,7 @@ void Server::Run()
 		++containersAuthored[a_player.id];
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
 		containerChanges.push_back({ index, a_player.id, *change });
+		touched();
 		broadcast(Protocol::Encode(containerChanges.back()), true, 0);
 	};
 
@@ -739,6 +749,7 @@ void Server::Run()
 			!pickedUp.insert(pickup->refId).second) {
 			return;
 		}
+		touched();
 		broadcast(Protocol::Encode(*pickup, Protocol::MessageType::kRefPickedUp), true, a_player.key);
 	};
 
@@ -756,6 +767,7 @@ void Server::Run()
 			return;
 		}
 		stored = *state;
+		touched();
 		stored.playerId = 0;  // a world state names nobody: a joiner takes it as it is
 		Protocol::RefState relayed = *state;
 		relayed.playerId = a_player.id;  // the others take it only if this player is near the thing
@@ -861,6 +873,7 @@ void Server::Run()
 				scrap ? "scrapped pieces of the world" : "built objects", item->refId, a_player.name));
 		}
 		if (outcome.relay) {
+			touched();  // relayed: what is kept changed
 			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);
 		}
 	};
@@ -1113,6 +1126,7 @@ void Server::Run()
 			auto& flags = markers[marker.refId];
 			if ((marker.flags & ~flags) != 0) {
 				flags |= marker.flags;
+				touched();
 				news.markers.push_back({ marker.refId, flags });
 			}
 		}
@@ -1177,6 +1191,7 @@ void Server::Run()
 		}
 		questStages.push_back(*stage);
 		questStageKeys.insert(questKey(*stage));
+		touched();
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
@@ -1349,6 +1364,10 @@ void Server::Run()
 					break;
 				case TransportEvent::Type::kDisconnect:
 					if (const auto it = players.find(key); it != players.end()) {
+						// The host's game going: it may be quitting, so what it did is written now.
+						if (it->second.local && it->second.welcomed) {
+							saveRequested = true;
+						}
 						leave(it->second);
 						players.erase(it);
 						// The clock belonged to someone who's gone; the next player brings their own.
@@ -1394,10 +1413,14 @@ void Server::Run()
 			player.stateDirty = false;
 		}
 
-		// The session goes to disk when it changed (checked every 15 s) and when the server stops.
-		if (Clock::now() >= nextSave) {
-			nextSave = Clock::now() + std::chrono::seconds(15);
-			if (stateSize() != lastSavedSize) {
+		// The session goes to disk when it changed (checked every saveInterval), when asked (the host's game
+		// saves, or its connection goes) and when the server stops.
+		if (saveRequested.exchange(false)) {
+			nextSave = Clock::now() + options.saveInterval;
+			saveSession();
+		} else if (Clock::now() >= nextSave) {
+			nextSave = Clock::now() + options.saveInterval;
+			if (revision != lastSavedRevision) {
 				saveSession();
 			}
 		}

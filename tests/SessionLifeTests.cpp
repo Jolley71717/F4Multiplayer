@@ -473,3 +473,150 @@ TEST("session life: when the host's game quit before its last loot was saved, th
 	me.Process();
 	CHECK(me.stimpaks == 1);
 }
+
+// ---- the session file keeps up ----------------------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint32_t DOOR = 0x0003D001;
+	constexpr std::uint32_t WALL = 0xFF000042;  // something built: a runtime reference
+
+	auto DoorReport(std::uint8_t a_open)
+	{
+		return Protocol::Encode(Protocol::RefState{ DOOR, a_open, Protocol::RefState::kNo }, MT::kReportRefState);
+	}
+
+	auto WallReport(float a_x)
+	{
+		Protocol::WorkshopItem item;
+		item.refId = WALL;
+		item.base = 0x0001F2A1;
+		item.workshop = 0x000250FE;
+		item.position[0] = a_x;
+		return Protocol::Encode(item, MT::kReportWorkshopItem);
+	}
+
+	// Waits (up to 3 s) for the session file to read back as a_ready says; the server writes it on its own thread.
+	template <class Ready>
+	std::optional<SessionFile::Snapshot> WaitForFile(const TempFile& a_file, Ready a_ready)
+	{
+		const auto until = std::chrono::steady_clock::now() + 3s;
+		do {
+			if (auto saved = SessionFile::Load(a_file.path); saved && a_ready(*saved)) {
+				return saved;
+			}
+			std::this_thread::sleep_for(10ms);
+		} while (std::chrono::steady_clock::now() < until);
+		return std::nullopt;
+	}
+
+	std::optional<std::uint8_t> DoorIn(const SessionFile::Snapshot& a_saved)
+	{
+		const auto it = std::ranges::find(a_saved.refStates, DOOR, &Protocol::RefState::refId);
+		return it == a_saved.refStates.end() ? std::nullopt : std::optional{ it->open };
+	}
+
+	std::optional<float> WallXIn(const SessionFile::Snapshot& a_saved)
+	{
+		const auto it = std::ranges::find(a_saved.workshopItems, WALL, &Protocol::WorkshopItem::refId);
+		return it == a_saved.workshopItems.end() ? std::nullopt : std::optional{ it->position[0] };
+	}
+}
+
+TEST("session life: a door closed again and a wall moved reach the file at the next check, and stand that way after the host restarts")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 50ms;
+	{
+		Fixture f{ options };
+		REQUIRE(JoinHost(f, 1));
+		REQUIRE(f.Join(2, Hello("Friend", FRIEND)));
+		f.fake->Deliver(2, DoorReport(Protocol::RefState::kYes));
+		f.fake->Deliver(1, WallReport(10.0f));
+		REQUIRE(WaitForFile(file, [](const auto& a_saved) { return DoorIn(a_saved) == Protocol::RefState::kYes && WallXIn(a_saved) == 10.0f; }));
+
+		// Nothing more or less is kept, only different: the file follows anyway.
+		f.fake->Deliver(2, DoorReport(Protocol::RefState::kNo));
+		f.fake->Deliver(1, WallReport(20.0f));
+		CHECK(WaitForFile(file, [](const auto& a_saved) { return DoorIn(a_saved) == Protocol::RefState::kNo && WallXIn(a_saved) == 20.0f; }));
+	}
+
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	REQUIRE(f.Join(2, Hello("Friend", FRIEND)));
+	const auto received = Received(f, 2);
+	const auto world = WorldStates(received);
+	REQUIRE(!world.empty());
+	REQUIRE(world[0].refStates.size() == 1);
+	CHECK(world[0].refStates[0].open == Protocol::RefState::kNo);
+	bool wallAt20 = false;
+	for (const auto& packet : received) {
+		if (packet[0] == Type(MT::kWorkshopItems)) {
+			const auto items = Protocol::DecodeWorkshopItems(packet);
+			REQUIRE(items);
+			wallAt20 |= std::ranges::any_of(*items, [](const auto& a_item) { return a_item.refId == WALL && a_item.position[0] == 20.0f; });
+		}
+	}
+	CHECK(wallAt20);
+}
+
+TEST("session life: the time of day alone doesn't rewrite the file, but the host's game saving writes it at once")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 50ms;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	REQUIRE(WaitForFile(file, [](const auto&) { return true; }));  // the host's identity is new to the session
+
+	Protocol::WorldTime time;
+	time.gameHour = 9.0f;
+	f.fake->Deliver(1, Protocol::Encode(time, MT::kReportTime));
+	Sync(f, 1);
+	std::this_thread::sleep_for(300ms);  // six checks
+	const auto before = SessionFile::Load(file.path);
+	REQUIRE(before);
+	CHECK(!before->worldTime);
+
+	f.server.RequestSave();  // the host's game saves (Session::OnBeforeSaveOrLoad)
+	const auto after = WaitForFile(file, [](const auto& a_saved) { return a_saved.worldTime.has_value(); });
+	REQUIRE(after);
+	CHECK(after->worldTime->gameHour == 9.0f);
+}
+
+TEST("session life: the host's game dropping out writes what it did at once, not at the next check")
+{
+	TempFile file;
+	auto     options = HostedOptions(file);
+	options.saveInterval = 60s;
+	Fixture f{ options };
+	REQUIRE(JoinHost(f, 1));
+	f.fake->Deliver(1, Kill(RAIDER));
+	Sync(f, 1);
+	f.fake->Drop(1);  // its game quit (or crashed)
+	const auto saved = WaitForFile(file, [](const auto& a_saved) { return !a_saved.deadActors.empty(); });
+	REQUIRE(saved);
+	CHECK(saved->deadActors == std::vector<std::uint32_t>{ RAIDER });
+}
+
+TEST("session life: a session file that can't be written is tried again at the next check, not taken as written")
+{
+	TempFile file;
+	std::filesystem::create_directory(file.path);  // where the file should go is a folder: every write fails
+	auto options = HostedOptions(file);
+	options.saveInterval = 50ms;
+	{
+		Fixture f{ options };
+		REQUIRE(JoinHost(f, 1));
+		f.fake->Deliver(1, Kill(RAIDER));
+		Sync(f, 1);
+		const auto until = std::chrono::steady_clock::now() + 3s;
+		while (f.LoggedCount("could not save the session") < 2 && std::chrono::steady_clock::now() < until) {
+			std::this_thread::sleep_for(10ms);
+		}
+		CHECK(f.LoggedCount("could not save the session") >= 2);
+	}
+	std::filesystem::remove(file.path.string() + ".tmp");
+	std::filesystem::remove(file.path);
+}

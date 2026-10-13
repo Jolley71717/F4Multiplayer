@@ -185,6 +185,14 @@ namespace
 			Compass::Install();
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
+			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
+			ExitMusic::AtShutdown([] {
+				try {
+					Session::Shutdown();
+				} catch (const std::exception& e) {
+					REX::ERROR("Session: shutting down: {}", e.what());
+				}
+			});
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");

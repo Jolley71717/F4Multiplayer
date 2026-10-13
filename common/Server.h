@@ -3,6 +3,7 @@
 #include "Transport.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -51,6 +52,9 @@ public:
 		// Where the session's world is saved (and loaded from at start), so it survives the host
 		// quitting. Empty = not saved.
 		std::string sessionFile;
+
+		// How often the session file is checked for changes to write. Tests shorten it.
+		std::chrono::milliseconds saveInterval{ 15000 };
 	};
 
 	using LogFn = std::function<void(std::string_view)>;
@@ -64,7 +68,12 @@ public:
 	// Binds the UDP port and starts the server thread. Players can also arrive through any extra
 	// transports (e.g. Steam). Returns false if the port can't be bound.
 	bool Start(const Options& a_options, std::vector<std::unique_ptr<ServerTransport>> a_extraTransports = {});
+	// Stops the server thread; the session file is written first.
 	void Stop();
+
+	// Writes the session file on the server thread's next tick, changed or not (the host's game is saving:
+	// the file is then never older than the host's save). Any thread.
+	void RequestSave() { saveRequested = true; }
 
 	[[nodiscard]] bool Running() const { return running; }
 
@@ -77,4 +86,5 @@ private:
 	std::thread                                   thread;
 	std::atomic<bool>                             running{ false };
 	std::atomic<bool>                             stopRequested{ false };
+	std::atomic<bool>                             saveRequested{ false };
 };
