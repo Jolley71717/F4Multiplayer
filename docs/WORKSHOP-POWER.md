@@ -12,6 +12,11 @@ starting the work, so the order and the risks are agreed first.
 - Copies are only of bases the workshop can build (statics, furniture, containers, doors, lights,
   terminals, misc, flora, non-unique NPCs for turrets). They are not workshop items in the
   receiving game: not counted, not scrappable, not wired, not assigned.
+- A moved piece's copy is moved with its 3D (an actor through its controller), or made again when it
+  changes cells. A load lets the copies' handles go and the server sends the building again; the
+  save's copies are adopted at their spots. Reports are placed in order, a few a frame
+  (`WorkshopInbox`); the rules that need no game are in `WorkshopMove` and tested end to end in
+  `tests/WorkshopSessionTests.cpp`.
 
 ## Three steps, in order
 
