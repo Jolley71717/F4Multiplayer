@@ -439,6 +439,13 @@ namespace StageRules
 	};
 
 	inline constexpr auto WARNING = std::chrono::seconds(10);
+	// After a warning, more stages that move the player go without another one this long.
+	inline constexpr auto WARNING_COVERS = std::chrono::seconds(60);
+	// A friend's stage is live (they did it just now, not caught up from the session) this long after it
+	// came; a stage that moves the player is set then if the friend who did it is within NEAR_FRIEND
+	// (game units, about 85 m): it moves them along with that friend.
+	inline constexpr auto  LIVE_FOR = std::chrono::seconds(30);
+	inline constexpr float NEAR_FRIEND = 6000.0f;
 
 	// A friend's stage that moves the player is set while the player is with them (it moves them along,
 	// as it moved the friend), and skipped otherwise, unless nothing else would start what it starts:

@@ -28,12 +28,14 @@ namespace QuestSync
 	// from other players.
 	void Frame(bool a_inSession);
 
-	// The stage reports to send. While not connected (a_sending false) they are kept for when the
-	// connection is back: a stage is reported only once.
-	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
+	// The reports to send (a_sending: welcomed). While joining or rejoining a session (a_inSession) they
+	// are kept for when the connection is back, since a stage is reported only once; playing alone they
+	// are dropped (see StageLog::Outbox).
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession);
 
 	// The session ended: the stages still waiting from it are dropped, not set in the player's own
-	// game, except those that give the player their controls back after a stage set here took them.
+	// game, except those that give the player their controls back after a stage set here took them
+	// (set even though the story is the player's own again). What other players moved lately goes too.
 	void OnSessionEnded();
 
 	// Forget the known stages and the waiting ones; the next Frame takes a fresh baseline (after

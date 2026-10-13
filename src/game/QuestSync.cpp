@@ -55,11 +55,10 @@ namespace QuestSync
 		// Stages a quest's script sets this soon after another player's stage are its reaction to
 		// that stage, not this player's progress: every game that applies it gets there by itself.
 		constexpr auto SCRIPT_REACTION_WINDOW = 3s;
-		// A friend's stage is live (they did it just now, not caught up from the session) this long after
-		// it came; a stage that moves the player is set then if a friend is within NEAR_FRIEND (game
-		// units, about 85 m): it moves them along with the friend who did it.
-		constexpr auto  LIVE_FOR = 30s;
-		constexpr float NEAR_FRIEND = 6000.0f;
+		// Live stages, the friend nearby and the warning's cover: StageRules (LIVE_FOR, NEAR_FRIEND, WARNING_COVERS).
+		using StageRules::LIVE_FOR;
+		using StageRules::NEAR_FRIEND;
+		using StageRules::WARNING_COVERS;
 		// Caught-up stages wait while the player fights and a moment after: a stage that moves them
 		// mustn't come mid-fight, and its quest XP would be taken for kill XP (see Party). Not forever:
 		// something out of reach can keep the player in combat.
@@ -69,10 +68,6 @@ namespace QuestSync
 		// away can start a scene with the player in it that only a later stage of its quest ends (MQ104's
 		// 18 starts one, its 30 ends it), while the scene's other actors are nowhere near.
 		constexpr auto MAX_SCENE_HOLD = 30s;
-		// After a warning that a stage will move the player, more such stages go without another one.
-		constexpr auto WARNING_COVERS = 60s;
-		// Stage reports kept while not connected (the welcome still to come, a reconnect), at most.
-		constexpr std::size_t MAX_UNSENT = 1024;
 		// The quests caught up with are named in one notice, once none came for a moment (or every so often).
 		constexpr auto NOTICE_QUIET = 3s;
 		constexpr auto NOTICE_EVERY = 15s;
@@ -109,7 +104,7 @@ namespace QuestSync
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
-		std::vector<std::vector<std::uint8_t>>           outgoing;
+		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
 		bool                                             busy = false;        // this poll: a conversation or scene
 		bool                                             combatHold = false;  // this poll: caught-up stages wait
@@ -231,13 +226,22 @@ namespace QuestSync
 			return file ? StageRules::Find(*file, a_quest & 0x00FFFFFF, a_stage) : nullptr;
 		}
 
+		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
+		// after its 500): without a combat hold, since the player can't fight anyway, and without
+		// another warning, since they were warned before the lock.
+		bool Unlocking(std::uint32_t a_quest)
+		{
+			return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest);
+		}
+
 		// Whether stages from other players can be set on this quest now. They wait until this player
 		// has started the quest too (an objective is shown; the game runs some quests in the background
 		// long before that), possibly because another quest's stage starts it (MQ104's 210 starts MQ105).
+		// A lock's quests go on after the session, when the story is no longer shared (StageLog::Settable).
 		StageLog::Quest StateOf(std::uint32_t a_quest)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
-			if (!quest || !Shared(quest) || StageLog::Finished(quest->data.flags)) {
+			if (!quest || !StageLog::Settable(Shared(quest), Unlocking(a_quest)) || StageLog::Finished(quest->data.flags)) {
 				return StageLog::Quest::kGone;
 			}
 			// Quest scripts must not run at the main menu or during a loading screen.
@@ -312,14 +316,6 @@ namespace QuestSync
 			remoteStageAt[id] = Clock::now();
 			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
 			++applied;
-		}
-
-		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
-		// after its 500): without a combat hold, since the player can't fight anyway, and without
-		// another warning, since they were warned before the lock.
-		bool Unlocking(std::uint32_t a_quest)
-		{
-			return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest);
 		}
 
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
@@ -596,7 +592,7 @@ namespace QuestSync
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
 				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF) {
-					outgoing.push_back(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone));
+					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone));
 					++completed;
 				}
 			}
@@ -630,24 +626,15 @@ namespace QuestSync
 				continue;
 			}
 			for (const auto stage : fresh) {
-				outgoing.push_back(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage));
+				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage));
 				++reported;
 			}
 		}
 	}
 
-	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
 	{
-		if (!a_sending) {
-			// Kept until connected: a stage is seen done only once, so a report dropped now (the welcome
-			// still to come, a reconnect) would never be sent, and what its script starts (MQ104's 210
-			// starts MQ105) would wait forever in the others' games.
-			if (outgoing.size() > MAX_UNSENT) {
-				outgoing.erase(outgoing.begin(), outgoing.end() - MAX_UNSENT);
-			}
-			return {};
-		}
-		return std::exchange(outgoing, {});
+		return outgoing.Take(a_sending, a_inSession);
 	}
 
 	void OnSessionEnded()
@@ -668,7 +655,8 @@ namespace QuestSync
 		sceneSince.reset();
 		lockWaitLogged.clear();
 		remoteStageAt.clear();
-		reportFrom.reset();
+		// Reporting goes on without a new settle (not reportFrom.reset): a stage done while the connection is
+		// remade is reported once it is back (outgoing), and playing alone the reports are dropped.
 	}
 
 	void Rebaseline()
@@ -687,7 +675,7 @@ namespace QuestSync
 		sceneSince.reset();
 		lockWaitLogged.clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
-		outgoing.clear();  // progress of the game before the load
+		outgoing.Clear();  // progress of the game before the load
 	}
 
 	Clock::time_point LastStageChange()
@@ -698,6 +686,6 @@ namespace QuestSync
 	std::string Describe()
 	{
 		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={}{}",
-			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.size(), locked ? " locked" : "");
+			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(), locked ? " locked" : "");
 	}
 }

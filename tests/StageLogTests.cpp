@@ -685,3 +685,56 @@ TEST("stage queue: while the player's controls are taken, another quest's stage 
 	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { MQ206, 1200 } }));
 	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10 }));
 }
+
+TEST("stage outbox: a stage reached while the connection is being remade is sent once it is back, in order")
+{
+	StageLog::Outbox<int> outbox;
+	outbox.Add(1);
+	outbox.Add(2);
+	CHECK(outbox.Take(false, true).empty());  // joining, or reconnecting
+	CHECK(outbox.Size() == 2);
+	outbox.Add(3);
+	CHECK((outbox.Take(true, true) == std::vector<int>{ 1, 2, 3 }));
+	CHECK(outbox.Size() == 0);
+	CHECK(outbox.Take(true, true).empty());  // and not twice
+}
+
+TEST("stage outbox: progress made playing alone never reaches a session joined later")
+{
+	StageLog::Outbox<int> outbox;
+	outbox.Add(1);
+	CHECK(outbox.Take(false, false).empty());  // no session
+	CHECK(outbox.Size() == 0);
+	CHECK(outbox.Take(true, true).empty());  // then a join
+}
+
+TEST("stage outbox: a connection down for a long time keeps only the newest stages, without growing")
+{
+	StageLog::Outbox<std::size_t> outbox;
+	const auto total = StageLog::Outbox<std::size_t>::MAX_UNSENT + 10;
+	for (std::size_t i = 0; i < total; ++i) {
+		outbox.Add(i);
+	}
+	CHECK(outbox.Take(false, true).empty());
+	CHECK(outbox.Size() == StageLog::Outbox<std::size_t>::MAX_UNSENT);
+	const auto sent = outbox.Take(true, true);
+	REQUIRE(sent.size() == StageLog::Outbox<std::size_t>::MAX_UNSENT);
+	CHECK(sent.front() == 10);
+	CHECK(sent.back() == total - 1);
+}
+
+TEST("stage outbox: a save loaded drops the progress of the game before it")
+{
+	StageLog::Outbox<int> outbox;
+	outbox.Add(1);
+	outbox.Clear();
+	CHECK(outbox.Take(true, true).empty());
+}
+
+TEST("stage queue: a friend's stage is set here when the session shares its quest, or when a lock begun in the session needs it after leaving")
+{
+	CHECK(StageLog::Settable(true, false));
+	CHECK(StageLog::Settable(false, true));   // the teleport goes on with the story the player's own again
+	CHECK(StageLog::Settable(true, true));
+	CHECK(!StageLog::Settable(false, false));  // the story after leaving: nothing of the session's is set
+}

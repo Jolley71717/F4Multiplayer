@@ -911,7 +911,9 @@ namespace Session
 		}
 		QuestSync::Frame(welcomed);
 		Achievements::Frame();
-		for (auto& packet : QuestSync::TakeOutgoing(welcomed)) {
+		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
+		// server is one), and playing alone they are dropped: a session joined later doesn't get them.
+		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
 			client->Send(std::move(packet), true);
 		}
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths

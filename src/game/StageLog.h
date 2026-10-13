@@ -54,6 +54,53 @@ namespace StageLog
 		return (a_flags & QUEST_COMPLETED) && !(a_flags & QUEST_RUNNING);
 	}
 
+	// Whether other players' stages of a quest are set here: a quest the session shares (the story's only
+	// while the host shares it), or one of a lock's (Queue::Lock), whatever the story is now. A stage set
+	// here took the player's controls and only its release gives them back, so a teleport begun in a
+	// session finishes after leaving it, when the story is the player's own again.
+	inline bool Settable(bool a_shared, bool a_lockQuest)
+	{
+		return a_shared || a_lockQuest;
+	}
+
+	// Reports on their way to the server (the stages done here, the quests completed). A stage is seen
+	// done only once, so a report made while the connection is down in a session (the welcome still to
+	// come, a reconnect) is kept for when it is back: dropped, what its script starts (MQ104's 210 starts
+	// MQ105) would wait forever in the others' games. One made in no session, playing alone, is no
+	// session's: it is dropped, so a session joined later doesn't take the player's solo progress for a
+	// friend's and set it in everyone's game.
+	template <class Report>
+	class Outbox
+	{
+	public:
+		static constexpr std::size_t MAX_UNSENT = 1024;  // the newest kept while the connection is down
+
+		void Add(Report a_report) { reports.push_back(std::move(a_report)); }
+
+		// The reports to send now. a_sending: connected and welcomed. a_inSession: in a session, or
+		// joining or rejoining one (a host's own game hosting one).
+		std::vector<Report> Take(bool a_sending, bool a_inSession)
+		{
+			if (a_sending) {
+				return std::exchange(reports, {});
+			}
+			if (!a_inSession) {
+				reports.clear();
+			} else if (reports.size() > MAX_UNSENT) {
+				reports.erase(reports.begin(), reports.end() - MAX_UNSENT);
+			}
+			return {};
+		}
+
+		// Progress of the game before a load.
+		void Clear() { reports.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return reports.size(); }
+
+	private:
+		std::vector<Report> reports;
+	};
+
 	// What a quest in this game says about the stages waiting for it.
 	enum class Quest
 	{
