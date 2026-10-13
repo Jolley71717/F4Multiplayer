@@ -150,6 +150,9 @@ TEST("remote edits: a friend is shown as a settler or our own default, never as 
 	CHECK(AllowedAppearance(OUR_DEFAULT, OUR_DEFAULT));
 	CHECK(!AllowedAppearance(0x0024A381, OUR_DEFAULT));  // a plain NPC with scripts of its own
 	CHECK(!AllowedAppearance(0x0002268A, 0x0020A578));   // what another player's ini picked is not ours
+	CHECK(LookToPlace(0, OUR_DEFAULT) == 0);  // nothing asked: our default
+	CHECK(LookToPlace(0x0020A57B, OUR_DEFAULT) == 0x0020A57B);
+	CHECK(LookToPlace(0x0024A381, OUR_DEFAULT) == 0);
 }
 
 TEST("death reports: a report is held against the player the server named, where they were when it came and where they are now")

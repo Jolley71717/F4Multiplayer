@@ -1142,12 +1142,12 @@ namespace RemotePlayers
 		{
 			// The look the player picked, when it is one we place (a settler, or our own default): any other NPC
 			// would bring its scripts and factions into our world on their word, so they are shown as our default.
-			const bool allowed = RemoteEdits::AllowedAppearance(a_player.appearance, Config::Get().puppetBaseForm);
-			if (a_player.appearance && !allowed && !a_player.appearanceWarned) {
+			const auto look = RemoteEdits::LookToPlace(a_player.appearance, Config::Get().puppetBaseForm);
+			if (a_player.appearance && !look && !a_player.appearanceWarned) {
 				a_player.appearanceWarned = true;
 				REX::WARN("RemotePlayers: '{}' asked to look like NPC {:08X}, which is not a settler or our default; using the default", a_player.name, a_player.appearance);
 			}
-			auto npc = a_player.appearance && allowed ? RE::TESForm::GetFormByID<RE::TESNPC>(a_player.appearance) : nullptr;
+			auto npc = look ? RE::TESForm::GetFormByID<RE::TESNPC>(look) : nullptr;
 			if (!npc) {
 				auto baseID = Config::Get().puppetBaseForm;
 				// With their face known, the base is a settler of their sex (unless the ini picked another base).

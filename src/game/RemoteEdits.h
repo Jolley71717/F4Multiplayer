@@ -249,4 +249,11 @@ namespace RemoteEdits
 	{
 		return a_base == FEMALE_SETTLER || a_base == MALE_SETTLER || a_base == a_localDefault;
 	}
+
+	// The look a friend's stand-in is placed with: the one they asked for (Hello.appearance, passed on as they
+	// sent it) when it is allowed, else 0: our default.
+	constexpr std::uint32_t LookToPlace(std::uint32_t a_asked, std::uint32_t a_localDefault)
+	{
+		return a_asked && AllowedAppearance(a_asked, a_localDefault) ? a_asked : 0;
+	}
 }

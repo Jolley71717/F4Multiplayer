@@ -2658,13 +2658,13 @@ TEST("host authority: a settler a friend's game moved far from them is not pulle
 	CHECK(hostGame.Take()[0].second);
 }
 
-TEST("host authority: a friend who asks to look like any NPC but a settler is shown as your own default")
+TEST("host authority: a friend who asks to look like any NPC but a settler is shown as your own default, even after rejoining with that look")
 {
 	constexpr std::uint32_t SOME_NPC = 0x0024A381;  // an ordinary, non-unique NPC with scripts of its own
 	Fixture f;
 	const auto host = f.Join(1, Fixture::MakeHello("Host"));  // no look picked: everyone's own default
 	REQUIRE(host);
-	auto bobHello = Fixture::MakeHello("Bob");
+	auto bobHello = Fixture::MakeHello("Bob", 0xB0B);
 	bobHello.appearance = SOME_NPC;
 	const auto bob = f.Join(2, bobHello);
 	REQUIRE(bob);
@@ -2673,20 +2673,31 @@ TEST("host authority: a friend who asks to look like any NPC but a settler is sh
 	const auto carol = f.Join(3, carolHello);
 	REQUIRE(carol);
 
-	// Each game decides by its own ini: the host's default is the female settler, Carol's is that same NPC.
+	// Each game places a stand-in from the PlayerJoined the server sent it, by its own ini: the host's default
+	// is the female settler, Bob's too, Carol's is that same NPC Bob asked for. (0: the game's own default.)
 	const std::map<PeerId, std::uint32_t> defaults{ { 1, RemoteEdits::FEMALE_SETTLER }, { 2, RemoteEdits::FEMALE_SETTLER }, { 3, SOME_NPC } };
-	std::map<std::pair<PeerId, std::uint32_t>, bool> placedAsAsked;  // (watcher, player) -> placed with the look they sent
-	for (const auto& [peer, localDefault] : defaults) {
-		for (const auto& joined : Decoded(Received(f, peer), MT::kPlayerJoined, Protocol::DecodePlayerJoined)) {
-			placedAsAsked[{ peer, joined.playerId }] = joined.appearance && RemoteEdits::AllowedAppearance(joined.appearance, localDefault);
+	std::map<std::pair<PeerId, std::uint32_t>, std::uint32_t> placed;  // (watcher, player) -> the look placed
+	const auto watch = [&](PeerId a_peer) {
+		for (const auto& joined : Decoded(Received(f, a_peer), MT::kPlayerJoined, Protocol::DecodePlayerJoined)) {
+			placed[{ a_peer, joined.playerId }] = RemoteEdits::LookToPlace(joined.appearance, defaults.at(a_peer));
 		}
+	};
+	for (const auto& [peer, localDefault] : defaults) {
+		watch(peer);
 	}
-	// The server passes every look on as sent; the receivers judge it.
-	CHECK(placedAsAsked.size() == 6);
-	CHECK(!placedAsAsked.at({ 1, bob->playerId }));    // the host sees Bob as the female settler
-	CHECK(placedAsAsked.at({ 1, carol->playerId }));    // and Carol as the male settler she picked
-	CHECK(placedAsAsked.at({ 2, carol->playerId }));
-	CHECK(placedAsAsked.at({ 3, bob->playerId }));      // Carol's own stand-ins are that NPC anyway
-	CHECK(!placedAsAsked.at({ 2, host->playerId }));   // the host picked nothing: Bob's default
-	CHECK(!placedAsAsked.at({ 3, host->playerId }));
+	CHECK(placed.size() == 6);
+	CHECK(placed.at({ 1, bob->playerId }) == 0);  // the host sees Bob as its default, the female settler
+	CHECK(placed.at({ 1, carol->playerId }) == RemoteEdits::MALE_SETTLER);
+	CHECK(placed.at({ 2, carol->playerId }) == RemoteEdits::MALE_SETTLER);
+	CHECK(placed.at({ 3, bob->playerId }) == SOME_NPC);  // Carol's own stand-ins are that NPC anyway
+	CHECK(placed.at({ 2, host->playerId }) == 0);        // the host picked nothing
+	CHECK(placed.at({ 3, host->playerId }) == 0);
+
+	// Bob leaves and comes back asking for a unique character this time: still the host's default.
+	f.fake->Drop(2);
+	Sync(f, 1);
+	bobHello.appearance = 0x0001A4D7;
+	REQUIRE(f.Join(4, bobHello));
+	watch(1);
+	CHECK(placed.at({ 1, bob->playerId }) == 0);
 }
