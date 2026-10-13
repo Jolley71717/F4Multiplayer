@@ -24,6 +24,10 @@ namespace WorkshopSync
 	// Another player built, moved or scrapped something.
 	void Apply(const Protocol::WorkshopItem& a_item);
 
+	// Whether the reference is a settlement's workbench (whatever its state): what a friend's build or scrap
+	// must name as its workbench.
+	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
+
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op);
 

@@ -3,6 +3,8 @@
 
 #include "ServerFixture.h"
 
+#include "game/RemoteEdits.h"
+
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -1783,4 +1785,32 @@ TEST("server trust: a joiner is told where each dead NPC fell before the dead li
 	const auto world = WorldStates(packets);
 	REQUIRE(world.size() == 1);
 	CHECK(world[0].deadActors.size() == 2);
+}
+
+// --- Host authority, end to end: what one player's game sends, through the real server, judged by the --
+// --- rules the receiving game applies (src/game/RemoteEdits.h) -------------------------------------------
+
+TEST("host authority: a friend's build saved a hundred times its size comes back after a host restart shown at most ten times")
+{
+	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	std::filesystem::remove(path);
+	Server::Options options;
+	options.sessionFile = path;
+	auto huge = Wall(0xFF000077);
+	huge.scale = 100.0f;  // the most the protocol lets through
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+		f.fake->Deliver(1, Built(huge));
+		Sync(f, 1);
+	}  // the host quits: stopping saves
+
+	Fixture f{ options };
+	REQUIRE(f.Join(2, Fixture::MakeHello("Host")));
+	const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);
+	CHECK(batches[0][0].scale == 100.0f);  // the server keeps what was said; it can't see anyone's world
+	CHECK(RemoteEdits::ClampScale(batches[0][0].scale) == RemoteEdits::MAX_SCALE);  // the host's game shows it at ten times
+	std::filesystem::remove(path);
 }
