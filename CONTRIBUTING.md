@@ -56,7 +56,10 @@ run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F
 
 Anything that touches the game (`src/game`, `src/steam`, the sync classes) can only be tested in a
 game. Say in the pull request whether you ran it with two games (host and joiner) and what you saw;
-"not tested in a game" is a fine answer, as long as it is said.
+"not tested in a game" is a fine answer, as long as it is said. A fix for something seen in a game
+carries an `Evidence:` trailer in its commit message: what was run, and what a player saw that
+shows the fix holding (`Evidence: two-game test, host in the Concord museum suit seen from the
+joiner: one suit, the name tag over the wearer, an empty frame left where they got out`).
 
 ## Code style
 
