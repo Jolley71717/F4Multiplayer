@@ -19,6 +19,12 @@ Gate for an rc, every time:
    or one cycle of `soak.sh`, is that set;
 3. no new crash log on either machine during it.
 
+Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
+Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
+plugin relies on by hand (the call from Main::Run into the message loop, the engine's message pump the frame
+check looks for, the save anchor, the HUD menu's update slot). A FAILED line means the game or the Address
+Library changed, or an ID in `src/` is wrong: look at it before going further.
+
 ## Promotion to the release
 
 The same commit is tagged `vX.Y.Z` (no label) after a multi-hour soak (`soak.sh 3`: the standing set in
