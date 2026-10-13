@@ -182,6 +182,7 @@ namespace
 		// Until then their container changes aren't echoed to them (the world state carries them, in order).
 		bool                       worldStateOwed = false;
 		std::uint32_t              owedFrom = 0;
+		bool                       workshopOwed = false;  // a load's settlements, sent with the owed world state
 		// A hello that came when their budget had no world state for it (a game rejoining over and over):
 		// handled when it refills, so each hello's welcome (who runs which NPC, what's built) is paid for too.
 		std::vector<std::uint8_t>  waitingHello;
@@ -679,6 +680,26 @@ void Server::Run()
 		log(std::format("server: '{}' has asked for the world too often; sending it when their budget refills", a_player.name));
 	};
 
+	// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in
+	// batches; not what the player built themselves. Sent on joining, and again when they load a save:
+	// the copies their game had made went with the world it had before the load.
+	const auto sendWorkshop = [&](const Player& a_player) {
+		std::vector<Protocol::WorkshopItem> batch;
+		workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
+			if (a_key.first == a_player.id) {
+				return;
+			}
+			batch.push_back(a_item);
+			if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
+				send(a_player.key, Protocol::Encode(batch), true);
+				batch.clear();
+			}
+		});
+		if (!batch.empty()) {
+			send(a_player.key, Protocol::Encode(batch), true);
+		}
+	};
+
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -830,23 +851,7 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
-		// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in batches.
-		{
-			std::vector<Protocol::WorkshopItem> batch;
-			workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
-				if (a_key.first == a_player.id) {
-					return;
-				}
-				batch.push_back(a_item);
-				if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
-					send(a_player.key, Protocol::Encode(batch), true);
-					batch.clear();
-				}
-			});
-			if (!batch.empty()) {
-				send(a_player.key, Protocol::Encode(batch), true);
-			}
-		}
+		sendWorkshop(a_player);
 
 		// Not to the host's own game: its clock is the session's, and a saved time would turn its clock back to
 		// when the session was last saved. (A dedicated server has no such game; it restores the saved time.)
@@ -1523,6 +1528,13 @@ void Server::Run()
 		}
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
 			giveWorldState(a_player, request->sessionId == sessionId ? request->containerFrom : 0);
+			// The copies of what others built went with the world the game threw away: they come with the
+			// world state, and wait with it while it is owed.
+			if (a_player.worldStateOwed) {
+				a_player.workshopOwed = true;
+			} else {
+				sendWorkshop(a_player);
+			}
 		}
 	};
 
@@ -1749,6 +1761,9 @@ void Server::Run()
 			if (player.welcomed && player.worldStateOwed && allowWorldState(player)) {
 				player.worldStateOwed = false;
 				sendWorldState(key, player.owedFrom);
+				if (std::exchange(player.workshopOwed, false)) {
+					sendWorkshop(player);
+				}
 				log(std::format("server: sent '{}' the world they asked for", player.name));
 			}
 			if (player.welcomed && player.faceDirty && player.face && now - budgetOf(player).lastFace >= options.faceInterval) {

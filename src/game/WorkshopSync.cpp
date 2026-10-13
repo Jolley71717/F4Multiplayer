@@ -2,9 +2,13 @@
 
 #include "game/EngineRefs.h"
 #include "game/RemoteEdits.h"
+#include "game/WorkshopApply.h"
 #include "game/WorkshopCells.h"
+#include "game/WorkshopInbox.h"
+#include "game/WorkshopMove.h"
 
 #include "game/DeferredDelete.h"
+#include "game/Hud.h"
 
 namespace WorkshopSync
 {
@@ -29,8 +33,10 @@ namespace WorkshopSync
 		bool                                                installed = false;
 		std::mutex                                          outLock;
 		std::vector<Outgoing>                               outgoing;
+		std::uint32_t                                       dropped = 0;  // reports dropped with the queue full (under outLock)
+		bool                                                droppedWarned = false;  // since the queue was last taken (under outLock)
 		std::map<Key, Copy>                                 copies;
-		WorkshopCells::Waiting<Key, Protocol::WorkshopItem> pending;  // waiting for their cell to load
+		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
 		std::vector<Copy>                                   graveyard;
 		constexpr std::size_t                               MAX_OUTGOING = 512;
 		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
@@ -40,11 +46,7 @@ namespace WorkshopSync
 		constexpr float                                     BUILD_REACH = 12000.0f;
 
 		std::uint32_t reported = 0;
-		std::uint32_t placed = 0;
-		std::uint32_t moved = 0;
-		std::uint32_t scrapped = 0;
-		std::uint32_t adopted = 0;
-		std::uint32_t refused = 0;  // outside their workbench's reach
+		WorkshopApply::Counts counts;  // what other players' reports did here
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
 		std::uint32_t anchorRefused = 0;  // named something that is no workbench here as their workbench
 		std::uint32_t scrapRefused = 0;   // scraps of the world refused: not junk workshop mode scraps, or outside the build area
@@ -54,6 +56,9 @@ namespace WorkshopSync
 		// Anchors that were no workbench, warned about once each (cleared when full, so it stays small).
 		std::unordered_set<std::uint32_t> badAnchorsWarned;
 		constexpr std::size_t             MAX_BAD_ANCHORS_WARNED = 64;
+		std::uint32_t itemsRescued = 0;   // copies of containers that held what we kept in them, emptied into our inventory first
+		std::unordered_set<std::uint32_t> stockedBases;  // container bases refused for what they hold (logged once each)
+		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
 		// the reference. Not one with the keyword that blocks scrapping; one whose base has a scrap
@@ -125,6 +130,10 @@ namespace WorkshopSync
 			const auto worldScrap = a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) ? a_item.refId : 0;
 			std::scoped_lock l{ outLock };
 			if (outgoing.size() >= MAX_OUTGOING) {
+				++dropped;
+				if (!std::exchange(droppedWarned, true)) {
+					REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.size());
+				}
 				return false;
 			}
 			outgoing.push_back({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap });
@@ -251,18 +260,100 @@ namespace WorkshopSync
 			return cell->worldSpace ? WorkshopCells::Exterior(cell->worldSpace->GetFormID(), ref->data.location.x, ref->data.location.y) : WhereOf(a_item);
 		}
 
-		void SetTransform(RE::TESObjectREFR* a_ref, const Protocol::WorkshopItem& a_item)
+		// Where the copy stands, for following its piece (WorkshopApply::Follow); none if it's gone, or in
+		// no cell.
+		std::optional<WorkshopApply::Standing> StandingOf(const Copy& a_copy)
 		{
-			a_ref->SetLocationOnReference({ a_item.position[0], a_item.position[1], a_item.position[2] });
-			a_ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
-			if (const auto scale = RemoteEdits::ScaleToApply(a_item, a_ref->refScale / 100.0f)) {  // a friend's message can say any size
-				a_ref->SetScale(*scale);
+			const auto ref = a_copy.ref.get();
+			const auto cell = ref ? ref->GetParentCell() : nullptr;
+			if (!cell) {
+				return std::nullopt;
+			}
+			WorkshopApply::Standing now;
+			if (const auto exterior = !cell->IsInterior() ? cell->cellData.exterior : nullptr) {
+				now.cell.emplace(exterior->cellX, exterior->cellY);
+			}
+			const auto& location = ref->data.location;
+			const auto& angle = ref->data.angle;
+			now.at = { { location.x, location.y, location.z }, { angle.x, angle.y, angle.z }, ref->refScale / 100.0f };
+			const auto base = ref->GetObjectReference();
+			now.base = base ? base->GetFormID() : 0;
+			return now;
+		}
+
+		// Moves the copy within its cell to where the report puts it. The reference's place alone moves
+		// neither what is drawn nor what collides: the 3D is moved too, and an actor (a turret, a robot)
+		// through its character controller.
+		void MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
+		{
+			const auto ref = a_copy.ref.get();
+			if (!ref) {
+				return;
+			}
+			if (const auto scale = RemoteEdits::ScaleToApply(a_item, ref->refScale / 100.0f)) {  // a friend's message can say any size
+				ref->SetScale(*scale);
+			}
+			const RE::NiPoint3 position{ a_item.position[0], a_item.position[1], a_item.position[2] };
+			if (const auto actor = ref->As<RE::Actor>()) {
+				actor->SetPosition(position, true);
+				actor->SetHeading(a_item.rotation[2]);
+			} else {
+				ref->SetLocationOnReference(position);
+				ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
+				ref->Update3DPosition(true);
 			}
 		}
 
 		bool InGraveyard(const RE::TESObjectREFR* a_ref)
 		{
 			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.ref.get().get() == a_ref; });
+		}
+
+		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
+		// first time anything touches it), is not empty.
+		bool HoldsItems(RE::TESObjectREFR* a_ref)
+		{
+			const auto list = a_ref->inventoryList;
+			if (!list) {
+				return false;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			return !list->data.empty();
+		}
+
+		WorkshopApply::Kind KindOf(RE::TESObjectREFR* a_ref)
+		{
+			if (a_ref->As<RE::Actor>()) {
+				return WorkshopApply::Kind::kActor;
+			}
+			const auto base = a_ref->GetObjectReference();
+			return base && base->Is(RE::ENUM_FORM_ID::kCONT) ? WorkshopApply::Kind::kContainer : WorkshopApply::Kind::kOther;
+		}
+
+		// Deletes a copy. What we kept in a copy of a friend's container comes to us first: it would have
+		// gone with the copy (their scrap, a move to another cell, or the session ending). Only a
+		// container's (WorkshopApply::Rescues): a turret or a robot holds its own gear.
+		void Delete(RE::TESObjectREFR* a_ref)
+		{
+			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref))) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
+				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
+				Hud::Notify("What you kept in a friend's container is in your inventory");
+				++itemsRescued;
+			}
+			a_ref->Disable();
+			a_ref->SetDelete(true);
+		}
+
+		void Remove(Copy& a_copy)
+		{
+			if (const auto ref = a_copy.ref.get()) {
+				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
+					Delete(ref.get());
+				} else {
+					graveyard.push_back(a_copy);
+				}
+			}
 		}
 
 		// A real workshop object of this game (ours, or one we scrapped/moved ourselves): it carries the
@@ -272,7 +363,8 @@ namespace WorkshopSync
 			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop);
 		}
 
-		// A copy left in this save by an earlier session: the same object at the same spot.
+		// A copy left in this save by an earlier session: the same object at the same spot, still standing
+		// (not one deleted already, waiting for the save to drop it: taken over, it would be removed twice).
 		RE::TESObjectREFR* FindExisting(const Protocol::WorkshopItem& a_item)
 		{
 			const auto tes = RE::TES::GetSingleton();
@@ -283,7 +375,8 @@ namespace WorkshopSync
 			const RE::NiPoint3 at{ a_item.position[0], a_item.position[1], a_item.position[2] };
 			tes->ForEachReferenceInRange(at, ADOPT_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !IsCopy(a_ref) && !InGraveyard(a_ref) && !IsWorkshopObject(a_ref)) {
+				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !a_ref->IsDisabled() && !a_ref->IsDeleted() && !IsCopy(a_ref) &&
+					!InGraveyard(a_ref) && !IsWorkshopObject(a_ref)) {
 					found = a_ref;
 					return RE::BSContainer::ForEachResult::kStop;
 				}
@@ -350,40 +443,30 @@ namespace WorkshopSync
 			return workshop->data.location.GetDistance(at) <= BUILD_REACH;
 		}
 
-		// Places (or moves) the copy; false if its settlement isn't loaded yet.
-		bool Place(const Key& a_key, const Protocol::WorkshopItem& a_item)
+		// Whether a copy of the piece may stand here (see WorkshopApply::Placeable).
+		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item)
 		{
-			const auto cell = CellFor(a_item);
-			if (!cell) {
-				return false;
-			}
-			if (const auto anchor = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop); !IsWorkbenchAnchor(anchor)) {
-				RefuseAnchor(a_item, anchor);
-				return true;  // dropped, as one out of reach is
-			}
-			if (!InReach(a_item)) {
-				++refused;
-				return true;  // dropped, and a copy already standing is left where it was
-			}
-			if (const auto it = copies.find(a_key); it != copies.end()) {
-				if (const auto ref = it->second.ref.get()) {
-					SetTransform(ref.get(), a_item);
-					++moved;
-					return true;
-				}
-				ForgetCopy(it->second.ref);
-				copies.erase(it);  // the game dropped it
-			}
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			if (!base || !Buildable(base)) {
-				return true;  // nothing we can show (a mod we don't have), or nothing we would
+				return WorkshopApply::Placeable::kNo;
 			}
-			if (const auto existing = FindExisting(a_item)) {
-				SetTransform(existing, a_item);
-				copies[a_key] = { existing->GetHandle(), Clock::now() };
-				NoteCopy(copies[a_key].ref);
-				++adopted;
-				return true;
+			// A container the workshop builds starts empty; one whose base holds things of its own is loot,
+			// ours on opening the copy (and again on every rescue from it).
+			if (const auto container = base->As<RE::TESObjectCONT>(); container && container->numContainerObjects != 0) {
+				if (stockedBases.insert(base->GetFormID()).second) {
+					REX::INFO("WorkshopSync: not placing copies of container {:08X}: it comes with things in it", base->GetFormID());
+				}
+				return WorkshopApply::Placeable::kStocked;
+			}
+			return WorkshopApply::Placeable::kYes;
+		}
+
+		std::optional<Copy> Create(const Protocol::WorkshopItem& a_item)
+		{
+			const auto cell = CellFor(a_item);
+			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
+			if (!cell || !base) {
+				return std::nullopt;
 			}
 			RE::NEW_REFR_DATA data;
 			data.location = { a_item.position[0], a_item.position[1], a_item.position[2] };
@@ -395,27 +478,12 @@ namespace WorkshopSync
 			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 			const auto ref = handle.get();
 			if (!ref) {
-				return true;
+				return std::nullopt;
 			}
 			if (const auto scale = RemoteEdits::ScaleToApply(a_item, 1.0f)) {
 				ref->SetScale(*scale);
 			}
-			copies[a_key] = { handle, Clock::now() };
-			NoteCopy(handle);
-			++placed;
-			return true;
-		}
-
-		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
-		// first time anything touches it), is not empty.
-		bool HoldsItems(RE::TESObjectREFR* a_ref)
-		{
-			const auto list = a_ref->inventoryList;
-			if (!list) {
-				return false;
-			}
-			RE::BSAutoReadLock l{ list->rwLock };
-			return !list->data.empty();
+			return Copy{ handle, Clock::now() };
 		}
 
 		// Defined with the walk below.
@@ -488,24 +556,49 @@ namespace WorkshopSync
 			return true;
 		}
 
-		void TryPending(const std::vector<Key>& a_keys)
+		// The game, as WorkshopApply sees it.
+		struct EngineWorld
 		{
-			for (const auto& key : a_keys) {
-				const auto found = pending.Find(key);
-				if (!found) {
-					continue;  // done with already (a key can come up twice)
-				}
-				const auto item = *found;
-				if (item.op == Protocol::WorkshopOp::kScrapped ? ScrapWorldRef(item) : Place(key, item)) {
-					pending.Erase(key);
-				}
-			}
-		}
+			using Copy = WorkshopSync::Copy;
 
-		// Tries again what waits in, or next to, a cell that just attached.
+			bool                     Loaded(const Protocol::WorkshopItem& a_item) { return CellFor(a_item) != nullptr; }
+			WorkshopCells::Where     WhereOf(const Protocol::WorkshopItem& a_item) { return WorkshopSync::WhereOf(a_item); }
+			WorkshopCells::Where     WhereScrapped(const Protocol::WorkshopItem& a_item) { return WorkshopSync::WhereScrapped(a_item); }
+			// Named with a real workbench (else dropped, said once in the log), and within its reach.
+			bool InReach(const Protocol::WorkshopItem& a_item)
+			{
+				if (const auto anchor = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.workshop); !IsWorkbenchAnchor(anchor)) {
+					RefuseAnchor(a_item, anchor);
+					return false;
+				}
+				return WorkshopSync::InReach(a_item);
+			}
+			auto                     StandingOf(const Copy& a_copy) { return WorkshopSync::StandingOf(a_copy); }
+			void                     MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item) { WorkshopSync::MoveTo(a_copy, a_item); }
+			void                     Keep(const Copy& a_copy) { NoteCopy(a_copy.ref); }
+			WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) { return WorkshopSync::CanPlace(a_item); }
+			std::optional<Copy>      Create(const Protocol::WorkshopItem& a_item) { return WorkshopSync::Create(a_item); }
+			bool                     ScrapWorldRef(const Protocol::WorkshopItem& a_item) { return WorkshopSync::ScrapWorldRef(a_item); }
+
+			void Discard(const Copy& a_copy)
+			{
+				ForgetCopy(a_copy.ref);
+				auto copy = a_copy;
+				Remove(copy);
+			}
+
+			std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item)
+			{
+				const auto existing = WorkshopSync::FindExisting(a_item);
+				return existing ? std::optional<Copy>{ Copy{ existing->GetHandle(), Clock::now() } } : std::nullopt;
+			}
+		};
+
+		// Tries again what waits in, or next to, a cell that just attached (in line with the rest: a cell
+		// can bring up hundreds).
 		void TryPendingNear(const WorkshopCells::Where& a_cell)
 		{
-			TryPending(pending.Near(a_cell));
+			inbox.Retry(inbox.Pending().Near(a_cell));
 		}
 
 		// Tries again the scraps that wait for one of the references of a cell that just attached,
@@ -514,7 +607,7 @@ namespace WorkshopSync
 		// that isn't persistent can't be looked up, to find where ours stands, until its cell loads.
 		void TryPendingScrapsIn(std::uint32_t a_cell)
 		{
-			if (!pending.WaitsForRefs()) {
+			if (!inbox.Pending().WaitsForRefs()) {
 				return;
 			}
 			const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(a_cell);
@@ -526,12 +619,12 @@ namespace WorkshopSync
 				const RE::BSAutoLock l{ cell->spinLock };
 				for (const auto& ref : cell->references) {
 					if (ref && Protocol::IsShareableRef(ref->GetFormID())) {
-						const auto waiting = pending.For(ref->GetFormID());
+						const auto waiting = inbox.Pending().For(ref->GetFormID());
 						keys.insert(keys.end(), waiting.begin(), waiting.end());
 					}
 				}
 			}
-			TryPending(keys);  // outside the cell's lock: a scrap switches the reference off
+			inbox.Retry(keys);
 		}
 
 		// ---- Cells as they attach -----------------------------------------------------------------
@@ -969,16 +1062,11 @@ namespace WorkshopSync
 			}
 		}
 
-		void Remove(Copy& a_copy)
+		// Another player's report, its turn come (see WorkshopApply::Apply).
+		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
-			if (const auto ref = a_copy.ref.get()) {
-				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
-					ref->Disable();
-					ref->SetDelete(true);
-				} else {
-					graveyard.push_back(a_copy);
-				}
-			}
+			EngineWorld world;
+			WorkshopApply::Apply(world, copies, inbox, counts, a_key, a_item);
 		}
 	}
 
@@ -1019,8 +1107,7 @@ namespace WorkshopSync
 			if (!DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_copy.placedAt)) {
 				return false;
 			}
-			ref->Disable();
-			ref->SetDelete(true);
+			Delete(ref.get());
 			return true;
 		});
 		if (now >= nextCellLook) {
@@ -1035,6 +1122,14 @@ namespace WorkshopSync
 				TryPendingNear(cell.where);
 				TryPendingScrapsIn(cell.id);
 			}
+			if (!fresh.empty()) {
+				EngineWorld world;
+				inbox.Retry(WorkshopApply::FoundSomewhere(world, inbox));  // their workbench may have come with one of them
+			}
+		}
+		const auto applyStart = Clock::now();
+		if (inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [] { return Clock::now(); }, ApplyNow) > 0) {
+			applyUsMax = (std::max)(applyUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - applyStart).count());
 		}
 		if (a_host) {
 			WalkSome();
@@ -1048,6 +1143,7 @@ namespace WorkshopSync
 		{
 			std::scoped_lock l{ outLock };
 			taken = std::exchange(outgoing, {});
+			droppedWarned = false;
 		}
 		std::vector<std::vector<std::uint8_t>> packets;
 		for (auto& out : taken) {
@@ -1062,25 +1158,7 @@ namespace WorkshopSync
 
 	void Apply(const Protocol::WorkshopItem& a_item)
 	{
-		const Key key{ a_item.playerId, a_item.refId };
-		if (a_item.op == Protocol::WorkshopOp::kScrapped) {
-			pending.Erase(key);
-			if (const auto it = copies.find(key); it != copies.end()) {
-				Remove(it->second);
-				ForgetCopy(it->second.ref);
-				copies.erase(it);
-				++scrapped;
-			}
-			// A piece of the world itself goes from our world too (one its player had moved has a copy
-			// here as well, gone above).
-			if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
-				pending.Put(WhereScrapped(a_item), key, a_item, a_item.refId);
-			}
-			return;
-		}
-		if (!Place(key, a_item)) {
-			pending.Put(WhereOf(a_item), key, a_item);
-		}
+		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
 	}
 
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
@@ -1090,15 +1168,12 @@ namespace WorkshopSync
 
 	void Reset()
 	{
-		for (auto& [key, copy] : copies) {
-			Remove(copy);
-		}
-		copies.clear();
+		EngineWorld world;
+		WorkshopApply::RemoveAll(world, copies, inbox);
 		{
 			std::scoped_lock l{ copyIdsLock };
 			copyIds.clear();
 		}
-		pending.Clear();
 		ClearWalk();
 		scrapsDeferred.clear();
 		{
@@ -1111,6 +1186,17 @@ namespace WorkshopSync
 
 	void OnGameLoaded()
 	{
+		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
+		// let go unread. The copies the save holds are found again, at their spots, when the server sends
+		// the session's building again after the load (FindExisting); one it had removed since the save
+		// stays. What waits in line, or for its cell, is reports, not handles, and stays.
+		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
+		copies.clear();
+		graveyard.clear();
+		{
+			std::scoped_lock l{ copyIdsLock };
+			copyIds.clear();
+		}
 		ClearWalk();
 	}
 
@@ -1124,8 +1210,13 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
-			       worldScrapped, adopted, refused, pending.Size()) +
+		std::uint32_t droppedNow = 0;
+		{
+			std::scoped_lock l{ outLock };
+			droppedNow = dropped;
+		}
+		return std::format("workshop: reported={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={}", anchorRefused, scrapRefused, scrapsDeferred.size());

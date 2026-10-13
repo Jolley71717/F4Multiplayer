@@ -37,6 +37,7 @@ Status: F = fixed (commit), O = open issue (beads id), N = checked, no change ne
 | NpcSync.cpp:167, RemotePlayers.cpp:387 | unregister by address of an actor already gone | F 46dd515 |
 | RemotePlayers.cpp:43, :438-441 | face base (runtime NPC form) kept as a pointer across loads | F 46dd515 (by ID, remade when gone, reset on load) |
 | RemotePlayers.cpp:657-668 | graveyard handles drained after a load | F 46dd515 (cleared on load) |
+| WorkshopSync.cpp `OnGameLoaded` | copies' and graveyard handles, and the copy ID set, kept across a load: a friend's next move or scrap resolved a handle from before it (another reference now, or nothing) | F 423d527 (let go unread on load; the server sends the building again after the load and the save's copies are adopted at their spots) |
 | NpcSync.cpp:127 | mirrors could target the player, a stand-in or a runtime actor | F 46dd515 |
 | WeaponFire.cpp:251 | sound handle follows a stand-in's 3D root that may be deleted mid-tail | F 72646ce |
 | WorldSync.cpp:537 | `LinkedTarget` returns the engine's pointer branch unverified | N (engine-owned entry; the ID branch handles the transient case) |

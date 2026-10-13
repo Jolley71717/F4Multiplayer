@@ -5,7 +5,8 @@
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
 // they can't scrap or power it; the builder keeps that). Copies are removed when the session
-// ends. The host also reports the settlement junk its save had scrapped before the session.
+// ends; what a player kept in a copy of a container comes to them first. The host also reports
+// the settlement junk its save had scrapped before the session.
 // Main thread only.
 namespace WorkshopSync
 {
@@ -21,7 +22,8 @@ namespace WorkshopSync
 	// and a piece of the world they reported scrapped is reported again when the walk finds it.
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
-	// Another player built, moved or scrapped something.
+	// Another player built, moved or scrapped something: in line behind what came before, and placed a
+	// few a frame (Frame).
 	void Apply(const Protocol::WorkshopItem& a_item);
 
 	// Whether the reference is a settlement's workbench (whatever its state): what a friend's build or scrap
@@ -34,7 +36,8 @@ namespace WorkshopSync
 	// Removes every copy (leaving the session).
 	void Reset();
 
-	// A save was loaded: its cells are walked again for scrapped junk.
+	// A save was loaded: the copies made before it are let go (the session sends its building again),
+	// and its cells are walked again for scrapped junk.
 	void OnGameLoaded();
 
 	// The loaded save is another character's world (the session is left): the copies were placed in the world before

@@ -108,6 +108,15 @@ namespace WorkshopCells
 			return keys;
 		}
 
+		// The keys waiting nowhere: their workbench wasn't in this game when they were filed (its cell not
+		// loaded, for one that isn't persistent). No cell brings them up; any cell that attaches may have
+		// brought their workbench.
+		[[nodiscard]] std::vector<Key> Nowhere() const
+		{
+			const auto cell = byCell.find(Where{});
+			return cell != byCell.end() ? std::vector<Key>(cell->second.begin(), cell->second.end()) : std::vector<Key>{};
+		}
+
 		// The keys waiting for this reference, in whatever cell they wait.
 		[[nodiscard]] std::vector<Key> For(std::uint32_t a_ref) const
 		{
