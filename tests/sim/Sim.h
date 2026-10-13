@@ -6,8 +6,9 @@
 // game would now show: who is there and where, who runs which NPC, what is dead, what containers hold,
 // what was built at settlements, which quest stages are reached. Where the plugin's own rule for that
 // is free of the game, the model uses it rather than a copy, so a scenario tests the server and the
-// client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement,
-// FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor,
+// client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement, SendPacer
+// for how fast a player's settlement reports go, FoundDead::Shared for the host's save,
+// ArmorFrames::ChooseOriginal for a friend's power armor,
 // MoveSync::Drive every frame for a friend's stand-in, and StandInGear for what it wears (dressed every
 // frame as RemotePlayers::Update does, out of power armor). For the quests a test gives a game
 // (GiveQuest), QuestSync's StageLog and StageRules set friends' stages and decide what is reported
@@ -29,6 +30,7 @@
 #include "game/ArmorFrames.h"
 #include "game/FoundDead.h"
 #include "game/MoveSync.h"
+#include "game/SendPacer.h"
 #include "game/StandInGear.h"
 #include "game/WorkshopCells.h"
 
@@ -277,6 +279,11 @@ namespace Sim
 		void WearFrame(std::uint32_t a_frameRef);
 		void Revive(std::uint32_t a_playerId);
 		void HitPlayer(std::uint32_t a_playerId, float a_damage, std::uint32_t a_attacker);
+		// Whether what it builds, moves and scraps waits in line and goes a few hundred a second, as WorkshopSync's
+		// reports do (SendPacer, the plugin's own); off, all of it goes at once, as it did before.
+		void PaceWorkshop(bool a_paced) { pacedWorkshop = a_paced; }
+		// Its settlement reports still waiting in that line.
+		[[nodiscard]] std::size_t WorkshopUnsent() const { return workshopOut.Size(); }
 		// Anything at all, as a broken or hostile game might send it.
 		void Raw(Packet a_packet, bool a_reliable = true) { Send(std::move(a_packet), a_reliable); }
 
@@ -364,6 +371,8 @@ namespace Sim
 		friend class Session;
 
 		void Send(Packet a_packet, bool a_reliable);
+		void SendWorkshop(Packet a_packet);
+		void FlushWorkshop(Clock::time_point a_now);
 		void Pump();  // reads what the server sent
 		void Handle(std::span<const std::uint8_t> a_data);
 		void OnDisconnected();
@@ -424,6 +433,8 @@ namespace Sim
 		Protocol::PlayerStatus      myStatus;
 		std::optional<std::vector<std::uint32_t>> myGear;  // what this player wears, once they put anything on or off
 		std::uint32_t               nextRef = 0;
+		SendPacer::Queue<Packet>    workshopOut{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // WorkshopSync's outgoing line
+		bool                        pacedWorkshop = true;
 		Clock::time_point           frameClock{};  // this game's frames, 30 a second
 	};
 
@@ -475,8 +486,45 @@ namespace Sim
 		}
 
 		// Delivers what the players sent (through their faults), waits until the server has acted on it
-		// all (and, if anyone moved, relayed the positions), and has every player read what came back.
+		// all (and, if anyone moved, relayed the positions), and has every player read what came back. A
+		// player's settlement reports still in line (SendPacer) are waited for: they go as time lets them.
 		void Settle()
+		{
+			DeliverAll();
+			Settled();
+		}
+
+		// a_wait goes by, in which each player's settlement reports go as far as their line lets them (the
+		// rest still waits), and the session is settled with what was sent.
+		void Pass(std::chrono::milliseconds a_wait)
+		{
+			Deliver();
+			std::this_thread::sleep_for(a_wait);
+			Settled();
+		}
+
+		// The server stops (saving its session file) and everyone connected loses the connection.
+		void StopServer()
+		{
+			DeliverAll();
+			if (fixture) {
+				fixture->fake->Settle();
+				fixture->server.Stop();  // first, so its last line ("server: stopped") is kept
+				for (auto& line : fixture->LogLines()) {
+					pastLog.push_back(std::move(line));
+				}
+				fixture.reset();
+			}
+			for (auto& client : clients) {
+				if (client->connected) {
+					client->OnDisconnected();
+				}
+			}
+		}
+
+	private:
+		// The rest of Settle, once what is to be sent has been.
+		void Settled()
 		{
 			Deliver();
 			if (fixture) {
@@ -494,25 +542,17 @@ namespace Sim
 			}
 		}
 
-		// The server stops (saving its session file) and everyone connected loses the connection.
-		void StopServer()
+		// Delivers what was sent, and what waits in the players' settlement lines as it comes due.
+		void DeliverAll()
 		{
 			Deliver();
-			if (fixture) {
-				fixture->fake->Settle();
-				fixture->server.Stop();  // first, so its last line ("server: stopped") is kept
-				for (auto& line : fixture->LogLines()) {
-					pastLog.push_back(std::move(line));
-				}
-				fixture.reset();
-			}
-			for (auto& client : clients) {
-				if (client->connected) {
-					client->OnDisconnected();
-				}
+			while (std::ranges::any_of(clients, [](const auto& a_client) { return a_client->connected && a_client->WorkshopUnsent() > 0; })) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+				Deliver();
 			}
 		}
 
+	public:
 		// The server starts, from the session file if there is one.
 		void StartServer()
 		{
@@ -613,6 +653,11 @@ namespace Sim
 		// What each player sent since the last time, in the order sent, through that player's faults.
 		void Deliver()
 		{
+			// What has come due in each player's settlement line goes too (WorkshopSync::TakeOutgoing, each frame).
+			const auto now = Clock::now();
+			for (auto& client : clients) {
+				client->FlushWorkshop(now);
+			}
 			auto pending = std::exchange(outbox, {});
 			if (!fixture) {
 				return;  // nobody is listening
@@ -733,6 +778,7 @@ namespace Sim
 		heardDead.clear();
 		toCheck.clear();
 		time.reset();
+		(void)workshopOut.TakeAll();  // WorkshopSync::TakeOutgoing(false): what waited to be sent is not
 		// QuestSync::OnSessionEnded, and the story is our own again (Story::SetShared(false)).
 		questGame.OnSessionEnded();
 	}
@@ -743,6 +789,26 @@ namespace Sim
 			return;  // playing alone: nobody hears of it
 		}
 		session.Queue({ this, Session::Kind::kPacket, peer, std::move(a_packet), a_reliable });
+	}
+
+	inline void Client::SendWorkshop(Packet a_packet)
+	{
+		if (!connected) {
+			return;
+		}
+		if (!pacedWorkshop) {
+			Send(std::move(a_packet), true);
+			return;
+		}
+		(void)workshopOut.Push(std::move(a_packet));
+		FlushWorkshop(Clock::now());  // the game takes its reports every frame: what may go, goes now
+	}
+
+	inline void Client::FlushWorkshop(Clock::time_point a_now)
+	{
+		for (auto& packet : workshopOut.TakeDue(a_now)) {
+			Send(std::move(packet), true);
+		}
 	}
 
 	inline void Client::Move(float a_x, float a_y, float a_z, float a_speed, std::uint32_t a_worldspace)
@@ -824,7 +890,7 @@ namespace Sim
 		item.position[1] = a_y;
 		item.position[2] = a_z;
 		world.built[ref] = item;
-		Send(Protocol::Encode(item, MT::kReportWorkshopItem), true);
+		SendWorkshop(Protocol::Encode(item, MT::kReportWorkshopItem));
 		return ref;
 	}
 
@@ -837,7 +903,7 @@ namespace Sim
 		it->second.position[0] = a_x;
 		it->second.position[1] = a_y;
 		it->second.position[2] = a_z;
-		Send(Protocol::Encode(it->second, MT::kReportWorkshopItem), true);
+		SendWorkshop(Protocol::Encode(it->second, MT::kReportWorkshopItem));
 	}
 
 	inline void Client::Scrap(std::uint32_t a_bench, std::uint32_t a_ref)
@@ -853,7 +919,7 @@ namespace Sim
 		if (Protocol::IsShareableRef(a_ref)) {
 			world.scrapped.insert(a_ref);
 		}
-		Send(Protocol::Encode(item, MT::kReportWorkshopItem), true);
+		SendWorkshop(Protocol::Encode(item, MT::kReportWorkshopItem));
 	}
 
 	inline void Client::Claim(std::uint32_t a_ref, Protocol::ClaimReason a_reason)
