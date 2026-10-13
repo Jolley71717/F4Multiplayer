@@ -355,7 +355,8 @@ What a peer can now send that it could not before, and what checks it on the way
   <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
-  objectives with their state), `status` (cell, worldspace and location).
+  objectives with their state), `status` (cell, worldspace and location), `log level info|debug`
+  (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session

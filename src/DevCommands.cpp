@@ -1,6 +1,7 @@
 ﻿#include "DevCommands.h"
 
 #include "DevChannel.h"
+#include "Log.h"
 #include "net/Session.h"
 #include "Protocol.h"
 
@@ -1659,6 +1660,27 @@ namespace DevCommands
 			return form ? std::format("'{}' type={}", form->GetFormEditorID(), static_cast<int>(form->GetFormType())) : "error: no such form";
 		}
 
+		// log [level info|debug | flush | path]: the plugin log's level (sLogLevel until the game restarts).
+		std::string LogCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty() || (args.size() == 1 && args[0] == "level")) {
+				return std::format("level {}", Log::Level());
+			}
+			if (args.size() == 2 && args[0] == "level") {
+				return Log::SetLevel(args[1]) ? "ok" : "error: log level info|debug";
+			}
+			if (args.size() == 1 && args[0] == "flush") {
+				Log::Flush();
+				return "ok";
+			}
+			if (args.size() == 1 && args[0] == "path") {
+				const auto text = Log::Path().u8string();
+				return std::string{ text.begin(), text.end() };
+			}
+			return "error: log [level info|debug | flush | path]";
+		}
+
 		// net [connect <address>]
 		std::string Net(std::string_view a_args)
 		{
@@ -2012,6 +2034,7 @@ namespace DevCommands
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
+			Entry{ "log", LogCommand },
 			Entry{ "echo", Echo },
 			Entry{ "voice", VoiceCommand },
 			Entry{ "markers", Markers },
