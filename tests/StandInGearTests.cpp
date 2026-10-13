@@ -1,5 +1,7 @@
 // A friend's gear as their stand-in here is dressed in it (game/StandInGear.h). What their game reports goes through a
-// real server, and what reaches our game is fed, frame by frame, to the rules RemotePlayers dresses the stand-in by.
+// real server; what reaches our game is fed, frame by frame, to StandInGear::Dress, the function RemotePlayers asks, and
+// what it says is done to a stand-in played by the test: what it wears, its power armor frame and skeleton, the engine
+// putting the NPC's own outfit back on it, and its gun put away and drawn again.
 
 #include "ServerFixture.h"
 
@@ -7,7 +9,6 @@
 #include "game/StandInGear.h"
 
 #include <algorithm>
-#include <set>
 
 using namespace TestServer;
 using namespace std::chrono_literals;
@@ -15,47 +16,79 @@ using namespace std::chrono_literals;
 namespace
 {
 	using Clock = std::chrono::steady_clock;
-	using StandInGear::Step;
+	using ArmorFrames::Dress;
+	using StandInGear::Put;
 
 	constexpr std::uint32_t PISTOL = 0x0000DF42;
 	constexpr std::uint32_t RIFLE = 0x0000E27B;
 	constexpr std::uint32_t VAULT_SUIT = 0x0001EED7;
 	constexpr std::uint32_t HAT = 0x000F4D22;
 	constexpr std::uint32_t GLASSES = 0x0018F5B3;
-	constexpr std::uint32_t FRAG = 0x0000E56B;  // a grenade: counted as worn by its owner's game while they have one
+	constexpr std::uint32_t FRAG = 0x0000E56B;         // a grenade: counted as worn by its owner's game while they have one
+	constexpr std::uint32_t T60_HELMET = 0x00154ABD;   // a power armor piece
+	constexpr std::uint32_t T60_TORSO = 0x00154AC1;
+	constexpr std::uint32_t FRAME = 0x00031CE5;        // the frame itself as an item
+	constexpr std::uint32_t SETTLER_RAGS = 0x0001C2B9;  // the stand-in's own outfit, which the engine can put back on it
 
 	bool InHand(std::uint32_t a_item)
 	{
 		return a_item == PISTOL || a_item == RIFLE;
 	}
 
+	ArmorFrames::Item KindOf(std::uint32_t a_item)
+	{
+		if (a_item == PISTOL || a_item == RIFLE || a_item == FRAG) {
+			return ArmorFrames::Item::kWeapon;
+		}
+		if (a_item == T60_HELMET || a_item == T60_TORSO) {
+			return ArmorFrames::Item::kPiece;
+		}
+		return a_item == FRAME ? ArmorFrames::Item::kFrame : ArmorFrames::Item::kOther;
+	}
+
+	// What a stand-in dressed so wears of a list (RemotePlayers' Kept), and what of that an NPC's inventory shows as worn
+	// (Wearable: a grenade is held, not worn).
+	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, Dress a_dress)
+	{
+		std::vector<std::uint32_t> out;
+		std::ranges::copy_if(a_items, std::back_inserter(out), [&](std::uint32_t a_item) { return ArmorFrames::Wears(a_dress, KindOf(a_item)); });
+		return out;
+	}
+
+	std::vector<std::uint32_t> Wearable(std::vector<std::uint32_t> a_items)
+	{
+		std::erase(a_items, FRAG);
+		std::ranges::sort(a_items);
+		return a_items;
+	}
+
 	// About how long a stand-in takes to put its gun away and draw it again (Puppets::RedrawWeapon).
 	constexpr auto DRAW_TIME = 500ms;
 
-	// Our game's stand-in for Alice, dressed frame by frame the way RemotePlayers::Update does it. Counts what an
-	// onlooker would see: a stand-in emptied and dressed again, a change put on over what it wears, and its gun put away
-	// and drawn again.
+	// Alice's stand-in in Bob's game, and the engine's side of it.
+	struct StandIn
+	{
+		std::vector<std::uint32_t> wears{ SETTLER_RAGS };  // as placed: the NPC's own outfit
+		bool                       has3D = true;
+		bool                       inFrame = false;
+		bool                       armorSkeleton = false;  // its 3D rebuilt on the power armor skeleton
+		Clock::time_point          gunOutAt{};             // its gun is out from then on
+	};
+
+	// Bob's game, dressing Alice's stand-in each frame as StandInGear::Dress says, the way RemotePlayers::Update does.
+	// Counts what an onlooker would see: a stand-in emptied and dressed again, gear put on over what it wears, and its gun
+	// put away and drawn again.
 	struct Ours
 	{
 		StandInGear::Gear gear;
+		StandIn           standIn;
 		Clock::time_point now = Clock::time_point{} + 1h;
-		int               dresses = 0;
+		int               applies = 0;  // emptied and dressed
+		int               wears = 0;    // put on over what it wears, out of a frame
+		int               inArmor = 0;  // pieces and weapons put on in its frame
 		int               changes = 0;
 		int               redraws = 0;
-		Clock::time_point drawnAt{};               // its gun is out from then on
-		std::vector<std::uint32_t> heard;          // the sounds of the shots played (WeaponFire::PlayShot)
-
-		// One of their shots, as PlayShot replays it on the stand-in.
-		AttackKind::Replay Shot(const std::optional<Protocol::Shot>& a_shot)
-		{
-			REQUIRE(a_shot);
-			const bool holdsGun = std::ranges::any_of(gear.worn, InHand);
-			const auto replay = AttackKind::ReplayShot(holdsGun, gear.dressed && now >= drawnAt);
-			if (replay == AttackKind::Replay::kFire || replay == AttackKind::Replay::kSoundOnly) {
-				heard.push_back(a_shot->sound);
-			}
-			return replay;
-		}
+		int               refits = 0;   // found in something else, logged and dressed afresh
 
 		void Receive(const std::optional<Protocol::Equipment>& a_report)
 		{
@@ -63,18 +96,47 @@ namespace
 			StandInGear::Report(gear, a_report->items);
 		}
 
+		// A new stand-in for her (a door, a load, out of her frame): wearing its own outfit, its 3D not in yet.
+		void Place()
+		{
+			standIn = StandIn{};
+			standIn.has3D = false;
+			StandInGear::Placed(gear);
+		}
+
 		void Frame()
 		{
 			now += 16ms;
-			const auto step = StandInGear::Next(gear, now);
-			if (step == Step::kNone) {
-				return;
+			const auto dress = ArmorFrames::ChooseDress(standIn.inFrame, standIn.inFrame && standIn.armorSkeleton);
+			const auto shown = dress == Dress::kArmor ? Kept(standIn.wears, dress) : standIn.wears;
+			const auto dressing = StandInGear::Dress(gear, dress, standIn.has3D, now, InHand,
+				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown) == Wearable(Kept(a_worn, dress)); });
+			const auto outfit = Kept(gear.items, dress);
+			switch (dressing.put) {
+			case Put::kApply:
+				++applies;
+				standIn.wears = outfit;
+				break;
+			case Put::kWear:
+				++wears;
+				standIn.wears = outfit;
+				break;
+			case Put::kWearInArmor:
+				{
+					++inArmor;
+					// Their pieces and weapons on; the frame the engine put on it stays.
+					std::erase_if(standIn.wears, [&](std::uint32_t a_item) { return ArmorFrames::Wears(Dress::kArmor, KindOf(a_item)); });
+					standIn.wears.insert(standIn.wears.end(), outfit.begin(), outfit.end());
+					break;
+				}
+			case Put::kNone:
+				break;
 			}
-			dresses += step == Step::kDress;
-			changes += step == Step::kChange;
-			if (StandInGear::Done(gear, step, now, InHand)) {
+			changes += dressing.change;
+			refits += dressing.refit;
+			if (dressing.redraw) {
 				++redraws;
-				drawnAt = now + DRAW_TIME;
+				standIn.gunOutAt = now + DRAW_TIME;
 			}
 		}
 
@@ -83,6 +145,15 @@ namespace
 			for (int i = 0; i < a_count; ++i) {
 				Frame();
 			}
+		}
+
+		std::vector<std::uint32_t> Wears() const { return Wearable(standIn.wears); }
+
+		// One of her shots, as WeaponFire::PlayShot replays it on the stand-in.
+		AttackKind::Replay Shot() const
+		{
+			const bool holdsGun = std::ranges::any_of(standIn.wears, InHand);
+			return AttackKind::ReplayShot(holdsGun, gear.dressed && now >= standIn.gunOutAt);
 		}
 	};
 
@@ -113,19 +184,13 @@ namespace
 			}
 			return report;
 		}
-
-		// Alice fires; the shot Bob's game is told of.
-		std::optional<Protocol::Shot> Shoot(std::uint32_t a_sound)
-		{
-			f.fake->Deliver(2, Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, a_sound }, MT::kReportShot));
-			const auto packet = f.fake->WaitFor(1, Type(MT::kShotFired));
-			const auto shot = packet ? Protocol::DecodeShot(*packet) : std::nullopt;
-			if (shot) {
-				CHECK(shot->playerId == alice);
-			}
-			return shot;
-		}
 	};
+
+	std::vector<std::uint32_t> Sorted(std::vector<std::uint32_t> a_items)
+	{
+		std::ranges::sort(a_items);
+		return a_items;
+	}
 }
 
 TEST("stand-in gear: a friend's hat and their last grenade never make their stand-in put its gun away; a gun swap does, once")
@@ -134,23 +199,28 @@ TEST("stand-in gear: a friend's hat and their last grenade never make their stan
 	Ours    bob;
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT, FRAG }));
 	bob.Frames(2);
-	CHECK(bob.dresses == 1);
+	CHECK(bob.applies == 1);
 	CHECK(bob.redraws == 1);  // a new stand-in draws the gun it was given
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
 	bob.Frames(70);
 
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAG }));  // hat off mid-fight
 	bob.Frames(70);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));  // last grenade thrown
 	bob.Frames(70);
 	CHECK(bob.changes == 2);
-	CHECK(bob.redraws == 1);  // the gun stayed out: their shots kept their sound
-	CHECK((bob.gear.worn == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+	CHECK(bob.wears == 2);
+	CHECK(bob.redraws == 1);  // the gun stayed out
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
 
 	bob.Receive(session.Report({ RIFLE, VAULT_SUIT }));
 	bob.Frames(70);
 	CHECK(bob.changes == 3);
 	CHECK(bob.redraws == 2);
-	CHECK(bob.dresses == 1);  // never stripped and dressed again for a change
+	CHECK(bob.applies == 1);  // never stripped and dressed again for a change
+	CHECK(bob.refits == 0);   // and the gear check never took a change for the wrong outfit
+	CHECK(bob.Wears() == Sorted({ RIFLE, VAULT_SUIT }));
 }
 
 TEST("stand-in gear: a friend's game sending its gear again, or in another order, changes nothing on their stand-in")
@@ -165,10 +235,11 @@ TEST("stand-in gear: a friend's game sending its gear again, or in another order
 	}
 	// The same items in another order (only a modified game sends that) get past the server, but are no change here.
 	bob.Receive(session.Report({ GLASSES, VAULT_SUIT, PISTOL }));
-	bob.Frames(70);
-	CHECK(bob.dresses == 1);
+	bob.Frames(400);  // past two gear checks
+	CHECK(bob.applies == 1);
 	CHECK(bob.changes == 0);
 	CHECK(bob.redraws == 1);
+	CHECK(bob.refits == 0);
 }
 
 TEST("stand-in gear: a friend's game flipping between two outfits as fast as it can redresses their stand-in at most once a second")
@@ -189,8 +260,8 @@ TEST("stand-in gear: a friend's game flipping between two outfits as fast as it 
 	bob.Frames(70);
 	CHECK(bob.changes == 0);
 	CHECK(bob.redraws == 1);
-	CHECK(bob.dresses == 1);
-	CHECK(bob.gear.worn == one);
+	CHECK(bob.applies == 1);
+	CHECK(bob.Wears() == Sorted(one));
 	// Once more, more than a second on and ending on the other: the first flip goes on at once (its gun swapped), and
 	// the forty after it, within the second, end on what it then wears.
 	for (int i = 0; i < 41; ++i) {
@@ -200,7 +271,8 @@ TEST("stand-in gear: a friend's game flipping between two outfits as fast as it 
 	bob.Frames(70);
 	CHECK(bob.changes == 1);
 	CHECK(bob.redraws == 2);
-	CHECK(bob.gear.worn == other);
+	CHECK(bob.Wears() == Sorted(other));
+	CHECK(bob.refits == 0);
 }
 
 TEST("stand-in gear: a friend whose game restarted is dressed again in the same gear, and a newcomer sees it too")
@@ -220,8 +292,8 @@ TEST("stand-in gear: a friend whose game restarted is dressed again in the same 
 	// The same gear as before the restart: passed on, since it is her first report since.
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
 	bob.Frames(2);
-	CHECK(bob.dresses == 1);
-	CHECK((bob.gear.worn == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+	CHECK(bob.applies == 1);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
 
 	// Carol joins afterwards: told Alice's gear as she joins, with nothing new from Alice.
 	REQUIRE(session.f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
@@ -230,103 +302,195 @@ TEST("stand-in gear: a friend whose game restarted is dressed again in the same 
 	Ours carol;
 	carol.Receive(Protocol::DecodeEquipment(*packet));
 	carol.Frames(2);
-	CHECK((carol.gear.worn == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+	CHECK(carol.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
 }
 
-TEST("stand-in gear: a stand-in placed again (a door, a load, power armor) is dressed afresh with nothing new from the server")
+TEST("stand-in gear: a stand-in placed again through a door is dressed as its 3D comes in, with nothing new from the server")
 {
 	Session session;
 	Ours    bob;
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }));
 	bob.Frames(70);
-	// Through a door: a new stand-in, dressed in what she last reported, though the server sends nothing new.
-	StandInGear::Redress(bob.gear);
+	// Through a door: a new stand-in, in its own outfit. Nothing goes on until its 3D is in; then it is dressed in what
+	// she last reported, though the server sends nothing new.
+	bob.Place();
 	CHECK(!session.Report({ PISTOL, VAULT_SUIT, HAT }, 300ms));
+	bob.Frames(5);
+	CHECK(bob.applies == 1);
+	CHECK(bob.Wears() == Sorted({ SETTLER_RAGS }));
+	bob.standIn.has3D = true;
 	bob.Frame();
-	CHECK(bob.dresses == 2);
+	CHECK(bob.applies == 2);
 	CHECK(bob.redraws == 2);
-	// A change reported right after is put on a second later, over what it wears.
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+	// A change reported right after is put on a second after it was dressed, over what it wears.
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
 	bob.Frames(30);
 	CHECK(bob.changes == 0);
 	bob.Frames(40);
 	CHECK(bob.changes == 1);
 	CHECK(bob.redraws == 2);
-	// Into power armor and back out: dressed afresh both times, no wait for the gap.
-	StandInGear::Redress(bob.gear);
-	bob.Frame();
-	StandInGear::Redress(bob.gear);
-	bob.Frame();
-	CHECK(bob.dresses == 4);
-	CHECK(bob.changes == 1);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
 }
 
-TEST("stand-in gear: every shot a friend fires is heard, with their gun's sound, also while their stand-in draws its gun again")
+TEST("stand-in gear: a friend in power armor gets their pieces only once the stand-in is on the armor skeleton, and a grenade there keeps the gun out")
 {
-	using AttackKind::Replay;
-	constexpr std::uint32_t SUPPRESSED = 0x0012A3B4;  // the sound their game picked for their gun
+	Session session;
+	Ours    bob;
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	bob.Frames(70);
+	// She gets into her frame: her game reports the frame and pieces. The stand-in is switched into its copy (the engine
+	// puts the frame item on it) but its 3D is rebuilt on the power armor skeleton only a few frames later: nothing of
+	// hers goes on meanwhile, not even the change she reported, or the pieces would hang off its own body.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAME, T60_HELMET, T60_TORSO }));
+	bob.standIn.inFrame = true;
+	bob.standIn.wears.push_back(FRAME);
+	bob.Frames(120);  // two seconds, past the change gap and a gear check
+	CHECK(bob.inArmor == 0);
+	CHECK(bob.wears == 0);
+	CHECK(bob.refits == 0);
+	CHECK(!std::ranges::contains(bob.standIn.wears, T60_HELMET));
+	// The rebuild comes: dressed afresh in its frame, its gun drawn again.
+	bob.standIn.armorSkeleton = true;
+	bob.Frame();
+	CHECK(bob.inArmor == 1);
+	CHECK(bob.applies == 1);  // never emptied in its frame: the frame item would go too
+	CHECK(bob.redraws == 2);
+	CHECK(std::ranges::contains(bob.standIn.wears, T60_HELMET));
+	CHECK(std::ranges::contains(bob.standIn.wears, FRAME));
+	bob.Frames(250);  // past more gear checks: what it wears in its frame is what it was dressed in
+	CHECK(bob.refits == 0);
+	// A grenade picked up: put on in its frame, the gun stays out.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAME, T60_HELMET, T60_TORSO, FRAG }));
+	bob.Frames(70);
+	CHECK(bob.inArmor == 2);
+	CHECK(bob.changes == 1);
+	CHECK(bob.redraws == 2);
+	// Out of her frame: the stand-in is replaced (ArmorFrames), and the new one dressed in clothes.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	bob.Place();
+	bob.standIn.has3D = true;
+	bob.Frame();
+	CHECK(bob.applies == 2);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
+}
+
+TEST("stand-in gear: a stand-in the engine dresses in its own outfit again is put right at the next check, and one it keeps undressing is left after three tries")
+{
 	Session session;
 	Ours    bob;
 	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }));
-	bob.Frames(70);
-	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
+	bob.Frames(2);
+	REQUIRE(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+	// The engine sets up its inventory late and puts its own outfit back on it.
+	bob.standIn.wears = { SETTLER_RAGS };
+	bob.Frames(3000 / 16 + 2);
+	CHECK(bob.refits == 1);
+	CHECK(bob.applies == 2);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+	bob.Frames(400);
+	CHECK(bob.refits == 1);  // it stuck
 
-	// Hat off mid-fight: the change goes on over what it wears and the gun stays out; every shot is seen and heard.
-	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
-	for (int i = 0; i < 8; ++i) {
-		bob.Frames(10);
-		CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
+	// Now it undoes every dressing: three more tries in a row, then it is left as it is rather than stripped and
+	// dressed again every three seconds for as long as she plays.
+	const int before = bob.applies;
+	for (int i = 0; i < 30 * 1000 / 16; ++i) {
+		bob.Frame();
+		bob.standIn.wears = { SETTLER_RAGS };
+	}
+	CHECK(bob.applies - before == 3);
+	CHECK(bob.refits == 4);
+	// A change she makes is put on, and the tries start over.
+	bob.Receive(session.Report({ RIFLE, VAULT_SUIT }));
+	for (int i = 0; i < 30 * 1000 / 16; ++i) {
+		bob.Frame();
+		bob.standIn.wears = { SETTLER_RAGS };
 	}
 	CHECK(bob.changes == 1);
+	CHECK(bob.refits == 7);
+}
 
-	// Through a door: a new stand-in, dressed and drawing its gun. Her shots meanwhile are heard, not seen.
-	StandInGear::Redress(bob.gear);
+TEST("stand-in gear: a change reported just as the gear check falls is put on over what it wears, not taken for the wrong outfit")
+{
+	Session session;
+	Ours    bob;
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }));
 	bob.Frame();
-	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly);
-	bob.Frames(10);
-	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly);
-	bob.Frames(30);
-	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
-
-	// A gun swap draws the new gun: heard while it comes out, seen once it is.
-	bob.Receive(session.Report({ RIFLE, VAULT_SUIT }));
-	bob.Frames(70);
-	CHECK(bob.redraws == 3);
-	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
-	int heardOnly = 0;
-	for (int i = 0; i < 12; ++i) {
-		bob.Frames(10);
-		heardOnly += bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly;
+	const auto dressedAt = bob.now;
+	// Frames up to the one before the check is due ...
+	while (bob.now + 16ms < dressedAt + StandInGear::CHECK_INTERVAL) {
+		bob.Frame();
 	}
-	CHECK(heardOnly >= 2);
-	CHECK(bob.redraws == 4);
+	// ... and her change arrives for the very frame it is.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	bob.Frame();
+	CHECK(bob.wears == 1);
+	CHECK(bob.applies == 1);
+	CHECK(bob.refits == 0);
+	CHECK(bob.redraws == 1);
+	bob.Frames(400);
+	CHECK(bob.refits == 0);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
+}
 
-	// Not one shot went silent, and each kept the sound her game picked.
-	CHECK(bob.heard.size() == 1 + 8 + 3 + 12);
-	CHECK(std::ranges::all_of(bob.heard, [](std::uint32_t a_sound) { return a_sound == SUPPRESSED; }));
-
-	// Fists, through a door: a punch waits for the stand-in to be ready, as before (asking for one would draw first).
+// The sound itself (WeaponFire::PlayShot on a stand-in whose gun is put away) needs the game; this covers when the stand-in
+// holsters its gun, and so which of her shots show their firing animation and which are heard only.
+TEST("stand-in gear: a friend's shots keep their firing animation through gear changes that keep their gun; a new stand-in or a gun swap shows a moment of shots heard only")
+{
+	using AttackKind::Replay;
+	Session session;
+	Ours    bob;
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT, FRAG }));
+	bob.Frames(70);
+	int fired = 0;
+	int heardOnly = 0;
+	const auto shoot = [&](int a_frames) {
+		for (int i = 0; i < a_frames; i += 6) {  // ten shots a second
+			bob.Frames(6);
+			const auto replay = bob.Shot();
+			CHECK(replay != Replay::kNone);
+			fired += replay == Replay::kFire;
+			heardOnly += replay == Replay::kSoundOnly;
+		}
+	};
+	// Hat off, a grenade thrown, glasses on, mid-fight: every shot shows.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAG }));
+	shoot(90);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	shoot(90);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, GLASSES }));
+	shoot(90);
+	CHECK(heardOnly == 0);
+	CHECK(fired == 45);
+	// A gun swap: about half a second of shots heard while the new gun comes out.
+	bob.Receive(session.Report({ RIFLE, VAULT_SUIT, GLASSES }));
+	heardOnly = 0;
+	shoot(90);
+	CHECK(heardOnly >= 4);
+	CHECK(heardOnly <= 6);
+	// Unarmed after a door: a punch waits until the new stand-in is dressed and ready (asking for one would draw first).
 	bob.Receive(session.Report({ VAULT_SUIT }));
 	bob.Frames(70);
-	StandInGear::Redress(bob.gear);
+	bob.Place();
 	bob.Frame();
-	CHECK(bob.Shot(session.Shoot(0)) == Replay::kNone);
+	CHECK(bob.Shot() == Replay::kNone);
+	bob.standIn.has3D = true;
 	bob.Frames(40);
-	CHECK(bob.Shot(session.Shoot(0)) == Replay::kSwing);
+	CHECK(bob.Shot() == Replay::kSwing);
 }
 
 TEST("stand-in gear: no report yet, nothing put on; a stand-in dressed in what it wears is not dressed again")
 {
 	StandInGear::Gear gear;
 	const auto        now = Clock::time_point{} + 1h;
-	CHECK(StandInGear::Next(gear, now) == Step::kNone);  // the NPC's own outfit until their gear comes
+	CHECK(StandInGear::Next(gear, now) == StandInGear::Step::kNone);  // the NPC's own outfit until their gear comes
 	CHECK(StandInGear::Report(gear, { PISTOL }));
-	CHECK(StandInGear::Next(gear, now) == Step::kDress);
-	StandInGear::Done(gear, Step::kDress, now, InHand);
-	CHECK(StandInGear::Next(gear, now + 10s) == Step::kNone);
+	CHECK(StandInGear::Next(gear, now) == StandInGear::Step::kDress);
+	StandInGear::Done(gear, StandInGear::Step::kDress, now, InHand);
+	CHECK(StandInGear::Next(gear, now + 10s) == StandInGear::Step::kNone);
 	CHECK(!StandInGear::Report(gear, { PISTOL, PISTOL }));  // a duplicate entry is the same list
 	CHECK(StandInGear::Report(gear, {}));                    // everything off is a change
-	CHECK(StandInGear::Next(gear, now + 999ms) == Step::kNone);
-	CHECK(StandInGear::Next(gear, now + 1s) == Step::kChange);
-	CHECK(StandInGear::Done(gear, Step::kChange, now + 1s, InHand));  // the pistol went: drawn again, empty-handed
+	CHECK(StandInGear::Next(gear, now + 999ms) == StandInGear::Step::kNone);
+	CHECK(StandInGear::Next(gear, now + 1s) == StandInGear::Step::kChange);
+	CHECK(StandInGear::Done(gear, StandInGear::Step::kChange, now + 1s, InHand));  // the pistol went: drawn again, empty-handed
 }

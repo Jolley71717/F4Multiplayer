@@ -36,11 +36,6 @@ namespace RemotePlayers
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
 
-		// The game sometimes puts the NPC's own outfit back on a stand-in (when its inventory is
-		// set up late, or its 3D reloads). What it wears is checked this often and put right.
-		constexpr auto EQUIPMENT_CHECK_INTERVAL = 3s;
-		constexpr int  MAX_EQUIPMENT_FIXES = 3;  // in a row without it sticking, then give up
-
 		struct Snapshot
 		{
 			Clock::time_point     received;
@@ -63,8 +58,6 @@ namespace RemotePlayers
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
-			Clock::time_point    equipmentCheckAt{};
-			int                  equipmentFixes = 0;
 			std::deque<Snapshot> snapshots;
 			Prediction::ArrivalClock arrivals;     // even stamps for states read in bursts
 			float                delay = 0.07f;  // seconds behind now it is rendered
@@ -94,7 +87,6 @@ namespace RemotePlayers
 			Clock::time_point    switchTriedAt{};
 			Clock::time_point    switchedAt{};           // when the switch-in took for this stand-in
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
-			ArmorFrames::Dress   dress = ArmorFrames::Dress::kClothes;  // how the stand-in was dressed last update
 			bool                 switchGaveUp = false;   // logged
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
@@ -1332,9 +1324,7 @@ namespace RemotePlayers
 			return;
 		}
 		// What they have on already changes nothing; a change is put on over what the stand-in wears (see Update).
-		if (StandInGear::Report(it->second.gear, std::move(a_items))) {
-			it->second.equipmentFixes = 0;
-		}
+		StandInGear::Report(it->second.gear, std::move(a_items));
 	}
 
 	std::vector<Info> List()
@@ -1706,8 +1696,7 @@ namespace RemotePlayers
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
-				StandInGear::Redress(remote.gear);
-				remote.equipmentFixes = 0;
+				StandInGear::Placed(remote.gear);
 				remote.shownName.clear();
 				remote.lastTarget.reset();
 				// Still in their armor (it was replaced through a door, after a load, with a new look, or for a skeleton that
@@ -1716,7 +1705,6 @@ namespace RemotePlayers
 				remote.switchTriedAt = {};
 				remote.switchedAt = {};
 				remote.armorSkeleton = nullptr;
-				remote.dress = ArmorFrames::Dress::kClothes;
 				remote.switchGaveUp = false;
 			}
 
@@ -1730,55 +1718,42 @@ namespace RemotePlayers
 				remote.shownName = std::move(label);
 			}
 
-			// Dressed as the engine has it (ArmorFrames::ChooseDress): Apply empties the inventory first, which in its frame
-			// would take the frame the engine put on it, so in a frame only the pieces and weapons are put right; what it wears
-			// besides them is not looked at there. In its frame but still on its own body (the rebuild the switch-in queued
-			// has not run), nothing is put on or looked at: the pieces would hang off the wrong skeleton. Dressed anew as the
-			// dress changes: the pieces go on the update the power armor skeleton is found.
+			// Dressed as the engine has it (ArmorFrames::ChooseDress; StandInGear::Dress says what goes on). Apply empties the
+			// inventory first, which in its frame would take the frame the engine put on it, so in a frame only the pieces and
+			// weapons are put on; what it wears besides them is not looked at there. In its frame but still on its own body
+			// (the rebuild the switch-in queued has not run), nothing is put on or looked at: the pieces would hang off the
+			// wrong skeleton. A change they reported while it is dressed is put on over what it wears (Wear takes off what
+			// they no longer have on and leaves the rest), at most once a StandInGear::CHANGE_GAP; its gun is put away and
+			// drawn again only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent.
 			const bool inArmor = Equipment::InPowerArmor(actor);
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
-			if (dress != remote.dress) {
-				remote.dress = dress;
-				StandInGear::Redress(remote.gear);
-			}
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
-			const auto step = StandInGear::Next(remote.gear, now);
-			if (dress == ArmorFrames::Dress::kWait) {
-				// waiting for the power armor skeleton
-			} else if (step != StandInGear::Step::kNone && actor->Get3D()) {
-				// Dressed afresh (a new stand-in, in or out of its frame, or the gear check below): emptied and dressed. A change
-				// they reported while it is dressed is put on over what it wears instead (Wear takes off what they no longer
-				// have on and leaves the rest), at most once a StandInGear::CHANGE_GAP. Its gun is put away and drawn again
-				// only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent a second.
-				const auto outfit = Outfit(remote, dress);
-				if (dress == ArmorFrames::Dress::kArmor) {
-					Equipment::WearInArmor(actor, outfit);
-				} else if (step == StandInGear::Step::kDress) {
-					Equipment::Apply(actor, outfit);
-				} else {
-					Equipment::Wear(actor, outfit);
-				}
-				gearChanges += step == StandInGear::Step::kChange;
-				if (StandInGear::Done(remote.gear, step, now, HandWeapon)) {
-					Puppets::RedrawWeapon(actor);
-					++redraws;
-				}
-				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-			} else if (remote.gear.dressed && now >= remote.equipmentCheckAt && actor->Get3D()) {
-				remote.equipmentCheckAt = now + EQUIPMENT_CHECK_INTERVAL;
-				if (Wearable(shown()) == Wearable(Outfit(remote, dress))) {
-					remote.equipmentFixes = 0;
-				} else if (remote.equipmentFixes < MAX_EQUIPMENT_FIXES) {
-					++remote.equipmentFixes;
-					++equipmentFixesTotal;
-					StandInGear::Redress(remote.gear);  // dressed afresh next frame
-					{
-						std::string worn, wanted;
-						for (const auto item : Wearable(shown())) worn += std::format("{:08X} ", item);
-						for (const auto item : Wearable(Outfit(remote, dress))) wanted += std::format("{:08X} ", item);
-						REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
-					}
-				}
+			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
+				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });
+			switch (dressing.put) {
+			case StandInGear::Put::kApply:
+				Equipment::Apply(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kWear:
+				Equipment::Wear(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kWearInArmor:
+				Equipment::WearInArmor(actor, Outfit(remote, dress));
+				break;
+			case StandInGear::Put::kNone:
+				break;
+			}
+			gearChanges += dressing.change;
+			if (dressing.redraw) {
+				Puppets::RedrawWeapon(actor);
+				++redraws;
+			}
+			if (dressing.refit) {
+				++equipmentFixesTotal;
+				std::string worn, wanted;
+				for (const auto item : Wearable(shown())) worn += std::format("{:08X} ", item);
+				for (const auto item : Wearable(Kept(remote.gear.worn, dress))) wanted += std::format("{:08X} ", item);
+				REX::INFO("RemotePlayers: '{}' stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.name, worn, wanted);
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{
