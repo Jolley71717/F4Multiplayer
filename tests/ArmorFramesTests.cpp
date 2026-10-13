@@ -1,6 +1,8 @@
 #include "Test.h"
 #include "game/ArmorFrames.h"
 
+#include <limits>
+
 using namespace std::chrono_literals;
 using ArmorFrames::ChooseCopy;
 using ArmorFrames::Copy;
@@ -232,5 +234,215 @@ TEST("armor frames: our copy is never hidden while a quest of ours holds it")
 	facts = here;
 	facts.quest = true;
 	facts.base = 0x00140F1A;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kMissing);
+}
+
+TEST("armor frames: the copy the stand-in is in is the engine's: never held, moved, placed again or deleted by us")
+{
+	// Switched in, the engine disables the copy (no 3D) and leaves it where it was placed while the stand-in walks off in
+	// it. Taken for a copy that never loaded, or one left behind, it was deleted from under the stand-in.
+	CopyFacts facts = held;
+	facts.engaged = true;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+	facts.loaded = false;
+	facts.sincePlaced = ArmorFrames::LOAD_LIMIT + 1s;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+	facts.distance = ArmorFrames::MOVE_LIMIT * 10.0f;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+	facts.samePlace = false;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+	// Nobody here can be in a disabled frame; nor is it handed over or deleted when they get out: the stand-in goes with it.
+	facts.occupied = true;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+	facts.worn = false;
+	facts.sinceOut = ArmorFrames::KEEP_AFTER_OUT;
+	CHECK(ArmorFrames::ChooseCopy(facts) == Copy::kNone);
+}
+
+TEST("armor frames: the stand-in is switched in as soon as its copy is held under it")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	const SwitchFacts ready{ .worn = true, .ready = true, .held = true };
+	CHECK(ChooseSwitch(ready) == Switch::kIn);
+	// Its copy not loaded (or not placed) yet, or the stand-in not drawn yet: it waits, in their clothes.
+	auto facts = ready;
+	facts.held = false;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts = ready;
+	facts.ready = false;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	// Not in power armor: nothing to switch into.
+	facts = ready;
+	facts.worn = false;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	CHECK(ChooseSwitch({}) == Switch::kNone);
+	// In it already: left so.
+	facts = ready;
+	facts.in = true;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.held = false;
+	facts.ready = false;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+}
+
+TEST("armor frames: out of their armor, a stand-in still in its frame is replaced")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	// The engine's own exit waits on the animation graph and, with no room to step out, on an AI package: never for a
+	// stand-in. Whatever else holds.
+	CHECK(ChooseSwitch({ .in = true }) == Switch::kOut);
+	CHECK(ChooseSwitch({ .in = true, .ready = true, .held = true }) == Switch::kOut);
+	CHECK(ChooseSwitch({ .in = true, .tries = ArmorFrames::MAX_SWITCH_TRIES }) == Switch::kOut);
+	// Out, and the stand-in out too (it never got in, or is already the fresh one): nothing to do.
+	CHECK(ChooseSwitch({ .ready = true, .held = true }) == Switch::kNone);
+	CHECK(ChooseSwitch({ .tries = ArmorFrames::MAX_SWITCH_TRIES }) == Switch::kNone);
+}
+
+TEST("armor frames: a switch-in that does not take is tried again a little later, then given up")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	SwitchFacts facts{ .worn = true, .ready = true, .held = true, .tries = 1, .sinceTried = 0s };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);  // not every frame
+	facts.sinceTried = ArmorFrames::SWITCH_RETRY - 1ms;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceTried = ArmorFrames::SWITCH_RETRY;
+	CHECK(ChooseSwitch(facts) == Switch::kIn);
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES - 1;
+	CHECK(ChooseSwitch(facts) == Switch::kIn);
+	// Given up: shown out of its armor (their clothes, the copy hidden under it) for the rest of this wear.
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;
+	CHECK(ChooseSwitch(facts) == Switch::kGaveUp);
+	facts.held = false;
+	facts.ready = false;
+	CHECK(ChooseSwitch(facts) == Switch::kGaveUp);
+	// It took after all: in.
+	facts.in = true;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	// Out of their armor: nothing given up any more.
+	facts.in = false;
+	facts.worn = false;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+}
+
+TEST("armor frames: the pieces go on only once the engine has the stand-in in its frame")
+{
+	using ArmorFrames::ChooseDress;
+	using ArmorFrames::Dress;
+	using ArmorFrames::Item;
+	using ArmorFrames::Wears;
+	// Out of a frame (whatever their status says: they may be in theirs, and the stand-in not in its own yet, or ever):
+	// never a piece or the frame on its own body.
+	CHECK(ChooseDress(false) == Dress::kClothes);
+	CHECK(!Wears(Dress::kClothes, Item::kPiece));
+	CHECK(!Wears(Dress::kClothes, Item::kFrame));
+	CHECK(Wears(Dress::kClothes, Item::kOther));
+	CHECK(Wears(Dress::kClothes, Item::kWeapon));
+	// In its frame: their pieces and their weapons; neither clothes (under the armor at best, or in the frame's slots) nor
+	// the frame, which the engine has put on it already.
+	CHECK(ChooseDress(true) == Dress::kArmor);
+	CHECK(Wears(Dress::kArmor, Item::kPiece));
+	CHECK(Wears(Dress::kArmor, Item::kWeapon));
+	CHECK(!Wears(Dress::kArmor, Item::kOther));
+	CHECK(!Wears(Dress::kArmor, Item::kFrame));
+}
+
+TEST("armor frames: a whole wear, from getting in to the frame left where they got out")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	// They get in: a copy is placed at the stand-in, which waits in their clothes.
+	CopyFacts copy{ .worn = true };
+	CHECK(ChooseCopy(copy) == Copy::kPlace);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = false }) == Switch::kNone);
+	// The copy's 3D is in: held under the stand-in, which goes into it on that same update.
+	copy = held;
+	CHECK(ChooseCopy(copy) == Copy::kHold);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = ChooseCopy(copy) == Copy::kHold }) == Switch::kIn);
+	CHECK(ArmorFrames::ChooseDress(true) == ArmorFrames::Dress::kArmor);
+	// In it, walking off: the copy (disabled, left behind) is the engine's.
+	copy.engaged = true;
+	copy.loaded = false;
+	copy.distance = 2000.0f;
+	CHECK(ChooseCopy(copy) == Copy::kNone);
+	CHECK(ChooseSwitch({ .worn = true, .in = true }) == Switch::kNone);
+	// Out: the stand-in goes (a fresh one comes out of armor), and a copy is placed where it stood, shown a while.
+	CHECK(ChooseSwitch({ .worn = false, .in = true }) == Switch::kOut);
+	CopyFacts left{ .worn = false, .exists = true, .loaded = true, .samePlace = true, .distance = 0.0f, .sincePlaced = 0s, .sinceOut = 0s };
+	CHECK(ChooseCopy(left) == Copy::kShow);
+	CHECK(ChooseSwitch({ .worn = false, .in = false, .ready = true }) == Switch::kNone);
+	left.sinceOut = ArmorFrames::KEEP_AFTER_OUT;
+	CHECK(ChooseCopy(left) == Copy::kDelete);
+	// Somebody here got into it first: theirs.
+	left.occupied = true;
+	CHECK(ChooseCopy(left) == Copy::kAbandon);
+}
+
+TEST("armor frames: a stand-in placed again while they are still in it goes straight back in")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	// Through a door, after a save or a load, or with a new look: the old one went with its frame; the fresh one has no
+	// copy and has tried nothing.
+	CHECK(ChooseCopy({ .worn = true }) == Copy::kPlace);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = false, .tries = 0 }) == Switch::kNone);
+	CHECK(ChooseCopy(held) == Copy::kHold);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = 0 }) == Switch::kIn);
+	// The copy of the old one, should it still be ours (a copy left where they got out a moment ago, and they are back
+	// in): held under the fresh one and used.
+	CopyFacts back = held;
+	back.sinceOut = 1s;
+	CHECK(ChooseCopy(back) == Copy::kHold);
+}
+
+TEST("armor frames: our copy of a pre-placed frame is hidden only while it stands where it was placed")
+{
+	// The receiver's own suit, taken from the museum and parked at a power armor station: a friend parks theirs at the
+	// same station and gets in, and ours, a step away, was hidden from under our player.
+	using ArmorFrames::ChooseOriginal;
+	using ArmorFrames::Original;
+	using ArmorFrames::OriginalFacts;
+	constexpr std::uint32_t museum = 0x000370E3;
+	constexpr std::uint32_t base = 0x0019DED9;
+	const OriginalFacts here{ .found = true, .created = false, .base = base, .frame = true, .loaded = true, .fromSpot = 3.0f };
+
+	CHECK(ChooseOriginal(museum, base, here) == Original::kHide);  // never moved
+	auto facts = here;
+	facts.fromStart = ArmorFrames::START_TOLERANCE;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	facts.fromStart = ArmorFrames::START_TOLERANCE + 0.5f;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	facts.fromStart = 30000.0f;  // Concord to Sanctuary
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	// Wherever they got in, and loaded or not: where it stands now says nothing of whose it is.
+	facts.fromSpot = 0.0f;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	facts.loaded = false;
+	facts.fromSpot.reset();
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	// Not a number: not known to stand where it was placed.
+	facts = here;
+	facts.fromStart = std::numeric_limits<float>::quiet_NaN();
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	// Our player in it or last out of it, someone here in it, or a quest of ours on it: told as such first.
+	facts = here;
+	facts.fromStart = 500.0f;
+	facts.ours = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kOurs);
+	facts.ours = false;
+	facts.inUse = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kInUse);
+	facts.inUse = false;
+	facts.quest = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kQuest);
+	// Not the same frame, or one made in this game: nothing of ours to leave alone.
+	facts = here;
+	facts.fromStart = 500.0f;
+	facts.created = true;
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kMissing);
 }
