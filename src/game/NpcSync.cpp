@@ -154,12 +154,6 @@ namespace NpcSync
 			       !a_actor->IsDead(false) && !a_actor->IsDisabled() && a_actor->Get3D();
 		}
 
-		bool IsOurCompanion(RE::Actor* a_actor)
-		{
-			static const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(CURRENT_COMPANION_FACTION);
-			return faction && a_actor->IsInFaction(faction);
-		}
-
 		// Where an actor is, as sent in states: (interior cell, 0) or (0, worldspace).
 		std::pair<std::uint32_t, std::uint32_t> SpaceOf(const RE::Actor* a_actor)
 		{
@@ -685,6 +679,12 @@ namespace NpcSync
 				snaps.pop_front();
 			}
 		}
+	}
+
+	bool IsOurCompanion(RE::Actor* a_actor)
+	{
+		static const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(CURRENT_COMPANION_FACTION);
+		return a_actor && faction && a_actor->IsInFaction(faction);
 	}
 
 	bool RunsLocally(std::uint32_t a_refId)

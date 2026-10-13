@@ -18,6 +18,9 @@ namespace NpcSync
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyStates(const std::vector<Protocol::ActorState>& a_states);
 
+	// Whether the actor is our own current companion (it follows us, whoever runs it elsewhere).
+	[[nodiscard]] bool IsOurCompanion(RE::Actor* a_actor);
+
 	// Whether our game runs this NPC.
 	[[nodiscard]] bool RunsLocally(std::uint32_t a_refId);
 

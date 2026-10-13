@@ -3,6 +3,7 @@
 #include "EnetTransport.h"
 #include "Protocol.h"
 #include "SessionFile.h"
+#include "TokenBucket.h"
 #include "WorkshopStore.h"
 
 #include <array>
@@ -40,6 +41,10 @@ namespace
 	constexpr auto  FACE_INTERVAL = std::chrono::seconds(5); // each face change makes a new base form in every game
 	constexpr auto  EXPLOSION_AFTER_THROW = std::chrono::seconds(10);  // explosions are reported only after a throw
 	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
+	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
+	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
+	constexpr double EXPLOSION_BURST = 16.0;
+	constexpr double EXPLOSIONS_PER_SECOND = 4.0;
 	constexpr std::size_t MAX_COMPANIONS_PER_PLAYER = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
@@ -106,6 +111,8 @@ namespace
 		Clock::time_point          lastPing{};
 		Clock::time_point          lastLine{};
 		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
+		TokenBucket                explosions{ EXPLOSION_BURST, EXPLOSIONS_PER_SECOND };  // not for the host's own game
+		bool                       explosionsLogged = false;  // the budget ran out, and the log said so
 		Clock::time_point          lastFace{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
@@ -1026,16 +1033,26 @@ void Server::Run()
 			return;
 		}
 		// Only what follows one of the reporter's throws, and near where they are: an explosion report
-		// is otherwise a way to set off anything at anyone.
-		if (Clock::now() - a_player.lastThrow > EXPLOSION_AFTER_THROW) {
+		// is otherwise a way to set off anything at anyone. A player who hasn't said where they are yet
+		// is near nothing. (Each game also judges the explosion itself: WeaponFire's ApplyExplosion.)
+		const auto now = Clock::now();
+		if (now - a_player.lastThrow > EXPLOSION_AFTER_THROW || !a_player.hasState) {
 			return;
 		}
-		if (a_player.hasState) {
-			const float dx = explosion->x - a_player.state.x;
-			const float dy = explosion->y - a_player.state.y;
-			if (!(dx * dx + dy * dy <= EXPLOSION_RANGE * EXPLOSION_RANGE)) {
+		const float dx = explosion->x - a_player.state.x;
+		const float dy = explosion->y - a_player.state.y;
+		const float dz = explosion->z - a_player.state.z;
+		if (!(dx * dx + dy * dy + dz * dz <= EXPLOSION_RANGE * EXPLOSION_RANGE)) {
+			return;
+		}
+		if (!a_player.local) {
+			if (!a_player.explosions.Take(now)) {
+				if (!std::exchange(a_player.explosionsLogged, true)) {
+					log(std::format("server: '{}' reports explosions faster than anyone throws; dropping them until their budget refills", a_player.name));
+				}
 				return;
 			}
+			a_player.explosionsLogged = false;
 		}
 		explosion->playerId = a_player.id;
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);

@@ -1724,6 +1724,85 @@ TEST("server trust: an explosion is relayed only after a throw and near the thro
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
 }
 
+namespace
+{
+	// Where the player says they are (outdoors in the Commonwealth unless a_cell names an interior).
+	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y, float a_z = 0.0f, std::uint32_t a_cell = 0)
+	{
+		Protocol::PlayerState state;
+		state.sequence = a_sequence;
+		state.cell = a_cell;
+		state.worldspace = a_cell ? 0 : 0x0000003C;
+		state.x = a_x, state.y = a_y, state.z = a_z;
+		return Protocol::Encode(state);
+	}
+
+	std::vector<std::uint8_t> ExplosionAt(float a_x, float a_y, float a_z, std::uint32_t a_base = 0x0001D2EE)
+	{
+		return Protocol::Encode(Protocol::Explosion{ 0, a_base, a_x, a_y, a_z, 0, 0x0000003C }, MT::kReportExplosion);
+	}
+}
+
+TEST("server trust: an explosion from a player who hasn't said where they are is dropped")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, Throw());
+	f.fake->Deliver(1, Explosion(100.0f, 100.0f));  // a throw, but nowhere known
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+
+	f.fake->Deliver(1, StateAt(1, 100.0f, 100.0f));
+	f.fake->Deliver(1, Explosion(100.0f, 100.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+}
+
+TEST("server trust: an explosion is measured from the thrower in 3D, not just on the map")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, StateAt(1, 100.0f, 100.0f, 0.0f));
+	f.fake->Deliver(1, Throw());
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(1, ExplosionAt(100.0f, 100.0f, 9000.0f));  // straight above her, far up
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+	f.fake->Deliver(1, ExplosionAt(100.0f, 100.0f, 300.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+}
+
+TEST("server trust: a joiner's explosions stop at their budget however many throws they report")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, StateAt(1, 100.0f, 100.0f));
+	for (int i = 0; i < 20; ++i) {
+		f.fake->Deliver(1, Throw());  // throws cost nothing to report
+	}
+	Clear(f, { 1, 2 });
+	for (int i = 0; i < 17; ++i) {
+		f.fake->Deliver(1, Explosion(100.0f + static_cast<float>(i), 100.0f));
+	}
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 16);
+	CHECK(f.Logged("reports explosions faster than anyone throws"));
+}
+
+TEST("server trust: the host's own game has no explosion budget")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, StateAt(1, 100.0f, 100.0f));
+	f.fake->Deliver(1, Throw());
+	Clear(f, { 1, 2 });
+	for (int i = 0; i < 24; ++i) {
+		f.fake->Deliver(1, Explosion(100.0f + static_cast<float>(i), 100.0f));  // a Fat Man into a ghoul pack: a chain of explosions
+	}
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 24);
+}
+
 TEST("server trust: one player's companion claims are capped")
 {
 	Fixture f;
@@ -1813,4 +1892,61 @@ TEST("host authority: a friend's build saved a hundred times its size comes back
 	CHECK(batches[0][0].scale == 100.0f);  // the server keeps what was said; it can't see anyone's world
 	CHECK(RemoteEdits::ClampScale(batches[0][0].scale) == RemoteEdits::MAX_SCALE);  // the host's game shows it at ten times
 	std::filesystem::remove(path);
+}
+
+namespace
+{
+	constexpr float FRAG_RADIUS = 500.0f;     // a frag grenade's outer radius
+	constexpr float MINI_NUKE_RADIUS = 3000.0f;
+
+	// What the receiving game does with each explosion the server passes on: its own rule, with the friendly
+	// fire it was welcomed with, the radius of the explosion's record and where it stands itself.
+	std::vector<bool> SetOffBy(const Packets& a_packets, const Protocol::Welcome& a_welcome, const RemoteEdits::Spot& a_us, float a_radius)
+	{
+		std::vector<bool> out;
+		for (const auto& explosion : Decoded(a_packets, MT::kExplosion, Protocol::DecodeExplosion)) {
+			const RemoteEdits::Spot at{ explosion.cell, explosion.worldspace, explosion.x, explosion.y, explosion.z };
+			out.push_back(RemoteEdits::MaySetOff(a_radius, RemoteEdits::Distance(a_us, at), a_welcome.friendlyFire));
+		}
+		return out;
+	}
+}
+
+TEST("host authority: a friend's grenade at your feet goes off in your game only with friendly fire on; away from you it always does")
+{
+	for (const bool friendlyFire : { false, true }) {
+		Server::Options options;
+		options.friendlyFire = friendlyFire;
+		Fixture    f{ options };
+		const auto host = f.Join(1, Fixture::MakeHello("Host"));
+		REQUIRE(host);
+		JoinAs(f, 2, "Bob");
+		const RemoteEdits::Spot hostAt{ 0, 0x0000003C, 1000.0f, 1000.0f, 0.0f };
+		f.fake->Deliver(1, StateAt(1, hostAt.x, hostAt.y));
+		f.fake->Deliver(2, StateAt(1, 1500.0f, 1000.0f));  // Bob stands 500 away
+		f.fake->Deliver(2, Throw());
+		Clear(f, { 1, 2 });
+
+		f.fake->Deliver(2, ExplosionAt(1050.0f, 1000.0f, 0.0f));  // at the host's feet
+		f.fake->Deliver(2, ExplosionAt(2400.0f, 1000.0f, 0.0f));  // 1400 away from the host: past a grenade's reach
+		const auto setOff = SetOffBy(Received(f, 1), *host, hostAt, FRAG_RADIUS);
+		REQUIRE(setOff.size() == 2);  // the server can't tell who is standing where in the host's game: both reach it
+		CHECK(setOff[0] == friendlyFire);
+		CHECK(setOff[1]);
+	}
+}
+
+TEST("host authority: a friend's game reporting a mini nuke after a throw sets nothing off in yours")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, Throw());
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, ExplosionAt(5000.0f, 0.0f, 0.0f, 0x000E98F0));  // near Bob, far from the host
+	const auto setOff = SetOffBy(Received(f, 1), *host, { 0, 0x0000003C, 0.0f, 9000.0f, 0.0f }, MINI_NUKE_RADIUS);
+	REQUIRE(setOff.size() == 1);
+	CHECK(!setOff[0]);
 }
