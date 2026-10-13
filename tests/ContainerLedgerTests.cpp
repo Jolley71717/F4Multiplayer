@@ -588,3 +588,80 @@ TEST("loot sync: a corpse a friend looted before its kill reached us keeps its l
 	CHECK(bob.In(RAIDER, STIMPAK) == 1);
 	CHECK(bob.holders[RAIDER] == alice.holders[RAIDER]);
 }
+
+TEST("loot sync: a joiner's report of a living NPC's pockets changes nothing for the others, and after ten minutes stops holding up that NPC's loot")
+{
+	// Carol's game reports what it shouldn't (a build from before the rule, or a changed one): she
+	// pickpockets the settler, and trades with him. The settler lives in Bob's game, and never dies there.
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
+	for (auto* game : { &alice, &bob, &carol }) {
+		game->Join(f, "P");
+		game->holderFacts[SETTLER] = { .kind = LootScope::Holder::kActor, .alive = true };
+		game->holders[SETTLER] = { { CAPS, 30 }, { STIMPAK, 3 } };
+	}
+	// Alice's own pickpocketing isn't reported at all.
+	alice.Take(f, SETTLER, CAPS, 10);
+	CHECK(alice.loot.Stats().sent == 0);
+	CHECK(alice.loot.KeptSent(LootScope::Scope::kNotYetDead) == 1);
+
+	carol.SendRaw(f, SETTLER, CAPS, -30);
+	carol.SendRaw(f, SETTLER, STIMPAK, -3);
+	carol.SendRaw(f, SETTLER, STIMPAK, 1);
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 3);
+	CHECK(bob.In(SETTLER, CAPS) == 30);
+
+	CHECK(!bob.Wait(f, 9min));
+	CHECK(bob.loot.Waiting().size() == 3);
+	bob.Wait(f, 1min);
+	// All three were given up together: none went in.
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(SETTLER, CAPS) == 30);
+	CHECK(bob.In(SETTLER, STIMPAK) == 3);
+	CHECK(bob.loot.KeptApplied(LootScope::Scope::kNotYetDead) == 3);
+
+	// Later the settler dies in Alice's game, and she loots him: that reaches Bob at once.
+	alice.Kill(f, SETTLER);
+	alice.Take(f, SETTLER, STIMPAK, 3);
+	bob.Receive(f);
+	CHECK(bob.In(SETTLER, STIMPAK) == 0);
+	CHECK(bob.In(SETTLER, CAPS) == 30);
+}
+
+TEST("loot sync: a flood of living-NPC loot from a joiner can't push out a friend's loot for a chest that isn't loaded yet")
+{
+	// The server relays a joiner's flood of pickpocketing reports for NPCs alive in our game (more than
+	// the queue holds); among them, a friend takes from a chest across the map.
+	Game bob{ 2, 0xB0B };
+	bob.holderFacts[SETTLER] = { .kind = LootScope::Holder::kActor, .alive = true };
+	bob.holderFacts[RAIDER] = { .kind = LootScope::Holder::kActor, .alive = true };
+	bob.holders[SETTLER] = { { CAPS, 9000 } };
+	bob.holders[RAIDER] = { { CAPS, 9000 } };
+	bob.holders[CHEST] = { { AMMO, 50 } };
+	bob.away.insert(CHEST);
+	constexpr std::uint32_t CAROL = 3, ALICE = 1;
+	LootTest::Packets flood;
+	std::uint32_t     index = 0;
+	for (; index < LootSync::Loot::MAX_PENDING + 100; ++index) {
+		if (index == 1000) {
+			flood.push_back(Protocol::Encode(Protocol::IndexedContainerChange{ index++, ALICE, { CHEST, AMMO, -20 } }));
+		}
+		flood.push_back(Protocol::Encode(Protocol::IndexedContainerChange{ index, CAROL, { index % 2 ? SETTLER : RAIDER, CAPS, -1 } }));
+	}
+	flood.push_back(Protocol::Encode(Protocol::IndexedContainerChange{ index, ALICE, { SAFE, CAPS, -5 } }));  // after the queue filled
+	bob.away.insert(SAFE);
+	bob.holders[SAFE] = { { CAPS, 10 } };
+	bob.Handle(nullptr, flood);
+	CHECK(bob.loot.Waiting().size() == LootSync::Loot::MAX_PENDING);
+	CHECK(bob.loot.Stats().pendingFull > 0);
+
+	// Bob walks to the chest and the safe: Alice's takes go in.
+	bob.away.clear();
+	bob.loot.Retry(bob, LootTest::APPLY_INTERVAL);
+	CHECK(bob.In(CHEST, AMMO) == 30);
+	CHECK(bob.In(SAFE, CAPS) == 5);
+	CHECK(bob.In(SETTLER, CAPS) == 9000);  // nothing of the flood: the NPCs live
+	CHECK(bob.In(RAIDER, CAPS) == 9000);
+	CHECK(bob.applied == 2);
+}

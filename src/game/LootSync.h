@@ -48,12 +48,13 @@ namespace LootSync
 		virtual void                   Apply(const Protocol::ContainerChange& a_change) = 0;
 	};
 
-	// A change that waits to go into our world. Kept in the save (not aliveFor).
+	// A change that waits to go into our world. Kept in the save (not aliveFor or alive).
 	struct Pending
 	{
 		std::uint32_t             index = 0;
 		Protocol::ContainerChange change;
-		Clock::duration           aliveFor{};  // time in the world spent waiting for a living NPC to die
+		Clock::duration           aliveFor{};     // time in the world spent waiting for a living NPC to die
+		bool                      alive = false;  // a living NPC holds it up (the last try found one, or one ahead of it did)
 	};
 
 	class Loot
@@ -62,7 +63,8 @@ namespace LootSync
 		// A change for a living NPC waits for it to die here (its kill may be on its way). One that never dies
 		// (a companion's trade a joiner reported anyway) isn't kept for ever: after this long in the world.
 		static constexpr Clock::duration NOT_YET_DEAD_LIMIT = std::chrono::minutes{ 10 };
-		// Changes waiting, at most. Past it the new change is let go.
+		// Changes waiting, at most. Past it one waiting for a living NPC makes room; with none, the new change
+		// is let go.
 		static constexpr std::size_t MAX_PENDING = 4096;
 
 		struct Counts
@@ -149,20 +151,28 @@ namespace LootSync
 		}
 
 		// Tries the waiting changes again (every a_elapsed while in the world). Changes to one container
-		// stay in order: the first that can't go in holds back the rest of its container's.
+		// stay in order: the first that can't go in holds back the rest of its container's. Time an NPC
+		// lives here counts for all its changes, so the wait for one that never dies ends for all of them
+		// together.
 		void Retry(World& a_world, Clock::duration a_elapsed)
 		{
-			std::unordered_set<std::uint32_t> blocked;
+			std::unordered_set<std::uint32_t> blocked, alive;
 			std::erase_if(pending, [&](Pending& a_pending) {
 				const auto container = a_pending.change.container;
 				if (blocked.contains(container)) {
+					if (alive.contains(container)) {
+						a_pending.alive = true;
+						a_pending.aliveFor += a_elapsed;
+					}
 					return false;
 				}
 				switch (TryApply(a_pending.change, a_world)) {
 				case Applied::kDone:
 					return true;
 				case Applied::kNotYetDead:
+					a_pending.alive = true;
 					a_pending.aliveFor += a_elapsed;
+					alive.insert(container);
 					if (a_pending.aliveFor >= NOT_YET_DEAD_LIMIT) {
 						++counts.keptApplied[static_cast<std::size_t>(LootScope::Scope::kNotYetDead)];
 						++counts.pendingDropped;
@@ -234,17 +244,19 @@ namespace LootSync
 		void ApplyInOrder(const Protocol::IndexedContainerChange& a_change, World& a_world)
 		{
 			const auto& change = a_change.change;
-			const bool  waiting = std::ranges::any_of(pending, [&](const Pending& a_pending) { return a_pending.change.container == change.container; });
-			if (waiting) {
-				Hold({ a_change.index, change });
+			const auto  first = std::ranges::find(pending, change.container, [](const Pending& a_pending) { return a_pending.change.container; });
+			if (first != pending.end()) {
+				Hold({ .index = a_change.index, .change = change, .alive = first->alive });  // waits for the same NPC
 				return;
 			}
 			switch (TryApply(change, a_world)) {
 			case Applied::kDone:
 				return;
 			case Applied::kNotLoaded:
-			case Applied::kNotYetDead:
 				Hold({ a_change.index, change });
+				return;
+			case Applied::kNotYetDead:
+				Hold({ .index = a_change.index, .change = change, .alive = true });
 				return;
 			}
 		}
@@ -254,7 +266,14 @@ namespace LootSync
 			if (pending.size() >= MAX_PENDING) {
 				++counts.pendingDropped;
 				++counts.pendingFull;
-				return;
+				// What waits for a living NPC is the likeliest never to go in (one a joiner's game reported
+				// anyway, maybe many): it makes room before an ordinary change for a container not loaded is lost.
+				const auto alive = std::ranges::find_if(pending, &Pending::alive);
+				if (alive == pending.end()) {
+					return;
+				}
+				++counts.keptApplied[static_cast<std::size_t>(LootScope::Scope::kNotYetDead)];
+				pending.erase(alive);
 			}
 			pending.push_back(a_change);
 		}
