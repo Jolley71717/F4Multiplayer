@@ -64,6 +64,9 @@ namespace WorkshopInbox
 			return done;
 		}
 
+		// Drops what waits under the key: a report for it, its turn come, is newer (see WorkshopApply::Apply).
+		void Forget(const Key& a_key) { waiting.Erase(a_key); }
+
 		// Files a report until its cell loads (see WorkshopCells::Waiting::Put).
 		void Wait(const WorkshopCells::Where& a_where, const Key& a_key, const Item& a_item, std::uint32_t a_ref = 0) { waiting.Put(a_where, a_key, a_item, a_ref); }
 

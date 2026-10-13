@@ -1,10 +1,12 @@
 // Settlement building across a session, end to end without the game: a real Server, real Protocol
 // messages from two or three players, and what the server sends fed into the client's real inbox
-// (game/WorkshopInbox.h). The engine side of a friend's game is a small stand-in (Game below): the
-// pieces standing in its world, the copies it knows are copies, and which cells are loaded.
+// (game/WorkshopInbox.h) and its real rules for each report (game/WorkshopApply.h, the code the plugin
+// runs). Only the engine under those rules is a stand-in (Game below): the pieces standing in its
+// world, which cells and workbenches are loaded.
 
 #include "ServerFixture.h"
 
+#include "game/WorkshopApply.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
 
@@ -13,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -72,10 +75,8 @@ namespace
 		return Protocol::Encode(a_item, MT::kReportWorkshopItem);
 	}
 
-	// A friend's game, as far as building goes. Its rules for a report follow WorkshopSync::ApplyNow: a
-	// scrap takes the copy away; a piece whose cell isn't loaded waits for it; a piece with a copy moves
-	// it (WorkshopMove: within its cell, or made again in the next or as another object); otherwise a copy
-	// the save left at the same spot is taken over, or a new one made.
+	// A friend's game, as far as building goes: the engine under WorkshopApply (the World it asks).
+	// What to do with each report is WorkshopApply's; this only keeps what stands in the world.
 	struct Game
 	{
 		struct Piece
@@ -85,22 +86,69 @@ namespace
 			std::pair<std::int32_t, std::int32_t> cell;  // the cell it was made in: the engine keeps it there
 		};
 
+		using Copy = int;  // a piece's ID in `world`: the stand-in's handle
+
 		static constexpr float ADOPT_RADIUS = 4.0f;  // a copy the save left counts if it stands this close
+		static constexpr float REACH = 12000.0f;     // how far from its workbench a piece may stand
+		static constexpr float BENCH_X = 0.0f, BENCH_Y = 1000.0f;
 
 		std::map<int, Piece>                               world;   // what stands in the world, by an ID of the stand-in's own
 		std::map<Key, int>                                 copies;  // the copies this run knows, as handles
 		std::set<WorkshopCells::Where>                     loaded;
-		bool                                               benchLoaded = true;  // the settlement's workbench is in memory (WorkshopSync::WhereOf)
+		std::set<std::uint32_t>                            benches{ BENCH };  // workbenches in memory here (WorkshopSync::WhereOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem> inbox;
+		WorkshopApply::Counts                              counts;
 		int                                                nextId = 1;
 		Clock::time_point                                  now{};
-		Clock::duration                                    placeCost = std::chrono::microseconds(10);
+		std::function<Clock::duration()>                   placeCost = [] { return std::chrono::microseconds(10); };
 		std::size_t                                        mostInAFrame = 0;
 		int                                                frames = 0;
-		int                                                moves = 0;        // copies moved where they stand (each marks it changed in the save)
-		int                                                recreations = 0;  // copies made again in another cell
 
 		static WorkshopCells::Where Cell(const Protocol::WorkshopItem& a_item) { return WorkshopCells::Exterior(COMMONWEALTH, a_item.position[0], a_item.position[1]); }
+
+		// ---- the World WorkshopApply asks ----
+
+		bool                 Loaded(const Protocol::WorkshopItem& a_item) const { return benches.contains(a_item.workshop) && loaded.contains(Cell(a_item)); }
+		WorkshopCells::Where WhereOf(const Protocol::WorkshopItem& a_item) const { return benches.contains(a_item.workshop) ? Cell(a_item) : WorkshopCells::Where{}; }
+		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item) const { return WhereOf(a_item); }
+		bool                 InReach(const Protocol::WorkshopItem& a_item) const { return std::hypot(a_item.position[0] - BENCH_X, a_item.position[1] - BENCH_Y) <= REACH; }
+		void                 Keep(Copy) {}
+		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem&) const { return WorkshopApply::Placeable::kYes; }
+		bool                     ScrapWorldRef(const Protocol::WorkshopItem&) const { return true; }
+
+		std::optional<WorkshopApply::Standing> StandingOf(Copy a_copy) const
+		{
+			const auto it = world.find(a_copy);
+			if (it == world.end()) {
+				return std::nullopt;
+			}
+			return WorkshopApply::Standing{ it->second.base, it->second.at, it->second.cell };
+		}
+
+		void MoveTo(Copy a_copy, const Protocol::WorkshopItem& a_item) { world[a_copy].at = WorkshopMove::Of(a_item); }
+
+		void Discard(Copy a_copy) { world.erase(a_copy); }
+
+		// A piece of the same object at the spot that no copy of this run is.
+		std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item) const
+		{
+			for (const auto& [id, piece] : world) {
+				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
+				if (!tracked && piece.base == a_item.base && std::hypot(piece.at.position[0] - a_item.position[0], piece.at.position[1] - a_item.position[1]) <= ADOPT_RADIUS) {
+					return id;
+				}
+			}
+			return std::nullopt;
+		}
+
+		std::optional<Copy> Create(const Protocol::WorkshopItem& a_item)
+		{
+			const auto to = WorkshopMove::Of(a_item);
+			world[nextId] = { a_item.base, to, { WorkshopCells::Grid(to.position[0]), WorkshopCells::Grid(to.position[1]) } };
+			return nextId++;
+		}
+
+		// ---- what WorkshopSync and Session do around it ----
 
 		// Session.cpp: each kWorkshopItem and each item of a kWorkshopItems goes to WorkshopSync::Apply.
 		void Receive(const Packets& a_packets)
@@ -123,69 +171,15 @@ namespace
 			}
 		}
 
-		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
-		{
-			now += placeCost;
-			if (a_item.op == Protocol::WorkshopOp::kScrapped) {
-				if (const auto it = copies.find(a_key); it != copies.end()) {
-					world.erase(it->second);
-					copies.erase(it);
-				}
-				return;
-			}
-			if (!benchLoaded) {
-				inbox.Wait({}, a_key, a_item);
-				return;
-			}
-			if (!loaded.contains(Cell(a_item))) {
-				inbox.Wait(Cell(a_item), a_key, a_item);
-				return;
-			}
-			const auto to = WorkshopMove::Of(a_item);
-			const auto move = [&](int a_id) {
-				auto& piece = world[a_id];
-				switch (WorkshopMove::HowToFollow(piece.base, piece.at, piece.cell, a_item)) {
-				case WorkshopMove::How::kStay:
-					return true;
-				case WorkshopMove::How::kInPlace:
-					piece.at = to;
-					++moves;
-					return true;
-				default:
-					world.erase(a_id);
-					++recreations;
-					return false;
-				}
-			};
-			if (const auto it = copies.find(a_key); it != copies.end()) {
-				const auto id = it->second;
-				copies.erase(it);
-				if (move(id)) {
-					copies[a_key] = id;
-					return;
-				}
-			}
-			for (const auto& [id, piece] : world) {
-				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
-				if (!tracked && piece.base == a_item.base && std::hypot(piece.at.position[0] - to.position[0], piece.at.position[1] - to.position[1]) <= ADOPT_RADIUS) {
-					const auto found = id;
-					if (move(found)) {
-						copies[a_key] = found;
-						return;
-					}
-					break;
-				}
-			}
-			copies[a_key] = nextId;
-			world[nextId++] = { a_item.base, to, { WorkshopCells::Grid(to.position[0]), WorkshopCells::Grid(to.position[1]) } };
-		}
-
-		// WorkshopSync::Frame: what came in is placed, a few a frame.
+		// WorkshopSync::Frame: what came in is placed, a few a frame. The time each takes is placeCost's.
 		void Frame()
 		{
 			++frames;
 			const auto done = inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [this] { return now; },
-				[this](const Key& a_key, const Protocol::WorkshopItem& a_item) { ApplyNow(a_key, a_item); });
+				[this](const Key& a_key, const Protocol::WorkshopItem& a_item) {
+					now += placeCost();
+					WorkshopApply::Apply(*this, copies, inbox, counts, a_key, a_item);
+				});
 			mostInAFrame = (std::max)(mostInAFrame, done);
 		}
 
@@ -270,7 +264,7 @@ TEST("workshop session: a friend who loads a save gets the others' building back
 	CHECK(bob.At(300.0f) == 1);
 	CHECK(bob.copies.size() == 3);
 	CHECK(!bob.AnySpotDoubled());
-	CHECK(bob.moves == 0);  // sent again unchanged: nothing is moved (each move marks the copy changed in his save)
+	CHECK(bob.counts.moved == 0);  // sent again unchanged: nothing is moved (each move marks the copy changed in his save)
 	// His own piece is his game's own, not sent back to him as a copy.
 	for (const auto& packet : answer) {
 		if (!packet.empty() && packet[0] == Type(MT::kWorkshopItems)) {
@@ -339,20 +333,39 @@ TEST("workshop session: a big settlement arrives a few pieces a frame, and a pie
 	CHECK(bob.At(2590.0f) == 1);
 }
 
-TEST("workshop session: placing stops for the frame once its time is up, and the line still moves")
+TEST("workshop session: a settlement of slow pieces never holds a frame long past its budget, and every frame still places some")
 {
-	auto bob = GameAt(100.0f);
-	for (std::uint32_t i = 0; i < 20; ++i) {
-		auto item = Wall(0xFF000001 + i, 100.0f + static_cast<float>(i) * 10.0f);
-		item.playerId = 1;
-		bob.inbox.Arrive({ 1, item.refId }, item);
+	constexpr std::uint32_t PIECES = 120;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	for (std::uint32_t i = 0; i < PIECES; ++i) {
+		f.fake->Deliver(1, Report(Wall(0xFF200000 + i, 100.0f + static_cast<float>(i) * 10.0f)));
 	}
-	bob.placeCost = std::chrono::milliseconds(1);  // a slow piece (a big FindExisting, a havok object)
-	bob.Frame();
-	CHECK(bob.world.size() == 2);  // 2 ms a frame
-	bob.placeCost = std::chrono::milliseconds(50);  // one that takes longer than a frame's budget by itself
-	bob.Frame();
-	CHECK(bob.world.size() == 3);  // still one: a slow piece can't stall the rest for good
+	Received(f, 1);
+	JoinAs(f, 2, "Bob");
+	auto bob = GameAt(100.0f);
+	bob.Receive(Received(f, 2));
+	REQUIRE(bob.inbox.Queued() == PIECES);
+
+	// Pieces that take from a tenth of a millisecond to longer than a whole frame's budget each (a big
+	// FindExisting, a havok object, a robot).
+	const std::vector<Clock::duration> costs{ std::chrono::microseconds(100), std::chrono::microseconds(1500), std::chrono::microseconds(700),
+		WorkshopInbox::APPLY_TIME_PER_FRAME * 3 };
+	std::size_t     next = 0;
+	Clock::duration last{};
+	bob.placeCost = [&] { return last = costs[next++ % costs.size()]; };
+	while (bob.inbox.Queued() > 0) {
+		const auto placedBefore = bob.world.size();
+		const auto start = bob.now;
+		bob.Frame();
+		const auto took = bob.now - start;
+		CHECK(bob.world.size() > placedBefore);  // the line always moves
+		// No piece is started once the frame's time is up: only the last one may run over.
+		CHECK(took - last < WorkshopInbox::APPLY_TIME_PER_FRAME);
+		REQUIRE(bob.frames < static_cast<int>(PIECES) + 1);
+	}
+	CHECK(bob.world.size() == PIECES);
+	CHECK(!bob.AnySpotDoubled());
 }
 
 TEST("workshop session: a newer report for a piece waiting for its cell wins, whichever comes up first")
@@ -395,7 +408,7 @@ TEST("workshop session: a friend's building that came while its workbench wasn't
 	JoinAs(f, 2, "Bob");
 	Received(f, 1);
 	Game bob;  // far away: neither the settlement nor its workbench is loaded
-	bob.benchLoaded = false;
+	bob.benches.clear();
 	bob.Receive(Received(f, 2));
 
 	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
@@ -408,7 +421,7 @@ TEST("workshop session: a friend's building that came while its workbench wasn't
 	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 30000.0f, 30000.0f));
 	bob.RunUntilIdle();
 	CHECK(bob.world.empty());
-	bob.benchLoaded = true;
+	bob.benches.insert(BENCH);
 	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
 	bob.RunUntilIdle();
 	CHECK(bob.At(100.0f) == 1);
@@ -487,7 +500,7 @@ TEST("workshop session: a friend's moved piece moves for you, and one moved into
 	CHECK(bob.At(100.0f) == 0);
 	CHECK(bob.At(400.0f) == 1);
 	CHECK(bob.world.begin()->second.at.rotation[2] == 3.0f);
-	CHECK(bob.moves == 2);
+	CHECK(bob.counts.moved == 2);
 
 	// Over the cell's edge: made again there, the old one gone.
 	f.fake->Deliver(1, Report(Wall(0xFF000001, 4200.0f)));
@@ -497,7 +510,7 @@ TEST("workshop session: a friend's moved piece moves for you, and one moved into
 	CHECK(bob.world.begin()->first != first);
 	CHECK(bob.At(400.0f) == 0);
 	CHECK(bob.At(4200.0f) == 1);
-	CHECK(bob.recreations == 1);
+	CHECK(bob.counts.recreated == 1);
 
 	// And the scrap still finds the one made again.
 	f.fake->Deliver(1, Report(Scrapped(Wall(0xFF000001, 4200.0f))));
@@ -536,6 +549,165 @@ TEST("workshop session: a friend who loads their own save and builds something e
 	carol.RunUntilIdle();
 	REQUIRE(carol.world.size() == 1);
 	CHECK(carol.world.begin()->second.base == CHAIR);
+}
+
+// ---- reports that overtake each other while a settlement isn't loaded ------------------------
+
+namespace
+{
+	// Alice builds a settlement of a_pieces walls before Bob joins; Bob joins with nothing of it loaded,
+	// his game takes in one frame of the welcome, and Alice scraps a_scrap (still in his line).
+	void ScrapWhileAway(Fixture& a_f, Game& a_bob, std::uint32_t a_pieces, std::uint32_t a_scrap)
+	{
+		JoinAs(a_f, 1, "Alice");
+		for (std::uint32_t i = 0; i < a_pieces; ++i) {
+			a_f.fake->Deliver(1, Report(Wall(0xFF300000 + i, 100.0f + static_cast<float>(i) * 10.0f)));
+		}
+		Received(a_f, 1);
+		JoinAs(a_f, 2, "Bob");
+		a_bob.Receive(Received(a_f, 2));
+		REQUIRE(a_bob.inbox.Queued() == a_pieces);
+		a_bob.Frame();
+		REQUIRE(a_bob.inbox.Queued() >= a_pieces - a_scrap);  // the scrapped one is still in line
+		a_f.fake->Deliver(1, Report(Scrapped(Wall(0xFF300000 + a_scrap, 100.0f + static_cast<float>(a_scrap) * 10.0f))));
+		a_bob.Receive(Received(a_f, 2));
+		a_bob.RunUntilIdle();
+		CHECK(a_bob.world.empty());
+	}
+}
+
+TEST("workshop session: a piece a friend scraps while your game still takes in their settlement from afar isn't standing when you get there")
+{
+	constexpr std::uint32_t PIECES = 100, SCRAP = 80;
+	Fixture                 f;
+	Game                    bob;  // far from the settlement: nothing of it is loaded
+	ScrapWhileAway(f, bob, PIECES, SCRAP);
+	CHECK(bob.inbox.Pending().Size() == PIECES - 1);
+
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.At(100.0f + SCRAP * 10.0f) == 0);
+	CHECK(bob.At(100.0f + (SCRAP - 1) * 10.0f) == 1);
+	CHECK(bob.world.size() == PIECES - 1);
+	CHECK(bob.inbox.Pending().Empty());
+}
+
+TEST("workshop session: the same, with the settlement's workbench not loaded either")
+{
+	constexpr std::uint32_t PIECES = 100, SCRAP = 80;
+	Fixture                 f;
+	Game                    bob;
+	bob.benches.clear();
+	ScrapWhileAway(f, bob, PIECES, SCRAP);
+	CHECK(bob.inbox.Pending().Nowhere().size() == PIECES - 1);
+
+	bob.benches.insert(BENCH);
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.At(100.0f + SCRAP * 10.0f) == 0);
+	CHECK(bob.world.size() == PIECES - 1);
+	CHECK(bob.inbox.Pending().Empty());
+}
+
+TEST("workshop session: a friend's piece moved out of a cell you haven't loaded, both reports in line at once, stays where they moved it when you get there")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);  // the settlement's first cell is loaded, the next one east isn't
+	bob.Receive(Received(f, 2));
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 4300.0f)));  // in the next cell
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 300.0f)));   // dragged back over the edge
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.At(300.0f) == 1);
+
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 4300.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.At(4300.0f) == 0);
+	CHECK(bob.At(300.0f) == 1);
+	CHECK(bob.world.size() == 1);
+	CHECK(bob.counts.recreated == 0);
+	CHECK(bob.copies.contains({ alice, 0xFF000001 }));
+}
+
+TEST("workshop session: building still in line when you load a save neither doubles a piece nor puts a moved one back")
+{
+	constexpr std::uint32_t FIRST = 40, MORE = 60;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Receive(Received(f, 2));
+	const auto at = [](std::uint32_t a_i) { return 100.0f + static_cast<float>(a_i) * 10.0f; };
+	for (std::uint32_t i = 0; i < FIRST; ++i) {
+		f.fake->Deliver(1, Report(Wall(0xFF400000 + i, at(i))));
+	}
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	const auto save = bob.world;  // Bob saves with Alice's first forty standing
+
+	// Alice builds sixty more and moves one of them; one frame of it is placed when Bob loads his save.
+	for (std::uint32_t i = FIRST; i < FIRST + MORE; ++i) {
+		f.fake->Deliver(1, Report(Wall(0xFF400000 + i, at(i))));
+	}
+	constexpr std::uint32_t MOVED = FIRST + MORE - 5;
+	f.fake->Deliver(1, Report(Wall(0xFF400000 + MOVED, at(MOVED), 2000.0f)));
+	bob.Receive(Received(f, 2));
+	bob.Frame();
+	REQUIRE(bob.inbox.Queued() > 0);
+	bob.Load(save);
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0 }));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+
+	for (std::uint32_t i = 0; i < FIRST + MORE; ++i) {
+		CHECK(bob.At(at(i), i == MOVED ? 2000.0f : 1000.0f) == 1);
+	}
+	CHECK(bob.At(at(MOVED)) == 0);
+	CHECK(bob.world.size() == FIRST + MORE);
+	CHECK(bob.copies.size() == FIRST + MORE);
+	CHECK(bob.counts.adopted == FIRST);  // the save's copies taken over, not made again beside themselves
+	CHECK(!bob.AnySpotDoubled());
+}
+
+// ---- a player sending what they shouldn't ---------------------------------------------------
+
+TEST("workshop session: a joiner who claims to scrap the host's piece, or to build far out in the open world, changes nothing in a friend's game")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Mallory");
+	JoinAs(f, 3, "Carol");
+	Received(f, 1);
+	Received(f, 2);
+	auto carol = GameAt(100.0f);
+	carol.loaded.insert(WorkshopCells::Exterior(COMMONWEALTH, 60000.0f, 1000.0f));
+	carol.Receive(Received(f, 3));
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	carol.Receive(Received(f, 3));
+	carol.RunUntilIdle();
+	REQUIRE(carol.At(100.0f) == 1);
+
+	// Mallory names Alice's reference ID: it is hers alone to scrap.
+	f.fake->Deliver(2, Report(Scrapped(Wall(0xFF000001, 100.0f))));
+	// And claims Alice's settlement for a wall of her own sixty thousand units away, then for one
+	// moved there from inside it.
+	f.fake->Deliver(2, Report(Wall(0xFF00BAD1, 60000.0f)));
+	f.fake->Deliver(2, Report(Wall(0xFF00BAD2, 200.0f)));
+	f.fake->Deliver(2, Report(Wall(0xFF00BAD2, 60000.0f)));
+	carol.Receive(Received(f, 3));
+	carol.RunUntilIdle();
+
+	CHECK(carol.At(100.0f) == 1);
+	CHECK(carol.copies.contains({ alice, 0xFF000001 }));
+	CHECK(carol.At(60000.0f) == 0);
+	CHECK(carol.At(200.0f) == 1);  // left where it stood
+	CHECK(carol.counts.refused == 2);
 }
 
 // ---- WorkshopMove's rules, alone ------------------------------------------------------------
