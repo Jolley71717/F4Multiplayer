@@ -3,8 +3,10 @@
 
 #include "ServerFixture.h"
 
+#include "game/AttackKind.h"
 #include "game/StandInGear.h"
 
+#include <algorithm>
 #include <set>
 
 using namespace TestServer;
@@ -27,6 +29,9 @@ namespace
 		return a_item == PISTOL || a_item == RIFLE;
 	}
 
+	// About how long a stand-in takes to put its gun away and draw it again (Puppets::RedrawWeapon).
+	constexpr auto DRAW_TIME = 500ms;
+
 	// Our game's stand-in for Alice, dressed frame by frame the way RemotePlayers::Update does it. Counts what an
 	// onlooker would see: a stand-in emptied and dressed again, a change put on over what it wears, and its gun put away
 	// and drawn again.
@@ -37,6 +42,20 @@ namespace
 		int               dresses = 0;
 		int               changes = 0;
 		int               redraws = 0;
+		Clock::time_point drawnAt{};               // its gun is out from then on
+		std::vector<std::uint32_t> heard;          // the sounds of the shots played (WeaponFire::PlayShot)
+
+		// One of their shots, as PlayShot replays it on the stand-in.
+		AttackKind::Replay Shot(const std::optional<Protocol::Shot>& a_shot)
+		{
+			REQUIRE(a_shot);
+			const bool holdsGun = std::ranges::any_of(gear.worn, InHand);
+			const auto replay = AttackKind::ReplayShot(holdsGun, gear.dressed && now >= drawnAt);
+			if (replay == AttackKind::Replay::kFire || replay == AttackKind::Replay::kSoundOnly) {
+				heard.push_back(a_shot->sound);
+			}
+			return replay;
+		}
 
 		void Receive(const std::optional<Protocol::Equipment>& a_report)
 		{
@@ -53,7 +72,10 @@ namespace
 			}
 			dresses += step == Step::kDress;
 			changes += step == Step::kChange;
-			redraws += StandInGear::Done(gear, step, now, InHand);
+			if (StandInGear::Done(gear, step, now, InHand)) {
+				++redraws;
+				drawnAt = now + DRAW_TIME;
+			}
 		}
 
 		void Frames(int a_count)
@@ -90,6 +112,18 @@ namespace
 				CHECK(report->playerId == alice);
 			}
 			return report;
+		}
+
+		// Alice fires; the shot Bob's game is told of.
+		std::optional<Protocol::Shot> Shoot(std::uint32_t a_sound)
+		{
+			f.fake->Deliver(2, Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, a_sound }, MT::kReportShot));
+			const auto packet = f.fake->WaitFor(1, Type(MT::kShotFired));
+			const auto shot = packet ? Protocol::DecodeShot(*packet) : std::nullopt;
+			if (shot) {
+				CHECK(shot->playerId == alice);
+			}
+			return shot;
 		}
 	};
 }
@@ -225,6 +259,60 @@ TEST("stand-in gear: a stand-in placed again (a door, a load, power armor) is dr
 	bob.Frame();
 	CHECK(bob.dresses == 4);
 	CHECK(bob.changes == 1);
+}
+
+TEST("stand-in gear: every shot a friend fires is heard, with their gun's sound, also while their stand-in draws its gun again")
+{
+	using AttackKind::Replay;
+	constexpr std::uint32_t SUPPRESSED = 0x0012A3B4;  // the sound their game picked for their gun
+	Session session;
+	Ours    bob;
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }));
+	bob.Frames(70);
+	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
+
+	// Hat off mid-fight: the change goes on over what it wears and the gun stays out; every shot is seen and heard.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	for (int i = 0; i < 8; ++i) {
+		bob.Frames(10);
+		CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
+	}
+	CHECK(bob.changes == 1);
+
+	// Through a door: a new stand-in, dressed and drawing its gun. Her shots meanwhile are heard, not seen.
+	StandInGear::Redress(bob.gear);
+	bob.Frame();
+	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly);
+	bob.Frames(10);
+	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly);
+	bob.Frames(30);
+	CHECK(bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kFire);
+
+	// A gun swap draws the new gun: heard while it comes out, seen once it is.
+	bob.Receive(session.Report({ RIFLE, VAULT_SUIT }));
+	bob.Frames(70);
+	CHECK(bob.redraws == 3);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+	int heardOnly = 0;
+	for (int i = 0; i < 12; ++i) {
+		bob.Frames(10);
+		heardOnly += bob.Shot(session.Shoot(SUPPRESSED)) == Replay::kSoundOnly;
+	}
+	CHECK(heardOnly >= 2);
+	CHECK(bob.redraws == 4);
+
+	// Not one shot went silent, and each kept the sound her game picked.
+	CHECK(bob.heard.size() == 1 + 8 + 3 + 12);
+	CHECK(std::ranges::all_of(bob.heard, [](std::uint32_t a_sound) { return a_sound == SUPPRESSED; }));
+
+	// Fists, through a door: a punch waits for the stand-in to be ready, as before (asking for one would draw first).
+	bob.Receive(session.Report({ VAULT_SUIT }));
+	bob.Frames(70);
+	StandInGear::Redress(bob.gear);
+	bob.Frame();
+	CHECK(bob.Shot(session.Shoot(0)) == Replay::kNone);
+	bob.Frames(40);
+	CHECK(bob.Shot(session.Shoot(0)) == Replay::kSwing);
 }
 
 TEST("stand-in gear: no report yet, nothing put on; a stand-in dressed in what it wears is not dressed again")
