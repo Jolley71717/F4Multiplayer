@@ -183,9 +183,32 @@ References are identified by form ID, which matches across players because the l
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
-items, pickups only for loose inventory items that don't fill a quest alias. Personal items stay in
-everyone's world, loose or in containers: keys, notes/holotapes, `FeaturedItem` (bobbleheads,
-magazines), and stacks a container holds in a quest alias.
+items, pickups only for loose inventory items that don't fill a quest alias.
+
+Which loot is the session's is one rule, `LootScope::Of` (src/game/LootScope.h, game-free and tested),
+run by the sender before reporting a move and by every receiver before applying one, so what an older
+build reports anyway stays out:
+
+- Per player: keys, paper notes, holotapes, bobbleheads, magazines (`FeaturedItem`), quest items (a
+  stack held in a quest alias), all weapons and armor, vendors and caps, what companions and settlers
+  carry (any living NPC's inventory: trading with a companion, pickpocketing), settlement workbench
+  storage, power armor frames.
+- Shared: ammo, chems, food, junk and other loot in containers and on corpses.
+
+Weapons and armor are per player because a move carries only the base form: another game would get a
+plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
+corpse. A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
+for a second after, are trades and never reported. A corpse is shared once the session says it died: a
+change for an NPC still alive in this game waits for its kill (up to 10 minutes in the world). Loose
+items picked up from the world are the same placed reference in every game, so only the personal ones
+stay (a loose weapon is taken from the friend's world as it is). The status line counts what each end
+kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupported=`, `personal=`,
+and on the sender `holderDropped=` and `lootSent=`.
+
+Activators (buttons, switches, levers, a sink) a friend presses are pressed in our game by their
+stand-in, not our player, so a script that acts on whoever pressed it (rads from a sink, a teleport)
+acts on the stand-in. Without the stand-in here the press is refused (`acts=` sent/applied/refused);
+the door or lock it drives arrives as its state.
 
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
@@ -194,7 +217,7 @@ menu) and to loaded references; everything else waits and is retried.
 |---|---|
 | Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
-| Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
+| Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
 | Quest stages | poll `TESQuest::currentStage` twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+) only with `sStory = shared` (Welcome::sharedStory); never misc. Forward changes only, 5 s settle after load, only of quests the reporter has started. Receivers `setstage` (only if higher) once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits, and never during dialogue or a scene |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
@@ -207,14 +230,30 @@ safely. Container changes can't (that would duplicate items), so:
 
 - each session has a random ID, and container changes are numbered in session order;
 - each player tracks which numbers its world contains (`containerNext`, plus the changes still waiting
-  for their container to load) and stores that in the save's F4SE co-save;
+  for their container to load) and stores that in the save's F4SE co-save (record `CONT`, v1);
 - Hello and RequestWorldState say what the world has, and the server sends only the rest.
 
+The receiving end is `ContainerLedger` (src/game/ContainerLedger.h, game-free and tested). Changes are
+applied strictly in number order, whether they come live or in a `WorldState`: one that comes before an
+earlier one waits for it (`gap=`, at most 8192; past that the newest is dropped, and `containerNext`
+never jumps), a number already applied is dropped (`dupChanges=`). A gap with nothing arriving is asked
+for again after 15 s, then 30 s, then every 60 s (`rerequests=`); a refused request (the server allows
+3, plus one every 10 s) is covered by the next one. Should the server's log be shorter than the save
+says (a host that crashed restarts from its last session file, written every 15 s), its answer to our
+request starts below what we asked for and has no changes: the ledger goes back to the log's end, drops
+what waited past it and logs "the server's log is shorter than our save" (`rewound=`). Only an answer to
+a request we sent can do that.
+
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
-save's record and asks for the session's changes again. Container changes in a `WorldState` carry who made
-them; the player's own changes after the save are skipped (the save is from before them, so
-replaying them would empty the container without giving the loot back, or duplicate what they put
-in). A player who reconnects gets their old player ID back: Hello carries `identity`, a random
+save's record and asks for the session's changes again. The player's moves from the frame before the
+save or load are sent first, so they are in that answer. A save with no record of this session (made
+alone, or in another session) takes this one from its first change, so the saves made from it on carry
+one. Container changes in a `WorldState` carry who made them; the player's own changes after the save
+are skipped (the save is from before them, so replaying them would empty the container without giving
+the loot back, or duplicate what they put in). One known way to duplicate remains: put something in a
+chest after saving, a friend takes it, reload: the reloaded game still carries it and the friend has it
+too. `dupRisk=` counts it (our skipped deposit, then a friend's take of the same item from the same
+container) until own changes are replayed as moves. A player who reconnects gets their old player ID back: Hello carries `identity`, a random
 number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and the server remembers
 which ID each identity had during its run (not while the old connection is still open; the client
 also remembers every ID it had in the session).

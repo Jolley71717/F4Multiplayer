@@ -69,7 +69,7 @@ counters and files below as evidence:
 | Movement and stance | Sanctuary street, Vault 81 corridors | trace.sh lag and error, sneaking and jumping visible on video |
 | Combat and kills | Lexington feral ghouls (native actors; console-spawned refs are never shared) | health fractions, `dead=`, ragdoll push distance |
 | Buttons and terminals | Vault 81 elevator call buttons; Super-Duper Mart storage terminal and safe | door open state, safe `locked=`, `acts=`, `states=` |
-| Loot and containers | Red Rocket containers, a Vault 81 room | `containerNext=`, `pendingLoot=`, item counts on both sides |
+| Loot and containers | Red Rocket containers, a Vault 81 room | `containerNext=` (equal on both sides), `gap=0`, `rewound=`, `dupRisk=`, `pendingLoot=`, item counts on both sides |
 | Grenades | Sanctuary | `explosions=` reported/set off, `refs 51` shows no stray projectile, `ghosts=` |
 | Power armor | Sanctuary with T-45 pieces | the frame base and pieces listed by `equipped <stand-in>`, in and out, moving |
 | Cell change | Red Rocket interior door | the stand-in disappears and reappears at the right place |

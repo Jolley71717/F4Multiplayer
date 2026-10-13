@@ -38,7 +38,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
 [*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
 [*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods should behave the same way (you join once your character is in the open world) but are untested.
-[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. [b]Shared:[/b] NPCs, loot, doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
+[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
 [*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). Different mod collections per player do not work.
 [/list]
 

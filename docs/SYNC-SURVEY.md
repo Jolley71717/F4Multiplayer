@@ -25,7 +25,7 @@ Candidates, by how often a player would notice the gap in a normal session:
 
 | 13 | Fast travel with a friend | Each player can fast travel alone today; the other sees them vanish and reappear. To verify both ways, and consider "travel together" (the friend gets a prompt) | small to verify; medium for travel-together | verify next |
 | 14 | Workshop building shared | The big one: a friend's walls, turrets and crops don't exist in your game | first step done (protocol 22): what a player places, moves or scraps is copied into the others' games (plain copies: not scrappable or powerable by them); the rest is planned in docs/WORKSHOP-POWER.md | partly |
-| 15 | Buttons, switches, levers | A friend presses the button; your door, elevator or light does nothing (Nexus report on 0.7.0) | done (0.7.2, 2026-10-10): an activator a player uses is reported and the others activate the same reference as their own player; replayed presses are not reported back. Verified both ways at the Vault 81 elevator call buttons | done |
+| 15 | Buttons, switches, levers | A friend presses the button; your door, elevator or light does nothing (Nexus report on 0.7.0) | done (0.7.2, 2026-10-10): an activator a player uses is reported and the others activate the same reference; since 0.8.6-rc4 their stand-in presses it, not their own player (a sink's drink gave the receiver rads), and with no stand-in there it isn't pressed. Verified both ways at the Vault 81 elevator call buttons | done |
 | 16 | Ghost grenades | The stand-in really threw the grenade the equipment sync gave it: a second grenade near the stand-in | done (0.7.2): projectiles a stand-in shoots within 2 s of a replayed throw are disabled and deleted | done |
 | 17 | Terminal-linked locks and doors | A terminal that unlocks a safe or door: the other game keeps it locked | done (0.7.0 code, verified 0.7.2 on 2026-10-10 both ways with the Super-Duper Mart storage terminal and its safe); the watch on a used object now lasts five minutes, since hacking and menus took longer than the old minute | done |
 
@@ -39,8 +39,11 @@ case, and where the holes are.
 
 **What exists.** Doors and locks a player *activates* are watched for a while and their open/lock state
 is sent to the others (`WorldSync`: "pendingDoors"), so a door you unlock with a key or a bobby pin
-opens in your friend's game too. Keys, notes, bobbleheads and magazines are "everyone takes their own":
-the pickup is not removed from the friend's world, they get their own copy. Side quests share stages
+opens in your friend's game too. Per player ("everyone takes their own"): keys, paper notes, holotapes,
+bobbleheads, magazines, all weapons and armor, vendors and caps, what companions and settlers carry (any living NPC's inventory),
+settlement workbench storage, power armor frames. Shared: ammo, chems, food, junk and other loot in
+containers and on corpses (`LootScope`, the same rule on both ends). A personal pickup is not removed
+from the friend's world, they get their own copy. Side quests share stages
 (`QuestSync`): when you move a side quest on, the friend's game is set to the same stage once they have
 the quest, and the quest's own script does the unlocking there (a door that opens at stage 30 opens in
 both games). The main story and the faction quests are per player unless the host sets
@@ -69,7 +72,7 @@ both games). The main story and the faction quests are per player unless the hos
 - Companions: each follows its owner; the friend's game runs it as a mirror. To verify on video.
 - Vertibird signal grenades and the Vertibird itself: the rider is on their own; the friend sees the stand-in in the sky.
 - Settlement attacks and radiant settlement quests: per game (first pass #9).
-- Trading with vendors, caps, crafting: per player, by design.
+- Trading with vendors, caps, crafting: per player, by design. A vendor's chest, moves while the barter menu is open, settlement workbench storage and power armor frames are never shared (`LootScope`), so selling to a vendor leaves the friend's vendor with the same caps and stock.
 - Sleeping and waiting: the world clock is shared (clock owner), so one player sleeping moves time for both.
 - Faction hostility after story choices: with `own` stories, one player can be an Institute ally while the other is at war with it; their NPCs are shared, so the friend's enemies attack you in their cell. Say so in INSTALL.md.
 - Addiction, radiation, survival mode needs: per player.
