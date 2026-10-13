@@ -120,3 +120,74 @@ TEST("server: asking for the world state over and over gets only a few answers")
 	CHECK(welcomed <= 4);
 	CHECK(!f.fake->Disconnected(1));
 }
+
+namespace
+{
+	std::vector<std::uint8_t> GearReport(std::vector<std::uint32_t> a_items)
+	{
+		return Protocol::Encode(Protocol::Equipment{ 0, std::move(a_items) }, MT::kEquipment);
+	}
+
+	std::optional<Protocol::Equipment> GearPassedOn(Fixture& a_f, PeerId a_to, std::chrono::milliseconds a_wait = std::chrono::milliseconds(2000))
+	{
+		const auto packet = a_f.fake->WaitFor(a_to, Type(MT::kPlayerEquipment), a_wait);
+		return packet ? Protocol::DecodeEquipment(*packet) : std::nullopt;
+	}
+
+	constexpr std::uint32_t PISTOL = 0x0000DF42;
+	constexpr std::uint32_t VAULT_SUIT = 0x0001EED7;
+}
+
+// A game sending the same list over and over (a modified one, or one that resends after loading a save) had every other
+// player strip and dress its stand-in again for each copy.
+TEST("server: a gear report the same as the player's last is not passed on; a changed one is, and a newcomer gets the latest")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	f.fake->Deliver(2, GearReport({ PISTOL, VAULT_SUIT }));
+	auto gear = GearPassedOn(f, 1);
+	REQUIRE(gear);
+	CHECK(gear->playerId == alice->playerId);
+	CHECK((gear->items == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+
+	for (int i = 0; i < 5; ++i) {
+		f.fake->Deliver(2, GearReport({ PISTOL, VAULT_SUIT }));
+	}
+	CHECK(!GearPassedOn(f, 1, std::chrono::milliseconds(300)));
+
+	f.fake->Deliver(2, GearReport({ VAULT_SUIT }));  // gun put away for good
+	gear = GearPassedOn(f, 1);
+	REQUIRE(gear);
+	CHECK((gear->items == std::vector<std::uint32_t>{ VAULT_SUIT }));
+	// Back to what she had before the last report: a change from the last, so passed on.
+	f.fake->Deliver(2, GearReport({ PISTOL, VAULT_SUIT }));
+	gear = GearPassedOn(f, 1);
+	REQUIRE(gear);
+	CHECK((gear->items == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+
+	const auto carol = f.Join(3, Fixture::MakeHello("Carol", 0xCA201));
+	REQUIRE(carol);
+	gear = GearPassedOn(f, 3);
+	REQUIRE(gear);
+	CHECK(gear->playerId == alice->playerId);
+	CHECK((gear->items == std::vector<std::uint32_t>{ PISTOL, VAULT_SUIT }));
+}
+
+TEST("server: a player's first gear report is passed on even when they wear nothing")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Alice", 0xA11CE)));
+	TakeAliceJoined(f);
+
+	f.fake->Deliver(2, GearReport({}));
+	const auto gear = GearPassedOn(f, 1);
+	REQUIRE(gear);
+	CHECK(gear->items.empty());
+	f.fake->Deliver(2, GearReport({}));
+	CHECK(!GearPassedOn(f, 1, std::chrono::milliseconds(300)));
+}
