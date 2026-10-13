@@ -34,9 +34,9 @@ namespace SaveGuard
 	void Frame();
 
 	// Before a save: the created references that are strays (SaveStrays::Stray) are kept out of it (SaveStrays::Judge):
-	// ones with neither a cell nor a worldspace (the game's own only once this run placed a stand-in, frame copy or
-	// light), and deleted ones in no cell that are ours or whose base no longer exists. Every save is searched.
-	// Returns how many were kept out.
+	// ours with neither a cell nor a worldspace, and deleted ones in no cell that are ours or whose base no longer exists.
+	// One of the game's with neither, its base still there, is only logged (its record is the game's, as without the
+	// mod). Every save is searched. Returns how many were kept out.
 	std::uint32_t BeforeSave();
 
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.

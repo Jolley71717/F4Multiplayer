@@ -266,7 +266,7 @@ namespace SaveGuard
 			foreignDoomed += doomed && !c.seen.ours && hasChanges;
 			if (verdict == SaveStrays::Verdict::kTell) {
 				if (hasChanges) {
-					REX::WARN("SaveGuard: {} has neither a cell nor a worldspace; not ours and no friend's stand-in was placed this run, so it is left to the game", Describe(c, hasChanges));
+					REX::WARN("SaveGuard: {} has neither a cell nor a worldspace; not ours, so its record is left as the game has it (if this save fails, this is the line to report)", Describe(c, hasChanges));
 				}
 				continue;
 			}

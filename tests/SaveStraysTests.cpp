@@ -145,26 +145,25 @@ TEST("save strays: with a worldspace to be saved under, the old rules stand")
 	CHECK(!SaveStrays::Gone({ .inCell = false, .hasBase = true, .deleted = false, .anchored = false }));  // doomed is not gone
 }
 
-TEST("save strays: a save keeps every stray of ours out, the game's once this run had a session; right after a load only ours are dropped")
+TEST("save strays: a save keeps every stray of ours out and one whose base is gone; the game's own with no cell or worldspace keeps its record; right after a load only ours are dropped")
 {
 	using SaveStrays::Judge;
 	using SaveStrays::Verdict;
 	using SaveStrays::When;
 	const SaveStrays::Actor doomedOurs{ .inCell = false, .hasBase = true, .ours = true, .anchored = false };
 	const SaveStrays::Actor doomedGames{ .inCell = false, .hasBase = true, .ours = false, .anchored = false };
+	const SaveStrays::Actor doomedBaseGone{ .inCell = false, .hasBase = false, .ours = false, .anchored = false };
 	const SaveStrays::Actor baseGone{ .inCell = false, .hasBase = false, .deleted = true };
 	const SaveStrays::Actor heldBack{ .inCell = false, .hasBase = true, .deleted = false };
-	for (const bool session : { false, true }) {
-		CHECK(Judge(doomedOurs, When::kSave, session) == Verdict::kExclude);
-		CHECK(Judge(baseGone, When::kSave, session) == Verdict::kExclude);
-		CHECK(Judge(heldBack, When::kSave, session) == Verdict::kLeave);
-		CHECK(Judge(doomedOurs, When::kLoad, session) == Verdict::kExclude);
-		CHECK(Judge(doomedGames, When::kLoad, session) == Verdict::kTell);  // its cell may be on its way as the load settles
-		CHECK(Judge(baseGone, When::kLoad, session) == Verdict::kTell);
-		CHECK(Judge(heldBack, When::kLoad, session) == Verdict::kLeave);
-	}
-	CHECK(Judge(doomedGames, When::kSave, true) == Verdict::kExclude);
-	CHECK(Judge(doomedGames, When::kSave, false) == Verdict::kTell);  // a solo game's own: as it is without the mod
+	CHECK(Judge(doomedOurs, When::kSave) == Verdict::kExclude);
+	CHECK(Judge(doomedGames, When::kSave) == Verdict::kTell);  // a quest's or the player's own: as it is without the mod
+	CHECK(Judge(doomedBaseGone, When::kSave) == Verdict::kExclude);  // it could only come back broken
+	CHECK(Judge(baseGone, When::kSave) == Verdict::kExclude);
+	CHECK(Judge(heldBack, When::kSave) == Verdict::kLeave);
+	CHECK(Judge(doomedOurs, When::kLoad) == Verdict::kExclude);
+	CHECK(Judge(doomedGames, When::kLoad) == Verdict::kTell);  // its cell may be on its way as the load settles
+	CHECK(Judge(baseGone, When::kLoad) == Verdict::kTell);
+	CHECK(Judge(heldBack, When::kLoad) == Verdict::kLeave);
 }
 
 namespace
@@ -359,19 +358,50 @@ TEST("save strays: after a load, an id a frame copy or light had before it names
 	CHECK(engine.book.Session());  // the load does not change that this run had a session
 }
 
-TEST("save strays: a solo game's own reference with neither a cell nor a worldspace is only logged; once a stand-in was placed this run, it is kept out")
+TEST("save strays: the game's own reference with neither a cell nor a worldspace keeps its record in every save of a session: alone, beside a friend's stand-in the cells were cleared under, after a reload, and after the friend leaves")
 {
 	Engine engine;
-	const auto doomed = engine.Place({ .base = 0x0020A578, .inCell = false, .worldspace = false });  // a script's, held in no cell
+	// A quest's or a mod's reference, held in no cell: the game has it so with or without the mod. Whether the
+	// engine's save gets through with it is the game's business (the crash is known only for ours), so it is only
+	// logged, and its record is written as without the mod.
+	const auto games = engine.Place({ .base = 0x0020A578, .inCell = false, .worldspace = false });
+	const auto onlyGames = std::vector<std::uint32_t>{ games };
 	auto saved = engine.Save();
-	CHECK(saved.told == std::vector<std::uint32_t>{ doomed });
-	CHECK(Has(saved.written, doomed));  // left as the game has it, as without the mod
+	CHECK(saved.told == onlyGames);
+	CHECK(Has(saved.written, games));
 
-	engine.PlaceOurs(FACE_COPY, true);
+	// A friend joins: their stand-in, frame copy and light are placed. The host follows them (coc), and the cells are
+	// cleared under ours before they could be taken out.
+	const std::vector<std::uint32_t> ours{ engine.PlaceOurs(FACE_COPY, true), engine.PlaceOurs(FRAME, false), engine.PlaceOurs(LIGHT, false) };
+	for (const auto id : ours) {
+		engine.refs[id].inCell = false;
+		engine.refs[id].worldspace = false;
+	}
 	saved = engine.Save();
-	CHECK(saved.told.empty());
-	CHECK(!Has(saved.written, doomed));
-	CHECK(!saved.crashed);
+	CHECK(engine.book.Session());
+	for (const auto id : ours) {
+		CHECK(!Has(saved.written, id));
+	}
+	CHECK(Has(saved.written, games));  // a session is no reason to drop the game's own
+	CHECK(saved.told == onlyGames);
+
+	// The host reloads that save: ours are not in it, and the game's comes back as it was saved.
+	std::map<std::uint32_t, Engine::Ref> fromSave;
+	for (const auto id : saved.written) {
+		fromSave[id] = engine.refs.at(id);
+	}
+	engine.Load(fromSave, engine.nextId);
+	CHECK(engine.Written(games));  // after a load it is logged, never dropped
+	CHECK(engine.book.PlacedCount() == 0);
+
+	// The friend's stand-in is placed again, then they leave: the game takes it from under us, and its form goes.
+	const auto again = engine.PlaceOurs(FACE_COPY, true);
+	engine.book.Forget(again);
+	engine.refs.erase(again);
+	saved = engine.Save();
+	CHECK(Has(saved.written, games));
+	CHECK(!Has(saved.written, again));
+	CHECK(saved.told == onlyGames);
 }
 
 TEST("save strays: a forgotten reference is kept out only while its id still names the one we placed")

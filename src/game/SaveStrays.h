@@ -24,7 +24,7 @@ namespace SaveStrays
 	// One the engine cannot save: for a created reference with a record of changes, the save (and the
 	// engine unloading it, as a demoted actor's cell goes) asks for its cell, or else its worldspace, and
 	// reads that without a check. With neither, it crashes, whoever made the reference and whether or not it
-	// is deleted. So it is a stray whoever made it: losing its record beats a save that cannot be written.
+	// is deleted. So it is a stray whoever made it, and named in the log; whether its record is dropped is Judge's.
 	constexpr bool Doomed(const Actor& a_actor)
 	{
 		return !a_actor.anchored;
@@ -164,13 +164,14 @@ namespace SaveStrays
 		kTell,     // only logged
 	};
 
-	// A stray of ours is kept out of every save, and dropped from a save that brought it back. One of the game's is
-	// kept out of a save made once this run has placed a stand-in, frame copy or light (a_session): the session may
-	// have left it so (its cells cleared under it), and a save written with it cannot be loaded. Before that, a
-	// doomed one of the game's is only logged, its record left as the game has it, as it is without the mod. Right
-	// after a load one of the game's is only logged: it may be in the middle of getting its cell back as the load
-	// settles, and is left to the sweep before the next save.
-	constexpr Verdict Judge(const Actor& a_actor, When a_when, bool a_session)
+	// A stray of ours is kept out of every save, and dropped from a save that brought it back. One of the game's whose
+	// base is gone (a stand-in an earlier version saved, on a face copy no save keeps) is kept out of a save: it could
+	// only come back broken. A doomed one of the game's that still has its base is only logged, its record left as the
+	// game has it, as it is without the mod, whether or not a friend's stand-in was placed this run: the crash is known
+	// only for ours, and dropping the record of one of the game's (a quest's, or the player's own) could lose its
+	// changes from the player's save for good. Right after a load one of the game's is only logged: it may be in the
+	// middle of getting its cell back as the load settles, and is left to the sweep before the next save.
+	constexpr Verdict Judge(const Actor& a_actor, When a_when)
 	{
 		if (!Stray(a_actor)) {
 			return Verdict::kLeave;
@@ -178,7 +179,7 @@ namespace SaveStrays
 		if (a_actor.ours) {
 			return Verdict::kExclude;
 		}
-		if (a_when == When::kLoad || (Doomed(a_actor) && !a_session)) {
+		if (a_when == When::kLoad || (Doomed(a_actor) && a_actor.hasBase)) {
 			return Verdict::kTell;
 		}
 		return Verdict::kExclude;
@@ -314,8 +315,8 @@ namespace SaveStrays
 		{
 			std::vector<std::pair<Judged, Verdict>> out;
 			for (auto& f : Strays(std::move(a_found), a_standIn)) {
-				const auto save = Judge(f.seen, When::kSave, placed.Any());
-				const auto load = Judge(f.seen, When::kLoad, placed.Any());
+				const auto save = Judge(f.seen, When::kSave);
+				const auto load = Judge(f.seen, When::kLoad);
 				out.push_back({ { f, save }, load });
 			}
 			return out;
@@ -331,7 +332,7 @@ namespace SaveStrays
 		{
 			std::vector<Judged> out;
 			for (auto& f : a_strays) {
-				const auto verdict = Judge(f.seen, a_when, placed.Any());
+				const auto verdict = Judge(f.seen, a_when);
 				out.push_back({ f, verdict });
 			}
 			return out;
