@@ -29,6 +29,22 @@ public:
 	void Drop(PeerId a_peer) { Push({ TransportEvent::Type::kDisconnect, a_peer, {} }); }
 	void Deliver(PeerId a_peer, std::vector<std::uint8_t> a_data) { Push({ TransportEvent::Type::kPacket, a_peer, std::move(a_data) }); }
 
+	// Everything the server sent to a_peer so far, with how each was sent, and forgets it (the sim loses
+	// or reorders only what goes unreliably, as the real transports do).
+	std::vector<Sent> TakeSent(PeerId a_peer)
+	{
+		std::lock_guard   lock{ mutex };
+		std::vector<Sent> out;
+		std::erase_if(sent, [&](Sent& a_sent) {
+			if (a_sent.peer != a_peer) {
+				return false;
+			}
+			out.push_back(std::move(a_sent));
+			return true;
+		});
+		return out;
+	}
+
 	// Everything the server sent to a_peer so far (and forgets it).
 	std::vector<std::vector<std::uint8_t>> Take(PeerId a_peer)
 	{
@@ -64,6 +80,24 @@ public:
 		return found;
 	}
 
+	// Waits until the server has acted on everything delivered so far: it took it all (Poll) and came back
+	// for more, which it does only once it has handled what it took. What the server queued for itself
+	// meanwhile (a disconnect it asked for) is waited for too. False if it didn't in time (it stopped).
+	bool Settle(std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	{
+		std::unique_lock lock{ mutex };
+		do {
+			if (!changed.wait_for(lock, a_timeout, [&] { return pending.empty(); })) {
+				return false;
+			}
+			const auto seen = polls;
+			if (!changed.wait_for(lock, a_timeout, [&] { return polls > seen; })) {
+				return false;
+			}
+		} while (!pending.empty());
+		return true;
+	}
+
 	bool Disconnected(PeerId a_peer)
 	{
 		std::lock_guard lock{ mutex };
@@ -76,11 +110,15 @@ public:
 
 	void Poll(std::vector<TransportEvent>& a_out, int) override
 	{
-		std::lock_guard lock{ mutex };
-		for (auto& event : pending) {
-			a_out.push_back(std::move(event));
+		{
+			std::lock_guard lock{ mutex };
+			for (auto& event : pending) {
+				a_out.push_back(std::move(event));
+			}
+			pending.clear();
+			++polls;
 		}
-		pending.clear();
+		changed.notify_all();
 	}
 
 	void Send(PeerId a_peer, std::span<const std::uint8_t> a_data, bool a_reliable) override
@@ -126,4 +164,5 @@ private:
 	std::vector<Sent>           sent;
 	std::map<PeerId, bool>      disconnected;
 	std::map<PeerId, bool>      local;
+	std::uint64_t               polls = 0;  // times the server came for events
 };
