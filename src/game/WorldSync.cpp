@@ -136,6 +136,9 @@ namespace WorldSync
 		// Health values from other players for actors that weren't loaded yet.
 		std::unordered_map<std::uint32_t, float> pendingHealth;
 
+		// Events to send. A save or a load can flush loot into it from its own thread when the main thread
+		// doesn't come (see main.cpp RunBeforeSaveOrLoad), hence the lock.
+		std::mutex                             outgoingLock;
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		Clock::time_point                      nextApply{};
 		std::uint32_t                          applied = 0;
@@ -159,9 +162,15 @@ namespace WorldSync
 		std::uint32_t                          foundDead = 0;
 		std::uint32_t                          ownStoryDead = 0;  // found dead but left alone: a story character, with everyone on their own story
 
+		void Queue(std::vector<std::uint8_t> a_packet)
+		{
+			std::scoped_lock l{ outgoingLock };
+			outgoing.push_back(std::move(a_packet));
+		}
+
 		void ReportDead(const Protocol::ActorDeath& a_death)
 		{
-			outgoing.push_back(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
+			Queue(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
 			++reported;
 		}
 
@@ -631,6 +640,20 @@ namespace WorldSync
 			++keptByScope[static_cast<std::size_t>(a_scope)];
 		}
 
+		// Deaths in our world: reported, unless someone else reported them (we caused those because they did).
+		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const std::unordered_set<std::uint32_t>& a_killedByUs)
+		{
+			for (const auto id : a_deaths) {
+				if (dead.insert(id).second) {
+					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
+					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
+					ReportDead({ .refId = id, .killed = a_killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
+				}
+				pending.erase(id);
+				pendingHealth.erase(id);
+			}
+		}
+
 		// The player's own moves since the last frame: those that are the session's are reported.
 		void ReportMoves(const std::vector<Move>& a_moves)
 		{
@@ -639,7 +662,7 @@ namespace WorldSync
 				const auto holder = ReadHolderFacts(move.holder);
 				const auto scope = LootScope::Of(holder, ReadItemFacts(RE::TESForm::GetFormByID(move.item)), direction);
 				if (scope == LootScope::Scope::kShared) {
-					outgoing.push_back(Protocol::Encode(Protocol::ContainerChange{ move.holder, move.item, move.count }, Protocol::MessageType::kReportContainer));
+					Queue(Protocol::Encode(Protocol::ContainerChange{ move.holder, move.item, move.count }, Protocol::MessageType::kReportContainer));
 					++lootSent;
 					continue;
 				}
@@ -760,7 +783,7 @@ namespace WorldSync
 				if (match == recentActivations.end()) {
 					return false;
 				}
-				outgoing.push_back(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				Queue(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
 				recentActivations.erase(match);
 				return true;
 			});
@@ -869,7 +892,7 @@ namespace WorldSync
 				}
 				if (*state != it->second.lastSent) {
 					it->second.lastSent = *state;
-					outgoing.push_back(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
+					Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
 				}
 				++it;
 			}
@@ -1135,16 +1158,7 @@ namespace WorldSync
 			newMoves.swap(lootInbox);
 		}
 
-		// Deaths we caused because someone else reported them are already known and don't go back out.
-		for (const auto id : newDeaths) {
-			if (dead.insert(id).second) {
-				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
-				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
-				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
-			}
-			pending.erase(id);
-			pendingHealth.erase(id);
-		}
+		ReportDeaths(newDeaths, killedByUs);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
 
@@ -1160,7 +1174,7 @@ namespace WorldSync
 					const float maximum = values.GetPermanentActorValue(*info);
 					if (maximum > 0.0f) {
 						const float fraction = values.GetActorValue(*info) / maximum;
-						outgoing.push_back(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
+						Queue(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
 					}
 				}
 			}
@@ -1177,13 +1191,13 @@ namespace WorldSync
 			// A button, switch or lever: the others press it too, so what it drives happens in their games.
 			const auto base = RE::TESForm::GetFormByID(activation.base);
 			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
-				outgoing.push_back(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
+				Queue(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
 				++activationsSent;
 			}
 		}
 		for (const auto& hit : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
-				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
+				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 
@@ -1194,7 +1208,7 @@ namespace WorldSync
 		// server is asked again (the answer to the last request may have been refused, or never come).
 		if (loot.Due(now)) {
 			const auto request = loot.Request(now);
-			outgoing.push_back(Protocol::Encode(request));
+			Queue(Protocol::Encode(request));
 			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request.containerFrom, loot.Numbers().Waiting());
 		}
 		if ((pending.empty() && pendingHealth.empty() && pendingContainer.empty() && pendingPickups.empty() && pendingRefStates.empty()) || now < nextApply) {
@@ -1218,11 +1232,20 @@ namespace WorldSync
 
 	void FlushLoot()
 	{
-		std::vector<Move> moves;
+		MainThread::Assert("WorldSync::FlushLoot");
+		std::vector<std::uint32_t>        deaths;
+		std::unordered_set<std::uint32_t> killedByUs;
+		std::vector<Move>                 moves;
 		{
 			std::scoped_lock l{ inboxLock };
+			deaths.swap(deathInbox);
+			killedByUs.swap(killInbox);
 			moves.swap(lootInbox);
 		}
+		// The deaths first, as in a frame: a corpse looted in the last moments goes out dead, so the others
+		// put its loot in (after a load Reset would forget the death, and they would hold the loot as a
+		// living NPC's until they gave up on it).
+		ReportDeaths(deaths, killedByUs);
 		ReportMoves(moves);
 	}
 
@@ -1233,6 +1256,7 @@ namespace WorldSync
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
+		std::scoped_lock l{ outgoingLock };
 		return std::exchange(outgoing, {});
 	}
 
@@ -1258,6 +1282,7 @@ namespace WorldSync
 		killInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
+		std::scoped_lock o{ outgoingLock };
 		outgoing.clear();
 	}
 
