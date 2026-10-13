@@ -133,6 +133,14 @@
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.
+- Gear: each game rolls NPC gear on its own, so the owner reports what its NPCs wear when it changes
+  (`ReportNpcEquipment`, owner only) and the server keeps the last report for newcomers. A copy is dressed
+  from its own inventory only (`GearPlan`): it equips what it carries of the owner's items, unless that
+  would take off something it wears that the owner's copy does not, and nothing is ever added or
+  unequipped (the NPC is a real one of that game and goes into its saves: a settler the host dressed keeps
+  the host's armor, and a corpse holds only its own roll). An NPC in a power armor frame is left alone, and
+  power armor pieces are never put on a body. Where its roll lacks the owner's item it wears its own; the
+  one thing it is given is a grenade or mine to hold for a replayed throw, which the throw spends.
 - An owner more than 6000 units from an NPC releases it when a friend in the same space is within
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim

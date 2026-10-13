@@ -9,10 +9,13 @@ namespace Equipment
 	// Replaces everything the puppet carries with these items and equips them.
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items);
 
-	// Gives the actor these items (if it doesn't have them) and equips them, and takes off any other
-	// armor or weapon it wears; the rest of its inventory is left alone (a mirrored NPC's loot stays
-	// its own).
-	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+	// Dresses a mirrored NPC like its owner's copy as far as its own inventory allows (GearPlan): equips those of
+	// these items it carries, unless one would take off something it wears that they are not. Nothing is given
+	// and nothing taken off (the NPC and its inventory are this game's, and go into its saves), and an actor in a
+	// power armor frame is left alone. Where its own roll lacks the owner's item, it wears its own. The one item
+	// it may be given is a grenade or mine to hold for a replayed throw (HoldThrowable), which the throw spends.
+	// Returns how many equip commands it issued.
+	std::uint32_t Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
 
 	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets
 	// into a frame and takes off as it gets out. (The engine's own PlayerInPowerArmor said false on a player
