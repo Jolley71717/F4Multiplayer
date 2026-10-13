@@ -33,7 +33,7 @@ namespace ExitMusic
 		{
 			std::uintptr_t       vtable;      // 00
 			std::uintptr_t       secondBase;  // 08
-			std::uintptr_t       unk10;       // 10  zeroed by the constructor along with the music; not read here
+			RE::PlayerCharacter* player;      // 10  set when the player is made (the game's cell events compare it); not read here
 			RE::TESForm*         music;       // 18  BGSMusicType: ~TESObjectCELL reads the region state only while it is set
 		};
 		static_assert(offsetof(MusicChanger, music) == 0x18);
