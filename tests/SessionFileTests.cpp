@@ -50,7 +50,7 @@ namespace
 
 	std::filesystem::path TempFile()
 	{
-		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{}.bin", std::rand());
+		return Test::TempPath("f4mp-session", ".bin");
 	}
 }
 

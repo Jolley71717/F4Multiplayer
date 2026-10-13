@@ -1400,7 +1400,7 @@ TEST("server workshop: a piece of the world moved and then scrapped reaches a la
 
 TEST("server session file: the world survives a server restart with the same load order")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
@@ -1453,7 +1453,7 @@ TEST("server session file: the world survives a server restart with the same loa
 
 TEST("server session file: junk the host's save had scrapped, reported again after a restart, stays scrapped")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	const auto path = Test::TempPath("f4mp-server", ".session").string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
