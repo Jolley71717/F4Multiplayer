@@ -93,7 +93,7 @@ namespace RemotePlayers
 			Clock::time_point    framePlacedAt{};
 			Clock::time_point    frameActionAt{};        // when they last got out (the copy stands where they did a while)
 			const RE::NiAVObject* frameCollisionOff = nullptr;  // the frame's 3D whose collision we turned off; only compared
-			int                  switchTries = 0;        // switch-ins into a copy that did not take in this wear (see ArmorFrames::ChooseSwitch)
+			int                  switchTries = 0;        // switch-ins in this wear that did not take, or whose skeleton never came (see ArmorFrames::ChooseSwitch)
 			Clock::time_point    switchTriedAt{};
 			Clock::time_point    switchedAt{};           // when the switch-in took for this stand-in
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
@@ -917,7 +917,6 @@ namespace RemotePlayers
 				// the 3D it has now is still its own body, which the queued task takes away.
 				a_player.switchedAt = a_now;
 				a_player.armorSkeleton = nullptr;
-				a_player.switchTries = 0;
 				++switchesIn;
 				REX::INFO("RemotePlayers: '{}' stand-in {:08X} is in its frame copy {:08X}; its power armor skeleton is on its way", a_player.name, a_actor->GetFormID(), a_frame->GetFormID());
 				return;
