@@ -506,11 +506,7 @@ namespace NpcSync
 		// follows its player, as a companion does. Their game saying it is somewhere far from them moves nothing here.
 		bool OwnerBeside(std::uint32_t a_owner, const Protocol::ActorState& a_state)
 		{
-			std::optional<RemoteEdits::Spot> owner;
-			if (const auto state = RemotePlayers::LastStateOf(a_owner)) {
-				owner = RemoteEdits::SpotOf(*state);
-			}
-			return RemoteEdits::OwnerNear(owner, RemoteEdits::SpotOf(a_state));
+			return RemoteEdits::OwnerBeside(RemotePlayers::LastStateOf, a_owner, a_state);
 		}
 
 		// The owner's copy stands near us outdoors, but ours is somewhere else: in a cell we have not loaded
@@ -630,7 +626,9 @@ namespace NpcSync
 				const auto* latest = mirror.snapshots.empty() ? nullptr : &mirror.snapshots.back();
 				// Outdoors in the same world, the owner's copy went far (a companion ran after its player, or
 				// was moved): ours is brought over and mirrored from there, instead of being left behind; as
-				// long as that is beside its owner's stand-in (OwnerBeside), else ours runs its own AI here.
+				// long as that is beside its owner's stand-in (OwnerBeside), else ours runs its own AI here. That
+				// goes for any NPC their game runs, not only companions: a settler their game moved far from them
+				// stays here until they are beside it.
 				if (latest && a_now - latest->received <= LOST_AFTER && latest->state.cell == 0 && SpaceOf(actor) == std::pair{ 0u, latest->state.worldspace } &&
 					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
 					if (OwnerBeside(owner, latest->state)) {

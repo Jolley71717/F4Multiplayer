@@ -2444,6 +2444,7 @@ TEST("host authority: after loading a save from before the fight, a boss you bot
 namespace
 {
 	constexpr std::uint32_t DOGMEAT = 0x0001D162;
+	constexpr std::uint32_t SETTLER = 0x0001D1A0;  // a generic settler at a settlement
 
 	std::vector<std::uint8_t> NpcAt(std::uint32_t a_ref, const RemoteEdits::Spot& a_at)
 	{
@@ -2455,61 +2456,150 @@ namespace
 		return Protocol::Encode(std::vector<Protocol::ActorState>{ state }, MT::kActorStates);
 	}
 
-	// Whether our game brings each NPC position the server passed on to it over to where the owner's game has
-	// it: the owner's stand-in must be beside it, by the states our game has heard (NpcSync's BringIn).
-	std::vector<bool> BroughtIn(const Packets& a_packets, Heard& a_heard, std::uint32_t a_owner)
+	// The receiving game's NpcSync, as far as moving a friend's NPC to where their game has it goes: who runs
+	// each NPC (the owners the server sends), the last state each player sent, and for each NPC position the
+	// server passes on, whether ours is brought there (RemoteEdits::OwnerBeside, as BringIn and the bring-over
+	// of a far mirror ask it).
+	struct MovesHere
 	{
-		std::vector<bool> out;
-		for (const auto& packet : a_packets) {
-			if (packet[0] == Type(MT::kPlayerStates)) {
-				Note(a_heard, packet);
-			} else if (packet[0] == Type(MT::kActorStatesRelay)) {
-				const auto states = Protocol::DecodeActorStates(packet);
-				REQUIRE(states);
-				for (const auto& state : *states) {
-					const auto owner = a_heard.find(a_owner);
-					out.push_back(RemoteEdits::OwnerNear(owner == a_heard.end() ? std::nullopt : std::optional{ owner->second }, RemoteEdits::SpotOf(state)));
+		std::map<std::uint32_t, std::uint32_t>         owners;
+		std::map<std::uint32_t, Protocol::PlayerState> lastStates;
+		std::vector<std::pair<std::uint32_t, bool>>    brought;  // (NPC, brought to where its owner's game has it), in order
+
+		void Handle(const Packets& a_packets)
+		{
+			for (const auto& packet : a_packets) {
+				if (packet[0] == Type(MT::kActorOwners)) {
+					const auto batch = Protocol::DecodeOwners(packet);
+					REQUIRE(batch);
+					for (const auto& entry : *batch) {
+						if (entry.playerId == 0) {
+							owners.erase(entry.refId);
+						} else {
+							owners[entry.refId] = entry.playerId;
+						}
+					}
+				} else if (packet[0] == Type(MT::kPlayerStates)) {
+					const auto batch = Protocol::DecodePlayerStates(packet);
+					REQUIRE(batch);
+					for (const auto& entry : batch->players) {
+						lastStates[entry.playerId] = entry.state;
+					}
+				} else if (packet[0] == Type(MT::kActorStatesRelay)) {
+					const auto states = Protocol::DecodeActorStates(packet);
+					REQUIRE(states);
+					for (const auto& state : *states) {
+						const auto owner = owners.find(state.refId);
+						const auto lastState = [this](std::uint32_t a_player) -> std::optional<Protocol::PlayerState> {
+							const auto it = lastStates.find(a_player);
+							return it == lastStates.end() ? std::nullopt : std::optional{ it->second };
+						};
+						brought.emplace_back(state.refId, RemoteEdits::OwnerBeside(lastState, owner == owners.end() ? 0 : owner->second, state));
+					}
 				}
 			}
 		}
-		return out;
+
+		// The verdicts since the last call.
+		std::vector<std::pair<std::uint32_t, bool>> Take() { return std::exchange(brought, {}); }
+	};
+
+	auto Handler(MovesHere& a_game)
+	{
+		return [&a_game](const Packets& a_packets) { a_game.Handle(a_packets); };
 	}
+
+	const RemoteEdits::Spot HOST_AT{ 0, 0x0000003C, 5000.0f, 5000.0f, 0.0f };
+	const RemoteEdits::Spot BESIDE_HOST{ 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f };
 }
 
-TEST("host authority: a friend's companion walks in beside them, but no NPC is pulled to you on their game's word alone")
+TEST("host authority: a friend's companion walks in beside them, even when its steps arrive before theirs, but is never pulled to you on their game's word alone")
 {
 	Fixture    f;
 	const auto host = f.Join(1, Fixture::MakeHello("Host"));
 	REQUIRE(host);
 	const auto bob = JoinAs(f, 2, "Bob");
 	JoinAs(f, 3, "Carol");
+	MovesHere hostGame;
 	f.fake->Deliver(2, Claim(DOGMEAT, Reason::kCompanion));
-	Clear(f, { 1, 2, 3 });
-	Heard heard;
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.owners.contains(DOGMEAT); });
+	CHECK(hostGame.owners.at(DOGMEAT) == bob);
 
-	// Bob's dog is reported before the host's game has heard where Bob is: not moved yet.
-	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 1200.0f, 1100.0f, 0.0f }));
-	auto brought = BroughtIn(Received(f, 1), heard, bob);
-	REQUIRE(brought.size() == 1);
-	CHECK(!brought[0]);
-
-	// Bob walks up to the host with his dog at heel: it comes in beside him.
-	Stand(f, 2, bob, { 0, 0x0000003C, 1000.0f, 1000.0f, 0.0f }, 1, heard);
-	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 1200.0f, 1100.0f, 0.0f }));
-	brought = BroughtIn(Received(f, 1), heard, bob);
-	REQUIRE(brought.size() == 1);
-	CHECK(brought[0]);
+	// Bob walks up to the host with his dog at heel; the dog's position comes before his (positions of NPCs
+	// go out as they come, players' with the next batch). Not moved yet; the next one, once his has come, is.
+	f.fake->Deliver(2, NpcAt(DOGMEAT, BESIDE_HOST));
+	f.fake->Deliver(2, StateOf({ 0, 0x0000003C, 5300.0f, 5100.0f, 0.0f }));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1 && hostGame.lastStates.contains(bob); });
+	auto brought = hostGame.Take();
+	CHECK(!brought[0].second);
+	f.fake->Deliver(2, NpcAt(DOGMEAT, BESIDE_HOST));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	CHECK(hostGame.Take()[0].second);
 
 	// Bob is across the map, and his game says the dog stands next to the host.
-	Stand(f, 2, bob, { 0, 0x0000003C, -60000.0f, 80000.0f, 0.0f }, 1, heard);
-	f.fake->Deliver(2, NpcAt(DOGMEAT, { 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f }));
-	brought = BroughtIn(Received(f, 1), heard, bob);
-	REQUIRE(brought.size() == 1);
-	CHECK(!brought[0]);
+	f.fake->Deliver(2, StateOf(ACROSS_THE_MAP));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.lastStates[bob].x == ACROSS_THE_MAP.x; });
+	f.fake->Deliver(2, NpcAt(DOGMEAT, BESIDE_HOST));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	CHECK(!hostGame.Take()[0].second);
 
 	// Carol doesn't run the dog: her positions for it never reach the host.
-	f.fake->Deliver(3, NpcAt(DOGMEAT, { 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f }));
-	CHECK(Count(Received(f, 1), MT::kActorStatesRelay) == 0);
+	f.fake->Deliver(3, NpcAt(DOGMEAT, BESIDE_HOST));
+	hostGame.Handle(Received(f, 1));
+	CHECK(hostGame.brought.empty());
+}
+
+TEST("host authority: when a friend's companion changes hands, it follows its new owner's stand-in, not the old one's")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	MovesHere hostGame;
+	f.fake->Deliver(2, StateOf(BESIDE_HOST));
+	f.fake->Deliver(3, StateOf(ACROSS_THE_MAP));
+	f.fake->Deliver(2, Claim(DOGMEAT, Reason::kCompanion));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.owners.contains(DOGMEAT) && hostGame.lastStates.contains(carol); });
+
+	// Bob lets the dog go and Carol recruits it, far away: positions beside Bob and the host now move nothing.
+	f.fake->Deliver(2, Release(DOGMEAT));
+	f.fake->Deliver(3, Claim(DOGMEAT, Reason::kCompanion));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.owners.contains(DOGMEAT) && hostGame.owners.at(DOGMEAT) == carol; });
+	f.fake->Deliver(3, NpcAt(DOGMEAT, BESIDE_HOST));
+	f.fake->Deliver(2, NpcAt(DOGMEAT, BESIDE_HOST));  // no longer Bob's to send
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	auto brought = hostGame.Take();
+	CHECK(!brought[0].second);
+	CHECK(hostGame.lastStates.at(bob).x == BESIDE_HOST.x);
+
+	// Beside Carol, it is.
+	f.fake->Deliver(3, NpcAt(DOGMEAT, { 0, 0x0000003C, ACROSS_THE_MAP.x + 200.0f, ACROSS_THE_MAP.y, 0.0f }));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	CHECK(hostGame.Take()[0].second);
+}
+
+TEST("host authority: a settler a friend's game moved far from them is not pulled across your settlement; it runs its own AI in yours until they come")
+{
+	// The bring-over of a far mirror asks the same question of every NPC a friend's game runs, not only
+	// companions: their game moving one somewhere they are not is only their word for it.
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	MovesHere hostGame;
+	f.fake->Deliver(2, StateOf({ 0, 0x0000003C, 20000.0f, 5000.0f, 0.0f }));  // Bob at the far end of the settlement
+	f.fake->Deliver(2, Claim(SETTLER));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.owners.contains(SETTLER) && hostGame.lastStates.contains(bob); });
+	f.fake->Deliver(2, NpcAt(SETTLER, BESIDE_HOST));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	CHECK(!hostGame.Take()[0].second);
+
+	f.fake->Deliver(2, StateOf(HOST_AT));  // Bob walks over: now it is brought over beside him
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.lastStates[bob].x == HOST_AT.x; });
+	f.fake->Deliver(2, NpcAt(SETTLER, BESIDE_HOST));
+	Pump(f, 1, Handler(hostGame), [&] { return hostGame.brought.size() == 1; });
+	CHECK(hostGame.Take()[0].second);
 }
 
 TEST("host authority: a friend who asks to look like any NPC but a settler is shown as your own default")

@@ -85,6 +85,15 @@ namespace RemoteEdits
 		return a_owner && OwnerNear(Distance(*a_owner, a_spot));
 	}
 
+	// Whether the owner's stand-in stands beside where the owner's game has the NPC, by what our game has heard:
+	// a_owner runs it (as the server last said), a_lastState(player) is the last state that player sent us.
+	template <class LastState>
+	bool OwnerBeside(LastState&& a_lastState, std::uint32_t a_owner, const Protocol::ActorState& a_npc)
+	{
+		const std::optional<Protocol::PlayerState> owner = a_owner ? a_lastState(a_owner) : std::nullopt;
+		return owner && OwnerNear(Distance(SpotOf(*owner), SpotOf(a_npc)));
+	}
+
 	// A death the reporter could have seen: they stood in the actor's cell or worldspace, this close to
 	// our copy. (Measured from our copy, not from where the reporter says the corpse lies: that comes
 	// from them too.)
