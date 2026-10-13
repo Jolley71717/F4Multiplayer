@@ -408,7 +408,7 @@ TEST("budgets: hello again on the same connection with an empty budget is answer
 	Sync(f, 1);
 	game.Take(Received(f, 2));
 	const auto savedWorld = game.world;
-	const auto savedNext = game.ledger.Next();
+	const auto savedNext = game.Next();
 	REQUIRE(savedNext == 1);
 	f.fake->Deliver(1, Loot(CHEST, ITEM, -1));  // #1: after it
 	// He reloaded twice already: with the join, his budget is spent.
@@ -441,8 +441,8 @@ TEST("budgets: hello again on the same connection with an empty budget is answer
 	std::ranges::copy(afterRestart, std::back_inserter(toAlice));
 	CHECK(game.world.Of(CHEST) == SessionAsToldTo(toAlice).Of(CHEST));
 	CHECK((game.world.Of(CHEST).at({ CHEST, ITEM }) == 1));
-	CHECK(game.ledger.WaitingCount() == 0);
-	CHECK(game.ledger.Next() == 4);
+	CHECK(game.loot.Waiting().size() == 0);
+	CHECK(game.Next() == 4);
 	// Alice was told he left and came back.
 	CHECK(Count(afterRestart, MT::kPlayerLeft) == 1);
 	CHECK(Count(afterRestart, MT::kPlayerJoined) == 1);
@@ -470,8 +470,8 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 	std::vector<std::chrono::steady_clock::time_point> askedAt;
 	for (std::uint32_t reload = 0; reload < 3; ++reload) {
 		const auto savedWorld = game.world;
-		const auto savedNext = game.ledger.Next();
-		const auto savedEntries = game.ledger.Waiting();
+		const auto savedNext = game.Next();
+		const auto savedEntries = game.loot.Waiting();
 		f.fake->Deliver(1, Loot(CHEST, ITEM + reload, 2));
 		Sync(f, 1);
 		game.Take(Received(f, 2));
@@ -496,7 +496,7 @@ TEST("budgets: a friend who joins and reloads three times in a row gets every wo
 	std::ranges::move(Received(f, 1), std::back_inserter(toAlice));
 	CHECK(game.world.Of(CHEST) == SessionAsToldTo(toAlice).Of(CHEST));
 	CHECK(game.world.Of(CHEST).size() == 3);
-	CHECK(game.ledger.WaitingCount() == 0);
+	CHECK(game.loot.Waiting().size() == 0);
 }
 
 // The owed world state and the live echoes never overlap or leave a gap: while Bob's is owed, the

@@ -2,14 +2,14 @@
 
 // Players' games as far as the session goes, for tests that play two or three of them against the real Server:
 // which character is loaded, the stimpaks in one chest in that world, and what Session and WorldSync keep of the
-// session (CharacterBinding's tracker, the container ledger, the refusals). What the server sends goes through the
-// steps Session takes (SessionSteps, the ledger, Refusals); what Session does around them (connect, drop, start and
+// session (CharacterBinding's tracker, the loot engine, the refusals). What the server sends goes through the
+// steps Session takes (SessionSteps, the loot engine, Refusals); what Session does around them (connect, drop, start and
 // stop the server) is a line or two here.
 
+#include "ChestWorld.h"
 #include "ServerFixture.h"
 #include "SessionFile.h"
 #include "game/CharacterBinding.h"
-#include "game/ContainerLedger.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
 
@@ -157,7 +157,7 @@ namespace TestGame
 			std::int32_t                          stimpaks = STIMPAKS_IN_CHEST;
 			std::uint64_t                         session = 0;
 			std::uint32_t                         next = 0;
-			std::vector<ContainerLedger::Pending> waiting;
+			std::vector<LootSync::Pending>        waiting;
 		};
 
 		Machine&                         machine;
@@ -173,7 +173,9 @@ namespace TestGame
 		PeerId                           peer = 0;
 		std::optional<Protocol::Welcome> welcome;
 		CharacterBinding::Tracker        binding;
-		ContainerLedger                  ledger;
+		LootSync::Loot                   loot;
+		// The world as the loot engine sees it: everything is loaded, and only the stimpaks in the chest matter.
+		ChestWorld                       chests{ [](std::uint32_t) { return true; }, [this](const Protocol::ContainerChange& a_change) { Apply(a_change); } };
 		Refusals                         refusals;
 		Refusals::Answer                 lastRefusal;
 		std::vector<std::string>         notices;  // what Session would tell the player
@@ -223,7 +225,7 @@ namespace TestGame
 		{
 			Server::Options options;
 			options.hostIdentity = identity;
-			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, false, ledger.ResyncPoint().sessionId, [this](const std::string& a_line) {
+			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, false, loot.Point().sessionId, [this](const std::string& a_line) {
 				machine.said.push_back(a_line);
 			}).string();
 			HostOn(options);
@@ -276,7 +278,7 @@ namespace TestGame
 			}
 			Disconnected();
 			refusals.Clear();
-			SessionSteps::OnServerChanged(binding, ledger);
+			SessionSteps::OnServerChanged(binding, loot);
 		}
 
 		// Session::OnDisconnected.
@@ -284,7 +286,7 @@ namespace TestGame
 		{
 			connected = false;
 			welcome.reset();
-			SessionSteps::OnDisconnected(ledger);
+			SessionSteps::OnDisconnected(loot);
 		}
 
 		// The connection drops (a network hiccup); Session tries again by itself (Retry).
@@ -317,7 +319,7 @@ namespace TestGame
 			f.fake->Connect(peer);
 			connected = true;
 			auto hello = Hello(identity == HOST ? "Host" : "Friend", identity);
-			hello.world = SessionSteps::OnHello(binding, ledger, character);
+			hello.world = SessionSteps::OnHello(binding, loot, character);
 			hello.password = password;
 			f.fake->Deliver(peer, Protocol::Encode(hello));
 
@@ -352,7 +354,6 @@ namespace TestGame
 		// Session::HandlePacket, for what the session and the chest take; then what Frame does after its poll.
 		void Handle(const Packets& a_packets)
 		{
-			const auto tryApply = [this](const Protocol::ContainerChange& a_change) { return Apply(a_change); };
 			bool       leave = false;
 			bool       refused = false;
 			for (const auto& packet : a_packets) {
@@ -364,7 +365,7 @@ namespace TestGame
 					if (!welcome) {
 						const auto msg = Protocol::DecodeWelcome(packet);
 						REQUIRE(msg);
-						if (SessionSteps::OnWelcome(binding, ledger, hosting, *msg) == Step::kLeave) {
+						if (SessionSteps::OnWelcome(binding, loot, hosting, *msg) == Step::kLeave) {
 							leave = true;
 							break;
 						}
@@ -387,14 +388,14 @@ namespace TestGame
 					{
 						const auto state = Protocol::DecodeWorldState(packet);
 						REQUIRE(state);
-						ledger.TakeWorldState(*state, tryApply);
+						loot.CatchUp(state->containerFirstIndex, state->containerChanges, LootSync::Clock::now(), chests);
 					}
 					break;
 				case MT::kContainerChanged:
 					{
 						const auto change = Protocol::DecodeIndexedContainerChange(packet);
 						REQUIRE(change);
-						ledger.Offer(change->index, change->playerId, change->change, tryApply);
+						loot.Live(*change, LootSync::Clock::now(), chests);
 					}
 					break;
 				default:
@@ -420,7 +421,7 @@ namespace TestGame
 			Send(Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, a_count }, MT::kReportContainer));
 		}
 
-		[[nodiscard]] Save MakeSave() const { return { character, stimpaks, ledger.RecordSession(), ledger.Next(), ledger.Waiting() }; }
+		[[nodiscard]] Save MakeSave() const { return { character, stimpaks, loot.Point().sessionId, loot.Point().containerFrom, loot.Waiting() }; }
 
 		// Loads a save: the world goes back to the save's and its co-save record comes back (or none: WorldSync's
 		// revert and load callbacks), then Session::OnGameLoaded. What the server sent meanwhile is still to be
@@ -441,12 +442,9 @@ namespace TestGame
 			character = a_save.character;
 			stimpaks = a_save.stimpaks;
 			inOpening = a_newGame;
-			ledger.OnRevert();
-			if (a_save.session != 0) {
-				ledger.OnRecordLoaded(a_save.session, a_save.next, a_save.waiting);
-			}
+			loot.LoadRecord(a_save.session, a_save.next, a_save.waiting);  // session 0: the save has no record
 			SessionSteps::OnGameLoaded(
-				binding, ledger, Link(), a_newGame, character,
+				binding, loot, Link(), a_newGame, character,
 				[this](Step a_step) {
 					if (a_step == Step::kStopHosting) {
 						StopHosting();

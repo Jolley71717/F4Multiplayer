@@ -4,7 +4,10 @@
 
 #include "game/FoundDead.h"
 
-class ContainerLedger;
+namespace LootSync
+{
+	class Loot;
+}
 
 // Shared world state: things that happen in one player's world are replayed in everyone's.
 // Actor deaths and health, container contents, picked-up items, doors and locks, and (through
@@ -20,9 +23,9 @@ namespace WorldSync
 	// The server welcomed us (the session's side of it goes through SessionSteps).
 	void OnWelcome(bool a_friendlyFire);
 
-	// Which of the session's container changes our world holds, and our IDs in it (kept in the save). Session
-	// moves it through loads, hellos and welcomes with SessionSteps.
-	[[nodiscard]] ContainerLedger& Ledger();
+	// The loot engine: which of the session's container changes our world holds (or waits to), and our IDs in
+	// it (kept in the save). Session moves it through loads, hellos and welcomes with SessionSteps.
+	[[nodiscard]] LootSync::Loot& Loot();
 
 	// Another player's game reported a death, or the server replays one it knows (no player named): killed
 	// here once loaded, the corpse put where it fell for them and pushed by their stand-in if theirs was the
@@ -47,10 +50,16 @@ namespace WorldSync
 	// a_hosting: this game runs the session's server; its world is the session's (actors dead in it are dead for all).
 	void Frame(bool a_hosting);
 
+	// Before a save or a load: the deaths and the player's item moves since the last frame are looked at
+	// now, while the world they were made in stands, and what is the session's joins what TakeOutgoing
+	// returns (ahead of a load's request, so the server numbers it before answering).
+	void FlushLoot();
+
 	// How many actors the player killed since the last call (any actor, shared or not).
 	[[nodiscard]] std::uint32_t TakePlayerKills();
 
-	// Local events to send to the server since the last call.
+	// Local events to send to the server since the last call (a request for container changes a gap
+	// still lacks among them).
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
 	// Forget what we know about the world (on disconnect and after loading a save). The record of

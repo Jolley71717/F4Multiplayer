@@ -1,9 +1,11 @@
 #include "game/WorldSync.h"
 
-#include "game/ContainerLedger.h"
+#include "MainThread.h"
 #include "game/DeathReports.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
+#include "game/LootScope.h"
+#include "game/LootSync.h"
 #include "game/NpcSync.h"
 #include "game/PendingContainers.h"
 #include "game/QuestSync.h"
@@ -46,7 +48,17 @@ namespace WorldSync
 		std::vector<std::uint32_t> refLoadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
-		std::vector<std::vector<std::uint8_t>> lootInbox;  // already-encoded reports
+		// Items the player moved between their inventory and a container or an NPC. Whether one is the
+		// session's is decided in Frame(), on the main thread, where the references can be read.
+		using Move = LootSync::Move;
+		std::vector<Move> lootInbox;
+		// Trading moves everything through ordinary transfers against the vendor's chest or the vendor
+		// (BarterMenu::CompleteTrade), so moves while the barter menu is open (and just after) are trades:
+		// vendors and caps are each player's. Set from the menu event's thread.
+		constexpr auto          BARTER_TAIL = 1s;
+		std::atomic<bool>       bartering{ false };
+		std::atomic<Clock::rep> barterClosedAt{ 0 };
+		std::atomic<std::uint32_t> barterMoves{ 0 };
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
 		struct StandInHit
 		{
@@ -84,27 +96,34 @@ namespace WorldSync
 		std::uint32_t                                        linkedWatched = 0;  // linked refs (a terminal's door) put on watch
 		std::uint32_t                                        refStatesApplied = 0;  // lock/open changes taken from other players
 
-		// Activators (buttons, switches, levers) pressed in another player's game are pressed here
-		// too. A press we replayed is remembered briefly so our own watcher doesn't report it back.
-		constexpr auto                                         REPLAY_ECHO = 2s;
-		std::unordered_map<std::uint32_t, Clock::time_point> replayed;
+		// Activators (buttons, switches, levers) pressed in another player's game are pressed here too, by
+		// their stand-in (so our own watcher, which takes only the player's presses, never reports it back).
 		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
 		std::uint32_t                                          refStatesRefused = 0, corpsesMoved = 0;
 		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
-		// Which of the session's numbered container changes our world contains (or waits for its container
-		// to load), and our player IDs in the session. Kept in the save (see SaveResyncPoint).
-		ContainerLedger ledger;
+		// Container changes are numbered by the server. Everything before the ledger's next number is in
+		// our world already or waits in the loot's queue (its container isn't loaded, or an NPC lives here);
+		// changes that came early wait in the ledger for those before them. The session and that number
+		// belong to the world rather than the connection, so they are kept in the save (see
+		// SaveResyncPoint). The ledger also knows our player IDs in the session (our own changes are in our
+		// world already): a reconnect normally gets the old one back (the server knows us by
+		// Protocol::Hello::identity), but not while the server still holds the old connection. Session moves
+		// it through loads, hellos and welcomes with SessionSteps.
+		LootSync::Loot    loot;
+		bool              lootFullWarned = false;
+		Clock::time_point lootAgedAt{};  // when the wait for living NPCs was last counted (see AgeLoot)
+
+		// Vendors' chests (each faction's merchant container): trading stays in each player's game.
+		std::unordered_set<std::uint32_t> vendorChests;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
 		// Every pickup we were told of this session (for how full its history is; see NoticeHistory).
 		std::unordered_set<std::uint32_t> pickedUpKnown;
 		std::uint64_t                     historyNoticedIn = 0;  // the session the player was told of (once a session)
-		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
-		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
-		std::uint32_t                     containerRefused = 0;  // changes to a workbench or our own companion, left alone
+		std::uint32_t                     personalSkipped = 0;  // pickups of personal or quest items left alone (container changes: loot's)
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -112,6 +131,9 @@ namespace WorldSync
 		// Health values from other players for actors that weren't loaded yet.
 		std::unordered_map<std::uint32_t, float> pendingHealth;
 
+		// Events to send. A save or a load can flush loot into it from its own thread when the main thread
+		// doesn't come (see main.cpp RunBeforeSaveOrLoad), hence the lock.
+		std::mutex                             outgoingLock;
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		// When what waits (WaitingIds) is tried again.
 		RetrySchedule                          retrySchedule{ SWEEP_INTERVAL, SWEEP_ENTRIES };
@@ -138,9 +160,15 @@ namespace WorldSync
 		std::uint32_t                          foundDead = 0;
 		std::uint32_t                          ownStoryDead = 0;  // found dead but left alone: a story character, with everyone on their own story
 
+		void Queue(std::vector<std::uint8_t> a_packet)
+		{
+			std::scoped_lock l{ outgoingLock };
+			outgoing.push_back(std::move(a_packet));
+		}
+
 		void ReportDead(const Protocol::ActorDeath& a_death)
 		{
-			outgoing.push_back(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
+			Queue(Protocol::Encode(a_death, Protocol::MessageType::kReportDeath));
 			++reported;
 		}
 
@@ -453,8 +481,8 @@ namespace WorldSync
 				// Only moves the local player makes. Changes we apply for other players go between a
 				// container and nothing, so they never match and never echo back.
 				using Protocol::PLAYER_REF_ID;
-				std::optional<std::vector<std::uint8_t>> packet;
-				const auto count = a_event.itemCount;
+				std::optional<Move> move;
+				const auto          count = a_event.itemCount;
 				if (a_event.newContainerFormID == PLAYER_REF_ID && a_event.oldContainerFormID == 0) {
 					// Picked up from the world. The event doesn't say which reference (referenceFormID is 0),
 					// so Frame() pairs it with the item the player just activated.
@@ -466,19 +494,44 @@ namespace WorldSync
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				if (a_event.newContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.oldContainerFormID)) {
-					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count }, Protocol::MessageType::kReportContainer);
+					move = Move{ a_event.oldContainerFormID, a_event.baseObjectFormID, -count };
 				} else if (a_event.oldContainerFormID == PLAYER_REF_ID && IsShareableRef(a_event.newContainerFormID)) {
-					packet = Protocol::Encode(Protocol::ContainerChange{ a_event.newContainerFormID, a_event.baseObjectFormID, count }, Protocol::MessageType::kReportContainer);
+					move = Move{ a_event.newContainerFormID, a_event.baseObjectFormID, count };
 				}
-				if (packet) {
-					std::scoped_lock l{ inboxLock };
-					lootInbox.push_back(std::move(*packet));
+				if (!move) {
+					return RE::BSEventNotifyControl::kContinue;
 				}
+				const auto closed = Clock::time_point{ Clock::duration{ barterClosedAt.load() } };
+				if (bartering || Clock::now() - closed < BARTER_TAIL) {
+					++barterMoves;  // a trade
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				std::scoped_lock l{ inboxLock };
+				lootInbox.push_back(*move);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
 
 		ContainerWatcher containerWatcher;
+
+		// Only a flag is set here (the event's thread); see bartering.
+		class MenuWatcher :
+			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+			{
+				if (a_event.menuName == "BarterMenu"sv) {
+					if (!a_event.opening) {
+						barterClosedAt = Clock::now().time_since_epoch().count();
+					}
+					bartering = a_event.opening;
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		MenuWatcher menuWatcher;
 
 		class ActivateWatcher :
 			public RE::BSTEventSink<RE::TESActivateEvent>
@@ -500,45 +553,119 @@ namespace WorldSync
 
 		ActivateWatcher activateWatcher;
 
-		// Things that can sit in an inventory.
-		bool IsInventoryForm(const RE::TESForm* a_form)
-		{
-			using Type = RE::ENUM_FORM_ID;
-			if (!a_form) {
-				return false;
-			}
-			switch (a_form->GetFormType()) {
-			case Type::kARMO:
-			case Type::kBOOK:
-			case Type::kMISC:
-			case Type::kWEAP:
-			case Type::kAMMO:
-			case Type::kKEYM:
-			case Type::kALCH:
-			case Type::kNOTE:
-			case Type::kINGR:
-			case Type::kCMPO:
-				return true;
-			default:
-				return false;
-			}
-		}
-
-		// Containers, and NPCs (corpses, merchants): what another player can take from or put into.
 		constexpr std::uint32_t FEATURED_ITEM_KEYWORD = 0x001B3FAC;  // bobbleheads and magazines
 
-		// Items every player collects for themselves: bobbleheads, magazines, keys, notes and
-		// holotapes. Taking one doesn't take it from anyone else's world.
-		bool IsPersonalItem(RE::TESForm* a_item)
+		// What kind of item a base form is, for LootScope (the quest-alias fact is the holder's, see
+		// HoldsAsQuestItem).
+		LootScope::ItemFacts ReadItemFacts(RE::TESForm* a_item)
 		{
+			using Item = LootScope::Item;
+			using Type = RE::ENUM_FORM_ID;
+			LootScope::ItemFacts facts;
 			if (!a_item) {
-				return false;
+				return facts;
 			}
-			if (a_item->Is(RE::ENUM_FORM_ID::kKEYM, RE::ENUM_FORM_ID::kNOTE)) {
-				return true;
+			switch (a_item->GetFormType()) {
+			case Type::kKEYM:
+				facts.kind = Item::kKey;
+				break;
+			case Type::kNOTE:
+				facts.kind = Item::kNote;
+				break;
+			case Type::kBOOK:
+				facts.kind = Item::kBook;
+				break;
+			case Type::kWEAP:
+				facts.kind = Item::kWeapon;
+				break;
+			case Type::kARMO:
+				facts.kind = Item::kArmor;
+				break;
+			case Type::kMISC:
+				facts.kind = Item::kMisc;
+				break;
+			case Type::kAMMO:
+				facts.kind = Item::kAmmo;
+				break;
+			case Type::kALCH:
+				facts.kind = Item::kAid;
+				break;
+			case Type::kINGR:
+				facts.kind = Item::kIngredient;
+				break;
+			case Type::kCMPO:
+				facts.kind = Item::kComponent;
+				break;
+			default:
+				return facts;
 			}
 			const auto keywords = a_item->As<RE::BGSKeywordForm>();
-			return keywords && keywords->HasKeywordID(FEATURED_ITEM_KEYWORD);
+			facts.featured = keywords && keywords->HasKeywordID(FEATURED_ITEM_KEYWORD);
+			return facts;
+		}
+
+		// What holds the items, for LootScope: a reference ID from either end of a move.
+		LootScope::HolderFacts ReadHolderFacts(std::uint32_t a_id)
+		{
+			using Holder = LootScope::Holder;
+			LootScope::HolderFacts facts;
+			if (!IsShareableRef(a_id)) {
+				facts.kind = a_id == Protocol::PLAYER_REF_ID ? Holder::kPlayer : Holder::kRuntime;
+				return facts;
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			if (!ref || ref->IsDeleted()) {
+				return facts;
+			}
+			if (const auto actor = ref->As<RE::Actor>()) {
+				if (actor->IsPlayerRef() || Puppets::IsPuppet(actor)) {
+					facts.kind = Holder::kPlayer;
+					return facts;
+				}
+				facts.kind = Holder::kActor;
+				facts.alive = !actor->IsDead(false);
+				facts.knownDead = dead.contains(a_id);
+				facts.companion = NpcSync::IsOurCompanion(actor);  // holds what we gave them: a friend's loot says nothing of ours
+				return facts;
+			}
+			const auto base = ref->GetObjectReference();
+			if (base && base->Is(RE::ENUM_FORM_ID::kCONT)) {
+				facts.kind = Holder::kContainer;
+			} else if (base && base->Is(RE::ENUM_FORM_ID::kFURN)) {
+				facts.kind = Holder::kFurniture;  // a power armor frame
+			}
+			// A settlement's workbench holds what we gave it (as WorkshopSync finds them: the anchor, not every
+			// reference with workshop data).
+			facts.workshop = WorkshopSync::IsWorkbenchAnchor(ref);
+			facts.vendorChest = vendorChests.contains(a_id);
+			return facts;
+		}
+
+		// Each faction's merchant container, once game data is loaded.
+		void FindVendorChests()
+		{
+			const auto data = RE::TESDataHandler::GetSingleton();
+			if (!data) {
+				return;
+			}
+			std::size_t unknown = 0;
+			for (const auto faction : data->GetFormArray<RE::TESFaction>()) {
+				const auto chest = faction ? faction->vendorData.merchantContainer : nullptr;
+				// Like a linked reference (see LinkedTarget), the field may still hold the form ID the engine
+				// read from the file rather than the reference.
+				const auto raw = reinterpret_cast<std::uintptr_t>(chest);
+				const auto id = raw <= 0xFFFFFFFFull ? static_cast<std::uint32_t>(raw) : chest->GetFormID();
+				if (!IsShareableRef(id)) {
+					continue;
+				}
+				// No reference by that ID: a reference the engine put below 4 GB would look like this, and
+				// its chest would be missing from the set (its trades are still kept by the barter menu).
+				if (raw <= 0xFFFFFFFFull && !RE::TESForm::GetFormByID<RE::TESObjectREFR>(id)) {
+					++unknown;
+				}
+				vendorChests.insert(id);
+			}
+			REX::INFO("WorldSync: {} vendor chests ({} not found as references)", vendorChests.size(), unknown);
 		}
 
 		// Whether a container holds the item as part of a quest (it's in a quest alias).
@@ -562,57 +689,102 @@ namespace WorldSync
 			return false;
 		}
 
-		bool IsItemHolder(RE::TESObjectREFR* a_ref)
+		// The engine's side of the loot (LootSync). Main thread only.
+		class EngineWorld final :
+			public LootSync::World
 		{
-			if (const auto actor = a_ref->As<RE::Actor>()) {
-				return !actor->IsPlayerRef() && !Puppets::IsPuppet(actor);
-			}
-			const auto base = a_ref->GetObjectReference();
-			return base && base->GetFormType() == RE::ENUM_FORM_ID::kCONT;
-		}
+		public:
+			// CanApply(), when the caller worked it out once for everything it offers (a whole world state).
+			std::optional<bool> inWorld;
 
-		// Applies another player's container change. Returns false to try again later.
-		bool TryApplyContainer(const Protocol::ContainerChange& a_change, bool a_inWorld)
-		{
-			if (!a_inWorld) {
-				return false;
+			bool Loaded(std::uint32_t a_holder) override
+			{
+				if (!(inWorld ? *inWorld : InWorld() && !Story::InOpening())) {  // in the opening: once they're out
+					return false;
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				return ref && !ref->IsDeleted();
 			}
-			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
-			if (!container || container->IsDeleted()) {
-				return false;  // not loaded yet
-			}
-			// A settlement's workbench, and our own companion, hold what we gave them: a friend's loot in their
-			// game says nothing about ours.
-			if (const auto actor = container->As<RE::Actor>(); WorkshopSync::IsWorkbenchAnchor(container) || (actor && NpcSync::IsOurCompanion(actor))) {
-				++containerRefused;
-				return true;
-			}
-			const auto item = RE::TESForm::GetFormByID(a_change.item);
-			if (!IsItemHolder(container) || !IsInventoryForm(item)) {
-				return true;  // nothing sensible to do
-			}
-			// Everyone takes their own bobblehead, key or quest item (and doesn't get a copy of
-			// one someone else put in).
-			if (IsPersonalItem(item) || (a_change.count < 0 && HoldsAsQuestItem(container, item))) {
-				++personalSkipped;
-				return true;
-			}
-			const auto command = a_change.count < 0 ?
-				std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
-				std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
-			RE::Console::ExecuteCommand(command.c_str());
-			return true;
-		}
 
-		// A session container change reached us (live or in a WorldState).
-		ContainerLedger::Offered OfferContainerChange(const Protocol::IndexedContainerChange& a_change, bool a_inWorld)
-		{
-			return ledger.Offer(a_change.index, a_change.playerId, a_change.change, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
-		}
+			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
 
+			LootScope::ItemFacts Item(std::uint32_t a_item) override { return ReadItemFacts(RE::TESForm::GetFormByID(a_item)); }
+
+			bool QuestAlias(std::uint32_t a_holder, std::uint32_t a_item) override
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				const auto item = RE::TESForm::GetFormByID(a_item);
+				return ref && item && HoldsAsQuestItem(ref, item);
+			}
+
+			void Apply(const Protocol::ContainerChange& a_change) override
+			{
+				const auto command = a_change.count < 0 ?
+					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
+					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
+				RE::Console::ExecuteCommand(command.c_str());
+			}
+		};
+
+		EngineWorld engine;
+
+		// What waits for a_container tried again, as it loads or a sweep comes to it (see ApplyWaiting).
 		std::size_t RetryContainer(std::uint32_t a_container, bool a_inWorld)
 		{
-			return ledger.Retry(a_container, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
+			if (!a_inWorld) {
+				return 0;
+			}
+			engine.inWorld = true;
+			const auto done = loot.Retry(a_container, engine);
+			engine.inWorld.reset();
+			return done;
+		}
+
+		// The player's own moves: those that are the session's are reported.
+		void ReportMoves(const std::vector<Move>& a_moves)
+		{
+			for (auto& packet : loot.Report(a_moves, engine)) {
+				Queue(std::move(packet));
+			}
+		}
+
+		// Deaths in our world: reported, unless someone else reported them (we caused those because they did).
+		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const std::unordered_set<std::uint32_t>& a_killedByUs)
+		{
+			for (const auto id : a_deaths) {
+				if (dead.insert(id).second) {
+					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
+					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
+					ReportDead({ .refId = id, .killed = a_killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
+				}
+				reports.Forget(id);
+				pendingHealth.erase(id);
+			}
+		}
+
+		void WarnIfLootFull()
+		{
+			if (loot.Stats().pendingFull && !std::exchange(lootFullWarned, true)) {
+				REX::WARN("WorldSync: {} container changes wait already; dropping more", LootSync::Loot::MAX_PENDING);
+			}
+		}
+
+		// Loot waiting for a living NPC waits only so long in the world (LootSync::Loot::NOT_YET_DEAD_LIMIT): its
+		// time is counted every sweep interval, not every frame (the wait is minutes long), and not in loading
+		// screens. Everything waiting is tried again then too.
+		void AgeLoot(Clock::time_point a_now, bool a_inWorld)
+		{
+			if (!a_inWorld || !loot.WaitsForTheLiving()) {
+				lootAgedAt = a_now;
+				return;
+			}
+			if (a_now - lootAgedAt < SWEEP_INTERVAL) {
+				return;
+			}
+			engine.inWorld = true;
+			loot.Retry(engine, a_now - lootAgedAt);
+			engine.inWorld.reset();
+			lootAgedAt = a_now;
 		}
 
 		// Pairs world pickups with the reference the player activated, and reports them.
@@ -630,7 +802,7 @@ namespace WorldSync
 				if (match == recentActivations.end()) {
 					return false;
 				}
-				outgoing.push_back(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
+				Queue(Protocol::Encode(Protocol::RefPickedUp{ match->ref }, Protocol::MessageType::kReportPickup));
 				recentActivations.erase(match);
 				return true;
 			});
@@ -739,7 +911,7 @@ namespace WorldSync
 				}
 				if (*state != it->second.lastSent) {
 					it->second.lastSent = *state;
-					outgoing.push_back(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
+					Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
 				}
 				++it;
 			}
@@ -748,6 +920,7 @@ namespace WorldSync
 		// Removes an item another player picked up. Returns false to try again later.
 		bool TryApplyPickup(std::uint32_t a_refId, bool a_inWorld)
 		{
+			MainThread::Assert("WorldSync::TryApplyPickup");
 			if (!a_inWorld) {
 				return false;
 			}
@@ -755,13 +928,20 @@ namespace WorldSync
 			if (!ref) {
 				return false;
 			}
-			// Only loose items. Quest and personal items (bobbleheads, magazines, keys, holotapes)
-			// stay so every player can still pick up their own copy.
-			if (ref->As<RE::Actor>() || !IsInventoryForm(ref->GetObjectReference())) {
+			// Only loose items. Quest and personal items (bobbleheads, magazines, keys, holotapes, paper
+			// notes) stay so every player can still pick up their own copy.
+			if (ref->As<RE::Actor>()) {
 				return true;
 			}
-			if (IsPersonalItem(ref->GetObjectReference()) || InQuestAlias(ref)) {
+			auto facts = ReadItemFacts(ref->GetObjectReference());
+			facts.questAlias = InQuestAlias(ref);
+			switch (LootScope::OfPickup(facts)) {
+			case LootScope::Scope::kShared:
+				break;
+			case LootScope::Scope::kPersonal:
 				++personalSkipped;
+				return true;
+			default:
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
@@ -804,7 +984,7 @@ namespace WorldSync
 		// Every reference something waits for.
 		std::vector<std::uint32_t> WaitingIds()
 		{
-			auto ids = ledger.Containers();
+			auto ids = loot.Containers();
 			const auto held = reports.Refs();
 			ids.reserve(ids.size() + held.size() + pendingHealth.size() + pendingPickups.size() + pendingRefStates.size());
 			ids.insert(ids.end(), held.begin(), held.end());
@@ -822,11 +1002,11 @@ namespace WorldSync
 		// past that, kills, pickups and loot stop being shared, and the player should know why.
 		void NoticeHistory()
 		{
-			const auto percent = SharedHistoryPercent(dead.size(), pickedUpKnown.size(), ledger.Next());
-			if (percent < 80 || historyNoticedIn == ledger.RecordSession()) {
+			const auto percent = SharedHistoryPercent(dead.size(), pickedUpKnown.size(), loot.Point().containerFrom);
+			if (percent < 80 || historyNoticedIn == loot.Point().sessionId) {
 				return;
 			}
-			historyNoticedIn = ledger.RecordSession();
+			historyNoticedIn = loot.Point().sessionId;
 			REX::WARN("WorldSync: the session's shared history is {}% full", percent);
 			Hud::Notify(std::format("Multiplayer: the session's shared history is {}% full; loot and kill sharing stop at 100%. "
 									"The host can start a fresh session by removing the session file (see the docs)",
@@ -867,6 +1047,10 @@ namespace WorldSync
 		if (const auto source = RE::TESActivateEvent::GetEventSource()) {
 			source->RegisterSink(&activateWatcher);
 		}
+		if (const auto ui = RE::UI::GetSingleton()) {
+			ui->RegisterSink<RE::MenuOpenCloseEvent>(&menuWatcher);
+		}
+		FindVendorChests();
 	}
 
 	void OnWelcome(bool a_friendlyFire)
@@ -874,9 +1058,9 @@ namespace WorldSync
 		friendlyFire = a_friendlyFire;
 	}
 
-	ContainerLedger& Ledger()
+	LootSync::Loot& Loot()
 	{
-		return ledger;
+		return loot;
 	}
 
 	namespace
@@ -936,12 +1120,11 @@ namespace WorldSync
 
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId)
 	{
-		if (!InWorld() || !IsShareableRef(a_refId)) {
+		if (!InWorld() || Story::InOpening() || !IsShareableRef(a_refId)) {
 			return;
 		}
 		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_refId);
-		const auto player = RE::PlayerCharacter::GetSingleton();
-		if (!ref || !player || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell()) {
+		if (!ref || ref->IsDeleted() || !ref->Get3D() || !ref->GetParentCell()) {
 			return;  // not where we are: whatever it drives reaches us as a door state, or not at all
 		}
 		const auto base = ref->GetObjectReference();
@@ -955,25 +1138,33 @@ namespace WorldSync
 			++activationsRefused;
 			return;
 		}
-		replayed[a_refId] = Clock::now();
-		ref->ActivateRef(player, nullptr, 0, false, false, false);
+		// The friend's stand-in presses it, not our player: an activator's script acts on whoever pressed it
+		// (a sink's drink gave our player rads, a teleport marker moved them). Without a stand-in here (not
+		// spawned yet, or gone) it isn't pressed: the door or lock it drives is on the friend's watch and
+		// arrives as its state.
+		const auto standIn = RE::TESForm::GetFormByID<RE::Actor>(RemotePlayers::ActorIdOf(a_playerId));
+		if (!standIn || standIn->IsDeleted() || !standIn->Get3D() || !standIn->GetParentCell()) {
+			++activationsRefused;
+			return;
+		}
+		ref->ActivateRef(standIn, nullptr, 0, false, false, false);
 		++activationsApplied;
 	}
 
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
+		MainThread::Assert("WorldSync::ApplyWorldState");
 		const bool inWorld = CanApply();
 		for (const auto id : a_state.deadActors) {
 			TakeDeath(id, DeathReports::Book::Replayed(Clock::now()), inWorld);
 		}
 		// The server sends the changes our world doesn't have: those made since our save. Our own
-		// are skipped. We loaded a save from before them, so replaying them would take loot from
-		// the container that isn't in our inventory any more (or duplicate what we put in).
-		const auto taken = ledger.TakeWorldState(a_state, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, inWorld); });
-		ownSkipped += taken.ours;
-		if (taken.wasAhead) {
-			REX::WARN("WorldSync: the session's container changes end at #{}, before ours (the host's server lost its last ones); its next ones are new to us",
-				a_state.containerFirstIndex);
+		// are skipped (see ContainerLedger::Receiver).
+		engine.inWorld = inWorld;
+		const auto lost = loot.CatchUp(a_state.containerFirstIndex, a_state.containerChanges, Clock::now(), engine);
+		engine.inWorld.reset();
+		if (lost) {
+			REX::WARN("WorldSync: the server's log is shorter than our save (lost {} changes); counting again from #{}", lost, a_state.containerFirstIndex);
 		}
 		for (const auto id : a_state.pickedUp) {
 			OfferPickup(id, inWorld);
@@ -1010,7 +1201,7 @@ namespace WorldSync
 		// Another player's game runs these, so they live there. A persistent NPC (or one of a cell we left
 		// lately) is in our memory even where we aren't, and when we host, ours is checked (CheckFoundDead).
 		for (const auto& owner : a_owners) {
-			if (owner.playerId != 0 && !ledger.Ours(owner.playerId) && IsShareableRef(owner.refId)) {
+			if (owner.playerId != 0 && !loot.Ours(owner.playerId) && IsShareableRef(owner.refId)) {
 				toCheck.insert(owner.refId);
 			}
 		}
@@ -1018,7 +1209,8 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		OfferContainerChange(a_change, CanApply());
+		MainThread::Assert("WorldSync::ApplyContainerChange");
+		loot.Live(a_change, Clock::now(), engine);
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)
@@ -1033,6 +1225,7 @@ namespace WorldSync
 
 	void Frame(bool a_hosting)
 	{
+		MainThread::Assert("WorldSync::Frame");
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::vector<std::uint32_t>                  newRefLoads;
@@ -1041,6 +1234,7 @@ namespace WorldSync
 		std::vector<std::uint32_t> newPickups;
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
+		std::vector<Move>          newMoves;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
@@ -1052,22 +1246,12 @@ namespace WorldSync
 			newPickups.swap(pickupInbox);
 			newStandInHits.swap(standInHits);
 			newActivations.swap(activateInbox);
-			for (auto& packet : lootInbox) {
-				outgoing.push_back(std::move(packet));
-			}
-			lootInbox.clear();
+			newMoves.swap(lootInbox);
 		}
 
-		// Deaths we caused because someone else reported them are already known and don't go back out.
-		for (const auto id : newDeaths) {
-			if (dead.insert(id).second) {
-				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
-				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
-				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
-			}
-			reports.Forget(id);
-			pendingHealth.erase(id);
-		}
+		ReportDeaths(newDeaths, killedByUs);
+		// After the deaths: a corpse looted the frame it died goes out dead first.
+		ReportMoves(newMoves);
 
 		TrackLoads(newLoads);
 		CheckFoundDead(a_hosting);
@@ -1081,7 +1265,7 @@ namespace WorldSync
 					const float maximum = values.GetPermanentActorValue(*info);
 					if (maximum > 0.0f) {
 						const float fraction = values.GetActorValue(*info) / maximum;
-						outgoing.push_back(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
+						Queue(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
 					}
 				}
 			}
@@ -1097,21 +1281,27 @@ namespace WorldSync
 			NpcSync::OnActivated(activation.ref);
 			// A button, switch or lever: the others press it too, so what it drives happens in their games.
 			const auto base = RE::TESForm::GetFormByID(activation.base);
-			if (base && base->Is(RE::ENUM_FORM_ID::kACTI) && !replayed.erase(activation.ref)) {
-				outgoing.push_back(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
+			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
+				Queue(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
 				++activationsSent;
 			}
 		}
 		for (const auto& hit : newStandInHits) {
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
-				outgoing.push_back(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
+				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 
 		const auto now = Clock::now();
-		std::erase_if(replayed, [&](const auto& a_entry) { return now - a_entry.second > REPLAY_ECHO; });
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
+		// Container changes that came before one we still lack, with nothing arriving for a while: the
+		// server is asked again (the answer to the last request may have been refused, or never come).
+		if (const auto request = loot.Due(now)) {
+			Queue(Protocol::Encode(*request));
+			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, loot.Numbers().Numbers().Waiting());
+		}
+		WarnIfLootFull();
 		// Remote changes waiting for their reference: tried as it loads; all of them when the player comes out
 		// of a loading screen (or the opening) or into another cell; otherwise a few at a time, slowly.
 		const bool inWorld = CanApply();
@@ -1121,7 +1311,7 @@ namespace WorldSync
 			const auto parent = player ? player->GetParentCell() : nullptr;
 			cell = parent ? parent->GetFormID() : 0;
 		}
-		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || ledger.WaitingCount() != 0 || !pendingPickups.empty() || !pendingRefStates.empty();
+		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty();
 		const auto started = Clock::now();
 		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
 		for (const auto id : plan.loaded) {
@@ -1134,6 +1324,26 @@ namespace WorldSync
 			retryUs = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started).count();
 			retryUsMax = (std::max)(retryUsMax, retryUs);
 		}
+		AgeLoot(now, inWorld);
+	}
+
+	void FlushLoot()
+	{
+		MainThread::Assert("WorldSync::FlushLoot");
+		std::vector<std::uint32_t>        deaths;
+		std::unordered_set<std::uint32_t> killedByUs;
+		std::vector<Move>                 moves;
+		{
+			std::scoped_lock l{ inboxLock };
+			deaths.swap(deathInbox);
+			killedByUs.swap(killInbox);
+			moves.swap(lootInbox);
+		}
+		// The deaths first, as in a frame: a corpse looted in the last moments goes out dead, so the others
+		// put its loot in (after a load Reset would forget the death, and they would hold the loot as a
+		// living NPC's until they gave up on it).
+		ReportDeaths(deaths, killedByUs);
+		ReportMoves(moves);
 	}
 
 	std::uint32_t TakePlayerKills()
@@ -1143,6 +1353,7 @@ namespace WorldSync
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
 	{
+		std::scoped_lock l{ outgoingLock };
 		return std::exchange(outgoing, {});
 	}
 
@@ -1159,7 +1370,6 @@ namespace WorldSync
 		watched.clear();
 		pendingRefStates.clear();
 		unmatchedPickups.clear();
-		replayed.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
 		checkAllLoaded = true;
@@ -1171,23 +1381,24 @@ namespace WorldSync
 		killInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
+		std::scoped_lock o{ outgoingLock };
 		outgoing.clear();
 	}
 
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
 	{
-		const auto session = ledger.RecordSession();
-		const auto next = ledger.Next();
-		if (session == 0) {
+		const auto point = loot.Point();
+		if (point.sessionId == 0) {
 			return;
 		}
-		const auto count = static_cast<std::uint32_t>(ledger.WaitingCount());
+		const auto& waiting = loot.Waiting();
+		const auto  count = static_cast<std::uint32_t>(waiting.size());
 		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
-			!a_intfc->WriteRecordData(session) || !a_intfc->WriteRecordData(next) || !a_intfc->WriteRecordData(count)) {
+			!a_intfc->WriteRecordData(point.sessionId) || !a_intfc->WriteRecordData(point.containerFrom) || !a_intfc->WriteRecordData(count)) {
 			REX::ERROR("WorldSync: failed to save the session record");
 			return;
 		}
-		for (const auto& entry : ledger.Waiting()) {
+		for (const auto& entry : waiting) {
 			a_intfc->WriteRecordData(entry.index);
 			a_intfc->WriteRecordData(entry.change.container);
 			a_intfc->WriteRecordData(entry.change.item);
@@ -1210,28 +1421,40 @@ namespace WorldSync
 			REX::WARN("WorldSync: ignoring an unreadable session record");
 			return;
 		}
-		std::vector<ContainerLedger::Pending> saved;
+		std::vector<LootSync::Pending> saved;
 		for (std::uint32_t i = 0; i < count; ++i) {
-			ContainerLedger::Pending entry{};
+			LootSync::Pending entry{};
 			a_intfc->ReadRecordData(entry.index);
 			a_intfc->ReadRecordData(entry.change.container);
 			a_intfc->ReadRecordData(entry.change.item);
 			a_intfc->ReadRecordData(entry.change.count);
 			saved.push_back(entry);
 		}
-		ledger.OnRecordLoaded(savedSession, savedNext, std::move(saved));
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", savedSession, savedNext, ledger.WaitingCount());
+		const auto waiting = saved.size();
+		loot.LoadRecord(savedSession, savedNext, std::move(saved));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", savedSession, savedNext, waiting);
 	}
 
 	void RevertResyncPoint()
 	{
-		ledger.OnRevert();
+		loot.LoadRecord(0, 0, {});
 	}
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} containerRefused={} storyKillKept={} loadApplied={} retryUs={}/{}",
-			dead.size(), reports.Size(), reported, applied, ledger.Next(), ledger.WaitingCount(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
-			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), containerRefused, storyKillsKept, loadApplied, retryUs, retryUsMax);
+		using LootScope::Scope;
+		const auto  kept = [](Scope a_scope) { return loot.KeptSent(a_scope) + loot.KeptApplied(a_scope); };
+		const auto& receiver = loot.Numbers();
+		const auto& numbers = receiver.Numbers();
+		const auto& counts = numbers.Stats();
+		const auto& stats = loot.Stats();
+		// personal= means what it did in 0.8.5: other players' personal items left alone (pickups and loot).
+		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
+		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} loadedActors={}",
+			dead.size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
+			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
+			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
+		       std::format(" storyKillKept={} loadApplied={} retryUs={}/{}", storyKillsKept, loadApplied, retryUs, retryUsMax);
 	}
 }

@@ -1,13 +1,14 @@
 #pragma once
 
 // A friend's game as far as loot goes, for tests that feed it what a real server sent: WorldSync's glue
-// around ContainerLedger (Offer per change, live or in a world state; its own changes from before the save
-// skipped; the record a save keeps) and RetrySchedule (what loaded, a loading screen, the sweep), against a
-// world in which only some containers are loaded. The game itself is the part left out.
+// around the loot engine (LootSync::Loot: each change live or in a world state; its own changes skipped;
+// the record a save keeps) and RetrySchedule (what loaded, a loading screen, the sweep), against a world in
+// which only some containers are loaded. Every holder is a plain container and every item shared (the
+// scope rule has tests of its own). The game itself is the part left out.
 
 #include "ServerFixture.h"
 
-#include "game/ContainerLedger.h"
+#include "game/LootSync.h"
 #include "game/PendingContainers.h"
 
 #include <map>
@@ -52,7 +53,8 @@ namespace TestServer
 		}
 	};
 
-	struct FriendGame
+	struct FriendGame final :
+		LootSync::World
 	{
 		using Change = Protocol::ContainerChange;
 		using Clock = RetrySchedule::Clock;
@@ -60,7 +62,7 @@ namespace TestServer
 		std::uint32_t           me = 0;
 		std::set<std::uint32_t> loaded;
 		Inventories             world;
-		ContainerLedger         ledger;
+		LootSync::Loot          loot;
 		std::size_t             worldStates = 0;
 		std::size_t             welcomes = 0;
 		// Containers whose changes came live before this game's Welcome (a game takes them as they come).
@@ -72,25 +74,33 @@ namespace TestServer
 		std::vector<std::uint32_t> loadInbox;
 		Clock::time_point          now = Clock::now();
 
-		bool TryApply(const Change& a_change)
+		// ---- LootSync::World: a container can be changed while we are in the world and it is loaded ----
+		bool                   Loaded(std::uint32_t a_holder) override { return inWorld && loaded.contains(a_holder); }
+		LootScope::HolderFacts Holder(std::uint32_t) override { return { .kind = LootScope::Holder::kContainer }; }
+		LootScope::ItemFacts   Item(std::uint32_t) override { return { .kind = LootScope::Item::kMisc }; }
+		bool                   QuestAlias(std::uint32_t, std::uint32_t) override { return false; }
+		void                   Apply(const Change& a_change) override { world.Change(a_change); }
+
+		// Whether something waits for a_container.
+		[[nodiscard]] bool Waits(std::uint32_t a_container) const
 		{
-			if (!inWorld || !loaded.contains(a_change.container)) {
-				return false;
-			}
-			world.Change(a_change);
-			return true;
+			return std::ranges::any_of(loot.Waiting(), [&](const LootSync::Pending& a_pending) { return a_pending.change.container == a_container; });
 		}
 
+		// The first change of the session our world lacks.
+		[[nodiscard]] std::uint32_t Next() const { return loot.Point().containerFrom; }
+
+		// A change that came live (WorldSync::ApplyContainerChange).
 		void Offer(const Protocol::IndexedContainerChange& a_change)
 		{
-			ledger.Offer(a_change.index, a_change.playerId, a_change.change, [&](const Change& a_next) { return TryApply(a_next); });
+			loot.Live(a_change, now, *this);
 		}
 
-		// The server welcomed this game (Session hands the Welcome to WorldSync's ledger).
+		// The server welcomed this game (Session hands the Welcome to WorldSync's loot through SessionSteps).
 		void Welcome(const Protocol::Welcome& a_welcome)
 		{
 			me = a_welcome.playerId;
-			ledger.OnWelcome(a_welcome.sessionId, a_welcome.playerId);
+			loot.OnWelcome(a_welcome.sessionId, a_welcome.playerId);
 		}
 
 		// Everything the server sent, in the order it came (Session hands each packet to WorldSync).
@@ -109,9 +119,7 @@ namespace TestServer
 					const auto state = Protocol::DecodeWorldState(packet);
 					REQUIRE(state);
 					++worldStates;
-					for (const auto& change : state->containerChanges) {
-						Offer(change);
-					}
+					loot.CatchUp(state->containerFirstIndex, state->containerChanges, now, *this);
 				} else if (packet[0] == Type(MT::kContainerChanged)) {
 					const auto change = Protocol::DecodeIndexedContainerChange(packet);
 					REQUIRE(change);
@@ -125,10 +133,10 @@ namespace TestServer
 		RetrySchedule::Plan Frame(Clock::duration a_step = std::chrono::milliseconds(16))
 		{
 			now += a_step;
-			auto plan = schedule.Frame(now, inWorld, cell, std::exchange(loadInbox, {}), ledger.WaitingCount() != 0, [&] { return ledger.Containers(); });
+			auto plan = schedule.Frame(now, inWorld, cell, std::exchange(loadInbox, {}), !loot.Waiting().empty(), [&] { return loot.Containers(); });
 			for (const auto& ids : { plan.loaded, plan.others }) {
 				for (const auto id : ids) {
-					ledger.Retry(id, [&](const Change& a_next) { return TryApply(a_next); });
+					loot.Retry(id, *this);
 				}
 			}
 			return plan;
@@ -156,27 +164,27 @@ namespace TestServer
 		}
 
 		// The game loads a save made in this session: its co-save record (WorldSync::Load).
-		void LoadRecord(std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
+		void LoadRecord(std::uint32_t a_next, std::vector<LootSync::Pending> a_entries)
 		{
-			const auto session = ledger.RecordSession();
-			ledger.OnRevert();
-			ledger.OnRecordLoaded(session, a_next, std::move(a_entries));
+			const auto session = loot.Point().sessionId;
+			loot.LoadRecord(0, 0, {});  // F4SE reverts first
+			loot.LoadRecord(session, a_next, std::move(a_entries));
 		}
 
 		// The player loads a save: what it kept.
-		void LoadSave(const Inventories& a_world, std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
+		void LoadSave(const Inventories& a_world, std::uint32_t a_next, std::vector<LootSync::Pending> a_entries)
 		{
 			world = a_world;
 			LoadRecord(a_next, std::move(a_entries));
 		}
 
 		// The game restarted and loaded a save: a new game, not yet welcomed, with nothing of the last run's frames
-		// (nor of its ledger: which player IDs are its own comes with the next Welcome).
-		void Restart(const Inventories& a_world, std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
+		// (nor of its loot engine: which player IDs are its own comes with the next Welcome).
+		void Restart(const Inventories& a_world, std::uint32_t a_next, std::vector<LootSync::Pending> a_entries)
 		{
-			const auto session = ledger.RecordSession();
-			ledger = ContainerLedger{};
-			ledger.OnRecordLoaded(session, a_next, std::move(a_entries));
+			const auto session = loot.Point().sessionId;
+			loot = LootSync::Loot{};
+			loot.LoadRecord(session, a_next, std::move(a_entries));
 			world = a_world;
 			welcomes = 0;
 			beforeWelcome = 0;

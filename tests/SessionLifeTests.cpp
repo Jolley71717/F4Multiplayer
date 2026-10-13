@@ -246,7 +246,7 @@ TEST("session life: a resent loot message, or a second hello's world state, does
 
 	// The same change again, as the server sent it (a resend after a lost ack), and the world asked for again.
 	me.Handle({ Protocol::Encode(Protocol::IndexedContainerChange{ 0, host.welcome->playerId, { CHEST, STIMPAK, -3 } }) });
-	me.Send(Protocol::Encode(me.ledger.ResyncPoint()));
+	me.Send(Protocol::Encode(me.loot.Point()));
 	me.Process();
 	CHECK(me.stimpaks == 7);
 	CHECK(me.applied == 1);

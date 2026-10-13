@@ -1,8 +1,9 @@
 // A friend's loot as a client keeps it until the container it changed is loaded (WorldSync's
-// ContainerLedger), the slow sweep over what waits (RetryCursor), and the once-a-session notice of how
+// loot engine, LootSync::Loot), the slow sweep over what waits (RetryCursor), and the once-a-session notice of how
 // full the session's history is. The first test drives it with what a real server sends; the rest pin
 // down the promises it relies on.
 
+#include "ChestWorld.h"
 #include "FriendGame.h"
 
 #include <algorithm>
@@ -87,19 +88,19 @@ TEST("pending loot: a friend's game ends up with every container as the session 
 	bob.Take(Received(f, 2));
 	bob.Loot(f, 2, { CHEST_A, ITEM, -1 });  // one of the two Alice put there
 	bob.Take(Received(f, 2));
-	CHECK(bob.ledger.Waits(CHEST_B));
-	CHECK(bob.ledger.Waits(CHEST_C));
+	CHECK(bob.Waits(CHEST_B));
+	CHECK(bob.Waits(CHEST_C));
 
 	// Two quick reloads use up his budget; the world states change nothing in his game.
-	f.fake->Deliver(2, Request(welcome->sessionId, bob.ledger.Next()));
-	f.fake->Deliver(2, Request(welcome->sessionId, bob.ledger.Next()));
+	f.fake->Deliver(2, Request(welcome->sessionId, bob.Next()));
+	f.fake->Deliver(2, Request(welcome->sessionId, bob.Next()));
 	bob.Take(Received(f, 2));
 	CHECK(bob.worldStates == 3);
 
 	// He saves.
 	const auto savedWorld = bob.world;
-	const auto savedNext = bob.ledger.Next();
-	auto       savedEntries = bob.ledger.Waiting();
+	const auto savedNext = bob.Next();
+	auto       savedEntries = bob.loot.Waiting();
 
 	// After the save: more loot, some of it in containers Bob has, live.
 	f.fake->Deliver(1, Loot(CHEST_B, ITEM_2, 1));
@@ -113,7 +114,7 @@ TEST("pending loot: a friend's game ends up with every container as the session 
 	std::ranges::shuffle(savedEntries, std::mt19937{ 7 });
 	bob.world = savedWorld;
 	bob.LoadRecord(savedNext, savedEntries);
-	f.fake->Deliver(2, Request(welcome->sessionId, bob.ledger.Next()));
+	f.fake->Deliver(2, Request(welcome->sessionId, bob.Next()));
 	Sync(f, 2);
 	CHECK(f.Logged("'Bob' has asked for the world too often"));
 
@@ -150,14 +151,14 @@ TEST("pending loot: a friend's game ends up with every container as the session 
 	}
 	CHECK((bob.world.Of(CHEST_B).at({ CHEST_B, ITEM }) == 4));  // 1 (taken from nothing, put back), then 3 more
 	CHECK(bob.world.Of(CHEST_D).empty());
-	CHECK(bob.ledger.WaitingCount() == 1);
-	CHECK(bob.ledger.Waits(CHEST_D));
-	CHECK(bob.ledger.Next() == echoes.size());
+	CHECK(bob.loot.Waiting().size() == 1);
+	CHECK(bob.Waits(CHEST_D));
+	CHECK(bob.Next() == echoes.size());
 
 	// And when he does get there, D too.
 	bob.Arrive(CHEST_D);
 	CHECK(bob.world.Of(CHEST_D) == session.Of(CHEST_D));
-	CHECK(bob.ledger.WaitingCount() == 0);
+	CHECK(bob.loot.Waiting().size() == 0);
 }
 
 // A rejoin with a save from before the session's latest loot: the hello's world state carries what the
@@ -176,7 +177,7 @@ TEST("pending loot: rejoining from an older save, only what the save lacks is ap
 	Sync(f, 1);
 	bob.Take(Received(f, 2));
 	const auto savedWorld = bob.world;
-	const auto savedNext = bob.ledger.Next();
+	const auto savedNext = bob.Next();
 	f.fake->Deliver(1, Loot(CHEST_A, ITEM, -2));
 	f.fake->Deliver(1, Loot(CHEST_B, ITEM, 1));
 	Sync(f, 1);
@@ -188,7 +189,7 @@ TEST("pending loot: rejoining from an older save, only what the save lacks is ap
 	bob.LoadRecord(savedNext, {});
 	f.fake->Connect(3);
 	auto hello = HelloFrom("Bob", 0xB0B);
-	hello.world = { welcome->sessionId, bob.ledger.Next() };
+	hello.world = { welcome->sessionId, bob.Next() };
 	f.fake->Deliver(3, Protocol::Encode(hello));
 	Packets toBob;
 	REQUIRE(AwaitWorldState(f, 3, toBob));
@@ -199,7 +200,7 @@ TEST("pending loot: rejoining from an older save, only what the save lacks is ap
 
 	CHECK((bob.world.Of(CHEST_A) == std::map<std::pair<std::uint32_t, std::uint32_t>, int>{ { { CHEST_A, ITEM }, 1 } }));
 	CHECK((bob.world.Of(CHEST_B) == std::map<std::pair<std::uint32_t, std::uint32_t>, int>{ { { CHEST_B, ITEM }, 1 } }));
-	CHECK(bob.ledger.WaitingCount() == 0);
+	CHECK(bob.loot.Waiting().size() == 0);
 }
 
 // Bob fast travels while a chest he is heading to has loot waiting. The chest loads during the loading
@@ -224,8 +225,8 @@ TEST("pending loot: a chest that loads during a loading screen gets its loot on 
 	Sync(f, 1);
 	bob.Take(Received(f, 2));
 	bob.Frame();
-	CHECK(bob.ledger.Waits(CHEST_B));
-	CHECK(!bob.ledger.Waits(CHEST_A));
+	CHECK(bob.Waits(CHEST_B));
+	CHECK(!bob.Waits(CHEST_A));
 
 	bob.inWorld = false;
 	bob.Frame();
@@ -248,7 +249,7 @@ TEST("pending loot: a chest that loads during a loading screen gets its loot on 
 	const auto session = Inventories::FromEchoes(Decoded(toAlice, MT::kContainerChanged, Protocol::DecodeIndexedContainerChange));
 	CHECK(bob.world.Of(CHEST_B) == session.Of(CHEST_B));
 	CHECK(bob.world.Of(CHEST_A) == session.Of(CHEST_A));
-	CHECK(bob.ledger.WaitingCount() == 0);
+	CHECK(bob.loot.Waiting().size() == 0);
 }
 
 // A chest that loaded before its change came (the game said so then, and won't again) isn't tried every
@@ -258,17 +259,17 @@ TEST("retry schedule: a chest loaded without a word from the game is applied by 
 	FriendGame bob;
 	bob.Frame();
 	bob.Offer({ .index = 0, .playerId = 9, .change = { CHEST_A, ITEM, 1 } });
-	CHECK(bob.ledger.Waits(CHEST_A));
+	CHECK(bob.Waits(CHEST_A));
 	CHECK(bob.Frame().others.size() == 1);  // a sweep, while it isn't loaded
 	bob.loaded.insert(CHEST_A);
 
 	const auto from = bob.now;
 	std::size_t tried = 0;
-	for (int frame = 0; frame < 1000 && bob.ledger.Waits(CHEST_A); ++frame) {
+	for (int frame = 0; frame < 1000 && bob.Waits(CHEST_A); ++frame) {
 		const auto plan = bob.Frame(50ms);
 		tried += plan.others.size() + plan.loaded.size();
 	}
-	CHECK(!bob.ledger.Waits(CHEST_A));
+	CHECK(!bob.Waits(CHEST_A));
 	CHECK(tried == 1);
 	CHECK(bob.now - from >= 1900ms);  // the sweep's interval in FriendGame: two seconds
 	CHECK(bob.now - from <= 2100ms);
@@ -319,76 +320,72 @@ TEST("retry schedule: everything waiting is tried on arriving in the world or in
 
 TEST("pending loot: a container that never loads doesn't hold up another's changes")
 {
-	ContainerLedger ledger;
+	LootSync::Loot      loot;
 	std::vector<Change> applied;
-	const auto loadedIsB = [&](const Change& a_change) {
-		if (a_change.container != CHEST_B) {
-			return false;
-		}
-		applied.push_back(a_change);
-		return true;
-	};
-	ledger.Offer(0, ALICE, { CHEST_A, ITEM, -1 }, loadedIsB);
-	ledger.Offer(1, ALICE, { CHEST_B, ITEM, 2 }, loadedIsB);
-	ledger.Offer(2, ALICE, { CHEST_A, ITEM, 1 }, loadedIsB);
-	ledger.Offer(3, ALICE, { CHEST_B, ITEM, -1 }, loadedIsB);
+	ChestWorld          world{ [](std::uint32_t a_container) { return a_container == CHEST_B; }, [&](const Change& a_change) { applied.push_back(a_change); } };
+	const auto          now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, -1 }), now, world);
+	loot.Live(Numbered(1, ALICE, { CHEST_B, ITEM, 2 }), now, world);
+	loot.Live(Numbered(2, ALICE, { CHEST_A, ITEM, 1 }), now, world);
+	loot.Live(Numbered(3, ALICE, { CHEST_B, ITEM, -1 }), now, world);
 	CHECK(applied.size() == 2);
-	CHECK(ledger.WaitingCount() == 2);
-	CHECK(ledger.Waits(CHEST_A));
-	CHECK(!ledger.Waits(CHEST_B));
-	CHECK(ledger.Next() == 4);
+	CHECK(loot.Waiting().size() == 2);
+	CHECK((loot.Containers() == std::vector<std::uint32_t>{ CHEST_A }));
+	CHECK(loot.Point().containerFrom == 4);
 }
 
 TEST("pending loot: a change behind another to the same container waits for it, even if it could be applied now")
 {
-	ContainerLedger ledger;
+	LootSync::Loot            loot;
 	std::vector<std::int32_t> applied;
 	bool                      loaded = false;
-	const auto tryApply = [&](const Change& a_change) {
-		if (!loaded) {
-			return false;
-		}
-		applied.push_back(a_change.count);
-		return true;
-	};
-	CHECK(ledger.Offer(0, ALICE, { CHEST_A, ITEM, -1 }, tryApply) == ContainerLedger::Offered::kWaiting);
+	ChestWorld                world{ [&](std::uint32_t) { return loaded; }, [&](const Change& a_change) { applied.push_back(a_change.count); } };
+	const auto                now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, -1 }), now, world);
+	CHECK(loot.Waiting().size() == 1);
 	loaded = true;
-	CHECK(ledger.Offer(1, ALICE, { CHEST_A, ITEM, 2 }, tryApply) == ContainerLedger::Offered::kWaiting);
+	loot.Live(Numbered(1, ALICE, { CHEST_A, ITEM, 2 }), now, world);
+	CHECK(loot.Waiting().size() == 2);
 	CHECK(applied.empty());
-	CHECK(ledger.Retry(CHEST_A, tryApply) == 2);
+	CHECK(loot.Retry(CHEST_A, world) == 2);
 	CHECK((applied == std::vector<std::int32_t>{ -1, 2 }));
-	CHECK(ledger.WaitingCount() == 0);
-	CHECK(!ledger.Waits(CHEST_A));
+	CHECK(loot.Waiting().empty());
+	CHECK(loot.Containers().empty());
 }
 
 TEST("pending loot: a change that comes twice, or one already in our world, isn't applied (again)")
 {
-	ContainerLedger ledger;
-	ledger.OnWelcome(SESSION, BOB);
-	int        applied = 0;
-	const auto tryApply = [&](const Change&) { return ++applied, true; };
-	ledger.Offer(0, ALICE, { CHEST_A, ITEM, 1 }, tryApply);
-	ledger.Offer(0, ALICE, { CHEST_A, ITEM, 1 }, tryApply);  // live, then in a world state
-	CHECK(ledger.Offer(1, BOB, { CHEST_A, ITEM, 1 }, tryApply) == ContainerLedger::Offered::kOurs);  // before the save we loaded
-	CHECK(ledger.Offer(2, ALICE, { 0, ITEM, 1 }, tryApply) == ContainerLedger::Offered::kInvalid);  // nothing a game could apply
+	LootSync::Loot loot;
+	int            applied = 0;
+	ChestWorld     world{ [](std::uint32_t) { return true; }, [&](const Change&) { ++applied; } };
+	const auto     now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, 1 }), now, world);
+	loot.CatchUp(0, { Numbered(0, ALICE, { CHEST_A, ITEM, 1 }) }, now, world);  // live, then in a world state
+	loot.Live(Numbered(1, BOB, { CHEST_A, ITEM, 1 }), now, world);              // our own: in our world already
+	loot.Live(Numbered(2, ALICE, { 0, ITEM, 1 }), now, world);                  // nothing a game could apply
 	CHECK(applied == 1);
-	CHECK(ledger.Next() == 3);
-	CHECK(ledger.WaitingCount() == 0);
+	CHECK(loot.Point().containerFrom == 3);
+	CHECK(loot.Waiting().empty());
 }
 
 // A change from a gap (one the world state we asked for after a load carries, behind a live one that came
 // first) goes in its container's queue in session order, not at the back.
 TEST("pending loot: a change that fills a gap waits in session order behind its container's earlier ones, ahead of later ones")
 {
-	ContainerLedger ledger;
-	ledger.OnWelcome(SESSION, BOB);
-	const auto never = [](const Change&) { return false; };
-	ledger.Offer(0, ALICE, { CHEST_A, ITEM, 1 }, never);
-	ledger.Offer(3, ALICE, { CHEST_A, ITEM, 4 }, never);  // live, ahead of the world state's #1 and #2
-	ledger.Offer(2, ALICE, { CHEST_A, ITEM, 3 }, never);
-	ledger.Offer(1, ALICE, { CHEST_A, ITEM, 2 }, never);
+	LootSync::Loot            loot;
+	bool                      loaded = false;
 	std::vector<std::int32_t> order;
-	CHECK(ledger.Retry(CHEST_A, [&](const Change& a_change) { return order.push_back(a_change.count), true; }) == 4);
+	ChestWorld                world{ [&](std::uint32_t) { return loaded; }, [&](const Change& a_change) { order.push_back(a_change.count); } };
+	const auto                now = LootSync::Clock::now();
+	loot.OnWelcome(SESSION, BOB);
+	loot.Live(Numbered(0, ALICE, { CHEST_A, ITEM, 1 }), now, world);
+	loot.Live(Numbered(3, ALICE, { CHEST_A, ITEM, 4 }), now, world);  // live, ahead of the world state's #1 and #2
+	loot.CatchUp(1, { Numbered(1, ALICE, { CHEST_A, ITEM, 2 }), Numbered(2, ALICE, { CHEST_A, ITEM, 3 }) }, now, world);
+	loaded = true;
+	CHECK(loot.Retry(CHEST_A, world) == 4);
 	CHECK((order == std::vector<std::int32_t>{ 1, 2, 3, 4 }));
 }
 
@@ -396,34 +393,40 @@ TEST("pending loot: a change that fills a gap waits in session order behind its 
 // order the record holds it in.
 TEST("pending loot: a save keeps what waits, and loading it waits for the same containers in the same order")
 {
-	ContainerLedger pending;
+	LootSync::Loot pending;
+	ChestWorld     never{ [](std::uint32_t) { return false; }, [](const Change&) {} };
+	const auto     now = LootSync::Clock::now();
 	pending.OnWelcome(SESSION, BOB);
-	const auto never = [](const Change&) { return false; };
 	for (std::uint32_t i = 0; i < 30; ++i) {
-		pending.Offer(i, ALICE, { CHEST_A + i % 4, ITEM, static_cast<std::int32_t>(i) + 1 }, never);
+		pending.Live(Numbered(i, ALICE, { CHEST_A + i % 4, ITEM, static_cast<std::int32_t>(i) + 1 }), now, never);
 	}
 	auto saved = pending.Waiting();
 	REQUIRE(saved.size() == 30);
-	CHECK(std::ranges::is_sorted(saved, {}, &ContainerLedger::Pending::index));
+	CHECK(std::ranges::is_sorted(saved, {}, &LootSync::Pending::index));
 	std::ranges::shuffle(saved, std::mt19937{ 11 });
 
-	ContainerLedger loaded;
-	loaded.OnRecordLoaded(SESSION, pending.Next(), saved);
-	CHECK(loaded.RecordSession() == SESSION);
-	CHECK(loaded.Next() == 30);
-	CHECK(loaded.WaitingCount() == 30);
-	CHECK(loaded.Waiting() == pending.Waiting());
+	LootSync::Loot loaded;
+	loaded.LoadRecord(SESSION, pending.Point().containerFrom, saved);
+	CHECK(loaded.Point().sessionId == SESSION);
+	CHECK(loaded.Point().containerFrom == 30);
+	REQUIRE(loaded.Waiting().size() == 30);
+	for (std::size_t i = 0; i < 30; ++i) {
+		CHECK(loaded.Waiting()[i].index == pending.Waiting()[i].index);
+		CHECK(loaded.Waiting()[i].change.container == pending.Waiting()[i].change.container);
+		CHECK(loaded.Waiting()[i].change.count == pending.Waiting()[i].change.count);
+	}
 	CHECK(loaded.Containers() == pending.Containers());
 	for (std::uint32_t chest = CHEST_A; chest < CHEST_A + 4; ++chest) {
 		std::vector<std::int32_t> order;
-		loaded.Retry(chest, [&](const Change& a_change) { return order.push_back(a_change.count), true; });
+		ChestWorld                here{ [&](std::uint32_t a_container) { return a_container == chest; }, [&](const Change& a_change) { order.push_back(a_change.count); } };
+		loaded.Retry(chest, here);
 		CHECK(std::ranges::is_sorted(order));
 		CHECK(order.size() == 30 / 4 + (chest - CHEST_A < 30 % 4 ? 1 : 0));
 	}
-	CHECK(loaded.WaitingCount() == 0);
+	CHECK(loaded.Waiting().empty());
 	CHECK(loaded.Containers().empty());
-	loaded.OnRevert();
-	CHECK(loaded.Next() == 0);
+	loaded.LoadRecord(0, 0, {});  // a save with no record
+	CHECK(loaded.Point().containerFrom == 0);
 }
 
 // The safety net for what loaded before its change came: a few at a time, but nothing is left out for long.

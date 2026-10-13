@@ -202,9 +202,37 @@ References are identified by form ID, which matches across players because the l
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
-items, pickups only for loose inventory items that don't fill a quest alias. Personal items stay in
-everyone's world, loose or in containers: keys, notes/holotapes, `FeaturedItem` (bobbleheads,
-magazines), and stacks a container holds in a quest alias.
+items, pickups only for loose inventory items that don't fill a quest alias.
+
+Which loot is the session's is one rule, `LootScope::Of` (src/game/LootScope.h, game-free and tested),
+run by the sender before reporting a move and by every receiver before applying one, so what an older
+build reports anyway stays out. WorldSync runs it through `LootSync` (src/game/LootSync.h, game-free):
+the sender's report, the receiver's check, and the changes that wait for a container or a death. The
+tests play two and three games through it against a real server (tests/LootGame.h).
+
+- Per player: keys, paper notes, holotapes, bobbleheads, magazines (`FeaturedItem`), quest items (a
+  stack held in a quest alias), all weapons and armor, vendors and caps, what companions and settlers
+  carry (any living NPC's inventory: trading with a companion, pickpocketing), settlement workbench
+  storage, power armor frames.
+- Shared: ammo, chems, food, junk and other loot in containers and on corpses.
+
+Weapons and armor are per player because a move carries only the base form: another game would get a
+plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
+corpse. A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
+for a second after, are trades and never reported. A corpse is shared once the session says it died: a
+change for an NPC still alive in this game waits for its kill, up to 10 minutes in the world, counted
+for all of that NPC's changes together (at most 4096 changes wait; when full, one waiting for a living
+NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). Loose
+items picked up from the world are the same placed reference in every game, so only the personal ones
+stay (a loose weapon is taken from the friend's world as it is). The status line counts what each end
+kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupported=` (both ends),
+`personal=` (other players' personal items left alone, pickups included, as in 0.8.5), and on the
+sender `personalSent=`, `holderDropped=` and `lootSent=`.
+
+Activators (buttons, switches, levers, a sink) a friend presses are pressed in our game by their
+stand-in, not our player, so a script that acts on whoever pressed it (rads from a sink, a teleport)
+acts on the stand-in. Without the stand-in here the press is refused (`acts=` sent/applied/refused);
+the door or lock it drives arrives as its state.
 
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
@@ -213,7 +241,7 @@ menu) and to loaded references; everything else waits and is retried.
 |---|---|
 | Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
-| Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
+| Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
 | Quest stages | poll `TESQuest::currentStage` twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+) only with `sStory = shared` (Welcome::sharedStory); never misc. Forward changes only, 5 s settle after load, only of quests the reporter has started. Receivers `setstage` (only if higher) once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits, and never during dialogue or a scene |
 | Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
@@ -226,14 +254,32 @@ safely. Container changes can't (that would duplicate items), so:
 
 - each session has a random ID, and container changes are numbered in session order;
 - each player tracks which numbers its world contains (`containerNext`, plus the changes still waiting
-  for their container to load) and stores that in the save's F4SE co-save;
+  for their container to load) and stores that in the save's F4SE co-save (record `CONT`, v1);
 - Hello and RequestWorldState say what the world has, and the server sends only the rest.
 
+The receiving end is `ContainerLedger` (src/game/ContainerLedger.h, game-free and tested). Changes are
+applied strictly in number order, whether they come live or in a `WorldState`: one that comes before an
+earlier one waits for it (`gap=`, at most 8192; past that the newest is dropped, and `containerNext`
+never jumps), a number already applied is dropped (`dupChanges=`). A gap with nothing arriving is asked
+for again after 15 s, then 30 s, then every 60 s (`rerequests=`); a refused request (the server allows
+3, plus one every 10 s) is covered by the next one. Should the server's log be shorter than the save
+says (a host that crashed restarts from its last session file, written every 15 s), its answer to our
+request starts below what we asked for and has no changes: the ledger goes back to the log's end, drops
+what waited past it and logs "the server's log is shorter than our save" (`rewound=`). Only an answer to
+a request we sent can do that.
+
 After loading a save (including the reload after dying) the client forgets what it knew, reads the
-save's record and asks for the session's changes again. Container changes in a `WorldState` carry who made
-them; the player's own changes after the save are skipped (the save is from before them, so
-replaying them would empty the container without giving the loot back, or duplicate what they put
-in). A player who reconnects gets their old player ID back: Hello carries `identity`, a random
+save's record and asks for the session's changes again. The deaths and the player's moves from the
+frame before the save or load are sent first (deaths first), so they are in that answer. A save with no record of this session (made
+alone, or in another session) takes this one from its first change, so the saves made from it on carry
+one. Container changes carry who made them; the player's own are never replayed. Those made before the
+loaded world (the save is from before them) are counted in `ownSkipped=`: replaying them would empty
+the container without giving the loot back, or duplicate what they put in. Each report is remembered
+with the world it was made in (counted by loads), so a move made just before a load counts whether its
+echo arrives live after the load or in the catch-up. One known way to duplicate remains: put something in a
+chest after saving, a friend takes it, reload: the reloaded game still carries it and the friend has it
+too. `dupRisk=` counts it (our skipped deposit, then a friend's take of the same item from the same
+container) until own changes are replayed as moves. A player who reconnects gets their old player ID back: Hello carries `identity`, a random
 number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and the server remembers
 which ID each identity had during its run (not while the old connection is still open; the client
 also remembers every ID it had in the session).
@@ -367,7 +413,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
-| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (`containerRefused`); other containers, vendors included, follow friends | yes |
+| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there) | yes |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 

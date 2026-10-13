@@ -3,292 +3,351 @@
 #include "Protocol.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-// Which of the session's container changes this world contains. The server numbers every change to a
-// container (loot taken, items put in) in session order; everything before Next() is in our world already,
-// or waiting in Waiting() for its container to load. That belongs to the world rather than the connection,
-// so it goes into the save (WorldSync's co-save record) and comes back with it, and a save loaded later
-// asks the server only for the changes after it. Replaying one twice takes the loot twice (or duplicates
-// what was put in). WorldSync's bookkeeping, kept free of the game so it can be tested.
-class ContainerLedger
+// Which of the session's numbered container changes our world has, and the order they go into it in.
+// The server numbers every change and sends it live to everyone (the sender too); a player who joins,
+// reconnects or loads a save asks for the changes from the first number its world lacks and gets them
+// in a WorldState. Live changes can arrive ahead of that reply (made while the save loaded), and a
+// world can be ahead of the server (the host's game stopped before writing its last changes to the
+// session file). Kept free of the game so it can be tested; WorldSync puts what is ready into the world.
+namespace ContainerLedger
 {
-public:
-	struct Pending
-	{
-		std::uint32_t             index;
-		Protocol::ContainerChange change;
+	using Clock = std::chrono::steady_clock;
 
-		friend bool operator==(const Pending& a_lhs, const Pending& a_rhs)
+	// A change ready to go into the world, in session order.
+	struct Ready
+	{
+		Protocol::IndexedContainerChange change;
+		bool                             catchUp = false;  // it first came in a WorldState, not live
+	};
+
+	// The numbering: what is in, and what came early and waits for the changes before it.
+	class Ledger
+	{
+	public:
+		// Changes that wait for an earlier one, at most. Past it the newest is let go: the server is asked
+		// for it again once the gap before it has filled. The first missing number never moves on its own.
+		static constexpr std::size_t MAX_AHEAD = 8192;
+		// How long a gap may stay open with nothing arriving before the server is asked again (a request it
+		// refused, its budget being spent, is what this covers): 15 s, 30 s, then every 60 s.
+		static constexpr std::array<Clock::duration, 3> ASK_AGAIN{ std::chrono::seconds{ 15 }, std::chrono::seconds{ 30 }, std::chrono::seconds{ 60 } };
+
+		struct Counts
 		{
-			return a_lhs.index == a_rhs.index && a_lhs.change.container == a_rhs.change.container && a_lhs.change.item == a_rhs.change.item &&
-			       a_lhs.change.count == a_rhs.change.count;
+			std::uint32_t duplicates = 0;    // a change we had already, or had waiting
+			std::uint32_t gaps = 0;          // times changes started waiting for an earlier one
+			std::uint32_t droppedAhead = 0;  // waiting changes let go at MAX_AHEAD (asked for again later)
+			std::uint32_t asked = 0;         // times the server was asked again for a gap
+			std::uint32_t rewinds = 0;       // times the server's log turned out shorter than our world's
+			std::uint32_t lost = 0;          // changes those rewinds counted again from
+		};
+
+		// The first change our world lacks.
+		[[nodiscard]] std::uint32_t Next() const { return next; }
+		// Changes waiting for an earlier one.
+		[[nodiscard]] std::size_t   Waiting() const { return ahead.size(); }
+		[[nodiscard]] const Counts& Stats() const { return counts; }
+
+		// Our world has every change before a_next and nothing after (a new session, a save's record).
+		void Restart(std::uint32_t a_next)
+		{
+			next = a_next;
+			ahead.clear();
+			requested.reset();
+			tries = 0;
 		}
-	};
 
-	enum class Offered
-	{
-		kHave,     // already in our world (or waiting): nothing done
-		kOurs,     // made in our own world, so it's in it
-		kInvalid,  // nothing sensible to apply
-		kApplied,
-		kWaiting,  // its container isn't there yet (or earlier changes to it wait): kept until it is
-	};
-
-	// The server welcomed us into a_session as a_playerId. A session other than the one our world's record
-	// is about: none of its changes are in our world yet.
-	void OnWelcome(std::uint64_t a_session, std::uint32_t a_playerId)
-	{
-		liveSession = a_session;
-		if (a_session != recordSession) {
-			recordSession = a_session;
-			next = 0;
-			ClearWaiting();
-			gaps.clear();
-			ownIds.clear();
-		}
-		ownIds.insert(a_playerId);
-	}
-
-	// The connection is gone. The record stays: it is our world's, and a reconnect carries on from it.
-	void OnDisconnected() { liveSession = 0; }
-
-	// The game threw its world away (a load or a new game begins): until a save's record says otherwise,
-	// the world holds none of any session's changes.
-	void OnRevert()
-	{
-		recordSession = 0;
-		next = 0;
-		ClearWaiting();
-		gaps.clear();
-	}
-
-	// The loaded save's record.
-	void OnRecordLoaded(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending)
-	{
-		recordSession = a_session;
-		next = a_next;
-		ClearWaiting();
-		std::ranges::sort(a_pending, {}, &Pending::index);  // a record may hold them in any order
-		for (auto& entry : a_pending) {
-			byContainer[entry.change.container].push_back(std::move(entry));
-		}
-		waitingCount = a_pending.size();
-		gaps.clear();
-	}
-
-	// A save was loaded (or a new game started) while we are in a session. A save without that session's
-	// record holds none of its changes; from here on they are counted for that session, from the first, so
-	// the next save records the session and loading that save asks only for what came after it. (Left at
-	// the save's record, every later save had none, and each reload or reconnect replayed every change
-	// again.) Returns whether the record changed.
-	bool BindToLiveSession()
-	{
-		if (liveSession == 0 || recordSession == liveSession) {
-			return false;
-		}
-		recordSession = liveSession;
-		next = 0;
-		ClearWaiting();
-		gaps.clear();
-		return true;
-	}
-
-	// What to ask the server for (in the Hello, and after a load).
-	[[nodiscard]] Protocol::WorldRequest ResyncPoint() const { return { recordSession, next }; }
-
-	// After a load, once the save's record is in (OnRevert, then OnRecordLoaded for a save that has one) and the
-	// game has left the session if the save isn't the session's world (CharacterBinding): still in a session, the
-	// world is bound to it (BindToLiveSession) and this is what to ask the server for.
-	[[nodiscard]] std::optional<Protocol::WorldRequest> AfterLoad()
-	{
-		if (liveSession == 0) {
-			return std::nullopt;
-		}
-		BindToLiveSession();
-		return ResyncPoint();
-	}
-
-	// Our player IDs in this session. A reconnect normally gets the old one back (the server knows us by
-	// Protocol::Hello::identity), but not while the server still holds the old connection; changes under
-	// either ID are ours.
-	[[nodiscard]] bool Ours(std::uint32_t a_playerId) const { return ownIds.contains(a_playerId); }
-
-	// A world state's chunk, before its changes are offered. Its first index is where the server's table
-	// starts for us, and a chunk without changes says the table ends there. Should we count more than that
-	// (the host's game quit before the server wrote its last changes, and our save has them), the server
-	// numbers its next changes from there, and they must not be taken for ones we have. Returns true when
-	// we were ahead.
-	bool OnWorldState(std::uint32_t a_firstIndex, bool a_hasChanges)
-	{
-		if (a_hasChanges || a_firstIndex >= next) {
-			return false;
-		}
-		next = a_firstIndex;
-		std::erase_if(gaps, [&](const auto& a_gap) { return a_gap.first >= next; });
-		for (auto& gap : gaps) {
-			gap.second = (std::min)(gap.second, next);
-		}
-		return true;
-	}
-
-	// A session container change reached us (live, or in a world state). a_tryApply(change) applies it to
-	// our world and returns false when it can't yet (its container isn't loaded).
-	template <class TryApply>
-	Offered Offer(std::uint32_t a_index, std::uint32_t a_playerId, const Protocol::ContainerChange& a_change, TryApply&& a_tryApply)
-	{
-		if (a_index >= next) {
-			// A live change past the ones we have: those between are on their way in the world state we
-			// asked for after a load (the server sent this one before it had our request).
-			if (a_index > next) {
-				AddGap(next, a_index);
+		// A numbered change reached us. Returns what can go into the world now, in order (it, and those that
+		// waited for it), or nothing.
+		std::vector<Ready> Offer(const Protocol::IndexedContainerChange& a_change, bool a_catchUp, Clock::time_point a_now)
+		{
+			std::vector<Ready> ready;
+			const auto         index = a_change.index;
+			if (index < next || ahead.contains(index)) {
+				++counts.duplicates;
+				return ready;
 			}
-			next = a_index + 1;
-		} else if (!TakeFromGap(a_index)) {
-			return Offered::kHave;
+			if (index > next) {
+				if (ahead.empty()) {
+					quietSince = a_now;
+					tries = 0;
+					++counts.gaps;
+				}
+				if (ahead.size() >= MAX_AHEAD) {
+					++counts.droppedAhead;
+					const auto newest = std::prev(ahead.end());
+					if (newest->first < index) {
+						return ready;
+					}
+					ahead.erase(newest);
+				}
+				ahead.emplace(index, Ready{ a_change, a_catchUp });
+				return ready;
+			}
+			ready.push_back({ a_change, a_catchUp });
+			++next;
+			for (auto it = ahead.begin(); it != ahead.end() && it->first == next; it = ahead.erase(it)) {
+				ready.push_back(std::move(it->second));
+				++next;
+			}
+			quietSince = a_now;
+			if (ahead.empty()) {
+				tries = 0;
+			}
+			return ready;
 		}
-		if (Ours(a_playerId)) {
-			return Offered::kOurs;
-		}
-		if (!Protocol::IsValid(a_change)) {
-			return Offered::kInvalid;
-		}
-		// Changes to one container stay in order; different containers don't wait for each other.
-		// (Each container's waiting changes are kept apart, so a long list waiting costs nothing to look up.)
-		const auto it = byContainer.find(a_change.container);
-		if (it != byContainer.end() || !a_tryApply(a_change)) {
-			auto& queue = it != byContainer.end() ? it->second : byContainer[a_change.container];
-			// In session order: one from a gap can come after a later one to the same container.
-			const auto at = std::ranges::upper_bound(queue, a_index, {}, &Pending::index);
-			queue.insert(at, { a_index, a_change });
-			++waitingCount;
-			return Offered::kWaiting;
-		}
-		return Offered::kApplied;
-	}
 
-	struct Taken
-	{
-		bool          wasAhead = false;  // we counted more changes than the server has (see OnWorldState)
-		std::uint32_t ours = 0;          // changes of our own, skipped
+		// We asked the server for every change from a_from (Hello, or RequestWorldState).
+		void OnRequest(std::uint32_t a_from, Clock::time_point a_now)
+		{
+			requested = a_from;
+			quietSince = a_now;
+		}
+
+		// A WorldState came, whose container changes start at a_firstIndex (a_count of them). Called before
+		// they are offered. The first one after our request answers it: when it starts below what we asked
+		// for and has nothing, the server's log is shorter than our world's (the host's game stopped without
+		// writing its last changes to the session file; it writes every 15 s). Its next change takes the
+		// first number it lacks, so ours counts from there; what our world got of the lost ones stays in it.
+		// Only a request we sent can do that: a WorldState nobody asked for never moves the count back.
+		// Returns how many numbers were counted again (0: none).
+		std::uint32_t OnChunk(std::uint32_t a_firstIndex, std::size_t a_count, Clock::time_point a_now)
+		{
+			quietSince = a_now;
+			const auto asked = std::exchange(requested, std::nullopt);
+			if (!asked || a_firstIndex >= *asked || a_count != 0) {
+				return 0;
+			}
+			const auto lost = *asked - a_firstIndex;
+			next = a_firstIndex;
+			ahead.clear();
+			tries = 0;
+			++counts.rewinds;
+			counts.lost += lost;
+			return lost;
+		}
+
+		// Whether to ask the server again now: a gap has stayed open with nothing arriving.
+		bool Due(Clock::time_point a_now)
+		{
+			const auto wait = ASK_AGAIN[(std::min)(static_cast<std::size_t>(tries), ASK_AGAIN.size() - 1)];
+			if (ahead.empty() || a_now - quietSince < wait) {
+				return false;
+			}
+			++tries;
+			++counts.asked;
+			quietSince = a_now;
+			return true;
+		}
+
+	private:
+		std::uint32_t                   next = 0;
+		std::map<std::uint32_t, Ready>  ahead;
+		std::optional<std::uint32_t>    requested;
+		Clock::time_point               quietSince{};  // the last change that went in, chunk or request, or when the gap opened
+		std::uint32_t                   tries = 0;     // times asked again for this gap
+		Counts                          counts;
 	};
 
-	// A world state's container changes (the answer to a Hello or to AfterLoad's request), offered in order.
-	template <class TryApply>
-	Taken TakeWorldState(const Protocol::WorldState& a_state, TryApply&& a_tryApply)
+	// The duplication loop that is still open: our own deposit skipped in a catch-up (the save we loaded
+	// is from before it, so the item is back in our inventory), then another player taking the same item
+	// out of the same container (so they have it too). Counted so a soak measures it.
+	class DupWatch
 	{
-		Taken taken;
-		taken.wasAhead = OnWorldState(a_state.containerFirstIndex, !a_state.containerChanges.empty());
-		for (const auto& change : a_state.containerChanges) {
-			taken.ours += Offer(change.index, change.playerId, change.change, a_tryApply) == Offered::kOurs;
-		}
-		return taken;
-	}
+	public:
+		static constexpr std::size_t MAX_REMEMBERED = 4096;
 
-	// Applies what waits for a_container, in order, until one can't be (WorldSync tries a container as it
-	// loads: see RetrySchedule). Returns how many were applied.
-	template <class TryApply>
-	std::size_t Retry(std::uint32_t a_container, TryApply&& a_tryApply)
+		void OwnSkipped(const Protocol::ContainerChange& a_change)
+		{
+			if (a_change.count > 0 && deposits.size() < MAX_REMEMBERED) {
+				deposits.insert({ a_change.container, a_change.item });
+			}
+		}
+
+		// Another player's change. True when it takes what our skipped deposit put in.
+		bool Foreign(const Protocol::ContainerChange& a_change)
+		{
+			if (a_change.count >= 0 || !deposits.erase({ a_change.container, a_change.item })) {
+				return false;
+			}
+			++count;
+			return true;
+		}
+
+		void Clear() { deposits.clear(); }
+
+		[[nodiscard]] std::uint32_t Count() const { return count; }
+
+	private:
+		std::set<std::pair<std::uint32_t, std::uint32_t>> deposits;  // container, item
+		std::uint32_t                                     count = 0;
+	};
+
+	// The receiving end, as WorldSync runs it: which session our world belongs to, which player IDs are
+	// ours in it, and what of the changes that come goes into the world. Our own changes never go in: made
+	// in the world we have, they are in it; made before the save we loaded, that save is from before them,
+	// and replaying them would take loot from the container that isn't in our inventory any more (or put
+	// in a second copy of what we put in). Those are counted (OwnSkipped, DupRisk). Everything else goes
+	// to a_apply, in session order.
+	class Receiver
 	{
-		const auto it = byContainer.find(a_container);
-		if (it == byContainer.end()) {
-			return 0;
-		}
-		std::size_t applied = 0;
-		auto&       queue = it->second;
-		while (!queue.empty() && a_tryApply(queue.front().change)) {
-			queue.pop_front();
-			++applied;
-		}
-		waitingCount -= applied;
-		if (queue.empty()) {
-			byContainer.erase(it);
-		}
-		return applied;
-	}
+	public:
+		using Apply = std::function<void(const Protocol::IndexedContainerChange&)>;
 
-	// Every container that has changes waiting (for a full pass, or a sweep's cursor), in order.
-	[[nodiscard]] std::vector<std::uint32_t> Containers() const
-	{
-		std::vector<std::uint32_t> containers;
-		containers.reserve(byContainer.size());
-		for (const auto& [container, queue] : byContainer) {
-			containers.push_back(container);
+		// Our reports remembered until they come back numbered, at most. Past it the oldest is forgotten
+		// (its echo is then judged by how it came: see Deliver).
+		static constexpr std::size_t MAX_REPORTS = 4096;
+
+		// The server welcomed us. True when it is another session than our world's: none of its changes
+		// are in our world yet.
+		bool OnWelcome(std::uint64_t a_session, std::uint32_t a_localId)
+		{
+			const bool fresh = a_session != session;
+			if (fresh) {
+				session = a_session;
+				ledger.Restart(0);
+				ownIds.clear();
+				dups.Clear();
+				reports.clear();
+			}
+			ownIds.insert(a_localId);
+			return fresh;
 		}
-		return containers;
-	}
 
-	// Applies what waits, in order per container.
-	template <class TryApply>
-	void Retry(TryApply&& a_tryApply)
-	{
-		for (const auto container : Containers()) {
-			Retry(container, a_tryApply);
+		// A save's record was read (or the save has none: session 0). The world is another one from here
+		// on: what we reported before it isn't in it, unless the save was made after it.
+		void Load(std::uint64_t a_session, std::uint32_t a_next)
+		{
+			session = a_session;
+			ledger.Restart(a_next);
+			++world;
 		}
-	}
 
-	[[nodiscard]] std::uint64_t RecordSession() const { return recordSession; }
-	[[nodiscard]] std::uint32_t Next() const { return next; }
-	[[nodiscard]] std::size_t   WaitingCount() const { return waitingCount; }
-	[[nodiscard]] bool          Waits(std::uint32_t a_container) const { return byContainer.contains(a_container); }
-
-	// What waits, in session order: what a save keeps (the co-save record's layout is unchanged).
-	[[nodiscard]] std::vector<Pending> Waiting() const
-	{
-		std::vector<Pending> entries;
-		entries.reserve(waitingCount);
-		for (const auto& [container, queue] : byContainer) {
-			entries.insert(entries.end(), queue.begin(), queue.end());
+		// We reported one of our own moves. It comes back numbered (live, or in a catch-up when our world
+		// lacks its number), maybe after a load: a move made in the frame before one goes out ahead of the
+		// load's request (WorldSync::FlushLoot), and its echo can arrive after the load either way.
+		void Reported(const Protocol::ContainerChange& a_change)
+		{
+			if (reports.size() >= MAX_REPORTS) {
+				reports.pop_front();
+			}
+			reports.push_back({ a_change, world });
 		}
-		std::ranges::sort(entries, {}, &Pending::index);
-		return entries;
-	}
 
-private:
-	static constexpr std::size_t MAX_GAPS = 64;  // each is a range; many only if live changes keep jumping ahead
-
-	void ClearWaiting()
-	{
-		byContainer.clear();
-		waitingCount = 0;
-	}
-
-	void AddGap(std::uint32_t a_from, std::uint32_t a_to)
-	{
-		if (gaps.size() >= MAX_GAPS) {
-			gaps.erase(gaps.begin());  // the oldest: its changes are as good as lost, as they were before gaps were kept
+		// After a load while connected: a save from no session (made alone, or another character's) or
+		// from another one takes the session we are in, from its first change, so the saves made from it
+		// on carry a record. True when it did (none of the session's changes are in that world).
+		bool Adopt(std::uint64_t a_session, std::uint32_t a_localId)
+		{
+			ownIds.insert(a_localId);
+			if (a_session == 0 || a_session == session) {
+				return false;
+			}
+			session = a_session;
+			ledger.Restart(0);
+			dups.Clear();
+			return true;
 		}
-		gaps.emplace_back(a_from, a_to);
-	}
 
-	bool TakeFromGap(std::uint32_t a_index)
-	{
-		const auto it = std::ranges::find_if(gaps, [&](const auto& a_gap) { return a_index >= a_gap.first && a_index < a_gap.second; });
-		if (it == gaps.end()) {
-			return false;
+		// What to ask the server for: everything our world lacks. Counts as asked.
+		Protocol::WorldRequest Request(Clock::time_point a_now)
+		{
+			ledger.OnRequest(ledger.Next(), a_now);
+			return { session, ledger.Next() };
 		}
-		const auto [from, to] = *it;
-		gaps.erase(it);
-		if (from < a_index) {
-			gaps.emplace_back(from, a_index);
-		}
-		if (a_index + 1 < to) {
-			gaps.emplace_back(a_index + 1, to);
-		}
-		return true;
-	}
 
-	std::uint64_t                                      liveSession = 0;    // the session we're welcomed into (0: none)
-	std::uint64_t                                      recordSession = 0;  // the session next and pending count for
-	std::uint32_t                                      next = 0;
-	std::map<std::uint32_t, std::deque<Pending>>       byContainer;  // what waits, per container, in session order
-	std::size_t                                        waitingCount = 0;
-	std::vector<std::pair<std::uint32_t, std::uint32_t>> gaps;  // [from, to): changes below next we haven't had yet
-	std::unordered_set<std::uint32_t>                  ownIds;
-};
+		// What our world has, without asking (for the save's record).
+		[[nodiscard]] Protocol::WorldRequest Point() const { return { session, ledger.Next() }; }
+
+		void Live(const Protocol::IndexedContainerChange& a_change, Clock::time_point a_now, const Apply& a_apply)
+		{
+			for (const auto& ready : ledger.Offer(a_change, false, a_now)) {
+				Deliver(ready, a_apply);
+			}
+		}
+
+		// One WorldState's container changes. Returns how many numbers the server's log lost (see
+		// Ledger::OnChunk); our count then starts again at a_firstIndex.
+		std::uint32_t CatchUp(std::uint32_t a_firstIndex, const std::vector<Protocol::IndexedContainerChange>& a_changes, Clock::time_point a_now, const Apply& a_apply)
+		{
+			const auto lost = ledger.OnChunk(a_firstIndex, a_changes.size(), a_now);
+			for (const auto& change : a_changes) {
+				for (const auto& ready : ledger.Offer(change, true, a_now)) {
+					Deliver(ready, a_apply);
+				}
+			}
+			return lost;
+		}
+
+		// Whether to ask the server again now (see Ledger::Due); then send Request.
+		bool Due(Clock::time_point a_now) { return ledger.Due(a_now); }
+
+		[[nodiscard]] std::uint64_t  SessionId() const { return session; }
+		[[nodiscard]] bool           Ours(std::uint32_t a_playerId) const { return ownIds.contains(a_playerId); }
+		[[nodiscard]] const Ledger&  Numbers() const { return ledger; }
+		[[nodiscard]] std::uint32_t  OwnSkipped() const { return ownSkipped; }
+		[[nodiscard]] std::uint32_t  DupRisk() const { return dups.Count(); }
+
+	private:
+		void Deliver(const Ready& a_ready, const Apply& a_apply)
+		{
+			const auto& change = a_ready.change;
+			if (ownIds.contains(change.playerId)) {
+				// Made before the world we have: the save we loaded is from before it (or we don't remember
+				// making it, and it came in a catch-up). A move made in the moments before a save it was in
+				// is counted too when its echo is late (rare: the save would have to come within a round trip).
+				const auto made = MadeIn(change.change);
+				if (made ? *made != world : a_ready.catchUp) {
+					++ownSkipped;
+					dups.OwnSkipped(change.change);
+				}
+				return;
+			}
+			dups.Foreign(change.change);
+			if (Protocol::IsValid(change.change)) {
+				a_apply(change);
+			}
+		}
+
+		// The world our report a_change was made in, if we remember it; forgets it and the reports before it
+		// (those the server dropped, or whose number our world had already).
+		std::optional<std::uint32_t> MadeIn(const Protocol::ContainerChange& a_change)
+		{
+			const auto it = std::ranges::find_if(reports, [&](const Report& a_report) {
+				return a_report.change.container == a_change.container && a_report.change.item == a_change.item && a_report.change.count == a_change.count;
+			});
+			if (it == reports.end()) {
+				return std::nullopt;
+			}
+			const auto made = it->world;
+			reports.erase(reports.begin(), std::next(it));
+			return made;
+		}
+
+		struct Report
+		{
+			Protocol::ContainerChange change;
+			std::uint32_t             world = 0;
+		};
+
+		std::uint64_t                     session = 0;
+		std::uint32_t                     world = 0;  // which world (counted by loads) our game has now
+		std::deque<Report>                reports;    // ours, oldest first, not yet back
+		std::unordered_set<std::uint32_t> ownIds;  // a reconnect normally gets the old ID back, but not while the server still holds the old connection
+		Ledger                            ledger;
+		DupWatch                          dups;
+		std::uint32_t                     ownSkipped = 0;
+	};
+}

@@ -217,7 +217,7 @@ TEST("character session: a friend who starts a new character for co-op stays joi
 	me.Load(newSave);
 	CHECK(me.welcome);
 
-	me.Load({ FRIEND_COOP, 7, me.ledger.RecordSession(), 1, {} });
+	me.Load({ FRIEND_COOP, 7, me.loot.Point().sessionId, 1, {} });
 	CHECK(!me.joining);
 }
 

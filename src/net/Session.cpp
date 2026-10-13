@@ -240,7 +240,7 @@ namespace Session
 					break;  // one welcome per connection: a second would reset the world counters mid-session
 				}
 				if (const auto msg = Protocol::DecodeWelcome(a_data)) {
-					if (SessionSteps::OnWelcome(binding, WorldSync::Ledger(), hostedServer != nullptr, *msg) == CharacterBinding::Step::kLeave) {
+					if (SessionSteps::OnWelcome(binding, WorldSync::Loot(), hostedServer != nullptr, *msg) == CharacterBinding::Step::kLeave) {
 						leaveAfterPoll = true;  // nothing more of this connection is taken (see Frame)
 						break;
 					}
@@ -525,7 +525,7 @@ namespace Session
 			localId = 0;
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
-			SessionSteps::OnDisconnected(WorldSync::Ledger());
+			SessionSteps::OnDisconnected(WorldSync::Loot());
 			NpcSync::Reset();
 			Party::Reset();
 			WorldClock::Reset();
@@ -561,7 +561,7 @@ namespace Session
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
 			refusals.Clear();
-			SessionSteps::OnServerChanged(binding, WorldSync::Ledger());
+			SessionSteps::OnServerChanged(binding, WorldSync::Loot());
 		}
 
 		// A Steam invite or "Join Game" was accepted.
@@ -584,6 +584,17 @@ namespace Session
 			if (address != serverAddress) {
 				Notify("Multiplayer: joining your friend's game");
 				SwitchServer(address);
+			}
+		}
+
+		// Events from our world go to the server only while we're in a session, and not from the
+		// opening (see Story::InOpening).
+		void SendWorldEvents()
+		{
+			for (auto& packet : WorldSync::TakeOutgoing()) {
+				if (welcomed && !Story::InOpening()) {
+					client->Send(std::move(packet), true);
+				}
 			}
 		}
 	}
@@ -638,7 +649,7 @@ namespace Session
 			if (const auto folder = Identity::DataFolder()) {
 				// This character's own session (the old shared file is taken over if the loaded save played in it). Told
 				// once per character, not at every start (a port that can't be had is tried every few seconds).
-				const auto path = CharacterBinding::PrepareFile(*folder, character, settings.devChannel, WorldSync::Ledger().ResyncPoint().sessionId,
+				const auto path = CharacterBinding::PrepareFile(*folder, character, settings.devChannel, WorldSync::Loot().Point().sessionId,
 					[character](const std::string& a_line) {
 						REX::INFO("Session: {}", a_line);
 						if (legacyTold.insert(character).second) {
@@ -743,7 +754,7 @@ namespace Session
 					hello.name = PlayerName();
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
-					hello.world = SessionSteps::OnHello(binding, WorldSync::Ledger(), CurrentCharacter());
+					hello.world = SessionSteps::OnHello(binding, WorldSync::Loot(), CurrentCharacter());
 					hello.identity = Identity::Get();
 					hello.plugins = plugins;
 					client->Send(Protocol::Encode(hello), true);
@@ -884,13 +895,7 @@ namespace Session
 			}
 		}
 
-		// Events from our world go to the server only while we're in a session, and not from the
-		// opening (see Story::InOpening).
-		for (auto& packet : WorldSync::TakeOutgoing()) {
-			if (welcomed && !Story::InOpening()) {
-				client->Send(std::move(packet), true);
-			}
-		}
+		SendWorldEvents();
 		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
 
 		if (welcomed) {
@@ -955,6 +960,11 @@ namespace Session
 
 	void OnBeforeSaveOrLoad()
 	{
+		// The player's last moves, and what the last frame left to send, go out now, while their world
+		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
+		// request they are in its answer, numbered before it.
+		WorldSync::FlushLoot();
+		SendWorldEvents();
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		Downed::OnBeforeSave();
@@ -998,7 +1008,7 @@ namespace Session
 		// leaves. (After the above: leaving removes stand-ins and copies, and their handles from before the load are let
 		// go by then.) Only then is the world bound to the session it is still in, and its changes asked for.
 		SessionSteps::OnGameLoaded(
-			binding, WorldSync::Ledger(), LinkNow(), a_newGame, CurrentCharacter(),
+			binding, WorldSync::Loot(), LinkNow(), a_newGame, CurrentCharacter(),
 			[a_newGame](CharacterBinding::Step a_step) {
 				WorkshopSync::OnWorldGone();
 				if (a_step == CharacterBinding::Step::kStopHosting) {

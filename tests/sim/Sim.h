@@ -6,7 +6,7 @@
 // game would now show: who is there and where, who runs which NPC, what is dead, what containers hold,
 // what was built at settlements, which quest stages are reached. Where the plugin's own rule for that
 // is free of the game, the model uses it rather than a copy, so a scenario tests the server and the
-// client side together: ContainerLedger for loot, WorkshopCells for what waits at a settlement,
+// client side together: LootSync::Loot for loot, WorkshopCells for what waits at a settlement,
 // FoundDead::Shared for the host's save, ArmorFrames::ChooseOriginal for a friend's power armor, and
 // MoveSync::Drive every frame for a friend's stand-in. The rest is the model's own, written after the
 // plugin and only as good as that copy: applying doors, quest stages and pickups, dropping older
@@ -19,10 +19,10 @@
 // from the session's seed, and the session is settled (the server has acted on everything sent, and
 // every player has read what came back) whenever the test says so.
 
+#include "../ChestWorld.h"
 #include "../ServerFixture.h"
 
 #include "game/ArmorFrames.h"
-#include "game/ContainerLedger.h"
 #include "game/FoundDead.h"
 #include "game/MoveSync.h"
 #include "game/WorkshopCells.h"
@@ -281,7 +281,7 @@ namespace Sim
 		// The save this game was loaded from had these dead before the session.
 		void DeadInSave(std::uint32_t a_ref) { world.dead.insert(a_ref); }
 
-		Save SaveGame() const { return { world, ledger.ResyncPoint() }; }
+		Save SaveGame() const { return { world, loot.Point() }; }
 		// Loads a save: the world goes back to it, and a game in a session asks for what changed since
 		// (Session::OnGameLoaded).
 		void LoadGame(const Save& a_save);
@@ -358,7 +358,7 @@ namespace Sim
 		void ApplyWorkshop(const Protocol::WorkshopItem& a_item);
 		void ApplyDoor(const Protocol::RefState& a_state);
 		void JudgeWear(std::uint32_t a_friend);
-		Packet Hello() const;
+		Packet Hello();
 
 		Session&      session;
 		std::string   name;
@@ -374,7 +374,8 @@ namespace Sim
 		bool          sharedStory = false;
 
 		World                                         world;
-		ContainerLedger                               ledger;
+		LootSync::Loot                                loot;
+		TestServer::ChestWorld                        chests{ [](std::uint32_t) { return true; }, [this](const Protocol::ContainerChange& a_change) { Put(a_change); } };  // every container is loaded here
 		std::set<std::uint32_t>                       heardDead;  // dead as the session told us, or as we found and said (WorldSync's dead)
 		std::set<std::uint32_t>                       toCheck;    // NPCs others run: the host checks its own world for them
 		std::map<std::uint32_t, FoundDead::Npc>       characters;
@@ -599,13 +600,13 @@ namespace Sim
 
 	// ---- Client ----
 
-	inline Packet Client::Hello() const
+	inline Packet Client::Hello()
 	{
 		Protocol::Hello hello;
 		hello.contentHash = contentHash;
 		hello.name = name;
 		hello.identity = identity;
-		hello.world = ledger.ResyncPoint();
+		hello.world = loot.Hello(LootSync::Clock::now());
 		return Protocol::Encode(hello);
 	}
 
@@ -662,7 +663,7 @@ namespace Sim
 		connected = false;
 		welcomed = false;
 		peer = 0;
-		ledger.OnDisconnected();
+		loot.OnDisconnected();
 		friends.clear();
 		owners.clear();
 		npcStates.clear();
@@ -869,11 +870,8 @@ namespace Sim
 		heardDead.clear();  // WorldSync::Reset: what was known described the game before the load
 		// WorldSync's record of the save, then (Session) the world is bound to the session we're in and asks
 		// for what came since.
-		ledger.OnRevert();
-		if (a_save.resync.sessionId != 0) {
-			ledger.OnRecordLoaded(a_save.resync.sessionId, a_save.resync.containerFrom, {});
-		}
-		if (const auto request = welcomed ? ledger.AfterLoad() : std::nullopt) {
+		loot.LoadRecord(a_save.resync.sessionId, a_save.resync.containerFrom, {});  // session 0: the save has no record
+		if (const auto request = welcomed ? loot.AfterLoad(LootSync::Clock::now()) : std::nullopt) {
 			Send(Protocol::Encode(*request), true);
 		}
 	}
@@ -948,7 +946,7 @@ namespace Sim
 
 	inline void Client::ApplyContainer(std::uint32_t a_index, std::uint32_t a_playerId, const Protocol::ContainerChange& a_change)
 	{
-		ledger.Offer(a_index, a_playerId, a_change, [&](const Protocol::ContainerChange& a_next) { return Put(a_next); });
+		loot.Live({ .index = a_index, .playerId = a_playerId, .change = a_change }, LootSync::Clock::now(), chests);
 	}
 
 	inline void Client::ApplyWorldState(const Protocol::WorldState& a_state)
@@ -957,7 +955,7 @@ namespace Sim
 			heardDead.insert(ref);
 			world.dead.insert(ref);
 		}
-		ledger.TakeWorldState(a_state, [&](const Protocol::ContainerChange& a_next) { return Put(a_next); });
+		loot.CatchUp(a_state.containerFirstIndex, a_state.containerChanges, LootSync::Clock::now(), chests);
 		world.pickedUp.insert(a_state.pickedUp.begin(), a_state.pickedUp.end());
 		for (const auto& state : a_state.refStates) {
 			ApplyDoor(state);
@@ -1041,7 +1039,7 @@ namespace Sim
 				playerId = msg->playerId;
 				sessionId = msg->sessionId;
 				sharedStory = msg->sharedStory;
-				ledger.OnWelcome(msg->sessionId, msg->playerId);
+				loot.OnWelcome(msg->sessionId, msg->playerId);
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
 				}
@@ -1180,7 +1178,7 @@ namespace Sim
 						continue;
 					}
 					owners[owner.refId] = owner.playerId;
-					if (!ledger.Ours(owner.playerId) && Protocol::IsShareableRef(owner.refId)) {
+					if (!loot.Ours(owner.playerId) && Protocol::IsShareableRef(owner.refId)) {
 						toCheck.insert(owner.refId);  // WorldSync::OnActorOwners
 					}
 				}
