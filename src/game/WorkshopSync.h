@@ -25,7 +25,7 @@ namespace WorkshopSync
 	void Apply(const Protocol::WorkshopItem& a_item);
 
 	// Whether the reference is a settlement's workbench (whatever its state): what a friend's build or scrap
-	// must name as its workbench.
+	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.

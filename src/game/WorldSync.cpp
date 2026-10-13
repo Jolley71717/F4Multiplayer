@@ -7,6 +7,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
+#include "game/WorkshopSync.h"
 
 namespace WorldSync
 {
@@ -104,6 +105,7 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> pendingPickups;
 		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
 		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
+		std::uint32_t                     containerRefused = 0;  // changes to a workbench or our own companion, left alone
 
 		// Actors we hit last frame; their resulting health is reported this frame, once the
 		// damage has been applied.
@@ -569,6 +571,12 @@ namespace WorldSync
 			const auto container = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container);
 			if (!container || container->IsDeleted()) {
 				return false;  // not loaded yet
+			}
+			// A settlement's workbench, and our own companion, hold what we gave them: a friend's loot in their
+			// game says nothing about ours.
+			if (const auto actor = container->As<RE::Actor>(); WorkshopSync::IsWorkbenchAnchor(container) || (actor && NpcSync::IsOurCompanion(actor))) {
+				++containerRefused;
+				return true;
 			}
 			const auto item = RE::TESForm::GetFormByID(a_change.item);
 			if (!IsItemHolder(container) || !IsInventoryForm(item)) {
@@ -1166,8 +1174,8 @@ namespace WorldSync
 
 	std::string Describe()
 	{
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} storyKillKept={} loadedActors={}",
-			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} containerRefused={} ownSkipped={} foundDead={} ownStoryDead={} storyKillKept={} loadedActors={}",
+			dead.size(), pending.size(), reported, applied, containerNext, pendingContainer.size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped, containerRefused,
 			ownSkipped, foundDead, ownStoryDead, storyKillsKept, loadedActors.size());
 	}
 }
