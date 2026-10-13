@@ -610,7 +610,7 @@ void Server::Run()
 			return true;
 		}
 		if (!std::exchange(budget.shareLogged[a_table], true)) {
-			log(std::format("server: '{}' has added {} {} entries this run, their share; no more of theirs are kept", a_player.name, budget.added[a_table], TABLE_NAMES[a_table]));
+			log(std::format("server: player {} has added {} {} entries this run, their share; no more of theirs are kept", a_player.id, budget.added[a_table], TABLE_NAMES[a_table]));
 		}
 		return false;
 	};
@@ -694,7 +694,7 @@ void Server::Run()
 		}
 		a_player.worldStateOwed = true;
 		a_player.owedFrom = a_containerFrom;
-		log(std::format("server: '{}' has asked for the world too often; sending it when their budget refills", a_player.name));
+		log(std::format("server: player {} has asked for the world too often; sending it when their budget refills", a_player.id));
 	};
 
 	// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in
@@ -960,8 +960,8 @@ void Server::Run()
 				++droppedDeaths;
 				if (now - droppedDeathLogged >= DROPPED_DEATH_LOG_INTERVAL) {
 					droppedDeathLogged = now;
-					log(std::format("server: death of {:08X} from '{}' dropped: player {} runs it and the reporter wasn't fighting it ({} dropped since the last such line)",
-						death->refId, a_player.name, owner->second.playerId, std::exchange(droppedDeaths, 0)));
+					log(std::format("server: death of {:08X} from player {} dropped: player {} runs it and the reporter wasn't fighting it ({} dropped since the last such line)",
+						death->refId, a_player.id, owner->second.playerId, std::exchange(droppedDeaths, 0)));
 				}
 				return;
 			}
@@ -1031,7 +1031,7 @@ void Server::Run()
 		// The host's own game has none (see withinShare).
 		if (!a_player.local && containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
 			if (!std::exchange(budgetOf(a_player).shareLogged[kContainers], true)) {
-				log(std::format("server: '{}' has made {} container changes this session, their share; no more of theirs are kept", a_player.name, containersAuthored[a_player.id]));
+				log(std::format("server: player {} has made {} container changes this session, their share; no more of theirs are kept", a_player.id, containersAuthored[a_player.id]));
 			}
 			return;
 		}
@@ -1864,7 +1864,7 @@ void Server::Run()
 				if (std::exchange(player.workshopOwed, false)) {
 					sendWorkshop(player);
 				}
-				log(std::format("server: sent '{}' the world they asked for", player.name));
+				log(std::format("server: sent player {} the world they asked for", player.id));
 			}
 			if (player.welcomed && player.faceDirty && player.face && now - budgetOf(player).lastFace >= options.faceInterval) {
 				player.faceDirty = false;

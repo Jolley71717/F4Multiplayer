@@ -30,6 +30,7 @@
 #include <cmath>
 #include <filesystem>
 #include <format>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -505,6 +506,24 @@ namespace Sim
 		{
 			const auto has = [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; };
 			return std::ranges::any_of(pastLog, has) || (fixture && fixture->Logged(a_text));
+		}
+
+		// Every line the server logged (this run and the earlier ones), in order.
+		[[nodiscard]] std::vector<std::string> LogLines() const
+		{
+			auto out = pastLog;
+			if (fixture) {
+				std::ranges::move(fixture->LogLines(), std::back_inserter(out));
+			}
+			return out;
+		}
+
+		// Time goes by on the server (a budget refills), and then the session is settled.
+		void SettleAfter(std::chrono::milliseconds a_wait)
+		{
+			Deliver();
+			std::this_thread::sleep_for(a_wait);
+			Settle();
 		}
 
 		[[nodiscard]] const Server::Options& ServerOptions() const { return options; }

@@ -132,6 +132,13 @@ function Require([bool]$ok, [string]$what) {
 	if (-not $ok) { throw "aborting: $what" }
 }
 
+# The player number a bot was welcomed as (its own log says), or -1.
+function Player-Of([string]$name) {
+	$m = [regex]::Match((Read-Text (Join-Path $logDir "$name.log")), '(?m)^welcomed as player (\d+) ')
+	if ($m.Success) { return [int]$m.Groups[1].Value }
+	return -1
+}
+
 function Wait-Exit([string]$name, [int]$timeout) {
 	if (-not $procs[$name].WaitForExit($timeout * 1000)) {
 		Check $false "$name finished within $timeout s"
@@ -159,7 +166,7 @@ if ($Abuse) {
 
 		Start-Bot 'honest' 'Honest' $Seconds @('--identity', '0000000000001001', '--loot', "${container}:${item}:-10", '--kill', '0001A001',
 			'--pickup', $pickup, '--door', "${door}:1:0", '--quest', "${quest}:20") | Out-Null
-		Require (Wait-Log "'Honest' joined as player 1 ") 'Honest joins as player 1'
+		Require (Wait-Log 'server: player 1 joined from ') 'Honest joins as player 1'
 		Start-Bot 'looper' 'Looper' ($Seconds - 5) @('--identity', '0000000000002002', '--rejoin-loop', '20') | Out-Null
 
 		$floods = @(
@@ -198,13 +205,18 @@ if ($Abuse) {
 		Check ($procs[$name].ExitCode -eq 0) "$name exits 0 (got $($procs[$name].ExitCode))"
 	}
 	if (-not $aborted) {
-		Check ((Count-Matches $log "'Floodkills' has added 1000 dead NPC entries this run, their share") -eq 1) 'server: the kill flooder is stopped at its share, said once'
+		# The server names players by number: each flooder's is the one its own log was welcomed as.
+		$floodKills = Player-Of 'flood-kills'
+		$floodLoot = Player-Of 'flood-loot'
+		$floodPickups = Player-Of 'flood-pickups'
+		Check ((Count-Matches $log "server: player $floodKills has added 1000 dead NPC entries this run, their share") -eq 1) 'server: the kill flooder is stopped at its share, said once'
 		Check ((Count-Matches $log "dead NPC table is \d+% full \(\d+/1200\); kill sharing stops at 100%") -eq 1) 'server: the kill table is said to be near full once'
 		Check ((Count-Matches $log "dead NPC table is 100% full \(1200/1200\)") -eq 1) 'server: the kill table is said to be full once'
-		Check ((Count-Matches $log "'Floodloot' has made 1000 container changes this session, their share") -eq 1) 'server: the loot flooder is stopped at its share, said once'
-		Check ((Count-Matches $log "'Floodpickups' has added 1000 picked-up item entries this run, their share") -eq 1) 'server: the pickup flooder is stopped at its share, said once'
+		Check ((Count-Matches $log "server: player $floodLoot has made 1000 container changes this session, their share") -eq 1) 'server: the loot flooder is stopped at its share, said once'
+		Check ((Count-Matches $log "server: player $floodPickups has added 1000 picked-up item entries this run, their share") -eq 1) 'server: the pickup flooder is stopped at its share, said once'
 		Check ((Count-Matches $log "says hello too often") -ge 1) 'server: the looper waits for its budget'
-		Check ((Count-Matches $log "'Honest'.*(their share|too often|dropping some)") -eq 0) 'server: the honest player is never limited'
+		Check ((Count-Matches $log "server: player 1 .*(their share|too often|dropping some)") -eq 0) 'server: the honest player (player 1) is never limited'
+		Check ((Count-Matches $log 'Honest|Looper|Flood') -eq 0) 'server: names no player'
 		Check ((Count-Matches $log "(?i)too many events") -eq 0) 'server: no flood of events beyond the per-second limit'
 		$grown = $memoryAtEnd - $memoryAfterFloods
 		Check ($memoryAfterFloods -gt 0 -and $grown -lt 20MB) "server: memory flat after the floods (grew $([int]($grown / 1KB)) KB)"

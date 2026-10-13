@@ -1640,7 +1640,7 @@ TEST("server trust: in a three-player fight, only those who fought the raider ca
 	f.fake->Deliver(3, Death(NPC, true));
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
 	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
-	CHECK(f.Logged(std::format("death of {:08X} from 'Carol' dropped: player {} runs it", NPC, alice)));
+	CHECK(f.Logged(std::format("death of {:08X} from player {} dropped: player {} runs it", NPC, carol, alice)));
 	// Nor does a fight make Carol's say-so a found-dead report: only the host's game is believed about those.
 	f.fake->Deliver(3, Health(NPC, 0.5f));
 	f.fake->Deliver(3, FoundDeadReport(NPC));

@@ -99,7 +99,8 @@ TEST("server: asking for the world state over and over gets only a few answers, 
 	Server::Options options;
 	options.worldStateRefill = std::chrono::milliseconds(1000);
 	Fixture f{ options };
-	REQUIRE(f.Join(1, Fixture::MakeHello("Alice", 0xA11CE)));
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
 	// The join's own world state (from the same budget) is sent right after the Welcome, on the server's
 	// thread: Take alone could run before it arrives and leave it to be counted below.
 	REQUIRE(f.fake->WaitFor(1, Type(MT::kWorldState)));
@@ -111,7 +112,7 @@ TEST("server: asking for the world state over and over gets only a few answers, 
 	const auto atOnce = WorldStates(Received(f, 1)).size();
 	CHECK(atOnce >= 1);
 	CHECK(atOnce <= 3);
-	CHECK(f.Logged("'Alice' has asked for the world too often"));
+	CHECK(f.Logged(std::format("player {} has asked for the world too often", alice->playerId)));
 	// The rest: one, owed.
 	std::vector<std::vector<std::uint8_t>> later;
 	CHECK(Await(f, 1, MT::kWorldState, later, std::chrono::milliseconds(3000)));

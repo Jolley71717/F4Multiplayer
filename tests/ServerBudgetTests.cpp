@@ -330,7 +330,7 @@ TEST("budgets: a friend rejoining in a loop waits for their budget, and gets the
 	f.fake->Deliver(2, Request(first->sessionId, 0));
 	f.fake->Deliver(2, Request(first->sessionId, 0));  // the fourth in a moment: owed
 	Sync(f, 2);
-	CHECK(f.Logged("'Bob' has asked for the world too often"));
+	CHECK(f.Logged(std::format("player {} has asked for the world too often", first->playerId)));
 	f.fake->Drop(2);
 
 	f.fake->SetIdentity(3, BOB_STEAM);
@@ -537,7 +537,7 @@ TEST("budgets: while a player's world state is owed, every container change reac
 		order.push_back(change.index);
 	}
 	CHECK((order == std::vector<std::uint32_t>{ 1, 2, 3, 4 }));
-	CHECK(f.Logged("sent 'Bob' the world they asked for"));
+	CHECK(f.Logged(std::format("sent player {} the world they asked for", bob->playerId)));
 }
 
 // ---- other budgets kept across a reconnect --------------------------------------------------
@@ -609,14 +609,14 @@ TEST("shares: a joiner past their share of kills is logged once and no more of t
 	options.maxWorldEntriesPerPlayer = 5;
 	Fixture    f{ options };
 	const auto alice = JoinAs(f, 1, "Alice");
-	JoinAs(f, 2, "Mallory");
+	const auto mallory = JoinAs(f, 2, "Mallory");
 	Clear(f, { 1, 2 });
 
 	for (std::uint32_t i = 0; i < 8; ++i) {
 		f.fake->Deliver(2, Death(0x0007F000 + i));
 	}
 	CHECK(Count(Received(f, 1), MT::kActorDied) == 5);
-	CHECK(f.LogLines("'Mallory' has added 5 dead NPC entries this run").size() == 1);
+	CHECK(f.LogLines(std::format("player {} has added 5 dead NPC entries this run", mallory)).size() == 1);
 
 	f.fake->Deliver(1, Death(0x00010001));
 	const auto toMallory = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);

@@ -116,7 +116,7 @@ TEST("pending loot: a friend's game ends up with every container as the session 
 	bob.LoadRecord(savedNext, savedEntries);
 	f.fake->Deliver(2, Request(welcome->sessionId, bob.Next()));
 	Sync(f, 2);
-	CHECK(f.Logged("'Bob' has asked for the world too often"));
+	CHECK(f.Logged(std::format("player {} has asked for the world too often", welcome->playerId)));
 
 	// Alice carries on meanwhile; none of it reaches Bob live while his world state is owed.
 	f.fake->Deliver(1, Loot(CHEST_C, ITEM, -1));
