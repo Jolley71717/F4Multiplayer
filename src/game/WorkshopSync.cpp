@@ -3,6 +3,7 @@
 #include "game/EngineRefs.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopInbox.h"
+#include "game/WorkshopMove.h"
 
 #include "game/DeferredDelete.h"
 
@@ -46,6 +47,7 @@ namespace WorkshopSync
 		std::uint32_t adopted = 0;
 		std::uint32_t refused = 0;  // outside their workbench's reach
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
+		std::uint32_t recreated = 0;      // copies made again where their piece was moved (to another cell)
 		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
@@ -241,18 +243,61 @@ namespace WorkshopSync
 			return cell->worldSpace ? WorkshopCells::Exterior(cell->worldSpace->GetFormID(), ref->data.location.x, ref->data.location.y) : WhereOf(a_item);
 		}
 
-		void SetTransform(RE::TESObjectREFR* a_ref, const Protocol::WorkshopItem& a_item)
+		// Moves the copy to where the report puts it (see WorkshopMove); false if it has to be made again
+		// there instead. The reference's place alone moves neither what is drawn nor what collides: the 3D
+		// is moved too, and an actor (a turret, a robot) through its character controller.
+		bool MoveCopy(RE::TESObjectREFR* a_ref, const Protocol::WorkshopItem& a_item)
 		{
-			a_ref->SetLocationOnReference({ a_item.position[0], a_item.position[1], a_item.position[2] });
-			a_ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
-			if (std::abs(a_ref->refScale / 100.0f - a_item.scale) > 0.01f) {
+			const auto cell = a_ref->GetParentCell();
+			if (!cell) {
+				return false;
+			}
+			std::optional<std::pair<std::int32_t, std::int32_t>> at;
+			if (const auto exterior = !cell->IsInterior() ? cell->cellData.exterior : nullptr) {
+				at.emplace(exterior->cellX, exterior->cellY);
+			}
+			const auto& location = a_ref->data.location;
+			const auto& angle = a_ref->data.angle;
+			const WorkshopMove::Transform now{ { location.x, location.y, location.z }, { angle.x, angle.y, angle.z }, a_ref->refScale / 100.0f };
+			switch (WorkshopMove::HowToMove(now, WorkshopMove::Of(a_item), at)) {
+			case WorkshopMove::How::kStay:
+				return true;
+			case WorkshopMove::How::kRecreate:
+				return false;
+			case WorkshopMove::How::kInPlace:
+				break;
+			}
+			if (std::abs(now.scale - a_item.scale) > WorkshopMove::SAME_SCALE) {
 				a_ref->SetScale(a_item.scale);
 			}
+			const RE::NiPoint3 position{ a_item.position[0], a_item.position[1], a_item.position[2] };
+			if (const auto actor = a_ref->As<RE::Actor>()) {
+				actor->SetPosition(position, true);
+				actor->SetHeading(a_item.rotation[2]);
+			} else {
+				a_ref->SetLocationOnReference(position);
+				a_ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
+				a_ref->Update3DPosition(true);
+			}
+			++moved;
+			return true;
 		}
 
 		bool InGraveyard(const RE::TESObjectREFR* a_ref)
 		{
 			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.ref.get().get() == a_ref; });
+		}
+
+		void Remove(Copy& a_copy)
+		{
+			if (const auto ref = a_copy.ref.get()) {
+				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
+					ref->Disable();
+					ref->SetDelete(true);
+				} else {
+					graveyard.push_back(a_copy);
+				}
+			}
 		}
 
 		// A real workshop object of this game (ours, or one we scrapped/moved ourselves): it carries the
@@ -337,24 +382,31 @@ namespace WorkshopSync
 				return true;  // dropped, and a copy already standing is left where it was
 			}
 			if (const auto it = copies.find(a_key); it != copies.end()) {
-				if (const auto ref = it->second.ref.get()) {
-					SetTransform(ref.get(), a_item);
-					++moved;
+				const auto ref = it->second.ref.get();
+				if (ref && MoveCopy(ref.get(), a_item)) {
 					return true;
 				}
 				ForgetCopy(it->second.ref);
-				copies.erase(it);  // the game dropped it
+				if (ref) {
+					Remove(it->second);  // it went to another cell: made again there, below
+					++recreated;
+				}
+				copies.erase(it);  // (or the game dropped it)
 			}
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
 			if (!base || !Buildable(base)) {
 				return true;  // nothing we can show (a mod we don't have), or nothing we would
 			}
 			if (const auto existing = FindExisting(a_item)) {
-				SetTransform(existing, a_item);
-				copies[a_key] = { existing->GetHandle(), Clock::now() };
-				NoteCopy(copies[a_key].ref);
-				++adopted;
-				return true;
+				Copy copy{ existing->GetHandle(), Clock::now() };
+				if (MoveCopy(existing, a_item)) {
+					copies[a_key] = copy;
+					NoteCopy(copy.ref);
+					++adopted;
+					return true;
+				}
+				Remove(copy);  // at the spot, but a cell apart (on its edge): made again, below
+				++recreated;
 			}
 			RE::NEW_REFR_DATA data;
 			data.location = { a_item.position[0], a_item.position[1], a_item.position[2] };
@@ -883,18 +935,6 @@ namespace WorkshopSync
 			}
 		}
 
-		void Remove(Copy& a_copy)
-		{
-			if (const auto ref = a_copy.ref.get()) {
-				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
-					ref->Disable();
-					ref->SetDelete(true);
-				} else {
-					graveyard.push_back(a_copy);
-				}
-			}
-		}
-
 		// Another player's report, its turn come: placed, moved, or scrapped here, or filed until its cell
 		// loads.
 		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
@@ -1035,8 +1075,8 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
-			       placed, moved, scrapped, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} scrapped={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
+			       placed, moved, recreated, scrapped, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size());
 	}

@@ -126,10 +126,13 @@ namespace DevCommands
 			const auto& loc = a_ref->data.location;
 			const auto  cell = a_ref->GetParentCell();
 			const auto  lock = a_ref->GetLock();
+			// Where it is drawn: the reference's place alone doesn't move its 3D.
+			const auto  node = a_ref->Get3D();
+			const auto  drawn = node ? std::format(" 3dx={:.1f} 3dy={:.1f} 3dz={:.1f}", node->world.translate.x, node->world.translate.y, node->world.translate.z) : std::string{};
 			return std::format(
 				"ref={:08X} x={:.1f} y={:.1f} z={:.1f} rz={:.1f} cell={:08X} 3d={} deleted={} disabled={} locked={}",
 				a_ref->GetFormID(), loc.x, loc.y, loc.z, a_ref->data.angle.z * TO_DEGREES,
-				cell ? cell->GetFormID() : 0, a_ref->Get3D() != nullptr, a_ref->IsDeleted(), a_ref->IsDisabled(), lock ? ((lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? "yes" : "no") : "-") + DescribeMovement(a_ref);
+				cell ? cell->GetFormID() : 0, node != nullptr, a_ref->IsDeleted(), a_ref->IsDisabled(), lock ? ((lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? "yes" : "no") : "-") + drawn + DescribeMovement(a_ref);
 		}
 
 		std::string Status(std::string_view)
@@ -986,6 +989,7 @@ namespace DevCommands
 				}
 			} else {
 				ref->SetLocationOnReference(pos);
+				ref->Update3DPosition(true);  // and where it is drawn and collides
 			}
 			return DescribeRef(ref);
 		}
@@ -1103,8 +1107,9 @@ namespace DevCommands
 			return std::format("friend light form {:08X}", *id);
 		}
 
-		// wsreport <refHex>|place <baseHex> [workshopHex] [scrap]: reports a reference (or a new one of that base,
-		// put a step in front of the player) as if just placed (or scrapped) in workshop mode.
+		// wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]: reports a reference (or a
+		// new one of that base, put a step in front of the player) as if just placed (or scrapped) in workshop mode.
+		// A new one needs its workbench: the others' games place a copy only once its workbench is loaded there.
 		std::string WsReport(std::string_view a_args)
 		{
 			auto args = SplitArgs(a_args);
@@ -1116,6 +1121,9 @@ namespace DevCommands
 				const auto cell = player ? player->GetParentCell() : nullptr;
 				if (!base || !cell) {
 					return "error: no such base form, or not in game";
+				}
+				if (args.size() < 3 || !LookupRef(args[2])) {
+					return "error: usage: wsreport place <baseHex> <workshopHex> [scrap]";
 				}
 				RE::NEW_REFR_DATA data;
 				data.location = player->data.location;
@@ -1134,7 +1142,7 @@ namespace DevCommands
 				}
 			}
 			if (!ref) {
-				return "error: usage: wsreport <refHex>|place <baseHex> [workshopHex] [scrap]";
+				return "error: usage: wsreport <refHex> [workshopHex] [scrap] | place <baseHex> <workshopHex> [scrap]";
 			}
 			const auto workshop = !args.empty() && args[0] != "scrap" ? LookupRef(args[0]) : nullptr;
 			const bool scrap = !args.empty() && args.back() == "scrap";

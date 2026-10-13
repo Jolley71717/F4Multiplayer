@@ -6,6 +6,7 @@
 #include "ServerFixture.h"
 
 #include "game/WorkshopInbox.h"
+#include "game/WorkshopMove.h"
 
 #include <algorithm>
 #include <cmath>
@@ -73,13 +74,15 @@ namespace
 
 	// A friend's game, as far as building goes. Its rules for a report follow WorkshopSync::ApplyNow: a
 	// scrap takes the copy away; a piece whose cell isn't loaded waits for it; a piece with a copy moves
-	// it; otherwise a copy the save left at the same spot is taken over, or a new one made.
+	// it (WorkshopMove: within its cell, or made again in the next); otherwise a copy the save left at the
+	// same spot is taken over, or a new one made.
 	struct Game
 	{
 		struct Piece
 		{
-			std::uint32_t base;
-			float         x, y;
+			std::uint32_t                          base;
+			WorkshopMove::Transform                at;
+			std::pair<std::int32_t, std::int32_t> cell;  // the cell it was made in: the engine keeps it there
 		};
 
 		static constexpr float ADOPT_RADIUS = 4.0f;  // a copy the save left counts if it stands this close
@@ -93,6 +96,8 @@ namespace
 		Clock::duration                                    placeCost = std::chrono::microseconds(10);
 		std::size_t                                        mostInAFrame = 0;
 		int                                                frames = 0;
+		int                                                moves = 0;        // copies moved where they stand (each marks it changed in the save)
+		int                                                recreations = 0;  // copies made again in another cell
 
 		static WorkshopCells::Where Cell(const Protocol::WorkshopItem& a_item) { return WorkshopCells::Exterior(COMMONWEALTH, a_item.position[0], a_item.position[1]); }
 
@@ -131,19 +136,43 @@ namespace
 				inbox.Wait(Cell(a_item), a_key, a_item);
 				return;
 			}
+			const auto to = WorkshopMove::Of(a_item);
+			const auto move = [&](int a_id) {
+				auto& piece = world[a_id];
+				switch (WorkshopMove::HowToMove(piece.at, to, piece.cell)) {
+				case WorkshopMove::How::kStay:
+					return true;
+				case WorkshopMove::How::kInPlace:
+					piece.at = to;
+					++moves;
+					return true;
+				default:
+					world.erase(a_id);
+					++recreations;
+					return false;
+				}
+			};
 			if (const auto it = copies.find(a_key); it != copies.end()) {
-				world[it->second] = { a_item.base, a_item.position[0], a_item.position[1] };
-				return;
-			}
-			for (const auto& [id, piece] : world) {
-				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
-				if (!tracked && piece.base == a_item.base && std::hypot(piece.x - a_item.position[0], piece.y - a_item.position[1]) <= ADOPT_RADIUS) {
+				const auto id = it->second;
+				copies.erase(it);
+				if (move(id)) {
 					copies[a_key] = id;
 					return;
 				}
 			}
+			for (const auto& [id, piece] : world) {
+				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
+				if (!tracked && piece.base == a_item.base && std::hypot(piece.at.position[0] - to.position[0], piece.at.position[1] - to.position[1]) <= ADOPT_RADIUS) {
+					const auto found = id;
+					if (move(found)) {
+						copies[a_key] = found;
+						return;
+					}
+					break;
+				}
+			}
 			copies[a_key] = nextId;
-			world[nextId++] = { a_item.base, a_item.position[0], a_item.position[1] };
+			world[nextId++] = { a_item.base, to, { WorkshopCells::Grid(to.position[0]), WorkshopCells::Grid(to.position[1]) } };
 		}
 
 		// WorkshopSync::Frame: what came in is placed, a few a frame.
@@ -179,12 +208,14 @@ namespace
 
 		std::size_t At(float a_x, float a_y = 1000.0f) const
 		{
-			return static_cast<std::size_t>(std::ranges::count_if(world, [&](const auto& a_piece) { return std::hypot(a_piece.second.x - a_x, a_piece.second.y - a_y) <= ADOPT_RADIUS; }));
+			return static_cast<std::size_t>(std::ranges::count_if(world, [&](const auto& a_piece) {
+				return std::hypot(a_piece.second.at.position[0] - a_x, a_piece.second.at.position[1] - a_y) <= ADOPT_RADIUS;
+			}));
 		}
 
 		bool AnySpotDoubled() const
 		{
-			return std::ranges::any_of(world, [&](const auto& a_piece) { return At(a_piece.second.x, a_piece.second.y) > 1; });
+			return std::ranges::any_of(world, [&](const auto& a_piece) { return At(a_piece.second.at.position[0], a_piece.second.at.position[1]) > 1; });
 		}
 	};
 
@@ -232,6 +263,7 @@ TEST("workshop session: a friend who loads a save gets the others' building back
 	CHECK(bob.At(300.0f) == 1);
 	CHECK(bob.copies.size() == 3);
 	CHECK(!bob.AnySpotDoubled());
+	CHECK(bob.moves == 0);  // sent again unchanged: nothing is moved (each move marks the copy changed in his save)
 	// His own piece is his game's own, not sent back to him as a copy.
 	for (const auto& packet : answer) {
 		if (!packet.empty() && packet[0] == Type(MT::kWorkshopItems)) {
@@ -391,4 +423,82 @@ TEST("workshop session: a friend's save from an earlier run of the session keeps
 		CHECK(again.copies.size() == 2);
 	}
 	std::filesystem::remove(path);
+}
+
+TEST("workshop session: a friend's moved piece moves for you, and one moved into the next cell is made again there with nothing left behind")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.loaded.insert(WorkshopCells::Exterior(COMMONWEALTH, 4200.0f, 1000.0f));
+	bob.Receive(Received(f, 2));
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.world.size() == 1);
+	const auto first = bob.world.begin()->first;
+
+	// Dragged across the room, then turned where it stands: the same copy follows.
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 400.0f)));
+	auto turned = Wall(0xFF000001, 400.0f);
+	turned.rotation[2] = 3.0f;
+	f.fake->Deliver(1, Report(turned));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.world.size() == 1);
+	CHECK(bob.world.begin()->first == first);
+	CHECK(bob.At(100.0f) == 0);
+	CHECK(bob.At(400.0f) == 1);
+	CHECK(bob.world.begin()->second.at.rotation[2] == 3.0f);
+	CHECK(bob.moves == 2);
+
+	// Over the cell's edge: made again there, the old one gone.
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 4200.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	REQUIRE(bob.world.size() == 1);
+	CHECK(bob.world.begin()->first != first);
+	CHECK(bob.At(400.0f) == 0);
+	CHECK(bob.At(4200.0f) == 1);
+	CHECK(bob.recreations == 1);
+
+	// And the scrap still finds the one made again.
+	f.fake->Deliver(1, Report(Scrapped(Wall(0xFF000001, 4200.0f))));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.world.empty());
+}
+
+// ---- WorkshopMove's rules, alone ------------------------------------------------------------
+
+TEST("workshop move: a report that changes nothing (within half a unit, a hundredth of a radian) moves nothing")
+{
+	WorkshopMove::Transform at{ { 100.0f, 200.0f, 50.0f }, { 0.0f, 0.0f, 0.001f }, 1.0f };
+	auto                    to = at;
+	to.position[0] += 0.3f;
+	to.rotation[2] = 2.0f * std::numbers::pi_v<float> - 0.002f;  // the same heading, written a full turn on
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ 0, 0 }) == WorkshopMove::How::kStay);
+	to.scale = 1.5f;  // only bigger
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ 0, 0 }) == WorkshopMove::How::kInPlace);
+	to = at;
+	to.rotation[0] = 0.5f;  // tilted
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ 0, 0 }) == WorkshopMove::How::kInPlace);
+}
+
+TEST("workshop move: a copy changes cells only by being made again, below zero too; an interior is all one cell")
+{
+	const WorkshopMove::Transform at{ { -10.0f, 100.0f, 0.0f }, {}, 1.0f };
+	auto                          to = at;
+	to.position[0] = -4000.0f;  // still cell -1
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ -1, 0 }) == WorkshopMove::How::kInPlace);
+	to.position[0] = 10.0f;  // cell 0
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ -1, 0 }) == WorkshopMove::How::kRecreate);
+	to.position[0] = -10.0f;
+	to.position[1] = -10.0f;  // cell -1, -1
+	CHECK(WorkshopMove::HowToMove(at, to, std::pair{ -1, 0 }) == WorkshopMove::How::kRecreate);
+	to.position[0] = 90000.0f;
+	CHECK(WorkshopMove::HowToMove(at, to, std::nullopt) == WorkshopMove::How::kInPlace);
 }
