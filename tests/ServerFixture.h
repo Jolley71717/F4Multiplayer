@@ -8,11 +8,28 @@
 #include "Protocol.h"
 #include "Server.h"
 
+#include <filesystem>
+#include <format>
 #include <random>
+#include <system_error>
 
 namespace TestServer
 {
 	using MT = Protocol::MessageType;
+
+	// A session file of its own for one test, removed at the end with what saving leaves beside it. Named at
+	// random: test runs in other worktrees overlap, and std::rand() names it the same in every process.
+	struct TempSessionFile
+	{
+		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-test-{:016X}.session", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+		~TempSessionFile()
+		{
+			std::error_code error;
+			for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
+				std::filesystem::remove(path.string() + suffix, error);
+			}
+		}
+	};
 
 	constexpr std::uint8_t Type(MT a_type) { return static_cast<std::uint8_t>(a_type); }
 

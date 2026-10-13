@@ -1400,8 +1400,8 @@ TEST("server workshop: a piece of the world moved and then scrapped reaches a la
 
 TEST("server session file: the world survives a server restart with the same load order")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
-	std::filesystem::remove(path);
+	const TempSessionFile file;
+	const auto            path = file.path.string();
 	Server::Options options;
 	options.sessionFile = path;
 	std::uint64_t firstSession = 0;
@@ -1448,13 +1448,12 @@ TEST("server session file: the world survives a server restart with the same loa
 		CHECK(f.Logged("load order changed"));
 		CHECK(WorldStates(Received(f, 3))[0].deadActors.empty());
 	}
-	std::filesystem::remove(path);
 }
 
 TEST("server session file: junk the host's save had scrapped, reported again after a restart, stays scrapped")
 {
-	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
-	std::filesystem::remove(path);
+	const TempSessionFile file;
+	const auto            path = file.path.string();
 	Server::Options options;
 	options.sessionFile = path;
 	auto junk = Wall(0x0001A2B3);
@@ -1476,7 +1475,6 @@ TEST("server session file: junk the host's save had scrapped, reported again aft
 		CHECK(batches[0][0].refId == 0x0001A2B3);
 		CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
 	}
-	std::filesystem::remove(path);
 }
 
 // --- What a client is believed about (docs/AUDIT-LIFETIME.md, network trust) ---------------------

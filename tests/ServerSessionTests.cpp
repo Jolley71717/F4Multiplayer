@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <limits>
@@ -986,7 +985,8 @@ TEST("server session: the session's time is forgotten when everyone has left")
 TEST("server session: the host's own game isn't sent the saved time; a friend is")
 {
 	constexpr std::uint64_t HOST = 0x1111;
-	const auto path = std::filesystem::temp_directory_path() / std::format("f4mp-time-{}.session", std::rand());
+	const TempSessionFile file;
+	const auto&           path = file.path;
 	SessionFile::Snapshot saved;
 	saved.contentHash = 0x1234;
 	saved.sessionId = 0x5E55;
@@ -1009,7 +1009,6 @@ TEST("server session: the host's own game isn't sent the saved time; a friend is
 		REQUIRE(packet);
 		CHECK(Protocol::DecodeWorldTime(*packet)->gameHour == 9.0f);
 	}
-	std::filesystem::remove(path);
 }
 
 TEST("server session: a time report that doesn't decode is ignored")

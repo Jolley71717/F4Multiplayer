@@ -32,18 +32,7 @@ namespace
 	constexpr std::uint32_t CHEST = 0x0002C001;
 	constexpr std::uint32_t STIMPAK = 0x00023736;
 
-	// A session file of its own for each test: test runs (and other worktrees' runs) overlap.
-	struct TempFile
-	{
-		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-life-{:016X}.session", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
-		~TempFile()
-		{
-			std::error_code error;
-			for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
-				std::filesystem::remove(path.string() + suffix, error);
-			}
-		}
-	};
+	using TempFile = TempSessionFile;
 
 	Server::Options HostedOptions(const TempFile& a_file)
 	{
