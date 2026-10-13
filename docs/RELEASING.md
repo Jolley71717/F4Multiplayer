@@ -38,6 +38,12 @@ Gate for an rc, every time, on the packaged zip installed on both machines (not 
    in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
    `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
+Before the rig run, `tools/addrcheck.ps1` (Windows PowerShell, read-only, the game is not started) resolves every
+Address Library ID the plugin names against the installed `version-1-11-240-0.bin` and checks the game code the
+plugin relies on by hand (the call from Main::Run into the message loop, the engine's message pump the frame
+check looks for, the save anchor, the HUD menu's update slot). A FAILED line means the game or the Address
+Library changed, or an ID in `src/` is wrong: look at it before going further.
+
 ## Promotion to the release
 
 The release is the rc that held, not a new build. After a multi-hour soak of the rc's zip (`soak.sh 3`:

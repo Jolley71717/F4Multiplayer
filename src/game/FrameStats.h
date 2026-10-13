@@ -73,6 +73,7 @@ namespace FrameStats
 	Tracker& Global();
 
 	// Which threads the per-frame task runs on, and how often per drawn frame (main.cpp): the F4SE
-	// permanent task turned out to run twice per drawn frame, once off the main thread.
+	// permanent task turned out to run twice per drawn frame, once off the main thread. Also how many frame
+	// messages were put off inside the engine's own message pump, and whether that check works (NestedPump).
 	std::string TakeThreads();
 }

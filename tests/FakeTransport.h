@@ -5,6 +5,7 @@
 
 #include "Transport.h"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <format>
@@ -96,6 +97,29 @@ public:
 			}
 		} while (!pending.empty());
 		return true;
+	}
+
+	// Waits up to a_timeout for the server to send a_peer a packet whose first byte is a_type, and returns everything it
+	// sent a_peer up to and including that one, in the order sent (empty when none came; the rest stay queued).
+	std::vector<std::vector<std::uint8_t>> TakeThrough(PeerId a_peer, std::uint8_t a_type, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	{
+		std::unique_lock                       lock{ mutex };
+		std::vector<std::vector<std::uint8_t>> out;
+		changed.wait_for(lock, a_timeout, [&] {
+			return std::ranges::any_of(sent, [&](const Sent& a_sent) { return a_sent.peer == a_peer && !a_sent.data.empty() && a_sent.data[0] == a_type; });
+		});
+		const auto last = std::ranges::find_if(sent, [&](const Sent& a_sent) { return a_sent.peer == a_peer && !a_sent.data.empty() && a_sent.data[0] == a_type; });
+		if (last == sent.end()) {
+			return out;
+		}
+		const auto end = last + 1;
+		for (auto it = sent.begin(); it != end; ++it) {
+			if (it->peer == a_peer) {
+				out.push_back(std::move(it->data));
+			}
+		}
+		sent.erase(std::remove_if(sent.begin(), end, [&](const Sent& a_sent) { return a_sent.peer == a_peer; }), end);
+		return out;
 	}
 
 	bool Disconnected(PeerId a_peer)

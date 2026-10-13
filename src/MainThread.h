@@ -19,4 +19,8 @@ namespace MainThread
 
 	// How many calls Assert found off the main thread.
 	[[nodiscard]] std::uint32_t OffThread();
+
+	// Whether game work has a main thread to run on: "hooked", "pending" (no game window yet) or "failed" (the
+	// window could not be hooked: multiplayer is off this run).
+	const char* HookState();
 }

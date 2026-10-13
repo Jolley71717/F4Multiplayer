@@ -9,8 +9,10 @@
 #include "game/FrameStats.h"
 #include "game/Menu.h"
 #include "HangWatch.h"
+#include "Background.h"
 #include "Log.h"
 #include "MainThread.h"
+#include "NestedPump.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
 #include "net/Session.h"
@@ -22,6 +24,12 @@ __declspec(dllimport) std::intptr_t __stdcall SetWindowLongPtrW(void* a_window, 
 __declspec(dllimport) std::intptr_t __stdcall CallWindowProcW(std::intptr_t a_proc, void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) int __stdcall PostMessageW(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) unsigned int __stdcall RegisterWindowMessageW(const wchar_t* a_name);
+}
+
+// kernel32, for the stack check (see NestedPump).
+extern "C" {
+__declspec(dllimport) unsigned short __stdcall RtlCaptureStackBackTrace(unsigned long a_skip, unsigned long a_count, void** a_frames, unsigned long* a_hash);
+__declspec(dllimport) void* __stdcall RtlLookupFunctionEntry(std::uint64_t a_address, std::uint64_t* a_imageBase, void* a_history);
 }
 
 namespace
@@ -41,6 +49,8 @@ namespace
 		std::uint32_t             mainDrawing = 0, otherDrawing = 0;   // the renderer was inside a frame
 		std::uint32_t             lastDrawn = 0;
 		std::set<std::thread::id> others;
+		std::uint32_t             deferred = 0;  // frame messages put off inside the engine's pump (see NestedPump)
+		NestedPump::Check         pumpCheck = NestedPump::Check::kUnknown;
 	};
 	std::mutex   frameThreadsLock;
 	FrameThreads frameThreads;
@@ -84,6 +94,7 @@ namespace
 	}
 
 	void WakeMainThread();  // with the window, below
+	bool WindowFailed();    // likewise: the window could not be hooked, and nothing serves work handed over
 
 	// The hang watch gives a save or load the same longer limit as a loading screen.
 	void BeginSaveOrLoad(HangWatch::Phase a_what)
@@ -118,6 +129,12 @@ namespace
 			hold.RunNow(a_work);  // what an earlier message handed over goes first
 			return;
 		}
+		if (WindowFailed()) {
+			// No frame runs to take it (multiplayer is off this run): this thread does it at once, as it would after
+			// MAIN_THREAD_WAIT, rather than hold every load up for it.
+			hold.RunNow(a_work);
+			return;
+		}
 		const auto start = std::chrono::steady_clock::now();
 		const auto waited = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count(); };
 		hold.Post(std::move(a_work));
@@ -146,8 +163,8 @@ namespace
 	void RunAfterLoad(SaveLoadHold::Hold::Work a_work)
 	{
 		auto& hold = SaveLoadHold::Global();
-		if (OnMainThread()) {
-			hold.RunNow(a_work);
+		if (OnMainThread() || WindowFailed()) {
+			hold.RunNow(a_work);  // with no window hooked, nothing else would: the hold would never end
 			return;
 		}
 		hold.Post(std::move(a_work));
@@ -178,6 +195,41 @@ namespace
 	void OnRevert(const F4SE::SerializationInterface*)
 	{
 		WorldSync::RevertResyncPoint();
+	}
+
+	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
+	// or a player who alt-tabbed stood still for friends, with the NPCs their game runs. Out of a session the setting is
+	// back as the player's ini has it (see Background). Looked at once a frame.
+	Background::Switch background;
+
+	RE::Setting* AlwaysActive()
+	{
+		static RE::Setting* const found = [] {
+			const auto prefs = RE::INIPrefSettingCollection::GetSingleton();
+			const auto inPrefs = prefs ? prefs->GetSetting("bAlwaysActive:General") : nullptr;
+			const auto setting = inPrefs ? inPrefs : RE::GetINISetting("bAlwaysActive:General");
+			if (!setting || setting->GetType() != RE::Setting::SETTING_TYPE::kBinary) {
+				REX::WARN("Config: the game's bAlwaysActive setting was not found; the game pauses while it is not focused");
+				return static_cast<RE::Setting*>(nullptr);
+			}
+			REX::INFO("Config: the game's bAlwaysActive is in its {} settings, {} now", inPrefs ? "Prefs ini" : "ini", setting->GetBinary());
+			return setting;
+		}();
+		return found;
+	}
+
+	void RunInBackground()
+	{
+		const auto setting = AlwaysActive();
+		if (!setting) {
+			return;
+		}
+		const auto status = Session::GetStatus();
+		const bool session = status.hosting || status.link == Session::Status::Link::kJoined;
+		if (const auto value = background.Update(Config::Get().runInBackground, session, setting->GetBinary())) {
+			setting->SetBinary(*value);
+			REX::INFO("Config: {}", *value ? "in a session, the game runs on while it is not focused (bRunInBackground)" : "out of the session, the game's bAlwaysActive is back off");
+		}
 	}
 
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
@@ -228,6 +280,8 @@ namespace
 					if (gameDataReady) {
 						if (loaded) {
 							SaveGuard::AfterLoad();
+						} else {
+							SaveGuard::NewGame();
 						}
 						Session::OnGameLoaded(!loaded);
 						Hud::OnGameLoaded();
@@ -298,6 +352,7 @@ namespace
 		if (gameDataReady) {
 			DevCommands::Frame();
 			Session::Frame();
+			RunInBackground();
 			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 		}
 	}
@@ -313,8 +368,9 @@ namespace
 	std::atomic<void*>       gameWindow{ nullptr };                   // also read by a load's thread (WakeMainThread)
 	std::intptr_t            originalWndProc = 0;
 	unsigned int             frameMessage = 0;
-	bool                     windowFailed = false;
+	std::atomic<bool>        windowFailed{ false };                 // read by net status (MainThread::HookState)
 	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
+	NestedPump::Check        pumpCheck = NestedPump::Check::kUnknown;  // main thread only
 	std::atomic<bool>        framePosted{ false };
 	std::chrono::steady_clock::time_point postedAt{};
 
@@ -327,26 +383,73 @@ namespace
 		}
 	}
 
+	// The code of the function at a_address, from the game's unwind table (none when it has no entry, or a_address is
+	// not where its entry begins).
+	NestedPump::Range FunctionAt(std::uintptr_t a_address)
+	{
+		struct RuntimeFunction
+		{
+			std::uint32_t begin;
+			std::uint32_t end;
+			std::uint32_t unwind;
+		};
+		std::uint64_t base = 0;
+		const auto    entry = static_cast<const RuntimeFunction*>(RtlLookupFunctionEntry(a_address, &base, nullptr));
+		if (!entry || base + entry->begin != a_address) {
+			return {};
+		}
+		return { base + entry->begin, base + entry->end };
+	}
+
+	// Where on the main thread's stack our frame message is being dispatched from (see NestedPump), by Address Library
+	// ID (1.11.240): PositionPlayerJob::Run (+C3B030), the engine's pump while it moves the player; the game's message
+	// loop, Main::Run_WindowsMessageLoop (+C336B0), and Main::Run (+C314F0), which calls it.
+	NestedPump::Seen WhereDispatched()
+	{
+		static const NestedPump::Range pump = FunctionAt(REL::ID(2228998).address());
+		static const std::array<NestedPump::Range, 2> outer{ FunctionAt(REL::ID(2228915).address()), FunctionAt(REL::ID(4484191).address()) };
+		void*      frames[48];
+		const auto count = RtlCaptureStackBackTrace(1, static_cast<unsigned long>(std::size(frames)), frames, nullptr);
+		std::array<std::uintptr_t, std::size(frames)> addresses{};
+		for (unsigned short i = 0; i < count; ++i) {
+			addresses[i] = reinterpret_cast<std::uintptr_t>(frames[i]);
+		}
+		const auto seen = NestedPump::Classify(std::span{ addresses.data(), count }, pump, outer);
+		if (NestedPump::Decide(pumpCheck, seen)) {
+			if (pumpCheck == NestedPump::Check::kOk) {
+				REX::INFO("Frame: the stack check finds the game's message loop; frame messages inside the engine's own pump are put off");
+			} else {
+				REX::WARN("Frame: the stack check finds neither the game's message loop nor the engine's pump ({} frames); no frame is put off", count);
+			}
+			std::scoped_lock l{ frameThreadsLock };
+			frameThreads.pumpCheck = pumpCheck;
+		}
+		return seen;
+	}
+
+	// What the window procedure calls for our message (see NestedPump::Dispatch).
+	struct WindowCalls
+	{
+		void             Taken() { framePosted = false; }  // the next drawn frame posts another
+		NestedPump::Seen Where() { return WhereDispatched(); }
+		void             Posted() { SaveLoadHold::Global().RunPosted(); }
+		void             Frame() { RunFrame(true); }
+		void             Deferred()
+		{
+			std::scoped_lock l{ frameThreadsLock };
+			++frameThreads.deferred;
+		}
+	};
+
 	std::intptr_t __stdcall WndProc(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam)
 	{
 		if (a_msg == frameMessage && frameMessage != 0) {
-			const bool wake = a_wparam == WAKE;
-			if (!wake) {
-				framePosted = false;
-			}
-			if (!inFrame) {
-				inFrame = true;
-				// An exception must never escape into the game's message loop.
-				try {
-					if (wake) {
-						SaveLoadHold::Global().RunPosted();
-					} else {
-						RunFrame(true);
-					}
-				} catch (const std::exception& e) {
-					REX::ERROR("Frame: {}", e.what());
-				}
-				inFrame = false;
+			// An exception must never escape into the game's message loop, the stack check's included.
+			try {
+				WindowCalls calls;
+				NestedPump::Dispatch(a_wparam == WAKE, inFrame, calls);
+			} catch (const std::exception& e) {
+				REX::ERROR("Frame: {}", e.what());
 			}
 			return 0;
 		}
@@ -375,12 +478,17 @@ namespace
 			gameWindow = window;
 		}
 		if (windowFailed) {
-			REX::ERROR("Frame: couldn't hook the game window; game work runs on the task threads");
+			REX::ERROR("Frame: couldn't hook the game window; multiplayer is off this run");
 		} else {
 			REX::INFO("Frame: game work runs on the main thread");
 			MainThread::Capture();
 		}
 		return gameWindow.load() != nullptr;
+	}
+
+	bool WindowFailed()
+	{
+		return windowFailed;
 	}
 
 	// The F4SE permanent task (see NewFrame for when it runs).
@@ -391,7 +499,13 @@ namespace
 			return;
 		}
 		if (!HookWindow()) {
-			RunFrame(false);  // no window yet (startup), or it couldn't be hooked
+			// The window could not be hooked: nothing runs. Game work on this job thread raced the engine (reading the
+			// actor lists crashed leaving Red Rocket), and what a save or load hands over would take the stand-ins out
+			// beside a frame. The log said so once; net status says so too.
+			if (windowFailed) {
+				return;
+			}
+			RunFrame(false);  // no window yet: startup, which comes before the game's data is ready
 			return;
 		}
 		if (!framePosted.exchange(true) || now - postedAt > REPOST_AFTER) {
@@ -429,6 +543,11 @@ namespace MainThread
 	std::uint32_t OffThread()
 	{
 		return offThreadCalls;
+	}
+
+	const char* HookState()
+	{
+		return gameWindow.load() ? "hooked" : (windowFailed ? "failed" : "pending");
 	}
 }
 
@@ -491,8 +610,8 @@ namespace FrameStats
 	std::string TakeThreads()
 	{
 		std::scoped_lock l{ frameThreadsLock };
-		const auto t = std::exchange(frameThreads, FrameThreads{ .lastDrawn = frameThreads.lastDrawn });
-		return std::format("main={} (repeats={} drawing={}) other={} (repeats={} drawing={} threads={})", t.mainCalls, t.mainRepeats, t.mainDrawing, t.otherCalls,
-			t.otherRepeats, t.otherDrawing, t.others.size());
+		const auto t = std::exchange(frameThreads, FrameThreads{ .lastDrawn = frameThreads.lastDrawn, .pumpCheck = frameThreads.pumpCheck });
+		return std::format("main={} (repeats={} drawing={}) other={} (repeats={} drawing={} threads={}) deferred={} pumpCheck={}", t.mainCalls, t.mainRepeats, t.mainDrawing, t.otherCalls,
+			t.otherRepeats, t.otherDrawing, t.others.size(), t.deferred, NestedPump::Name(t.pumpCheck));
 	}
 }

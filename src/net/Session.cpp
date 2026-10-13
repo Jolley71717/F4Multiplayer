@@ -1,6 +1,7 @@
 ﻿#include "net/Session.h"
 
 #include "Config.h"
+#include "MainThread.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
@@ -20,6 +21,7 @@
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
+#include "game/SaveGuard.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -960,7 +962,6 @@ namespace Session
 		}
 
 		RemotePlayers::Update();
-		WeaponFire::Frame();
 		Compass::Frame();
 		Puppets::Tick();
 	}
@@ -1049,7 +1050,7 @@ namespace Session
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
+		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	void ConnectTo(std::string a_address)

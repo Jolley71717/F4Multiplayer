@@ -108,6 +108,8 @@ namespace Config
 				settings.shareMap = ParseBool(value);
 			} else if (key == "bFastLoading") {
 				settings.fastLoading = ParseBool(value);
+			} else if (key == "bRunInBackground") {
+				settings.runInBackground = ParseBool(value);
 			} else if (key == "bCompassMarkers") {
 				settings.compassMarkers = ParseBool(value);
 			} else if (key == "bSyncTime") {

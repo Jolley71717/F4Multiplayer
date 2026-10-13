@@ -1,4 +1,5 @@
 #include "game/Party.h"
+#include "game/ArmorFrames.h"
 
 #include "game/WeaponFire.h"
 
@@ -69,11 +70,8 @@ namespace Party
 		int                                                 slowAnswers = 0;
 		Clock::time_point                                   nextPingWarning{};
 
-		// The frame our player wears (its base, and itself when every game has it), from the furniture occupied when
-		// the armor went on (see SampleStatus). Forgotten on a load: the loaded save may have our player in another
-		// frame, and the old one was sent for as long as the armor stayed on.
-		std::uint32_t frameInUse = 0;
-		std::uint32_t frameRefInUse = 0;
+		// The frame our player wears, as friends are told it (see ArmorFrames::OwnWear). Forgotten on a load.
+		ArmorFrames::OwnWear ownWear;
 
 		std::optional<float> lastXp;
 		float                xpCredit = 0.0f;  // shares we applied, not to be reported as our own XP
@@ -197,27 +195,21 @@ namespace Party
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = Equipment::InPowerArmor(player);
-			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on:
-			// the occupied furniture changes with every terminal or chair used in the armor (a terminal was once
-			// sent as the frame, and the others placed a terminal copy and sat the stand-in at it).
-			// The reference goes too when every game has it (a frame placed in the world by a plugin, such as the
-			// museum's suit in Concord): the others hide their own copy of it while we wear ours, else they saw
-			// two suits. One made in this game (0xFF......) is another reference, or none, in theirs.
-			if (status.powerArmor) {
-				if (frameInUse == 0) {
+			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on (see
+			// ArmorFrames::OwnWear).
+			const auto wear = ownWear.Update(
+				status.powerArmor,
+				[&] {
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-					const auto frame = middle ? middle->occupiedFurniture.get() : nullptr;
-					const auto base = frame ? frame->GetObjectReference() : nullptr;
-					if (Equipment::IsPowerArmorFrame(base)) {
-						frameInUse = base->GetFormID();
-						frameRefInUse = Protocol::IsShareableRef(frame->GetFormID()) ? frame->GetFormID() : 0;
-					}
-				}
-				status.powerArmorFrame = frameInUse;
-				status.powerArmorFrameRef = frameRefInUse;
-			} else {
-				frameInUse = 0;
-				frameRefInUse = 0;
+					const auto seat = middle ? middle->occupiedFurniture.get() : nullptr;
+					const auto base = seat ? seat->GetObjectReference() : nullptr;
+					return ArmorFrames::Seat{ .ref = seat ? seat->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+				},
+				Clock::now());
+			status.powerArmorFrame = wear.frame;
+			status.powerArmorFrameRef = wear.frameRef;
+			if (wear.unknown) {
+				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", wear.seat);
 			}
 			return status;
 		}
@@ -654,7 +646,10 @@ namespace Party
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
 
-		// Same place: go straight there. Elsewhere: load their cell or worldspace first.
+		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins go first, in this
+		// frame (RemotePlayers::DespawnAll, as before a save): the engine clears the cells for the coc or cow later in this
+		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
+		// crashes the engine unloading it or the next save. They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			player->SetPosition(position, true);
 			REX::INFO("Party: teleported to player {}", target->id);
@@ -668,6 +663,7 @@ namespace Party
 				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
 				return;
 			}
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -677,6 +673,7 @@ namespace Party
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);
@@ -712,8 +709,7 @@ namespace Party
 		unclaimedXp = 0.0f;
 		heldXp = 0.0f;
 		killWindowEnd = {};
-		frameInUse = 0;
-		frameRefInUse = 0;
+		ownWear.Forget();
 	}
 
 	void Reset()

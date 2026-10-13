@@ -100,6 +100,7 @@ namespace RemotePlayers
 			Clock::time_point    originalCheckAt{};
 			int                  originalChoice = -1;    // the last ArmorFrames::Original logged
 			bool                 originalCounted = false;  // a hide counted for this wear (one hidden again after a load is not a new one)
+			ArmorFrames::UnknownFrame frameUnknown;      // a wear the stand-in goes through with no frame copy, for the log (see Update)
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
@@ -136,12 +137,18 @@ namespace RemotePlayers
 			// that one. Never dereferenced (see RemotePlayer::registered); null for a light or frame.
 			const RE::Actor*                 puppet = nullptr;
 			std::uint32_t                    puppetId = 0;
+			std::uint32_t                    id = 0;  // the reference's form ID, for when its handle stops resolving (SaveGuard::Forget)
 		};
 		std::vector<Grave> graveyard;
 		std::uint32_t      flushedBeforeSave = 0;
 		// Marked for deletion, and still there until the engine lets go of them: a save in that moment
 		// would write them too.
-		std::vector<RE::ObjectRefHandle> deleting;
+		struct Deleting
+		{
+			RE::ObjectRefHandle ref;
+			std::uint32_t       id = 0;
+		};
+		std::vector<Deleting> deleting;
 		std::uint32_t      heldForConversation = 0;
 
 		// The stand-in is out of the world (or gone): no longer one of our puppets.
@@ -189,7 +196,9 @@ namespace RemotePlayers
 			return true;
 		}
 
-		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete.
+		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete. One that has lost its
+		// cell already (the cells were cleared under it: a door, a coc, a fast travel) has its record dropped at once
+		// (see SaveGuard::ExcludeOurs), and again each frame while it waits (see Update).
 		void Bury(Grave a_grave)
 		{
 			const auto ref = a_grave.actor.get();
@@ -199,10 +208,28 @@ namespace RemotePlayers
 			}
 			const auto now = Clock::now();
 			a_grave.buriedAt = now;
+			a_grave.id = ref->GetFormID();
+			if (!ref->GetParentCell()) {
+				SaveGuard::ExcludeOurs(ref.get());
+			}
 			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt) && !HeldForConversation(a_grave, ref.get(), now)) {
 				Disable(a_grave, ref.get(), now);
 			}
 			graveyard.push_back(a_grave);
+		}
+
+		// A reference of ours with neither a cell nor a worldspace (see SaveGuard::Anchored): its record is dropped, and it
+		// is one to let go of once it has had a moment to attach (one just placed may not be in its cell yet).
+		constexpr auto ADRIFT_GRACE = 2s;
+		std::uint32_t  adrift = 0;  // lights and frame copies let go of so
+
+		bool Adrift(RE::TESObjectREFR* a_ref, Clock::time_point a_placedAt, Clock::time_point a_now)
+		{
+			if (!a_ref || a_ref->GetParentCell() || SaveGuard::Anchored(a_ref)) {
+				return false;
+			}
+			SaveGuard::ExcludeOurs(a_ref);
+			return a_now - a_placedAt >= ADRIFT_GRACE;
 		}
 
 		// The first stand-in waits this long for the player's face, instead of being placed and then
@@ -465,6 +492,7 @@ namespace RemotePlayers
 				a_player.light = handle;
 				a_player.lightPlacedAt = a_now;
 				++lightsPlaced;
+				SaveGuard::Track(light.get());
 			}
 			light->SetLocationOnReference(at);
 			light->Update3DPosition(true);  // the reference's place alone left the light shining where it was made
@@ -906,6 +934,7 @@ namespace RemotePlayers
 			a_player.framePlacedAt = a_now;
 			a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
 			++framesPlaced;
+			SaveGuard::Track(frame.get());
 			return true;
 		}
 
@@ -1424,9 +1453,10 @@ namespace RemotePlayers
 		}
 		// Marked for deletion earlier and still there: kept out of the save too. (Before the graveyard is
 		// flushed, so the ones it adds now are not excluded twice.)
-		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) {
-			const auto ref = a_handle.get();
+		std::erase_if(deleting, [](const Deleting& a_deleting) {
+			const auto ref = a_deleting.ref.get();
 			if (!ref) {
+				SaveGuard::Forget(a_deleting.id);
 				return true;
 			}
 			SaveGuard::Exclude(ref.get());
@@ -1441,6 +1471,7 @@ namespace RemotePlayers
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
+				SaveGuard::Forget(a_grave.id);
 				Release(a_grave);
 				return true;
 			}
@@ -1452,7 +1483,7 @@ namespace RemotePlayers
 			ref->Disable();
 			ref->SetDelete(true);
 			SaveGuard::Exclude(ref.get());
-			deleting.push_back(a_grave.actor);
+			deleting.push_back({ a_grave.actor, a_grave.id });
 			++flushedBeforeSave;
 			return true;
 		});
@@ -1554,13 +1585,11 @@ namespace RemotePlayers
 				player.switchTries = 0;             // a new wear: the stand-in is tried afresh
 				player.switchGaveUp = false;
 			}
-			player.powerArmorOn = a_on;
-			if (a_frameBase) {
-				player.powerArmorFrame = a_frameBase;
-				player.powerArmorFrameRef = a_frameRef;
-			} else if (!a_on) {
-				player.powerArmorFrameRef = 0;  // the next frame is told with its base
-			}
+			// The frame is kept until they tell another (see ArmorFrames::Hear).
+			const auto heard = ArmorFrames::Hear({ player.powerArmorOn, player.powerArmorFrame, player.powerArmorFrameRef }, a_on, a_frameBase, a_frameRef);
+			player.powerArmorOn = heard.on;
+			player.powerArmorFrame = heard.frame;
+			player.powerArmorFrameRef = heard.frameRef;
 		}
 	}
 
@@ -1596,11 +1625,18 @@ namespace RemotePlayers
 			}
 		}
 		lastFrame = now;
+		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
+		// each frame: any change the engine makes to it makes a new one, and the engine unloading it would write that
+		// out and crash on the cell it no longer has.
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
+				SaveGuard::Forget(a_grave.id);
 				Release(a_grave);
 				return true;
+			}
+			if (!actor->GetParentCell()) {
+				SaveGuard::ExcludeOurs(actor.get());
 			}
 			if (!a_grave.disabledAt) {
 				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now)) {
@@ -1613,10 +1649,22 @@ namespace RemotePlayers
 				return false;
 			}
 			actor->SetDelete(true);
-			deleting.push_back(a_grave.actor);
+			SaveGuard::ExcludeOurs(actor.get());  // marking it deleted made a record of the change
+			deleting.push_back({ a_grave.actor, a_grave.id });
 			return true;
 		});
-		std::erase_if(deleting, [](const RE::ObjectRefHandle& a_handle) { return !a_handle.get(); });
+		std::erase_if(deleting, [](const Deleting& a_deleting) {
+			const auto ref = a_deleting.ref.get();
+			if (!ref) {
+				SaveGuard::Forget(a_deleting.id);
+				return true;
+			}
+			if (!ref->GetParentCell()) {
+				SaveGuard::ExcludeOurs(ref.get());
+			}
+			return false;
+		});
+		SaveGuard::Frame();
 		UpdatePendingSolid();
 		for (auto& [id, remote] : players) {
 			// Drop snapshots that are too old to ever be rendered again.
@@ -1631,12 +1679,36 @@ namespace RemotePlayers
 			const auto sampled = Sample(remote, now);
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
+			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
+			// engine unloading it would write the record out and crash on the cell it no longer has. A frame copy the
+			// stand-in is in is the engine's: only its record goes (it goes with the stand-in).
+			if (const auto light = remote.light.get(); Adrift(light.get(), remote.lightPlacedAt, now)) {
+				++adrift;
+				DeleteLight(remote);
+			}
+			if (const auto frame = remote.frame.get(); Adrift(frame.get(), remote.framePlacedAt, now)) {
+				const auto standIn = GetActor(remote);
+				if (!standIn || Equipment::PowerArmorFrameOf(standIn).get() != frame.get()) {
+					++adrift;
+					DeleteFrame(remote, standIn);
+				}
+			}
+
+			// In power armor with no frame here to place a copy of, for a second (the first status of a wear names none):
+			// the stand-in wears their pieces as they are, and nothing else is logged of it (no "is in power armor").
+			if (remote.frameUnknown.Update(remote.powerArmorOn, WornFrame(remote) != nullptr, now)) {
+				REX::WARN("RemotePlayers: '{}' is in power armor, but the frame they told ({:08X}) is {}; their stand-in wears the pieces with no frame copy", remote.name, remote.powerArmorFrame,
+					remote.powerArmorFrame ? "no frame in this game" : "none");
+			}
+
 			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
 			UpdateOriginal(remote, now);
 
 			auto actor = GetActor(remote);
 			if (!actor && remote.registered) {
-				// The game removed our puppet (e.g. cell unload); forget the stale registration.
+				// The game removed our puppet (e.g. cell unload); forget the stale registration. Its form may still be
+				// there: it is kept out of saves while it is.
+				SaveGuard::Forget(remote.registeredId);
 				DeleteActor(remote);
 			}
 			if (actor && IsBroken(actor)) {
@@ -1826,8 +1898,8 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} respawnWaits={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, respawnWaits, graveyard.size(),
-				flushedBeforeSave);
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, respawnWaits, adrift,
+				graveyard.size(), flushedBeforeSave);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
