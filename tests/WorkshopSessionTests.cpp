@@ -90,6 +90,7 @@ namespace
 		std::map<int, Piece>                               world;   // what stands in the world, by an ID of the stand-in's own
 		std::map<Key, int>                                 copies;  // the copies this run knows, as handles
 		std::set<WorkshopCells::Where>                     loaded;
+		bool                                               benchLoaded = true;  // the settlement's workbench is in memory (WorkshopSync::WhereOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem> inbox;
 		int                                                nextId = 1;
 		Clock::time_point                                  now{};
@@ -130,6 +131,10 @@ namespace
 					world.erase(it->second);
 					copies.erase(it);
 				}
+				return;
+			}
+			if (!benchLoaded) {
+				inbox.Wait({}, a_key, a_item);
 				return;
 			}
 			if (!loaded.contains(Cell(a_item))) {
@@ -191,11 +196,13 @@ namespace
 			}
 		}
 
-		// A cell attaches: what waits in it, or next to it, gets in line again.
+		// A cell attaches (WorkshopSync::Frame): what waits in it, or next to it, gets in line again, and
+		// what waits nowhere.
 		void Attach(const WorkshopCells::Where& a_cell)
 		{
 			loaded.insert(a_cell);
 			inbox.Retry(inbox.Pending().Near(a_cell));
+			inbox.Retry(inbox.Pending().Nowhere());
 		}
 
 		// A save is loaded (WorkshopSync::OnGameLoaded): the world is the save's again, and the handles of
@@ -378,6 +385,33 @@ TEST("workshop session: a newer report for a piece waiting for its cell wins, wh
 	CHECK(bob.At(150.0f) == 1);
 	CHECK(bob.At(200.0f) == 0);
 	CHECK(bob.At(300.0f) == 1);
+	CHECK(bob.inbox.Pending().Empty());
+}
+
+TEST("workshop session: a friend's building that came while its workbench wasn't loaded shows up once a cell brings the workbench")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	Game bob;  // far away: neither the settlement nor its workbench is loaded
+	bob.benchLoaded = false;
+	bob.Receive(Received(f, 2));
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.world.empty());
+	CHECK(bob.inbox.Pending().Nowhere().size() == 1);
+
+	// Bob travels: a cell on the way attaches, and the next with the settlement and its workbench.
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 30000.0f, 30000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.world.empty());
+	bob.benchLoaded = true;
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.At(100.0f) == 1);
 	CHECK(bob.inbox.Pending().Empty());
 }
 

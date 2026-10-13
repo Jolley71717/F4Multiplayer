@@ -1033,6 +1033,9 @@ namespace WorkshopSync
 				TryPendingNear(cell.where);
 				TryPendingScrapsIn(cell.id);
 			}
+			if (!fresh.empty()) {
+				inbox.Retry(inbox.Pending().Nowhere());  // their workbench may have come with one of them
+			}
 		}
 		const auto applyStart = Clock::now();
 		if (inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [] { return Clock::now(); }, ApplyNow) > 0) {

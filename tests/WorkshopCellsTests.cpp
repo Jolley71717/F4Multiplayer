@@ -63,13 +63,19 @@ TEST("workshop cells: an interior brings up only what waits in it")
 	CHECK(near[0] == 1);
 }
 
-TEST("workshop cells: what waits nowhere (its workbench isn't in this game) is never brought up")
+TEST("workshop cells: what waits nowhere (its workbench wasn't in this game) is never brought up by a cell, only as nowhere")
 {
 	Waiting waiting;
-	waiting.Put({}, 1, "a mod's settlement we don't have");
-	CHECK(waiting.Size() == 1);
+	waiting.Put({}, 1, "a settlement whose workbench wasn't loaded");
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 2, "a copy waiting for its settlement");
+	CHECK(waiting.Size() == 2);
 	CHECK(waiting.Near({}).empty());
-	CHECK(waiting.Near({ COMMONWEALTH, 0, 0 }).empty());
+	CHECK(waiting.Near({ COMMONWEALTH, 0, 0 }) == std::vector<int>{ 2 });
+	CHECK(waiting.Nowhere() == std::vector<int>{ 1 });
+	// Filed somewhere once its workbench is known, it's nowhere no more.
+	waiting.Put({ COMMONWEALTH, 0, 0 }, 1, "its workbench came");
+	CHECK(waiting.Nowhere().empty());
+	CHECK(waiting.Near({ COMMONWEALTH, 0, 0 }).size() == 2);
 }
 
 TEST("workshop cells: putting under the same key again replaces it, in its new cell")
