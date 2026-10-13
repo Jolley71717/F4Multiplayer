@@ -190,13 +190,22 @@ namespace RemoteEdits
 		return a_scale < MIN_SCALE ? MIN_SCALE : (a_scale > MAX_SCALE ? MAX_SCALE : a_scale);
 	}
 
+	// The size our copy of a friend's build is set to, when it is to change: a_current is our copy's now (1 for
+	// one just placed). Nothing when it is that size already.
+	inline std::optional<float> ScaleToApply(const Protocol::WorkshopItem& a_item, float a_current)
+	{
+		const float scale = ClampScale(a_item.scale);
+		return std::abs(a_current - scale) > 0.01f ? std::optional{ scale } : std::nullopt;
+	}
+
 	// A workbench's build area, as the game knows it here: volumes linked to the bench, loaded or not, or
 	// none at all.
 	enum class BuildArea
 	{
 		kNoVolumes,
-		kNotLoaded,
-		kLoaded,
+		kNotLoaded,     // none of them
+		kPartlyLoaded,  // some of them (a settlement's area can be several volumes, in different cells)
+		kLoaded,        // all of them
 	};
 
 	enum class Verdict
@@ -210,13 +219,15 @@ namespace RemoteEdits
 	constexpr float BUILD_AREA_RADIUS = 5000.0f;
 
 	// Whether a friend's scrap of a piece of our world falls in its workbench's build area. a_inArea: the
-	// game's own test with the volumes (only read when they are loaded). While its volumes exist but aren't
-	// loaded the scrap waits rather than being refused or let through by a guess.
+	// game's own test with the volumes that are loaded. While some of its volumes aren't loaded, a scrap not in
+	// the loaded ones waits (it may lie in another) rather than being refused or let through by a guess.
 	constexpr Verdict ScrapReach(BuildArea a_area, bool a_inArea, float a_distanceToBench)
 	{
 		switch (a_area) {
 		case BuildArea::kLoaded:
 			return a_inArea ? Verdict::kApply : Verdict::kRefuse;
+		case BuildArea::kPartlyLoaded:
+			return a_inArea ? Verdict::kApply : Verdict::kWait;
 		case BuildArea::kNotLoaded:
 			return Verdict::kWait;
 		default:

@@ -255,9 +255,8 @@ namespace WorkshopSync
 		{
 			a_ref->SetLocationOnReference({ a_item.position[0], a_item.position[1], a_item.position[2] });
 			a_ref->SetAngleOnReference({ a_item.rotation[0], a_item.rotation[1], a_item.rotation[2] });
-			const float scale = RemoteEdits::ClampScale(a_item.scale);  // a friend's message can say any size
-			if (std::abs(a_ref->refScale / 100.0f - scale) > 0.01f) {
-				a_ref->SetScale(scale);
+			if (const auto scale = RemoteEdits::ScaleToApply(a_item, a_ref->refScale / 100.0f)) {  // a friend's message can say any size
+				a_ref->SetScale(*scale);
 			}
 		}
 
@@ -398,8 +397,8 @@ namespace WorkshopSync
 			if (!ref) {
 				return true;
 			}
-			if (const float scale = RemoteEdits::ClampScale(a_item.scale); std::abs(scale - 1.0f) > 0.01f) {
-				ref->SetScale(scale);
+			if (const auto scale = RemoteEdits::ScaleToApply(a_item, 1.0f)) {
+				ref->SetScale(*scale);
 			}
 			copies[a_key] = { handle, Clock::now() };
 			NoteCopy(handle);
@@ -459,7 +458,8 @@ namespace WorkshopSync
 				return true;
 			}
 			const auto area = BuildAreaState(*workshop);
-			const bool inArea = area == RemoteEdits::BuildArea::kLoaded && RE::Workshop::IsLocationWithinBuildableArea(*workshop, ref->data.location);
+			const bool inArea = (area == RemoteEdits::BuildArea::kLoaded || area == RemoteEdits::BuildArea::kPartlyLoaded) &&
+			                    RE::Workshop::IsLocationWithinBuildableArea(*workshop, ref->data.location);
 			switch (RemoteEdits::ScrapReach(area, inArea, workshop->data.location.GetDistance(ref->data.location))) {
 			case RemoteEdits::Verdict::kWait:
 				scrapsDeferred.insert(a_item.refId);
@@ -747,8 +747,8 @@ namespace WorkshopSync
 		// How far a build area reaches from its workbench while none of its volumes is loaded.
 		constexpr float   BUILD_AREA_RADIUS = RemoteEdits::BUILD_AREA_RADIUS;
 
-		// Whether build-area volumes are linked to the workbench, and whether one of them is loaded. The game's
-		// own test then decides by them alone. While none is, it falls back to a radius, but around the
+		// Whether build-area volumes are linked to the workbench, and how many of them are loaded. The game's
+		// own test then decides by the loaded ones alone. While none is, it falls back to a radius, but around the
 		// settlement the player is at in workshop mode (its location's marker and radius) whichever workbench
 		// it is asked about, and around the workbench only outside workshop mode.
 		RemoteEdits::BuildArea BuildAreaState(const RE::TESObjectREFR& a_bench)
@@ -758,23 +758,25 @@ namespace WorkshopSync
 			if (!children || !*keyword) {
 				return RemoteEdits::BuildArea::kNoVolumes;
 			}
-			bool linked = false;
+			std::size_t linked = 0, loaded = 0;
 			for (const auto& child : children->linkedChildren) {
 				if (child.keyword != *keyword) {
 					continue;
 				}
-				linked = true;
+				++linked;
 				const auto volume = child.REFR.get();
-				if (volume && volume->extraList && volume->extraList->GetPrimitive()) {
-					return RemoteEdits::BuildArea::kLoaded;
-				}
+				loaded += volume && volume->extraList && volume->extraList->GetPrimitive();
 			}
-			return linked ? RemoteEdits::BuildArea::kNotLoaded : RemoteEdits::BuildArea::kNoVolumes;
+			if (linked == 0) {
+				return RemoteEdits::BuildArea::kNoVolumes;
+			}
+			return loaded == 0 ? RemoteEdits::BuildArea::kNotLoaded : (loaded < linked ? RemoteEdits::BuildArea::kPartlyLoaded : RemoteEdits::BuildArea::kLoaded);
 		}
 
 		bool BuildAreaLoaded(const RE::TESObjectREFR& a_bench)
 		{
-			return BuildAreaState(a_bench) == RemoteEdits::BuildArea::kLoaded;
+			const auto area = BuildAreaState(a_bench);
+			return area == RemoteEdits::BuildArea::kLoaded || area == RemoteEdits::BuildArea::kPartlyLoaded;
 		}
 
 		// Whether the spot is in the workbench's build area: inside one of the build-area volumes linked

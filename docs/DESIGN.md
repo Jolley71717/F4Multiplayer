@@ -350,7 +350,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (`containerRefused`); other containers, vendors included, follow friends | yes |
-| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in a loaded build area (`scrapRefused`, `scrapDeferred`) | yes |
+| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there) | yes |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 
 A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our
@@ -367,6 +367,8 @@ To check live before this ships (the tests cannot reach the game):
 - A friend's grenade thrown into a melee next to the other player and their companion kills the
   enemies in both games, and the first explosions in the log read a radius of about 500 (a Fat Man's
   shell under 1024) with `explosionRefusedRadius=0`.
+- Junk scrapped in one game is gone in the other, at a settlement whose build area is several
+  volumes too (scripted pieces are left alone in the other game, as the host's own walk leaves them).
 
 Not done yet: a single `Mutates(MessageType)` list the server and a CI check share, so a new message
 that changes the world cannot ship without a row here.

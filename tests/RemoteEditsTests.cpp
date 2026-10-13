@@ -111,12 +111,32 @@ TEST("remote edits: a friend's build is shown no smaller than a tenth and no big
 	CHECK(ClampScale(INF) == 10.0f);
 }
 
+TEST("remote edits: a friend's build is set to its size here only when that changes, and never past the bounds")
+{
+	Protocol::WorkshopItem item;
+	item.scale = 1.0f;
+	CHECK(!ScaleToApply(item, 1.0f));  // placed at the game's own size: left alone
+	item.scale = 1.005f;
+	CHECK(!ScaleToApply(item, 1.0f));
+	item.scale = 1.5f;
+	CHECK(ScaleToApply(item, 1.0f) == 1.5f);
+	CHECK(!ScaleToApply(item, 1.5f));  // moved, the same size
+	item.scale = 100.0f;
+	CHECK(ScaleToApply(item, 1.0f) == MAX_SCALE);
+	CHECK(!ScaleToApply(item, MAX_SCALE));
+	item.scale = 0.0001f;
+	CHECK(ScaleToApply(item, 1.0f) == MIN_SCALE);
+}
+
 TEST("remote edits: a friend's scrap is applied in the build area, waits while its volumes aren't loaded, and is refused outside")
 {
 	CHECK(ScrapReach(BuildArea::kLoaded, true, 99999.0f) == Verdict::kApply);  // the volumes decide, not the distance
 	CHECK(ScrapReach(BuildArea::kLoaded, false, 10.0f) == Verdict::kRefuse);
 	CHECK(ScrapReach(BuildArea::kNotLoaded, false, 10.0f) == Verdict::kWait);
 	CHECK(ScrapReach(BuildArea::kNotLoaded, false, 99999.0f) == Verdict::kWait);
+	// A settlement of several volumes, some not loaded yet: inside a loaded one goes, outside them all waits.
+	CHECK(ScrapReach(BuildArea::kPartlyLoaded, true, 99999.0f) == Verdict::kApply);
+	CHECK(ScrapReach(BuildArea::kPartlyLoaded, false, 10.0f) == Verdict::kWait);
 	CHECK(ScrapReach(BuildArea::kNoVolumes, false, 5000.0f) == Verdict::kApply);
 	CHECK(ScrapReach(BuildArea::kNoVolumes, false, 5001.0f) == Verdict::kRefuse);
 	CHECK(ScrapReach(BuildArea::kNoVolumes, false, NaN) == Verdict::kRefuse);

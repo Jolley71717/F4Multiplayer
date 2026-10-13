@@ -2022,28 +2022,84 @@ TEST("server trust: a joiner is told where each dead NPC fell before the dead li
 // --- Host authority, end to end: what one player's game sends, through the real server, judged by the --
 // --- rules the receiving game applies (src/game/RemoteEdits.h) -------------------------------------------
 
-TEST("host authority: a friend's build saved a hundred times its size comes back after a host restart shown at most ten times")
+namespace
+{
+	// The receiving game's copies of a friend's builds, as WorkshopSync places and moves them: a new copy
+	// starts at the game's own size, and each item the server passes on sets the size RemoteEdits::ScaleToApply
+	// gives (nothing: left as it is).
+	struct BuildsHere
+	{
+		std::map<std::uint32_t, float> sizes;  // ref -> our copy's size
+		std::size_t                    rescaled = 0;
+
+		void Apply(const Protocol::WorkshopItem& a_item)
+		{
+			const auto copy = sizes.find(a_item.refId);
+			const float current = copy == sizes.end() ? 1.0f : copy->second;  // placed: the game's own size
+			const auto  scale = RemoteEdits::ScaleToApply(a_item, current);
+			rescaled += scale.has_value();
+			sizes[a_item.refId] = scale.value_or(current);
+		}
+
+		void Handle(const Packets& a_packets)
+		{
+			for (const auto& item : Decoded(a_packets, MT::kWorkshopItem, Protocol::DecodeWorkshopItem)) {
+				Apply(item);
+			}
+			for (const auto& batch : Decoded(a_packets, MT::kWorkshopItems, Protocol::DecodeWorkshopItems)) {
+				for (const auto& item : batch) {
+					Apply(item);
+				}
+			}
+		}
+	};
+
+	Protocol::WorkshopItem SizedWall(std::uint32_t a_ref, float a_scale)
+	{
+		auto item = Wall(a_ref);
+		item.scale = a_scale;
+		return item;
+	}
+}
+
+TEST("host authority: a friend's builds come back after a host restart at their own size, but none bigger than ten times or smaller than a tenth")
 {
 	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
 	std::filesystem::remove(path);
 	Server::Options options;
 	options.sessionFile = path;
-	auto huge = Wall(0xFF000077);
-	huge.scale = 100.0f;  // the most the protocol lets through
 	{
 		Fixture f{ options };
 		REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
-		f.fake->Deliver(1, Built(huge));
+		f.fake->Deliver(1, Built(SizedWall(0xFF000071, 100.0f)));    // the most the protocol lets through: covers a town
+		f.fake->Deliver(1, Built(SizedWall(0xFF000072, 0.0001f)));   // too small to see, or to shoot past
+		f.fake->Deliver(1, Built(SizedWall(0xFF000073, 1.5f)));      // the workshop's own scaling
+		f.fake->Deliver(1, Built(SizedWall(0xFF000074, 1.0f)));
 		Sync(f, 1);
 	}  // the host quits: stopping saves
 
-	Fixture f{ options };
+	Fixture    f{ options };
+	BuildsHere hostGame;
 	REQUIRE(f.Join(2, Fixture::MakeHello("Host")));
-	const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
-	REQUIRE(batches.size() == 1);
-	REQUIRE(batches[0].size() == 1);
-	CHECK(batches[0][0].scale == 100.0f);  // the server keeps what was said; it can't see anyone's world
-	CHECK(RemoteEdits::ClampScale(batches[0][0].scale) == RemoteEdits::MAX_SCALE);  // the host's game shows it at ten times
+	JoinAs(f, 1, "Bob", 0xB0B);
+	hostGame.Handle(Received(f, 2));
+	REQUIRE(hostGame.sizes.size() == 4);
+	CHECK(hostGame.sizes.at(0xFF000071) == RemoteEdits::MAX_SCALE);
+	CHECK(hostGame.sizes.at(0xFF000072) == RemoteEdits::MIN_SCALE);
+	CHECK(hostGame.sizes.at(0xFF000073) == 1.5f);
+	CHECK(hostGame.sizes.at(0xFF000074) == 1.0f);
+	CHECK(hostGame.rescaled == 3);  // a copy at the game's own size is left alone
+
+	// Bob moves them about: the honest one keeps its size with no rescale, the huge one stays capped.
+	const auto before = hostGame.rescaled;
+	f.fake->Deliver(1, Built(SizedWall(0xFF000073, 1.5f)));
+	f.fake->Deliver(1, Built(SizedWall(0xFF000071, 100.0f)));
+	f.fake->Deliver(1, Built(SizedWall(0xFF000074, 50.0f)));  // the plain one, blown up
+	hostGame.Handle(Received(f, 2));
+	CHECK(hostGame.sizes.at(0xFF000073) == 1.5f);
+	CHECK(hostGame.sizes.at(0xFF000071) == RemoteEdits::MAX_SCALE);
+	CHECK(hostGame.sizes.at(0xFF000074) == RemoteEdits::MAX_SCALE);
+	CHECK(hostGame.rescaled == before + 1);
 	std::filesystem::remove(path);
 }
 
