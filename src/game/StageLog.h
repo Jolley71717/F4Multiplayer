@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -63,9 +64,10 @@ namespace StageLog
 	// What became of a stage whose turn came.
 	enum class Set
 	{
-		kSet,      // set; the next once it reads done
-		kSkipped,  // dropped: it isn't to be set here
-		kLater,    // not now; nothing that came after it is set either
+		kSet,         // set; the next once it reads done
+		kSkipped,     // dropped: it isn't to be set here
+		kLater,       // not now; nothing that came after it is set either
+		kQuestWaits,  // not now; its quest waits, the other quests go on
 	};
 
 	// Stages from other players, set here in the order they came (the order they were done in): per
@@ -77,12 +79,13 @@ namespace StageLog
 	// quests at a time, at most MAX_PER_POLL stages per poll; a quest that can't take a stage yet holds
 	// nothing up. Only setting the highest stage skipped the ones between, and with them what their
 	// scripts do: MQ104's 210 starts MQ105, so a friend who only got MQ104's last stage never got MQ105,
-	// and its stages waited for it forever.
+	// and its stages waited for it forever. Scripts don't run while the game is paused (a menu, a
+	// loading screen), so a paused poll moves the holds and timeouts on by the time that passed.
 	class Queue
 	{
 	public:
 		static constexpr auto        TIMEOUT = std::chrono::seconds(5);
-		static constexpr auto        MAX_HOLD = std::chrono::seconds(15);
+		static constexpr auto        MAX_HOLD = std::chrono::seconds(30);  // the longest wait in StageRules is 25 s
 		static constexpr std::size_t MAX_PER_POLL = 4;
 		static constexpr std::size_t MAX_WAITING = 16384;  // stages in all; more are refused
 
@@ -112,10 +115,20 @@ namespace StageLog
 		// more here (done, or the quest is already past it); Set(quest, stage) -> Set; Hold(quest,
 		// stage) -> Clock::duration: how long its script may run on once it reads done. A ready quest's
 		// settled stages are dropped, and all of a quest that is gone. Returns the stages given up on:
-		// set, but not done TIMEOUT later.
+		// set, but not done TIMEOUT later. While the game is paused nothing is set, and the time since
+		// the last poll doesn't count against any hold or timeout.
 		template <class Game>
-		std::vector<Stage> Poll(Clock::time_point a_now, Game& a_game)
+		std::vector<Stage> Poll(Clock::time_point a_now, Game& a_game, bool a_paused = false)
 		{
+			const auto sinceLast = lastPoll ? a_now - *lastPoll : Clock::duration::zero();
+			lastPoll = a_now;
+			if (a_paused) {
+				for (auto& [id, entry] : quests) {
+					entry.since += sinceLast;
+					entry.holdUntil += sinceLast;
+				}
+				return {};
+			}
 			std::vector<Stage>                                    gaveUp;
 			std::vector<std::pair<std::uint64_t, std::uint32_t>> ready;  // (when its first stage came, quest)
 			std::uint64_t                                         blockedFrom = NONE;  // what came from here on waits
@@ -186,6 +199,8 @@ namespace StageLog
 				case Set::kLater:
 					blockedFrom = from;
 					break;
+				case Set::kQuestWaits:
+					break;
 				}
 			}
 			std::erase_if(quests, [&](const auto& a_entry) { return a_entry.second.stages.empty() && a_now >= a_entry.second.holdUntil; });
@@ -231,6 +246,20 @@ namespace StageLog
 			count = 0;
 		}
 
+		// Drops every quest but these (the one whose stage took the player's controls, and the one
+		// whose stage gives them back).
+		void Keep(std::initializer_list<std::uint32_t> a_quests)
+		{
+			for (auto it = quests.begin(); it != quests.end();) {
+				if (std::ranges::find(a_quests, it->first) == a_quests.end()) {
+					count -= it->second.stages.size();
+					it = quests.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+
 	private:
 		static constexpr std::uint64_t NONE = (std::numeric_limits<std::uint64_t>::max)();
 
@@ -260,8 +289,9 @@ namespace StageLog
 			return first;
 		}
 
-		std::map<std::uint32_t, Entry> quests;
-		std::size_t                    count = 0;
-		std::uint64_t                  next = 0;
+		std::map<std::uint32_t, Entry>   quests;
+		std::size_t                      count = 0;
+		std::uint64_t                    next = 0;
+		std::optional<Clock::time_point> lastPoll;
 	};
 }

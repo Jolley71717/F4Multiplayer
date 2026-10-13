@@ -556,26 +556,29 @@ TEST("server world: door states are relayed when they change, and the latest is 
 
 // ---- quests -----------------------------------------------------------------------------
 
-TEST("server world: quest stages are relayed once and late joiners get them in order")
+TEST("server world: quest stages are relayed once, stamped with who did them, and late joiners get them in order")
 {
 	Fixture f;
-	JoinAs(f, 1, "Alice");
-	JoinAs(f, 2, "Bob");
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 
 	f.fake->Deliver(1, Stage(QUEST, 10));
 	f.fake->Deliver(2, Stage(QUEST2, 5));
-	f.fake->Deliver(1, Stage(QUEST, 20));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::QuestStage{ QUEST, 20, bob }, MT::kReportQuestStage));  // claims Bob did it
 	f.fake->Deliver(2, Stage(QUEST, 10));  // already known
 	f.fake->Deliver(1, Stage(QUEST, 20));
 	f.fake->Deliver(1, Stage(RUNTIME, 1));
 	f.fake->Deliver(1, Stage(0, 1));
 
+	// The sender's id is stamped by the server, whatever the sender said: a stage that moves the
+	// player is only followed by a friend standing with the one who did it.
 	const auto toBob = Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage);
-	CHECK((toBob == std::vector<Protocol::QuestStage>{ { QUEST, 10 }, { QUEST, 20 } }));
+	CHECK((toBob == std::vector<Protocol::QuestStage>{ { QUEST, 10, alice }, { QUEST, 20, alice } }));
 	const auto toAlice = Decoded(Received(f, 1), MT::kQuestStage, Protocol::DecodeQuestStage);
-	CHECK((toAlice == std::vector<Protocol::QuestStage>{ { QUEST2, 5 } }));
+	CHECK((toAlice == std::vector<Protocol::QuestStage>{ { QUEST2, 5, bob } }));
 
+	// Caught up from the session, nobody is "with" the one who did it: no id.
 	JoinAs(f, 3, "Carol");
 	const auto world = WorldStates(Received(f, 3));
 	REQUIRE(world.size() == 1);
@@ -588,14 +591,14 @@ TEST("server world: quest stages are relayed once and late joiners get them in o
 TEST("server world: a lower stage of a quest is still passed on")
 {
 	Fixture f;
-	JoinAs(f, 1, "Alice");
+	const auto alice = JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 
 	f.fake->Deliver(1, Stage(QUEST, 20));
 	f.fake->Deliver(1, Stage(QUEST, 10));
 	const auto stages = Decoded(Received(f, 2), MT::kQuestStage, Protocol::DecodeQuestStage);
-	CHECK((stages == std::vector<Protocol::QuestStage>{ { QUEST, 20 }, { QUEST, 10 } }));
+	CHECK((stages == std::vector<Protocol::QuestStage>{ { QUEST, 20, alice }, { QUEST, 10, alice } }));
 }
 
 TEST("server world: a completed quest is relayed with the sender's player ID")

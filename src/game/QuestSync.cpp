@@ -71,6 +71,12 @@ namespace QuestSync
 		constexpr auto MAX_SCENE_HOLD = 30s;
 		// After a warning that a stage will move the player, more such stages go without another one.
 		constexpr auto WARNING_COVERS = 60s;
+		// A stage set here took the player's controls away, and the one that gives them back hasn't
+		// come this long after: it is set outright (MQ206's 1200 after its 500; the teleport between
+		// them takes 10 s, a loading screen included).
+		constexpr auto LOCK_TIMEOUT = 90s;
+		// Stage reports kept while not connected (the welcome still to come, a reconnect), at most.
+		constexpr std::size_t MAX_UNSENT = 1024;
 		// The quests caught up with are named in one notice, once none came for a moment (or every so often).
 		constexpr auto NOTICE_QUIET = 3s;
 		constexpr auto NOTICE_EVERY = 15s;
@@ -89,7 +95,24 @@ namespace QuestSync
 		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
 		StageLog::Queue                                  waiting;  // stages from other players, until they are set here
 		std::unordered_set<std::uint32_t>                waited;   // quests whose stages waited for the quest to start here
-		std::unordered_map<std::uint64_t, Clock::time_point> liveAt;  // friends' stages that came live (quest << 16 | stage)
+		struct Live
+		{
+			Clock::time_point at;
+			std::uint32_t     playerId;  // who did it (0: not known)
+		};
+		std::unordered_map<std::uint64_t, Live>          liveAt;  // friends' stages that came live (quest << 16 | stage)
+		// A stage set here took the player's controls away (StageRules::LOCKS), and the stage that gives
+		// them back is still to come.
+		struct Locked
+		{
+			std::uint32_t     quest;
+			std::uint16_t     stage;
+			std::uint32_t     releaseQuest;
+			std::uint16_t     releaseStage;
+			Clock::time_point since;
+		};
+		std::optional<Locked>                            locked;
+		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		std::vector<std::vector<std::uint8_t>>           outgoing;
 		Clock::time_point                                nextPoll{};
@@ -102,7 +125,6 @@ namespace QuestSync
 		std::vector<std::string>                         caughtUpNames;
 		Clock::time_point                                caughtUpFirst{};
 		Clock::time_point                                caughtUpLast{};
-		bool                                             repairChecked = false;
 		std::uint32_t                                    reported = 0;
 		std::uint32_t                                    applied = 0;
 		std::uint32_t                                    caughtUp = 0;  // ... after waiting for the quest to start here
@@ -112,6 +134,7 @@ namespace QuestSync
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
+		std::uint32_t                                    released = 0;  // controls given back by the timeout
 		std::unordered_map<std::uint32_t, std::uint16_t> miscStages;  // misc quests: stage changes only
 		Clock::time_point                                lastStageChange{};
 
@@ -165,23 +188,27 @@ namespace QuestSync
 			return a_now - lastCombat < AFTER_COMBAT;
 		}
 
-		bool NearFriend()
+		// The game is paused (the Pip-Boy, the pause menu, a container, a terminal): scripts don't run.
+		bool Paused()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return !ui || ui->menuMode != 0;
+		}
+
+		// Whether this friend (the one who did a stage) is close by. Not any friend: with three players,
+		// a stage one of them did across the map mustn't move the two standing together.
+		bool NearFriend(std::uint32_t a_id)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
-			if (!player) {
+			const auto position = a_id ? RemotePlayers::PositionOf(a_id) : std::nullopt;
+			if (!player || !position) {
 				return false;
 			}
 			const auto& at = player->data.location;
-			return std::ranges::any_of(RemotePlayers::List(), [&](const RemotePlayers::Info& a_friend) {
-				const auto position = RemotePlayers::PositionOf(a_friend.id);
-				if (!position) {
-					return false;
-				}
-				const float dx = position->x - at.x;
-				const float dy = position->y - at.y;
-				const float dz = position->z - at.z;
-				return dx * dx + dy * dy + dz * dz <= NEAR_FRIEND * NEAR_FRIEND;
-			});
+			const float dx = position->x - at.x;
+			const float dy = position->y - at.y;
+			const float dz = position->z - at.z;
+			return dx * dx + dy * dy + dz * dz <= NEAR_FRIEND * NEAR_FRIEND;
 		}
 
 		// The main story and faction quests (their finales too) are shared only if the host chose a
@@ -277,6 +304,29 @@ namespace QuestSync
 			return "it moves the player, who isn't with the friend who did it";
 		}
 
+		// Sets a stage here as one from another player: through the console (it runs a moment later),
+		// and not reported back.
+		void SetStageHere(RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto id = a_quest->GetFormID();
+			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", id, a_stage).c_str());
+			knownStages[id] = std::max(a_quest->currentStage, a_stage);
+			if (const auto known = doneStages.find(id); known != doneStages.end()) {
+				StageLog::Insert(known->second, a_stage);
+			}
+			remoteStageAt[id] = Clock::now();
+			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
+			++applied;
+		}
+
+		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
+		// after its 500): without a combat hold, since the player can't fight anyway, and without
+		// another warning, since they were warned before the lock.
+		bool Unlocking(std::uint32_t a_quest)
+		{
+			return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest);
+		}
+
 		// Sets another player's stage here, if it is this player's to have (see StageRules::Judge). That
 		// runs the stage's script, as it did in their game (an achievement in it too, where the game
 		// awards them), and starts a quest from wherever the player is; it can pull a new character out
@@ -291,22 +341,26 @@ namespace QuestSync
 			const auto  file = FileOf(quest);
 			const auto  local = a_quest & 0x00FFFFFF;
 			const auto  rule = file ? StageRules::Find(*file, local, a_stage) : nullptr;
+			const auto  lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr;
+			const auto  releaseId = lock ? (a_quest & 0xFF000000) | lock->releaseQuest : 0u;
 
 			StageRules::Situation now;
 			now.sharedStory = Story::Shared();
 			const auto live = liveAt.find(Key(a_quest, a_stage));
-			now.live = live != liveAt.end() && a_now - live->second < LIVE_FOR;
-			now.held = combatHold;
-			if (const auto lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr) {
-				const auto releaseId = (a_quest & 0xFF000000) | lock->releaseQuest;
+			now.live = live != liveAt.end() && a_now - live->second.at < LIVE_FOR;
+			const bool unlocking = Unlocking(a_quest);
+			now.held = combatHold && !unlocking;
+			if (lock) {
 				const auto release = RE::TESForm::GetFormByID<RE::TESQuest>(releaseId);
 				now.releaseComing = waiting.Contains(releaseId, lock->releaseStage) || (release && QuestStageLayout::IsStageDone(release, lock->releaseStage));
 			}
-			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
+			if (unlocking) {
+				now.warned = StageRules::WARNING;
+			} else if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
 			if (rule && (rule->flags & StageRules::kMoves) && now.live) {
-				now.nearFriend = NearFriend();
+				now.nearFriend = NearFriend(live->second.playerId);
 			}
 			switch (StageRules::Judge(rule, now)) {
 			case StageRules::Verdict::kSkip:
@@ -320,26 +374,51 @@ namespace QuestSync
 				return StageLog::Set::kLater;
 			case StageRules::Verdict::kLater:
 				return StageLog::Set::kLater;
+			case StageRules::Verdict::kQuestWaits:
+				if (lockWaitLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} takes the player's controls away; waiting for {:08X} stage {}, which gives them back",
+						a_quest, name ? name : "", a_stage, releaseId, lock ? lock->releaseStage : 0);
+				}
+				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
 				break;
 			}
 
-			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", a_quest, a_stage).c_str());
+			SetStageHere(quest, a_stage);
 			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live ? "" : " (catching up)");
-			// That stage came from another player; don't report it back. (The console sets it a moment later.)
-			knownStages[a_quest] = std::max(quest->currentStage, a_stage);
-			if (const auto known = doneStages.find(a_quest); known != doneStages.end()) {
-				StageLog::Insert(known->second, a_stage);
+			if (lock) {
+				locked = Locked{ a_quest, a_stage, releaseId, lock->releaseStage, a_now };
 			}
-			remoteStageAt[a_quest] = Clock::now();
-			lastStageChange = Clock::now();  // its quest XP is ours, not kill XP
-			++applied;
 			if (waited.erase(a_quest) > 0) {
 				++caughtUp;
 				NoteCaughtUp(name, a_now);
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
 			return StageLog::Set::kSet;
+		}
+
+		// The player has their controls back once the lock's release stage is done. If it hasn't come
+		// LOCK_TIMEOUT after the lock (its stage was given up on, or never ran), it is set outright
+		// rather than leave the player unable to move.
+		void CheckLock(Clock::time_point a_now)
+		{
+			if (!locked) {
+				return;
+			}
+			const auto release = RE::TESForm::GetFormByID<RE::TESQuest>(locked->releaseQuest);
+			if (!release || QuestStageLayout::IsStageDone(release, locked->releaseStage)) {
+				locked.reset();
+				return;
+			}
+			if (a_now - locked->since < LOCK_TIMEOUT) {
+				return;
+			}
+			REX::WARN("QuestSync: {:08X} stage {} took the player's controls {} s ago and {:08X} stage {} hasn't given them back; setting it",
+				locked->quest, locked->stage, std::chrono::duration_cast<std::chrono::seconds>(LOCK_TIMEOUT).count(), locked->releaseQuest, locked->releaseStage);
+			SetStageHere(release, locked->releaseStage);
+			++released;
+			Hud::Notify("Your friends' story step didn't finish; you have your controls back");
+			locked.reset();
 		}
 
 		// The game as the queue sees it.
@@ -410,7 +489,7 @@ namespace QuestSync
 			return;
 		}
 		if (a_live) {
-			liveAt[Key(a_stage.quest, a_stage.stage)] = Clock::now();
+			liveAt[Key(a_stage.quest, a_stage.stage)] = Live{ Clock::now(), a_stage.playerId };
 		}
 	}
 
@@ -438,6 +517,9 @@ namespace QuestSync
 		nextPoll = now + POLL_INTERVAL;
 
 		if (!WorldSync::InWorld()) {
+			// A loading screen: no script runs, so no hold runs out.
+			Game game{ now };
+			waiting.Poll(now, game, true);
 			return;
 		}
 		// Misc quests (radiant ones give XP too) are only watched for stage changes.
@@ -463,19 +545,21 @@ namespace QuestSync
 			return;
 		}
 
-		// Friends' stages are only set during a session (OnSessionEnded drops the rest).
-		if (a_inSession) {
+		// Friends' stages are only set during a session (OnSessionEnded drops the rest), except what
+		// gives the player their controls back after a lock stage set here.
+		if (a_inSession || locked) {
 			busy = PlayerBusy(now);
 			combatHold = CombatHold(now);
-			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second >= LIVE_FOR; });
+			std::erase_if(liveAt, [&](const auto& a_entry) { return now - a_entry.second.at >= LIVE_FOR; });
 			Game game{ now };
-			for (const auto& stage : waiting.Poll(now, game)) {
+			for (const auto& stage : waiting.Poll(now, game, Paused())) {
 				++gaveUp;
 				REX::WARN("QuestSync: {:08X} stage {} still not done {} s after setting it; going on with the next", stage.quest, stage.stage,
 					std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
 			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 			FlushCaughtUp(now);
+			CheckLock(now);
 		}
 
 		if (!reportFrom) {
@@ -483,8 +567,9 @@ namespace QuestSync
 		}
 		const bool report = now >= *reportFrom;
 
-		if (a_inSession && report && !repairChecked && Story::Shared() && !Story::InOpening()) {
-			repairChecked = true;
+		// Every poll, not once: the catch-up itself can leave MQ104 past 210 without it (a session
+		// file from before 210 was reported), after this check first ran.
+		if (a_inSession && report && Story::Shared() && !Story::InOpening()) {
 			RepairStory();
 		}
 
@@ -543,20 +628,34 @@ namespace QuestSync
 		}
 	}
 
-	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
 	{
+		if (!a_sending) {
+			// Kept until connected: a stage is seen done only once, so a report dropped now (the welcome
+			// still to come, a reconnect) would never be sent, and what its script starts (MQ104's 210
+			// starts MQ105) would wait forever in the others' games.
+			if (outgoing.size() > MAX_UNSENT) {
+				outgoing.erase(outgoing.begin(), outgoing.end() - MAX_UNSENT);
+			}
+			return {};
+		}
 		return std::exchange(outgoing, {});
 	}
 
 	void OnSessionEnded()
 	{
-		waiting.Clear();
+		// A stage set here has the player's controls: its quest goes on until they are given back.
+		if (locked) {
+			waiting.Keep({ locked->quest, locked->releaseQuest });
+		} else {
+			waiting.Clear();
+		}
 		waited.clear();
 		liveAt.clear();
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneSince.reset();
-		repairChecked = false;
+		lockWaitLogged.clear();
 	}
 
 	void Rebaseline()
@@ -573,7 +672,9 @@ namespace QuestSync
 		caughtUpNames.clear();
 		warnedAt.reset();
 		sceneSince.reset();
-		repairChecked = false;
+		lockWaitLogged.clear();
+		locked.reset();  // the save says whether the player has their controls
+		outgoing.clear();  // progress of the game before the load
 	}
 
 	Clock::time_point LastStageChange()
@@ -583,7 +684,7 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={}",
-			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired);
+		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={}{}",
+			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.size(), locked ? " locked" : "");
 	}
 }

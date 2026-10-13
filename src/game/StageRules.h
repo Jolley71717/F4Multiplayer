@@ -189,6 +189,7 @@ namespace StageRules
 		{ 0, 0x05DEE4, 1500, kStory, 0 },
 		{ 0, 0x05DEE4, 2000, kStory, 0 },
 		{ 0, 0x05DEE4, 2010, kStory, 0 },
+		{ 0, 0x05DEE4, 2100, kStory, 0 },  // Stop(): with 1500 and 2000 left out, the quest would end unfinished
 		{ 0, 0x05FD90, 410, 0, 10 },  // RRM01
 		{ 0, 0x064EC7, 0, kMoves | kBridge, 20 },  // BoSR01
 		{ 0, 0x068D7B, 0, kMoves, 20 },  // BoS100Fight
@@ -233,7 +234,7 @@ namespace StageRules
 		{ 0, 0x0AE51C, 90, 0, 50 },
 		{ 0, 0x0B1752, 40, 0, 10 },  // MQ206
 		{ 0, 0x0B1752, 500, kMoves | kBridge, 1 },
-		{ 0, 0x0B1752, 1000, kMoves, 40 },
+		{ 0, 0x0B1752, 1000, kMoves | kBridge, 40 },  // the teleporter: the only way into the Institute
 		{ 0, 0x0B1752, 1050, 0, 20 },
 		{ 0, 0x0B1D79, 0, kMoves | kBridge, 20 },  // BoSM01
 		{ 0, 0x0B1D79, 1, kMoves | kBridge, 40 },
@@ -358,8 +359,11 @@ namespace StageRules
 	// Stages whose script takes the player's controls away until a later stage gives them back. They
 	// are only set once that stage is coming too (waiting here, or done), so the player is never left
 	// without controls: in MQ206 "Molecular Level", 500 takes them at the teleporter and 1200 gives them
-	// back in the Institute. The faction versions' 1400 set MQ206's 500. 500 also starts MQ207, and
-	// nothing else does in normal play, so it can't be skipped.
+	// back in the Institute (1000 between them is the teleport itself, which is why 500 is a bridge
+	// too: it starts MQ207, and nothing else does in normal play). Until the release is coming, only
+	// the lock's own quest waits (see Verdict::kQuestWaits): a release that never comes (the friend's
+	// game crashed in the teleport) mustn't hold up every other quest. The faction versions' 1400 set
+	// MQ206's 500.
 	struct Lock
 	{
 		std::uint8_t  file;
@@ -419,8 +423,9 @@ namespace StageRules
 	{
 		kSet,
 		kSkip,   // never: it isn't the player's to have
-		kLater,  // not yet; nothing that came after it is set either
-		kWarn,   // not yet: tell the player first that it will move them
+		kLater,       // not yet; nothing that came after it is set either
+		kWarn,        // not yet: tell the player first that it will move them
+		kQuestWaits,  // not yet: its quest waits for the stage that frees the player; other quests go on
 	};
 
 	struct Situation
@@ -446,7 +451,7 @@ namespace StageRules
 			return Verdict::kSkip;
 		}
 		if (!a_now.releaseComing) {
-			return Verdict::kLater;
+			return Verdict::kQuestWaits;
 		}
 		if (a_now.live && (!(flags & kMoves) || a_now.nearFriend)) {
 			return Verdict::kSet;

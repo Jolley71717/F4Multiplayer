@@ -97,7 +97,7 @@ namespace
 			return it != holds.end() ? it->second : Clock::duration::zero();
 		}
 
-		std::vector<Stage> Poll(StageLog::Queue& a_queue, Clock::time_point a_now) { return a_queue.Poll(a_now, *this); }
+		std::vector<Stage> Poll(StageLog::Queue& a_queue, Clock::time_point a_now, bool a_paused = false) { return a_queue.Poll(a_now, *this, a_paused); }
 
 		// Polls and runs the console until nothing is waiting (or a_polls run out).
 		void Run(StageLog::Queue& a_queue, Clock::time_point& a_now, int a_polls = 50)
@@ -431,6 +431,107 @@ TEST("stage queue: a skipped stage is dropped and the next goes; one for later h
 	game.Run(queue, now);
 	CHECK((game.set == std::vector<Stage>{ { MQ105, 180 }, { SIDE, 10 }, { MQ105, 185 } }));
 	CHECK(queue.Size() == 0);
+}
+
+TEST("stage queue: a lock whose release never comes holds up only its own quest (MQ206 500 without 1200)")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 400;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ105].current = 170;
+	game.verdicts[{ MQ206, 500 }] = StageLog::Set::kQuestWaits;  // 1200 isn't waiting here
+	StageLog::Queue queue;
+	queue.Add(MQ206, 500);
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);  // came after it
+	queue.Add(MQ105, 180);
+
+	auto now = Start();
+	game.Run(queue, now, 20);
+	// Everything else goes; MQ206 waits, 1000 behind its 500.
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ105, 180 } }));
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 500, 1000 }));
+	CHECK(queue.Size() == 2);
+
+	// The release comes: 500 goes, then 1000, then 1200.
+	queue.Add(MQ206, 1200);
+	game.verdicts.erase({ MQ206, 500 });
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ105, 180 }, { MQ206, 500 }, { MQ206, 1000 }, { MQ206, 1200 } }));
+	CHECK(queue.Size() == 0);
+}
+
+TEST("stage queue: when the session ends with the player's controls taken, only the lock's quest is kept")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 500;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ207].flags = 0;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);
+	queue.Add(MQ207, 10);
+	queue.Add(MQ206, 1050);
+	queue.Add(MQ206, 1200);
+	queue.Add(SIDE, 20);
+	CHECK(queue.Size() == 6);
+
+	queue.Keep({ MQ206, MQ206 });
+	CHECK(queue.Size() == 3);
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 1000, 1050, 1200 }));
+	CHECK(!queue.Contains(SIDE));
+	CHECK(!queue.Contains(MQ207));
+
+	auto now = Start();
+	game.Run(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { MQ206, 1050 }, { MQ206, 1200 } }));
+	CHECK(queue.Size() == 0);
+}
+
+TEST("stage queue: while the game is paused nothing is set, and holds and timeouts don't run down")
+{
+	FakeGame game;
+	game.quests[MQ206].current = 700;
+	game.quests[SIDE];
+	game.holds[{ MQ206, 1000 }] = 5s;
+	StageLog::Queue queue;
+	queue.Add(MQ206, 1000);
+	queue.Add(SIDE, 10);
+
+	const auto start = Start();
+	game.Poll(queue, start);
+	game.Tick();
+	game.Poll(queue, start + 500ms);  // 1000 reads done; its script runs on for 5 s
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 } }));
+	// The Pip-Boy is open from 1 s to 4 s: the script's wait doesn't advance, so neither does the hold.
+	game.Poll(queue, start + 1s, true);
+	game.Poll(queue, start + 4s, true);
+	game.Poll(queue, start + 5500ms);
+	CHECK(game.set.size() == 1);
+	game.Poll(queue, start + 8s);
+	CHECK(game.set.size() == 1);
+	// The half second before the first paused poll counts as paused too: the hold ends at 9 s.
+	game.Poll(queue, start + 8500ms);
+	CHECK(game.set.size() == 1);
+	game.Poll(queue, start + 9s);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 1000 }, { SIDE, 10 } }));
+
+	// A stage set just before a pause isn't given up on for the time paused.
+	game.quests[SIDE].missing = { 20 };
+	queue.Add(SIDE, 20);
+	game.Tick();
+	game.Poll(queue, start + 9500ms);
+	CHECK(game.set.size() == 3);
+	game.Poll(queue, start + 10s, true);
+	CHECK(game.Poll(queue, start + 30s, true).empty());
+	CHECK(game.Poll(queue, start + 33s).empty());
+	CHECK(!game.Poll(queue, start + 35s).empty());
+	// Nothing is set while paused, either.
+	queue.Add(SIDE, 30);
+	game.Poll(queue, start + 36s, true);
+	CHECK(game.set.size() == 3);
+	game.Poll(queue, start + 36500ms);
+	CHECK(game.set.size() == 4);
 }
 
 TEST("stage queue: a full queue refuses more, and clears")

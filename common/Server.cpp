@@ -1137,11 +1137,13 @@ void Server::Run()
 		if (!allowEvent(a_player)) {
 			return;
 		}
-		const auto stage = Protocol::DecodeQuestStage(a_data);
+		auto stage = Protocol::DecodeQuestStage(a_data);
 		if (!stage || !Protocol::IsShareableRef(stage->quest) || questStages.size() >= Protocol::MAX_WORLD_STATE_ACTORS ||
 			questStageKeys.contains(questKey(*stage))) {
 			return;
 		}
+		// Who did it: a stage that moves the player is only followed by a friend standing with them.
+		stage->playerId = a_player.id;
 		questStages.push_back(*stage);
 		questStageKeys.insert(questKey(*stage));
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);

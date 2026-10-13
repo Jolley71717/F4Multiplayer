@@ -799,10 +799,8 @@ namespace Session
 		}
 		QuestSync::Frame(welcomed);
 		Achievements::Frame();
-		for (auto& packet : QuestSync::TakeOutgoing()) {
-			if (welcomed) {
-				client->Send(std::move(packet), true);
-			}
+		for (auto& packet : QuestSync::TakeOutgoing(welcomed)) {
+			client->Send(std::move(packet), true);
 		}
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {

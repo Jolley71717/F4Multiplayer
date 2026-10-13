@@ -118,7 +118,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   included (the game only awards them without mods), and goes into each player's save when they
   save. Scenes can play out where you aren't, and a friend's faction choices become yours. A
   story step that has to move you to go on (the Institute's teleporter) comes after a 10-second
-  warning, and not during a fight. With the default `own` story, a side quest never moves your story
+  warning, and not during a fight; once it has begun it finishes even if the connection drops, so
+  you are never left without your controls. With the default `own` story, a side quest never moves your story
   on (Sanctuary doesn't make you a Minuteman because a friend joined them).
 - **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
   relay, Mass Fusion's reactor) open for each player at their own stage with the default `own`

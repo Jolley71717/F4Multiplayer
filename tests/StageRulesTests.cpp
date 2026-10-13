@@ -41,13 +41,17 @@ TEST("stage rules: what the fragments do")
 	CHECK(FlagsOf(0x0229E6, 177) == kPays);  // MQ105: the 250 caps bribe for Geneva
 	CHECK(FlagsOf(0x1764DF, 40) == kPays);   // FFDiamondCity10: a Stimpak
 	CHECK(FlagsOf(0x0229FD, 37) == kMoves);  // MS07b: MoveTo the dig site, faded out
-	CHECK(FlagsOf(0x0B1752, 1000) == kMoves);           // MQ206: through the teleporter door
-	CHECK(FlagsOf(0x0B1752, 500) == (kMoves | kBridge));  // MQ206: controls off, and starts MQ207
+	CHECK(FlagsOf(0x0B1752, 1000) == (kMoves | kBridge));  // MQ206: through the teleporter door, the only way into the Institute
+	CHECK(FlagsOf(0x0B1752, 500) == (kMoves | kBridge));   // MQ206: controls off, and starts MQ207
+	CHECK(FlagsOf(0x0B1752, 1050) == 0);                   // MQ206: Wait 2, then 1200
+	CHECK(!Find(0x0B1752, 1200));                          // MQ206: controls back, the quest stops
 	CHECK(FindLock(File::kFallout4, 0x0B1752, 500) && FindLock(File::kFallout4, 0x0B1752, 500)->releaseStage == 1200);
 	CHECK(FindLock(File::kFallout4, 0x0B26BC, 1400));  // MQ206RR sets MQ206 500
 	CHECK(!FindLock(File::kFallout4, 0x0B1752, 1000));
 	CHECK(FlagsOf(0x05DEE4, 220) == kStory);   // Min01: Preston's offer, The First Step
 	CHECK(FlagsOf(0x05DEE4, 2000) == kStory);  // Min01: the Minutemen
+	CHECK(FlagsOf(0x05DEE4, 2100) == kStory);  // Min01: Stop(), which would end a Sanctuary left at 1410 by the skipped 1500
+	CHECK(FlagsOf(0x05DEE4, 1900) == 0);       // Min01: Preston's greeting, nothing of the story
 	CHECK(FlagsOf(0x108EC0, 100) == kStory);   // FFGoodneighbor01: MQ103 30
 	CHECK(FlagsOf(0x01F25E, 210) == 0);        // MQ104 210: starts MQ105, nothing to hold back
 	CHECK(!(FlagsOf(0x001B42, 10, File::kCoast) & kStory));  // Far Harbor's own story is left alone
@@ -90,6 +94,12 @@ TEST("stage rules: a friend's stage is set, skipped, or waits")
 	CHECK(Judge(&bridge, { .live = false, .held = true, .warned = WARNING }) == Verdict::kLater);
 	CHECK(Judge(&bridge, { .live = true, .nearFriend = true }) == Verdict::kSet);
 
-	// Controls taken away only once the stage that gives them back is coming.
-	CHECK(Judge(&bridge, { .live = true, .nearFriend = true, .releaseComing = false }) == Verdict::kLater);
+	// Controls taken away only once the stage that gives them back is coming; until then only its
+	// own quest waits (a release that never comes mustn't hold up every other quest), whatever else
+	// is the case.
+	CHECK(Judge(&bridge, { .live = true, .nearFriend = true, .releaseComing = false }) == Verdict::kQuestWaits);
+	CHECK(Judge(&bridge, { .live = false, .held = true, .releaseComing = false, .warned = WARNING }) == Verdict::kQuestWaits);
+	CHECK(Judge(&bridge, { .live = false, .releaseComing = true, .warned = WARNING }) == Verdict::kSet);
+	// The stages after a lock stage go on as warned, and in a fight (the player can't fight anyway).
+	CHECK(Judge(&bridge, { .live = false, .held = false, .warned = WARNING }) == Verdict::kSet);
 }
