@@ -39,7 +39,7 @@ public:
 	// Drops every connection immediately (server shutdown).
 	virtual void Close() = 0;
 
-	// For log lines, e.g. "udp 1.2.3.4:5678" or "steam 7656...".
+	// For log lines, e.g. "udp 1.2.3.x:5678" or "steam ~3fa2c1": masked, see Redact.
 	[[nodiscard]] virtual std::string Describe(PeerId a_peer) const = 0;
 
 	// The peer connects from this machine, as the host's own game does (the server also checks that it

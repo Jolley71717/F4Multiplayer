@@ -1,6 +1,7 @@
 ﻿#include "Config.h"
 
 #include "IniFile.h"
+#include "Log.h"
 
 namespace Config
 {
@@ -158,6 +159,8 @@ namespace Config
 				ParseInt(value, settings.hangSeconds);
 			} else if (key == "bHangDump") {
 				settings.hangDump = ParseBool(value);
+			} else if (key == "sLogLevel") {
+				settings.logLevel = value;
 			} else if (key == "bDevChannel") {
 				settings.devChannel = ParseBool(value);
 			} else if (key == "iDevChannelPort") {
@@ -167,6 +170,9 @@ namespace Config
 			}
 		}
 
+		if (!Log::SetLevel(settings.logLevel)) {
+			REX::WARN("Config: sLogLevel '{}' is not info or debug; keeping {}", settings.logLevel, Log::Level());
+		}
 		REX::INFO("Config: loaded {}", PATH);
 	}
 

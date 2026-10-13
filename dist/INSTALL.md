@@ -160,7 +160,11 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
   usually recovers ("connection restored"); after 20 seconds you're disconnected and the mod keeps
   trying to reconnect.
 
-- Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`
+- Logs: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`, and the last three launches' as
+  `F4Multiplayer.1.log` (the one before) to `.3.log`. They name other players as `player N`, Steam
+  accounts by a short alias such as `~3fa2c1`, and mask IP addresses, so they are fine to attach to a
+  public bug report. Crash logs, hang `.dmp` files, screenshots and logs from older versions can still
+  hold names: check those first. `sLogLevel = debug` adds more detail when you are asked for it.
 - "Your load order is different": the message names the plugins only you have or are missing, or says the order differs; match the host's list exactly.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and

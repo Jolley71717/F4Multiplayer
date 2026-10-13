@@ -2,6 +2,7 @@
 
 #include "EnetTransport.h"
 #include "Protocol.h"
+#include "Redact.h"
 #include "SessionFile.h"
 #include "WorkshopStore.h"
 
@@ -145,8 +146,10 @@ namespace
 	}
 }
 
+// Every line goes through Redact::Scrub: the lines below name players by ID and mask addresses
+// already, so this only catches what a transport's description or an error text brings in.
 Server::Server(LogFn a_log) :
-	log(std::move(a_log))
+	log([a_log = std::move(a_log)](std::string_view a_line) { a_log(Redact::Scrub(a_line)); })
 {}
 
 Server::~Server()
@@ -370,7 +373,7 @@ void Server::Run()
 		}
 		if (!a_player.floodLogged) {
 			a_player.floodLogged = true;
-			log(std::format("server: '{}' sends too many events; dropping some", a_player.name));
+			log(std::format("server: player {} sends too many events; dropping some", a_player.id));
 		}
 		return false;
 	};
@@ -477,7 +480,7 @@ void Server::Run()
 	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
-			log(std::format("server: '{}' left", a_player.name));
+			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
@@ -514,7 +517,9 @@ void Server::Run()
 				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
 				return;
 			}
-			log(std::format("server: '{}' joins with a load order that differs only in ignored plugins", hello->name));
+			// Not their name, and they have no player number yet: where they come from (masked) says which
+			// joiner it was.
+			log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
 		}
 
 		// Someone coming back gets their old ID. If their old connection is still here, their game
@@ -526,7 +531,7 @@ void Server::Run()
 					return a_entry.first != a_player.key && a_entry.second.welcomed && a_entry.second.id == known->second;
 				});
 				if (stale != players.end()) {
-					log(std::format("server: dropping the old connection of '{}' ({})", stale->second.name, describe(stale->first)));
+					log(std::format("server: dropping the old connection of player {} ({})", stale->second.id, describe(stale->first)));
 					leave(stale->second);
 					disconnect(stale->second);
 					players.erase(stale);
@@ -610,7 +615,7 @@ void Server::Run()
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
 		}
 
-		log(std::format("server: '{}' {} as player {} from {} ({} online)", a_player.name, returning ? "came back" : "joined", a_player.id, describe(a_player.key),
+		log(std::format("server: player {} {} from {} ({} online)", a_player.id, returning ? "came back" : "joined", describe(a_player.key),
 			welcomedCount()));
 	};
 
@@ -840,8 +845,8 @@ void Server::Run()
 		const auto outcome = workshop.Report(*item);
 		// Logged once a run: past the cap, every report would be.
 		if (const bool scrap = item->op == Protocol::WorkshopOp::kScrapped; outcome.full && !std::exchange(scrap ? scrapsFullLogged : builtFullLogged, true)) {
-			log(std::format("server: the session keeps at most {} {}; not keeping {:08X} from '{}', nor any more", scrap ? MAX_WORLD_SCRAPS : MAX_WORKSHOP_ITEMS,
-				scrap ? "scrapped pieces of the world" : "built objects", item->refId, a_player.name));
+			log(std::format("server: the session keeps at most {} {}; not keeping {:08X} from player {}, nor any more", scrap ? MAX_WORLD_SCRAPS : MAX_WORKSHOP_ITEMS,
+				scrap ? "scrapped pieces of the world" : "built objects", item->refId, a_player.id));
 		}
 		if (outcome.relay) {
 			broadcast(Protocol::Encode(*item, Protocol::MessageType::kWorkshopItem), true, a_player.key);

@@ -9,6 +9,7 @@
 #include "game/FrameStats.h"
 #include "game/Menu.h"
 #include "HangWatch.h"
+#include "Log.h"
 #include "MainThread.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
@@ -402,8 +403,14 @@ namespace MainThread
 
 F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
+	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
+	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
 	F4SE::Init(a_f4se);
+	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
+	if (notKept) {
+		REX::WARN("Log: could not keep the previous log ({}); it was overwritten", notKept.message());
+	}
 
 	REX::INFO("F4Multiplayer loaded");
 	if constexpr (sizeof(F4MP_BUILD_LABEL) > 1) {

@@ -148,6 +148,7 @@ namespace Downed
 				}
 			} else if (near && a_now - helpSince >= HELP_TIME) {
 				outgoing.push_back(Protocol::Encode(Protocol::Revive{ near }, Protocol::MessageType::kRevive));
+				REX::INFO("Downed: helped player {} up", near);
 				Hud::Notify(std::format("You helped {} up", name));
 				++helped;
 				helping = 0;
@@ -179,6 +180,7 @@ namespace Downed
 				++downs;
 				// The game would stand the player up again by itself after a while.
 				SetStayDown(player, true);
+				REX::INFO("Downed: down; a friend can help us up");
 				Hud::Notify(std::format("You're down! A friend can help you up. Hold {} to give up", GiveUpKey()));
 			}
 		} else if (!InEssentialDown(player)) {
@@ -246,6 +248,7 @@ namespace Downed
 		GetUp(player);
 		++revives;
 		const auto name = RemotePlayers::NameOf(a_revive.playerId);
+		REX::INFO("Downed: helped up by player {}", a_revive.playerId);
 		Hud::Notify(std::format("{} helped you up", name.empty() ? "A friend" : name));
 	}
 

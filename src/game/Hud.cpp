@@ -141,7 +141,8 @@ namespace Hud
 				clean.push_back(static_cast<char>(c));
 			}
 		}
-		REX::INFO("Hud: {}", clean);
+		// Not logged at any level: many of these name players (and carry their chat), and players attach the
+		// log to public bug reports. What the log needs is logged by the callers, by player ID.
 		std::scoped_lock l{ queueLock };
 		if (!Settled()) {
 			++held;

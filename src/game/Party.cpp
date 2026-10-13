@@ -260,6 +260,7 @@ namespace Party
 			}
 			if (!unstable && a_now - lastAck > UNSTABLE_AFTER) {
 				unstable = true;
+				REX::INFO("Party: connection to the host is unstable");
 				Hud::Notify("Multiplayer: connection to the host is unstable");
 			}
 		}
@@ -478,12 +479,15 @@ namespace Party
 				teleportTarget = a_status.playerId;
 				const auto target = FindPlayer(a_status.playerId);
 				const auto where = target && target->state ? DistanceTo(target->state->cell, target->state->worldspace, target->state->x, target->state->y) : std::string{};
+				REX::INFO("Party: player {} is down", a_status.playerId);
 				Hud::Notify(where.empty() ?
 								std::format("{} is down! Hold {} to teleport to them and help them up", name, KeyName(Config::Get().keyTeleport)) :
 								std::format("{} is down! Get to them to help them up ({})", name, where));
 			} else if (a_status.health == 0 && !a_status.downed && !wasDead) {
+				REX::INFO("Party: player {} died", a_status.playerId);
 				Hud::Notify(name + " died");
 			} else if (before.downed && !a_status.downed && a_status.health > 0) {
+				REX::INFO("Party: player {} is back up", a_status.playerId);
 				Hud::Notify(name + " is back up");
 			}
 		}
@@ -535,11 +539,13 @@ namespace Party
 		lastAck = now;
 		if (unstable) {
 			unstable = false;
+			REX::INFO("Party: connection to the host restored");
 			Hud::Notify("Multiplayer: connection restored");
 		}
 		slowAnswers = roundTripMs > HIGH_PING_MS ? slowAnswers + 1 : 0;
 		if (slowAnswers >= 5 && now >= nextPingWarning) {
 			nextPingWarning = now + 60s;
+			REX::INFO("Party: high ping to the host ({} ms)", roundTripMs);
 			Hud::Notify(std::format("Multiplayer: high ping to the host ({} ms)", roundTripMs));
 		}
 	}
@@ -563,6 +569,7 @@ namespace Party
 			killFeedShown = 0;
 		}
 		if (++killFeedShown <= 3) {
+			REX::INFO("Party: player {} killed {:08X}", a_death.playerId, a_death.refId);
 			Hud::Notify(std::format("{} killed {}", killer, victim));
 		}
 	}
@@ -629,15 +636,18 @@ namespace Party
 			return;
 		}
 		if (const auto reason = TeleportBlocked(player); !reason.empty()) {
+			REX::INFO("Party: can't teleport to player {} {}", target->id, reason);
 			Hud::Notify(std::format("Can't teleport {}", reason));
 			return;
 		}
 		if (!target->state) {
+			REX::INFO("Party: can't teleport to player {}: no position from them yet", target->id);
 			Hud::Notify(std::format("Can't find {} right now", target->name));
 			return;
 		}
 		// Their opening is a place (and a time) that doesn't exist in our game.
 		if (const auto it = known.find(target->id); it != known.end() && it->second.hasStatus && it->second.status.opening) {
+			REX::INFO("Party: can't teleport to player {}: they are still in the opening", target->id);
 			Hud::Notify(std::format("{} hasn't left Vault 111 yet", target->name));
 			return;
 		}
@@ -647,12 +657,14 @@ namespace Party
 		// Same place: go straight there. Elsewhere: load their cell or worldspace first.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			player->SetPosition(position, true);
+			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(std::format("Teleported to {}", target->name));
 			return;
 		}
 		if (const auto cell = state.cell ? RE::TESForm::GetFormByID<RE::TESObjectCELL>(state.cell) : nullptr) {
 			const std::string editorId = cell->GetFormEditorID();
 			if (editorId.empty()) {
+				REX::INFO("Party: can't teleport to player {}: cell {:08X} has no editor ID", target->id, state.cell);
 				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
 				return;
 			}
@@ -660,16 +672,19 @@ namespace Party
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
 			if (editorId.empty()) {
+				REX::INFO("Party: can't teleport to player {}: worldspace {:08X} has no editor ID", target->id, state.worldspace);
 				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
+			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);
 			Hud::Notify(std::format("Can't teleport to {}", target->name));
 			return;
 		}
 		pendingTeleport = PendingTeleport{ state.cell, state.worldspace, position, Clock::now() + TELEPORT_TIMEOUT };
+		REX::INFO("Party: teleporting to player {}", target->id);
 		Hud::Notify(std::format("Teleporting to {}", target->name));
 	}
 

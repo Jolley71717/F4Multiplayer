@@ -360,8 +360,8 @@ try {
 	# Downed first, so it is player 1 (the Reviver helps player 1 up).
 	Start-Bot $roles[0]
 	$joinDeadline = (Get-Date).AddSeconds(10)
-	while ((Get-Date) -lt $joinDeadline -and -not ((Read-Text $server.Log) -match "'Downed' joined as player 1 ")) { Start-Sleep -Milliseconds 100 }
-	if (-not ((Read-Text $server.Log) -match "'Downed' joined as player 1 ")) { throw 'Downed did not join as player 1' }
+	while ((Get-Date) -lt $joinDeadline -and -not ((Read-Text $server.Log) -match 'server: player 1 joined ')) { Start-Sleep -Milliseconds 100 }
+	if (-not ((Read-Text $server.Log) -match 'server: player 1 joined ')) { throw 'Downed did not join as player 1' }
 
 	$nextSample = Get-Date
 	while ((Get-Date) -lt $deadline) {
@@ -464,7 +464,7 @@ foreach ($bot in $runs) {
 if ($ids['Downed'] -ne 1) { Problem "Downed was player $($ids['Downed']), not 1" }
 $all = ''
 foreach ($s in $servers) { $all += Read-Text $s.Log }
-$churnBack = ([regex]::Matches($all, "'Churn' came back as player")).Count
+$churnBack = if ($ids.ContainsKey('Churn')) { ([regex]::Matches($all, "server: player $($ids['Churn']) came back ")).Count } else { 0 }
 $churnRuns = @($runs | Where-Object { $_.Role.Name -eq 'Churn' }).Count
 if ($churnRuns -gt 2 -and $churnBack -lt 1) { Problem 'the Churn bot never came back as itself' }
 

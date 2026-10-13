@@ -1,5 +1,7 @@
 #include "steam/Steam.h"
 
+#include "Redact.h"
+
 namespace Steam
 {
 	namespace
@@ -207,7 +209,7 @@ namespace Steam
 			lobby = a_event.lobby;
 			AdvertiseLobby();
 			joinTarget = owner;
-			Note(std::format("joined lobby {}; host is {}", lobby, owner));
+			Note(std::format("joined lobby {}; host is {}", lobby, Redact::Alias(owner)));
 		}
 
 		void Handle(const JoinRequested& a_event)
@@ -221,7 +223,7 @@ namespace Steam
 		{
 			++presenceUpdates;
 			if (a_event.appId == FALLOUT4_APP_ID) {
-				REX::INFO("Steam: rich presence from {} arrived", a_event.user);
+				REX::INFO("Steam: rich presence from {} arrived", Redact::Alias(a_event.user));
 			}
 		}
 
@@ -244,7 +246,7 @@ namespace Steam
 			if (const auto id = LobbyFromConnect(a_event.connect)) {
 				JoinLobby(*id);
 			} else {
-				Note(std::format("ignored join request '{}'", a_event.connect));
+				Note("ignored a join request that names no lobby of ours");
 			}
 		}
 
@@ -278,7 +280,7 @@ namespace Steam
 			// Requests repeat (for every message while connecting to ourselves); report each user once.
 			static std::set<std::pair<SteamId, bool>> reported;
 			if (reported.insert({ a_event.user, allowed }).second) {
-				Note(std::format("{} connection from {}", allowed ? "accepted" : "ignored", a_event.user));
+				Note(std::format("{} connection from {}", allowed ? "accepted" : "ignored", Redact::Alias(a_event.user)));
 			}
 		}
 
@@ -288,7 +290,7 @@ namespace Steam
 			std::erase_if(undecided, [&](const auto& a_entry) {
 				if (MayConnect(a_entry.first)) {
 					Accept(a_entry.first);
-					Note(std::format("accepted connection from {}", a_entry.first));
+					Note(std::format("accepted connection from {}", Redact::Alias(a_entry.first)));
 					return true;
 				}
 				return now >= a_entry.second;
@@ -311,7 +313,7 @@ namespace Steam
 			api->RegisterCallback(&presenceCallback, SteamApi::kFriendRichPresenceUpdate);
 			api->InitRelayNetworkAccess(api->utils);
 			setUp = true;
-			REX::INFO("Steam: ready as {} ({})", PersonaName(), LocalId());
+			REX::INFO("Steam: ready ({})", Redact::Alias(LocalId()));
 			return true;
 		}
 	}
@@ -480,10 +482,11 @@ namespace Steam
 			if (a_friend.lobby != 0 && scan.hosting.size() < MAX_LISTED) {
 				scan.hosting.push_back({ a_friend.id, a_friend.lobby, a_friend.name });
 			}
-			// Online friends only, in the log: the join page is the one place this runs.
+			// Online friends only, and only with sLogLevel = debug: the join page is the one place this runs.
+			// By alias, never by name, and not what else they play: inF4 is what the join page's advice is about.
 			if (a_friend.state != 0) {
-				REX::INFO("Steam: friend {} ({}) state={} app={} gameLobby={} connect='{}' -> lobby={}", a_friend.name, a_friend.id, a_friend.state, a_friend.gameId,
-					a_friend.gameLobby, a_friend.connect, a_friend.lobby);
+				REX::DEBUG("Steam: friend {} state={} inF4={} gameLobby={} -> lobby={}", Redact::Alias(a_friend.id), a_friend.state,
+					a_friend.gameId == FALLOUT4_APP_ID, a_friend.gameLobby, a_friend.lobby);
 			}
 			return true;
 		});

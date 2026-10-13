@@ -319,7 +319,7 @@ TEST("sim: a friend whose game crashes and comes back before the server notices 
 	bob.Vanish();  // the server still holds the old connection
 	REQUIRE(bob.Join());
 	CHECK(bob.Id() == bobId);
-	CHECK(s.Logged("dropping the old connection of 'Bob'"));
+	CHECK(s.Logged(std::format("dropping the old connection of player {} ", bobId)));
 	REQUIRE(host.FriendById(bobId));
 	// His own wall isn't sent back to him as someone else's (his game would build a second one on top of
 	// it), and his loot isn't counted again.

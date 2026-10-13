@@ -45,7 +45,7 @@ namespace Identity
 			std::ofstream out{ *path, std::ios::trunc };
 			out << std::format("{:016x}", id);
 			if (!out) {
-				REX::WARN("Identity: couldn't write {}", path->string());
+				REX::WARN("Identity: couldn't write {}", path->filename().string());  // not the folder: it holds the Windows user name
 			}
 			return id;
 		}

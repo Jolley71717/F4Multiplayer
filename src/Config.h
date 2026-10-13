@@ -100,6 +100,11 @@ namespace Config
 		// freeze the game would come out of into a permanent one, and it holds paths and the Windows user name.
 		bool hangDump = false;
 
+		// What the log holds (sLogLevel): "info" (the default) or "debug", which adds the friend scans (by
+		// alias) and the lines characters say. HUD messages name players and are never logged. Applied by
+		// Load.
+		std::string logLevel = "info";
+
 		// Developer control channel (see DevChannel.h). Off unless explicitly enabled.
 		bool          devChannel = false;
 		std::uint16_t devChannelPort = 7790;

@@ -59,6 +59,16 @@
   maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
   quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
   The judgement is `src/HangDetector.h`, unit tested.
+- **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
+  before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
+  launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can
+  throw inside the `noexcept` Init (CommonLib's rotating sink throws on a failed rename). A file
+  another program holds is not kept, and the log says so. Right after Init a sink wrapping
+  CommonLib's runs every line through `Redact::Scrub` (`common/Redact.h`): a SteamID64 becomes a
+  per-launch alias (`~` and six hex digits of a salted hash), an IPv4 address loses its last part.
+  The server's log function does the same. That is the net; the lines themselves name players by
+  ID and accounts by alias, and HUD messages (which name players) are not logged at all. `sLogLevel`
+  (info or debug) sets the level; flushing is CommonLib's (every INFO line).
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
   (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
   transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.
@@ -355,7 +365,8 @@ What a peer can now send that it could not before, and what checks it on the way
   <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
-  objectives with their state), `status` (cell, worldspace and location).
+  objectives with their state), `status` (cell, worldspace and location), `log level info|debug`
+  (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session

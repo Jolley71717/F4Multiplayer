@@ -152,38 +152,38 @@ try {
 	Write-Host 'Starting Raider, Owner, Looter'
 	Start-Bot 'raider' 'Raider' $Seconds @('--time', '14', '--time-step', '1', '--weather', '0001E0F2', '--shoot', '0000463F',
 		'--hit-player', "2:15:$attacker", '--radius', '200') | Out-Null
-	Require (Wait-Log "'Raider' joined as player 1 ") 'Raider joins as player 1'
+	Require (Wait-Log 'server: player 1 joined from ') 'Raider joins as player 1'
 	Start-Bot 'owner' 'Owner' $Seconds @('--own', $npc, '--say', $npc, '--radius', '400') | Out-Null
-	Require (Wait-Log "'Owner' joined as player 2 ") 'Owner joins as player 2'
+	Require (Wait-Log 'server: player 2 joined from ') 'Owner joins as player 2'
 	Start-Bot 'looter' 'Looter' $Seconds @('--loot', "${container}:${item}:-10", '--quest', "${quest}:20", '--pickup', $pickup,
 		'--door', "${door}:1:0", '--marker', $marker, '--ping', '1', '--speed', '370') | Out-Null
-	Require (Wait-Log "'Looter' joined as player 3 ") 'Looter joins as player 3'
+	Require (Wait-Log 'server: player 3 joined from ') 'Looter joins as player 3'
 
 	Write-Host "Rejoiner: plays $short s and leaves"
 	Start-Bot 'rejoiner1' 'Rejoiner' $short @('--identity', $identity) | Out-Null
-	Require (Wait-Log "'Rejoiner' joined as player 4 ") 'Rejoiner joins as player 4'
+	Require (Wait-Log 'server: player 4 joined from ') 'Rejoiner joins as player 4'
 	Wait-Exit 'rejoiner1' ($short + 10)
-	Require (Wait-Log "'Rejoiner' left" 1 5) 'the server sees the Rejoiner leave'
+	Require (Wait-Log 'server: player 4 left' 1 5) 'the server sees the Rejoiner leave'
 
 	Write-Host 'Rejoiner: comes back, then is killed (a crash)'
 	Start-Bot 'rejoiner2' 'Rejoiner' $Seconds @('--identity', $identity) | Out-Null
-	Require (Wait-Log "'Rejoiner' came back as player 4 " 1) 'Rejoiner comes back as player 4'
+	Require (Wait-Log 'server: player 4 came back from ' 1) 'Rejoiner comes back as player 4'
 	Start-Sleep -Seconds 3
 	Stop-Process -Id $procs['rejoiner2'].Id -Force
 
 	Write-Host "Rejoiner: comes back before the server notices the crash, plays $short s"
 	Start-Bot 'rejoiner3' 'Rejoiner' $short @('--identity', $identity) | Out-Null
-	Require (Wait-Log "'Rejoiner' came back as player 4 " 2) 'Rejoiner comes back as player 4 after the crash'
+	Require (Wait-Log 'server: player 4 came back from ' 2) 'Rejoiner comes back as player 4 after the crash'
 
 	Write-Host "Late: joins now, plays $short s"
 	Start-Bot 'late' 'Late' $short @('--talk', $npc, '--radius', '150') | Out-Null
-	Require (Wait-Log "'Late' joined as player 7 ") 'Late joins as player 7'
+	Require (Wait-Log 'server: player 7 joined from ') 'Late joins as player 7'
 
 	foreach ($name in 'rejoiner3', 'late') { Wait-Exit $name ($short + 10) }
 	$remaining = [Math]::Max(1, $Seconds - [int]((Get-Date) - $started).TotalSeconds)
 	Write-Host "Waiting about $remaining s for the main bots"
 	foreach ($name in 'raider', 'owner', 'looter') { Wait-Exit $name ($remaining + 15) }
-	[void](Wait-Log "'Looter' left" 1 5)
+	[void](Wait-Log 'server: player 3 left' 1 5)
 	Start-Sleep -Milliseconds 500
 } catch {
 	$aborted = $_.Exception.Message
@@ -216,15 +216,20 @@ foreach ($name in $finished) {
 }
 
 if (-not $aborted) {
-	# The server log.
-	foreach ($n in 'Raider', 'Owner', 'Looter', 'Late') {
-		Check ((Count-Matches $log "'$n' joined as player") -eq 1) "server: '$n' joined once"
-		Check ((Count-Matches $log "'$n' left") -eq 1) "server: '$n' left once"
+	# The server log (players by ID: Raider 1, Owner 2, Looter 3, Rejoiner 4, Late 7).
+	foreach ($pair in @(@('Raider', 1), @('Owner', 2), @('Looter', 3), @('Late', 7))) {
+		$n = $pair[0]; $p = $pair[1]
+		Check ((Count-Matches $log "server: player $p joined from ") -eq 1) "server: $n (player $p) joined once"
+		Check ((Count-Matches $log "server: player $p left") -eq 1) "server: $n (player $p) left once"
 	}
-	Check ((Count-Matches $log "'Rejoiner' joined as player") -eq 1) "server: 'Rejoiner' joined once"
-	Check ((Count-Matches $log "'Rejoiner' came back as player 4 ") -eq 2) "server: 'Rejoiner' came back as player 4 twice"
-	Check ((Count-Matches $log "dropping the old connection of 'Rejoiner'") -eq 1) 'server: dropped the crashed Rejoiner connection'
-	Check ((Count-Matches $log "'Rejoiner' left") -eq 3) "server: 'Rejoiner' left 3 times (left, crash, end)"
+	Check ((Count-Matches $log 'server: player 4 joined from ') -eq 1) 'server: the Rejoiner (player 4) joined once'
+	Check ((Count-Matches $log 'server: player 4 came back from ') -eq 2) 'server: the Rejoiner came back as player 4 twice'
+	Check ((Count-Matches $log 'dropping the old connection of player 4 ') -eq 1) 'server: dropped the crashed Rejoiner connection'
+	Check ((Count-Matches $log 'server: player 4 left') -eq 3) 'server: the Rejoiner left 3 times (left, crash, end)'
+	# What players attach to bug reports: no names, no SteamID64, no address but this machine's.
+	Check ((Count-Matches $log 'Raider|Owner|Looter|Rejoiner|Late') -eq 0) 'server: names no player'
+	Check ((Count-Matches $log '7656\d{13}') -eq 0) 'server: holds no SteamID64'
+	Check ((Count-Matches $log '\b(?!127\.)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b') -eq 0) 'server: holds no address but 127.0.0.1'
 	foreach ($bad in 'too many', 'no hello', 'load order changed', 'Server is full', 'wrong password', 'error', 'failed') {
 		Check ((Count-Matches $log "(?i)$bad") -eq 0) "server: nothing about '$bad'"
 	}

@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Protocol.h"
+#include "Redact.h"
 #include "Server.h"
 #include "game/Compass.h"
 #include "game/Conversations.h"
@@ -64,8 +65,13 @@ namespace Session
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
 
+		// The session's own messages (connected, refused and why, disconnected) name nobody, so they go to
+		// the log at INFO too; players joining and leaving go to the HUD by name and to the log by ID. A
+		// refusal's reason is the host's text: Redact::OneLine keeps it one line (the wire drops control
+		// characters too, but not every message here came over it).
 		void Notify(const std::string& a_message)
 		{
+			REX::INFO("Session: {}", Redact::OneLine(a_message));
 			Hud::Notify(a_message);
 		}
 
@@ -227,7 +233,8 @@ namespace Session
 			case MessageType::kPlayerJoined:
 				if (const auto msg = Protocol::DecodePlayerJoined(a_data)) {
 					RemotePlayers::Add(msg->playerId, msg->name, msg->appearance);
-					Notify(msg->name + " joined");
+					REX::INFO("Session: player {} joined", msg->playerId);
+					Hud::Notify(msg->name + " joined");
 				}
 				break;
 			case MessageType::kPlayerLeft:
@@ -236,7 +243,8 @@ namespace Session
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
-					Notify(name.empty() ? "A player left" : name + " left");
+					REX::INFO("Session: player {} left", msg->playerId);
+					Hud::Notify(name.empty() ? "A player left" : name + " left");
 				}
 				break;
 			case MessageType::kExplosion:
