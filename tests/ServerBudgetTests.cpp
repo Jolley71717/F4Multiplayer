@@ -645,10 +645,14 @@ TEST("shares: a junk flood of pickups doesn't stop an honest friend's being shar
 	CHECK(!f.Logged("% full"));
 }
 
+// The host's world is the session's: everything their game does is kept, loot and building included,
+// however much it is. A friend with the same limits is held to them.
 TEST("shares: the host's own game has no share limit")
 {
 	auto options = HostedOptions();
 	options.maxWorldEntriesPerPlayer = 3;
+	options.maxContainerChangesPerPlayer = 3;
+	options.maxWorkshopItemsPerPlayer = 3;
 	Fixture f{ options };
 	JoinAsHost(f, 1);
 	JoinAs(f, 2, "Bob");
@@ -657,12 +661,60 @@ TEST("shares: the host's own game has no share limit")
 		f.fake->Deliver(1, Death(0x00010001 + i));
 		f.fake->Deliver(1, Pickup(0x00040001 + i));
 		f.fake->Deliver(1, Stage(QUEST + i, 10));
+		f.fake->Deliver(1, Loot(CHEST, ITEM + i, -1));
+		f.fake->Deliver(1, Build(0xFF000001 + i));
 	}
 	const auto toBob = Received(f, 2);
 	CHECK(Count(toBob, MT::kActorDied) == 6);
 	CHECK(Count(toBob, MT::kRefPickedUp) == 6);
 	CHECK(Count(toBob, MT::kQuestStage) == 6);
+	CHECK(Count(toBob, MT::kContainerChanged) == 6);
+	CHECK(Count(toBob, MT::kWorkshopItem) == 6);
 	CHECK(!f.Logged("their share"));
+
+	// Bob's loot past the same number isn't.
+	Clear(f, { 1 });
+	for (std::uint32_t i = 0; i < 6; ++i) {
+		f.fake->Deliver(2, Loot(CHEST, ITEM + 0x10 + i, 1));
+	}
+	CHECK(Count(Received(f, 1), MT::kContainerChanged) == 3);
+	CHECK(f.LogLines("their share").size() == 1);
+}
+
+// A dedicated server keeps running when everyone leaves; the next first arrival with another load order
+// starts a fresh session. What a friend had added to the old one no longer counts against them.
+TEST("shares: a fresh session for a new load order starts every player's share again")
+{
+	Server::Options options;
+	options.maxWorldEntriesPerPlayer = 3;
+	Fixture f{ options };
+	f.fake->SetIdentity(1, BOB_STEAM);
+	JoinAs(f, 1, "Bob", 0xB0B);
+	JoinAs(f, 2, "Alice", 0xA11CE);
+	Clear(f, { 1, 2 });
+	for (std::uint32_t i = 0; i < 5; ++i) {
+		f.fake->Deliver(1, Death(0x00010001 + i));
+	}
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 3);
+	CHECK(f.LogLines("their share").size() == 1);
+	f.fake->Drop(1);
+	f.fake->Drop(2);
+
+	// Alice is back first, with her mods changed; Bob follows with the same ones.
+	auto aliceHello = Fixture::MakeHello("Alice", 0xA11CE);
+	aliceHello.contentHash = 0x5678;
+	REQUIRE(f.Join(3, aliceHello));
+	CHECK(f.Logged("load order changed; starting a new session"));
+	auto bobHello = Fixture::MakeHello("Bob", 0xB0B);
+	bobHello.contentHash = 0x5678;
+	f.fake->SetIdentity(4, BOB_STEAM);
+	REQUIRE(f.Join(4, bobHello));
+	Clear(f, { 3, 4 });
+	for (std::uint32_t i = 0; i < 3; ++i) {
+		f.fake->Deliver(4, Death(0x00020001 + i));
+	}
+	CHECK(Count(Received(f, 3), MT::kActorDied) == 3);
+	CHECK(f.LogLines("their share").size() == 1);  // only the old session's
 }
 
 // G13: the share goes by who the transport says they are, so a new player ID from a made-up identity
@@ -748,6 +800,10 @@ TEST("shares: a friend's loot share holds after the host restarts from the sessi
 	const auto echo = Decoded(Received(f, 2), MT::kContainerChanged, Protocol::DecodeIndexedContainerChange);
 	REQUIRE(echo.size() == 1);
 	CHECK(echo[0].index == 4);  // numbered on from the saved session
+	for (std::uint32_t i = 0; i < 5; ++i) {  // the host, past the same number
+		f.fake->Deliver(1, Loot(CHEST, ITEM + 0x10 + i, 1));
+	}
+	CHECK(Count(Received(f, 2), MT::kContainerChanged) == 5);
 	std::filesystem::remove(path);
 }
 

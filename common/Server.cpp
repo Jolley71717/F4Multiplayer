@@ -393,6 +393,11 @@ void Server::Run()
 		hostHadAlive.clear();
 		nearFullLogged = {};
 		fullLogged = {};
+		// What each player added to the old session's tables is gone with it.
+		for (auto& [key, budget] : budgets) {
+			budget.added = {};
+			budget.shareLogged = {};
+		}
 		sessionId = NewSessionId();
 	};
 
@@ -874,7 +879,8 @@ void Server::Run()
 			return;
 		}
 		// Their share of the session's table, by player ID (saved with the session) and by budget (this run).
-		if (containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
+		// The host's own game has none (see withinShare).
+		if (!a_player.local && containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
 			if (!std::exchange(budgetOf(a_player).shareLogged[kContainers], true)) {
 				log(std::format("server: '{}' has made {} container changes this session, their share; no more of theirs are kept", a_player.name, containersAuthored[a_player.id]));
 			}

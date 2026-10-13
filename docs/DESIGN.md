@@ -42,8 +42,9 @@
   bucket of three world states refilled one per 10 s (past it a hello, or the world state after a load,
   waits for the refill rather than being refused), shared XP, face changes. Each player but the host has
   a share of each session table (15000 kills, pickups, doors and quest stages, 30000 container changes,
-  10000 built objects; `Server::Options`); the log says once when a share is used up and when a table
-  reaches 80% and 100%, and each game's HUD says so once a session at 80%.
+  10000 built objects; `Server::Options`; a fresh session starts them again); the log says once when a
+  share is used up and when a table reaches 80% and 100%, and each game's HUD says so once a session
+  at 80%.
 - **Client:** `src/net/NetClient.cpp` keeps ENet (including DNS lookups) on its own thread, so the
   connection survives loading screens. `src/net/Session.cpp` runs on the game's main thread every
   frame through an F4SE permanent task.
