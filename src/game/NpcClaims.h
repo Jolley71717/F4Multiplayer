@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 // Our game's offers to run NPCs (NpcSync's claims), and when to make them again. A claim the server has not answered
@@ -37,6 +38,21 @@ namespace NpcClaims
 		}
 
 		void Claimed(std::uint32_t a_id, Reason a_reason, Clock::time_point a_now) { claims[a_id] = { a_now, a_reason }; }
+
+		// NpcSync::Scan's decision for one loaded, living NPC: the claim to send for it now, if any, booked as sent.
+		// a_owner: who the server says runs it (0: nobody). a_companion: it follows our player. a_mayClaim: the
+		// session's deaths allow it (WorldSync::MayClaim: never one the session has dead, nothing until its dead list
+		// is in after a load). Not one we run, nor one another player runs unless it is our companion, nor while a claim
+		// awaits its answer or a refused companion claim backs off.
+		[[nodiscard]] std::optional<Reason> Offer(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_localId, bool a_companion, bool a_mayClaim, Clock::time_point a_now)
+		{
+			const auto reason = a_companion ? Reason::kCompanion : Reason::kUnowned;
+			if ((a_owner != 0 && a_owner == a_localId) || (a_owner != 0 && !a_companion) || !a_mayClaim || !Due(a_id, reason, a_now)) {
+				return std::nullopt;
+			}
+			Claimed(a_id, reason, a_now);
+			return reason;
+		}
 
 		// The server named the NPC's owner (0: nobody), in answer to a claim or to everyone.
 		void Answered(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_localId, Clock::time_point a_now)

@@ -1,6 +1,6 @@
 // Our game's offers to run NPCs, and when it makes them again (NpcClaims, as NpcSync::Scan, ApplyOwners and
-// OnLocalInteraction use it). The tests play the games against a real server: each scan's claim goes to the server,
-// and what the server answers goes back into that game's book, as NpcSync does.
+// OnLocalInteraction use it: Scan's decision is Book::Offer itself). The tests play the games against a real server:
+// each scan's claim goes to the server, and what the server answers goes back into that game's book, as NpcSync does.
 
 #include "ServerFixture.h"
 
@@ -75,24 +75,18 @@ namespace
 			}
 		}
 
-		// NpcSync::Scan for one loaded NPC at a_now (a_companion: it is this player's companion). True if it claimed;
-		// the answer is then pumped in.
-		bool Scan(std::uint32_t a_ref, bool a_companion, Clock::time_point a_now)
+		// NpcSync::Scan for one loaded NPC at a_now (a_companion: it is this player's companion; a_mayClaim: what
+		// WorldSync::MayClaim says). True if it claimed; the answer is then pumped in.
+		bool Scan(std::uint32_t a_ref, bool a_companion, Clock::time_point a_now, bool a_mayClaim = true)
 		{
-			const auto owner = OwnerOf(a_ref);
-			if (owner == id) {
-				return false;
-			}
-			const auto reason = a_companion ? Reason::kCompanion : Reason::kUnowned;
-			const bool sent = (owner == 0 || a_companion) && book.Due(a_ref, reason, a_now);
-			if (sent) {
-				f.fake->Deliver(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, reason } }));
-				book.Claimed(a_ref, reason, a_now);
+			const auto reason = book.Offer(a_ref, OwnerOf(a_ref), id, a_companion, a_mayClaim, a_now);
+			if (reason) {
+				f.fake->Deliver(peer, Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, *reason } }));
 				++claimsSent;
 				Pump(a_now);
 			}
 			book.Expire(a_now);
-			return sent;
+			return reason.has_value();
 		}
 
 		// Its player hits or talks to the NPC (NpcSync::OnLocalInteraction): a takeover claim.
@@ -217,6 +211,32 @@ TEST("npc claims: a takeover refused because the raider just changed hands is no
 	bob.Pump(t0 + 2s);
 	REQUIRE(bob.Scan(RAIDER, false, t0 + 2s));
 	CHECK(bob.OwnerOf(RAIDER) == bob.id);
+}
+
+TEST("npc claims: our game offers nothing while the session's deaths say not to, and never what it already runs")
+{
+	Fixture    f;
+	Game       alice{ f, 1, "Alice" };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+
+	// Alice just loaded a save: the session's dead list isn't in, so her game offers nothing, not even Dogmeat at
+	// her side (WorldSync::MayClaim).
+	CHECK(!alice.Scan(DOGMEAT, true, t0, false));
+	CHECK(!alice.Scan(RAIDER, false, t0, false));
+	bob.Pump(t0);
+	CHECK(bob.OwnerOf(DOGMEAT) == 0);
+	CHECK(bob.OwnerOf(RAIDER) == 0);
+
+	// Once it is in, both go on the next scan; from then on her game doesn't offer what it runs, a minute on.
+	REQUIRE(alice.Scan(DOGMEAT, true, t0 + SCAN));
+	REQUIRE(alice.Scan(RAIDER, false, t0 + SCAN));
+	CHECK(alice.ScanFor(DOGMEAT, true, t0 + 2 * SCAN, 60s) == 0);
+	CHECK(alice.ScanFor(RAIDER, false, t0 + 2 * SCAN, 60s) == 0);
+	CHECK(alice.claimsSent == 2);
+	bob.Pump(t0 + 1s);
+	CHECK(bob.OwnerOf(DOGMEAT) == alice.id);
+	CHECK(bob.OwnerOf(RAIDER) == alice.id);
 }
 
 TEST("npc claims: a claim the server hasn't answered isn't repeated for 3 s, then goes again")

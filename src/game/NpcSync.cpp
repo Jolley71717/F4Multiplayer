@@ -274,12 +274,9 @@ namespace NpcSync
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
 					// and nothing at all until its dead list is in after a load: the server would take a copy alive only in
 					// an older save for one that came back (WorldSync::MayClaim). Not again while a claim awaits its answer, nor for a
-					// while after another player who has it as a companion too kept it (NpcClaims).
-					const bool companion = IsOurCompanion(actor);
-					const auto reason = companion ? Protocol::ClaimReason::kCompanion : Protocol::ClaimReason::kUnowned;
-					if ((owner == 0 || companion) && claimBook.Due(id, reason, a_now) && WorldSync::MayClaim(id)) {
-						claims.push_back({ id, reason });
-						claimBook.Claimed(id, reason, a_now);
+					// while after another player who has it as a companion too kept it (NpcClaims::Book::Offer).
+					if (const auto reason = claimBook.Offer(id, owner, localId, IsOurCompanion(actor), WorldSync::MayClaim(id), a_now)) {
+						claims.push_back({ id, *reason });
 					}
 				}
 			}
