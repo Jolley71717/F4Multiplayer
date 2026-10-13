@@ -485,7 +485,7 @@ TEST("server session: the others are told when a player leaves")
 		REQUIRE(left);
 		CHECK(Protocol::DecodePlayerLeft(*left)->playerId == bob->playerId);
 	}
-	CHECK(f.Logged("'Bob' left"));
+	CHECK(f.Logged(std::format("player {} left", bob->playerId)));
 	// Only once.
 	CHECK(OfType(Settle(f, 1), MT::kPlayerLeft).empty());
 }
@@ -528,7 +528,7 @@ TEST("server session: names lose control characters; an empty name becomes Playe
 	const auto toNameless = OfType(f.fake->Take(2), MT::kPlayerJoined);
 	REQUIRE(!toNameless.empty());
 	CHECK(Protocol::DecodePlayerJoined(toNameless[0])->name == "Alice");
-	CHECK(f.Logged("'Alice' joined as player"));
+	CHECK(f.Logged(std::format("player {} joined from fake 1", alice->playerId)));
 }
 
 // ---- identities --------------------------------------------------------------------------
@@ -568,7 +568,7 @@ TEST("server session: different identities get different IDs and each gets its o
 	REQUIRE(aliceAgain);
 	CHECK(bobAgain->playerId == bob->playerId);
 	CHECK(aliceAgain->playerId == alice->playerId);
-	CHECK(f.Logged("'Bob' came back as player"));
+	CHECK(f.Logged(std::format("player {} came back from fake 3", bob->playerId)));
 }
 
 TEST("server session: a returning player without a name is named after their old ID")
@@ -1145,7 +1145,8 @@ TEST("server session: heartbeats don't use up the event budget")
 TEST("server session: a player flooding events loses the excess, and it's logged")
 {
 	Fixture f;
-	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	f.fake->Take(2);
 	constexpr int sent = 700;
@@ -1156,7 +1157,7 @@ TEST("server session: a player flooding events loses the excess, and it's logged
 	CHECK(!relayed.empty());
 	CHECK(relayed.size() < static_cast<std::size_t>(sent));
 	CHECK(relayed.size() <= 500 + 100);  // 500 a second (a window could roll over mid-flood)
-	CHECK(f.Logged("'Alice' sends too many events"));
+	CHECK(f.Logged(std::format("player {} sends too many events", alice->playerId)));
 	// Bob, who didn't flood, still gets through.
 	f.fake->Deliver(2, Protocol::Encode(Status(1), MT::kReportStatus));
 	CHECK(f.fake->WaitFor(1, Type(MT::kPlayerStatus)));

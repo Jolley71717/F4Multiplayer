@@ -72,6 +72,9 @@ public:
 
 	void SetLocal(PeerId a_peer) { std::lock_guard lock{ mutex }; local[a_peer] = true; }
 
+	// What Describe says about a_peer in the server's log, e.g. a real transport's "udp 1.2.3.4:5678".
+	void SetAddress(PeerId a_peer, std::string a_address) { std::lock_guard lock{ mutex }; addresses[a_peer] = std::move(a_address); }
+
 	// --- the server's side ---
 
 	void Poll(std::vector<TransportEvent>& a_out, int) override
@@ -104,7 +107,12 @@ public:
 
 	void Close() override {}
 
-	[[nodiscard]] std::string Describe(PeerId a_peer) const override { return std::format("fake {}", a_peer); }
+	[[nodiscard]] std::string Describe(PeerId a_peer) const override
+	{
+		std::lock_guard lock{ mutex };
+		const auto it = addresses.find(a_peer);
+		return it != addresses.end() ? it->second : std::format("fake {}", a_peer);
+	}
 
 	[[nodiscard]] bool IsLocal(PeerId a_peer) const override
 	{
@@ -120,10 +128,11 @@ private:
 		pending.push_back(std::move(a_event));
 	}
 
-	mutable std::mutex          mutex;
-	std::condition_variable     changed;
-	std::vector<TransportEvent> pending;
-	std::vector<Sent>           sent;
-	std::map<PeerId, bool>      disconnected;
-	std::map<PeerId, bool>      local;
+	mutable std::mutex            mutex;
+	std::condition_variable       changed;
+	std::vector<TransportEvent>   pending;
+	std::vector<Sent>             sent;
+	std::map<PeerId, bool>        disconnected;
+	std::map<PeerId, bool>        local;
+	std::map<PeerId, std::string> addresses;
 };

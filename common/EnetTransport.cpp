@@ -2,6 +2,7 @@
 
 #include "Net.h"
 #include "Protocol.h"
+#include "Redact.h"
 
 #include <format>
 
@@ -128,5 +129,5 @@ std::string EnetServerTransport::Describe(PeerId a_peer) const
 	}
 	char ip[64]{};
 	enet_address_get_host_ip(&it->second->address, ip, sizeof(ip));
-	return std::format("udp {}:{}", ip, it->second->address.port);
+	return "udp " + Redact::MaskAddress(ip, it->second->address.port);
 }
