@@ -175,8 +175,11 @@ namespace Equipment
 		}
 		const auto id = a_actor->GetFormID();
 		const auto pieceOrWeapon = [](const RE::TESForm* a_form) { return a_form && (a_form->Is(RE::ENUM_FORM_ID::kWEAP) || IsPowerArmorPiece(a_form)); };
+		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
+		// (StandInGear draws it again only when it changed).
+		const auto wearing = Read(a_actor);
 		for (const auto item : a_items) {
-			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
+			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item)) || std::ranges::binary_search(wearing, item)) {
 				continue;
 			}
 			if (!Has(a_actor, item)) {
