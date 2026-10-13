@@ -59,6 +59,16 @@
   maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
   quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
   The judgement is `src/HangDetector.h`, unit tested.
+- **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
+  before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
+  launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can
+  throw inside the `noexcept` Init (CommonLib's rotating sink throws on a failed rename). A file
+  another program holds is not kept, and the log says so. Right after Init a sink wrapping
+  CommonLib's runs every line through `Redact::Scrub` (`common/Redact.h`): a SteamID64 becomes a
+  per-launch alias (`~` and six hex digits of a salted hash), an IPv4 address loses its last part.
+  The server's log function does the same. That is the net; the lines themselves name players by
+  ID and accounts by alias, and HUD messages (which name players) are DEBUG. `sLogLevel` (info or
+  debug) sets the level; flushing is CommonLib's (every INFO line).
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
   (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
   transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.

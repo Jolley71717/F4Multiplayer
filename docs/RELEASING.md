@@ -17,7 +17,10 @@ Gate for an rc, every time:
    trace, Corvega combat with NPC tracing, terminals, loot and the safe, grenades, power armor in
    motion, the cell churn with a save reload, a VM restart and rejoin, fuzz on the host. `sweep.sh`,
    or one cycle of `soak.sh`, is that set;
-3. no new crash log on either machine during it.
+3. no new crash log on either machine during it;
+4. on both machines, `Select-String -Path F4Multiplayer*.log -Pattern (Get-Content ~/.f4mp-private-patterns)`
+   in `Documents\My Games\Fallout4\F4SE` finds nothing from this rc's sessions, and neither do
+   `-Pattern '7656\d{13}'` nor an IP address other than 127.0.0.1.
 
 ## Promotion to the release
 
@@ -29,5 +32,7 @@ GitHub release with `dist/RELEASE-X.Y.Z.md` as the notes.
 ## Notes for testers (put in every rc's notes)
 
 - Install a crash logger (Buffout 4 or Addictol) before testing, or a crash leaves nothing to read.
-- Report with the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`) and the crash log;
-  the first line of the plugin log names the build.
+- Report with the plugin log (`Documents\My Games\Fallout4\F4SE\F4Multiplayer.log`, or
+  `F4Multiplayer.1.log` if you restarted the game since) and the crash log; the first line of the
+  plugin log names the build. The plugin log names players as `player N` and leaves Steam ids and
+  addresses out; crash logs and screenshots can still hold names.

@@ -98,6 +98,14 @@ A hang minidump (`F4Multiplayer-hang-*.dmp`, written only with `bHangDump`) cont
 the Windows user name: it goes to the maintainer privately, never into an issue or a commit. The hang
 report (`.txt`) names modules only and is fine to attach.
 
+The same goes for the plugin's own log, which players attach to public issues. A log line names a
+player as `player N` (their ID), a Steam account as `Redact::Alias(id)` (`~3fa2c1`, different every
+launch) and an address through `Redact::MaskAddress`; never format a player's `.name`,
+`PersonaName()`, a SteamID64, an address or a path under the user's folder into an INFO, WARN or
+ERROR line. `Hud::Notify` text, which names players, goes to the log at DEBUG only. `Redact::Scrub`
+runs over every line (the server's log function and the plugin's log sink) as a net for Steam ids
+and IP addresses, not names; `tests/LogPrivacyTests.cpp` and `tools/soak.ps1` check the server's log.
+
 `tools/git-hooks` has a `pre-commit` and a `pre-push` hook that refuse a commit or push matching
 patterns you keep outside the repo (`~/.f4mp-private-patterns`, one regex per line). Turn them on
 with `git config core.hooksPath tools/git-hooks`. After the push is too late, so check before.
