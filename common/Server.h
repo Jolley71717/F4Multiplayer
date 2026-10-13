@@ -3,6 +3,7 @@
 #include "Transport.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -43,6 +44,11 @@ public:
 		// Container changes one player may author in a session: one client cannot fill the shared table
 		// (60,000) on its own. Tests lower it.
 		std::size_t maxContainerChangesPerPlayer = 30000;
+
+		// A player who hurt an NPC, or tried to take it over, within this long is believed about killing it while
+		// another player's game runs it (the takeover is refused for 5 s after one, and a kill in that time used to
+		// be lost). Tests shorten it.
+		std::chrono::milliseconds deathGrace{ 10000 };
 
 		// Plugins that may differ between players (texture, sound or UI mods): a load order that
 		// matches once these are left out is accepted.

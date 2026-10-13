@@ -54,6 +54,8 @@ namespace
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
 	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
+	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
+	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -111,6 +113,9 @@ namespace
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
 		float                      xpReports = XP_REPORT_BURST;
 		Clock::time_point          xpRefilled{};
+		// NPCs this player hurt or tried to take over, and when last: a kill of one another player's game runs is
+		// believed for a while after (Options::deathGrace). At most MAX_FIGHTING.
+		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 	};
 
 	struct Ownership
@@ -640,6 +645,24 @@ void Server::Run()
 		}
 	};
 
+	// The player hurt the NPC or tried to take it over (see handleDeath).
+	const auto noteFighting = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		auto& fighting = a_player.fighting;
+		if (fighting.size() >= MAX_FIGHTING && !fighting.contains(a_refId)) {
+			std::erase_if(fighting, [&](const auto& a_entry) { return a_now - a_entry.second > options.deathGrace; });
+			if (fighting.size() >= MAX_FIGHTING) {
+				return;
+			}
+		}
+		fighting[a_refId] = a_now;
+	};
+	const auto wasFighting = [&](const Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		const auto it = a_player.fighting.find(a_refId);
+		return it != a_player.fighting.end() && a_now - it->second <= options.deathGrace;
+	};
+	Clock::time_point droppedDeathLogged{};
+	std::size_t       droppedDeaths = 0;  // since the last line about them
+
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -661,10 +684,23 @@ void Server::Run()
 		// game during the session, after the runner had it alive, which is again the runner's to judge (the
 		// host's copy of an NPC another game runs can fall over by mistake; this report is then the same
 		// mistake found again after a reconnect or a load).
+		// A kill by a player who was fighting it is believed too: they hurt it or tried to take it over within
+		// Options::deathGrace. The takeover is refused for 5 s after the NPC changed hands, so two players
+		// fighting one raider used to lose the second one's kill (it lived on in the runner's game). Their
+		// game sends the takeover claim the frame it hits and the death a frame later (Session::Frame), on the
+		// one reliable channel, so even a one-shot kill finds the claim here first.
 		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+			const auto now = Clock::now();
 			const bool foundDead = a_player.local && death->foundDead && !hostHadAlive.contains(death->refId);
-			if (!foundDead) {
+			const bool fought = !death->foundDead && wasFighting(a_player, death->refId, now);
+			if (!foundDead && !fought) {
 				noteHostHadAlive(a_player, death->refId);  // the host's game had it alive, or saw it die
+				++droppedDeaths;
+				if (now - droppedDeathLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+					droppedDeathLogged = now;
+					log(std::format("server: death of {:08X} from '{}' dropped: player {} runs it and the reporter wasn't fighting it ({} dropped since the last such line)",
+						death->refId, a_player.name, owner->second.playerId, std::exchange(droppedDeaths, 0)));
+				}
 				return;
 			}
 		}
@@ -691,6 +727,7 @@ void Server::Run()
 			return;
 		}
 		noteHostHadAlive(a_player, health->refId);  // hit and still alive
+		noteFighting(a_player, health->refId, Clock::now());
 		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
 	};
 
@@ -778,6 +815,8 @@ void Server::Run()
 			}
 			if (claim.reason != Reason::kInteract) {
 				noteHostHadAlive(a_player, claim.refId);  // offered because it is loaded and alive (a hit or a press can be on a corpse)
+			} else {
+				noteFighting(a_player, claim.refId, now);  // granted or not: a refused takeover is the kill handleDeath must not lose
 			}
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;

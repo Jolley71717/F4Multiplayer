@@ -200,7 +200,7 @@ menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health or asked to take it over within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Others are dropped, with a log line at most every 10 s |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
