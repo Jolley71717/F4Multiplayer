@@ -1,4 +1,4 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--session-file PATH]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only]
 
 #include "Protocol.h"
 #include "Server.h"
@@ -57,8 +57,11 @@ int main(int argc, char* argv[])
 			options.sharedStory = true;
 		} else if (arg == "--session-file" && hasValue) {
 			options.sessionFile = argv[++i];
+		} else if (arg == "--loopback-only") {
+			// This machine only (tests and soaks): nothing from outside can reach it, and Windows asks nothing.
+			options.udpLoopbackOnly = true;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only]\n";
 			return 2;
 		}
 	}
