@@ -2,6 +2,7 @@
 
 #include "game/EngineRefs.h"
 #include "game/RemoteEdits.h"
+#include "game/SendPacer.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopCells.h"
 #include "game/WorkshopInbox.h"
@@ -32,13 +33,14 @@ namespace WorkshopSync
 
 		bool                                                installed = false;
 		std::mutex                                          outLock;
-		std::vector<Outgoing>                               outgoing;
+		// Reports wait here and go a few hundred a second (see SendPacer): a blueprint or a scrap-all of a big
+		// settlement, sent at once, went past the server's event budget, and it dropped the excess.
+		SendPacer::Queue<Outgoing>                          outgoing{ SendPacer::WORKSHOP_PER_SECOND, SendPacer::WORKSHOP_QUEUED };  // under outLock
 		std::uint32_t                                       dropped = 0;  // reports dropped with the queue full (under outLock)
-		bool                                                droppedWarned = false;  // since the queue was last taken (under outLock)
+		bool                                                droppedWarned = false;  // since the queue last ran empty (under outLock)
 		std::map<Key, Copy>                                 copies;
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
 		std::vector<Copy>                                   graveyard;
-		constexpr std::size_t                               MAX_OUTGOING = 512;
 		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
 		// How far from its workbench a piece may stand. The largest build area in the game (Spectacle
 		// Island) reaches about 9,000 units from its bench; a piece claimed farther away is someone placing
@@ -129,14 +131,13 @@ namespace WorkshopSync
 		{
 			const auto worldScrap = a_item.op == Protocol::WorkshopOp::kScrapped && Protocol::IsShareableRef(a_item.refId) ? a_item.refId : 0;
 			std::scoped_lock l{ outLock };
-			if (outgoing.size() >= MAX_OUTGOING) {
+			if (!outgoing.Push({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap })) {
 				++dropped;
 				if (!std::exchange(droppedWarned, true)) {
-					REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.size());
+					REX::WARN("WorkshopSync: {} reports wait to be sent; dropping more until they go (the others won't see those pieces)", outgoing.Size());
 				}
 				return false;
 			}
-			outgoing.push_back({ Protocol::Encode(a_item, Protocol::MessageType::kReportWorkshopItem), worldScrap });
 			++reported;
 			return true;
 		}
@@ -1142,8 +1143,10 @@ namespace WorkshopSync
 		std::vector<Outgoing> taken;
 		{
 			std::scoped_lock l{ outLock };
-			taken = std::exchange(outgoing, {});
-			droppedWarned = false;
+			taken = a_sending ? outgoing.TakeDue(Clock::now()) : outgoing.TakeAll();
+			if (outgoing.Empty()) {
+				droppedWarned = false;
+			}
 		}
 		std::vector<std::vector<std::uint8_t>> packets;
 		for (auto& out : taken) {
@@ -1181,7 +1184,7 @@ namespace WorkshopSync
 			sentScraps.clear();
 		}
 		std::scoped_lock l{ outLock };
-		outgoing.clear();
+		outgoing.Clear();
 	}
 
 	void OnGameLoaded()
@@ -1211,11 +1214,13 @@ namespace WorkshopSync
 	std::string Describe()
 	{
 		std::uint32_t droppedNow = 0;
+		std::size_t   unsent = 0;
 		{
 			std::scoped_lock l{ outLock };
 			droppedNow = dropped;
+			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, droppedNow, copies.size(),
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
 			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size()) +

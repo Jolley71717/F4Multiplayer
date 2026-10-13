@@ -18,8 +18,9 @@ namespace WorkshopSync
 	// while in a session.
 	void Frame(bool a_host);
 
-	// The reports to send. a_sending: false while they can't be (not in a session): they are dropped,
-	// and a piece of the world they reported scrapped is reported again when the walk finds it.
+	// The reports to send now: no more than SendPacer::WORKSHOP_PER_SECOND a second, the rest waiting their turn
+	// in order. a_sending: false while they can't be (not in a session): all of them are dropped, and a piece of
+	// the world they reported scrapped is reported again when the walk finds it.
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
 	// Another player built, moved or scrapped something: in line behind what came before, and placed a

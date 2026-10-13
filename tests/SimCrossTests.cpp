@@ -203,6 +203,147 @@ TEST("cross: an honest evening's big raid, settlement build and take-all are nev
 	}
 }
 
+// ---- a whole settlement at once: the game's send line against the server's event budget -------------
+
+namespace
+{
+	constexpr std::uint32_t JUNK_FIELD = 0x0004C000;  // a big settlement's junk, pieces of the world itself
+	constexpr std::uint32_t BOTTLE = 0x0004B001;
+
+	struct Burst
+	{
+		std::vector<std::uint32_t> built;
+		std::vector<std::uint32_t> scrapped;
+	};
+
+	// A blueprint placed, then "scrap all" on the settlement's junk: a_count reports from one game in a single
+	// moment, two of every three a piece built and the third a piece of the world scrapped.
+	Burst BuildAndScrapAtOnce(Client& a_player, std::uint32_t a_count)
+	{
+		Burst out;
+		for (std::uint32_t i = 0; i < a_count; ++i) {
+			if (i % 3 == 2) {
+				a_player.Scrap(SANCTUARY, JUNK_FIELD + i);
+				out.scrapped.push_back(JUNK_FIELD + i);
+			} else {
+				out.built.push_back(a_player.Build(SANCTUARY, WALL, static_cast<float>(i % 40) * 10.0f, static_cast<float>(i / 40) * 10.0f));
+			}
+		}
+		return out;
+	}
+
+	// Whether a_viewer's game shows all of a_player's burst: every piece built standing at Sanctuary, every
+	// piece of junk gone.
+	bool ShowsAll(const Client& a_viewer, const Client& a_player, const Burst& a_burst)
+	{
+		const auto at = a_viewer.At(SANCTUARY);
+		const bool built = std::ranges::all_of(a_burst.built, [&](std::uint32_t a_ref) { return at.contains({ a_player.Id(), a_ref }); });
+		const bool scrapped = std::ranges::all_of(a_burst.scrapped, [&](std::uint32_t a_ref) { return a_viewer.WorldNow().scrapped.contains(a_ref); });
+		return built && scrapped;
+	}
+}
+
+// The server takes at most 500 events a second from a player and drops the rest, with whatever else of theirs
+// came that second. A blueprint placed, or "scrap all" in a big settlement, reports every piece in one moment:
+// the others never saw most of them, nor a kill made right after. The game now lets its settlement reports out
+// 200 a second (SendPacer), the rest waiting in line, here through the real line at the passing of real time
+// into the real server.
+TEST("cross: fifteen hundred pieces built and scrapped at once all reach a friend and a late joiner, and a kill, a pickup and a reload made meanwhile get through")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	const auto worldStates = bob.Heard(MT::kWorldState);
+
+	const auto burst = BuildAndScrapAtOnce(bob, 1500);
+	const auto save = bob.SaveGame();
+	s.Pass(std::chrono::milliseconds(100));
+	CHECK(bob.WorkshopUnsent() > 1000);  // most of it still waits its turn
+	// Meanwhile Bob reloads (his game asks for the session's world again), kills a raider and picks a bottle up.
+	bob.LoadGame(save);
+	bob.Kill(RAIDER_1);
+	bob.PickUp(BOTTLE);
+	for (int step = 0; step < 200 && bob.WorkshopUnsent() > 0; ++step) {
+		s.Pass(std::chrono::milliseconds(100));
+	}
+	CHECK(bob.WorkshopUnsent() == 0);
+	s.Settle();
+
+	CHECK(!s.Logged("too many events"));
+	CHECK(LimitLinesAbout(s, bob.Id()).empty());
+	CHECK(bob.Heard(MT::kWorldState) == worldStates + 1);
+	CHECK(ShowsAll(host, bob, burst));
+	CHECK(host.WorldNow().dead.contains(RAIDER_1));
+	CHECK(host.WorldNow().pickedUp.contains(BOTTLE));
+
+	auto& dave = s.Player("Dave");
+	REQUIRE(dave.Join());
+	CHECK(ShowsAll(dave, bob, burst));
+	CHECK(dave.At(SANCTUARY).size() == burst.built.size());
+	CHECK(dave.WorldNow().scrapped.size() == burst.scrapped.size());
+	CHECK(dave.WorldNow().dead.contains(RAIDER_1));
+	CHECK(dave.WorldNow().pickedUp.contains(BOTTLE));
+	CHECK_AGREE({ &host, &bob, &dave });
+}
+
+// What the line is for: the same moment sent all at once, as the game did before it, is cut by the server's
+// event budget. Should this ever pass (the budget raised, the server counting otherwise), the test above no
+// longer shows anything.
+TEST("cross: the same fifteen hundred sent all at once, as the game used to, lose pieces and the kill made with them, though the reload's request is still answered")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	bob.PaceWorkshop(false);
+	const auto worldStates = bob.Heard(MT::kWorldState);
+
+	const auto burst = BuildAndScrapAtOnce(bob, 1500);
+	const auto save = bob.SaveGame();
+	s.Pass(std::chrono::milliseconds(100));
+	bob.LoadGame(save);
+	bob.Kill(RAIDER_1);
+	s.Settle();
+
+	CHECK(s.Logged(std::format("server: player {} sends too many events", bob.Id())));
+	CHECK(!ShowsAll(host, bob, burst));
+	CHECK(host.At(SANCTUARY).size() <= 500);
+	CHECK(!host.WorldNow().dead.contains(RAIDER_1));
+	// A request for the world is no event: its game asks once and never again.
+	CHECK(bob.Heard(MT::kWorldState) == worldStates + 1);
+}
+
+// A reload's request for the session's world is sent once and never again: dropped, the player's world lacked the
+// session's loot and the others' building until they rejoined.
+TEST("cross: a reload's request for the world is answered in a second its player has already spent their event budget")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	const auto save = bob.SaveGame();
+	const auto worldStates = bob.Heard(MT::kWorldState);
+	// After Bob's save: his reload lacks them until the server sends them again.
+	host.Loot(TRUNK, STIMPAK, -1);
+	const auto wall = host.Build(RED_ROCKET, WALL, 1.0f, 1.0f);
+	s.Settle();
+
+	for (std::uint32_t i = 0; i < 600; ++i) {
+		bob.Raw(Protocol::Encode(Protocol::RefPickedUp{ 0x00B10000 + i }, MT::kReportPickup));
+	}
+	bob.LoadGame(save);
+	s.Settle();
+
+	CHECK(s.Logged(std::format("server: player {} sends too many events", bob.Id())));
+	CHECK(bob.Heard(MT::kWorldState) == worldStates + 1);
+	CHECK(bob.Count(TRUNK, STIMPAK) == -1);
+	CHECK(bob.Copies().contains({ host.Id(), wall }));
+}
+
 // ---- a friend's gear: the server's repeat filter, rejoins and stand-ins ------------------------------
 
 // The server passes on no gear report that is the same as the player's last (a game resending its list had

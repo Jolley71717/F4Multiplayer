@@ -1616,13 +1616,14 @@ void Server::Run()
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		// Its world was just loaded, and is stale until a world state is sent to it (see handleClaims).
-		if (a_player.welcomed) {
-			a_player.worldAskedAt = Clock::now();
-			a_player.worldStale = true;
-		}
-		if (!allowEvent(a_player)) {
+		if (!a_player.welcomed) {
 			return;
 		}
+		a_player.worldAskedAt = Clock::now();
+		a_player.worldStale = true;
+		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
+		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
+		// the others' building until it rejoined. The world-state budget holds a game asking too often.
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
 			giveWorldState(a_player, request->sessionId == sessionId ? request->containerFrom : 0);
 			// The copies of what others built went with the world the game threw away: they come with the
