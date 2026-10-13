@@ -82,13 +82,13 @@ namespace NpcSync
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
-		std::uint32_t                                        broughtIn = 0;       // unloaded copies moved into our cell after their owner's
+		std::uint32_t                                        broughtIn = 0;       // copies moved to where their owner's stands: from an unloaded cell, or from another space ours was left in
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
 		std::unordered_map<std::uint32_t, Clock::time_point> switchedOnAt;
 		constexpr auto                                       SWITCH_ON_RETRY = 5s;
 		std::unordered_map<std::uint32_t, Clock::time_point> broughtInAt;
 		constexpr auto                                       BRING_IN_RETRY = 10s;
-		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell
+		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell or an interior
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        stateTick = 0;
@@ -501,9 +501,13 @@ namespace NpcSync
 			};
 		}
 
-		// The owner's copy stands near us outdoors, but ours sits in a cell we have not loaded (a companion
-		// that walked here with its player from across the map, say): ours is moved to where theirs is,
-		// through the console's moveto, which handles the cell change; it loads and is mirrored from there.
+		// The owner's copy stands near us outdoors, but ours is somewhere else: in a cell we have not loaded
+		// (a companion that walked here with its player from across the map, say), or loaded in an interior
+		// or another world its own quest left it in (the host finished Concord, so its Preston stands in
+		// Sanctuary; ours still waits in the museum). Ours is moved to where theirs is, through the
+		// console's moveto, which handles the cell change; it is mirrored from there. Left where it was,
+		// UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
+		// Never moved: the player, our own companion (it follows us here), the dead, one in a scene here, and one fighting us.
 		void BringIn(const Protocol::ActorState& a_state, Clock::time_point a_now)
 		{
 			if (a_state.cell != 0 || !Protocol::IsShareableRef(a_state.refId)) {
@@ -519,7 +523,13 @@ namespace NpcSync
 				return;
 			}
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_state.refId);
-			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || actor->Get3D() || actor->IsPlayerRef()) {
+			if (!actor || actor->IsDeleted() || actor->IsDisabled() || actor->IsDead(false) || actor->IsPlayerRef() || IsOurCompanion(actor) ||
+				actor->GetCurrentScene() || actor->currentCombatTarget.get().get() == player) {
+				return;
+			}
+			// Loaded in our world already: it is mirrored, or UpdateMirrors brings it over if it went far.
+			const auto ours = SpaceOf(actor);
+			if (actor->Get3D() && ours == std::pair{ 0u, a_state.worldspace }) {
 				return;
 			}
 			if (const auto last = broughtInAt.find(a_state.refId); last != broughtInAt.end() && a_now - last->second < BRING_IN_RETRY) {
@@ -527,7 +537,8 @@ namespace NpcSync
 			}
 			broughtInAt[a_state.refId] = a_now;
 			++broughtIn;
-			REX::INFO("NpcSync: bringing {:08X} in from an unloaded cell to ({:.0f},{:.0f},{:.0f}) where its owner's copy is", a_state.refId, at.x, at.y, at.z);
+			REX::INFO("NpcSync: bringing {:08X} in to ({:.0f},{:.0f},{:.0f}) where its owner's copy is; ours was {} (cell {:08X} ws {:08X})", a_state.refId, at.x, at.y, at.z,
+				actor->Get3D() ? "loaded elsewhere" : "in an unloaded cell", ours.first, ours.second);
 			RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", a_state.refId).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_state.refId, at.x).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_state.refId, at.y).c_str());
@@ -582,7 +593,8 @@ namespace NpcSync
 					continue;
 				}
 				// The owner's copy is somewhere else (e.g. a companion that followed its player through
-				// a door), far away, or hasn't been heard from: ours runs its own AI meanwhile.
+				// a door), far away, or hasn't been heard from: ours runs its own AI meanwhile. (Theirs
+				// outdoors next to us while ours is elsewhere is BringIn's case, from ApplyStates.)
 				const auto* latest = mirror.snapshots.empty() ? nullptr : &mirror.snapshots.back();
 				// Outdoors in the same world, the owner's copy went far (a companion ran after its player, or
 				// was moved): ours is brought over and mirrored from there, instead of being left behind.
@@ -655,10 +667,16 @@ namespace NpcSync
 			if (owner == 0 || owner == localId) {
 				continue;
 			}
-			if (!LoadedActor(state.refId)) {
+			const auto actor = LoadedActor(state.refId);
+			if (!actor) {
 				SwitchOn(state, now);
 				BringIn(state, now);  // a friend's companion that came from somewhere we have not loaded
 				continue;
+			}
+			// Loaded here but not where the owner's copy is (ours waits in an interior its own quest left it
+			// in): brought over the same way, and mirrored once it is here. The snapshot is kept meanwhile.
+			if (std::pair{ state.cell, state.worldspace } != SpaceOf(actor)) {
+				BringIn(state, now);
 			}
 			auto& mirror = mirrors[state.refId];
 			auto& snaps = mirror.snapshots;
