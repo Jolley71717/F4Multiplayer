@@ -141,7 +141,9 @@ namespace Hud
 				clean.push_back(static_cast<char>(c));
 			}
 		}
-		REX::INFO("Hud: {}", clean);
+		// DEBUG (sLogLevel = debug): many of these name players. What the log needs at INFO is logged by
+		// the callers, by player ID.
+		REX::DEBUG("Hud: {}", clean);
 		std::scoped_lock l{ queueLock };
 		if (!Settled()) {
 			++held;

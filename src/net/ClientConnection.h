@@ -44,7 +44,9 @@ public:
 		stopRequested = false;
 		status = Status::kConnecting;
 		thread = std::thread([this, a_address, a_defaultPort] { Run(a_address, a_defaultPort); });
-		REX::INFO("Connection: connecting to {}", a_address);
+		// Not the address: it is a Steam account or someone's IP, and this repeats every few seconds while
+		// the host is gone. The transport's own lines say who it reached (by alias).
+		REX::INFO("Connection: connecting ({})", a_address.starts_with("steam:") ? "steam" : "udp");
 		return true;
 	}
 

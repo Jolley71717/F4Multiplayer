@@ -260,6 +260,7 @@ namespace Party
 			}
 			if (!unstable && a_now - lastAck > UNSTABLE_AFTER) {
 				unstable = true;
+				REX::INFO("Party: connection to the host is unstable");
 				Hud::Notify("Multiplayer: connection to the host is unstable");
 			}
 		}
@@ -478,12 +479,15 @@ namespace Party
 				teleportTarget = a_status.playerId;
 				const auto target = FindPlayer(a_status.playerId);
 				const auto where = target && target->state ? DistanceTo(target->state->cell, target->state->worldspace, target->state->x, target->state->y) : std::string{};
+				REX::INFO("Party: player {} is down", a_status.playerId);
 				Hud::Notify(where.empty() ?
 								std::format("{} is down! Hold {} to teleport to them and help them up", name, KeyName(Config::Get().keyTeleport)) :
 								std::format("{} is down! Get to them to help them up ({})", name, where));
 			} else if (a_status.health == 0 && !a_status.downed && !wasDead) {
+				REX::INFO("Party: player {} died", a_status.playerId);
 				Hud::Notify(name + " died");
 			} else if (before.downed && !a_status.downed && a_status.health > 0) {
+				REX::INFO("Party: player {} is back up", a_status.playerId);
 				Hud::Notify(name + " is back up");
 			}
 		}
@@ -535,11 +539,13 @@ namespace Party
 		lastAck = now;
 		if (unstable) {
 			unstable = false;
+			REX::INFO("Party: connection to the host restored");
 			Hud::Notify("Multiplayer: connection restored");
 		}
 		slowAnswers = roundTripMs > HIGH_PING_MS ? slowAnswers + 1 : 0;
 		if (slowAnswers >= 5 && now >= nextPingWarning) {
 			nextPingWarning = now + 60s;
+			REX::INFO("Party: high ping to the host ({} ms)", roundTripMs);
 			Hud::Notify(std::format("Multiplayer: high ping to the host ({} ms)", roundTripMs));
 		}
 	}
@@ -563,6 +569,7 @@ namespace Party
 			killFeedShown = 0;
 		}
 		if (++killFeedShown <= 3) {
+			REX::INFO("Party: player {} killed {:08X}", a_death.playerId, a_death.refId);
 			Hud::Notify(std::format("{} killed {}", killer, victim));
 		}
 	}
@@ -647,6 +654,7 @@ namespace Party
 		// Same place: go straight there. Elsewhere: load their cell or worldspace first.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			player->SetPosition(position, true);
+			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(std::format("Teleported to {}", target->name));
 			return;
 		}
@@ -670,6 +678,7 @@ namespace Party
 			return;
 		}
 		pendingTeleport = PendingTeleport{ state.cell, state.worldspace, position, Clock::now() + TELEPORT_TIMEOUT };
+		REX::INFO("Party: teleporting to player {}", target->id);
 		Hud::Notify(std::format("Teleporting to {}", target->name));
 	}
 

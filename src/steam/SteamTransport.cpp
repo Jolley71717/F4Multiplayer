@@ -1,5 +1,7 @@
 #include "steam/SteamTransport.h"
 
+#include "Redact.h"
+
 namespace SteamTransport
 {
 	namespace
@@ -227,7 +229,7 @@ void SteamServerTransport::Close()
 std::string SteamServerTransport::Describe(PeerId a_peer) const
 {
 	const auto it = peers.find(a_peer);
-	return it != peers.end() ? std::format("steam {}", it->second.id) : "steam ?";
+	return it != peers.end() ? "steam " + Redact::Alias(it->second.id) : "steam ?";
 }
 
 void SteamClient::Run(std::string a_address, std::uint16_t)
@@ -235,7 +237,7 @@ void SteamClient::Run(std::string a_address, std::uint16_t)
 	const auto api = SteamApi::Loaded();
 	const auto host = ParseAddress(a_address);
 	if (!api || !host) {
-		REX::ERROR("SteamClient: can't connect to '{}' ({})", a_address, api ? "bad address" : "Steam isn't running");
+		REX::ERROR("SteamClient: can't connect to {} ({})", host ? Redact::Alias(host) : "that address"s, api ? "bad address" : "Steam isn't running");
 		Finish();
 		return;
 	}
@@ -287,7 +289,7 @@ void SteamClient::Run(std::string a_address, std::uint16_t)
 				connected = true;
 				status = Status::kConnected;
 				Push({ Event::Type::kConnected, {} });
-				REX::INFO("SteamClient: connected to {}", host);
+				REX::INFO("SteamClient: connected to {}", Redact::Alias(host));
 			}
 		});
 
@@ -297,11 +299,11 @@ void SteamClient::Run(std::string a_address, std::uint16_t)
 			break;
 		}
 		if (!connected && now - started > CONNECT_TIMEOUT) {
-			REX::WARN("SteamClient: {} did not answer", host);
+			REX::WARN("SteamClient: {} did not answer", Redact::Alias(host));
 			break;
 		}
 		if (connected && now - lastHeard > TIMEOUT) {
-			REX::WARN("SteamClient: lost connection to {}", host);
+			REX::WARN("SteamClient: lost connection to {}", Redact::Alias(host));
 			break;
 		}
 		std::this_thread::sleep_for(2ms);
