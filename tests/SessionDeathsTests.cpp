@@ -397,6 +397,43 @@ TEST("alive again: the host loading a save from before the kill doesn't bring th
 	CHECK(carol.deaths.Contains(RAIDER));
 }
 
+TEST("alive again: the host quickloading so often that the server refuses its world request doesn't undo a friend's kills")
+{
+	Fixture f{ HostedOptions() };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	host.Loads(RAIDER, true, Clock::now());
+	bob.Kills(RAIDER);  // Bob clears the camp
+	host.Pump();
+	bob.Pump();
+	CHECK(!host.Alive(RAIDER));
+	std::this_thread::sleep_for(GRACE + 50ms);
+
+	// The host is in a hard fight and quickloads a save from before the kill, again and again. The server answers
+	// three requests in a row; the fourth is refused, so its game never hears the raider is dead.
+	for (int load = 0; load < 3; ++load) {
+		host.LoadsASave({ RAIDER });
+		const auto toHost = host.Pump();
+		REQUIRE(Count(toHost, MT::kWorldState) >= 1);
+		CHECK(!host.Alive(RAIDER));
+	}
+	host.LoadsASave({ RAIDER });
+	CHECK(Count(host.Pump(), MT::kWorldState) == 0);
+	CHECK(host.Alive(RAIDER));
+
+	// Its game gives up waiting and offers the raider it has alive, well after the request (on the server's clock).
+	std::this_thread::sleep_for(GRACE + 50ms);
+	const auto afterFallback = Clock::now() + SessionDeaths::SETTLE_FALLBACK;
+	REQUIRE(host.Scan(RAIDER, afterFallback));
+	CHECK(Owners(host.Pump()).empty());
+	CHECK(Owners(bob.Pump()).empty());
+	CHECK(!f.Logged("alive again"));
+
+	// The kill stands: a newcomer finds the raider dead.
+	Game carol{ f, 3, "Carol" };
+	CHECK(carol.deaths.Contains(RAIDER));
+}
+
 TEST("alive again: a raider essential only in the host's game, which the kill command leaves standing, doesn't undo Bob's kill when it loads again")
 {
 	Fixture f{ HostedOptions() };

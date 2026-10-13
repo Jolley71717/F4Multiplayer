@@ -252,6 +252,9 @@ it to the host's game ("alive again in the host's world" in the server log); it 
 again. A joiner's claim on a dead NPC is dropped, so a joiner whose cell reset first sees its copy run by its
 own AI until the host's game brings it back; one whose copy is still a corpse keeps the corpse (its
 `AttackerHere` drops that NPC's hits). A dedicated server has no host's game, so nothing comes back there.
+Nor does anything while the host's last world request went unanswered (refused for asking too often after a
+burst of loads): its game may have the NPC alive only in the save it loaded, so the server waits for a request
+it answers (the next load) before believing it again.
 
 ### The opening (src/game/Story.cpp)
 

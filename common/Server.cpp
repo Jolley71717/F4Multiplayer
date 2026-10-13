@@ -117,6 +117,9 @@ namespace
 		// believed for a while after (Options::deathGrace). At most MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
+		// Its last request for the world went unanswered (refused for flooding): its game may have anything alive from the
+		// save it loaded, so it brings nobody back (see handleClaims) until a later request or hello is answered.
+		bool                       worldStale = false;
 	};
 
 	struct Ownership
@@ -714,8 +717,13 @@ void Server::Run()
 		if (!deadActors.insert(death->refId).second) {
 			return;
 		}
+		// A death older than aliveAgainGrace is the same as one with no entry (see handleClaims): those make room.
+		const auto diedNow = Clock::now();
+		if (diedAt.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+			std::erase_if(diedAt, [&](const auto& a_entry) { return diedNow - a_entry.second >= options.aliveAgainGrace; });
+		}
 		if (diedAt.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
-			diedAt[death->refId] = Clock::now();
+			diedAt[death->refId] = diedNow;
 		}
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
@@ -828,10 +836,12 @@ void Server::Run()
 			// WorldSync::MayClaim), and the host's world is the session's, so it is alive again for everyone and runs
 			// in the host's game. Only well after the host's game last asked for the world and after the death, so a
 			// copy alive only in an older save, or one the news of its death has not reached yet, is not taken for it.
-			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server.
+			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server. Nor
+			// can the host's game while its last request for the world went unanswered: what it has alive may be from
+			// the save it loaded, and it does not ask again until its next load.
 			if (deadActors.contains(claim.refId)) {
 				const auto died = diedAt.find(claim.refId);
-				const bool cameBack = a_player.local && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
+				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
 				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
 				if (!cameBack) {
 					continue;
@@ -1247,15 +1257,17 @@ void Server::Run()
 	};
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		// Its world was just loaded, whether or not it is answered (see handleClaims).
+		// Its world was just loaded, and is stale until this is answered (see handleClaims).
 		if (a_player.welcomed) {
 			a_player.worldAskedAt = Clock::now();
+			a_player.worldStale = true;
 		}
 		if (!allowEvent(a_player) || !allowWorldState(a_player)) {
 			return;
 		}
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
 			sendWorldState(a_player.key, request->sessionId == sessionId ? request->containerFrom : 0);
+			a_player.worldStale = false;
 		}
 	};
 
@@ -1270,6 +1282,8 @@ void Server::Run()
 				// Hello again on the same connection: their game restarted before it timed out
 				// (Steam keeps one connection per friend). Start over as a new arrival.
 				if (!allowWorldState(a_player)) {
+					a_player.worldStale = true;  // its game restarted and has its own save's world now (see handleClaims)
+					a_player.worldAskedAt = Clock::now();
 					break;
 				}
 				leave(a_player);
