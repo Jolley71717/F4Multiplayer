@@ -71,6 +71,13 @@ namespace TestServer
 			return std::ranges::any_of(logLines, [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; });
 		}
 
+		// Everything the server logged so far.
+		std::vector<std::string> LogLines()
+		{
+			std::lock_guard lock{ logMutex };
+			return logLines;
+		}
+
 	private:
 		std::mutex               logMutex;
 		std::vector<std::string> logLines;
