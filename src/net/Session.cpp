@@ -50,6 +50,7 @@ namespace Session
 
 		bool              welcomed = false;
 		std::uint32_t     localId = 0;
+		std::uint64_t     sessionId = 0;  // the session we were welcomed into
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
 
@@ -208,6 +209,7 @@ namespace Session
 					sentEquipment.reset();
 					sentFace.reset();
 					localId = msg->playerId;
+					sessionId = msg->sessionId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->sessionId, localId, msg->friendlyFire);
@@ -479,6 +481,7 @@ namespace Session
 			}
 			welcomed = false;
 			localId = 0;
+			sessionId = 0;
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			NpcSync::Reset();
@@ -872,8 +875,12 @@ namespace Session
 		WorldClock::Rebaseline();
 		WorkshopSync::OnGameLoaded();
 		if (welcomed) {
-			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
-			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
+			// A save from no session (made alone, or another character's) or another one joins ours from its
+			// first change, so the saves made from it on carry a record.
+			WorldSync::AdoptSession(sessionId, localId);
+			const auto request = WorldSync::ResyncPoint();
+			client->Send(Protocol::Encode(request), true);
+			REX::INFO("Session: save loaded; asking for the session's changes since #{}", request.containerFrom);
 		}
 	}
 

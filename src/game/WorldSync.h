@@ -16,8 +16,13 @@ namespace WorldSync
 	// The server welcomed us into session a_sessionId.
 	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire);
 
-	// What our world already contains, for Hello and after loading a save.
+	// What our world already contains, for Hello and after loading a save. The server's answer is expected:
+	// call it only for a request that is sent.
 	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
+
+	// After loading a save while in a session: a save with no session's record, or another session's,
+	// takes this one (from its first change), so the saves made from it on carry a record.
+	void AdoptSession(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId);
 
 	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
 	// a_x/y/z: where the corpse lies in the reporter's game (all zero when unknown).
@@ -40,7 +45,8 @@ namespace WorldSync
 	// How many actors the player killed since the last call (any actor, shared or not).
 	[[nodiscard]] std::uint32_t TakePlayerKills();
 
-	// Local events to send to the server since the last call.
+	// Local events to send to the server since the last call (a request for container changes a gap
+	// still lacks among them).
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
 	// Forget what we know about the world (on disconnect and after loading a save). The record of

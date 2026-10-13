@@ -456,6 +456,34 @@ TEST("server world: a world request after loading a save follows the same rule")
 	CHECK(world[0].containerChanges.size() == 5);
 }
 
+TEST("server world: a world request past the end of the log answers with containerFirstIndex = log size and no changes")
+{
+	// A save from before the host's game stopped without writing its last changes asks from further on
+	// than the server knows: the answer says where the log ends, which is how the client knows to count
+	// from there (ContainerLedger::Ledger::OnChunk). The rest of the world comes as usual.
+	Fixture    f;
+	const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(welcome);
+	for (int i = 0; i < 3; ++i) {
+		f.fake->Deliver(1, Container(CHEST, ITEM + i, 1));
+	}
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1 });
+
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 45 }));
+	const auto world = WorldStates(Received(f, 1));
+	REQUIRE(world.size() == 1);
+	CHECK(world[0].containerFirstIndex == 3);
+	CHECK(world[0].containerChanges.empty());
+	CHECK(world[0].deadActors == std::vector<std::uint32_t>{ NPC });
+
+	// The next change takes the first number past the end, which is where the client now counts from.
+	f.fake->Deliver(1, Container(CHEST, ITEM, -1));
+	const auto changes = Decoded(Received(f, 1), MT::kContainerChanged, Protocol::DecodeIndexedContainerChange);
+	REQUIRE(changes.size() == 1);
+	CHECK(changes[0].index == 3);
+}
+
 TEST("server world: a big world state is sent in chunks")
 {
 	// 4500 changes: more than one chunk. A player may report 500 events a second, so nine share it.
