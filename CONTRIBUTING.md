@@ -102,9 +102,10 @@ The same goes for the plugin's own log, which players attach to public issues. A
 player as `player N` (their ID), a Steam account as `Redact::Alias(id)` (`~3fa2c1`, different every
 launch) and an address through `Redact::MaskAddress`; never format a player's `.name`,
 `PersonaName()`, a SteamID64, an address or a path under the user's folder into an INFO, WARN or
-ERROR line. `Hud::Notify` text, which names players, goes to the log at DEBUG only. `Redact::Scrub`
-runs over every line (the server's log function and the plugin's log sink) as a net for Steam ids
-and IP addresses, not names; `tests/LogPrivacyTests.cpp` and `tools/soak.ps1` check the server's log.
+ERROR line. `Hud::Notify` text names players and is never logged, at any level: log what a
+maintainer needs next to it, by player ID. `Redact::Scrub` runs over every line (the server's log
+function and the plugin's log sink) as a net for Steam ids and IP addresses, not names;
+`tests/LogPrivacyTests.cpp` and `tools/soak.ps1` check the server's log.
 
 `tools/git-hooks` has a `pre-commit` and a `pre-push` hook that refuse a commit or push matching
 patterns you keep outside the repo (`~/.f4mp-private-patterns`, one regex per line). Turn them on

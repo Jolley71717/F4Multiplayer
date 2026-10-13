@@ -67,8 +67,8 @@
   CommonLib's runs every line through `Redact::Scrub` (`common/Redact.h`): a SteamID64 becomes a
   per-launch alias (`~` and six hex digits of a salted hash), an IPv4 address loses its last part.
   The server's log function does the same. That is the net; the lines themselves name players by
-  ID and accounts by alias, and HUD messages (which name players) are DEBUG. `sLogLevel` (info or
-  debug) sets the level; flushing is CommonLib's (every INFO line).
+  ID and accounts by alias, and HUD messages (which name players) are not logged at all. `sLogLevel`
+  (info or debug) sets the level; flushing is CommonLib's (every INFO line).
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
   (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
   transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.

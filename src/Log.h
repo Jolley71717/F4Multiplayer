@@ -13,8 +13,9 @@ namespace Log
 	// on its way to the file. A net under the call sites, which log players and accounts by alias already.
 	void InstallScrubber();
 
-	// "info" (the default: what players attach) or "debug" (also the friend scans and HUD messages,
-	// still by alias). sLogLevel in the ini, or the dev channel's "log level". False for anything else.
+	// "info" (the default: what players attach) or "debug" (also the friend scans, by alias, and
+	// the lines characters say; HUD messages name players, so neither level logs them). sLogLevel in the
+	// ini, or the dev channel's "log level". False for anything else.
 	bool                           SetLevel(std::string_view a_level);
 	[[nodiscard]] std::string_view Level();
 

@@ -20,9 +20,9 @@ game's own code can:
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
   sounds played, and so on.
 - **Open and close menus:** `menu PipboyMenu force`.
-- **Change the log:** `log level debug` adds the DEBUG lines (friend scans, HUD messages; players
-  still by alias, never by name) until the game restarts, `log level info` takes them out again,
-  and `log flush` writes out what is buffered.
+- **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
+  characters say; HUD messages name players and are never logged) until the game restarts, `log
+  level info` takes them out again, and `log flush` writes out what is buffered.
 - **Look inside the HUD:** `gfx` reads its Flash objects, and `gfxset` changes them. The compass
   markers were found this way.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
