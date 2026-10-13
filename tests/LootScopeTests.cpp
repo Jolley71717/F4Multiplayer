@@ -80,6 +80,24 @@ TEST("loot scope: a workbench, a power armor frame and a vendor's chest are each
 	}
 }
 
+TEST("loot scope: where a holder's rule and an item's meet, the holder's wins")
+{
+	// A vendor's chest is a trade whatever it holds: a weapon in it is the vendor's stock, not a weapon
+	// left out of the session, and a quest item put in is sold.
+	CHECK(Every(VENDOR_CHEST, ItemFacts{ .kind = Item::kWeapon }, Scope::kVendor));
+	CHECK(Of(VENDOR_CHEST, ItemFacts{ .kind = Item::kMisc, .questAlias = true }, Direction::kPut) == Scope::kVendor);
+	// A settlement's workbench is each player's, quest stack or bobblehead.
+	CHECK(Of(WORKBENCH, ItemFacts{ .kind = Item::kMisc, .questAlias = true }, Direction::kTake) == Scope::kPerPlayer);
+	CHECK(Every(WORKBENCH, ItemFacts{ .kind = Item::kMisc, .featured = true }, Scope::kPerPlayer));
+	CHECK(Every(FRAME, ItemFacts{ .kind = Item::kKey }, Scope::kPerPlayer));
+	// On a living NPC what is personal stays personal (it never waits for the NPC to die): a key a
+	// friend pickpocketed is still in our NPC's pocket for us.
+	CHECK(Every(LIVING, ItemFacts{ .kind = Item::kKey }, Scope::kPersonal));
+	CHECK(Of(LIVING, ItemFacts{ .kind = Item::kAid, .questAlias = true }, Direction::kTake) == Scope::kPersonal);
+	// A corpse whose kill hasn't reached us holds what it held: a quest item on it is still personal.
+	CHECK(Of(KILL_ON_ITS_WAY, ItemFacts{ .kind = Item::kMisc, .questAlias = true }, Direction::kTake) == Scope::kPersonal);
+}
+
 TEST("loot scope: a living NPC's inventory waits until it is dead: pickpocketing, a companion's trade, or a kill still on its way")
 {
 	CHECK(Every(LIVING, AMMO, Scope::kNotYetDead));
