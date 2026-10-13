@@ -15,8 +15,10 @@ starting the work, so the order and the risks are agreed first.
 - A moved piece's copy is moved with its 3D (an actor through its controller), or made again when it
   changes cells. A load lets the copies' handles go and the server sends the building again; the
   save's copies are adopted at their spots. Reports are placed in order, a few a frame
-  (`WorkshopInbox`); the rules that need no game are in `WorkshopMove` and tested end to end in
-  `tests/WorkshopSessionTests.cpp`.
+  (`WorkshopInbox`); what each report does (scrap, follow, adopt, make, wait) is `WorkshopApply`, a
+  game-free template the plugin runs against the engine and `tests/WorkshopSessionTests.cpp` runs
+  against a stand-in world, behind a real server. Only a container copy's contents are handed to the
+  player when it goes (`WorkshopApply::Rescues`): a turret's or robot's inventory is its own gear.
 
 ## Three steps, in order
 
