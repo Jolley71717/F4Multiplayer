@@ -337,6 +337,25 @@ What a peer can now send that it could not before, and what checks it on the way
 - Dev commands (`turnto`, `frames`, `say`): dev channel only, which is off by default and token-protected (docs/DEV-CHANNEL.md).
 - Frame-time stats: local counters, nothing on the wire.
 
+### Who may change your world (0.8.6-rc3)
+
+The server is a relay with budgets; it has no copy of the world to check against. So each game also
+judges what a friend's game says happened in it, by its own state. The game-free rules are in
+`src/game/RemoteEdits.h` (tested in `tests/RemoteEditsTests.cpp` and, end to end through the real
+server, in `tests/ServerWorldTests.cpp` under "host authority").
+
+| Message | Who may send it | Server check | Receiver check | In the session file |
+|---|---|---|---|---|
+| `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second (the host's own game has none; refused or repeated deaths cost nothing) | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`KillsOurCopy`); the body is moved only within 4096 | yes, so a death the server dropped is never replayed |
+| `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second | the explosion's radius must be in (0, 1024]; with friendly fire off, nothing is set off within its radius (+128) of us or our companions | no |
+| `kActorStates` (NPCs) | the player running the actor | owner only | a friend's companion is moved over only while our copy of the friend is within 1500 units of it; in the own story, our story's characters are not switched on by a friend's game | no |
+| `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (`containerRefused`); other containers, vendors included, follow friends | yes |
+| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in a loaded build area (`scrapRefused`, `scrapDeferred`) | yes |
+| `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
+
+Not done yet: a single `Mutates(MessageType)` list the server and a CI check share, so a new message
+that changes the world cannot ship without a row here.
+
 ## Prior art
 
 - Skyrim Together Reborn (GPL-3.0): ownership, interpolation and animation sync design.

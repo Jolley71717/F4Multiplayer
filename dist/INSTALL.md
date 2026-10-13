@@ -109,7 +109,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   with `bSyncQuests = false` if a quest misbehaves.
 - **The story:** everyone plays the main story and the faction quests in their own game, and gets
   a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
-  each of you talks to the characters yourself. The host can set `sStory = shared` to move
+  each of you talks to the characters yourself. A story character that a friend's game says died
+  where they were nowhere near, or that a friend's game switches on, stays as your own story has it. The host can set `sStory = shared` to move
   everyone's story along together instead (it can skip scenes you haven't seen, and a friend's
   faction choices become yours).
 - **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
