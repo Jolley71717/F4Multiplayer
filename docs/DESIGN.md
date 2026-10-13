@@ -103,7 +103,8 @@
 ## Remote player look
 
 - Body: a settler of the player's sex (0020A578 female / 0020A57B male) unless `iMyAppearance` is set.
-  Unique NPCs (companions, quest characters) are refused as appearances; their scripts would come along.
+  Only the two settlers, or the receiver's own `iPuppetBaseForm`, are placed: any other NPC (unique or
+  not) would bring its scripts and factions along, so it is shown as the receiver's default.
 - Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second).
   The puppet gets `removeallitems` + `additem`/`equipitem` via the console. Weapon mods and
   the player's face are not copied.

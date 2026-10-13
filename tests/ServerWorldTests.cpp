@@ -2261,3 +2261,36 @@ TEST("host authority: a friend's companion walks in beside them, but no NPC is p
 	f.fake->Deliver(3, NpcAt(DOGMEAT, { 0, 0x0000003C, 5100.0f, 5000.0f, 0.0f }));
 	CHECK(Count(Received(f, 1), MT::kActorStatesRelay) == 0);
 }
+
+TEST("host authority: a friend who asks to look like any NPC but a settler is shown as your own default")
+{
+	constexpr std::uint32_t SOME_NPC = 0x0024A381;  // an ordinary, non-unique NPC with scripts of its own
+	Fixture f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));  // no look picked: everyone's own default
+	REQUIRE(host);
+	auto bobHello = Fixture::MakeHello("Bob");
+	bobHello.appearance = SOME_NPC;
+	const auto bob = f.Join(2, bobHello);
+	REQUIRE(bob);
+	auto carolHello = Fixture::MakeHello("Carol");
+	carolHello.appearance = RemoteEdits::MALE_SETTLER;
+	const auto carol = f.Join(3, carolHello);
+	REQUIRE(carol);
+
+	// Each game decides by its own ini: the host's default is the female settler, Carol's is that same NPC.
+	const std::map<PeerId, std::uint32_t> defaults{ { 1, RemoteEdits::FEMALE_SETTLER }, { 2, RemoteEdits::FEMALE_SETTLER }, { 3, SOME_NPC } };
+	std::map<std::pair<PeerId, std::uint32_t>, bool> placedAsAsked;  // (watcher, player) -> placed with the look they sent
+	for (const auto& [peer, localDefault] : defaults) {
+		for (const auto& joined : Decoded(Received(f, peer), MT::kPlayerJoined, Protocol::DecodePlayerJoined)) {
+			placedAsAsked[{ peer, joined.playerId }] = joined.appearance && RemoteEdits::AllowedAppearance(joined.appearance, localDefault);
+		}
+	}
+	// The server passes every look on as sent; the receivers judge it.
+	CHECK(placedAsAsked.size() == 6);
+	CHECK(!placedAsAsked.at({ 1, bob->playerId }));    // the host sees Bob as the female settler
+	CHECK(placedAsAsked.at({ 1, carol->playerId }));    // and Carol as the male settler she picked
+	CHECK(placedAsAsked.at({ 2, carol->playerId }));
+	CHECK(placedAsAsked.at({ 3, bob->playerId }));      // Carol's own stand-ins are that NPC anyway
+	CHECK(!placedAsAsked.at({ 2, host->playerId }));   // the host picked nothing: Bob's default
+	CHECK(!placedAsAsked.at({ 3, host->playerId }));
+}
