@@ -1803,6 +1803,103 @@ TEST("server trust: the host's own game has no explosion budget")
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 24);
 }
 
+namespace
+{
+	// Deaths of NPCs nobody runs, from a_first on (each a different NPC).
+	std::vector<std::vector<std::uint8_t>> Deaths(std::uint32_t a_first, int a_count)
+	{
+		std::vector<std::vector<std::uint8_t>> out;
+		for (int i = 0; i < a_count; ++i) {
+			out.push_back(Death(a_first + static_cast<std::uint32_t>(i)));
+		}
+		return out;
+	}
+
+	void DeliverAll(Fixture& a_f, PeerId a_peer, const std::vector<std::vector<std::uint8_t>>& a_packets)
+	{
+		for (const auto& packet : a_packets) {
+			a_f.fake->Deliver(a_peer, packet);
+		}
+	}
+}
+
+TEST("server trust: a joiner's deaths stop at their budget and come back with time")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DeliverAll(f, 1, Deaths(0x00100000, 61));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 60);
+	CHECK(f.Logged("reports deaths faster than any fight"));
+
+	std::this_thread::sleep_for(1100ms);  // two a second come back
+	DeliverAll(f, 1, Deaths(0x00100100, 2));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 2);
+
+	// The one dropped is dropped for good: it isn't in the session's dead either.
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	CHECK(world[0].deadActors.size() == 62);
+	CHECK(std::ranges::find(world[0].deadActors, 0x00100000u + 60) == world[0].deadActors.end());
+}
+
+TEST("server trust: the host's own game reports any number of deaths")
+{
+	Fixture f{ HostedOptions() };
+	JoinAsHost(f, 1);
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DeliverAll(f, 1, Deaths(0x00100000, 90));  // a big fight, or found dead across a whole settlement
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 90);
+}
+
+TEST("server trust: a death refused, or known already, costs nothing from the budget")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	std::vector<Protocol::ActorClaim> bobs;
+	for (std::uint32_t i = 0; i < 40; ++i) {
+		bobs.push_back({ 0x00200000 + i, Reason::kUnowned });
+	}
+	f.fake->Deliver(2, Claim(bobs));  // Bob's game runs these
+	f.fake->Deliver(1, Death(NPC));
+	Clear(f, { 1, 2 });
+
+	for (int round = 0; round < 2; ++round) {
+		DeliverAll(f, 1, Deaths(0x00200000, 40));  // not Alice's to report
+		for (int i = 0; i < 20; ++i) {
+			f.fake->Deliver(1, Death(NPC));  // dead already
+		}
+	}
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	DeliverAll(f, 1, Deaths(0x00100000, 59));  // one of her 60 went on NPC
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 59);
+}
+
+TEST("server trust: a joiner's deaths over the budget are not in the session the host restarts from")
+{
+	const auto path = (std::filesystem::temp_directory_path() / std::format("f4mp-server-{}.session", std::rand())).string();
+	std::filesystem::remove(path);
+	Server::Options options;
+	options.sessionFile = path;
+	{
+		Fixture f{ options };
+		REQUIRE(f.Join(1, Fixture::MakeHello("Mallory", 0xBAD)));
+		DeliverAll(f, 1, Deaths(0x00100000, 200));  // every NPC around, as fast as it can
+		Sync(f, 1);
+	}  // the host quits: stopping saves
+
+	Fixture f{ options };
+	REQUIRE(f.Join(2, Fixture::MakeHello("Host")));
+	const auto world = WorldStates(Received(f, 2));
+	REQUIRE(world.size() == 1);
+	CHECK(world[0].deadActors.size() == 60);
+	std::filesystem::remove(path);
+}
+
 TEST("server trust: one player's companion claims are capped")
 {
 	Fixture f;
@@ -1949,4 +2046,147 @@ TEST("host authority: a friend's game reporting a mini nuke after a throw sets n
 	const auto setOff = SetOffBy(Received(f, 1), *host, { 0, 0x0000003C, 0.0f, 9000.0f, 0.0f }, MINI_NUKE_RADIUS);
 	REQUIRE(setOff.size() == 1);
 	CHECK(!setOff[0]);
+}
+
+namespace
+{
+	constexpr std::uint32_t CORVEGA_INSIDE = 0x0001F00D;  // an interior cell
+	constexpr std::uint32_t BOSS = 0x0001F0B5;            // a unique character of the main story, inside it
+	constexpr std::uint32_t RAIDER = 0x0001F0A1;          // one of his raiders
+	const RemoteEdits::Spot BOSS_HERE{ CORVEGA_INSIDE, 0, 1200.0f, -300.0f, 0.0f };  // where our copy of him stands
+	const RemoteEdits::Spot RAIDER_HERE{ CORVEGA_INSIDE, 0, 900.0f, 100.0f, 0.0f };
+	constexpr FoundDead::Npc UNIQUE{ .unique = true };
+	constexpr FoundDead::Npc GENERIC{};
+
+	// What a game has heard of where each other player is: the states the server passed on to it.
+	using Heard = std::map<std::uint32_t, RemoteEdits::Spot>;
+
+	void Note(Heard& a_heard, const std::vector<std::uint8_t>& a_packet)
+	{
+		const auto batch = Protocol::DecodePlayerStates(a_packet);
+		REQUIRE(batch);
+		for (const auto& entry : batch->players) {
+			a_heard[entry.playerId] = RemoteEdits::SpotOf(entry.state);
+		}
+	}
+
+	// Player a_id (on a_peer) says where they stand; returns once the server has passed it on to a_watcher.
+	void Stand(Fixture& a_f, PeerId a_peer, std::uint32_t a_id, const RemoteEdits::Spot& a_at, PeerId a_watcher, Heard& a_heard)
+	{
+		static std::uint32_t sequence = 0;
+		Protocol::PlayerState state;
+		state.sequence = ++sequence;
+		state.cell = a_at.cell;
+		state.worldspace = a_at.worldspace;
+		state.x = a_at.x, state.y = a_at.y, state.z = a_at.z;
+		a_f.fake->Deliver(a_peer, Protocol::Encode(state));
+		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		while (!(a_heard.contains(a_id) && a_heard[a_id].x == a_at.x) && std::chrono::steady_clock::now() < deadline) {
+			if (const auto packet = a_f.fake->WaitFor(a_watcher, Type(MT::kPlayerStates), 200ms)) {
+				Note(a_heard, *packet);
+			}
+		}
+		REQUIRE(a_heard.contains(a_id));
+	}
+
+	struct Seen
+	{
+		std::uint32_t                    reporter = 0;
+		std::optional<RemoteEdits::Spot> reporterThen;  // where our game had heard the reporter was when the death came
+	};
+
+	// Reads what a_peer is sent until the deaths of a_refs have come: as our game takes each report.
+	std::map<std::uint32_t, Seen> DeathsAsSeenBy(Fixture& a_f, PeerId a_peer, const std::set<std::uint32_t>& a_refs, Heard& a_heard)
+	{
+		std::map<std::uint32_t, Seen> out;
+		const auto deadline = std::chrono::steady_clock::now() + 3s;
+		while (out.size() < a_refs.size() && std::chrono::steady_clock::now() < deadline) {
+			for (const auto& packet : a_f.fake->Take(a_peer)) {
+				if (packet[0] == Type(MT::kPlayerStates)) {
+					Note(a_heard, packet);
+				} else if (packet[0] == Type(MT::kActorDied)) {
+					const auto death = Protocol::DecodeActorDeath(packet);
+					REQUIRE(death);
+					if (a_refs.contains(death->refId)) {
+						Seen seen{ death->playerId };
+						if (const auto it = a_heard.find(death->playerId); it != a_heard.end()) {
+							seen.reporterThen = it->second;
+						}
+						out[death->refId] = seen;
+					}
+				}
+			}
+			std::this_thread::sleep_for(20ms);
+		}
+		return out;
+	}
+}
+
+TEST("host authority: a boss killed by a friend beside him dies in your game too, even while you wait outside")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(2, Claim({ { BOSS, Reason::kUnowned }, { RAIDER, Reason::kUnowned } }));  // Bob's game runs the fight inside
+	Clear(f, { 1, 2 });
+	Heard heardByHost, heardByBob;
+	Stand(f, 1, host->playerId, { 0, 0x0000003C, 5000.0f, 5000.0f, 0.0f }, 2, heardByBob);  // the host waits out front
+	Stand(f, 2, bob, { CORVEGA_INSIDE, 0, 1100.0f, -200.0f, 0.0f }, 1, heardByHost);
+	f.fake->Deliver(2, DeathAt(BOSS, true, 1150.0f));
+
+	const auto seen = DeathsAsSeenBy(f, 1, { BOSS }, heardByHost);
+	REQUIRE(seen.contains(BOSS));
+	CHECK(seen.at(BOSS).reporter == bob);
+	CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heardByHost[bob], BOSS_HERE));
+}
+
+TEST("host authority: a friend's game reporting a story character dead from nowhere near leaves it alive in yours, but not a raider")
+{
+	for (const bool shared : { false, true }) {
+		Server::Options options;
+		options.sharedStory = shared;
+		Fixture    f{ options };
+		const auto host = f.Join(1, Fixture::MakeHello("Host"));
+		REQUIRE(host);
+		const auto mallory = JoinAs(f, 2, "Mallory");
+		Clear(f, { 1, 2 });
+		Heard heard;
+		Stand(f, 2, mallory, { 0, 0x0000003C, -60000.0f, 80000.0f, 0.0f }, 1, heard);  // across the map, outdoors
+		f.fake->Deliver(2, DeathAt(BOSS, true, 1200.0f));  // nobody runs either: the server takes the report from anyone
+		f.fake->Deliver(2, DeathAt(RAIDER, true, 900.0f));
+
+		const auto seen = DeathsAsSeenBy(f, 1, { BOSS, RAIDER }, heard);
+		REQUIRE(seen.size() == 2);
+		REQUIRE(seen.at(BOSS).reporterThen.has_value());
+		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heard[mallory], BOSS_HERE) == shared);
+		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, GENERIC, seen.at(RAIDER).reporterThen, heard[mallory], RAIDER_HERE));
+
+		// She walks over afterwards: where she is now counts, as the pending death is tried again.
+		Stand(f, 2, mallory, { CORVEGA_INSIDE, 0, 1000.0f, -300.0f, 0.0f }, 1, heard);
+		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, UNIQUE, seen.at(BOSS).reporterThen, heard[mallory], BOSS_HERE));
+	}
+}
+
+TEST("host authority: a story character's death replayed from the session after a reload stays your own story's to decide")
+{
+	Fixture    f;
+	const auto host = f.Join(1, Fixture::MakeHello("Host"));
+	REQUIRE(host);
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	f.fake->Deliver(2, DeathAt(BOSS, true, 1200.0f));
+	f.fake->Deliver(2, DeathAt(RAIDER, true, 900.0f));
+	Clear(f, { 1, 2 });
+
+	// The host loads a save from before the fight: the session's dead come back in the world state, with
+	// nobody known to have seen them die.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+	const auto world = WorldStates(Received(f, 1));
+	REQUIRE(world.size() == 1);
+	REQUIRE(world[0].deadActors.size() == 2);
+	for (const auto ref : world[0].deadActors) {
+		const bool boss = ref == BOSS;
+		CHECK(RemoteEdits::KillsOurCopy(host->sharedStory, boss ? UNIQUE : GENERIC, std::nullopt, std::nullopt, boss ? BOSS_HERE : RAIDER_HERE) == !boss);
+	}
 }

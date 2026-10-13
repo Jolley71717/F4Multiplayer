@@ -1406,6 +1406,15 @@ namespace RemotePlayers
 		});
 	}
 
+	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end() || it->second.snapshots.empty()) {
+			return std::nullopt;
+		}
+		return it->second.snapshots.back().state;
+	}
+
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);

@@ -252,7 +252,7 @@ namespace Session
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way
-					WorldSync::ApplyRemoteDeath(msg->refId, msg->killed ? msg->playerId : 0, msg->x, msg->y, msg->z);
+					WorldSync::ApplyRemoteDeath(msg->refId, msg->killed ? msg->playerId : 0, msg->x, msg->y, msg->z, msg->playerId);
 				}
 				break;
 			case MessageType::kActorHealth:

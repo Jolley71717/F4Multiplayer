@@ -45,6 +45,10 @@ namespace
 	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
 	constexpr double EXPLOSION_BURST = 16.0;
 	constexpr double EXPLOSIONS_PER_SECOND = 4.0;
+	// Deaths one player may report: a settlement defence or a ghoul pack at once, then two a second. A death
+	// is shared and saved with the session; a client making them up could otherwise empty the map.
+	constexpr double DEATH_BURST = 60.0;
+	constexpr double DEATHS_PER_SECOND = 2.0;
 	constexpr std::size_t MAX_COMPANIONS_PER_PLAYER = 4;
 	// Hello identities remembered per server run; a client can make up new ones, so there's a cap.
 	constexpr std::size_t MAX_IDENTITIES = 1024;
@@ -113,6 +117,8 @@ namespace
 		Clock::time_point          lastThrow{};  // explosions are believed only for a while after one
 		TokenBucket                explosions{ EXPLOSION_BURST, EXPLOSIONS_PER_SECOND };  // not for the host's own game
 		bool                       explosionsLogged = false;  // the budget ran out, and the log said so
+		TokenBucket                deaths{ DEATH_BURST, DEATHS_PER_SECOND };  // not for the host's own game
+		bool                       deathsLogged = false;
 		Clock::time_point          lastFace{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		float                      xpBudget = Protocol::MAX_XP_SHARE;
@@ -675,9 +681,21 @@ void Server::Run()
 				return;
 			}
 		}
-		if (!deadActors.insert(death->refId).second) {
+		if (deadActors.contains(death->refId)) {
 			return;
 		}
+		// Within the reporter's budget (what was refused or known already above costs nothing). One over it
+		// is dropped for good: the reporter's game counts it as sent.
+		if (!a_player.local) {
+			if (!a_player.deaths.Take(Clock::now())) {
+				if (!std::exchange(a_player.deathsLogged, true)) {
+					log(std::format("server: '{}' reports deaths faster than any fight; dropping them until their budget refills", a_player.name));
+				}
+				return;
+			}
+			a_player.deathsLogged = false;
+		}
+		deadActors.insert(death->refId);
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
 		}

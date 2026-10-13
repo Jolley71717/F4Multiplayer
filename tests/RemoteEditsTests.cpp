@@ -39,7 +39,7 @@ TEST("remote edits: a friend's kill kills anyone but our own story's unique or e
 	CHECK(MayKill(false, RADIANT_TARGET, false));  // radiant quests alias generic enemies: still everyone's kill
 	CHECK(!MayKill(false, JARED, false));
 	CHECK(!MayKill(false, PROTECTED, false));
-	CHECK(MayKill(false, JARED, true));   // killed with the other player beside him
+	CHECK(MayKill(false, JARED, true));   // the reporter stood beside him
 	CHECK(MayKill(true, PRESTON, false)); // a shared story: the host's story is everyone's
 }
 

@@ -2,6 +2,8 @@
 
 #include "Protocol.h"
 
+#include "game/FoundDead.h"
+
 // Shared world state: things that happen in one player's world are replayed in everyone's.
 // Actor deaths and health, container contents, picked-up items, doors and locks, and (through
 // QuestSync) quest stages. Also forwards NPC hits on remote players' stand-ins. Main thread only.
@@ -24,7 +26,13 @@ namespace WorldSync
 
 	// a_killer: the player who killed it (their stand-in gives the corpse its push), or 0.
 	// a_x/y/z: where the corpse lies in the reporter's game (all zero when unknown).
-	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0, float a_x = 0, float a_y = 0, float a_z = 0);
+	// a_reporter: the player whose game reported it (0: a replay from the session). With everyone on their
+	// own story, a unique or essential character dies here only if the reporter was there to see it
+	// (RemoteEdits::MayKill).
+	void ApplyRemoteDeath(std::uint32_t a_refId, std::uint32_t a_killer = 0, float a_x = 0, float a_y = 0, float a_z = 0, std::uint32_t a_reporter = 0);
+
+	// What makes the actor a character of a player's own story (unique, essential or protected, in a quest's alias).
+	[[nodiscard]] FoundDead::Npc DescribeStory(RE::Actor* a_actor);
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId);  // another player pressed a button, switch or lever
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);

@@ -109,6 +109,14 @@ namespace RemoteEdits
 		return a_sharedStory || !(a_npc.unique || a_npc.essential) || a_witnessed;
 	}
 
+	// The same, for our copy standing at a_actor: a_reporterThen is where the reporter was when the report
+	// came, a_reporterNow where they are now (their state can come after the report; either may be unknown).
+	inline bool KillsOurCopy(bool a_sharedStory, const FoundDead::Npc& a_npc, const std::optional<Spot>& a_reporterThen, const std::optional<Spot>& a_reporterNow,
+		const Spot& a_actor)
+	{
+		return MayKill(a_sharedStory, a_npc, Witnessed(a_reporterThen, a_actor) || Witnessed(a_reporterNow, a_actor));
+	}
+
 	// The corpse is put where it fell in the reporter's game only from this close; farther, it dies where
 	// ours stands (a report can't pull an NPC across the map).
 	constexpr float CORPSE_MOVE_RANGE = 4096.0f;

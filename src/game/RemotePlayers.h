@@ -47,6 +47,9 @@ namespace RemotePlayers
 	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
 	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);
 
+	// The last state a player sent, wherever they are (nothing if none yet, or they are gone).
+	[[nodiscard]] std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id);
+
 	// The player's name, or "" if unknown.
 	[[nodiscard]] std::string NameOf(std::uint32_t a_id);
 
