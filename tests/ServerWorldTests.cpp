@@ -1429,6 +1429,27 @@ TEST("server workshop: a world request after a load sends everything the others 
 	CHECK(batchesFor(2).empty());  // the fourth inside ten seconds
 }
 
+TEST("server workshop: a friend who loads a save from another session, or from before they ever joined, still gets the session's building sent")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(welcome);
+	f.fake->Deliver(1, Built(Wall(0xFF000001)));
+	Clear(f, { 1, 2 });
+
+	// The building went with the world his game had before the load, whatever session that save was
+	// made in: the copies it holds are only found again when the building is sent.
+	for (const auto session : { welcome->sessionId ^ 0x5A5A5A5Aull, std::uint64_t{ 0 } }) {
+		f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ session, 0 }));
+		const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+		REQUIRE(batches.size() == 1);
+		REQUIRE(batches[0].size() == 1);
+		CHECK(batches[0][0].refId == 0xFF000001);
+		CHECK(batches[0][0].playerId == alice);
+	}
+}
+
 // ---- the saved session --------------------------------------------------------------------
 
 TEST("server session file: the world survives a server restart with the same load order")
