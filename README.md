@@ -23,18 +23,18 @@ xmake build
 
 The plugin is written to `build/windows/x64/releasedbg/F4Multiplayer.dll`, next to the standalone server `F4MPServer.exe` and the test bot `F4MPBot.exe`. Copy the plugin to `Data/F4SE/Plugins/`, or set `XSE_FO4_MODS_PATH` (mod manager mods folder) or `XSE_FO4_GAME_PATH` and run `xmake install`. xmake fetches ENet; CommonLibF4 is the submodule. The Steamworks SDK is not needed: the plugin calls the game's own `steam_api64.dll` through a few hand-declared functions (`src/steam/SteamApi.cpp`).
 
-`tools/package.ps1` builds the release zip in `dist/out/` (the one on Nexus). It refuses a zip that names the build machine or its user.
+`tools/package.ps1` builds the release zip in `dist/out/` from a committed tree, after the unit tests pass. It refuses a zip that names the build machine or its user. `tools/promote.ps1` turns a release candidate that held into the release (docs/RELEASING.md).
 
 Logs are written to `Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`.
 
 ## Tests
 
 ```bat
-xmake build F4MPTests
-xmake run F4MPTests
+xmake build -y
+build\windows\x64\releasedbg\F4MPTests.exe
 ```
 
-Unit tests for the protocol and the session server (a fake transport drives a real server). `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
+`xmake build` builds the unit tests with everything else: the protocol, the session server (a fake transport drives a real server) and the parts of the plugin that need no game. `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin. `xmake config --analyze=y` turns on the MSVC code analyser for our sources.
 
 ## Bugs, ideas and pull requests
 

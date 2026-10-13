@@ -12,7 +12,7 @@ set_warnings("allextra")
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
 
-add_requires("enet")
+add_requires("enet v1.3.18")  -- pinned: a new enet release must not slip into a release build unnoticed
 
 -- keep the build machine's paths (and so the user name) out of the binaries: __FILE__ loses the
 -- project directory, and the .pdb is referred to by name only
@@ -46,7 +46,7 @@ target("F4MPCommon")
 
 -- client plugin, loaded into the game by F4SE
 target("F4Multiplayer")
-	add_defines('F4MP_BUILD_LABEL="' .. (os.getenv("F4MP_LABEL") or "") .. '"')  -- "rc1" on a release candidate, shown in the log
+	add_defines('F4MP_BUILD_LABEL="' .. (os.getenv("F4MP_LABEL") or "") .. '"')  -- tools/package.ps1 sets it to the label and commit ("rc3 1a2b3c4"), shown in the log
     add_rules("commonlibf4.plugin", {
         name = "F4Multiplayer",
         author = "Jolley71717",
@@ -77,10 +77,10 @@ target("F4MPBot")
     analyze()
     add_files("bot/**.cpp")
 
--- unit tests for the protocol and the server (no game needed): xmake build F4MPTests && xmake run F4MPTests
+-- unit tests for the protocol, the server and the game-free client logic (no game needed). Built by a
+-- plain `xmake build`, so whatever runs the tests after a build never runs an old binary.
 target("F4MPTests")
     set_kind("binary")
-    set_default(false)
     add_deps("F4MPCommon")
     analyze()
     add_files("tests/**.cpp")

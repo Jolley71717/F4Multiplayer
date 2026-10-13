@@ -43,19 +43,23 @@ If you already cloned without submodules: `git submodule update --init --recursi
 ## Tests
 
 ```bat
-xmake build -y F4MPTests
+xmake build -y
 build\windows\x64\releasedbg\F4MPTests.exe
 ```
 
-The tests cover the protocol and the session server (a fake transport drives a real server) and need
-no game. The exit code is the number of failed tests; pass a substring as the first argument to run
-only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
+`xmake build` builds the tests with everything else. They cover the protocol, the session server (a
+fake transport drives a real server, the test plays the players) and the parts of the plugin that
+need no game. The exit code is the number of failed tests; pass a substring as the first argument to
+run only the tests whose names contain it (`F4MPTests.exe Server`). `xmake run F4MPTests` works too.
 `tools/soak.ps1` runs the standalone server with five bots that join, leave, crash and rejoin.
 `xmake config --analyze=y` turns on the MSVC code analyser for our own sources.
 
 Anything that touches the game (`src/game`, `src/steam`, the sync classes) can only be tested in a
 game. Say in the pull request whether you ran it with two games (host and joiner) and what you saw;
-"not tested in a game" is a fine answer, as long as it is said.
+"not tested in a game" is a fine answer, as long as it is said. A fix for something seen in a game
+carries an `Evidence:` trailer in its commit message: what was run, and what a player saw that
+shows the fix holding (`Evidence: two-game test, host in the Concord museum suit seen from the
+joiner: one suit, the name tag over the wearer, an empty frame left where they got out`).
 
 ## Code style
 
@@ -85,9 +89,10 @@ the wire. Protocol tests live in `tests/ProtocolTests.cpp`.
 ## Branches and releases
 
 Work for a version lands on a `release-X.Y.Z` branch and is first published as a GitHub
-pre-release tagged `vX.Y.Z-rcN` once the unit tests and a two-game test pass. The same commit
-becomes `vX.Y.Z`, fast-forwarded to `main`, after a multi-hour soak with no crash and no regression
-report; Nexus gets settled versions in batches, rarely. Details in [docs/RELEASING.md](docs/RELEASING.md).
+pre-release tagged `vX.Y.Z-rcN` once the unit tests and a two-game test pass. The same commit and
+the rc's own zip (`tools/promote.ps1`) become `vX.Y.Z`, fast-forwarded to `main`, after a multi-hour
+soak with no crash and no regression report; Nexus gets settled versions in batches, rarely. Details
+in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## No personal data
 

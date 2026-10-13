@@ -3,9 +3,14 @@
 // A tiny test framework: TEST("name") { CHECK(...); REQUIRE(...); }. Run F4MPTests.exe, optionally
 // with a word: only tests whose name contains it run. The exit code is the number of failed tests.
 
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <format>
 #include <functional>
+#include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Test
@@ -67,6 +72,15 @@ namespace Test
 		}
 		++KnownFailures();
 		std::printf("  still fails %s:%d: %s\n", a_file, a_line, a_what.c_str());
+	}
+
+	// A file name in the temp folder that no other test, and no other run of the tests going on at the
+	// same time, uses.
+	inline std::filesystem::path TempPath(std::string_view a_stem, std::string_view a_extension)
+	{
+		std::random_device random;
+		const auto         unique = (static_cast<std::uint64_t>(random()) << 32) | random();
+		return std::filesystem::temp_directory_path() / std::format("{}-{:016x}{}", a_stem, unique, a_extension);
 	}
 }
 

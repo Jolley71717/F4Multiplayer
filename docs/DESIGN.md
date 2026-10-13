@@ -325,7 +325,7 @@ else skips this: the player is never in those places.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 24 (0.6.3).
+Protocol VERSION 27 (0.8.6). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

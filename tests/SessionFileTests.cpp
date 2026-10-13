@@ -50,7 +50,7 @@ namespace
 
 	std::filesystem::path TempFile()
 	{
-		return std::filesystem::temp_directory_path() / std::format("f4mp-session-{}.bin", std::rand());
+		return Test::TempPath("f4mp-session", ".bin");
 	}
 }
 
@@ -119,6 +119,21 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
 	}
+}
+
+// The host's workshop builds come back from the file. A workshop record damaged down to its type byte
+// is damage like any other: the file is refused whole, not loaded with that record skipped as an empty batch.
+TEST("session file: a workshop record cut to its type byte is refused like any other damage")
+{
+	auto bytes = SessionFile::Encode(MakeSnapshot());
+	REQUIRE(SessionFile::Decode(bytes));
+	const std::uint32_t length = 1;
+	const auto          at = bytes.size();
+	bytes.resize(at + sizeof(length));
+	std::memcpy(bytes.data() + at, &length, sizeof(length));
+	bytes.push_back(static_cast<std::uint8_t>(Protocol::MessageType::kWorkshopItems));
+	CHECK(!SessionFile::Decode(bytes));
+	CHECK(!Protocol::DecodeWorkshopItems(std::span(bytes).last(1)));
 }
 
 TEST("session file: the header carries the file's own version, not the protocol's")

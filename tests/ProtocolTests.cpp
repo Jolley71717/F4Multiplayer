@@ -1,7 +1,9 @@
 #include "Test.h"
 
 #include "Protocol.h"
+#include "ProtocolSamples.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <functional>
@@ -16,177 +18,10 @@
 
 namespace
 {
-	using namespace Protocol;
-	using MT = MessageType;
-	using Bytes = std::vector<std::uint8_t>;
-	using Decoder = std::function<bool(std::span<const std::uint8_t>)>;
+	using namespace ProtocolSamples;
 
 	constexpr float NaN = std::numeric_limits<float>::quiet_NaN();
 	constexpr float Inf = std::numeric_limits<float>::infinity();
-
-	// A plugin reference that every game shares (not the player, not runtime-created).
-	constexpr std::uint32_t REF_A = 0x0001F00D;
-	constexpr std::uint32_t REF_B = 0x0A0B0C0D;
-	constexpr std::uint32_t RUNTIME_REF = 0xFF001234;
-
-	template <class Fn>
-	Decoder D(Fn a_decode)
-	{
-		return [a_decode](std::span<const std::uint8_t> a_data) { return a_decode(a_data).has_value(); };
-	}
-
-	// One valid encoding of each message, with the decoder that reads it back.
-	struct Sample
-	{
-		std::string name;
-		Bytes       packet;
-		Decoder     decode;
-		bool        rejectsTrailing = true;
-	};
-
-	PlayerState MakeState(std::uint32_t a_seed)
-	{
-		PlayerState s;
-		s.sequence = a_seed;
-		s.cell = 0x0001A2B3 + a_seed;
-		s.worldspace = 0x0000003C;
-		s.x = 1234.5f + a_seed;
-		s.y = -987.25f;
-		s.z = 42.0f;
-		s.heading = 3.14159f;
-		s.speed = 250.0f;
-		s.moveMode = 0x1234;
-		s.flags = kRunning | kWeaponDrawn | kSwimming;
-		return s;
-	}
-
-	ActorState MakeActorState(std::uint32_t a_seed)
-	{
-		ActorState a;
-		a.refId = REF_A + a_seed;
-		a.cell = 0x0001A2B3;
-		a.worldspace = a_seed;
-		a.x = -1.5f;
-		a.y = 2.25f + a_seed;
-		a.z = 1e6f;
-		a.heading = -0.5f;
-		a.speed = 0.0f;
-		a.moveMode = 0xBEEF;
-		a.flags = kSneaking | kInAir | kJumping;
-		return a;
-	}
-
-	Hello MakeHello()
-	{
-		Hello h;
-		h.contentHash = 0xC0FFEE11;
-		h.name = "Alice";
-		h.password = "hunter2";
-		h.appearance = 0x0002F1E7;
-		h.world.sessionId = 0x0123456789ABCDEFull;
-		h.world.containerFrom = 77;
-		h.identity = 0xFEDCBA9876543210ull;
-		h.plugins = { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp" };
-		return h;
-	}
-
-	WorldState MakeWorldState()
-	{
-		WorldState w;
-		w.deadActors = { REF_A, REF_B, 0x00012345 };
-		w.containerFirstIndex = 1000;
-		w.containerChanges = {
-			{ 1000, 1, { REF_A, 0x0000000F, 250 } },
-			{ 1001, 2, { REF_B, 0x0004D00D, -3 } },
-			{ 1002, 7, { REF_A, 0x00000010, MAX_ITEM_COUNT } },
-		};
-		w.pickedUp = { 0x00055555, REF_B };
-		w.refStates = { { REF_A, RefState::kYes, RefState::kNo }, { REF_B, RefState::kUnknown, RefState::kYes } };
-		w.questStages = { { 0x0001ED86, 10 }, { 0x0002A1B2, 65535 } };
-		return w;
-	}
-
-	std::vector<Sample> Samples()
-	{
-		std::vector<Sample> s;
-		s.push_back({ "Hello", Encode(MakeHello()), D(DecodeHello), false });
-		s.push_back({ "WorldRequest", Encode(WorldRequest{ 0xABCDEF0123456789ull, 5 }), D(DecodeWorldRequest) });
-		s.push_back({ "PlayerState", Encode(MakeState(3)), D(DecodePlayerState) });
-		s.push_back({ "Welcome", Encode(Welcome{ 9, 0x1122334455667788ull, true, true }), D(DecodeWelcome), false });
-		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
-		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
-		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
-		s.push_back({ "PlayerStates", Encode(PlayerStates{ 99, { { 1, MakeState(1) }, { 2, MakeState(2) } } }), D(DecodePlayerStates) });
-		for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
-			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
-			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
-		}
-		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
-			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
-		}
-		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
-		s.push_back({ "IndexedContainerChange", Encode(IndexedContainerChange{ 17, 2, { REF_A, 0x0000000F, 5 } }), D(DecodeIndexedContainerChange) });
-		for (const auto type : { MT::kReportPickup, MT::kRefPickedUp }) {
-			s.push_back({ "RefPickedUp", Encode(RefPickedUp{ REF_B }, type), D(DecodeRefPickedUp) });
-		}
-		for (const auto type : { MT::kReportRefState, MT::kRefStateChanged }) {
-			s.push_back({ "RefState", Encode(RefState{ REF_A, RefState::kYes, RefState::kUnknown }, type), D(DecodeRefState) });
-		}
-		for (const auto type : { MT::kEquipment, MT::kPlayerEquipment }) {
-			s.push_back({ "Equipment", Encode(Equipment{ 6, { 0x00011111, 0x00022222, 0x00033333 } }, type), D(DecodeEquipment) });
-		}
-		s.push_back({ "Claims", Encode(std::vector<ActorClaim>{ { REF_A, ClaimReason::kInteract }, { REF_B, ClaimReason::kCompanion } }), D(DecodeClaims) });
-		s.push_back({ "Release", EncodeRelease({ REF_A, REF_B }), D(DecodeRelease) });
-		s.push_back({ "Owners", Encode(std::vector<ActorOwner>{ { REF_A, 1 }, { REF_B, 0 } }), D(DecodeOwners) });
-		for (const auto type : { MT::kActorStates, MT::kActorStatesRelay }) {
-			s.push_back({ "ActorStates", Encode(std::vector<ActorState>{ MakeActorState(0), MakeActorState(1) }, type), D(DecodeActorStates) });
-		}
-		for (const auto type : { MT::kPlayerHit, MT::kPlayerDamaged }) {
-			s.push_back({ "PlayerHit(npc)", Encode(PlayerHit{ 2, 12.5f, false, REF_A }, type), D(DecodePlayerHit) });
-			s.push_back({ "PlayerHit(player)", Encode(PlayerHit{ 2, 7.0f, true, 0 }, type), D(DecodePlayerHit) });
-		}
-		for (const auto type : { MT::kReportShot, MT::kShotFired }) {
-			s.push_back({ "Shot", Encode(Shot{ 3, REF_A }, type), D(DecodeShot) });
-			s.push_back({ "Shot(reload)", Encode(Shot{ 3, 0, ShotAction::kReload }, type), D(DecodeShot) });
-			s.push_back({ "Shot(sound)", Encode(Shot{ 3, 0, ShotAction::kShot, 0x0012A3B4 }, type), D(DecodeShot) });
-		}
-		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
-			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true, false, false, 0 }, type), D(DecodePlayerStatus) });
-			s.push_back({ "PlayerStatus(armor)", Encode(PlayerStatus{ 3, 0x0001D5E0, 0, 87, 42, false, false, false, true, 0x0017F6E4, REF_A }, type), D(DecodePlayerStatus) });
-		}
-		for (const auto type : { MT::kReportTime, MT::kWorldTime }) {
-			s.push_back({ "WorldTime", Encode(WorldTime{ 1, 13.5f, 21.75f, 0x3C, 0x0001F2A3 }, type), D(DecodeWorldTime) });
-		}
-		for (const auto type : { MT::kPing, MT::kPinged }) {
-			s.push_back({ "Ping", Encode(Ping{ 1, 0, 0x3C, 100.0f, -200.0f, 300.5f }, type), D(DecodePing) });
-		}
-		for (const auto type : { MT::kReportLine, MT::kLineSpoken }) {
-			s.push_back({ "Line", Encode(Line{ 1, REF_A, "Welcome to Diamond City!" }, type), D(DecodeLine) });
-		}
-		for (const auto type : { MT::kHeartbeat, MT::kHeartbeatAck }) {
-			s.push_back({ "Heartbeat", Encode(Heartbeat{ 0xDEADBEEF }, type), D(DecodeHeartbeat) });
-		}
-		for (const auto type : { MT::kReportXp, MT::kPartyXp }) {
-			s.push_back({ "XpGain", Encode(XpGain{ 2, 37.5f }, type), D(DecodeXpGain) });
-		}
-		for (const auto type : { MT::kReportMarkers, MT::kMarkersFound }) {
-			s.push_back({ "Markers", Encode(MarkersFound{ 2, { { REF_A, 1 }, { REF_B, 3 } } }, type), D(DecodeMarkers) });
-		}
-		for (const auto type : { MT::kVoice, MT::kVoiceRelay }) {
-			s.push_back({ "Voice", Encode(VoiceData{ 2, { 1, 2, 3, 4, 5, 0, 255 } }, type), D(DecodeVoice) });
-		}
-		for (const auto type : { MT::kRevive, MT::kRevived }) {
-			s.push_back({ "Revive", Encode(Revive{ 5 }, type), D(DecodeRevive) });
-		}
-		for (const auto type : { MT::kReportQuestDone, MT::kQuestDone }) {
-			s.push_back({ "QuestDone", Encode(QuestDone{ 5, 0x0001ED86 }, type), D(DecodeQuestDone) });
-		}
-		for (const auto type : { MT::kReportQuestStage, MT::kQuestStage }) {
-			s.push_back({ "QuestStage", Encode(QuestStage{ 0x0001ED86, 30 }, type), D(DecodeQuestStage) });
-		}
-		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
-		return s;
-	}
 
 	Bytes WithTrailingByte(Bytes a_packet)
 	{
@@ -209,6 +44,28 @@ TEST("protocol: every sample packet decodes")
 			Test::Fail(__FILE__, __LINE__, sample.name + " did not decode");
 		}
 	}
+}
+
+TEST("protocol: every message type has a sample packet")
+{
+	const auto samples = Samples();
+	int        types = 0;
+	for (int byte = 0; byte <= 0xFF; ++byte) {
+		if (!IsMessageType(static_cast<std::uint8_t>(byte))) {
+			continue;
+		}
+		++types;
+		const auto has = std::ranges::any_of(samples, [&](const Sample& a_s) { return a_s.packet[0] == byte; });
+		if (!has) {
+			Test::Fail(__FILE__, __LINE__, std::format("message type {} has no entry in Samples()", byte));
+		}
+	}
+	for (const auto& sample : samples) {
+		if (!IsMessageType(sample.packet[0])) {
+			Test::Fail(__FILE__, __LINE__, sample.name + ": its type is not a message type");
+		}
+	}
+	CHECK(types > 0);
 }
 
 TEST("protocol: PeekType reads the type byte of every message")
@@ -1327,5 +1184,48 @@ TEST("protocol: Explosion round trips and needs a base")
 		REQUIRE(out);
 		CHECK(*out == in);
 		CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0, 1.0f, 2.0f, 3.0f, 0, 0 }, type)));
+	}
+}
+
+TEST("protocol: Explosion refuses a position that is not a number")
+{
+	for (const float bad : { NaN, Inf, -Inf }) {
+		CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, bad, 2.0f, 3.0f, 0, 0 }, MT::kReportExplosion)));
+		CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, bad, 3.0f, 0, 0 }, MT::kReportExplosion)));
+		CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, 2.0f, bad, 0, 0 }, MT::kExplosion)));
+	}
+}
+
+TEST("protocol: WorkshopItem refuses a position, rotation or scale that is not a number")
+{
+	for (const float bad : { NaN, Inf, -Inf }) {
+		for (int axis = 0; axis < 3; ++axis) {
+			auto moved = MakeWorkshopItem();
+			moved.position[axis] = bad;
+			CHECK(!DecodeWorkshopItem(Encode(moved, MT::kReportWorkshopItem)));
+			auto turned = MakeWorkshopItem();
+			turned.rotation[axis] = bad;
+			CHECK(!DecodeWorkshopItem(Encode(turned, MT::kReportWorkshopItem)));
+		}
+		auto scaled = MakeWorkshopItem();
+		scaled.scale = bad;
+		CHECK(!DecodeWorkshopItem(Encode(scaled, MT::kReportWorkshopItem)));
+		// One bad item spoils a catch-up packet.
+		CHECK(!DecodeWorkshopItems(Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), scaled })));
+	}
+}
+
+TEST("protocol: Face refuses weights and bones that are not numbers")
+{
+	for (const float bad : { NaN, Inf }) {
+		auto heavy = MakeFace();
+		heavy.weight[2] = bad;
+		CHECK(!DecodeFace(Encode(heavy, MT::kReportFace)));
+		auto bent = MakeFace();
+		bent.bones[0].rotation[1] = bad;
+		CHECK(!DecodeFace(Encode(bent, MT::kReportFace)));
+		auto stretched = MakeFace();
+		stretched.bones[0].scale[0] = bad;
+		CHECK(!DecodeFace(Encode(stretched, MT::kReportFace)));
 	}
 }

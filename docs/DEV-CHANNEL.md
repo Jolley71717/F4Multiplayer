@@ -37,9 +37,14 @@ describes each one.
 2. **A password for every launch.** At startup the plugin makes a random token and writes it to
    `Documents\My Games\Fallout4\F4SE\F4Multiplayer_dev.token`, readable only by your Windows user.
    A connection must send `auth <token>` first or it is dropped.
-3. **Commands run on the game's main thread.** Game data must not be touched from the listener's
-   thread. The listener queues each command with F4SE's task interface (`AddTask`) and waits up to a
-   few seconds for the result. HUD changes go one step further, to the UI thread (`AddUITask`).
+3. **Commands run with the game's frame.** Game data must not be touched from the listener's
+   thread. The listener queues each command for the next frame (`MainThread::Post`) and waits up to
+   12 seconds for the result (`MAIN_THREAD_TIMEOUT`: a loading screen on a slow machine holds the game
+   that long). A command it stops waiting for is marked abandoned and skipped when its turn comes, so
+   it never goes off late. Queued work runs on the game's main thread, from a window message the plugin
+   hooks; before the window exists, or if hooking it failed (logged as an error), `RunFrame(false)`
+   runs it from F4SE's frame task instead, which is a task thread, not the main thread. A few HUD
+   commands go one step further, to the UI thread (`AddUITask`).
 4. **Commands are plain functions** (`src/DevCommands.cpp`). Each takes the rest of the line and
    returns a string. Console commands go through the game's own console (`RE::Console::ExecuteCommand`).
    Everything else calls the game's code directly through CommonLibF4: forms, actors, menus, the
