@@ -146,6 +146,10 @@
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
   then left as it is. The tries start over once the copy is on, or here (`net status`: `gaveUp=`).
+- Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
+  spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs
+  are counted (`CommandMeter`; `net status`: `cmds=` last frame/most, `busy=` frames over 32, `rereg=`,
+  `released=`), with a log line for a busy frame at most every 10 s.
 - An owner more than 6000 units from an NPC releases it when a friend in the same space is within
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim

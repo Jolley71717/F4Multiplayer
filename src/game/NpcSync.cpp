@@ -1,5 +1,6 @@
 #include "game/NpcSync.h"
 
+#include "game/CommandMeter.h"
 #include "game/Equipment.h"
 #include "game/NpcClaims.h"
 #include "game/Prediction.h"
@@ -88,6 +89,7 @@ namespace NpcSync
 		std::uint32_t                                        switchedOn = 0;      // copies that were off here while their owner's ran (Enable)
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
+		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
 		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell or an interior
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
@@ -181,6 +183,8 @@ namespace NpcSync
 			WeaponFire::ReleaseSoundsOf(a_id);  // a replayed burst may still follow the actor's 3D
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
+				meter.Count(1);  // its evp
+				meter.Released();
 			} else {
 				Puppets::Unregister(a_mirror.registered, a_id);  // the actor is gone; just forget it
 			}
@@ -550,6 +554,7 @@ namespace NpcSync
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", a_state.refId, at.x).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", a_state.refId, at.y).c_str());
 			RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", a_state.refId, at.z).c_str());
+			meter.Count(4);
 		}
 
 		// The owner's game switched the NPC on (a script enabled it: the mole rats that burrow up at Red
@@ -579,6 +584,7 @@ namespace NpcSync
 				REX::INFO("NpcSync: switching {:08X} on for the last time; after {} tries it stays off here", a_state.refId, RetryBudget::TRIES);
 			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_state.refId).c_str());
+			meter.Count(1);
 		}
 
 		void UpdateMirrors(Clock::time_point a_now)
@@ -628,11 +634,18 @@ namespace NpcSync
 					continue;
 				}
 				if (mirror.registered != actor) {
+					// A few a frame (after a pause menu, every copy at a busy settlement is taken over at once): the rest
+					// keep their snapshots and are taken over in the next frames.
+					if (!meter.MayRegister()) {
+						++it;
+						continue;
+					}
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
+					meter.Registered();
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
-						Equipment::Wear(actor, gear->second);
+						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
 					}
 				}
@@ -762,6 +775,10 @@ namespace NpcSync
 
 	void Frame()
 	{
+		// The last frame's console commands, wherever they ran (WorldSync's kills count here too).
+		if (meter.EndFrame(Clock::now())) {
+			REX::INFO("NpcSync: {} console commands for NPCs in one frame (the most so far {}, busy frames {})", meter.Last(), meter.Most(), meter.BusyFrames());
+		}
 		if (localId == 0) {
 			return;
 		}
@@ -825,6 +842,11 @@ namespace NpcSync
 		UpdateMirrors(now);
 	}
 
+	void CountCommands(std::uint32_t a_commands)
+	{
+		meter.Count(a_commands);
+	}
+
 	std::vector<Outgoing> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
@@ -848,7 +870,7 @@ namespace NpcSync
 		// stored pointer is only compared, never followed.
 		const auto actor = LoadedActor(a_equipment.refId);
 		if (const auto it = mirrors.find(a_equipment.refId); actor && it != mirrors.end() && it->second.registered == actor) {
-			Equipment::Wear(actor, a_equipment.items);
+			meter.Count(Equipment::Wear(actor, a_equipment.items));
 			++gearApplied;
 		}
 	}
@@ -906,7 +928,7 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} refusals={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, claimBook.Refusals(), localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied);
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} refusals={} fallbacks={} brought={}/{} switchedOn={} gaveUp={}/{} handOffs={} delayMs={}-{} gear={}/{} cmds={}/{} busy={} rereg={} released={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, claimBook.Refusals(), localFallbacks, broughtOver, broughtIn, switchedOn, switchOns.GaveUp(), bringIns.GaveUp(), handOffs, minDelay, maxDelay, gearSent, gearApplied, meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases());
 	}
 }

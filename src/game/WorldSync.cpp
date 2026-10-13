@@ -178,9 +178,11 @@ namespace WorldSync
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.1f}", a_refId, a_at.x).c_str());
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.1f}", a_refId, a_at.y).c_str());
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.1f}", a_refId, a_at.z).c_str());
+				NpcSync::CountCommands(3);
 				++corpsesMoved;
 			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
+			NpcSync::CountCommands(1);
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
 			// ragdolls away instead of dropping flat.
@@ -188,6 +190,7 @@ namespace WorldSync
 				// The calling reference is the source of the push and the argument is what flies: the stand-in
 				// pushes the corpse (the other way round ragdolled the stand-in).
 				RE::Console::ExecuteCommand(std::format("{:08X}.pushactoraway {:08X} 3", standIn, a_refId).c_str());
+				NpcSync::CountCommands(1);
 			}
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
