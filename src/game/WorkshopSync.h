@@ -21,7 +21,8 @@ namespace WorkshopSync
 	// and a piece of the world they reported scrapped is reported again when the walk finds it.
 	[[nodiscard]] std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending);
 
-	// Another player built, moved or scrapped something.
+	// Another player built, moved or scrapped something: in line behind what came before, and placed a
+	// few a frame (Frame).
 	void Apply(const Protocol::WorkshopItem& a_item);
 
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.
@@ -30,7 +31,8 @@ namespace WorkshopSync
 	// Removes every copy (leaving the session).
 	void Reset();
 
-	// A save was loaded: its cells are walked again for scrapped junk.
+	// A save was loaded: the copies made before it are let go (the session sends its building again),
+	// and its cells are walked again for scrapped junk.
 	void OnGameLoaded();
 
 	[[nodiscard]] std::string Describe();

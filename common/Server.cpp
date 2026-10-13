@@ -449,6 +449,26 @@ void Server::Run()
 		} while (offset < longest);
 	};
 
+	// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in
+	// batches; not what the player built themselves. Sent on joining, and again when they load a save:
+	// the copies their game had made went with the world it had before the load.
+	const auto sendWorkshop = [&](const Player& a_player) {
+		std::vector<Protocol::WorkshopItem> batch;
+		workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
+			if (a_key.first == a_player.id) {
+				return;
+			}
+			batch.push_back(a_item);
+			if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
+				send(a_player.key, Protocol::Encode(batch), true);
+				batch.clear();
+			}
+		});
+		if (!batch.empty()) {
+			send(a_player.key, Protocol::Encode(batch), true);
+		}
+	};
+
 	// Sends ownership changes in packets of at most MAX_ACTORS_PER_PACKET. a_to = 0: everyone.
 	const auto sendOwners = [&](const std::vector<Protocol::ActorOwner>& a_owners, ConnectionKey a_to) {
 		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
@@ -588,23 +608,7 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
-		// Everything built and scrapped at settlements so far, by anyone (their builder may be gone), in batches.
-		{
-			std::vector<Protocol::WorkshopItem> batch;
-			workshop.ForEach([&](const WorkshopStore::Key& a_key, const Protocol::WorkshopItem& a_item) {
-				if (a_key.first == a_player.id) {
-					return;
-				}
-				batch.push_back(a_item);
-				if (batch.size() == Protocol::MAX_ACTORS_PER_PACKET) {
-					send(a_player.key, Protocol::Encode(batch), true);
-					batch.clear();
-				}
-			});
-			if (!batch.empty()) {
-				send(a_player.key, Protocol::Encode(batch), true);
-			}
-		}
+		sendWorkshop(a_player);
 
 		if (worldTime) {
 			send(a_player.key, Protocol::Encode(*worldTime, Protocol::MessageType::kWorldTime), true);
@@ -1182,6 +1186,7 @@ void Server::Run()
 		}
 		if (const auto request = Protocol::DecodeWorldRequest(a_data)) {
 			sendWorldState(a_player.key, request->sessionId == sessionId ? request->containerFrom : 0);
+			sendWorkshop(a_player);
 		}
 	};
 

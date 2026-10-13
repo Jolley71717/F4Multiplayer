@@ -2,6 +2,7 @@
 
 #include "game/EngineRefs.h"
 #include "game/WorkshopCells.h"
+#include "game/WorkshopInbox.h"
 
 #include "game/DeferredDelete.h"
 
@@ -29,7 +30,7 @@ namespace WorkshopSync
 		std::mutex                                          outLock;
 		std::vector<Outgoing>                               outgoing;
 		std::map<Key, Copy>                                 copies;
-		WorkshopCells::Waiting<Key, Protocol::WorkshopItem> pending;  // waiting for their cell to load
+		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
 		std::vector<Copy>                                   graveyard;
 		constexpr std::size_t                               MAX_OUTGOING = 512;
 		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
@@ -45,6 +46,7 @@ namespace WorkshopSync
 		std::uint32_t adopted = 0;
 		std::uint32_t refused = 0;  // outside their workbench's reach
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
+		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
 		// the reference. Not one with the keyword that blocks scrapping; one whose base has a scrap
@@ -422,24 +424,11 @@ namespace WorkshopSync
 			return true;
 		}
 
-		void TryPending(const std::vector<Key>& a_keys)
-		{
-			for (const auto& key : a_keys) {
-				const auto found = pending.Find(key);
-				if (!found) {
-					continue;  // done with already (a key can come up twice)
-				}
-				const auto item = *found;
-				if (item.op == Protocol::WorkshopOp::kScrapped ? ScrapWorldRef(item) : Place(key, item)) {
-					pending.Erase(key);
-				}
-			}
-		}
-
-		// Tries again what waits in, or next to, a cell that just attached.
+		// Tries again what waits in, or next to, a cell that just attached (in line with the rest: a cell
+		// can bring up hundreds).
 		void TryPendingNear(const WorkshopCells::Where& a_cell)
 		{
-			TryPending(pending.Near(a_cell));
+			inbox.Retry(inbox.Pending().Near(a_cell));
 		}
 
 		// Tries again the scraps that wait for one of the references of a cell that just attached,
@@ -448,7 +437,7 @@ namespace WorkshopSync
 		// that isn't persistent can't be looked up, to find where ours stands, until its cell loads.
 		void TryPendingScrapsIn(std::uint32_t a_cell)
 		{
-			if (!pending.WaitsForRefs()) {
+			if (!inbox.Pending().WaitsForRefs()) {
 				return;
 			}
 			const auto cell = RE::TESForm::GetFormByID<RE::TESObjectCELL>(a_cell);
@@ -460,12 +449,12 @@ namespace WorkshopSync
 				const RE::BSAutoLock l{ cell->spinLock };
 				for (const auto& ref : cell->references) {
 					if (ref && Protocol::IsShareableRef(ref->GetFormID())) {
-						const auto waiting = pending.For(ref->GetFormID());
+						const auto waiting = inbox.Pending().For(ref->GetFormID());
 						keys.insert(keys.end(), waiting.begin(), waiting.end());
 					}
 				}
 			}
-			TryPending(keys);  // outside the cell's lock: a scrap switches the reference off
+			inbox.Retry(keys);
 		}
 
 		// ---- Cells as they attach -----------------------------------------------------------------
@@ -905,6 +894,29 @@ namespace WorkshopSync
 				}
 			}
 		}
+
+		// Another player's report, its turn come: placed, moved, or scrapped here, or filed until its cell
+		// loads.
+		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
+		{
+			if (a_item.op == Protocol::WorkshopOp::kScrapped) {
+				if (const auto it = copies.find(a_key); it != copies.end()) {
+					Remove(it->second);
+					ForgetCopy(it->second.ref);
+					copies.erase(it);
+					++scrapped;
+				}
+				// A piece of the world itself goes from our world too (one its player had moved has a copy
+				// here as well, gone above).
+				if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
+					inbox.Wait(WhereScrapped(a_item), a_key, a_item, a_item.refId);
+				}
+				return;
+			}
+			if (!Place(a_key, a_item)) {
+				inbox.Wait(WhereOf(a_item), a_key, a_item);
+			}
+		}
 	}
 
 	void Install()
@@ -947,6 +959,10 @@ namespace WorkshopSync
 				TryPendingScrapsIn(cell.id);
 			}
 		}
+		const auto applyStart = Clock::now();
+		if (inbox.Drain(WorkshopInbox::APPLY_PER_FRAME, WorkshopInbox::APPLY_TIME_PER_FRAME, [] { return Clock::now(); }, ApplyNow) > 0) {
+			applyUsMax = (std::max)(applyUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - applyStart).count());
+		}
 		if (a_host) {
 			WalkSome();
 			SendSome(now);
@@ -973,25 +989,7 @@ namespace WorkshopSync
 
 	void Apply(const Protocol::WorkshopItem& a_item)
 	{
-		const Key key{ a_item.playerId, a_item.refId };
-		if (a_item.op == Protocol::WorkshopOp::kScrapped) {
-			pending.Erase(key);
-			if (const auto it = copies.find(key); it != copies.end()) {
-				Remove(it->second);
-				ForgetCopy(it->second.ref);
-				copies.erase(it);
-				++scrapped;
-			}
-			// A piece of the world itself goes from our world too (one its player had moved has a copy
-			// here as well, gone above).
-			if (Protocol::IsShareableRef(a_item.refId) && !ScrapWorldRef(a_item)) {
-				pending.Put(WhereScrapped(a_item), key, a_item, a_item.refId);
-			}
-			return;
-		}
-		if (!Place(key, a_item)) {
-			pending.Put(WhereOf(a_item), key, a_item);
-		}
+		inbox.Arrive({ a_item.playerId, a_item.refId }, a_item);
 	}
 
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
@@ -1009,7 +1007,7 @@ namespace WorkshopSync
 			std::scoped_lock l{ copyIdsLock };
 			copyIds.clear();
 		}
-		pending.Clear();
+		inbox.Clear();
 		ClearWalk();
 		{
 			std::scoped_lock l{ sentScrapsLock };
@@ -1021,13 +1019,24 @@ namespace WorkshopSync
 
 	void OnGameLoaded()
 	{
+		// The copies' handles name other things now, or nothing (see RemotePlayers::OnGameLoaded): they are
+		// let go unread. The copies the save holds are found again, at their spots, when the server sends
+		// the session's building again after the load (FindExisting); one it had removed since the save
+		// stays. What waits in line, or for its cell, is reports, not handles, and stays.
+		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
+		copies.clear();
+		graveyard.clear();
+		{
+			std::scoped_lock l{ copyIdsLock };
+			copyIds.clear();
+		}
 		ClearWalk();
 	}
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,
-			       worldScrapped, adopted, refused, pending.Size()) +
+		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
+			       placed, moved, scrapped, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size());
 	}

@@ -1396,6 +1396,39 @@ TEST("server workshop: a piece of the world moved and then scrapped reaches a la
 	CHECK(batches[0][0].op == Protocol::WorkshopOp::kScrapped);
 }
 
+// A friend who loads a save lost the copies their game had made since (they went with the world before
+// the load), so the world request a load sends brings the building back too; but it shares the world
+// state's budget, so a client can't make the host send its settlements over and over.
+TEST("server workshop: a world request after a load sends everything the others built, but only a few times in a row")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(welcome);
+	f.fake->Deliver(1, Built(Wall(0xFF000001)));
+	f.fake->Deliver(2, Built(Wall(0xFF00B0B1, 50.0f)));
+	Clear(f, { 1, 2 });
+
+	const auto batchesFor = [&](PeerId a_peer) {
+		f.fake->Deliver(a_peer, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 0 }));
+		return Decoded(Received(f, a_peer), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
+	};
+	auto batches = batchesFor(2);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);  // not Bob's own
+	CHECK(batches[0][0].refId == 0xFF000001);
+	CHECK(batches[0][0].playerId == alice);
+
+	batches = batchesFor(1);
+	REQUIRE(batches.size() == 1);
+	REQUIRE(batches[0].size() == 1);
+	CHECK(batches[0][0].refId == 0xFF00B0B1);
+
+	CHECK(batchesFor(2).size() == 1);
+	CHECK(batchesFor(2).size() == 1);
+	CHECK(batchesFor(2).empty());  // the fourth inside ten seconds
+}
+
 // ---- the saved session --------------------------------------------------------------------
 
 TEST("server session file: the world survives a server restart with the same load order")
