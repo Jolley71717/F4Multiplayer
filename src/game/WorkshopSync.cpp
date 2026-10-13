@@ -6,6 +6,7 @@
 #include "game/WorkshopMove.h"
 
 #include "game/DeferredDelete.h"
+#include "game/Hud.h"
 
 namespace WorkshopSync
 {
@@ -48,6 +49,8 @@ namespace WorkshopSync
 		std::uint32_t refused = 0;  // outside their workbench's reach
 		std::uint32_t worldScrapped = 0;  // pieces of the world itself (a settlement's junk) scrapped by someone else
 		std::uint32_t recreated = 0;      // copies made again where their piece was moved (to another cell)
+		std::uint32_t itemsRescued = 0;   // copies of containers that held what we kept in them, emptied into our inventory first
+		std::unordered_set<std::uint32_t> stockedBases;  // container bases refused for what they hold (logged once each)
 		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
@@ -288,12 +291,37 @@ namespace WorkshopSync
 			return std::ranges::any_of(graveyard, [&](const Copy& a_copy) { return a_copy.ref.get().get() == a_ref; });
 		}
 
+		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
+		// first time anything touches it), is not empty.
+		bool HoldsItems(RE::TESObjectREFR* a_ref)
+		{
+			const auto list = a_ref->inventoryList;
+			if (!list) {
+				return false;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			return !list->data.empty();
+		}
+
+		// Deletes a copy. What we kept in a copy of a friend's container comes to us first: it would have
+		// gone with the copy (their scrap, a move to another cell, or the session ending).
+		void Delete(RE::TESObjectREFR* a_ref)
+		{
+			if (HoldsItems(a_ref)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
+				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
+				Hud::Notify("A friend's container is gone; what you kept in it is in your inventory");
+				++itemsRescued;
+			}
+			a_ref->Disable();
+			a_ref->SetDelete(true);
+		}
+
 		void Remove(Copy& a_copy)
 		{
 			if (const auto ref = a_copy.ref.get()) {
 				if (DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_copy.placedAt)) {
-					ref->Disable();
-					ref->SetDelete(true);
+					Delete(ref.get());
 				} else {
 					graveyard.push_back(a_copy);
 				}
@@ -397,6 +425,15 @@ namespace WorkshopSync
 			if (!base || !Buildable(base)) {
 				return true;  // nothing we can show (a mod we don't have), or nothing we would
 			}
+			// A container the workshop builds starts empty; one whose base holds things of its own is loot,
+			// ours on opening the copy (and again on every rescue from it).
+			if (const auto container = base->As<RE::TESObjectCONT>(); container && container->numContainerObjects != 0) {
+				++refused;
+				if (stockedBases.insert(base->GetFormID()).second) {
+					REX::INFO("WorkshopSync: not placing copies of container {:08X}: it comes with things in it", base->GetFormID());
+				}
+				return true;
+			}
 			if (const auto existing = FindExisting(a_item)) {
 				Copy copy{ existing->GetHandle(), Clock::now() };
 				if (MoveCopy(existing, a_item)) {
@@ -427,18 +464,6 @@ namespace WorkshopSync
 			NoteCopy(handle);
 			++placed;
 			return true;
-		}
-
-		// Whether the reference holds anything in our game: its inventory, once our game has made one (the
-		// first time anything touches it), is not empty.
-		bool HoldsItems(RE::TESObjectREFR* a_ref)
-		{
-			const auto list = a_ref->inventoryList;
-			if (!list) {
-				return false;
-			}
-			RE::BSAutoReadLock l{ list->rwLock };
-			return !list->data.empty();
 		}
 
 		// A piece of the world itself (the junk a settlement starts with) that its player scrapped: it goes
@@ -982,8 +1007,7 @@ namespace WorkshopSync
 			if (!DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_copy.placedAt)) {
 				return false;
 			}
-			ref->Disable();
-			ref->SetDelete(true);
+			Delete(ref.get());
 			return true;
 		});
 		if (now >= nextCellLook) {
@@ -1075,8 +1099,8 @@ namespace WorkshopSync
 
 	std::string Describe()
 	{
-		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} scrapped={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
-			       placed, moved, recreated, scrapped, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} copies={} placed={} moved={} recreated={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, copies.size(),
+			       placed, moved, recreated, scrapped, itemsRescued, worldScrapped, adopted, refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", savedScraps, seen.refs, seen.disabled, seen.deleted, benches.size(),
 				   waiting.size(), toSend.size());
 	}

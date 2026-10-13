@@ -5,7 +5,8 @@
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
 // they can't scrap or power it; the builder keeps that). Copies are removed when the session
-// ends. The host also reports the settlement junk its save had scrapped before the session.
+// ends; what a player kept in a copy of a container comes to them first. The host also reports
+// the settlement junk its save had scrapped before the session.
 // Main thread only.
 namespace WorkshopSync
 {
