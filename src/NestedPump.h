@@ -67,6 +67,39 @@ namespace NestedPump
 		return a_seen == Seen::kNested ? Action::kDefer : Action::kRunFrame;
 	}
 
+	// The window procedure's handling of our message: main.cpp's WndProc calls it with the game's calls, the tests with
+	// their own. A frame message is taken first (a_calls.Taken(): the next drawn frame posts another, whether this one
+	// runs or is put off), then what Choose says is done. a_calls.Where() is the stack check, asked only of a frame
+	// message outside a frame of ours; a_calls.Posted() runs what a save's or load's thread handed over, a_calls.Frame()
+	// a frame, a_calls.Deferred() counts one put off. a_inFrame is set while Posted or Frame runs (an engine call inside
+	// either can pump messages) and cleared after, whatever they throw.
+	template <class Calls>
+	Action Dispatch(bool a_wake, bool& a_inFrame, Calls& a_calls)
+	{
+		if (!a_wake) {
+			a_calls.Taken();
+		}
+		const auto action = Choose(a_wake, a_inFrame, a_wake || a_inFrame ? Seen::kNeither : a_calls.Where());
+		if (action == Action::kDefer) {
+			a_calls.Deferred();
+		} else if (action != Action::kSkip) {
+			struct Inside
+			{
+				bool& inFrame;
+				explicit Inside(bool& a_flag) : inFrame(a_flag) { inFrame = true; }
+				~Inside() { inFrame = false; }
+				Inside(const Inside&) = delete;
+				Inside& operator=(const Inside&) = delete;
+			} inside{ a_inFrame };
+			if (action == Action::kRunPosted) {
+				a_calls.Posted();
+			} else {
+				a_calls.Frame();
+			}
+		}
+		return action;
+	}
+
 	// Whether the walk works in this game: decided by the first frame message (ok when it found the game's message loop
 	// or the engine's pump, broken when neither). A broken walk never finds the pump, so nothing is ever put off and
 	// frames run as they did before the check; `frames` shows which (pumpCheck).

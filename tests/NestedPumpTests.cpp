@@ -5,6 +5,8 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -26,33 +28,50 @@ namespace
 	const std::vector<std::uintptr_t> ORDINARY{ USER32, USER32 + 0x40, 0x140C33790, 0x140C31523 };
 	const std::vector<std::uintptr_t> IN_PUMP{ USER32, USER32 + 0x40, 0x140C3B0E6, 0x140A10000, 0x140C33800, 0x140C31523 };
 
-	// What main.cpp's window procedure does with our message, with the hold it uses: the game's work for a frame is
-	// counted, a wake runs what a save's or load's thread handed over.
+	// The game's window as main.cpp drives it, with the real dispatch (NestedPump::Dispatch) and the hold main.cpp uses:
+	// the F4SE task posts a frame message once a drawn frame while the last is not taken, the window procedure takes
+	// each message from wherever it is dispatched (a_stack), and a frame does its game work under the hold.
 	struct Window
 	{
-		SaveLoadHold::Hold& hold;
-		bool                inFrame = false;
-		int                 framesRun = 0;
-		int                 deferred = 0;
+		SaveLoadHold::Hold&               hold;
+		bool                              inFrame = false;
+		bool                              posted = false;  // main.cpp's framePosted
+		std::vector<std::uintptr_t>       stack;           // where the next message is dispatched from
+		int                               framesRun = 0;
+		int                               deferred = 0;
+		int                               checks = 0;      // stack walks
+		std::function<void()>             duringFrame;     // what the frame's game work does (an engine call may pump messages)
 
-		void Dispatch(bool a_wake, const std::vector<std::uintptr_t>& a_stack)
+		// Calls (see NestedPump::Dispatch).
+		void             Taken() { posted = false; }
+		NestedPump::Seen Where()
 		{
-			switch (NestedPump::Choose(a_wake, inFrame, NestedPump::Classify(a_stack, PUMP, OUTER))) {
-			case Action::kSkip:
-				break;
-			case Action::kRunPosted:
-				hold.RunPosted();
-				break;
-			case Action::kRunFrame:
-				hold.RunPosted();
-				if (const SaveLoadHold::Frame frame{ hold, SaveLoadHold::Clock::now() }) {
-					++framesRun;
+			++checks;
+			return NestedPump::Classify(stack, PUMP, OUTER);
+		}
+		void Posted() { hold.RunPosted(); }
+		void Frame()
+		{
+			hold.RunPosted();  // RunFrame: what a save or load handed over comes first
+			if (const SaveLoadHold::Frame frame{ hold, SaveLoadHold::Clock::now() }) {
+				++framesRun;
+				if (duringFrame) {
+					duringFrame();
 				}
-				break;
-			case Action::kDefer:
-				++deferred;
-				break;
 			}
+		}
+		void Deferred() { ++deferred; }
+
+		// The F4SE task, once a drawn frame (OnFrame): posts a frame message unless one is waiting. True if it did.
+		bool DrawnFrame()
+		{
+			return !std::exchange(posted, true);
+		}
+
+		NestedPump::Action Dispatch(bool a_wake, const std::vector<std::uintptr_t>& a_stack)
+		{
+			stack = a_stack;
+			return NestedPump::Dispatch(a_wake, inFrame, *this);
 		}
 	};
 }
@@ -100,6 +119,70 @@ TEST("nested pump: a door taken while a load waits: the load's wake is served in
 	window.Dispatch(false, ORDINARY);
 	CHECK(window.framesRun == 2);
 	CHECK(window.deferred == 2);
+}
+
+TEST("nested pump: a frame message put off inside the engine's pump lets the next drawn frame post another, so play resumes the frame the move ends")
+{
+	SaveLoadHold::Hold hold{ 60s };
+	Window             window{ hold };
+	CHECK(window.DrawnFrame());
+	CHECK(window.Dispatch(false, IN_PUMP) == Action::kDefer);
+	// Still inside the move: each drawn frame posts one, and each is put off, none piling up.
+	for (int i = 0; i < 3; ++i) {
+		CHECK(window.DrawnFrame());
+		CHECK(window.Dispatch(false, IN_PUMP) == Action::kDefer);
+	}
+	CHECK(window.framesRun == 0);
+	// The move is done: the very next drawn frame's message runs (not one reposted after REPOST_AFTER).
+	CHECK(window.DrawnFrame());
+	CHECK(!window.DrawnFrame());  // one waiting already
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kRunFrame);
+	CHECK(window.framesRun == 1);
+	CHECK(window.deferred == 4);
+}
+
+TEST("nested pump: inside a frame of ours, what an engine call pumps (a frame message or a load's wake) runs nothing and walks no stack")
+{
+	SaveLoadHold::Hold hold{ 60s };
+	Window             window{ hold };
+	std::vector<Action> inside;
+	window.duringFrame = [&] {
+		inside.push_back(window.Dispatch(false, IN_PUMP));
+		inside.push_back(window.Dispatch(true, IN_PUMP));
+		inside.push_back(window.Dispatch(false, ORDINARY));
+	};
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kRunFrame);
+	const std::vector<Action> skipped{ Action::kSkip, Action::kSkip, Action::kSkip };
+	CHECK(inside == skipped);
+	CHECK(window.framesRun == 1);
+	CHECK(window.checks == 1);  // only the outer message's
+	CHECK(!window.inFrame);
+
+	// A wake outside a frame runs the work handed over without a walk either.
+	bool ran = false;
+	hold.Post([&] { ran = true; });
+	CHECK(window.Dispatch(true, ORDINARY) == Action::kRunPosted);
+	CHECK(ran);
+	CHECK(window.checks == 1);
+}
+
+TEST("nested pump: a frame whose game work throws leaves the window running the next frame, and no load waiting on it")
+{
+	SaveLoadHold::Hold hold{ 60s };
+	Window             window{ hold };
+	window.duringFrame = [] { throw std::runtime_error("game work failed"); };
+	bool thrown = false;
+	try {
+		window.Dispatch(false, ORDINARY);
+	} catch (const std::runtime_error&) {
+		thrown = true;  // main.cpp's WndProc catches it, the stack check's too
+	}
+	CHECK(thrown);
+	CHECK(!window.inFrame);
+	CHECK(hold.WaitForFrames(0s));  // the frame left the hold: a load beginning now does not wait for it
+	window.duringFrame = nullptr;
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kRunFrame);
+	CHECK(window.framesRun == 2);
 }
 
 TEST("nested pump: inside a frame of ours nothing more runs, a wake included; outside it a wake never waits for the stack check")

@@ -394,30 +394,29 @@ namespace
 		return seen;
 	}
 
+	// What the window procedure calls for our message (see NestedPump::Dispatch).
+	struct WindowCalls
+	{
+		void             Taken() { framePosted = false; }  // the next drawn frame posts another
+		NestedPump::Seen Where() { return WhereDispatched(); }
+		void             Posted() { SaveLoadHold::Global().RunPosted(); }
+		void             Frame() { RunFrame(true); }
+		void             Deferred()
+		{
+			std::scoped_lock l{ frameThreadsLock };
+			++frameThreads.deferred;
+		}
+	};
+
 	std::intptr_t __stdcall WndProc(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam)
 	{
 		if (a_msg == frameMessage && frameMessage != 0) {
-			const bool wake = a_wparam == WAKE;
-			if (!wake) {
-				framePosted = false;  // the next drawn frame posts another
-			}
-			const auto action = NestedPump::Choose(wake, inFrame, wake || inFrame ? NestedPump::Seen::kNeither : WhereDispatched());
-			if (action == NestedPump::Action::kDefer) {
-				std::scoped_lock l{ frameThreadsLock };
-				++frameThreads.deferred;
-			} else if (action != NestedPump::Action::kSkip) {
-				inFrame = true;
-				// An exception must never escape into the game's message loop.
-				try {
-					if (action == NestedPump::Action::kRunPosted) {
-						SaveLoadHold::Global().RunPosted();
-					} else {
-						RunFrame(true);
-					}
-				} catch (const std::exception& e) {
-					REX::ERROR("Frame: {}", e.what());
-				}
-				inFrame = false;
+			// An exception must never escape into the game's message loop, the stack check's included.
+			try {
+				WindowCalls calls;
+				NestedPump::Dispatch(a_wparam == WAKE, inFrame, calls);
+			} catch (const std::exception& e) {
+				REX::ERROR("Frame: {}", e.what());
 			}
 			return 0;
 		}
