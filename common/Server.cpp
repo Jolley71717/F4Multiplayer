@@ -517,7 +517,9 @@ void Server::Run()
 				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
 				return;
 			}
-			log("server: a joiner's load order differs only in ignored plugins");
+			// Not their name, and they have no player number yet: where they come from (masked) says which
+			// joiner it was.
+			log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
 		}
 
 		// Someone coming back gets their old ID. If their old connection is still here, their game

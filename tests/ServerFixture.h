@@ -20,6 +20,7 @@ namespace TestServer
 	{
 		Server         server{ [this](std::string_view a_line) { std::lock_guard lock{ logMutex }; logLines.emplace_back(a_line); } };
 		FakeTransport* fake = nullptr;
+		std::uint16_t  udpPort = 0;  // the server's real UDP transport (ENet), on 127.0.0.1
 
 		explicit Fixture(Server::Options a_options = {})
 		{
@@ -38,6 +39,7 @@ namespace TestServer
 				a_options.port = port++;
 				if (server.Start(a_options, std::move(extra))) {
 					fake = raw;
+					udpPort = a_options.port;
 					return;
 				}
 				port = randomPort();
