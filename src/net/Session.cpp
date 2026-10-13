@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Protocol.h"
 #include "Server.h"
+#include "game/CharacterBinding.h"
 #include "game/Compass.h"
 #include "game/Conversations.h"
 #include "game/Downed.h"
@@ -64,6 +65,12 @@ namespace Session
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
 
+		// The character whose session we host, and the one our game joined with (see CharacterBinding).
+		constexpr auto    CHARACTER_CHECK_INTERVAL = 1s;
+		Clock::time_point nextCharacterCheck{};
+		std::uint64_t     hostedCharacter = 0;
+		std::uint64_t     boundCharacter = 0;
+
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
 
@@ -120,6 +127,15 @@ namespace Session
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return player && player->GetParentCell();
+		}
+
+		// The loaded character's ID: the game makes it when the player confirms the name in the opening and
+		// keeps it in every save of that character. 0 is an ordinary ID (a character from coc at the main menu
+		// has it, and many saves do).
+		std::uint64_t CurrentCharacter()
+		{
+			const auto saves = RE::BGSSaveLoadManager::GetSingleton();
+			return saves ? saves->currentPlayerID : 0;
 		}
 
 		std::uint32_t hitsTaken = 0;
@@ -591,9 +607,16 @@ namespace Session
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
 		options.ignoredPlugins = settings.ignoredPlugins;
+		hostedCharacter = CurrentCharacter();
 		if (settings.saveSession) {
 			if (const auto folder = Identity::DataFolder()) {
-				options.sessionFile = (*folder / "F4Multiplayer.session").string();
+				// This character's own session (the old shared file is taken over if the loaded save played in it).
+				const auto path = CharacterBinding::PrepareFile(*folder, hostedCharacter, settings.devChannel, WorldSync::ResyncPoint().sessionId, [](const std::string& a_line) {
+					REX::INFO("Session: {}", a_line);
+					Notify("Multiplayer: " + a_line);
+				});
+				options.sessionFile = path.string();
+				REX::INFO("Session: hosting character {:016X}; its session is kept in {}", hostedCharacter, path.filename().string());
 			}
 		}
 		std::vector<std::unique_ptr<ServerTransport>> extra;
@@ -687,6 +710,7 @@ namespace Session
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = WorldSync::ResyncPoint();
 					hello.identity = Identity::Get();
+					boundCharacter = CurrentCharacter();
 					hello.plugins = plugins;
 					client->Send(Protocol::Encode(hello), true);
 				}
@@ -700,17 +724,39 @@ namespace Session
 			}
 		}
 
-		// bHost: the server starts once our world is there and out of the opening, never at the main menu.
-		// Whoever arrives first decides the session (its load order; a different one wipes the saved
-		// session), so a friend's Join must not find a server before our own game can be first. Steam's
-		// lobby and rich presence come with it, so friends can't even try until then.
-		if (Config::Get().host && !hostedServer && now >= nextHostAttempt && InGame() && !Story::InOpening()) {
-			nextHostAttempt = now + RECONNECT_DELAY;
-			auto error = StartHosting();
-			if (!error.empty() && error != lastHostError) {
-				Notify("Multiplayer: " + error);
+		// Once a second, hosting follows the character that is loaded (CharacterBinding). With bHost the server
+		// starts once our world is there and out of the opening, never at the main menu: whoever arrives first
+		// decides the session (its load order; a different one wipes the saved session), so a friend's Join
+		// must not find a server before our own game can be first. Steam's lobby and rich presence come with it,
+		// so friends can't even try until then.
+		if (now >= nextCharacterCheck) {
+			nextCharacterCheck = now + CHARACTER_CHECK_INTERVAL;
+			const auto character = CurrentCharacter();
+			switch (CharacterBinding::ForHost(Config::Get().host, hostedServer != nullptr, InGame(), Story::InOpening(), hostedCharacter, character)) {
+			case CharacterBinding::HostStep::kStop:
+				StopHosting();
+				Notify(Story::InOpening() ? "Multiplayer: hosting starts again once you're out of Vault 111" :
+				                            "Multiplayer: you loaded another character; hosting restarts with that character's session");
+				break;
+			case CharacterBinding::HostStep::kStart:
+				if (now >= nextHostAttempt) {
+					nextHostAttempt = now + RECONNECT_DELAY;
+					auto error = StartHosting();
+					if (!error.empty() && error != lastHostError) {
+						Notify("Multiplayer: " + error);
+					}
+					lastHostError = std::move(error);
+				}
+				break;
+			case CharacterBinding::HostStep::kNone:
+				break;
 			}
-			lastHostError = std::move(error);
+			// A joined game's character changes with no load only when a new character's name is confirmed, in
+			// the opening: that is the character that plays in the session from now on. (Anywhere else a change
+			// is a load, which OnGameLoaded judges against the character that joined.)
+			if (welcomed && !hostedServer && InGame() && Story::InOpening()) {
+				boundCharacter = character;
+			}
 		}
 
 		if (!serverAddress.empty() && client->GetStatus() == ClientConnection::Status::kDisconnected && now >= nextConnectAttempt && InGame()) {
@@ -909,8 +955,21 @@ namespace Session
 		REX::INFO("Session: game shutting down{}", hosting ? "; session saved" : "");
 	}
 
-	void OnGameLoaded()
+	void OnGameLoaded(bool a_newGame)
 	{
+		// Another character's world (or a new game's opening) isn't the session's: the host stops hosting (Frame
+		// starts it again with that character's session, once out of the opening), and a friend leaves before
+		// the session's changes are asked for.
+		const auto character = CurrentCharacter();
+		if (CharacterBinding::HostStopsOnLoad(hostedServer != nullptr, a_newGame, hostedCharacter, character)) {
+			StopHosting();
+			Notify(a_newGame ? "Multiplayer: hosting starts again once you're out of Vault 111" :
+			                   "Multiplayer: you loaded another character; hosting restarts with that character's session");
+		} else if (CharacterBinding::JoinerLeavesOnLoad(welcomed && !hostedServer, a_newGame, boundCharacter, character)) {
+			Leave();
+			Notify("Multiplayer: you loaded another character and left the session; join again from the menu");
+		}
+
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		WorldSync::BindToLiveSession();

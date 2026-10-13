@@ -25,6 +25,10 @@ One player hosts. Only the host changes a setting:
 bHost = true
 ```
 
+The host's game starts hosting once it is in the world (not at the main menu, and for a new
+character not until it is out of Vault 111). Friends who try to join earlier are told the host isn't
+in the game yet, and their game tries again by itself.
+
 Everyone else keeps the defaults. Players are named after their Steam names (set `sPlayerName` to
 use another name).
 
@@ -135,9 +139,17 @@ one player sides with one faction and another player with a rival one, both game
 What happens in a session is saved into your game when you save. Use a separate save for co-op if you
 want to keep your solo playthrough untouched.
 
-The host's game also keeps the shared world on disk (`bSaveSession`, on by default): the next time
-they host with the same load order, the session carries on where it stopped. Delete
-`DocumentsMy Gamesallout44se4multiplayer.session` to start over.
+The host's game also keeps the shared world on disk (`bSaveSession`, on by default), one file per
+character: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.<character>.session`. The next time
+they host that character with the same load order, the session carries on where it stopped. Hosting
+another character (a solo playthrough, or a new one) hosts that character's own session, and the
+co-op character's is kept for later. A joined friend who loads a save of another character leaves
+the session. Delete a character's file to start its session over.
+
+Coming from 0.8.5 or earlier: the old `F4Multiplayer.session` becomes the session of the first
+character that hosts with a save played in that session. A character with no such save starts a
+fresh session and leaves the old file where it is. Going back to an older version starts that
+version's session afresh.
 
 ## Dedicated server (optional)
 
@@ -166,3 +178,7 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.
 - "you're hosting": only the host sets `bHost = true`.
+- "The host isn't in the game yet": the host's game is at the main menu, loading, or in Vault 111's
+  opening. Your game keeps trying and joins once the host is in.
+- "you loaded another character": the session belongs to the character you played it with. Load
+  that character's save (and join again, if you're a friend).

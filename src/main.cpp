@@ -226,7 +226,7 @@ namespace
 						if (loaded) {
 							SaveGuard::AfterLoad();
 						}
-						Session::OnGameLoaded();
+						Session::OnGameLoaded(!loaded);
 						Hud::OnGameLoaded();
 					}
 				} catch (const std::exception& e) {

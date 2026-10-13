@@ -4,6 +4,7 @@
 
 #include "ServerFixture.h"
 #include "SessionFile.h"
+#include "game/CharacterBinding.h"
 #include "game/ContainerLedger.h"
 
 #include <algorithm>
@@ -619,4 +620,116 @@ TEST("session life: a session file that can't be written is tried again at the n
 	}
 	std::filesystem::remove(file.path.string() + ".tmp");
 	std::filesystem::remove(file.path);
+}
+
+// ---- one session per character ----------------------------------------------------------------------
+
+namespace
+{
+	constexpr std::uint64_t CHARACTER_A = 0x00A1B2C3D4E5F601;  // the host's co-op character
+	constexpr std::uint64_t CHARACTER_B = 0x00A1B2C3D4E5F602;  // their solo one
+
+	// The F4SE folder under Documents, for one test.
+	struct TempFolder
+	{
+		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-life-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+		TempFolder() { std::filesystem::create_directories(path); }
+		~TempFolder()
+		{
+			std::error_code error;
+			std::filesystem::remove_all(path, error);
+		}
+	};
+
+	// Session::StartHosting's server for the loaded character (a_saveSession: the session the loaded save's
+	// co-save record names).
+	Server::Options HostingCharacter(const TempFolder& a_folder, std::uint64_t a_character, std::uint64_t a_saveSession, std::vector<std::string>& a_log, bool a_dev = false)
+	{
+		Server::Options options;
+		options.hostIdentity = HOST;
+		options.sessionFile = CharacterBinding::PrepareFile(a_folder.path, a_character, a_dev, a_saveSession, [&](const std::string& a_line) { a_log.push_back(a_line); }).string();
+		return options;
+	}
+}
+
+TEST("session life: the host loading their solo character hosts that character's own session; the co-op character's dead stay in its own")
+{
+	TempFolder               folder;
+	std::vector<std::string> log;
+	std::uint64_t            coopSession = 0;
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_A, 0, log) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		coopSession = host->sessionId;
+		REQUIRE(f.Join(2, Hello("Friend", FRIEND)));
+		f.fake->Deliver(2, Kill(RAIDER));
+		Sync(f, 2);
+	}
+	// The host loads the solo character's save with bHost still on: hosting stops and starts again with it.
+	CHECK(CharacterBinding::HostStopsOnLoad(true, false, CHARACTER_A, CHARACTER_B));
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_B, 0, log) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId != coopSession);
+		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
+		f.fake->Deliver(1, Kill(RAIDER2));
+		Sync(f, 1);
+	}
+	// And back to the co-op character: its session as it was.
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_A, coopSession, log) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId == coopSession);
+		CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
+	}
+	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_A, false)));
+	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_B, false)));
+	CHECK(log.empty());  // no old shared file: nothing to say
+}
+
+TEST("session life: the old shared session file is taken over only by the character whose save played in it")
+{
+	TempFolder               folder;
+	std::vector<std::string> log;
+	REQUIRE(SessionFile::Save(folder.path / CharacterBinding::LEGACY_FILE, PlayedSession()));  // written by 0.8.5
+
+	// The solo character's save has no record of that session: it starts its own, and the old file waits.
+	ContainerLedger solo;  // what that save's co-save record says
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_B, solo.ResyncPoint().sessionId, log) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId != 0x5E55);
+		CHECK(DeadIn(WorldStates(Received(f, 1))).empty());
+	}
+	REQUIRE(log.size() == 1);
+	CHECK(log[0].find("another save's session") != std::string::npos);
+	CHECK(std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
+
+	// The test rig (dev channel) never reads it.
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_A, 0x5E55, log, true) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId != 0x5E55);
+	}
+	CHECK(std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
+
+	// The co-op character's save was played in it (its co-save record names the session): it carries on.
+	ContainerLedger coop;
+	coop.OnRecordLoaded(0x5E55, 1, {});
+	{
+		Fixture    f{ HostingCharacter(folder, CHARACTER_A, coop.ResyncPoint().sessionId, log) };
+		const auto host = JoinHost(f, 1);
+		REQUIRE(host);
+		CHECK(host->sessionId == 0x5E55);
+		CHECK(DeadIn(WorldStates(Received(f, 1))) == std::set<std::uint32_t>{ RAIDER });
+	}
+	REQUIRE(log.size() == 2);
+	CHECK(log[1].find("continuing the saved co-op session") != std::string::npos);
+	CHECK(!std::filesystem::exists(folder.path / CharacterBinding::LEGACY_FILE));
+	CHECK(std::filesystem::exists(folder.path / CharacterBinding::FileName(CHARACTER_A, false)));
 }

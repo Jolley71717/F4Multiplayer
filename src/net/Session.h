@@ -19,9 +19,9 @@ namespace Session
 	// still there. Nothing else runs after it.
 	void Shutdown();
 
-	// A save was loaded (or a new game started): the world went back in time, so the session's
-	// changes are requested and applied again.
-	void OnGameLoaded();
+	// A save was loaded (or, a_newGame, a new game started): the world went back in time, so the session's
+	// changes are requested and applied again. Another character's save (or a new game) leaves the session first.
+	void OnGameLoaded(bool a_newGame);
 
 	[[nodiscard]] std::string Describe();
 
