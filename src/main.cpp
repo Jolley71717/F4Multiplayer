@@ -2,6 +2,7 @@
 #include "DevChannel.h"
 #include "DevCommands.h"
 #include "game/Compass.h"
+#include "game/ExitMusic.h"
 #include "game/FastLoad.h"
 #include "game/Hud.h"
 #include "game/WorldSync.h"
@@ -183,6 +184,7 @@ namespace
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
 			Compass::Install();
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
+			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			Session::Initialize();
 			gameDataReady = true;
 			REX::INFO("Game data ready");
