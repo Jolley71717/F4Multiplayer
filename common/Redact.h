@@ -24,6 +24,7 @@ namespace Redact
 
 	// The line with every SteamID64 (17 digits starting 7656) replaced by its alias and every IPv4
 	// address other than loopback masked. Lobby ids (18 digits), form ids and hex hashes stay.
+	// A version number of four parts reads as an address unless a letter comes first: log "v1.11.240.0".
 	std::string Scrub(std::string_view a_line);
 
 	// a_text without its control characters (line breaks among them): text someone else chose, such as a

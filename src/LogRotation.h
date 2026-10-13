@@ -20,8 +20,9 @@ namespace LogRotation
 
 	// Moves a_log to its .1 copy, keeping a_keep copies. A missing or empty log is left alone (a launch
 	// that wrote nothing is not worth a place). Never throws: a file another program holds open (a log
-	// viewer, an editor, a sync client) only means that copy is not kept, and the game still starts. The
-	// first error is returned; an error on the last step means the previous log will be overwritten.
+	// viewer, an editor, a sync client) only means a copy is lost, and the game still starts: with .3
+	// held open, .2 can't move up and the .1 to .2 step replaces it. The first error is returned; an
+	// error on the last step means the previous log will be overwritten.
 	inline std::error_code Rotate(const std::filesystem::path& a_log, int a_keep)
 	{
 		std::error_code ec;
