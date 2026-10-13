@@ -7,6 +7,7 @@
 #include "game/SaveStrays.h"
 #include "game/Prediction.h"
 #include "game/StandInHold.h"
+#include "game/StandInRange.h"
 
 #include "game/Face.h"
 #include "Config.h"
@@ -33,9 +34,6 @@ namespace RemotePlayers
 		Clock::time_point lastFrame{};
 		constexpr auto STALE_AFTER = 5s;
 		constexpr std::size_t MAX_SNAPSHOTS = 32;
-
-		// Exterior puppets further than this are outside the loaded area and are despawned.
-		constexpr float MAX_EXTERIOR_DISTANCE = 9000.0f;
 
 		// The game sometimes puts the NPC's own outfit back on a stand-in (when its inventory is
 		// set up late, or its 3D reloads). What it wears is checked this often and put right.
@@ -85,6 +83,8 @@ namespace RemotePlayers
 			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
 			Clock::time_point    lightPlacedAt{};
 			Clock::time_point    spawnedAt{};  // when the current stand-in was placed
+			bool                 drawn = false;  // the current stand-in has had its 3D
+			Clock::time_point    replacedLaterAt{};  // when a stand-in never drawn where it was placed went (StandInRange::Left::kReplaceLater)
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
 			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
@@ -224,6 +224,8 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
+		std::uint32_t   spawns = 0;          // stand-ins placed
+		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
 		std::uint32_t                         equipmentFixesTotal = 0;
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
@@ -1132,6 +1134,58 @@ namespace RemotePlayers
 			return a_state.cell == 0 && a_localCell->worldSpace && a_state.worldspace == a_localCell->worldSpace->GetFormID();
 		}
 
+		// The game's uGridsToLoad (see StandInRange), read once the game has read its ini.
+		int GridsToLoad()
+		{
+			static std::optional<int> grids;
+			if (!grids) {
+				const auto setting = RE::GetINISetting("uGridsToLoad:General");
+				const auto type = setting ? setting->GetType() : RE::Setting::SETTING_TYPE::kNone;
+				grids = type == RE::Setting::SETTING_TYPE::kUInt ? static_cast<int>(setting->GetUInt()) :
+				        type == RE::Setting::SETTING_TYPE::kInt  ? setting->GetInt() :
+				                                                   StandInRange::DEFAULT_GRIDS;
+				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, setting ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
+			}
+			return *grids;
+		}
+
+		StandInRange::Cell CellOf(const RE::TESObjectCELL* a_cell)
+		{
+			using State = RE::TESObjectCELL::CELL_STATE;
+			if (!a_cell) {
+				return StandInRange::Cell::kNone;
+			}
+			if (a_cell->IsInterior()) {
+				return StandInRange::Cell::kInterior;
+			}
+			switch (a_cell->cellState) {
+			case State::kAttached:
+				return StandInRange::Cell::kAttached;
+			case State::kLoadingData:
+			case State::kLoading:
+			case State::kLoaded:
+			case State::kAttachQueued:
+			case State::kAttaching:
+				return StandInRange::Cell::kOnItsWay;
+			default:
+				return StandInRange::Cell::kGone;
+			}
+		}
+
+		// What becomes of a stand-in whose cell is not ours (see StandInRange::ChooseLeft).
+		StandInRange::Left ChooseLeft(const RemotePlayer& a_player, RE::TESObjectCELL* a_cell, const RE::TESObjectCELL* a_localCell, const RE::NiPoint3& a_us, Clock::time_point a_now)
+		{
+			StandInRange::LeftFacts facts;
+			facts.weInside = a_localCell->IsInterior();
+			facts.cell = CellOf(a_cell);
+			if (const auto coords = a_cell && a_cell->IsExterior() ? a_cell->GetCoordinates() : nullptr) {
+				facts.cellInGrid = StandInRange::InLoadedGrid(coords->cellX, coords->cellY, WorkshopCells::Grid(a_us.x), WorkshopCells::Grid(a_us.y), GridsToLoad());
+			}
+			facts.drawn = a_player.drawn;
+			facts.sinceSpawned = a_now - a_player.spawnedAt;
+			return StandInRange::ChooseLeft(facts);
+		}
+
 		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
 		constexpr std::uint32_t FEMALE_SETTLER = 0x0020A578;
 		constexpr std::uint32_t MALE_SETTLER = 0x0020A57B;
@@ -1572,9 +1626,7 @@ namespace RemotePlayers
 			bool       visible = state && localCell && !loading && SameSpace(*state, localCell);
 			if (visible && localCell->IsExterior()) {
 				const auto& p = player->data.location;
-				const float dx = state->x - p.x;
-				const float dy = state->y - p.y;
-				visible = dx * dx + dy * dy < MAX_EXTERIOR_DISTANCE * MAX_EXTERIOR_DISTANCE;
+				visible = StandInRange::Visible(state->x, state->y, p.x, p.y, GridsToLoad());
 			}
 
 			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
@@ -1597,13 +1649,18 @@ namespace RemotePlayers
 			}
 
 			// A puppet left behind in another cell (we went through a door) is replaced: always when we are
-			// inside, and outside when its cell is an interior or not attached (a neighbouring exterior cell is
-			// fine). It used to stay when we stepped from an interior into the open: stuck in the unloaded
-			// interior, never moving, with its power armor frame placed at that stale spot.
+			// inside, and outside when its cell is an interior or the engine no longer draws it (a neighbouring
+			// exterior cell is fine, and so is one still attaching; see StandInRange::ChooseLeft). It used to stay
+			// when we stepped from an interior into the open: stuck in the unloaded interior, never moving, with its
+			// power armor frame placed at that stale spot.
 			if (actor && actor->GetParentCell() != localCell) {
-				const auto puppetCell = actor->GetParentCell();
-				if (localCell->IsInterior() || !puppetCell || puppetCell->IsInterior() || !puppetCell->IsAttached()) {
+				const auto left = ChooseLeft(remote, actor->GetParentCell(), localCell, player->data.location, now);
+				if (left != StandInRange::Left::kKeep) {
 					++leftBehind;
+					if (left == StandInRange::Left::kReplaceLater) {
+						++respawnWaits;
+						remote.replacedLaterAt = now;
+					}
 					DeleteActor(remote);
 					actor = nullptr;
 				}
@@ -1635,11 +1692,16 @@ namespace RemotePlayers
 				if (!remote.face && now - remote.knownAt < FACE_GRACE) {
 					continue;  // their face is on its way
 				}
+				if (!StandInRange::MayRespawn(now - remote.replacedLaterAt)) {
+					continue;  // the last one was never drawn where it stood
+				}
 				actor = Spawn(remote, *state, localCell);
 				if (!actor) {
 					continue;
 				}
+				++spawns;
 				remote.spawnedAt = now;
+				remote.drawn = false;
 				remote.actor = actor->GetHandle();
 				remote.registered = actor;
 				remote.registeredId = actor->GetFormID();
@@ -1657,6 +1719,7 @@ namespace RemotePlayers
 				remote.switchGaveUp = false;
 			}
 
+			remote.drawn = remote.drawn || actor->Get3D() != nullptr;
 			UpdateLight(remote, actor, localCell, now);
 			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
 			CheckHold(remote, actor, { state->x, state->y, state->z }, state->speed, now);
@@ -1761,7 +1824,8 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{} leftBehind={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, leftBehind, graveyard.size(), flushedBeforeSave);
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} respawnWaits={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, respawnWaits, graveyard.size(),
+				flushedBeforeSave);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
