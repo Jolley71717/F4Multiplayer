@@ -1,6 +1,6 @@
 # End-to-end soak test: the standalone server with several fake players (F4MPBot) on this machine.
 #
-#   tools\soak.ps1 [-Seconds 45] [-Port 7801] [-SharedStory] [-Build] [-KeepLogs] [-Mode releasedbg]
+#   tools\soak.ps1 [-Seconds 45] [-Port 7801] [-SharedStory] [-Abuse] [-Build] [-KeepLogs] [-Mode releasedbg]
 #
 # Starts F4MPServer.exe on 127.0.0.1:Port, then:
 #   Raider  (player 1)  sets the time of day, shoots, and hits the Owner with an NPC once the Owner is in
@@ -13,10 +13,12 @@
 #                       companion away (must be refused)
 # Then checks exit codes, the server log and what each bot heard. Prints PASS/FAIL and exits 1 on
 # failure. Logs go to a temp folder (kept on failure or with -KeepLogs).
+# -Abuse runs the abuse scenario instead (described where it starts).
 param(
 	[int]$Seconds = 45,
 	[int]$Port = 7801,
 	[switch]$SharedStory,
+	[switch]$Abuse,
 	[switch]$Build,
 	[switch]$KeepLogs,
 	[string]$Mode = 'releasedbg'
@@ -138,6 +140,101 @@ function Wait-Exit([string]$name, [int]$timeout) {
 
 # How long each part takes: the three main bots stay the whole time; the rest come and go meanwhile.
 $short = [Math]::Max(5, [int]($Seconds / 5))
+
+# -Abuse: what one misbehaving game may cost the others, against a server with small tables (1200 entries,
+# 1000 per player) so the limits are reached in seconds. An honest player plays throughout; meanwhile one
+# bot after another reports thousands of made-up kills, loot, pickups and NPC claims, and another leaves and
+# joins again over and over under one identity. The server must log each limit once, stay up and stay flat
+# in memory, keep relaying the honest player, and never limit them.
+if ($Abuse) {
+	if ($Seconds -lt 40) { throw '-Abuse needs -Seconds 40 or more' }
+	Write-Host "Abuse soak: port $Port, $Seconds s, logs: $logDir"
+	$aborted = $null
+	$memoryAfterFloods = 0
+	$memoryAtEnd = 0
+	try {
+		Stop-Leftovers
+		Start-Exe 'server' $serverExe @('--port', "$Port", '--max-players', '8', '--max-world-entries', '1200', '--max-share', '1000') | Out-Null
+		Require (Wait-Log "listening on UDP port $Port") "server listens on port $Port"
+
+		Start-Bot 'honest' 'Honest' $Seconds @('--identity', '0000000000001001', '--loot', "${container}:${item}:-10", '--kill', '0001A001',
+			'--pickup', $pickup, '--door', "${door}:1:0", '--quest', "${quest}:20") | Out-Null
+		Require (Wait-Log "'Honest' joined as player 1 ") 'Honest joins as player 1'
+		Start-Bot 'looper' 'Looper' ($Seconds - 5) @('--identity', '0000000000002002', '--rejoin-loop', '20') | Out-Null
+
+		$floods = @(
+			@('kills', 'kills:1100', '0000000000003001'),
+			@('kills2', 'kills:300:00B00000', '0000000000003002'),
+			@('loot', 'loot:1100', '0000000000003003'),
+			@('pickups', 'pickups:1100', '0000000000003004'),
+			@('claims', 'claims:5000', '0000000000003005'))
+		foreach ($flood in $floods) {
+			Write-Host "Flooder: $($flood[1])"
+			Start-Bot "flood-$($flood[0])" "Flood$($flood[0])" 8 @('--identity', $flood[2], '--flood', $flood[1]) | Out-Null
+			Wait-Exit "flood-$($flood[0])" 20
+		}
+		$memoryAfterFloods = (Get-Process -Id $procs['server'].Id).WorkingSet64
+		$remaining = [Math]::Max(1, $Seconds - [int]((Get-Date) - $started).TotalSeconds)
+		Write-Host "Waiting about $remaining s for the honest player and the looper"
+		foreach ($name in 'honest', 'looper') { Wait-Exit $name ($remaining + 15) }
+		$memoryAtEnd = (Get-Process -Id $procs['server'].Id).WorkingSet64
+		Start-Sleep -Milliseconds 500
+	} catch {
+		$aborted = $_.Exception.Message
+		Write-Host "  $aborted" -ForegroundColor Red
+	} finally {
+		$serverAlive = $procs.ContainsKey('server') -and -not $procs['server'].HasExited
+		foreach ($p in $procs.Values) {
+			if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+		}
+		foreach ($p in $procs.Values) { [void]$p.WaitForExit(5000) }
+		Stop-Leftovers
+	}
+
+	Write-Host 'Checks:'
+	Check $serverAlive 'server still running at the end'
+	$log = Read-Text $serverLog
+	foreach ($name in @($procs.Keys | Where-Object { $_ -ne 'server' })) {
+		Check ($procs[$name].ExitCode -eq 0) "$name exits 0 (got $($procs[$name].ExitCode))"
+	}
+	if (-not $aborted) {
+		Check ((Count-Matches $log "'Floodkills' has added 1000 dead NPC entries this run, their share") -eq 1) 'server: the kill flooder is stopped at its share, said once'
+		Check ((Count-Matches $log "dead NPC table is \d+% full \(\d+/1200\); kill sharing stops at 100%") -eq 1) 'server: the kill table is said to be near full once'
+		Check ((Count-Matches $log "dead NPC table is 100% full \(1200/1200\)") -eq 1) 'server: the kill table is said to be full once'
+		Check ((Count-Matches $log "'Floodloot' has made 1000 container changes this session, their share") -eq 1) 'server: the loot flooder is stopped at its share, said once'
+		Check ((Count-Matches $log "'Floodpickups' has added 1000 picked-up item entries this run, their share") -eq 1) 'server: the pickup flooder is stopped at its share, said once'
+		Check ((Count-Matches $log "says hello too often") -ge 1) 'server: the looper waits for its budget'
+		Check ((Count-Matches $log "'Honest'.*(their share|too often|dropping some)") -eq 0) 'server: the honest player is never limited'
+		Check ((Count-Matches $log "(?i)too many events") -eq 0) 'server: no flood of events beyond the per-second limit'
+		$grown = $memoryAtEnd - $memoryAfterFloods
+		Check ($memoryAfterFloods -gt 0 -and $grown -lt 20MB) "server: memory flat after the floods (grew $([int]($grown / 1KB)) KB)"
+
+		$h = Read-Text (Join-Path $logDir 'honest.log')
+		Check ($h -match "(?m)^container changed #0 by player 1") 'honest: its loot is shared'
+		$rates = [regex]::Match($h, '^rates: player states (\d+)/s', 'Multiline')
+		Check ($rates.Success -and [int]$rates.Groups[1].Value -ge 20) "honest: hears the others throughout ($($rates.Groups[1].Value)/s)"
+		$fk = Read-Text (Join-Path $logDir 'flood-kills.log')
+		$fkRates = [regex]::Match($fk, '^rates: player states (\d+)/s', 'Multiline')
+		Check ($fkRates.Success -and [int]$fkRates.Groups[1].Value -ge 20) "the honest player's moves keep arriving during a flood ($($fkRates.Groups[1].Value)/s)"
+
+		# The looper: three welcomes at once (its bucket of world states), then at most one per ten seconds.
+		$lp = Read-Text (Join-Path $logDir 'looper.log')
+		$welcomes = Count-Matches $lp '^welcomed as player'
+		$allowed = 3 + [Math]::Ceiling(($Seconds - 5) / 10) + 1
+		Check ($welcomes -ge 4 -and $welcomes -le $allowed) "looper: welcomed $welcomes times in $($Seconds - 5) s (want 4 to $allowed)"
+	}
+
+	$failed = @($results | Where-Object { -not $_.Ok })
+	$elapsed = [int]((Get-Date) - $started).TotalSeconds
+	Write-Host ''
+	if ($aborted -or $failed.Count -gt 0) {
+		Write-Host "ABUSE SOAK FAIL: $($failed.Count) of $($results.Count) checks failed in $elapsed s. Logs: $logDir" -ForegroundColor Red
+		exit 1
+	}
+	Write-Host "ABUSE SOAK PASS: $($results.Count) checks in $elapsed s." -ForegroundColor Green
+	if ($KeepLogs) { Write-Host "Logs: $logDir" } else { Remove-Item -Recurse -Force $logDir }
+	exit 0
+}
 
 Write-Host "Soak test: port $Port, $Seconds s, shared story: $([bool]$SharedStory), logs: $logDir"
 $aborted = $null
