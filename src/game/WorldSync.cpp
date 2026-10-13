@@ -164,6 +164,7 @@ namespace WorldSync
 				return true;
 			}
 			if (actor && actor->IsDead(false)) {
+				deaths.SawDead(a_refId);
 				return true;
 			}
 			if (!LoadedActor(a_refId)) {
@@ -266,6 +267,8 @@ namespace WorldSync
 				const bool alive = actor && !actor->IsDeleted() && actor->Get3D() && !actor->IsDead(false);
 				if (deaths.OnLoaded(id, alive, pending.contains(id) || pendingHealth.contains(id), now)) {
 					REX::INFO("WorldSync: {:08X} is alive again here (its cell reset); no longer dead for us", id);
+				} else if (actor && actor->IsDead(false)) {
+					deaths.SawDead(id);  // its corpse
 				}
 				FoundDead::TrackLoad(loadedActors, id, [](std::uint32_t a_id) {
 					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
@@ -313,6 +316,7 @@ namespace WorldSync
 					continue;
 				}
 				deaths.Add(id, Clock::now());
+				deaths.SawDead(id);
 				// Said to be found dead, so the server takes it over the NPC's runner (see Server.cpp, handleDeath).
 				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
 				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
@@ -965,6 +969,7 @@ namespace WorldSync
 				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 				ReportDead({ .refId = id, .killed = killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
 			}
+			deaths.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 			pending.erase(id);
 			pendingHealth.erase(id);
 		}

@@ -27,7 +27,17 @@ namespace SessionDeaths
 	public:
 		// Learned dead: our own death event, another game's report, the session's list or found dead when we host.
 		// True if it is news.
-		bool Add(std::uint32_t a_id, Clock::time_point a_now) { return dead.try_emplace(a_id, a_now).second; }
+		bool Add(std::uint32_t a_id, Clock::time_point a_now) { return dead.try_emplace(a_id, Entry{ a_now }).second; }
+
+		// Our game has it dead: its death event, or its corpse loaded or found. A console kill that left it standing (an
+		// NPC essential in our game only: it goes down and gets up) is not this, so a later load of it alive is not
+		// taken for a respawn.
+		void SawDead(std::uint32_t a_id)
+		{
+			if (const auto it = dead.find(a_id); it != dead.end()) {
+				it->second.seenDead = true;
+			}
+		}
 
 		[[nodiscard]] bool Contains(std::uint32_t a_id) const { return dead.contains(a_id); }
 		[[nodiscard]] std::size_t Size() const { return dead.size(); }
@@ -53,13 +63,13 @@ namespace SessionDeaths
 		[[nodiscard]] bool Settled(Clock::time_point a_now) const { return settled || a_now - expectedAt >= SETTLE_FALLBACK; }
 
 		// An actor's 3D loaded. a_aliveHere: our game has it alive. a_killPending: its death waits for it to load
-		// (we have not killed it here yet). True when it came back: dead here for a while, killed, and alive again,
-		// which only a cell reset does. It is then forgotten as dead, so our game may offer to run it again; a
+		// (we have not killed it here yet). True when it came back: seen dead here (SawDead), learned of a while ago,
+		// and alive again, which only a cell reset does. It is then forgotten as dead, so our game may offer to run it again; a
 		// found-dead report is never sent for it, since it is alive.
 		bool OnLoaded(std::uint32_t a_id, bool a_aliveHere, bool a_killPending, Clock::time_point a_now)
 		{
 			const auto it = dead.find(a_id);
-			if (!a_aliveHere || a_killPending || it == dead.end() || a_now - it->second < RESPAWN_AFTER) {
+			if (!a_aliveHere || a_killPending || it == dead.end() || !it->second.seenDead || a_now - it->second.learned < RESPAWN_AFTER) {
 				return false;
 			}
 			dead.erase(it);
@@ -74,7 +84,13 @@ namespace SessionDeaths
 		[[nodiscard]] std::uint32_t Revived() const { return revived; }
 
 	private:
-		std::unordered_map<std::uint32_t, Clock::time_point> dead;  // -> when we learned of it
+		struct Entry
+		{
+			Clock::time_point learned{};
+			bool              seenDead = false;
+		};
+
+		std::unordered_map<std::uint32_t, Entry>             dead;
 		Clock::time_point                                    expectedAt{};
 		bool                                                 settled = false;
 		std::uint32_t                                        revived = 0;

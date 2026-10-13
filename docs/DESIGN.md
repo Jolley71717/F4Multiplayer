@@ -243,10 +243,11 @@ can have it alive from a save older than the kill.
 ### Deaths that end (cell resets)
 
 A killed NPC is dead in the session, but the game brings a cleared cell's NPCs back after days away. A
-game that killed an NPC here at least 10 s ago and then loads it alive takes that as a respawn and forgets
-it was dead (`revived=` in `net status`), so it may offer to run it again. Only the host's game is believed
-about it: its kUnowned claim on a dead NPC, at least `Options::aliveAgainGrace` (10 s) after its last hello or
-world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
+game that had an NPC dead here (it saw it die or its corpse load; a console kill that left an NPC essential in
+that game standing doesn't count), learned of the death at least 10 s ago and then loads it alive takes that
+as a respawn and forgets it was dead (`revived=` in `net status`), so it may offer to run it again. Only the
+host's game is believed about it: its kUnowned claim on a dead NPC, at least `Options::aliveAgainGrace` (10 s)
+after its last hello or world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
 it to the host's game ("alive again in the host's world" in the server log); it can fight and hurt players
 again. A joiner's claim on a dead NPC is dropped, so a joiner whose cell reset first sees its copy run by its
 own AI until the host's game brings it back; one whose copy is still a corpse keeps the corpse (its
