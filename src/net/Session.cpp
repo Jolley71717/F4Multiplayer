@@ -4,6 +4,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
+#include "game/CharacterBinding.h"
 #include "game/Compass.h"
 #include "game/Conversations.h"
 #include "game/Downed.h"
@@ -24,8 +25,12 @@
 #include "game/WorldSync.h"
 #include "net/Identity.h"
 #include "net/NetClient.h"
+#include "net/Refusals.h"
+#include "net/SessionSteps.h"
 #include "steam/Steam.h"
 #include "steam/SteamTransport.h"
+
+#include <unordered_set>
 
 namespace Session
 {
@@ -35,7 +40,6 @@ namespace Session
 
 		constexpr auto SEND_INTERVAL = 33ms;  // 30 Hz
 		constexpr auto RECONNECT_DELAY = 5s;
-		constexpr auto REJECTED_RETRY_DELAY = 60s;
 
 		std::uint32_t           contentHash = 0;
 		std::vector<std::string> plugins;  // the load order, sent with the hello
@@ -60,7 +64,17 @@ namespace Session
 		std::optional<std::vector<std::uint32_t>> sentEquipment;
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
-		std::string       lastRejectReason;
+		Refusals          refusals;  // why the server last turned us away, and when to try again
+		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
+		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
+		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
+
+		// The character whose session we host, and the one our game joined with (see CharacterBinding).
+		constexpr auto                    CHARACTER_CHECK_INTERVAL = 1s;
+		Clock::time_point                 nextCharacterCheck{};
+		CharacterBinding::Tracker         binding;
+		bool                              leaveAfterPoll = false;  // let back into another session than the one we joined
+		std::unordered_set<std::uint64_t> legacyTold;              // characters told about the old shared session file
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
@@ -123,6 +137,22 @@ namespace Session
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return player && player->GetParentCell();
+		}
+
+		// The loaded character's ID: the game makes it when the player confirms the name in the opening and
+		// keeps it in every save of that character. 0 is an ordinary ID (a character from coc at the main menu
+		// has it, and many saves do).
+		std::uint64_t CurrentCharacter()
+		{
+			const auto saves = RE::BGSSaveLoadManager::GetSingleton();
+			return saves ? saves->currentPlayerID : 0;
+		}
+
+		// What CharacterBinding needs to know of us. Joining: set to reach a friend's server, whether in it, connecting
+		// or waiting to try again.
+		CharacterBinding::Link LinkNow()
+		{
+			return { Config::Get().host, hostedServer != nullptr, !hostedServer && !serverAddress.empty() };
 		}
 
 		std::uint32_t hitsTaken = 0;
@@ -210,24 +240,30 @@ namespace Session
 					break;  // one welcome per connection: a second would reset the world counters mid-session
 				}
 				if (const auto msg = Protocol::DecodeWelcome(a_data)) {
+					if (SessionSteps::OnWelcome(binding, WorldSync::Ledger(), hostedServer != nullptr, *msg) == CharacterBinding::Step::kLeave) {
+						leaveAfterPoll = true;  // nothing more of this connection is taken (see Frame)
+						break;
+					}
 					welcomed = true;
 					sentEquipment.reset();
 					sentFace.reset();
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
-					WorldSync::OnWelcome(msg->sessionId, localId, msg->friendlyFire);
+					WorldSync::OnWelcome(msg->friendlyFire);
 					Story::SetShared(msg->sharedStory);
-					lastRejectReason.clear();
+					refusals.Clear();
 					Notify(std::format("Multiplayer: connected ({}{})", msg->sharedStory ? "shared story" : "everyone has their own story",
 						msg->friendlyFire ? ", friendly fire is on" : ""));
 				}
 				break;
 			case MessageType::kReject:
 				if (const auto msg = Protocol::DecodeReject(a_data)) {
-					lastRejectReason = msg->reason;
-					nextConnectAttempt = Clock::now() + REJECTED_RETRY_DELAY;
-					Notify("Multiplayer: " + msg->reason);
+					const auto answer = refusals.OnReject(msg->reason);
+					if (answer.notify) {
+						Notify("Multiplayer: " + msg->reason);
+					}
+					nextConnectAttempt = Clock::now() + answer.retryIn;
 				}
 				break;
 			case MessageType::kPlayerJoined:
@@ -489,6 +525,7 @@ namespace Session
 			localId = 0;
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
+			SessionSteps::OnDisconnected(WorldSync::Ledger());
 			NpcSync::Reset();
 			Party::Reset();
 			WorldClock::Reset();
@@ -496,6 +533,9 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
+			QuestSync::Reset();
+			Story::SetShared(false);
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -520,7 +560,8 @@ namespace Session
 			serverAddress = std::move(a_address);
 			client = &ConnectionFor(serverAddress);
 			nextConnectAttempt = {};
-			lastRejectReason.clear();
+			refusals.Clear();
+			SessionSteps::OnServerChanged(binding, WorldSync::Ledger());
 		}
 
 		// A Steam invite or "Join Game" was accepted.
@@ -532,6 +573,11 @@ namespace Session
 			}
 			if (hostedServer) {
 				Notify("Multiplayer: you're hosting. Set bHost = false to join friends.");
+				return;
+			}
+			// bHost waiting for our world: the hosting would take us back from the friend's game.
+			if (Config::Get().host) {
+				Notify("Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends.");
 				return;
 			}
 			const auto address = SteamTransport::FormatAddress(*target);
@@ -558,20 +604,19 @@ namespace Session
 		}
 		REX::INFO("Session: transport '{}' -> {}", settings.transport, steamMode ? "steam" : "udp");
 
-		serverAddress = settings.host ? std::format("127.0.0.1:{}", settings.port) : settings.serverAddress;
+		// With bHost, hosting starts once our own world is there (see Frame), and StartHosting points us at it.
+		serverAddress = settings.host ? std::string{} : settings.serverAddress;
 		client = &ConnectionFor(serverAddress);
-
-		if (settings.host) {
-			if (const auto error = StartHosting(); !error.empty()) {
-				Notify("Multiplayer: " + error);
-			}
-		}
 	}
 
 	std::string StartHosting()
 	{
 		if (hostedServer) {
 			return {};
+		}
+		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
+		if (Story::InOpening()) {
+			return "you can host once you're out of Vault 111";
 		}
 		const auto& settings = Config::Get();
 		hostedServer = std::make_unique<Server>([](std::string_view a_line) {
@@ -587,9 +632,21 @@ namespace Session
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
 		options.ignoredPlugins = settings.ignoredPlugins;
+		const auto character = CurrentCharacter();
+		binding.OnHostingStarted(character);
 		if (settings.saveSession) {
 			if (const auto folder = Identity::DataFolder()) {
-				options.sessionFile = (*folder / "F4Multiplayer.session").string();
+				// This character's own session (the old shared file is taken over if the loaded save played in it). Told
+				// once per character, not at every start (a port that can't be had is tried every few seconds).
+				const auto path = CharacterBinding::PrepareFile(*folder, character, settings.devChannel, WorldSync::Ledger().ResyncPoint().sessionId,
+					[character](const std::string& a_line) {
+						REX::INFO("Session: {}", a_line);
+						if (legacyTold.insert(character).second) {
+							Notify("Multiplayer: " + a_line);
+						}
+					});
+				options.sessionFile = path.string();
+				REX::INFO("Session: hosting character {:016X}; its session is kept in {}", character, path.filename().string());
 			}
 		}
 		std::vector<std::unique_ptr<ServerTransport>> extra;
@@ -603,9 +660,8 @@ namespace Session
 		if (steamMode) {
 			Steam::StartHosting(settings.maxPlayers);
 		}
-		// Started from the menu mid-game: leave whatever we were joining and connect to our own server
-		// (at startup this is where Initialize already pointed us, so nothing changes). Steam's
-		// StartHosting has left any lobby we were in.
+		// Connect to our own server, leaving whatever we were joining (started from the menu mid-game).
+		// Steam's StartHosting has left any lobby we were in.
 		const auto own = std::format("127.0.0.1:{}", settings.port);
 		if (serverAddress != own) {
 			SwitchServer(own);
@@ -653,12 +709,17 @@ namespace Session
 		status.hosting = hostedServer && hostedServer->Running();
 		status.steam = steamMode;
 		status.address = serverAddress;
-		status.rejectReason = lastRejectReason;
+		status.rejectReason = refusals.Last();
+		status.retrySoon = refusals.RetrySoon();
+		status.hostWaiting = !hostedServer && Config::Get().host;
 		return status;
 	}
 
 	void Frame()
 	{
+		if (shuttingDown) {
+			return;
+		}
 		const auto now = Clock::now();
 		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
 		Story::Frame();  // first: the rest of the session checks it
@@ -670,6 +731,9 @@ namespace Session
 
 		// Events first: reconnecting must not happen before a disconnect has been handled.
 		for (auto& event : client->Poll()) {
+			if (leaveAfterPoll) {
+				break;
+			}
 			switch (event.type) {
 			case ClientConnection::Event::Type::kConnected:
 				{
@@ -679,7 +743,7 @@ namespace Session
 					hello.name = PlayerName();
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
-					hello.world = WorldSync::ResyncPoint();
+					hello.world = SessionSteps::OnHello(binding, WorldSync::Ledger(), CurrentCharacter());
 					hello.identity = Identity::Get();
 					hello.plugins = plugins;
 					client->Send(Protocol::Encode(hello), true);
@@ -690,6 +754,34 @@ namespace Session
 				break;
 			case ClientConnection::Event::Type::kPacket:
 				HandlePacket(event.data);
+				break;
+			}
+		}
+		if (std::exchange(leaveAfterPoll, false)) {
+			Leave();
+			Notify("Multiplayer: the host is in another session now (another character, or a fresh start); join again from the menu to play in it");
+		}
+
+		// Once a second, hosting follows the character that is loaded (CharacterBinding::Tracker::Check). Steam's lobby
+		// and rich presence come with the server, so friends can't even try before our own game is in.
+		if (now >= nextCharacterCheck) {
+			nextCharacterCheck = now + CHARACTER_CHECK_INTERVAL;
+			switch (binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() })) {
+			case CharacterBinding::Step::kStopHosting:
+				StopHosting();
+				Notify("Multiplayer: you loaded another character; hosting restarts with that character's session");
+				break;
+			case CharacterBinding::Step::kStartHosting:
+				if (now >= nextHostAttempt) {
+					nextHostAttempt = now + RECONNECT_DELAY;
+					auto error = StartHosting();
+					if (!error.empty() && error != lastHostError) {
+						Notify("Multiplayer: " + error);
+					}
+					lastHostError = std::move(error);
+				}
+				break;
+			default:
 				break;
 			}
 		}
@@ -804,7 +896,7 @@ namespace Session
 		if (welcomed) {
 			NpcSync::Frame();
 		}
-		QuestSync::Frame();
+		QuestSync::Frame(welcomed);
 		for (auto& packet : QuestSync::TakeOutgoing()) {
 			if (welcomed) {
 				client->Send(std::move(packet), true);
@@ -866,9 +958,31 @@ namespace Session
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		Downed::OnBeforeSave();
+		// The session file is never older than our save. (A load asks too; it costs a write.)
+		if (hostedServer) {
+			hostedServer->RequestSave();
+		}
 	}
 
-	void OnGameLoaded()
+	void Shutdown()
+	{
+		if (std::exchange(shuttingDown, true)) {
+			return;
+		}
+		// Only what must happen before the game is gone: the world is being torn down, so no stand-ins or HUD.
+		client->Disconnect();
+		const bool hosting = hostedServer != nullptr;
+		if (hostedServer) {
+			hostedServer->Stop();  // its thread writes the session file before it ends
+			hostedServer.reset();
+		}
+		if (steamMode) {
+			Steam::StopHosting();
+		}
+		REX::INFO("Session: game shutting down{}", hosting ? "; session saved" : "");
+	}
+
+	void OnGameLoaded(bool a_newGame)
 	{
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
@@ -879,10 +993,27 @@ namespace Session
 		RemotePlayers::OnGameLoaded();
 		WorldClock::Rebaseline();
 		WorkshopSync::OnGameLoaded();
-		if (welcomed) {
-			client->Send(Protocol::Encode(WorldSync::ResyncPoint()), true);
-			REX::INFO("Session: save loaded; asking for the session's changes since #{}", WorldSync::ResyncPoint().containerFrom);
-		}
+		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
+		// host stops hosting (Frame starts it again with that character's session, out of the opening), and a friend
+		// leaves. (After the above: leaving removes stand-ins and copies, and their handles from before the load are let
+		// go by then.) Only then is the world bound to the session it is still in, and its changes asked for.
+		SessionSteps::OnGameLoaded(
+			binding, WorldSync::Ledger(), LinkNow(), a_newGame, CurrentCharacter(),
+			[a_newGame](CharacterBinding::Step a_step) {
+				WorkshopSync::OnWorldGone();
+				if (a_step == CharacterBinding::Step::kStopHosting) {
+					StopHosting();
+					Notify(a_newGame ? "Multiplayer: hosting starts again once you're out of Vault 111" :
+					                   "Multiplayer: you loaded another character; hosting restarts with that character's session");
+				} else {
+					Leave();
+					Notify("Multiplayer: you loaded another character and left the session; join again from the menu");
+				}
+			},
+			[](const Protocol::WorldRequest& a_request) {
+				client->Send(Protocol::Encode(a_request), true);
+				REX::INFO("Session: save loaded; asking for the session's changes since #{}", a_request.containerFrom);
+			});
 	}
 
 	std::string Describe()
@@ -900,12 +1031,17 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       lastRejectReason, WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	void ConnectTo(std::string a_address)
 	{
+		// (As for a Steam join: with bHost, our hosting starts once we're in the world, and would take us back.)
+		if (!hostedServer && Config::Get().host) {
+			Notify("Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends.");
+			return;
+		}
 		SwitchServer(std::move(a_address));
 	}
 

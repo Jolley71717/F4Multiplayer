@@ -6,7 +6,11 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <random>
+#include <string>
+#include <string_view>
+#include <vector>
 
 // The host's saved session: everything the server remembers, through the file and back.
 namespace
@@ -208,4 +212,148 @@ TEST("session file: save then load through a file; a missing file is nothing")
 	CHECK(back->deadActors.size() == 2);
 	CHECK(!std::filesystem::exists(path.string() + ".tmp"));
 	std::filesystem::remove(path);
+}
+
+TEST("session file: saving keeps the version before as a backup, and a damaged file is set aside for it")
+{
+	const auto path = TempFile();
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	auto       first = MakeSnapshot();
+	auto       second = MakeSnapshot();
+	second.deadActors.push_back(0x0001D420);
+	REQUIRE(SessionFile::Save(path, first));
+	REQUIRE(SessionFile::Save(path, second));
+	CHECK(SessionFile::Load(SessionFile::BackupOf(path))->deadActors == first.deadActors);
+	CHECK(SessionFile::Recover(path, say)->deadActors == second.deadActors);
+	CHECK(log.empty());
+
+	{
+		std::ofstream damaged{ path, std::ios::binary | std::ios::trunc };
+		damaged << "FMPS and then nothing";
+	}
+	const auto recovered = SessionFile::Recover(path, say);
+	REQUIRE(recovered);
+	CHECK(recovered->deadActors == first.deadActors);
+	CHECK(!std::filesystem::exists(path));
+	CHECK(std::filesystem::file_size(SessionFile::SetAsideOf(path)) == std::string_view{ "FMPS and then nothing" }.size());
+	CHECK(log.size() == 2);
+
+	// The next save doesn't turn the damaged file into the backup: the good one stays.
+	REQUIRE(SessionFile::Save(path, second));
+	CHECK(SessionFile::Load(SessionFile::BackupOf(path))->deadActors == first.deadActors);
+	for (const auto& file : { path, SessionFile::BackupOf(path), SessionFile::SetAsideOf(path) }) {
+		std::filesystem::remove(file);
+	}
+}
+
+namespace
+{
+	// The session as the host left it after sitting a_sitting: a different NPC dead each time, so a file tells
+	// which sitting it holds.
+	SessionFile::Snapshot Sitting(std::uint32_t a_sitting)
+	{
+		auto snapshot = MakeSnapshot();
+		snapshot.deadActors = { 0x0001F000 + a_sitting };
+		return snapshot;
+	}
+
+	std::uint32_t SittingIn(const std::optional<SessionFile::Snapshot>& a_saved)
+	{
+		return a_saved && a_saved->deadActors.size() == 1 ? a_saved->deadActors[0] - 0x0001F000 : 0;
+	}
+
+	// The session file and what saving leaves beside it, removed at the end.
+	struct Files
+	{
+		std::filesystem::path path = TempFile();
+		std::filesystem::path temp = path.string() + ".tmp";
+		std::filesystem::path backup = SessionFile::BackupOf(path);
+		std::filesystem::path aside = SessionFile::SetAsideOf(path);
+		~Files()
+		{
+			std::error_code error;
+			for (const auto& file : { path, temp, backup, aside }) {
+				std::filesystem::remove(file, error);
+			}
+		}
+
+		// Cuts the session file short, as a full disk or a sync tool can.
+		void CutShort() const
+		{
+			const auto size = std::filesystem::file_size(path);
+			std::filesystem::resize_file(path, size / 2);
+		}
+	};
+}
+
+TEST("session file: each save keeps the one before it as the backup, in place of the older backup")
+{
+	Files files;
+	for (std::uint32_t sitting = 1; sitting <= 3; ++sitting) {
+		REQUIRE(SessionFile::Save(files.path, Sitting(sitting)));
+	}
+	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 2);
+	CHECK(!std::filesystem::exists(files.temp));
+}
+
+TEST("session file: a session file cut short on disk never pushes the good backup out, and the host carries on from that backup")
+{
+	Files                    files;
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	REQUIRE(SessionFile::Save(files.path, Sitting(1)));
+	REQUIRE(SessionFile::Save(files.path, Sitting(2)));
+
+	// Cut short while the host plays on: the next save replaces it, but doesn't make it the backup.
+	files.CutShort();
+	REQUIRE(SessionFile::Save(files.path, Sitting(3)));
+	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
+
+	// Cut short after the host quit: the next start carries on from the backup, and keeps the cut file aside.
+	files.CutShort();
+	CHECK(SittingIn(SessionFile::Recover(files.path, say)) == 1);
+	CHECK(std::filesystem::exists(files.aside));
+	REQUIRE(SessionFile::Save(files.path, Sitting(4)));
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
+	CHECK(log.size() == 2);
+}
+
+TEST("session file: a save that can't be written leaves the session and its backup as they were")
+{
+	Files files;
+	REQUIRE(SessionFile::Save(files.path, Sitting(1)));
+	REQUIRE(SessionFile::Save(files.path, Sitting(2)));
+	std::filesystem::create_directory(files.temp);  // the temporary file can't be made
+	CHECK(!SessionFile::Save(files.path, Sitting(3)));
+	CHECK(SittingIn(SessionFile::Load(files.path)) == 2);
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
+	std::filesystem::remove(files.temp);
+	CHECK(SessionFile::Save(files.path, Sitting(3)));  // tried again later, it goes through
+	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 2);
+}
+
+TEST("session file: a damaged file that another program holds open is read past, and the save after keeps the good backup")
+{
+	Files                    files;
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	REQUIRE(SessionFile::Save(files.path, Sitting(1)));
+	REQUIRE(SessionFile::Save(files.path, Sitting(2)));
+	{
+		// A sync tool writing junk over it, and holding it: it can be read, but not renamed aside.
+		std::ofstream held{ files.path, std::ios::binary | std::ios::trunc };
+		held << "FMPS and then nothing";
+		held.flush();
+		CHECK(SittingIn(SessionFile::Recover(files.path, say)) == 1);
+		CHECK(!std::filesystem::exists(files.aside));
+		REQUIRE(!log.empty());
+		CHECK(log[0].find("nor renamed") != std::string::npos);
+	}
+	REQUIRE(SessionFile::Save(files.path, Sitting(3)));
+	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
+	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
 }

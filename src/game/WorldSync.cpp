@@ -94,16 +94,14 @@ namespace WorldSync
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 
-		// Container changes are numbered by the server. Everything before the ledger's Next() is in our
-		// world already or waiting in pendingContainers (its container isn't loaded). This belongs
-		// to the world rather than the connection, so it is kept in the save (see SaveResyncPoint).
-		ContainerLedger   ledger;
-		PendingContainers pendingContainers;
+		// Which of the session's numbered container changes our world contains (or waits for its container
+		// to load), and our player IDs in the session. Kept in the save (see SaveResyncPoint).
+		ContainerLedger ledger;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
 		// Every pickup we were told of this session (for how full its history is; see NoticeHistory).
 		std::unordered_set<std::uint32_t> pickedUpKnown;
-		bool                              historyNoticed = false;  // the player was told once this session
+		std::uint64_t                     historyNoticedIn = 0;  // the session the player was told of (once a session)
 		std::uint32_t                     personalSkipped = 0;  // pickups/loot of personal or quest items left alone
 		std::uint32_t                     ownSkipped = 0;       // our own container changes made after the save we loaded
 		std::uint32_t                     containerRefused = 0;  // changes to a workbench or our own companion, left alone
@@ -606,20 +604,15 @@ namespace WorldSync
 			return true;
 		}
 
-		// A session container change, made by player a_playerId, reached us (live or in a WorldState).
-		ContainerLedger::Offer OfferContainerChange(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::uint32_t a_playerId, bool a_inWorld)
+		// A session container change reached us (live or in a WorldState).
+		ContainerLedger::Offered OfferContainerChange(const Protocol::IndexedContainerChange& a_change, bool a_inWorld)
 		{
-			const auto offer = ledger.Take(a_index, a_playerId);
-			if (offer != ContainerLedger::Offer::kHave) {
-				// Ours is in our world already; anyone else's is applied, or waits for its container.
-				pendingContainers.Offer(a_index, a_change, offer == ContainerLedger::Offer::kOurs, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
-			}
-			return offer;
+			return ledger.Offer(a_change.index, a_change.playerId, a_change.change, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
 		}
 
 		std::size_t RetryContainer(std::uint32_t a_container, bool a_inWorld)
 		{
-			return pendingContainers.Retry(a_container, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
+			return ledger.Retry(a_container, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, a_inWorld); });
 		}
 
 		// Pairs world pickups with the reference the player activated, and reports them.
@@ -811,7 +804,7 @@ namespace WorldSync
 		// Every reference something waits for.
 		std::vector<std::uint32_t> WaitingIds()
 		{
-			auto ids = pendingContainers.Containers();
+			auto ids = ledger.Containers();
 			const auto held = reports.Refs();
 			ids.reserve(ids.size() + held.size() + pendingHealth.size() + pendingPickups.size() + pendingRefStates.size());
 			ids.insert(ids.end(), held.begin(), held.end());
@@ -830,9 +823,10 @@ namespace WorldSync
 		void NoticeHistory()
 		{
 			const auto percent = SharedHistoryPercent(dead.size(), pickedUpKnown.size(), ledger.Next());
-			if (percent < 80 || std::exchange(historyNoticed, true)) {
+			if (percent < 80 || historyNoticedIn == ledger.RecordSession()) {
 				return;
 			}
+			historyNoticedIn = ledger.RecordSession();
 			REX::WARN("WorldSync: the session's shared history is {}% full", percent);
 			Hud::Notify(std::format("Multiplayer: the session's shared history is {}% full; loot and kill sharing stop at 100%. "
 									"The host can start a fresh session by removing the session file (see the docs)",
@@ -875,19 +869,14 @@ namespace WorldSync
 		}
 	}
 
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire)
+	void OnWelcome(bool a_friendlyFire)
 	{
 		friendlyFire = a_friendlyFire;
-		if (ledger.Welcome(a_sessionId, a_localPlayerId)) {
-			// A different session: none of its changes are in our world yet.
-			pendingContainers.Clear();
-			historyNoticed = false;
-		}
 	}
 
-	Protocol::WorldRequest ResyncPoint()
+	ContainerLedger& Ledger()
 	{
-		return ledger.ResyncPoint();
+		return ledger;
 	}
 
 	namespace
@@ -980,8 +969,11 @@ namespace WorldSync
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped. We loaded a save from before them, so replaying them would take loot from
 		// the container that isn't in our inventory any more (or duplicate what we put in).
-		for (const auto& change : a_state.containerChanges) {
-			ownSkipped += OfferContainerChange(change.index, change.change, change.playerId, inWorld) == ContainerLedger::Offer::kOurs;
+		const auto taken = ledger.TakeWorldState(a_state, [&](const Protocol::ContainerChange& a_next) { return TryApplyContainer(a_next, inWorld); });
+		ownSkipped += taken.ours;
+		if (taken.wasAhead) {
+			REX::WARN("WorldSync: the session's container changes end at #{}, before ours (the host's server lost its last ones); its next ones are new to us",
+				a_state.containerFirstIndex);
 		}
 		for (const auto id : a_state.pickedUp) {
 			OfferPickup(id, inWorld);
@@ -1026,7 +1018,7 @@ namespace WorldSync
 
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
-		OfferContainerChange(a_change.index, a_change.change, a_change.playerId, CanApply());
+		OfferContainerChange(a_change, CanApply());
 	}
 
 	void ApplyRemotePickup(std::uint32_t a_refId)
@@ -1129,7 +1121,7 @@ namespace WorldSync
 			const auto parent = player ? player->GetParentCell() : nullptr;
 			cell = parent ? parent->GetFormID() : 0;
 		}
-		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !pendingContainers.Empty() || !pendingPickups.empty() || !pendingRefStates.empty();
+		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || ledger.WaitingCount() != 0 || !pendingPickups.empty() || !pendingRefStates.empty();
 		const auto started = Clock::now();
 		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
 		for (const auto id : plan.loaded) {
@@ -1184,18 +1176,18 @@ namespace WorldSync
 
 	void SaveResyncPoint(const F4SE::SerializationInterface* a_intfc)
 	{
-		if (ledger.Session() == 0) {
+		const auto session = ledger.RecordSession();
+		const auto next = ledger.Next();
+		if (session == 0) {
 			return;
 		}
-		// In session order, as before there was one queue per container (the record is unchanged).
-		const auto entries = pendingContainers.Sorted();
-		const auto count = static_cast<std::uint32_t>(entries.size());
+		const auto count = static_cast<std::uint32_t>(ledger.WaitingCount());
 		if (!a_intfc->OpenRecord(RESYNC_RECORD, RESYNC_VERSION) ||
-			!a_intfc->WriteRecordData(ledger.Session()) || !a_intfc->WriteRecordData(ledger.Next()) || !a_intfc->WriteRecordData(count)) {
+			!a_intfc->WriteRecordData(session) || !a_intfc->WriteRecordData(next) || !a_intfc->WriteRecordData(count)) {
 			REX::ERROR("WorldSync: failed to save the session record");
 			return;
 		}
-		for (const auto& entry : entries) {
+		for (const auto& entry : ledger.Waiting()) {
 			a_intfc->WriteRecordData(entry.index);
 			a_intfc->WriteRecordData(entry.change.container);
 			a_intfc->WriteRecordData(entry.change.item);
@@ -1218,30 +1210,28 @@ namespace WorldSync
 			REX::WARN("WorldSync: ignoring an unreadable session record");
 			return;
 		}
-		std::vector<PendingContainers::Entry> saved;
+		std::vector<ContainerLedger::Pending> saved;
 		for (std::uint32_t i = 0; i < count; ++i) {
-			PendingContainers::Entry entry{};
+			ContainerLedger::Pending entry{};
 			a_intfc->ReadRecordData(entry.index);
 			a_intfc->ReadRecordData(entry.change.container);
 			a_intfc->ReadRecordData(entry.change.item);
 			a_intfc->ReadRecordData(entry.change.count);
 			saved.push_back(entry);
 		}
-		ledger.Restore(savedSession, savedNext);
-		pendingContainers.Load(savedNext, std::move(saved));
-		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", ledger.Session(), ledger.Next(), pendingContainers.Size());
+		ledger.OnRecordLoaded(savedSession, savedNext, std::move(saved));
+		REX::INFO("WorldSync: save has session {:016X} container changes up to #{} ({} waiting)", savedSession, savedNext, ledger.WaitingCount());
 	}
 
 	void RevertResyncPoint()
 	{
-		ledger.Revert();
-		pendingContainers.Clear();
+		ledger.OnRevert();
 	}
 
 	std::string Describe()
 	{
 		return std::format("dead={} pending={} reported={} applied={} containerNext={} pendingLoot={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} ownSkipped={} foundDead={} ownStoryDead={} loadedActors={} containerRefused={} storyKillKept={} loadApplied={} retryUs={}/{}",
-			dead.size(), reports.Size(), reported, applied, ledger.Next(), pendingContainers.Size(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
+			dead.size(), reports.Size(), reported, applied, ledger.Next(), ledger.WaitingCount(), pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(), personalSkipped,
 			ownSkipped, foundDead, ownStoryDead, loadedActors.size(), containerRefused, storyKillsKept, loadApplied, retryUs, retryUsMax);
 	}
 }

@@ -43,6 +43,7 @@ namespace ExitMusic
 		std::uintptr_t changerVtable = 0;
 		void (*clearMusic)(MusicChanger*) = nullptr;
 		bool installed = false;
+		void (*atShutdown)() = nullptr;  // more to do at the shutdown stage (see AtShutdown)
 
 		void StopMusic()
 		{
@@ -72,12 +73,20 @@ namespace ExitMusic
 			{
 				if (a_event.stage == STAGE_SHUTDOWN) {
 					StopMusic();
+					if (atShutdown) {
+						atShutdown();
+					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
 
 		ShutdownWatcher watcher;
+	}
+
+	void AtShutdown(void (*a_work)())
+	{
+		atShutdown = a_work;
 	}
 
 	void Install()

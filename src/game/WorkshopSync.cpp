@@ -1114,6 +1114,14 @@ namespace WorkshopSync
 		ClearWalk();
 	}
 
+	void OnWorldGone()
+	{
+		copies.clear();
+		graveyard.clear();
+		std::scoped_lock l{ copyIdsLock };
+		copyIds.clear();
+	}
+
 	std::string Describe()
 	{
 		return std::format("workshop: reported={} copies={} placed={} moved={} scrapped={} worldScrapped={} adopted={} refused={} pending={}", reported, copies.size(), placed, moved, scrapped,

@@ -1,12 +1,13 @@
 #pragma once
 
 // A friend's game as far as loot goes, for tests that feed it what a real server sent: WorldSync's glue
-// around PendingContainers (Offer per change, live or in a world state; its own changes from before the save
-// skipped) and RetrySchedule (what loaded, a loading screen, the sweep), against a world in which only some
-// containers are loaded. The game itself is the part left out.
+// around ContainerLedger (Offer per change, live or in a world state; its own changes from before the save
+// skipped; the record a save keeps) and RetrySchedule (what loaded, a loading screen, the sweep), against a
+// world in which only some containers are loaded. The game itself is the part left out.
 
 #include "ServerFixture.h"
 
+#include "game/ContainerLedger.h"
 #include "game/PendingContainers.h"
 
 #include <map>
@@ -59,7 +60,7 @@ namespace TestServer
 		std::uint32_t           me = 0;
 		std::set<std::uint32_t> loaded;
 		Inventories             world;
-		PendingContainers       pending;
+		ContainerLedger         ledger;
 		std::size_t             worldStates = 0;
 		std::size_t             welcomes = 0;
 		// Containers whose changes came live before this game's Welcome (a game takes them as they come).
@@ -82,7 +83,14 @@ namespace TestServer
 
 		void Offer(const Protocol::IndexedContainerChange& a_change)
 		{
-			pending.Offer(a_change.index, a_change.change, a_change.playerId == me, [&](const Change& a_next) { return TryApply(a_next); });
+			ledger.Offer(a_change.index, a_change.playerId, a_change.change, [&](const Change& a_next) { return TryApply(a_next); });
+		}
+
+		// The server welcomed this game (Session hands the Welcome to WorldSync's ledger).
+		void Welcome(const Protocol::Welcome& a_welcome)
+		{
+			me = a_welcome.playerId;
+			ledger.OnWelcome(a_welcome.sessionId, a_welcome.playerId);
 		}
 
 		// Everything the server sent, in the order it came (Session hands each packet to WorldSync).
@@ -93,6 +101,9 @@ namespace TestServer
 					continue;
 				}
 				if (packet[0] == Type(MT::kWelcome)) {
+					const auto welcome = Protocol::DecodeWelcome(packet);
+					REQUIRE(welcome);
+					Welcome(*welcome);
 					++welcomes;
 				} else if (packet[0] == Type(MT::kWorldState)) {
 					const auto state = Protocol::DecodeWorldState(packet);
@@ -114,10 +125,10 @@ namespace TestServer
 		RetrySchedule::Plan Frame(Clock::duration a_step = std::chrono::milliseconds(16))
 		{
 			now += a_step;
-			auto plan = schedule.Frame(now, inWorld, cell, std::exchange(loadInbox, {}), !pending.Empty(), [&] { return pending.Containers(); });
+			auto plan = schedule.Frame(now, inWorld, cell, std::exchange(loadInbox, {}), ledger.WaitingCount() != 0, [&] { return ledger.Containers(); });
 			for (const auto& ids : { plan.loaded, plan.others }) {
 				for (const auto id : ids) {
-					pending.Retry(id, [&](const Change& a_next) { return TryApply(a_next); });
+					ledger.Retry(id, [&](const Change& a_next) { return TryApply(a_next); });
 				}
 			}
 			return plan;
@@ -144,17 +155,29 @@ namespace TestServer
 			a_f.fake->Deliver(a_peer, Protocol::Encode(a_change, MT::kReportContainer));
 		}
 
-		// The player loads a save: what it kept.
-		void LoadSave(const Inventories& a_world, std::uint32_t a_next, std::vector<PendingContainers::Entry> a_entries)
+		// The game loads a save made in this session: its co-save record (WorldSync::Load).
+		void LoadRecord(std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
 		{
-			world = a_world;
-			pending.Load(a_next, std::move(a_entries));
+			const auto session = ledger.RecordSession();
+			ledger.OnRevert();
+			ledger.OnRecordLoaded(session, a_next, std::move(a_entries));
 		}
 
-		// The game restarted and loaded a save: a new game, not yet welcomed, with nothing of the last run's frames.
-		void Restart(const Inventories& a_world, std::uint32_t a_next, std::vector<PendingContainers::Entry> a_entries)
+		// The player loads a save: what it kept.
+		void LoadSave(const Inventories& a_world, std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
 		{
-			LoadSave(a_world, a_next, std::move(a_entries));
+			world = a_world;
+			LoadRecord(a_next, std::move(a_entries));
+		}
+
+		// The game restarted and loaded a save: a new game, not yet welcomed, with nothing of the last run's frames
+		// (nor of its ledger: which player IDs are its own comes with the next Welcome).
+		void Restart(const Inventories& a_world, std::uint32_t a_next, std::vector<ContainerLedger::Pending> a_entries)
+		{
+			const auto session = ledger.RecordSession();
+			ledger = ContainerLedger{};
+			ledger.OnRecordLoaded(session, a_next, std::move(a_entries));
+			world = a_world;
 			welcomes = 0;
 			beforeWelcome = 0;
 			schedule = RetrySchedule{ std::chrono::seconds(2), 256 };

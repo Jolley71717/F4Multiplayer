@@ -2,9 +2,12 @@
 // other, and the per-player relays (state, status, clock, XP, pings, heartbeats, rate limits).
 
 #include "ServerFixture.h"
+#include "SessionFile.h"
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <format>
 #include <limits>
 #include <thread>
 
@@ -856,11 +859,16 @@ TEST("server session: the host's own game owns the clock")
 	Server::Options         options;
 	options.hostIdentity = HOST;
 	Fixture    f{ options };
-	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
-	REQUIRE(alice);
+	// Alice connected first (IDs go by connection), but a hosted server lets nobody in before the host's game.
+	f.fake->Connect(1);
 	f.fake->SetLocal(2);
 	const auto host = f.Join(2, Fixture::MakeHello("Host", HOST));
 	REQUIRE(host);
+	f.fake->Deliver(1, Protocol::Encode(Fixture::MakeHello("Alice")));
+	const auto welcome = f.fake->WaitFor(1, Type(MT::kWelcome));
+	REQUIRE(welcome);
+	const auto alice = Protocol::DecodeWelcome(*welcome);
+	REQUIRE(alice);
 	REQUIRE(alice->playerId < host->playerId);
 	f.fake->Take(1);
 	f.fake->Take(2);
@@ -882,11 +890,21 @@ TEST("server session: another game on the server's machine, or the host's identi
 	Server::Options         options;
 	options.hostIdentity = HOST;
 	Fixture    f{ options };
-	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	// The host's game lets the others in, then goes (the others carry on). Alice connected before it, so
+	// she has the lowest ID (IDs go by connection).
+	f.fake->Connect(1);
+	f.fake->SetLocal(9);
+	REQUIRE(f.Join(9, Fixture::MakeHello("Host", HOST)));
+	f.fake->Deliver(1, Protocol::Encode(Fixture::MakeHello("Alice")));
+	const auto welcome = f.fake->WaitFor(1, Type(MT::kWelcome));
+	REQUIRE(welcome);
+	const auto alice = Protocol::DecodeWelcome(*welcome);
 	REQUIRE(alice);
 	f.fake->SetLocal(2);
 	const auto bot = f.Join(2, Fixture::MakeHello("Bot", 0x2222));  // a bot, or a tunnel to another PC
 	REQUIRE(bot);
+	f.fake->Drop(9);
+	Settle(f, 9);
 	const auto faker = f.Join(3, Fixture::MakeHello("Faker", HOST));  // not on this machine
 	REQUIRE(faker);
 	f.fake->Take(1);
@@ -962,6 +980,35 @@ TEST("server session: the session's time is forgotten when everyone has left")
 
 	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
 	CHECK(!f.fake->WaitFor(2, Type(MT::kWorldTime), 300ms));
+}
+
+TEST("server session: the host's own game isn't sent the saved time; a friend is")
+{
+	constexpr std::uint64_t HOST = 0x1111;
+	const TempSessionFile file;
+	const auto&           path = file.path;
+	SessionFile::Snapshot saved;
+	saved.contentHash = 0x1234;
+	saved.sessionId = 0x5E55;
+	Protocol::WorldTime time;
+	time.gameHour = 9.0f;
+	saved.worldTime = time;
+	REQUIRE(SessionFile::Save(path, saved));
+
+	Server::Options options;
+	options.hostIdentity = HOST;
+	options.sessionFile = path.string();
+	{
+		Fixture f{ options };
+		f.fake->SetLocal(1);
+		REQUIRE(f.Join(1, Fixture::MakeHello("Host", HOST)));
+		CHECK(!f.fake->WaitFor(1, Type(MT::kWorldTime), 300ms));  // its own clock is the session's
+
+		REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+		const auto packet = f.fake->WaitFor(2, Type(MT::kWorldTime));
+		REQUIRE(packet);
+		CHECK(Protocol::DecodeWorldTime(*packet)->gameHour == 9.0f);
+	}
 }
 
 TEST("server session: a time report that doesn't decode is ignored")

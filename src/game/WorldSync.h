@@ -4,6 +4,8 @@
 
 #include "game/FoundDead.h"
 
+class ContainerLedger;
+
 // Shared world state: things that happen in one player's world are replayed in everyone's.
 // Actor deaths and health, container contents, picked-up items, doors and locks, and (through
 // QuestSync) quest stages. Also forwards NPC hits on remote players' stand-ins. Main thread only.
@@ -15,11 +17,12 @@ namespace WorldSync
 	// Registers game event sinks. Call once game data is loaded.
 	void Install();
 
-	// The server welcomed us into session a_sessionId.
-	void OnWelcome(std::uint64_t a_sessionId, std::uint32_t a_localPlayerId, bool a_friendlyFire);
+	// The server welcomed us (the session's side of it goes through SessionSteps).
+	void OnWelcome(bool a_friendlyFire);
 
-	// What our world already contains, for Hello and after loading a save.
-	[[nodiscard]] Protocol::WorldRequest ResyncPoint();
+	// Which of the session's container changes our world holds, and our IDs in it (kept in the save). Session
+	// moves it through loads, hellos and welcomes with SessionSteps.
+	[[nodiscard]] ContainerLedger& Ledger();
 
 	// Another player's game reported a death, or the server replays one it knows (no player named): killed
 	// here once loaded, the corpse put where it fell for them and pushed by their stand-in if theirs was the

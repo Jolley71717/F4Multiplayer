@@ -183,12 +183,12 @@ namespace Menu
 			} else {
 				switch (status.link) {
 				case Session::Status::Link::kNone:
-					body += "Not in a session. Host one, or join a friend who is hosting.";
+					body += status.hostWaiting ? "Hosting starts once you're in the world and out of Vault 111." : "Not in a session. Host one, or join a friend who is hosting.";
 					break;
 				case Session::Status::Link::kConnecting:
 					body += "Connecting to " + DescribeAddress(status.address) + "...";
 					if (!status.rejectReason.empty()) {
-						body += "\nRefused: " + status.rejectReason + " (trying again in a minute)";
+						body += "\nRefused: " + status.rejectReason + (status.retrySoon ? " (trying again in a few seconds)" : " (trying again in a minute)");
 					}
 					break;
 				case Session::Status::Link::kConnected:
@@ -242,6 +242,8 @@ namespace Menu
 					entries.push_back({ "Invite friends", [] { Steam::OpenInviteDialog(); } });
 				}
 				entries.push_back({ "Stop hosting", StopHosting });
+			} else if (status.hostWaiting) {
+				entries.push_back({ "Stop hosting", StopHosting });  // bHost off: it won't start
 			} else if (status.link != Session::Status::Link::kNone) {
 				entries.push_back({ "Leave", [] { Session::Leave(); ShowMain(); } });
 				entries.push_back({ "Join someone else", [] { RequestJoin(0); } });

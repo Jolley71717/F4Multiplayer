@@ -16,12 +16,27 @@
 #include <iterator>
 #include <random>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 
 namespace TestServer
 {
 	using MT = Protocol::MessageType;
+
+	// A session file of its own for one test, removed at the end with what saving leaves beside it. Named at
+	// random: test runs in other worktrees overlap, and std::rand() names it the same in every process.
+	struct TempSessionFile
+	{
+		std::filesystem::path path = std::filesystem::temp_directory_path() / std::format("f4mp-test-{:016X}.session", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+		~TempSessionFile()
+		{
+			std::error_code error;
+			for (const auto* suffix : { "", ".tmp", ".bak", ".corrupt" }) {
+				std::filesystem::remove(path.string() + suffix, error);
+			}
+		}
+	};
 
 	constexpr std::uint8_t Type(MT a_type) { return static_cast<std::uint8_t>(a_type); }
 
@@ -96,6 +111,12 @@ namespace TestServer
 			std::vector<std::string> out;
 			std::ranges::copy_if(logLines, std::back_inserter(out), [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; });
 			return out;
+		}
+
+		std::size_t LoggedCount(std::string_view a_text)
+		{
+			std::lock_guard lock{ logMutex };
+			return static_cast<std::size_t>(std::ranges::count_if(logLines, [&](const std::string& a_line) { return a_line.find(a_text) != std::string::npos; }));
 		}
 
 	private:

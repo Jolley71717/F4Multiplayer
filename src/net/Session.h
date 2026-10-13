@@ -4,7 +4,8 @@
 // All functions run on the game's main thread.
 namespace Session
 {
-	// Called once game data is loaded: computes the load-order hash and starts hosting if enabled.
+	// Called once game data is loaded: computes the load-order hash. With bHost, Frame starts hosting once
+	// the player is in the world and out of the opening.
 	void Initialize();
 
 	// Per-frame update: connection management, sending our state, applying remote states.
@@ -13,15 +14,20 @@ namespace Session
 	// Before a save is written or another save is loaded.
 	void OnBeforeSaveOrLoad();
 
-	// A save was loaded (or a new game started): the world went back in time, so the session's
-	// changes are requested and applied again.
-	void OnGameLoaded();
+	// The game is quitting (its shutdown stage, on the main thread, before the world is deleted): the hosted
+	// server writes the session file and stops, and the connections close while Steam and the network are
+	// still there. Nothing else runs after it.
+	void Shutdown();
+
+	// A save was loaded (or, a_newGame, a new game started): the world went back in time, so the session's
+	// changes are requested and applied again. Another character's save (or a new game) leaves the session first.
+	void OnGameLoaded(bool a_newGame);
 
 	[[nodiscard]] std::string Describe();
 
 	// The in-game menu: hosting and leaving while playing, and what to show.
-	// Starts the session server in this game (as bHost does at startup) and connects to it. Returns
-	// what went wrong, or "" when it's up.
+	// Starts the session server in this game (as bHost does once in the world) and connects to it. Returns
+	// what went wrong, or "" when it's up. Not in the opening.
 	[[nodiscard]] std::string StartHosting();
 	// Stops the hosted server; everyone in it is disconnected.
 	void StopHosting();
@@ -42,6 +48,8 @@ namespace Session
 		bool          steam = false;  // friends come through Steam (invites, Join Game)
 		std::string   address;        // the server we're set to reach ("" = none)
 		std::string   rejectReason;   // why the last join was refused ("" = it wasn't)
+		bool          retrySoon = false;    // the next try comes in a few seconds (the host isn't in yet), not in a minute
+		bool          hostWaiting = false;  // bHost, but not hosting yet: it starts once we're in the world, out of Vault 111
 	};
 	[[nodiscard]] Status GetStatus();
 

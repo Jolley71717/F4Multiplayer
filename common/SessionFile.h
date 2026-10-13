@@ -2,11 +2,15 @@
 
 #include "Protocol.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -197,21 +201,9 @@ namespace SessionFile
 		return snapshot;
 	}
 
-	// Written to a temporary file first, so a crash mid-write leaves the old save intact.
-	inline bool Save(const std::filesystem::path& a_path, const Snapshot& a_snapshot)
-	{
-		const auto bytes = Encode(a_snapshot);
-		const auto temp = a_path.string() + ".tmp";
-		{
-			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
-			if (!out || !out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
-				return false;
-			}
-		}
-		std::error_code error;
-		std::filesystem::rename(temp, a_path, error);
-		return !error;
-	}
+	// Beside the file: the version before the last save, and a file that couldn't be read, set aside.
+	[[nodiscard]] inline std::filesystem::path BackupOf(const std::filesystem::path& a_path) { return a_path.string() + ".bak"; }
+	[[nodiscard]] inline std::filesystem::path SetAsideOf(const std::filesystem::path& a_path) { return a_path.string() + ".corrupt"; }
 
 	inline std::optional<Snapshot> Load(const std::filesystem::path& a_path)
 	{
@@ -221,5 +213,83 @@ namespace SessionFile
 		}
 		std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 		return Decode(bytes);
+	}
+
+	// Written to a temporary file first, so a crash mid-write leaves the old save intact; the old save
+	// then becomes the backup (a crash between the two renames leaves the backup, which Recover reads).
+	// A write that fails or comes out short (a full disk) changes nothing, and is false. The file being
+	// replaced becomes the backup only when it reads back whole: a damaged one (Recover couldn't set it
+	// aside, or something cut it short since) must not push the good backup out.
+	inline bool Save(const std::filesystem::path& a_path, const Snapshot& a_snapshot)
+	{
+		const auto                  bytes = Encode(a_snapshot);
+		const std::filesystem::path temp = a_path.string() + ".tmp";
+		std::error_code             error;
+		const auto                  discard = [&] {
+			if (std::filesystem::is_regular_file(temp, error)) {
+				std::filesystem::remove(temp, error);
+			}
+			return false;
+		};
+		{
+			std::ofstream out{ temp, std::ios::binary | std::ios::trunc };
+			if (!out) {
+				return discard();
+			}
+			out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+			out.close();  // the last bytes are written here: a full disk shows now
+			if (out.fail()) {
+				return discard();
+			}
+		}
+		if (const auto size = std::filesystem::file_size(temp, error); error || size != bytes.size()) {
+			return discard();
+		}
+		if (Load(a_path)) {
+			std::filesystem::rename(a_path, BackupOf(a_path), error);  // no backup is no reason not to save
+		}
+		std::filesystem::rename(temp, a_path, error);  // (on failure the whole .tmp stays: Recover reads it)
+		return !error;
+	}
+
+	// The host's server at start: the session in a_path, or else what Save left of it. A file that is there
+	// but can't be read (damaged, or a newer version's) is renamed aside first, so the next save neither
+	// writes over it nor turns it into the backup, and the backup is read instead. With no file, only the
+	// state a crash between Save's two renames leaves (the new file still temporary, the old one the backup)
+	// is read: a player who deleted the file to start over starts over. Says what it did through a_log.
+	inline std::optional<Snapshot> Recover(const std::filesystem::path& a_path, const std::function<void(const std::string&)>& a_log)
+	{
+		std::error_code error;
+		const auto      backup = BackupOf(a_path);
+		const auto      fromBackup = [&]() -> std::optional<Snapshot> {
+			auto snapshot = Load(backup);
+			if (snapshot) {
+				a_log(std::format("carrying on from the backup, {} (the last few seconds before it may be missing)", backup.filename().string()));
+			}
+			return snapshot;
+		};
+		if (std::filesystem::is_regular_file(a_path, error)) {
+			// One another program holds for a moment (an antivirus or a sync tool) isn't damaged: it gets a second to let go.
+			for (int attempt = 0; attempt < 10 && !std::ifstream{ a_path, std::ios::binary }; ++attempt) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
+			if (auto snapshot = Load(a_path)) {
+				return snapshot;
+			}
+			const auto aside = SetAsideOf(a_path);
+			std::filesystem::rename(a_path, aside, error);
+			a_log(error ? std::format("{} can't be read, nor renamed: {}", a_path.filename().string(), error.message()) :
+			              std::format("{} can't be read; it is kept as {}", a_path.filename().string(), aside.filename().string()));
+			return fromBackup();
+		}
+		const std::filesystem::path temp = a_path.string() + ".tmp";
+		if (!std::filesystem::exists(temp, error) || !std::filesystem::exists(backup, error)) {
+			return std::nullopt;
+		}
+		if (auto snapshot = Load(temp)) {  // written whole (Decode refuses a part), then the game stopped
+			a_log(std::format("carrying on from {}, written just before the game stopped", temp.filename().string()));
+			return snapshot;
+		}
+		return fromBackup();
 	}
 }

@@ -244,7 +244,15 @@ TEST("sim: whatever three players do, however they come and go and however often
 				auto& player = *players[i];
 				if (!player.Welcomed()) {
 					if (dice.Chance(0.3)) {
-						REQUIRE(player.Join());
+						// A server in the host's game turns a friend away while nobody is in (the host's game
+						// decides the session's load order); they are let in once someone is.
+						const bool anyoneIn = std::ranges::any_of(players, [](const Client* a_other) { return a_other->Welcomed(); });
+						if (!player.Join()) {
+							REQUIRE(i != 0);
+							REQUIRE(!anyoneIn);
+							REQUIRE(!player.Rejections().empty());
+							CHECK(player.Rejections().back() == Protocol::REJECT_HOST_NOT_READY);
+						}
 					}
 					continue;
 				}
@@ -274,7 +282,13 @@ TEST("sim: whatever three players do, however they come and go and however often
 		CHECK_AGREE(players);
 		const auto& world = players[0]->WorldNow();
 		CHECK(world.dead == truth.dead);
-		CHECK(world.Contents() == truth.contents);
+		// (Loot taken and put back to nothing leaves nothing: a world lists only what a container holds.)
+		auto expected = truth.contents;
+		for (auto& [container, items] : expected) {
+			std::erase_if(items, [](const auto& a_item) { return a_item.second == 0; });
+		}
+		std::erase_if(expected, [](const auto& a_container) { return a_container.second.empty(); });
+		CHECK(world.Contents() == expected);
 		CHECK(world.pickedUp == truth.pickedUp);
 		CHECK(world.questStages == truth.stages);
 		CHECK(world.scrapped == truth.scrapped);

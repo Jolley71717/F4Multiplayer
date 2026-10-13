@@ -32,6 +32,7 @@
 #include <format>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
@@ -348,6 +349,12 @@ namespace Sim
 		void OnDisconnected();
 		void ApplyWorldState(const Protocol::WorldState& a_state);
 		void ApplyContainer(std::uint32_t a_index, std::uint32_t a_playerId, const Protocol::ContainerChange& a_change);
+		// Puts another player's container change into our world (every container is loaded here).
+		bool Put(const Protocol::ContainerChange& a_change)
+		{
+			world.containers[a_change.container][a_change.item] += a_change.count;
+			return true;
+		}
 		void ApplyWorkshop(const Protocol::WorkshopItem& a_item);
 		void ApplyDoor(const Protocol::RefState& a_state);
 		void JudgeWear(std::uint32_t a_friend);
@@ -655,6 +662,7 @@ namespace Sim
 		connected = false;
 		welcomed = false;
 		peer = 0;
+		ledger.OnDisconnected();
 		friends.clear();
 		owners.clear();
 		npcStates.clear();
@@ -859,13 +867,14 @@ namespace Sim
 	{
 		world = a_save.world;
 		heardDead.clear();  // WorldSync::Reset: what was known described the game before the load
+		// WorldSync's record of the save, then (Session) the world is bound to the session we're in and asks
+		// for what came since.
+		ledger.OnRevert();
 		if (a_save.resync.sessionId != 0) {
-			ledger.Restore(a_save.resync.sessionId, a_save.resync.containerFrom);
-		} else {
-			ledger.Revert();
+			ledger.OnRecordLoaded(a_save.resync.sessionId, a_save.resync.containerFrom, {});
 		}
-		if (welcomed) {
-			Send(Protocol::Encode(ledger.ResyncPoint()), true);
+		if (const auto request = welcomed ? ledger.AfterLoad() : std::nullopt) {
+			Send(Protocol::Encode(*request), true);
 		}
 	}
 
@@ -939,9 +948,7 @@ namespace Sim
 
 	inline void Client::ApplyContainer(std::uint32_t a_index, std::uint32_t a_playerId, const Protocol::ContainerChange& a_change)
 	{
-		if (ledger.Take(a_index, a_playerId) == ContainerLedger::Offer::kApply && Protocol::IsValid(a_change)) {
-			world.containers[a_change.container][a_change.item] += a_change.count;
-		}
+		ledger.Offer(a_index, a_playerId, a_change, [&](const Protocol::ContainerChange& a_next) { return Put(a_next); });
 	}
 
 	inline void Client::ApplyWorldState(const Protocol::WorldState& a_state)
@@ -950,9 +957,7 @@ namespace Sim
 			heardDead.insert(ref);
 			world.dead.insert(ref);
 		}
-		for (const auto& change : a_state.containerChanges) {
-			ApplyContainer(change.index, change.playerId, change.change);
-		}
+		ledger.TakeWorldState(a_state, [&](const Protocol::ContainerChange& a_next) { return Put(a_next); });
 		world.pickedUp.insert(a_state.pickedUp.begin(), a_state.pickedUp.end());
 		for (const auto& state : a_state.refStates) {
 			ApplyDoor(state);
@@ -1036,7 +1041,7 @@ namespace Sim
 				playerId = msg->playerId;
 				sessionId = msg->sessionId;
 				sharedStory = msg->sharedStory;
-				ledger.Welcome(msg->sessionId, msg->playerId);
+				ledger.OnWelcome(msg->sessionId, msg->playerId);
 				for (auto& [ref, item] : world.built) {
 					item.playerId = playerId;
 				}

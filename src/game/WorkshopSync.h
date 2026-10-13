@@ -37,6 +37,10 @@ namespace WorkshopSync
 	// A save was loaded: its cells are walked again for scrapped junk.
 	void OnGameLoaded();
 
+	// The loaded save is another character's world (the session is left): the copies were placed in the world before
+	// the load, and their handles name nothing of ours now (or something else). Forgotten, not removed.
+	void OnWorldGone();
+
 	[[nodiscard]] std::string Describe();
 
 	// Dev: the workbenches the walk found (or this one), with whether the player stands in each one's
