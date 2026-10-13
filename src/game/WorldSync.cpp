@@ -6,6 +6,7 @@
 #include "game/Hud.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
+#include "game/SessionDeaths.h"
 #include "game/NpcSync.h"
 #include "game/PendingContainers.h"
 #include "game/QuestSync.h"
@@ -28,11 +29,11 @@ namespace WorldSync
 		constexpr auto        SWEEP_INTERVAL = 2s;
 		constexpr std::size_t SWEEP_ENTRIES = 256;
 
-		// Every actor known to be dead this session, and the deaths we still have to kill locally (they
-		// weren't loaded when we heard about them, or the reporter's position is still on its way), judged by
-		// where each reporter is as their states reach us.
-		std::unordered_set<std::uint32_t> dead;
-		DeathReports::Book                reports{ [](std::uint32_t a_player) -> std::optional<RemoteEdits::Spot> {
+		// Every actor known to be dead this session (and whether our game may offer to run an NPC: SessionDeaths),
+		// and the deaths we still have to kill locally (they weren't loaded when we heard about them, or the
+		// reporter's position is still on its way), judged by where each reporter is as their states reach us.
+		SessionDeaths::Ledger dead;
+		DeathReports::Book    reports{ [](std::uint32_t a_player) -> std::optional<RemoteEdits::Spot> {
 			const auto state = RemotePlayers::LastStateOf(a_player);
 			return state ? std::optional{ RemoteEdits::SpotOf(*state) } : std::nullopt;
 		} };
@@ -216,6 +217,7 @@ namespace WorldSync
 				return true;
 			}
 			if (actor && actor->IsDead(false)) {
+				dead.SawDead(a_refId);
 				return true;
 			}
 			if (!LoadedActor(a_refId)) {
@@ -230,7 +232,7 @@ namespace WorldSync
 			case DeathReports::Verdict::kWait:
 				return false;
 			case DeathReports::Verdict::kKeepAlive:
-				dead.erase(a_refId);
+				dead.Forget(a_refId);
 				++storyKillsKept;
 				if (storyKillsLogged.insert(a_refId).second) {
 					REX::INFO("WorldSync: {:08X} died in player {}'s game with them nowhere near it; a character of our own story, it lives on here", a_refId, a_death.reporter);
@@ -251,9 +253,11 @@ namespace WorldSync
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.1f}", a_refId, at.x).c_str());
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.1f}", a_refId, at.y).c_str());
 				RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.1f}", a_refId, at.z).c_str());
+				NpcSync::CountCommands(3);
 				++corpsesMoved;
 			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
+			NpcSync::CountCommands(1);
 			++applied;
 			// Killed by a friend: their stand-in gives the corpse the push it got in the friend's game, so it
 			// ragdolls away instead of dropping flat.
@@ -261,6 +265,7 @@ namespace WorldSync
 				// The calling reference is the source of the push and the argument is what flies: the stand-in
 				// pushes the corpse (the other way round ragdolled the stand-in).
 				RE::Console::ExecuteCommand(std::format("{:08X}.pushactoraway {:08X} 3", standIn, a_refId).c_str());
+				NpcSync::CountCommands(1);
 			}
 			REX::INFO("WorldSync: killed {:08X} (died in another player's world)", a_refId);
 			return true;
@@ -268,7 +273,7 @@ namespace WorldSync
 
 		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death, bool a_inWorld)
 		{
-			if (IsShareableRef(a_refId) && dead.insert(a_refId).second && !TryKill(a_refId, a_death, a_inWorld)) {
+			if (IsShareableRef(a_refId) && dead.Add(a_refId, Clock::now()) && !TryKill(a_refId, a_death, a_inWorld)) {
 				reports.Hold(a_refId, a_death);
 			}
 		}
@@ -334,12 +339,22 @@ namespace WorldSync
 
 		void TrackLoads(const std::vector<std::pair<std::uint32_t, bool>>& a_events)
 		{
+			const auto now = Clock::now();
 			for (const auto& [id, isLoaded] : a_events) {
 				if (!isLoaded) {
 					loadedActors.erase(id);
 					continue;
 				}
 				toCheck.insert(id);
+				// Killed here a while ago and loaded alive: its cell reset (days away, or a long sleep). It is no longer
+				// dead for us, so our game offers to run it again; the host's game doing so brings it back for everyone.
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				const bool alive = actor && !actor->IsDeleted() && actor->Get3D() && !actor->IsDead(false);
+				if (dead.OnLoaded(id, alive, reports.Holds(id) || pendingHealth.contains(id), now)) {
+					REX::INFO("WorldSync: {:08X} is alive again here (its cell reset); no longer dead for us", id);
+				} else if (actor && actor->IsDead(false)) {
+					dead.SawDead(id);  // its corpse
+				}
 				FoundDead::TrackLoad(loadedActors, id, [](std::uint32_t a_id) {
 					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
 					return actor && actor->Get3D();
@@ -378,14 +393,15 @@ namespace WorldSync
 			}
 			for (const auto id : toCheck) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.contains(id)) {
+				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.Contains(id)) {
 					continue;
 				}
 				if (!FoundDead::Shared(Story::Shared(), DescribeDead(actor))) {
 					++ownStoryDead;
 					continue;
 				}
-				dead.insert(id);
+				dead.Add(id, Clock::now());
+				dead.SawDead(id);
 				// Said to be found dead, so the server takes it over the NPC's runner (see Server.cpp, handleDeath).
 				// No position: a friend's copy dies where it stands. Ours can lie in another cell than theirs
 				// (an NPC that walks about, alive in their game), and coordinates in one cell are nowhere in
@@ -624,7 +640,7 @@ namespace WorldSync
 				}
 				facts.kind = Holder::kActor;
 				facts.alive = !actor->IsDead(false);
-				facts.knownDead = dead.contains(a_id);
+				facts.knownDead = dead.Contains(a_id);
 				facts.companion = NpcSync::IsOurCompanion(actor);  // holds what we gave them: a friend's loot says nothing of ours
 				return facts;
 			}
@@ -752,11 +768,12 @@ namespace WorldSync
 		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const std::unordered_set<std::uint32_t>& a_killedByUs)
 		{
 			for (const auto id : a_deaths) {
-				if (dead.insert(id).second) {
+				if (dead.Add(id, Clock::now())) {
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 					ReportDead({ .refId = id, .killed = a_killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
 				}
+				dead.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 				reports.Forget(id);
 				pendingHealth.erase(id);
 			}
@@ -965,7 +982,7 @@ namespace WorldSync
 			if (reports.RetryOne(a_id, [&](std::uint32_t a_ref, const DeathReports::Report& a_death) { return TryKill(a_ref, a_death, a_inWorld); })) {
 				++done;
 			}
-			if (const auto it = pendingHealth.find(a_id); it != pendingHealth.end() && (dead.contains(a_id) || TrySetHealth(a_id, it->second, a_inWorld))) {
+			if (const auto it = pendingHealth.find(a_id); it != pendingHealth.end() && (dead.Contains(a_id) || TrySetHealth(a_id, it->second, a_inWorld))) {
 				pendingHealth.erase(it);
 				++done;
 			}
@@ -1002,7 +1019,7 @@ namespace WorldSync
 		// past that, kills, pickups and loot stop being shared, and the player should know why.
 		void NoticeHistory()
 		{
-			const auto percent = SharedHistoryPercent(dead.size(), pickedUpKnown.size(), loot.Point().containerFrom);
+			const auto percent = SharedHistoryPercent(dead.Size(), pickedUpKnown.size(), loot.Point().containerFrom);
 			if (percent < 80 || historyNoticedIn == loot.Point().sessionId) {
 				return;
 			}
@@ -1056,6 +1073,7 @@ namespace WorldSync
 	void OnWelcome(bool a_friendlyFire)
 	{
 		friendlyFire = a_friendlyFire;
+		dead.Expect(Clock::now());  // the session's world state follows the welcome
 	}
 
 	LootSync::Loot& Loot()
@@ -1158,6 +1176,7 @@ namespace WorldSync
 		for (const auto id : a_state.deadActors) {
 			TakeDeath(id, DeathReports::Book::Replayed(Clock::now()), inWorld);
 		}
+		dead.Settle();
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped (see ContainerLedger::Receiver).
 		engine.inWorld = inWorld;
@@ -1183,7 +1202,7 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
-		if (!IsShareableRef(a_refId) || dead.contains(a_refId)) {
+		if (!IsShareableRef(a_refId) || dead.Contains(a_refId)) {
 			return;
 		}
 		if (TrySetHealth(a_refId, a_health, CanApply())) {
@@ -1194,6 +1213,11 @@ namespace WorldSync
 			}
 			pendingHealth[a_refId] = a_health;
 		}
+	}
+
+	bool MayClaim(std::uint32_t a_refId)
+	{
+		return dead.MayClaim(a_refId, Clock::now());
 	}
 
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners)
@@ -1260,7 +1284,7 @@ namespace WorldSync
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
 			for (const auto id : hitLastFrame) {
 				const auto actor = LoadedActor(id);
-				if (actor && !actor->IsDead(false) && !dead.contains(id)) {
+				if (actor && !actor->IsDead(false) && !dead.Contains(id)) {
 					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 					const float maximum = values.GetPermanentActorValue(*info);
 					if (maximum > 0.0f) {
@@ -1359,7 +1383,7 @@ namespace WorldSync
 
 	void Reset()
 	{
-		dead.clear();
+		dead.Reset(Clock::now());
 		reports.Clear();
 		storyKillsLogged.clear();
 		pendingHealth.clear();
@@ -1452,9 +1476,9 @@ namespace WorldSync
 		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
 		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
 		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} loadedActors={}",
-			dead.size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
+			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
-		       std::format(" storyKillKept={} loadApplied={} retryUs={}/{}", storyKillsKept, loadApplied, retryUs, retryUsMax);
+		       std::format(" storyKillKept={} loadApplied={} retryUs={}/{} revived={} settled={}", storyKillsKept, loadApplied, retryUs, retryUsMax, dead.Revived(), dead.Settled(Clock::now()));
 	}
 }

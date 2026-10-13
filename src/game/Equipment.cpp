@@ -1,6 +1,7 @@
 #include "game/Equipment.h"
 
 #include "Protocol.h"
+#include "game/GearPlan.h"
 
 namespace Equipment
 {
@@ -102,32 +103,54 @@ namespace Equipment
 		return false;
 	}
 
-	void Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	namespace
+	{
+		bool IsThrowable(const RE::TESForm* a_form)
+		{
+			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+			if (!weapon) {
+				return false;
+			}
+			const auto type = weapon->weaponData.type.get();
+			return type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine;
+		}
+
+		GearPlan::Slots SlotsOf(std::uint32_t a_item)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			if (!form) {
+				return 0;
+			}
+			if (const auto armor = form->GetFormType() == RE::ENUM_FORM_ID::kARMO ? form->As<RE::TESObjectARMO>() : nullptr) {
+				return static_cast<const RE::BGSBipedObjectForm*>(armor)->bipedModelData.bipedObjectSlots;
+			}
+			if (form->GetFormType() == RE::ENUM_FORM_ID::kWEAP) {
+				return IsThrowable(form) ? GearPlan::THROWABLE_SLOT : GearPlan::WEAPON_SLOT;
+			}
+			return 0;
+		}
+	}
+
+	std::uint32_t Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
 	{
 		if (!a_actor) {
-			return;
+			return 0;
 		}
 		const auto id = a_actor->GetFormID();
-		for (const auto item : a_items) {
-			const auto form = RE::TESForm::GetFormByID(item);
-			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
-				continue;
-			}
-			// Given only when missing: every gear report used to add another copy, so an NPC's
-			// inventory grew with each one (and unique items were duplicated as loot).
-			if (!Has(a_actor, item)) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
-			}
+		const auto has = [&](std::uint32_t a_item) {
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			return form && form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) && Has(a_actor, a_item);
+		};
+		const auto piece = [](std::uint32_t a_item) { return IsPowerArmorPiece(RE::TESForm::GetFormByID(a_item)); };
+		const auto equip = GearPlan::Equip(Read(a_actor), a_items, InPowerArmor(a_actor), has, piece, SlotsOf);
+		for (const auto item : equip) {
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
-		// What it wears that the owner's doesn't (its own roll from the outfit) comes off, so the two
-		// look the same; it stays in the inventory as loot.
-		for (const auto worn : Read(a_actor)) {
-			if (!std::ranges::contains(a_items, worn)) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, worn).c_str());
-			}
+		// The one exception to "nothing is given": a replayed throw needs the grenade in the hand, and spends it.
+		if (!InPowerArmor(a_actor)) {
+			HoldThrowable(a_actor, a_items);
 		}
-		HoldThrowable(a_actor, a_items);
+		return static_cast<std::uint32_t>(equip.size());
 	}
 
 	bool InPowerArmor(const RE::Actor* a_actor)

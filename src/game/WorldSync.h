@@ -42,6 +42,10 @@ namespace WorldSync
 	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
 	// character: FoundDead::Shared).
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners);
+	// Whether our game may offer to run this NPC (NpcSync): not one the session has dead, nor any until the session's
+	// world state has come after a load or a welcome (our game may have it alive from a save older than its death).
+	// One whose cell reset since our game killed it is ours to offer again (SessionDeaths).
+	[[nodiscard]] bool MayClaim(std::uint32_t a_refId);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
 	void ApplyRemotePickup(std::uint32_t a_refId);
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);

@@ -895,6 +895,11 @@ namespace Session
 			}
 		}
 
+		// Events from our world go to the server only while we're in a session, and not from the
+		// opening (see Story::InOpening). Sent before WorldSync::Frame runs: a death it finds this frame
+		// leaves next frame, after the takeover claim the same hit makes (NpcSync::OnLocalInteraction, sent
+		// below this frame). The server believes our kill of an NPC another game runs only once it has that
+		// claim (Server.cpp, handleDeath), so this order is what keeps a one-shot kill.
 		SendWorldEvents();
 		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
 
@@ -907,6 +912,8 @@ namespace Session
 				client->Send(std::move(packet), true);
 			}
 		}
+		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
+		// WorldSync found this frame (see above).
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {
 				client->Send(std::move(packet.data), packet.reliable);

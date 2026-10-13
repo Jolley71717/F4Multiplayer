@@ -72,6 +72,8 @@ namespace
 	constexpr auto HELLO_TIMEOUT = std::chrono::seconds(5);
 	// A player who hits or talks to an NPC another player runs takes it over, at most this often.
 	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
+	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
+	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -191,6 +193,14 @@ namespace
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
+		// NPCs this player hurt or tried to take over, and when last: a kill of one another player's game runs is
+		// believed for a while after (Options::deathGrace). At most MAX_FIGHTING.
+		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
+		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
+		// Its last request for the world isn't answered yet (owed while its budget refills, or dropped for flooding):
+		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
+		// a world state is sent to it.
+		bool                       worldStale = false;
 	};
 
 	struct Ownership
@@ -320,6 +330,10 @@ void Server::Run()
 	// NPCs the host's game has had alive in this session (it claimed them or reported their health) or seen
 	// die while another game ran them: its world can't be dead "from its save" about those (see handleDeath).
 	std::unordered_set<std::uint32_t>                     hostHadAlive;
+	// When each NPC died in this run (one from the saved session died long ago), and how many came back in the host's
+	// world (see handleClaims). Not saved.
+	std::unordered_map<std::uint32_t, Clock::time_point>  diedAt;
+	std::size_t                                           aliveAgain = 0;
 
 	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
 	// when one gets near, once at 80% and once full.
@@ -429,6 +443,7 @@ void Server::Run()
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
+		diedAt.clear();
 		pickedUp.clear();
 		refStates.clear();
 		actorOwners.clear();
@@ -673,6 +688,7 @@ void Server::Run()
 		}
 		if (allowWorldState(a_player)) {
 			sendWorldState(a_player.key, a_containerFrom);
+			a_player.worldStale = false;
 			return;
 		}
 		a_player.worldStateOwed = true;
@@ -815,6 +831,7 @@ void Server::Run()
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		a_player.local = local;
+		a_player.worldAskedAt = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
@@ -889,6 +906,24 @@ void Server::Run()
 		}
 	};
 
+	// The player hurt the NPC or tried to take it over (see handleDeath).
+	const auto noteFighting = [&](Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		auto& fighting = a_player.fighting;
+		if (fighting.size() >= MAX_FIGHTING && !fighting.contains(a_refId)) {
+			std::erase_if(fighting, [&](const auto& a_entry) { return a_now - a_entry.second > options.deathGrace; });
+			if (fighting.size() >= MAX_FIGHTING) {
+				return;
+			}
+		}
+		fighting[a_refId] = a_now;
+	};
+	const auto wasFighting = [&](const Player& a_player, std::uint32_t a_refId, Clock::time_point a_now) {
+		const auto it = a_player.fighting.find(a_refId);
+		return it != a_player.fighting.end() && a_now - it->second <= options.deathGrace;
+	};
+	Clock::time_point droppedDeathLogged{};
+	std::size_t       droppedDeaths = 0;  // since the last line about them
+
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -910,10 +945,23 @@ void Server::Run()
 		// game during the session, after the runner had it alive, which is again the runner's to judge (the
 		// host's copy of an NPC another game runs can fall over by mistake; this report is then the same
 		// mistake found again after a reconnect or a load).
+		// A kill by a player who was fighting it is believed too: they hurt it or tried to take it over within
+		// Options::deathGrace. The takeover is refused for 5 s after the NPC changed hands, so two players
+		// fighting one raider used to lose the second one's kill (it lived on in the runner's game). Their
+		// game sends the takeover claim the frame it hits and the death a frame later (Session::Frame), on the
+		// one reliable channel, so even a one-shot kill finds the claim here first.
 		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+			const auto now = Clock::now();
 			const bool foundDead = a_player.local && death->foundDead && !hostHadAlive.contains(death->refId);
-			if (!foundDead) {
+			const bool fought = !death->foundDead && wasFighting(a_player, death->refId, now);
+			if (!foundDead && !fought) {
 				noteHostHadAlive(a_player, death->refId);  // the host's game had it alive, or saw it die
+				++droppedDeaths;
+				if (now - droppedDeathLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+					droppedDeathLogged = now;
+					log(std::format("server: death of {:08X} from '{}' dropped: player {} runs it and the reporter wasn't fighting it ({} dropped since the last such line)",
+						death->refId, a_player.name, owner->second.playerId, std::exchange(droppedDeaths, 0)));
+				}
 				return;
 			}
 		}
@@ -936,6 +984,14 @@ void Server::Run()
 		++budgetOf(a_player).added[kDeaths];
 		noteFill(kDeaths, deadActors.size());
 		touched();
+		// A death older than aliveAgainGrace is the same as one with no entry (see handleClaims): those make room.
+		const auto diedNow = Clock::now();
+		if (diedAt.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+			std::erase_if(diedAt, [&](const auto& a_entry) { return diedNow - a_entry.second >= options.aliveAgainGrace; });
+		}
+		if (diedAt.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+			diedAt[death->refId] = diedNow;
+		}
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
 		}
@@ -956,6 +1012,7 @@ void Server::Run()
 			return;
 		}
 		noteHostHadAlive(a_player, health->refId);  // hit and still alive
+		noteFighting(a_player, health->refId, Clock::now());
 		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
 	};
 
@@ -1075,11 +1132,37 @@ void Server::Run()
 		std::optional<std::size_t> owned;
 		std::optional<std::size_t> companions;
 		for (const auto& claim : *claims) {
-			if (!Protocol::IsShareableRef(claim.refId) || deadActors.contains(claim.refId)) {
+			if (!Protocol::IsShareableRef(claim.refId)) {
 				continue;
+			}
+			// The dead can't be claimed, except by the host's game when a cell reset brought them back: the raiders of
+			// a camp cleared days ago. Its game offers one only alive and loaded (NpcSync, never one it has dead:
+			// WorldSync::MayClaim), and the host's world is the session's, so it is alive again for everyone and runs
+			// in the host's game. Only well after the host's game last asked for the world and after the death, so a
+			// copy alive only in an older save, or one the news of its death has not reached yet, is not taken for it.
+			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server. Nor
+			// can the host's game while its last request for the world is unanswered (owed while its budget refills, or
+			// dropped): what it has alive may be from the save it loaded.
+			if (deadActors.contains(claim.refId)) {
+				const auto died = diedAt.find(claim.refId);
+				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
+				                      (died == diedAt.end() || now - died->second >= options.aliveAgainGrace);
+				if (!cameBack) {
+					continue;
+				}
+				deadActors.erase(claim.refId);
+				deathPositions.erase(claim.refId);
+				if (died != diedAt.end()) {
+					diedAt.erase(died);
+				}
+				++aliveAgain;
+				touched();
+				log(std::format("server: {:08X} is alive again in the host's world (its cell reset); no longer dead in the session", claim.refId));
 			}
 			if (claim.reason != Reason::kInteract) {
 				noteHostHadAlive(a_player, claim.refId);  // offered because it is loaded and alive (a hit or a press can be on a corpse)
+			} else {
+				noteFighting(a_player, claim.refId, now);  // granted or not: a refused takeover is the kill handleDeath must not lose
 			}
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
@@ -1523,6 +1606,11 @@ void Server::Run()
 	};
 
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		// Its world was just loaded, and is stale until a world state is sent to it (see handleClaims).
+		if (a_player.welcomed) {
+			a_player.worldAskedAt = Clock::now();
+			a_player.worldStale = true;
+		}
 		if (!allowEvent(a_player)) {
 			return;
 		}
@@ -1573,6 +1661,10 @@ void Server::Run()
 				}
 			}
 			if (!a_player.waitingHello.empty() || !worldStateReady(a_player)) {
+				if (a_player.welcomed) {
+					a_player.worldStale = true;  // its game restarted and has its own save's world now (see handleClaims)
+					a_player.worldAskedAt = Clock::now();
+				}
 				if (a_player.waitingHello.empty()) {
 					log(std::format("server: {} says hello too often; answering when their budget refills", describe(a_player.key)));
 				}
@@ -1761,6 +1853,7 @@ void Server::Run()
 			if (player.welcomed && player.worldStateOwed && allowWorldState(player)) {
 				player.worldStateOwed = false;
 				sendWorldState(key, player.owedFrom);
+				player.worldStale = false;
 				if (std::exchange(player.workshopOwed, false)) {
 					sendWorkshop(player);
 				}

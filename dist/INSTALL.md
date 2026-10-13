@@ -175,6 +175,8 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
+  there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).
 - If you load a save while in a session, a piece a friend moved or scrapped between that save and now stays where your save had it until the next session (the rest of their building comes back as it is now).
 

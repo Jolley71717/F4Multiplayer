@@ -135,7 +135,8 @@
 - Every loaded, living NPC from a plugin file has one owner, whose game runs its AI. The server decides:
   - nobody owns it: the first player to claim it (they have it loaded);
   - a player's current companion goes to that player, unless it is also another player's companion
-    (then the first keeps it, so two players with Dogmeat don't trade him forever);
+    (then the first keeps it, so two players with Dogmeat don't trade him forever; the other's game asks
+    again every 15 s rather than every 3 s, and at once when he is released: `NpcClaims`, `refusals=`);
   - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
     hands in the last 5 s.
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
@@ -152,6 +153,22 @@
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
   claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
   owner list on join.
+- Gear: each game rolls NPC gear on its own, so the owner reports what its NPCs wear when it changes
+  (`ReportNpcEquipment`, owner only) and the server keeps the last report for newcomers. A copy is dressed
+  from its own inventory only (`GearPlan`): it equips what it carries of the owner's items, unless that
+  would take off something it wears that the owner's copy does not, and nothing is ever added or
+  unequipped (the NPC is a real one of that game and goes into its saves: a settler the host dressed keeps
+  the host's armor, and a corpse holds only its own roll). An NPC in a power armor frame is left alone, and
+  power armor pieces are never put on a body. Where its roll lacks the owner's item it wears its own; the
+  one thing it is given is a grenade or mine to hold for a replayed throw, which the throw spends.
+- Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
+  standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
+  every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
+  then left as it is. The tries start over once the copy is on, or here (`net status`: `gaveUp=`).
+- Console commands: each one is compiled and run on the spot, so the copies taken over from their own AI are
+  spread out, 8 a frame at most (the rest keep their snapshots and wait a frame), and the commands run for NPCs
+  are counted (`CommandMeter`; `net status`: `cmds=` last frame/most, `busy=` frames over 32, `rereg=`,
+  `released=`), with a log line for a busy frame at most every 10 s.
 - An owner more than 6000 units from an NPC releases it when a friend in the same space is within
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
@@ -239,7 +256,7 @@ menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health or asked to take it over within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Others are dropped, with a log line at most every 10 s |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
@@ -283,6 +300,26 @@ container) until own changes are replayed as moves. A player who reconnects gets
 number kept in `Documents\My Games\Fallout4\F4SE\F4Multiplayer_player.id`, and the server remembers
 which ID each identity had during its run (not while the old connection is still open; the client
 also remembers every ID it had in the session).
+
+Until the session's world state has come after a welcome or a load (or 15 s have passed), the client
+offers to run no NPC, and never one the session has dead (`WorldSync::MayClaim`, `SessionDeaths`): its game
+can have it alive from a save older than the kill.
+
+### Deaths that end (cell resets)
+
+A killed NPC is dead in the session, but the game brings a cleared cell's NPCs back after days away. A
+game that had an NPC dead here (it saw it die or its corpse load; a console kill that left an NPC essential in
+that game standing doesn't count), learned of the death at least 10 s ago and then loads it alive takes that
+as a respawn and forgets it was dead (`revived=` in `net status`), so it may offer to run it again. Only the
+host's game is believed about it: its kUnowned claim on a dead NPC, at least `Options::aliveAgainGrace` (10 s)
+after its last hello or world request and after the death, takes the NPC off the dead list (and out of the saved session) and gives
+it to the host's game ("alive again in the host's world" in the server log); it can fight and hurt players
+again. A joiner's claim on a dead NPC is dropped, so a joiner whose cell reset first sees its copy run by its
+own AI until the host's game brings it back; one whose copy is still a corpse keeps the corpse (its
+`AttackerHere` drops that NPC's hits). A dedicated server has no host's game, so nothing comes back there.
+Nor does anything while the host's last world request went unanswered (refused for asking too often after a
+burst of loads): its game may have the NPC alive only in the save it loaded, so the server waits for a request
+it answers (the next load) before believing it again.
 
 ### The opening (src/game/Story.cpp)
 

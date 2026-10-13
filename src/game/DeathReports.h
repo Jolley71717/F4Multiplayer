@@ -96,6 +96,7 @@ namespace DeathReports
 		// Held until our copy can be judged (it isn't loaded yet, or the judge said wait).
 		void Hold(std::uint32_t a_ref, const Report& a_report) { held[a_ref] = a_report; }
 		void Forget(std::uint32_t a_ref) { held.erase(a_ref); }
+		[[nodiscard]] bool Holds(std::uint32_t a_ref) const { return held.contains(a_ref); }
 		void Clear() { held.clear(); }
 		[[nodiscard]] bool        Empty() const { return held.empty(); }
 		[[nodiscard]] std::size_t Size() const { return held.size(); }

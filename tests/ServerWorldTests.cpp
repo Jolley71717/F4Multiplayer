@@ -1560,6 +1560,123 @@ TEST("server trust: a death reported by someone who doesn't run the actor is dro
 	CHECK(deaths[0].playerId == alice);
 }
 
+TEST("server trust: two players fighting one raider: the one whose takeover was refused still gets the kill")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));  // Alice's game runs the raider
+	Clear(f, { 1, 2 });
+
+	// Bob shoots it: his game reports its health and asks to take it over, which is refused (it changed hands
+	// moments ago), so it stays Alice's. Then he kills it.
+	f.fake->Deliver(2, Health(NPC, 0.3f));
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, alice));
+	f.fake->Deliver(2, DeathAt(NPC, true, 250.0f));
+
+	const auto toAlice = Received(f, 1);
+	const auto deaths = Decoded(toAlice, MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].refId == NPC);
+	CHECK(deaths[0].playerId == bob);  // Alice's kill feed names Bob, and her copy is pushed by his stand-in
+	CHECK(deaths[0].killed);
+	CHECK(deaths[0].x == 250.0f);      // and lies where it fell for him
+	CHECK(HasOwner(Owners(toAlice), NPC, 0));  // her game stops running a corpse
+	CHECK(HasOwner(Owners(Received(f, 2)), NPC, 0));
+
+	// Her own copy falls as the news arrives and her game reports it too: nobody hears of it twice.
+	f.fake->Deliver(1, Death(NPC));
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	// Nobody can run it again, and a newcomer finds it dead where Bob dropped it.
+	f.fake->Deliver(1, Claim(NPC));
+	CHECK(Owners(Received(f, 1)).empty());
+	JoinAs(f, 3, "Carol");
+	const auto toCarol = Received(f, 3);
+	const auto world = WorldStates(toCarol);
+	REQUIRE(world.size() == 1);
+	CHECK(std::ranges::contains(world[0].deadActors, NPC));
+	const auto placed = Decoded(toCarol, MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(placed.size() == 1);
+	CHECK(placed[0].x == 250.0f);
+}
+
+TEST("server trust: a one-shot kill counts: the takeover claim from the hit, then the death, back to back")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim({ { NPC, Reason::kUnowned }, { NPC2, Reason::kUnowned } }));
+	Clear(f, { 1, 2 });
+
+	// A sneak headshot: no health report (it died of the hit), just the claim the hit made and the death a
+	// frame later, as Session::Frame sends them.
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	f.fake->Deliver(2, Death(NPC, true));
+	const auto deaths = Decoded(Received(f, 1), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == bob);
+
+	// The other order is no kill of Bob's: a death first, then a claim, says nothing about a fight.
+	f.fake->Deliver(2, Death(NPC2, true));
+	f.fake->Deliver(2, Claim(NPC2, Reason::kInteract));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+	JoinAs(f, 3, "Carol");
+	const auto world = WorldStates(Received(f, 3));
+	REQUIRE(world.size() == 1);
+	CHECK(!std::ranges::contains(world[0].deadActors, NPC2));
+}
+
+TEST("server trust: in a three-player fight, only those who fought the raider can kill it, and a dropped kill is logged")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	const auto carol = JoinAs(f, 3, "Carol");
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(2, Health(NPC, 0.6f));  // Bob is fighting it; Carol is not
+	Clear(f, { 1, 2, 3 });
+
+	f.fake->Deliver(3, Death(NPC, true));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 0);
+	CHECK(f.Logged(std::format("death of {:08X} from 'Carol' dropped: player {} runs it", NPC, alice)));
+	// Nor does a fight make Carol's say-so a found-dead report: only the host's game is believed about those.
+	f.fake->Deliver(3, Health(NPC, 0.5f));
+	f.fake->Deliver(3, FoundDeadReport(NPC));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+
+	// Carol's fight now counts: her kill is everyone's.
+	f.fake->Deliver(3, Death(NPC, true));
+	const auto deaths = Decoded(Received(f, 1), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == carol);
+	CHECK(Count(Received(f, 2), MT::kActorDied) == 1);
+}
+
+TEST("server trust: a fight long over is no licence to kill the NPC")
+{
+	Server::Options options;
+	options.deathGrace = 200ms;
+	Fixture    f{ options };
+	const auto alice = JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	f.fake->Deliver(2, Health(NPC, 0.9f));
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	Clear(f, { 1, 2 });
+
+	std::this_thread::sleep_for(300ms);
+	f.fake->Deliver(2, Death(NPC, true));
+	CHECK(Count(Received(f, 1), MT::kActorDied) == 0);
+	CHECK(f.Logged("dropped"));
+	// Alice's game still runs it, and her report of its death is believed as always.
+	f.fake->Deliver(1, Death(NPC, true));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == alice);
+}
+
 TEST("server trust: a death of an actor nobody runs is taken from anyone")
 {
 	Fixture f;

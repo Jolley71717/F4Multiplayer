@@ -46,6 +46,9 @@ namespace NpcSync
 	// Claims, releases, sends owned NPCs' states and moves mirrored ones. Call every frame.
 	void Frame();
 
+	// Console commands run for NPCs outside NpcSync this frame (WorldSync's kills), for `net status`.
+	void CountCommands(std::uint32_t a_commands);
+
 	std::vector<Outgoing> TakeOutgoing();
 
 	// Gives every mirrored NPC back to its own AI (before saving, and when leaving the session).
