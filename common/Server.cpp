@@ -74,6 +74,8 @@ namespace
 	constexpr auto TAKEOVER_COOLDOWN = std::chrono::seconds(5);
 	constexpr std::size_t MAX_FIGHTING = 256;  // NPCs one player is remembered fighting (a big fight is a dozen)
 	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
+	// A flooder's budget refills and runs out again twice a second: the log says so at most this often.
+	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -157,8 +159,10 @@ namespace
 		Clock::time_point lastLine{};
 		bool              floodLogged = false;
 		RateBudget        rates;  // explosions and deaths
-		bool              explosionsLogged = false;  // the explosion budget ran out, and the log said so
-		bool              deathsLogged = false;
+		Clock::time_point explosionsLogged{};  // when the log last said the explosion budget ran out
+		std::size_t       explosionsDropped = 0;  // dropped since then
+		Clock::time_point deathsLogged{};
+		std::size_t       deathsDropped = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
 		std::array<bool, kTables>        shareLogged{};
 		int               connections = 0;  // connections using it (it isn't forgotten while any do)
@@ -975,13 +979,15 @@ void Server::Run()
 		// is dropped for good: the reporter's game counts it as sent.
 		if (!a_player.local) {
 			auto& budget = budgetOf(a_player);
-			if (!spend(a_player, &RateBudget::deaths, Clock::now())) {
-				if (!std::exchange(budget.deathsLogged, true)) {
-					log(std::format("server: player {} reports deaths faster than any fight; dropping them until their budget refills", a_player.id));
+			const auto now = Clock::now();
+			if (!spend(a_player, &RateBudget::deaths, now)) {
+				++budget.deathsDropped;
+				if (now - budget.deathsLogged >= BUDGET_LOG_INTERVAL) {
+					budget.deathsLogged = now;
+					log(std::format("server: player {} reports deaths faster than any fight; dropping them until their budget refills ({} dropped since the last such line)", a_player.id, std::exchange(budget.deathsDropped, 0)));
 				}
 				return;
 			}
-			budget.deathsLogged = false;
 		}
 		deadActors.insert(death->refId);
 		++budgetOf(a_player).added[kDeaths];
@@ -1454,12 +1460,14 @@ void Server::Run()
 		}
 		if (!a_player.local) {
 			if (!spend(a_player, &RateBudget::explosions, now)) {
-				if (!std::exchange(budgetOf(a_player).explosionsLogged, true)) {
-					log(std::format("server: player {} reports explosions faster than anyone throws; dropping them until their budget refills", a_player.id));
+				auto& budget = budgetOf(a_player);
+				++budget.explosionsDropped;
+				if (now - budget.explosionsLogged >= BUDGET_LOG_INTERVAL) {
+					budget.explosionsLogged = now;
+					log(std::format("server: player {} reports explosions faster than anyone throws; dropping them until their budget refills ({} dropped since the last such line)", a_player.id, std::exchange(budget.explosionsDropped, 0)));
 				}
 				return;
 			}
-			budgetOf(a_player).explosionsLogged = false;
 		}
 		explosion->playerId = a_player.id;
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);

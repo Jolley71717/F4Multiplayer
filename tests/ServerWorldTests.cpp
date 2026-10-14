@@ -2001,6 +2001,22 @@ TEST("server trust: a joiner's deaths stop at their budget and come back with ti
 	CHECK(std::ranges::find(world[0].deadActors, 0x00100000u + 60) == world[0].deadActors.end());
 }
 
+TEST("server trust: a flood that goes on says once per 10 seconds that the budget ran out, and how many were dropped")
+{
+	// The budget refills two a second and a flooder spends them at once: the log used to say so each time.
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DeliverAll(f, 1, Deaths(0x00200000, 62));  // 60 pass, 2 dropped
+	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 60);
+	std::this_thread::sleep_for(1100ms);
+	DeliverAll(f, 1, Deaths(0x00200100, 5));  // 2 pass, 3 dropped
+	REQUIRE(Count(Received(f, 2), MT::kActorDied) == 2);
+	CHECK(f.LoggedTimes("reports deaths faster than any fight") == 1);
+	CHECK(f.Logged("(1 dropped since the last such line)"));
+}
+
 TEST("server trust: the host's own game reports any number of deaths")
 {
 	Fixture f{ HostedOptions() };

@@ -161,7 +161,7 @@ if ($Abuse) {
 	$memoryAtEnd = 0
 	try {
 		Stop-Leftovers
-		Start-Exe 'server' $serverExe @('--port', "$Port", '--max-players', '8', '--max-world-entries', '1200', '--max-share', '1000') | Out-Null
+		Start-Exe 'server' $serverExe @('--port', "$Port", '--max-players', '8', '--loopback-only', '--max-world-entries', '1200', '--max-share', '1000') | Out-Null
 		Require (Wait-Log "listening on UDP port $Port") "server listens on port $Port"
 
 		Start-Bot 'honest' 'Honest' $Seconds @('--identity', '0000000000001001', '--loot', "${container}:${item}:-10", '--kill', '0001A001',
@@ -209,9 +209,11 @@ if ($Abuse) {
 		$floodKills = Player-Of 'flood-kills'
 		$floodLoot = Player-Of 'flood-loot'
 		$floodPickups = Player-Of 'flood-pickups'
-		Check ((Count-Matches $log "server: player $floodKills has added 1000 dead NPC entries this run, their share") -eq 1) 'server: the kill flooder is stopped at its share, said once'
-		Check ((Count-Matches $log "dead NPC table is \d+% full \(\d+/1200\); kill sharing stops at 100%") -eq 1) 'server: the kill table is said to be near full once'
-		Check ((Count-Matches $log "dead NPC table is 100% full \(1200/1200\)") -eq 1) 'server: the kill table is said to be full once'
+		# Deaths have a rate budget (60 at once, then 2 a second), so a flooder is held back long before its
+		# share of the kill table or the table's limit; the server says so at most once per 10 seconds.
+		$heldKills = Count-Matches $log "server: player $floodKills reports deaths faster than any fight"
+		Check ($heldKills -ge 1 -and $heldKills -le [Math]::Ceiling($Seconds / 10) + 1) "server: the kill flooder is held to the death budget, said $heldKills times"
+		Check ((Count-Matches $log "dead NPC table is \d+% full") -eq 0) 'server: the kill floods never fill the kill table'
 		Check ((Count-Matches $log "server: player $floodLoot has made 1000 container changes this session, their share") -eq 1) 'server: the loot flooder is stopped at its share, said once'
 		Check ((Count-Matches $log "server: player $floodPickups has added 1000 picked-up item entries this run, their share") -eq 1) 'server: the pickup flooder is stopped at its share, said once'
 		Check ((Count-Matches $log "says hello too often") -ge 1) 'server: the looper waits for its budget'
@@ -253,7 +255,7 @@ $aborted = $null
 try {
 	Stop-Leftovers
 
-	$serverArgs = @('--port', "$Port", '--max-players', '8')
+	$serverArgs = @('--port', "$Port", '--max-players', '8', '--loopback-only')
 	if ($SharedStory) { $serverArgs += '--shared-story' }
 	Start-Exe 'server' $serverExe $serverArgs | Out-Null
 	Require (Wait-Log "listening on UDP port $Port") "server listens on port $Port"
