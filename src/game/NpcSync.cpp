@@ -1,6 +1,7 @@
 #include "game/NpcSync.h"
 
 #include "game/CommandMeter.h"
+#include "game/CreatureGait.h"
 #include "game/Equipment.h"
 #include "game/Gait.h"
 #include "game/NpcClaims.h"
@@ -407,6 +408,20 @@ namespace NpcSync
 						state.flags |= Protocol::kOwnDirection;
 					}
 				}
+				// A dog's gait and the rate its clip plays at, as its own graph has them (CreatureGait.h).
+				{
+					static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
+					static const RE::BSFixedString markerVar{ CreatureGait::MARKER_VARIABLE };
+					const auto                     graph = static_cast<const RE::IAnimationGraphManagerHolder*>(actor);
+					std::int32_t                   range = 0;
+					float                          rate = 0.0f;
+					const auto                     gait = graph->GetGraphVariableImplInt(rangeVar, range) && graph->GetGraphVariableImplFloat(markerVar, rate) ? CreatureGait::Find(range) : nullptr;
+					if (gait && graph->GetGraphVariableImplFloat(RE::BSFixedString{ gait->rateVariable }, rate)) {
+						state.gait = gait->id;
+						state.gaitRate = CreatureGait::PackRate(rate);
+						state.flags |= Protocol::kOwnGait;
+					}
+				}
 				if (actor->GetWeaponMagicDrawn()) {
 					state.flags |= Protocol::kWeaponDrawn;
 				}
@@ -511,6 +526,8 @@ namespace NpcSync
 				.direction = (state.flags & Protocol::kOwnDirection) ? Protocol::UnpackDirection(state.direction) : WrapAngle(motionAngle - state.heading) / (std::numbers::pi_v<float> * 2.0f),
 				.moveMode = state.moveMode,
 				.flags = state.flags,
+				.gait = state.gait,
+				.gaitRate = state.gaitRate,
 			};
 		}
 

@@ -15,6 +15,8 @@ namespace Puppets
 		float         pitch = 0.0f;      // aim up (+) or down (-), degrees: the graph's Pitch
 		std::uint16_t moveMode = 0;      // ActorState::moveMode bits of the remote player
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
+		std::uint8_t  gait = 0;          // with Protocol::kOwnGait: a mirrored dog's gait and its clip's rate in its owner's game
+		std::uint8_t  gaitRate = 0;      // (Protocol::ActorState::gait, gaitRate; CreatureGait.h)
 	};
 
 	enum class Kind
@@ -47,7 +49,8 @@ namespace Puppets
 
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
 	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how
-	// often it was stood up out of furniture), and its locomotion variables.
+	// often it was stood up out of furniture), the gait a dog's owner's game says it plays
+	// (ownerGait=state@rate, CreatureGait.h), and its locomotion variables.
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
 
 	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction

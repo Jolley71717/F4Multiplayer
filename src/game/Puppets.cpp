@@ -1,5 +1,6 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/CreatureGait.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
@@ -26,6 +27,7 @@ namespace Puppets
 			bool                                  moving = false;  // locomotion graph is in its moving state
 			Gait::Kind                            gait = Gait::Kind::kWalk;  // the gait its graph was last told (Gait.h)
 			float                                 gaitSpeed = 0.0f;           // the smoothed speed it goes by
+			std::int32_t                          range = -1;  // the gait a dog's graph was last told (CreatureGait.h), -1 none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
@@ -241,6 +243,8 @@ namespace Puppets
 			static const RE::BSFixedString weaponRunMultVar{ "fLocomotionRunPlaybackSpeed" };
 			static const RE::BSFixedString gaitSyncVar{ "iSyncLocomotionSpeed" };
 			static const RE::BSFixedString weaponGaitVar{ "iLocomotionSpeedState" };
+			static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
+			static const RE::BSFixedString markerVar{ CreatureGait::MARKER_VARIABLE };
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
@@ -256,6 +260,14 @@ namespace Puppets
 			if (humanoid) {
 				graph->SetGraphVariableInt(gaitSyncVar, Gait::SyncValue(gait));
 				graph->SetGraphVariableInt(weaponGaitVar, Gait::WeaponState(gait));
+			}
+			// A dog's (CreatureGait.h): the gait and rate its owner's graph plays, its state set first for the same reason.
+			std::int32_t range = 0;
+			float        marker = 0.0f;
+			const bool   dog = !humanoid && graph->GetGraphVariableImplInt(rangeVar, range) && graph->GetGraphVariableImplFloat(markerVar, marker);
+			const auto   dogGait = CreatureGait::Choose((motion.flags & Protocol::kOwnGait) != 0, motion.gait, motion.gaitRate, motion.speed);
+			if (dog) {
+				graph->SetGraphVariableInt(rangeVar, dogGait.range->id);
 			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
@@ -274,6 +286,12 @@ namespace Puppets
 					// The graph in use takes its own one and refuses the other.
 					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::Event(gait) });
 					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::WeaponEvent(gait) });
+				}
+			}
+			if (dog) {
+				graph->SetGraphVariableFloat(RE::BSFixedString{ dogGait.range->rateVariable }, dogGait.rate);
+				if (CreatureGait::Send(moving, a_puppet.moving, dogGait.range->id, a_puppet.range, step.resent != nullptr)) {
+					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ dogGait.range->event });
 				}
 			}
 			// What the engine's own move actions keep and our bare events do not: a jump's take-off and
@@ -313,6 +331,7 @@ namespace Puppets
 						entry->moving = moving;
 						entry->gait = gait;
 						entry->gaitSpeed = gaitSpeed;
+						entry->range = dog && moving ? dogGait.range->id : -1;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
 					}
@@ -586,12 +605,14 @@ namespace Puppets
 			puppet = *entry;
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
-			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits);
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} ownerGait={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
+			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits,
+			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" });
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
-		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run).
+		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate its
+		// walk and run play at.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "fWalkClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;
@@ -601,6 +622,8 @@ namespace Puppets
 				out += std::format(" {}={}", name, n);
 			} else if (name[0] == 'b' && graph->GetGraphVariableImplBool(var, b)) {
 				out += std::format(" {}={}", name, b);
+			} else if (name[0] == 'f' && graph->GetGraphVariableImplFloat(var, f)) {
+				out += std::format(" {}={:.2f}", name, f);  // a clip's rate
 			} else if (graph->GetGraphVariableImplFloat(var, f)) {
 				out += std::format(" {}={:.0f}", name, f);
 			}
