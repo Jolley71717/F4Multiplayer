@@ -616,6 +616,7 @@ int main(int argc, char* argv[])
 			Protocol::PlayerState state;
 			state.sequence = ++sequence;
 			state.cell = cell;
+			state.sentMs = Protocol::SentMs(now);
 			state.worldspace = cell ? 0 : worldspace;
 			state.x = cx + radius * std::sin(a);
 			state.y = cy + radius * std::cos(a);

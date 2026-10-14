@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -17,7 +18,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 28;
+	inline constexpr std::uint16_t VERSION = 29;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -150,6 +151,9 @@ namespace Protocol
 		float         speed = 0;     // units/second, for picking walk/run animations
 		std::uint16_t moveMode = 0;  // ActorState::moveMode bits (walk/run/sprint/sneak), copied to the puppet
 		std::uint8_t  flags = kNone;
+		// The sender's clock when it was sampled, in ms (any start; it wraps after 49 days), so the receiver can
+		// place it in time however late it came; 0 when not known.
+		std::uint32_t sentMs = 0;
 
 		[[nodiscard]] bool IsFinite() const
 		{
@@ -157,6 +161,13 @@ namespace Protocol
 			       std::isfinite(heading) && std::isfinite(speed);
 		}
 	};
+
+	// PlayerState::sentMs for a moment on the sender's steady clock (never 0, which means not known).
+	inline std::uint32_t SentMs(std::chrono::steady_clock::time_point a_at)
+	{
+		const auto ms = static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(a_at.time_since_epoch()).count());
+		return ms ? ms : 1;
+	}
 
 	// Which of a session's container changes a player's world already contains: the changes
 	// before containerFrom, if sessionId is the server's current session (otherwise none).
@@ -731,6 +742,7 @@ namespace Protocol
 		a_writer.F32(a_state.speed);
 		a_writer.U16(a_state.moveMode);
 		a_writer.U8(a_state.flags);
+		a_writer.U32(a_state.sentMs);
 	}
 
 	inline PlayerState ReadState(Reader& a_reader)
@@ -746,6 +758,7 @@ namespace Protocol
 		state.speed = a_reader.F32();
 		state.moveMode = a_reader.U16();
 		state.flags = a_reader.U8();
+		state.sentMs = a_reader.U32();
 		return state;
 	}
 

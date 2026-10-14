@@ -7,10 +7,10 @@
 #include "game/FriendLight.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
-#include "game/Prediction.h"
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
+#include "game/StateBuffer.h"
 
 #include "game/Face.h"
 #include "Config.h"
@@ -24,26 +24,6 @@ namespace RemotePlayers
 	namespace
 	{
 		using Clock = std::chrono::steady_clock;
-
-		// Render remote players slightly in the past so there are always two states to blend.
-		// States arrive about every 33 ms; two of them, plus slack for the relay and network jitter.
-		// That is the least: a slow game reads the network once a frame, so it needs one of its frames
-		// more, and a friend in a slow game sends less often. Each player's delay is eased toward one gap
-		// between their states plus one of our frames plus slack, so the render time never jumps.
-		constexpr auto  INTERPOLATION_DELAY = 70ms;
-		constexpr auto  MAX_INTERPOLATION_DELAY = 250ms;
-		constexpr float DELAY_SLACK = 0.02f;  // seconds
-		constexpr float DELAY_SLEW = 0.002f;  // seconds per frame
-		float             frameSeconds = 1.0f / 60.0f;  // ours, smoothed
-		Clock::time_point lastFrame{};
-		constexpr auto STALE_AFTER = 5s;
-		constexpr std::size_t MAX_SNAPSHOTS = 32;
-
-		struct Snapshot
-		{
-			Clock::time_point     received;
-			Protocol::PlayerState state;
-		};
 
 		// A place as a friend's state names it.
 		struct Spot
@@ -63,9 +43,7 @@ namespace RemotePlayers
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
-			std::deque<Snapshot> snapshots;
-			Prediction::ArrivalClock arrivals;     // even stamps for states read in bursts
-			float                delay = 0.07f;  // seconds behind now it is rendered
+			StateBuffer::Buffer  states;  // what they sent lately, and how far in the past it is drawn
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
 			// if the game deletes the actor behind our back (its handle then no longer resolves).
@@ -350,72 +328,11 @@ namespace RemotePlayers
 			return form && form->Is(RE::ENUM_FORM_ID::kWEAP) && !Throwable(a_item);
 		}
 
-		float LerpAngle(float a_from, float a_to, float a_t)
-		{
-			return a_from + StandInHold::TurnBetween(a_from, a_to) * a_t;
-		}
-
-		struct Sampled
-		{
-			Protocol::PlayerState state;
-			float                 motionAngle = 0.0f;  // world heading of travel, radians
-		};
-
 		// Movement direction relative to facing, as a fraction of a turn in [0, 1).
 		float RelativeDirection(float a_motionAngle, float a_heading)
 		{
 			const float rel = StandInHold::TurnBetween(a_heading, a_motionAngle) / (2.0f * std::numbers::pi_v<float>);
 			return rel < 0.0f ? rel + 1.0f : rel;
-		}
-
-		// Interpolated state at (now - delay), or nullopt if we have nothing recent.
-		std::optional<Sampled> Sample(const RemotePlayer& a_player, Clock::time_point a_now)
-		{
-			const auto& snaps = a_player.snapshots;
-			if (snaps.empty() || a_now - snaps.back().received > STALE_AFTER) {
-				return std::nullopt;
-			}
-
-			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(a_player.delay));
-			if (renderTime <= snaps.front().received) {
-				return Sampled{ snaps.front().state, snaps.front().state.heading };
-			}
-
-			for (std::size_t i = 1; i < snaps.size(); ++i) {
-				const auto& a = snaps[i - 1];
-				const auto& b = snaps[i];
-				if (renderTime > b.received) {
-					continue;
-				}
-
-				// Don't blend across a cell or worldspace change (doors, fast travel).
-				if (a.state.cell != b.state.cell || a.state.worldspace != b.state.worldspace) {
-					return Sampled{ b.state, b.state.heading };
-				}
-
-				const float span = std::chrono::duration<float>(b.received - a.received).count();
-				const float t = span > 0.0f ? std::chrono::duration<float>(renderTime - a.received).count() / span : 1.0f;
-
-				auto out = b.state;
-				out.x = std::lerp(a.state.x, b.state.x, t);
-				out.y = std::lerp(a.state.y, b.state.y, t);
-				out.z = std::lerp(a.state.z, b.state.z, t);
-				out.heading = LerpAngle(a.state.heading, b.state.heading, t);
-
-				const float dx = b.state.x - a.state.x;
-				const float dy = b.state.y - a.state.y;
-				const float motionAngle = dx * dx + dy * dy > 1.0f ? std::atan2(dx, dy) : out.heading;
-				return Sampled{ out, motionAngle };
-			}
-
-			// Past the newest snapshot: hold position rather than guessing ahead, and stop
-			// animating if updates have dried up.
-			auto held = snaps.back().state;
-			heldFrames += held.speed > 0.0f && a_now - snaps.back().received < 1s;
-			if (a_now - snaps.back().received > INTERPOLATION_DELAY + 250ms) {
-				held.speed = 0.0f;
-			}
-			return Sampled{ held, held.heading };
 		}
 
 		std::string NameTag(const RemotePlayer& a_player)
@@ -1362,14 +1279,8 @@ namespace RemotePlayers
 		if (it == players.end()) {
 			return;  // state for a player we haven't been told about yet
 		}
-		auto& snaps = it->second.snapshots;
-		if (!snaps.empty() && a_state.sequence <= snaps.back().state.sequence) {
+		if (!it->second.states.Push(a_state, Clock::now())) {
 			return;
-		}
-		const auto steps = snaps.empty() ? 1u : a_state.sequence - snaps.back().state.sequence;
-		snaps.push_back({ it->second.arrivals.Next(Clock::now(), steps), a_state });
-		while (snaps.size() > MAX_SNAPSHOTS) {
-			snaps.pop_front();
 		}
 		if (it->second.wornAtWanted) {
 			TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
@@ -1408,8 +1319,8 @@ namespace RemotePlayers
 		std::vector<Info> out;
 		for (const auto& [id, remote] : players) {
 			Info info{ id, remote.name, std::nullopt, GetActor(remote) };
-			if (!remote.snapshots.empty()) {
-				info.state = remote.snapshots.back().state;
+			if (!remote.states.snapshots.empty()) {
+				info.state = remote.states.snapshots.back().state;
 			}
 			out.push_back(std::move(info));
 		}
@@ -1533,16 +1444,16 @@ namespace RemotePlayers
 	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);
-		if (it == players.end() || it->second.snapshots.empty()) {
+		if (it == players.end() || it->second.states.snapshots.empty()) {
 			return std::nullopt;
 		}
-		return it->second.snapshots.back().state;
+		return it->second.states.snapshots.back().state;
 	}
 
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);
-		if (it == players.end() || it->second.snapshots.empty()) {
+		if (it == players.end() || it->second.states.snapshots.empty()) {
 			return std::nullopt;
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
@@ -1550,7 +1461,7 @@ namespace RemotePlayers
 		if (!cell) {
 			return std::nullopt;
 		}
-		const auto& last = it->second.snapshots.back().state;
+		const auto& last = it->second.states.snapshots.back().state;
 		const bool here = cell->IsInterior() ? last.cell == cell->GetFormID() : (cell->worldSpace && last.worldspace == cell->worldSpace->GetFormID());
 		if (!here) {
 			return std::nullopt;
@@ -1615,8 +1526,8 @@ namespace RemotePlayers
 				player.originalMoved = false;
 				player.originalChoice = -1;
 				player.originalCounted = false;
-				if (!player.snapshots.empty() && ArmorFrames::FreshEnough(Clock::now() - player.arrivals.arrival)) {
-					TakeWornAt(player, player.snapshots.back().state);
+				if (!player.states.snapshots.empty() && ArmorFrames::FreshEnough(Clock::now() - player.states.arrived)) {
+					TakeWornAt(player, player.states.snapshots.back().state);
 				}
 			} else if (!a_on) {
 				player.wornAtWanted = false;
@@ -1659,13 +1570,6 @@ namespace RemotePlayers
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
 
 		const auto now = Clock::now();
-		if (lastFrame != Clock::time_point{}) {
-			const float seconds = std::chrono::duration<float>(now - lastFrame).count();
-			if (seconds < 0.5f) {  // a load or a pause is not the frame rate
-				frameSeconds = frameSeconds * 0.95f + seconds * 0.05f;
-			}
-		}
-		lastFrame = now;
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
 		// each frame: any change the engine makes to it makes a new one, and the engine unloading it would write that
 		// out and crash on the cell it no longer has.
@@ -1709,16 +1613,11 @@ namespace RemotePlayers
 		SaveGuard::Frame();
 		UpdatePendingSolid();
 		for (auto& [id, remote] : players) {
-			// Drop snapshots that are too old to ever be rendered again.
-			while (remote.snapshots.size() > 2 && now - remote.snapshots[1].received > INTERPOLATION_DELAY + 1s) {
-				remote.snapshots.pop_front();
-			}
-
-			movingFrames += !remote.snapshots.empty() && remote.snapshots.back().state.speed > 0.0f && now - remote.snapshots.back().received < 1s;
-			const float delayWanted = std::clamp(remote.arrivals.gap + frameSeconds + DELAY_SLACK, std::chrono::duration<float>(INTERPOLATION_DELAY).count(),
-				std::chrono::duration<float>(MAX_INTERPOLATION_DELAY).count());
-			remote.delay += std::clamp(delayWanted - remote.delay, -DELAY_SLEW, DELAY_SLEW);
-			const auto sampled = Sample(remote, now);
+			remote.states.Frame(now);
+			const auto& snaps = remote.states.snapshots;
+			movingFrames += !snaps.empty() && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
+			const auto sampled = remote.states.Sample(now);
+			heldFrames += sampled && sampled->held && sampled->state.speed > 0.0f && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
@@ -1907,10 +1806,10 @@ namespace RemotePlayers
 		std::string out;
 		for (const auto& [id, remote] : players) {
 			const auto actor = GetActor(remote);
-			const auto& snaps = remote.snapshots;
+			const auto& snaps = remote.states.snapshots;
 			const auto& last = snaps.empty() ? Protocol::PlayerState{} : snaps.back().state;
 			// Average time between the states we hold (about the last second).
-			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().received - snaps.front().received).count() /
+			const auto gap = snaps.size() > 1 ? std::chrono::duration_cast<std::chrono::milliseconds>(snaps.back().stamp - snaps.front().stamp).count() /
 			                                        static_cast<long long>(snaps.size() - 1) :
 			                                    0;
 			// In power armor: whether the engine has the stand-in in its frame (and switch-ins that did not take), whether its
@@ -1933,7 +1832,7 @@ namespace RemotePlayers
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
-				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
+				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.states.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
 				remote.hold.off, remote.hold.frames, remote.hold.worst, armor);
 		}
 		if (originalsHidden) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 
@@ -100,6 +101,61 @@ namespace Prediction
 			const auto eased = predicted + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(error) * EASE);
 			stamp = (std::max)(eased, stamp + std::chrono::milliseconds(1));
 			return stamp;
+		}
+	};
+
+	// Stamps a friend's states with when they were sampled (the sender's clock, PlayerState::sentMs) moved onto
+	// ours. Evened-out arrival times (ArrivalClock) were wrong whenever states came late: after a stall in our
+	// game or on the way, the ones that came together were spread out from the moment they came, and the
+	// stand-in slowed down and then lurched ahead; and a friend whose game sends at uneven frames was drawn
+	// speeding up and slowing down. The shift between the clocks follows the quickest trip of the last TRIPS
+	// states, by at most FOLLOW seconds a second, so it never jerks the stamps; a state that was only late
+	// does not move it, and a route that got slower is followed within a few seconds.
+	struct SenderClock
+	{
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t TRIPS = 64;  // about two seconds of states
+		static constexpr float       FOLLOW = 0.03f;
+
+		bool                                 started = false;
+		std::uint32_t                        lastSent = 0;  // the last state's sentMs
+		Clock::duration                      sent{};        // the sender's time since their first state here
+		Clock::time_point                    first{};       // when their first state came
+		std::array<Clock::duration, TRIPS>   trips{};       // each state's trip, less the first one's
+		std::size_t                          tripCount = 0;
+		std::size_t                          tripNext = 0;
+		Clock::duration                      shift{};       // what the stamps add to first + sent
+		Clock::time_point                    arrival{};     // when the last state came
+		Clock::time_point                    stamp{};
+
+		Clock::time_point Next(Clock::time_point a_arrival, std::uint32_t a_sentMs)
+		{
+			if (!started) {
+				started = true;
+				lastSent = a_sentMs;
+				stamp = arrival = first = a_arrival;
+				Add(Clock::duration::zero());
+				return stamp;
+			}
+			// Their clock only goes forward; one read backwards (a state from a restarted game) counts as no time.
+			const auto delta = static_cast<std::int32_t>(a_sentMs - lastSent);
+			lastSent = a_sentMs;
+			sent += std::chrono::milliseconds((std::max)(delta, 0));
+			Add(a_arrival - (first + sent));
+			const auto quickest = *std::min_element(trips.begin(), trips.begin() + static_cast<std::ptrdiff_t>(tripCount));
+			const auto most = std::chrono::duration_cast<Clock::duration>((a_arrival - arrival) * FOLLOW);
+			arrival = a_arrival;
+			shift += std::clamp(quickest - shift, -most, most);
+			stamp = (std::max)(first + sent + shift, stamp + std::chrono::milliseconds(1));
+			return stamp;
+		}
+
+	private:
+		void Add(Clock::duration a_trip)
+		{
+			trips[tripNext] = a_trip;
+			tripNext = (tripNext + 1) % TRIPS;
+			tripCount = (std::min)(tripCount + 1, TRIPS);
 		}
 	};
 }
