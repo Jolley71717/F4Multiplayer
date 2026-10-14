@@ -123,9 +123,16 @@
 - Body: a settler of the player's sex (0020A578 female / 0020A57B male) unless `iMyAppearance` is set.
   Only the two settlers, or the receiver's own `iPuppetBaseForm`, are placed: any other NPC (unique or
   not) would bring its scripts and factions along, so it is shown as the receiver's default.
-- Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second).
-  The puppet gets `removeallitems` + `additem`/`equipitem` via the console. Weapon mods and
-  the player's face are not copied.
+- Gear: the equipped armor and weapons (base forms) are sent when they change (checked every second),
+  with the mods on each equipped copy that has a `BGSObjectInstanceExtra` (OMOD form, attach index,
+  rank, and the extra's item index; protocol 29). The puppet gets `removeallitems` + `equipitem` via
+  the console; each item is given built with the owner's mods (a new `BGSObjectInstanceExtra` with
+  `AddMod`, its `ExtraInstanceData` from `TESBoundObject::ApplyMods`, then
+  `TESObjectREFR::AddInventoryItem`), or, with no mods on record, the item's default combination
+  (`BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra`, useDefault): the console's `additem`
+  rolled the object template for the receiver's level (a stock 10mm shown with a long barrel). A
+  change of mods alone replaces the stand-in's copy (`StandInGear::ChooseCopy`). Items with neither
+  mods nor templates still go in by `additem`.
 - Weapon drawn/holstered follows the `kWeaponDrawn` state flag (`DrawWeaponMagicHands`).
 - Name: `ExtraDataList::SetOverrideName`, and the hooked `GetActivateText` returns true for puppets so
   the HUD shows the name when you look at them (pressing E still does nothing).

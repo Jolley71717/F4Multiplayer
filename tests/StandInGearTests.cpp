@@ -9,6 +9,8 @@
 #include "game/StandInGear.h"
 
 #include <algorithm>
+#include <map>
+#include <optional>
 
 using namespace TestServer;
 using namespace std::chrono_literals;
@@ -29,6 +31,15 @@ namespace
 	constexpr std::uint32_t T60_TORSO = 0x00154AC1;
 	constexpr std::uint32_t FRAME = 0x00031CE5;        // the frame itself as an item
 	constexpr std::uint32_t SETTLER_RAGS = 0x0001C2B9;  // the stand-in's own outfit, which the engine can put back on it
+
+	// Mods on her pistol (OMOD forms), each in its attach point (the index the engine keeps with it).
+	constexpr Protocol::ItemMod STANDARD_RECEIVER{ 0x0004F21D, 0, 0 };
+	constexpr Protocol::ItemMod SHORT_BARREL{ 0x0004F21E, 1, 0 };
+	constexpr Protocol::ItemMod LONG_BARREL{ 0x0004F21F, 1, 0 };
+	constexpr Protocol::ItemMod IRON_SIGHTS{ 0x0004F220, 2, 0 };
+	constexpr Protocol::ItemMod REFLEX_SIGHT{ 0x0004F221, 2, 1 };
+	// What a copy given with nothing on record is built with: the item's default combination (stands for its mods).
+	const std::vector<Protocol::ItemMod> DEFAULT_COMBINATION{ { 0x00DEFA17, 0, 0 } };
 
 	bool InHand(std::uint32_t a_item)
 	{
@@ -73,6 +84,8 @@ namespace
 		bool                       inFrame = false;
 		bool                       armorSkeleton = false;  // its 3D rebuilt on the power armor skeleton
 		Clock::time_point          gunOutAt{};             // its gun is out from then on
+		// The copies of her items it carries, by item, and the mods each was built with.
+		std::map<std::uint32_t, std::vector<Protocol::ItemMod>> copies;
 	};
 
 	// Bob's game, dressing Alice's stand-in each frame as StandInGear::Dress says, the way RemotePlayers::Update does.
@@ -89,11 +102,39 @@ namespace
 		int               changes = 0;
 		int               redraws = 0;
 		int               refits = 0;   // found in something else, logged and dressed afresh
+		int               gives = 0;     // copies given (built with her mods, or the default combination)
+		int               replaces = 0;  // copies taken away for carrying other mods than hers
 
 		void Receive(const std::optional<Protocol::Equipment>& a_report)
 		{
 			REQUIRE(a_report);
-			StandInGear::Report(gear, a_report->items);
+			StandInGear::Report(gear, a_report->items, a_report->mods);
+		}
+
+		// What Equipment::PutOn does with the stand-in's copy of one of her items, as StandInGear::ChooseCopy says.
+		void PutOn(std::uint32_t a_item)
+		{
+			const auto theirs = StandInGear::ModsOf(gear.mods, a_item);
+			const auto carried = standIn.copies.find(a_item);
+			const auto ours = carried != standIn.copies.end() ? std::optional{ carried->second } : std::nullopt;
+			switch (StandInGear::ChooseCopy(theirs, ours)) {
+			case StandInGear::Copy::kKeep:
+				break;
+			case StandInGear::Copy::kReplace:
+				++replaces;
+				[[fallthrough]];
+			case StandInGear::Copy::kGive:
+				++gives;
+				standIn.copies[a_item] = theirs ? theirs->mods : DEFAULT_COMBINATION;
+				break;
+			}
+		}
+
+		void PutOn(const std::vector<std::uint32_t>& a_items)
+		{
+			for (const auto item : a_items) {
+				PutOn(item);
+			}
 		}
 
 		// A new stand-in for her (a door, a load, out of her frame): wearing its own outfit, its 3D not in yet.
@@ -116,10 +157,13 @@ namespace
 			case Put::kApply:
 				++applies;
 				standIn.wears = outfit;
+				standIn.copies.clear();  // emptied first
+				PutOn(outfit);
 				break;
 			case Put::kWear:
 				++wears;
 				standIn.wears = outfit;
+				PutOn(outfit);
 				break;
 			case Put::kWearInArmor:
 				{
@@ -127,6 +171,7 @@ namespace
 					// Their pieces and weapons on; the frame the engine put on it stays.
 					std::erase_if(standIn.wears, [&](std::uint32_t a_item) { return ArmorFrames::Wears(Dress::kArmor, KindOf(a_item)); });
 					standIn.wears.insert(standIn.wears.end(), outfit.begin(), outfit.end());
+					PutOn(outfit);
 					break;
 				}
 			case Put::kNone:
@@ -173,10 +218,10 @@ namespace
 			f.fake->Take(1);
 		}
 
-		// Alice's game reports her gear; what Bob's game is told, if anything.
-		std::optional<Protocol::Equipment> Report(std::vector<std::uint32_t> a_items, std::chrono::milliseconds a_wait = 2000ms)
+		// Alice's game reports her gear, and the mods on it; what Bob's game is told, if anything.
+		std::optional<Protocol::Equipment> Report(std::vector<std::uint32_t> a_items, std::chrono::milliseconds a_wait = 2000ms, std::vector<Protocol::ItemMods> a_mods = {})
 		{
-			f.fake->Deliver(2, Protocol::Encode(Protocol::Equipment{ 0, std::move(a_items) }, MT::kEquipment));
+			f.fake->Deliver(2, Protocol::Encode(Protocol::Equipment{ 0, std::move(a_items), std::move(a_mods) }, MT::kEquipment));
 			const auto packet = f.fake->WaitFor(1, Type(MT::kPlayerEquipment), a_wait);
 			const auto report = packet ? Protocol::DecodeEquipment(*packet) : std::nullopt;
 			if (report) {
@@ -493,4 +538,116 @@ TEST("stand-in gear: no report yet, nothing put on; a stand-in dressed in what i
 	CHECK(StandInGear::Next(gear, now + 999ms) == StandInGear::Step::kNone);
 	CHECK(StandInGear::Next(gear, now + 1s) == StandInGear::Step::kChange);
 	CHECK(StandInGear::Done(gear, StandInGear::Step::kChange, now + 1s, InHand));  // the pistol went: drawn again, empty-handed
+}
+
+TEST("stand-in gear: a friend's 10mm reaches their stand-in with their own barrel and sights, not one rolled for this game's level, and a barrel swapped at a workbench swaps its copy once")
+{
+	Session session;
+	Ours    bob;
+	const std::vector<Protocol::ItemMods> stock{ { PISTOL, 3, { STANDARD_RECEIVER, SHORT_BARREL, IRON_SIGHTS } } };
+	const auto report = session.Report({ PISTOL, VAULT_SUIT }, 2000ms, stock);
+	REQUIRE(report);
+	CHECK(report->mods == stock);  // through the server as her game sent it
+	bob.Receive(report);
+	bob.Frames(2);
+	CHECK(bob.applies == 1);
+	CHECK(bob.standIn.copies[PISTOL] == stock[0].mods);
+	CHECK(bob.standIn.copies[VAULT_SUIT] == DEFAULT_COMBINATION);  // nothing on record: the default, never a level roll
+	bob.Frames(70);
+
+	// A long barrel and a reflex sight at a workbench: the same items, so only the mods tell the server it is news.
+	const std::vector<Protocol::ItemMods> modded{ { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL, REFLEX_SIGHT } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, modded));
+	bob.Frames(70);
+	CHECK(bob.changes == 1);
+	CHECK(bob.replaces == 1);  // the old copy taken away, one built with her mods given
+	CHECK(bob.standIn.copies[PISTOL] == modded[0].mods);
+	CHECK(bob.redraws == 2);   // its new copy drawn
+	CHECK(bob.applies == 1);   // never stripped and dressed again for it
+	CHECK(bob.refits == 0);
+
+	// Her game sending it again: the server keeps it to itself. The same mods listed in another order get past it, but
+	// are the copy it has: nothing given, the gun stays out.
+	CHECK(!session.Report({ PISTOL, VAULT_SUIT }, 300ms, modded));
+	const std::vector<Protocol::ItemMods> reordered{ { PISTOL, 3, { REFLEX_SIGHT, STANDARD_RECEIVER, LONG_BARREL } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, reordered));
+	bob.Frames(70);
+	CHECK(bob.replaces == 1);
+	CHECK(bob.redraws == 2);
+
+	// A hat on: the pistol's copy is left as it is.
+	const int gives = bob.gives;
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }, 2000ms, reordered));
+	bob.Frames(70);
+	CHECK(bob.gives == gives + 1);  // the hat only
+	CHECK(bob.redraws == 2);
+
+	// Carol joins afterwards: told Alice's gear with its mods as she joins.
+	REQUIRE(session.f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	const auto packet = session.f.fake->WaitFor(3, Type(MT::kPlayerEquipment));
+	REQUIRE(packet);
+	Ours carol;
+	carol.Receive(Protocol::DecodeEquipment(*packet));
+	carol.Frames(2);
+	CHECK(carol.standIn.copies[PISTOL] == reordered[0].mods);  // as her game last listed them
+	CHECK(carol.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+}
+
+TEST("stand-in gear: a friend in power armor gets their pieces built with their paint, and a stand-in placed again gets the same copies")
+{
+	Session session;
+	Ours    bob;
+	const std::vector<Protocol::ItemMods> painted{ { T60_HELMET, 0, { { 0x0015A3C1, 0, 0 } } }, { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, { painted[1] }));
+	bob.Frames(70);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAME, T60_HELMET, T60_TORSO }, 2000ms, painted));
+	bob.standIn.inFrame = true;
+	bob.standIn.armorSkeleton = true;
+	bob.standIn.wears.push_back(FRAME);
+	bob.Frame();
+	CHECK(bob.inArmor == 1);
+	CHECK(bob.standIn.copies[T60_HELMET] == painted[0].mods);
+	CHECK(bob.standIn.copies[T60_TORSO] == DEFAULT_COMBINATION);
+	CHECK(bob.standIn.copies[PISTOL] == painted[1].mods);
+	CHECK(bob.replaces == 0);  // the pistol it had was hers already
+	// Out of her frame: a new stand-in, given every copy afresh with her mods.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, { painted[1] }));
+	bob.Place();
+	bob.standIn.has3D = true;
+	bob.Frame();
+	CHECK(bob.applies == 2);
+	CHECK(bob.standIn.copies[PISTOL] == painted[1].mods);
+	CHECK(!bob.standIn.copies.contains(T60_HELMET));
+}
+
+TEST("stand-in gear: a copy is given when missing, kept when its mods are theirs in any order or none are on record, and replaced when they differ")
+{
+	using StandInGear::ChooseCopy;
+	using StandInGear::Copy;
+	const Protocol::ItemMods theirs{ PISTOL, 3, { STANDARD_RECEIVER, SHORT_BARREL } };
+	using Mods = std::vector<Protocol::ItemMod>;
+	CHECK(ChooseCopy(&theirs, std::nullopt) == Copy::kGive);
+	CHECK(ChooseCopy(nullptr, std::nullopt) == Copy::kGive);
+	CHECK(ChooseCopy(&theirs, Mods{ SHORT_BARREL, STANDARD_RECEIVER }) == Copy::kKeep);
+	CHECK(ChooseCopy(&theirs, Mods{ STANDARD_RECEIVER, LONG_BARREL }) == Copy::kReplace);
+	CHECK(ChooseCopy(&theirs, Mods{ STANDARD_RECEIVER }) == Copy::kReplace);
+	CHECK(ChooseCopy(&theirs, Mods{}) == Copy::kReplace);  // a copy without an instance extra
+	CHECK(ChooseCopy(&theirs, Mods{ STANDARD_RECEIVER, { SHORT_BARREL.mod, SHORT_BARREL.index, 1 } }) == Copy::kReplace);  // another rank
+	CHECK(ChooseCopy(nullptr, Mods{ LONG_BARREL }) == Copy::kKeep);  // nothing to check it against
+
+	// A report keeps the mods of the items it lists only, one entry each, and a mod change is a change.
+	StandInGear::Gear gear;
+	const auto        now = Clock::time_point{} + 1h;
+	CHECK(StandInGear::Report(gear, { PISTOL, VAULT_SUIT }, { theirs, { RIFLE, 0, { LONG_BARREL } }, { PISTOL, 0, {} } }));
+	REQUIRE(gear.mods.size() == 1);
+	CHECK(gear.mods[0] == theirs);
+	CHECK(StandInGear::ModsOf(gear.mods, VAULT_SUIT) == nullptr);
+	StandInGear::Done(gear, StandInGear::Step::kDress, now, InHand);
+	CHECK(!StandInGear::Report(gear, { VAULT_SUIT, PISTOL }, { theirs }));
+	CHECK(StandInGear::Report(gear, { PISTOL, VAULT_SUIT }, { { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL } } }));
+	CHECK(StandInGear::Next(gear, now + 1s) == StandInGear::Step::kChange);
+	CHECK(StandInGear::Done(gear, StandInGear::Step::kChange, now + 1s, InHand));  // its gun got a new barrel: drawn again
+	// Mods on armor change nothing in the hand.
+	CHECK(StandInGear::Report(gear, { PISTOL, VAULT_SUIT }, { { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL } }, { VAULT_SUIT, 0, { { 0x0011AAAA, 0, 0 } } } }));
+	CHECK(!StandInGear::Done(gear, StandInGear::Step::kChange, now + 2s, InHand));
 }

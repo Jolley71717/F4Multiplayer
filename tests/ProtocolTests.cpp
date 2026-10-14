@@ -329,7 +329,77 @@ TEST("protocol: Equipment round trips")
 		const auto none = DecodeEquipment(Encode(Equipment{ 8, {} }, type));
 		REQUIRE(none);
 		CHECK(none->items.empty());
+		CHECK(none->mods.empty());
 	}
+}
+
+TEST("protocol: Equipment carries the mods on each item, and only for items it lists")
+{
+	for (const auto type : { MT::kEquipment, MT::kPlayerEquipment }) {
+		Equipment in{ 8, { 0x0000DF42, 0x0001EED7, 0x0000E27B }, {} };
+		in.mods.push_back({ 0x0000DF42, 3, { { 0x0004F21D, 0, 0 }, { 0x0004F21F, 1, 2 }, { 0x0004F221, 2, 255 } } });
+		in.mods.push_back({ 0x0001EED7, 0xFFFF, {} });  // an instance extra with nothing on it
+		ItemMods full{ 0x0000E27B, 7, {} };
+		for (std::uint32_t i = 0; i < MAX_ITEM_MODS; ++i) {
+			full.mods.push_back({ 0x00050000 + i, static_cast<std::uint8_t>(i), 0 });
+		}
+		in.mods.push_back(full);
+		const auto out = DecodeEquipment(Encode(in, type));
+		REQUIRE(out);
+		CHECK(*out == in);
+	}
+
+	// Left off on encode: the mods of an item not in the list (or one cut off it), a second entry for an item, and mods
+	// past the limit.
+	Equipment extra{ 1, { 0x0000DF42 }, {} };
+	extra.mods.push_back({ 0x0000DF42, 0, { { 0x0004F21D, 0, 0 } } });
+	extra.mods.push_back({ 0x0000DF42, 0, { { 0x0004F21F, 0, 0 } } });
+	extra.mods.push_back({ 0x0000E27B, 0, { { 0x0004F21F, 0, 0 } } });
+	extra.mods[0].mods.resize(MAX_ITEM_MODS + 3, { 0x0004F21D, 0, 0 });
+	const auto trimmed = DecodeEquipment(Encode(extra, MT::kEquipment));
+	REQUIRE(trimmed);
+	REQUIRE(trimmed->mods.size() == 1);
+	CHECK(trimmed->mods[0].item == 0x0000DF42);
+	CHECK(trimmed->mods[0].mods.size() == MAX_ITEM_MODS);
+	Equipment cut{ 1, std::vector<std::uint32_t>(MAX_EQUIPMENT, 0x00011111), {} };
+	cut.items.push_back(0x0000DF42);
+	cut.mods.push_back({ 0x0000DF42, 0, { { 0x0004F21D, 0, 0 } } });
+	const auto cutOut = DecodeEquipment(Encode(cut, MT::kEquipment));
+	REQUIRE(cutOut);
+	CHECK(cutOut->mods.empty());
+
+	// Rejected on the wire: mods for an item the list doesn't name, a second entry for an item, too many mods, and an
+	// entry cut short.
+	const auto wire = [](std::uint32_t a_item, int a_entries, std::uint8_t a_modCount, int a_modsWritten) {
+		Writer w{ MT::kPlayerEquipment };
+		w.U32(1);
+		w.U8(1);
+		w.U32(0x0000DF42);
+		w.U8(static_cast<std::uint8_t>(a_entries));
+		for (int e = 0; e < a_entries; ++e) {
+			w.U32(a_item);
+			w.U16(0);
+			w.U8(a_modCount);
+			for (int m = 0; m < a_modsWritten; ++m) {
+				w.U32(0x0004F21D);
+				w.U8(0);
+				w.U8(0);
+			}
+		}
+		return w.Data();
+	};
+	CHECK(DecodeEquipment(wire(0x0000DF42, 1, 2, 2)));
+	CHECK(!DecodeEquipment(wire(0x0000E27B, 1, 2, 2)));
+	CHECK(!DecodeEquipment(wire(0x0000DF42, 2, 1, 1)));
+	CHECK(!DecodeEquipment(wire(0x0000DF42, 1, static_cast<std::uint8_t>(MAX_ITEM_MODS + 1), MAX_ITEM_MODS + 1)));
+	CHECK(!DecodeEquipment(wire(0x0000DF42, 1, 3, 2)));
+	// The list as an older build sent it, without the mods count: refused rather than read short (a different protocol
+	// version is turned away at hello anyway).
+	Writer old{ MT::kPlayerEquipment };
+	old.U32(1);
+	old.U8(1);
+	old.U32(0x0000DF42);
+	CHECK(!DecodeEquipment(old.Data()));
 }
 
 TEST("protocol: actor claim, release and owner lists round trip")
@@ -893,6 +963,7 @@ TEST("protocol: lists over their limit are truncated on encode and rejected on t
 	for (std::size_t i = 0; i <= MAX_EQUIPMENT; ++i) {
 		ew.U32(0x00011111);
 	}
+	ew.U8(0);
 	CHECK(!DecodeEquipment(ew.Data()));
 
 	// Actor lists
@@ -1000,6 +1071,7 @@ TEST("protocol: list counts larger than the data are rejected")
 	equipment.U32(1);
 	equipment.U8(3);
 	equipment.U32(0x00011111);
+	equipment.U8(0);
 	CHECK(!DecodeEquipment(equipment.Data()));
 
 	Writer markers{ MT::kReportMarkers };

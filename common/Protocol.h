@@ -17,7 +17,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 28;
+	inline constexpr std::uint16_t VERSION = 29;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -277,11 +277,42 @@ namespace Protocol
 	// NPCs one player's game may run at once (a busy cell is a few dozen); one client cannot fill the owner table.
 	inline constexpr std::size_t MAX_OWNED_PER_PLAYER = 4096;
 
-	// Base forms of a player's equipped armor and weapons. playerId is ignored client -> server.
+	// Mods (OMOD forms) one item may carry: a weapon has a handful of attach points, a power armor piece a few more.
+	inline constexpr std::size_t MAX_ITEM_MODS = 32;
+
+	// One mod on the owner's copy of an item, as the engine keeps it there (BGSMod::ObjectIndexData): the mod, the
+	// attach point it is in and its rank.
+	struct ItemMod
+	{
+		std::uint32_t mod = 0;
+		std::uint8_t  index = 0;
+		std::uint8_t  rank = 0;
+
+		bool operator==(const ItemMod&) const = default;
+	};
+
+	// The mods on the owner's copy of one item they wear or hold (its BGSObjectInstanceExtra), so the stand-in's copy is
+	// built with the same barrel, receiver and sights. Without them the receiver's game rolls the item's object template
+	// for its own level, and a stock 10mm shows up with a long barrel. templateIndex is the extra's own item index.
+	struct ItemMods
+	{
+		std::uint32_t        item = 0;
+		std::uint16_t        templateIndex = 0;
+		std::vector<ItemMod> mods;
+
+		bool operator==(const ItemMods&) const = default;
+	};
+
+	// Base forms of a player's equipped armor and weapons, and the mods on those that carry any (an item without an
+	// entry has none on record: the stand-in's copy is given the item's default combination). playerId is ignored
+	// client -> server.
 	struct Equipment
 	{
 		std::uint32_t              playerId = 0;
 		std::vector<std::uint32_t> items;
+		std::vector<ItemMods>      mods;
+
+		bool operator==(const Equipment&) const = default;
 	};
 
 	// A player's face and body shape, as the game stores it on their character's base NPC: head
@@ -1248,6 +1279,27 @@ namespace Protocol
 		for (std::size_t i = 0; i < count; ++i) {
 			w.U32(a_msg.items[i]);
 		}
+		// The mods of the items sent, one entry each (one for an item left off, or a second for the same item, is not).
+		const auto sent = std::span(a_msg.items).first(count);
+		std::vector<const ItemMods*> mods;
+		for (const auto& entry : a_msg.mods) {
+			if (mods.size() < MAX_EQUIPMENT && std::ranges::contains(sent, entry.item) &&
+				std::ranges::none_of(mods, [&](const ItemMods* a_other) { return a_other->item == entry.item; })) {
+				mods.push_back(&entry);
+			}
+		}
+		w.U8(static_cast<std::uint8_t>(mods.size()));
+		for (const auto entry : mods) {
+			w.U32(entry->item);
+			w.U16(entry->templateIndex);
+			const auto modCount = (std::min)(entry->mods.size(), MAX_ITEM_MODS);
+			w.U8(static_cast<std::uint8_t>(modCount));
+			for (std::size_t i = 0; i < modCount; ++i) {
+				w.U32(entry->mods[i].mod);
+				w.U8(entry->mods[i].index);
+				w.U8(entry->mods[i].rank);
+			}
+		}
 		return w.Data();
 	}
 
@@ -1263,6 +1315,29 @@ namespace Protocol
 		}
 		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
 			msg.items.push_back(r.U32());
+		}
+		const auto modded = r.U8();
+		if (modded > MAX_EQUIPMENT) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < modded && r.Ok(); ++i) {
+			ItemMods entry;
+			entry.item = r.U32();
+			entry.templateIndex = r.U16();
+			const auto modCount = r.U8();
+			// Only for an item the list names, once.
+			if (modCount > MAX_ITEM_MODS || !std::ranges::contains(msg.items, entry.item) ||
+				std::ranges::any_of(msg.mods, [&](const ItemMods& a_other) { return a_other.item == entry.item; })) {
+				return std::nullopt;
+			}
+			for (std::uint8_t m = 0; m < modCount && r.Ok(); ++m) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				entry.mods.push_back(mod);
+			}
+			msg.mods.push_back(std::move(entry));
 		}
 		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;

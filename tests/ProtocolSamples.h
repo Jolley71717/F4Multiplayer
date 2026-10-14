@@ -152,7 +152,7 @@ namespace ProtocolSamples
 			s.push_back({ "RefState", Encode(RefState{ REF_A, RefState::kYes, RefState::kUnknown }, type), D(DecodeRefState) });
 		}
 		for (const auto type : { MT::kEquipment, MT::kPlayerEquipment }) {
-			s.push_back({ "Equipment", Encode(Equipment{ 6, { 0x00011111, 0x00022222, 0x00033333 } }, type), D(DecodeEquipment) });
+			s.push_back({ "Equipment", Encode(Equipment{ 6, { 0x00011111, 0x00022222, 0x00033333 }, { { 0x00022222, 3, { { 0x00044444, 0, 0 }, { 0x00055555, 1, 2 } } } } }, type), D(DecodeEquipment) });
 		}
 		s.push_back({ "Claims", Encode(std::vector<ActorClaim>{ { REF_A, ClaimReason::kInteract }, { REF_B, ClaimReason::kCompanion } }), D(DecodeClaims) });
 		s.push_back({ "Release", EncodeRelease({ REF_A, REF_B }), D(DecodeRelease) });

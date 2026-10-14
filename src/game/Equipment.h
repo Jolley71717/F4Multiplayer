@@ -1,13 +1,20 @@
 #pragma once
 
+#include "Protocol.h"
+
 // Equipped armor and weapons: read from the local player, copied onto puppets. Main thread only.
 namespace Equipment
 {
 	// Base forms of the armor and weapons the actor has equipped, sorted, without duplicates.
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor);
 
-	// Replaces everything the puppet carries with these items and equips them.
-	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items);
+	// The mods on the actor's copies of those items (their BGSObjectInstanceExtra), for the items whose copy carries
+	// one: what a friend's stand-in of the actor is given its copies built with.
+	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor);
+
+	// Replaces everything the puppet carries with these items and equips them, each built with its mods in a_mods (or the
+	// item's default combination, none on record; see Give).
+	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// Dresses a mirrored NPC like its owner's copy as far as its own inventory allows (GearPlan): equips those of
 	// these items it carries, unless one would take off something it wears that they are not. Nothing is given
@@ -20,8 +27,9 @@ namespace Equipment
 	// Dresses a friend's stand-in (a puppet of this game, not an NPC of its world) over what it wears: gives it these
 	// items if it doesn't have them and equips those it doesn't wear yet, and takes off any other armor or weapon it
 	// wears; the rest of its inventory is left alone. What it has on already is left alone too: two console scripts
-	// fewer for each, and the gun in its hand is not equipped over again.
-	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+	// fewer for each, and the gun in its hand is not equipped over again; unless its copy carries other mods than theirs
+	// in a_mods (StandInGear::ChooseCopy): then the copy is taken away and one built with their mods is given and equipped.
+	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets
 	// into a frame and takes off as it gets out. (The engine's own PlayerInPowerArmor said false on a player
@@ -45,7 +53,8 @@ namespace Equipment
 	// yet, and takes off the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing
 	// leaves its inventory: Apply empties it first, which would take the frame the engine put on it, and clothes put on
 	// would go under the armor at best or into the frame's slots.
-	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items);
+	// Their pieces and weapons are built with their mods as in WearOnStandIn.
+	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// The frame the engine has the actor in (ExtraPowerArmor's frame), or none.
 	[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor);
