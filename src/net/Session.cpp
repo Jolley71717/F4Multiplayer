@@ -479,6 +479,7 @@ namespace Session
 			state.heading = player->data.angle.z;
 			state.speed = speed;
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
+			state.sentMs = Protocol::SentMs(a_now);
 			// A downed player's stand-in crouches.
 			if (player->IsSneaking() || Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;

@@ -85,10 +85,14 @@
   uniqueID) and spawns the stand-in from it. A changed face deletes the stand-in; it respawns with
   a fresh copy. Copies are never freed (forms can't be).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
-  player is in the same interior or within about 9000 units outside. It renders 70 ms in the past
-  and blends between received states. `net status` shows the average gap between a friend's states
+  player is in the same interior or within about 9000 units outside. It renders a friend in the past
+  and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
+  ours by the quickest trip of the last 64 states (src/game/Prediction.h, SenderClock), so states that came
+  together after a stall are still drawn as far apart as they were sent. How far in the past (`delayMs`,
+  at least 70) follows how far past the newest state our recent frames were (src/game/StateBuffer.h).
+  `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
-  was late and the stand-in stood still. More than a few percent means the 70 ms is too short for
+  was late and the stand-in stood still. More than a few percent means the delay is too short for
   that connection. `offSpot=a/b worst=w` counts frames, out of b with the friend standing still
   (their state says speed 0: one held still only by a late state is not counted), where the
   stand-in was found more than 2 units from where it was put (w the furthest): anything but 0
@@ -427,7 +431,7 @@ else skips this: the player is never in those places.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 28 (0.8.6; 28 adds who reported a quest stage to kQuestStage). The sections below record each review as it was written.
+Protocol VERSION 29 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

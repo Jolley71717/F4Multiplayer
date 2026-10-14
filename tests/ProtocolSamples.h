@@ -52,6 +52,7 @@ namespace ProtocolSamples
 		s.speed = 250.0f;
 		s.moveMode = 0x1234;
 		s.flags = kRunning | kWeaponDrawn | kSwimming;
+		s.sentMs = 0xF0E1D2C3u + a_seed;
 		return s;
 	}
 

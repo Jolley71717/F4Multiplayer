@@ -183,7 +183,7 @@ namespace
 	bool SameState(const PlayerState& a, const PlayerState& b)
 	{
 		return a.sequence == b.sequence && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
-		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags;
+		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.sentMs == b.sentMs;
 	}
 
 	bool SameActorState(const ActorState& a, const ActorState& b)
