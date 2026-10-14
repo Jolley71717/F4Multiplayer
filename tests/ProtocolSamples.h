@@ -53,6 +53,8 @@ namespace ProtocolSamples
 		s.moveMode = 0x1234;
 		s.flags = kRunning | kWeaponDrawn | kSwimming;
 		s.sentMs = 0xF0E1D2C3u + a_seed;
+		s.direction = static_cast<std::uint8_t>(192 + a_seed);
+		s.pitch = -37;
 		return s;
 	}
 

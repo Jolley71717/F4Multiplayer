@@ -482,6 +482,16 @@ namespace Session
 			state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
 			state.sentMs = Protocol::SentMs(a_now);
+			// Where the player's own graph has them go and look, rather than guessed from their path by friends.
+			{
+				static const RE::BSFixedString directionVar{ "Direction" };
+				static const RE::BSFixedString pitchVar{ "Pitch" };
+				const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(player);
+				float      direction = 0.0f;
+				float      pitch = 0.0f;
+				state.direction = graph->GetGraphVariableImplFloat(directionVar, direction) ? Protocol::PackDirection(direction) : std::uint8_t{ 0 };
+				state.pitch = graph->GetGraphVariableImplFloat(pitchVar, pitch) ? Protocol::PackPitch(pitch) : std::int8_t{ 0 };
+			}
 			// A downed player's stand-in crouches.
 			if (player->IsSneaking() || Downed::IsDown()) {
 				state.flags |= Protocol::kSneaking;

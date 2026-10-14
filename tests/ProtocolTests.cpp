@@ -183,7 +183,8 @@ namespace
 	bool SameState(const PlayerState& a, const PlayerState& b)
 	{
 		return a.sequence == b.sequence && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
-		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.sentMs == b.sentMs;
+		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.sentMs == b.sentMs &&
+		       a.direction == b.direction && a.pitch == b.pitch;
 	}
 
 	bool SameActorState(const ActorState& a, const ActorState& b)
@@ -1300,5 +1301,37 @@ TEST("protocol: Face refuses weights and bones that are not numbers")
 		auto stretched = MakeFace();
 		stretched.bones[0].scale[0] = bad;
 		CHECK(!DecodeFace(Encode(stretched, MT::kReportFace)));
+	}
+}
+
+TEST("protocol: a player's own direction and aim pitch, as their graph has them, arrive as sent")
+{
+	// Live, the player's graph read Direction 0, 0.25, 0.5 and 0.75 going forward, right, back and left, and
+	// Pitch +-25.5 looking up and down.
+	CHECK(PackDirection(0.0f) == 0);
+	CHECK(PackDirection(0.25f) == 64);
+	CHECK(PackDirection(0.5f) == 128);
+	CHECK(PackDirection(0.75f) == 192);
+	CHECK(PackDirection(1.0f) == 0);
+	CHECK(PackDirection(-0.25f) == 192);
+	CHECK(PackDirection(std::numeric_limits<float>::quiet_NaN()) == 0);
+	CHECK(PackPitch(25.515f) == 26);
+	CHECK(PackPitch(-25.515f) == -26);
+	CHECK(PackPitch(400.0f) == 90);
+	CHECK(PackPitch(std::numeric_limits<float>::infinity()) == 0);
+	for (const auto [turns, degrees] : { std::pair{ 0.25f, 25.515f }, std::pair{ 0.75f, -25.515f }, std::pair{ 0.5f, 0.0f } }) {
+		auto in = MakeState(3);
+		in.direction = PackDirection(turns);
+		in.pitch = PackPitch(degrees);
+		const auto out = DecodePlayerState(Encode(in));
+		REQUIRE(out);
+		CHECK(UnpackDirection(out->direction) == turns);
+		CHECK(std::abs(out->pitch - degrees) < 0.5f);
+		// And in the server's batch to everyone else.
+		const auto batch = DecodePlayerStates(Encode(PlayerStates{ 9, { { 7, in } } }));
+		REQUIRE(batch);
+		REQUIRE(batch->players.size() == 1);
+		CHECK(batch->players[0].state.direction == in.direction);
+		CHECK(batch->players[0].state.pitch == in.pitch);
 	}
 }

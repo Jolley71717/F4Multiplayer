@@ -154,6 +154,10 @@ namespace Protocol
 		// The sender's clock when it was sampled, in ms (any start; it wraps after 49 days), so the receiver can
 		// place it in time however late it came; 0 when not known.
 		std::uint32_t sentMs = 0;
+		// The owner's own graph says where they go and look: Direction, travel relative to facing in 256ths of a
+		// turn (0 forward, 64 right, 128 back, 192 left), and Pitch, the aim up (+) or down (-) in degrees.
+		std::uint8_t direction = 0;
+		std::int8_t  pitch = 0;
 
 		[[nodiscard]] bool IsFinite() const
 		{
@@ -161,6 +165,25 @@ namespace Protocol
 			       std::isfinite(heading) && std::isfinite(speed);
 		}
 	};
+
+	// PlayerState::direction from the graph's Direction (a fraction of a turn), and back.
+	inline std::uint8_t PackDirection(float a_turns)
+	{
+		if (!std::isfinite(a_turns)) {
+			return 0;
+		}
+		return static_cast<std::uint8_t>(std::lround((a_turns - std::floor(a_turns)) * 256.0f) & 0xFF);
+	}
+	inline float UnpackDirection(std::uint8_t a_direction)
+	{
+		return static_cast<float>(a_direction) / 256.0f;
+	}
+
+	// PlayerState::pitch from the graph's Pitch in degrees, held to a quarter turn either way.
+	inline std::int8_t PackPitch(float a_degrees)
+	{
+		return std::isfinite(a_degrees) ? static_cast<std::int8_t>(std::clamp(std::lround(a_degrees), -90L, 90L)) : std::int8_t{ 0 };
+	}
 
 	// PlayerState::sentMs for a moment on the sender's steady clock (never 0, which means not known).
 	inline std::uint32_t SentMs(std::chrono::steady_clock::time_point a_at)
@@ -774,6 +797,8 @@ namespace Protocol
 		a_writer.U16(a_state.moveMode);
 		a_writer.U8(a_state.flags);
 		a_writer.U32(a_state.sentMs);
+		a_writer.U8(a_state.direction);
+		a_writer.U8(static_cast<std::uint8_t>(a_state.pitch));
 	}
 
 	inline PlayerState ReadState(Reader& a_reader)
@@ -790,6 +815,8 @@ namespace Protocol
 		state.moveMode = a_reader.U16();
 		state.flags = a_reader.U8();
 		state.sentMs = a_reader.U32();
+		state.direction = a_reader.U8();
+		state.pitch = static_cast<std::int8_t>(a_reader.U8());
 		return state;
 	}
 

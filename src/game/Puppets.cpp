@@ -225,6 +225,7 @@ namespace Puppets
 		{
 			static const RE::BSFixedString speedVar{ "Speed" };
 			static const RE::BSFixedString directionVar{ "Direction" };
+			static const RE::BSFixedString pitchVar{ "Pitch" };
 			static const RE::BSFixedString idleLocomotionVar{ "iSyncIdleLocomotion" };
 			static const RE::BSFixedString moveStart{ "moveStart" };
 			static const RE::BSFixedString moveStop{ "moveStop" };
@@ -295,10 +296,11 @@ namespace Puppets
 				graph->NotifyAnimationGraphImpl(jumpLand);
 			}
 
-			// The animation runs at the speed the owner reported (their game measures it from the ground they covered
-			// between two states), and only while the graph is in its moving state.
+			// The animation runs at the speed the owner reported (the speed their own legs play), and only while the
+			// graph is in its moving state; it goes the way they go and aims where they aim.
 			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
+			graph->SetGraphVariableFloat(pitchVar, motion.pitch);
 
 			{
 				std::uint32_t resyncs = 0;

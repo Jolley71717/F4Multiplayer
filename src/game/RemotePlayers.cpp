@@ -328,13 +328,6 @@ namespace RemotePlayers
 			return form && form->Is(RE::ENUM_FORM_ID::kWEAP) && !Throwable(a_item);
 		}
 
-		// Movement direction relative to facing, as a fraction of a turn in [0, 1).
-		float RelativeDirection(float a_motionAngle, float a_heading)
-		{
-			const float rel = StandInHold::TurnBetween(a_heading, a_motionAngle) / (2.0f * std::numbers::pi_v<float>);
-			return rel < 0.0f ? rel + 1.0f : rel;
-		}
-
 		std::string NameTag(const RemotePlayer& a_player)
 		{
 			if (a_player.downed) {
@@ -1793,7 +1786,8 @@ namespace RemotePlayers
 				.position = { state->x, state->y, state->z },
 				.heading = state->heading,
 				.speed = state->speed,
-				.direction = RelativeDirection(sampled->motionAngle, state->heading),
+				.direction = Protocol::UnpackDirection(state->direction),
+				.pitch = static_cast<float>(state->pitch),
 				.moveMode = state->moveMode,
 				.flags = state->flags,
 			});

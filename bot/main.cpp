@@ -2,6 +2,7 @@
 //
 //   F4MPBot --server 127.0.0.1:7779 --name Bot --cell 0 --worldspace 0000003C
 //           --x -80352 --y 89600 --z 7790 [--radius 300] [--speed 150] [--content-hash HEX] [--seconds N]
+//           [--pitch DEGREES]  (aims up (+) or down (-))
 //           [--shoot WEAPONHEX]  (holds the weapon out and reports shots; with --own, the NPC's)
 //           [--status-health PERCENT] [--ping 1] [--xp N]  [--time HOUR --weather HEX [--time-step HOURS]]  (health in the status sent after joining, an "over here", a kill XP report)
 //           [--quest-done QUESTHEX]  (reports completing this quest once welcomed)
@@ -97,7 +98,7 @@ int main(int argc, char* argv[])
 	std::uint32_t worldspace = 0x3C;  // Commonwealth
 	std::uint32_t contentHash = 0;
 	std::uint32_t appearance = 0;
-	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150;
+	float         cx = 0, cy = 0, cz = 0, radius = 300, walkSpeed = 150, pitch = 0;
 	int           seconds = 0;  // 0 = run until killed
 	bool          jump = false;  // jump once during each standing phase
 	std::uint32_t shootWeapon = 0;  // hold this weapon drawn and fire it twice a second while standing
@@ -190,6 +191,8 @@ int main(int argc, char* argv[])
 			ok = ParseNumber(value, radius);
 		} else if (key == "--speed") {
 			ok = ParseNumber(value, walkSpeed);
+		} else if (key == "--pitch") {
+			ok = ParseNumber(value, pitch);
 		} else if (key == "--quest") {
 			// quest:stage, hex:decimal
 			const auto colon = value.find(':');
@@ -617,6 +620,7 @@ int main(int argc, char* argv[])
 			state.sequence = ++sequence;
 			state.cell = cell;
 			state.sentMs = Protocol::SentMs(now);
+			state.pitch = Protocol::PackPitch(pitch);
 			state.worldspace = cell ? 0 : worldspace;
 			state.x = cx + radius * std::sin(a);
 			state.y = cy + radius * std::cos(a);

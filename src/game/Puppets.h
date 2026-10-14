@@ -12,6 +12,7 @@ namespace Puppets
 		float         heading = 0.0f;    // radians
 		float         speed = 0.0f;      // units/second
 		float         direction = 0.0f;  // travel relative to heading, fraction of a turn (0 fwd, 0.25 right, 0.5 back)
+		float         pitch = 0.0f;      // aim up (+) or down (-), degrees: the graph's Pitch
 		std::uint16_t moveMode = 0;      // ActorState::moveMode bits of the remote player
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
 	};
