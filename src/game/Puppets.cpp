@@ -1,5 +1,6 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/AimPoint.h"
 #include "game/CreatureGait.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
@@ -93,6 +94,53 @@ namespace Puppets
 			const auto values = RE::ActorValue::GetSingleton();
 			if (values && values->health) {
 				static_cast<RE::ActorValueOwner*>(a_actor)->RestoreActorValue(*values->health, 100000.0f);
+			}
+		}
+
+		// The point an NPC's weapon aim turns its arms toward (AimPoint.h). Actor::SetLookAtTarget leaves it in
+		// the actor's movement state (+C9CB00; FLT_MIN takes the race's own turn rate, then 1 and 1, as
+		// AIProcess::SetHeadTrackPathingFaceTarget passes), the aim modifier reads it back through +C9CC80, and
+		// Actor::ClearLookAtTarget forgets it (+C9CF00).
+		constexpr REL::ID SET_LOOK_AT{ 2230283 };
+		constexpr REL::ID LOOK_AT_POINT{ 2230288 };
+		constexpr REL::ID CLEAR_LOOK_AT{ 2230291 };
+
+		// The engine reaches the point through the actor's mover and movement controller, which it does not
+		// check for: an actor without them (no 3D yet) is left alone.
+		bool CanAim(const RE::Actor* a_actor)
+		{
+			return a_actor->actorMover != nullptr && a_actor->movementController.get() != nullptr;
+		}
+
+		void SetAimPoint(RE::Actor* a_actor, const AimPoint::Point& a_point)
+		{
+			if (!CanAim(a_actor)) {
+				return;
+			}
+			static REL::Relocation<void (*)(RE::Actor*, RE::NiPoint3&, float, float, float)> setLookAt{ SET_LOOK_AT };
+			RE::NiPoint3 point{ a_point.x, a_point.y, a_point.z };
+			setLookAt(a_actor, point, std::numeric_limits<float>::min(), 1.0f, 1.0f);
+		}
+
+		std::optional<AimPoint::Point> GetAimPoint(const RE::Actor* a_actor)
+		{
+			if (!CanAim(a_actor)) {
+				return std::nullopt;
+			}
+			static REL::Relocation<bool (*)(const RE::Actor*, RE::NiPoint3&)> lookAtPoint{ LOOK_AT_POINT };
+			RE::NiPoint3 point;
+			if (!lookAtPoint(a_actor, point)) {
+				return std::nullopt;
+			}
+			return AimPoint::Point{ point.x, point.y, point.z };
+		}
+
+		// A stand-in aims where its owner aims (AimPoint.h), from where it stands now.
+		void Aim(RE::Actor* a_actor, const Puppet& a_puppet)
+		{
+			const auto& at = a_actor->data.location;
+			if (const auto point = AimPoint::ForPuppet(a_puppet.kind == Kind::kPlayer, { at.x, at.y, at.z }, a_puppet.target.heading, a_puppet.target.pitch)) {
+				SetAimPoint(a_actor, *point);
 			}
 		}
 
@@ -315,7 +363,8 @@ namespace Puppets
 			}
 
 			// The animation runs at the speed the owner reported (the speed their own legs play), and only while the
-			// graph is in its moving state; it goes the way they go and aims where they aim.
+			// graph is in its moving state; it goes the way they go. Pitch moves nothing on an NPC (its blend is
+			// weighted by IsPlayer); it is set so a reading shows what arrived. The arms follow the aim point (Aim).
 			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
 			graph->SetGraphVariableFloat(pitchVar, motion.pitch);
@@ -407,6 +456,7 @@ namespace Puppets
 			a_this->UpdateNoAI(a_delta);
 			if (puppet->hasTarget) {
 				DriveAnimation(a_this, *puppet);
+				Aim(a_this, *puppet);
 				// It has just asked a standing NPC's graph to move; a refusal means an idle holds it.
 				if (puppet->kind == Kind::kNpc && !puppet->moving && puppet->target.speed > MoveSync::START) {
 					ReleaseIdle(a_this);
@@ -628,7 +678,57 @@ namespace Puppets
 				out += std::format(" {}={:.0f}", name, f);
 			}
 		}
+		return out + " " + DescribeAim(a_actor);
+	}
+
+	std::string DescribeAim(const RE::Actor* a_actor)
+	{
+		const auto&           at = a_actor->data.location;
+		const AimPoint::Point from{ at.x, at.y, at.z };
+		auto                  out = std::format("angleX={:.1f} angleZ={:.1f}", a_actor->data.angle.x * AimPoint::TO_DEGREES, a_actor->data.angle.z * AimPoint::TO_DEGREES);
+		if (const auto point = GetAimPoint(a_actor)) {
+			out += std::format(" aimPoint=({:.0f},{:.0f},{:.0f}) aimPitch={:.1f} aimHeading={:.1f}", point->x, point->y, point->z, AimPoint::PitchTo(from, *point),
+				AimPoint::HeadingTo(from, *point) * AimPoint::TO_DEGREES);
+		} else {
+			out += CanAim(a_actor) ? " aimPoint=none" : " aimPoint=- (no mover)";
+		}
+		{
+			std::scoped_lock l{ lock };
+			if (const auto entry = Find(a_actor); entry && entry->kind == Kind::kPlayer) {
+				out += std::format(" ownerPitch={:.0f}", entry->target.pitch);
+			}
+		}
+		// What the weapon behaviour's aim modifier makes of it: bAimActive while it turns the arms, its offsets
+		// from the point, and its limits.
+		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
+		for (const auto name : { "bAimActive", "bAimEnabled" }) {
+			bool b = false;
+			if (graph->GetGraphVariableImplBool(RE::BSFixedString{ name }, b)) {
+				out += std::format(" {}={}", name, b);
+			}
+		}
+		for (const auto name : { "IsPlayer", "Pitch", "AimPitchCurrent", "AimHeadingCurrent", "fDirectAtSavedGain", "AimPitchMaxUp", "AimPitchMaxDown" }) {
+			float f = 0.0f;
+			if (graph->GetGraphVariableImplFloat(RE::BSFixedString{ name }, f)) {
+				out += std::format(" {}={:.2f}", name, f);
+			}
+		}
 		return out;
+	}
+
+	std::string AimAt(RE::Actor* a_actor, std::optional<float> a_pitch)
+	{
+		if (!CanAim(a_actor)) {
+			return "error: the actor has no mover yet";
+		}
+		if (a_pitch) {
+			const auto& at = a_actor->data.location;
+			SetAimPoint(a_actor, AimPoint::Along({ at.x, at.y, at.z }, a_actor->data.angle.z, *a_pitch));
+		} else {
+			static REL::Relocation<void (*)(RE::Actor*)> clearLookAt{ CLEAR_LOOK_AT };
+			clearLookAt(a_actor);
+		}
+		return DescribeAim(a_actor);
 	}
 
 	std::string Describe()

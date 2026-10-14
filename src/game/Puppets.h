@@ -12,7 +12,7 @@ namespace Puppets
 		float         heading = 0.0f;    // radians
 		float         speed = 0.0f;      // units/second
 		float         direction = 0.0f;  // travel relative to heading, fraction of a turn (0 fwd, 0.25 right, 0.5 back)
-		float         pitch = 0.0f;      // aim up (+) or down (-), degrees: the graph's Pitch
+		float         pitch = 0.0f;      // aim up (+) or down (-), degrees: the owner's angle x (AimPoint.h)
 		std::uint16_t moveMode = 0;      // ActorState::moveMode bits of the remote player
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
 		std::uint8_t  gait = 0;          // with Protocol::kOwnGait: a mirrored dog's gait and its clip's rate in its owner's game
@@ -52,6 +52,15 @@ namespace Puppets
 	// often it was stood up out of furniture), the gait a dog's owner's game says it plays
 	// (ownerGait=state@rate, CreatureGait.h), and its locomotion variables.
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
+
+	// Dev: where any actor aims (AimPoint.h): its angles in degrees, the point the engine gives its weapon aim
+	// (and the pitch and heading that point is at from its feet), the pitch a stand-in's owner sent, and the aim
+	// modifier's graph variables.
+	[[nodiscard]] std::string DescribeAim(const RE::Actor* a_actor);
+
+	// Dev: gives any actor an aim point a_pitch degrees up (or down) along its heading, or with none forgets its
+	// point, and describes its aim. A stand-in is given its owner's again on its next update.
+	std::string AimAt(RE::Actor* a_actor, std::optional<float> a_pitch);
 
 	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction
 	// such as getting into power armor; the stand-in is not warped meanwhile, nor given its idle package
