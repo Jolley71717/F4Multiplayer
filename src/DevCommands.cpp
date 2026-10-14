@@ -758,6 +758,13 @@ namespace DevCommands
 				const auto form = RE::TESForm::GetFormByID(id);
 				out += std::format(" {:08X} '{}'", id, form ? RE::TESFullName::GetFullName(*form) : ""sv);
 			}
+			// The mods on the copies worn (what the gear report sends, and what a stand-in's copy was built with).
+			for (const auto& item : Equipment::ReadMods(actor)) {
+				out += std::format(" mods[{:08X}]=", item.item);
+				for (const auto& mod : item.mods) {
+					out += std::format("{:08X},", mod.mod);
+				}
+			}
 			// The engine's own list (a throwable shows up here and not above on an NPC), and its 3D.
 			return out + " held:" + Equipment::DescribeHeld(actor);
 		}
