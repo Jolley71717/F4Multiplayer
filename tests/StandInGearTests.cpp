@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <map>
 #include <optional>
+#include <set>
 
 using namespace TestServer;
 using namespace std::chrono_literals;
@@ -38,6 +39,10 @@ namespace
 	constexpr Protocol::ItemMod LONG_BARREL{ 0x0004F21F, 1, 0 };
 	constexpr Protocol::ItemMod IRON_SIGHTS{ 0x0004F220, 2, 0 };
 	constexpr Protocol::ItemMod REFLEX_SIGHT{ 0x0004F221, 2, 1 };
+	// Mods from a plugin Bob's game hasn't (another load order, or one the host ignores).
+	constexpr Protocol::ItemMod CUSTOM_BARREL{ 0x0A000F01, 1, 0 };
+	constexpr Protocol::ItemMod CUSTOM_BARREL_LONG{ 0x0A000F02, 1, 0 };
+	constexpr Protocol::ItemMod CUSTOM_LINING{ 0x0A000F03, 0, 0 };
 	// What a copy given with nothing on record is built with: the item's default combination (stands for its mods).
 	const std::vector<Protocol::ItemMod> DEFAULT_COMBINATION{ { 0x00DEFA17, 0, 0 } };
 
@@ -104,6 +109,9 @@ namespace
 		int               refits = 0;   // found in something else, logged and dressed afresh
 		int               gives = 0;     // copies given (built with her mods, or the default combination)
 		int               replaces = 0;  // copies taken away for carrying other mods than hers
+		std::set<std::uint32_t> missing;  // her mods Bob's game hasn't
+
+		bool Here(std::uint32_t a_mod) const { return !missing.contains(a_mod); }
 
 		void Receive(const std::optional<Protocol::Equipment>& a_report)
 		{
@@ -111,21 +119,26 @@ namespace
 			StandInGear::Report(gear, a_report->items, a_report->mods);
 		}
 
-		// What Equipment::PutOn does with the stand-in's copy of one of her items, as StandInGear::ChooseCopy says.
+		// What Equipment::PutOn does with the stand-in's copy of one of her items, as StandInGear::ChooseCopy says, and
+		// Equipment::Give builds it: with those of her mods that are here, or else the default combination.
 		void PutOn(std::uint32_t a_item)
 		{
-			const auto theirs = StandInGear::ModsOf(gear.mods, a_item);
+			const auto buildable = StandInGear::Buildable(StandInGear::ModsOf(gear.mods, a_item), [&](std::uint32_t a_mod) { return Here(a_mod); });
 			const auto carried = standIn.copies.find(a_item);
 			const auto ours = carried != standIn.copies.end() ? std::optional{ carried->second } : std::nullopt;
-			switch (StandInGear::ChooseCopy(theirs, ours)) {
+			switch (StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, ours)) {
 			case StandInGear::Copy::kKeep:
 				break;
 			case StandInGear::Copy::kReplace:
 				++replaces;
+				// The gun in its hand taken away, and the new copy equipped but holstered until it is drawn again.
+				if (InHand(a_item)) {
+					standIn.gunOutAt = Clock::time_point::max();
+				}
 				[[fallthrough]];
 			case StandInGear::Copy::kGive:
 				++gives;
-				standIn.copies[a_item] = theirs ? theirs->mods : DEFAULT_COMBINATION;
+				standIn.copies[a_item] = buildable ? buildable->mods : DEFAULT_COMBINATION;
 				break;
 			}
 		}
@@ -650,4 +663,115 @@ TEST("stand-in gear: a copy is given when missing, kept when its mods are theirs
 	// Mods on armor change nothing in the hand.
 	CHECK(StandInGear::Report(gear, { PISTOL, VAULT_SUIT }, { { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL } }, { VAULT_SUIT, 0, { { 0x0011AAAA, 0, 0 } } } }));
 	CHECK(!StandInGear::Done(gear, StandInGear::Step::kChange, now + 2s, InHand));
+}
+
+TEST("stand-in gear: a friend's gun with a barrel from a plugin this game hasn't is given its copy once, and keeps it out through a hat, a grenade and a sight swap")
+{
+	Session session;
+	Ours    bob;
+	bob.missing = { CUSTOM_BARREL.mod, CUSTOM_BARREL_LONG.mod };
+	using Mods = std::vector<Protocol::ItemMod>;
+	const std::vector<Protocol::ItemMods> custom{ { PISTOL, 3, { STANDARD_RECEIVER, CUSTOM_BARREL, REFLEX_SIGHT } } };
+	const auto report = session.Report({ PISTOL, VAULT_SUIT, HAT, FRAG }, 2000ms, custom);
+	REQUIRE(report);
+	CHECK(report->mods == custom);  // through the server as her game sent it, the barrel too
+	bob.Receive(report);
+	bob.Frames(70);
+	CHECK((bob.standIn.copies[PISTOL] == Mods{ STANDARD_RECEIVER, REFLEX_SIGHT }));  // built without the barrel it hasn't
+	const int gives = bob.gives;
+
+	// Hat off, the last grenade thrown, glasses on: the pistol's copy is the one it can have, and stays out. Each of
+	// these used to take the gun away and give it again, holstered, its shots unseen until the next gun swap.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, FRAG }, 2000ms, custom));
+	bob.Frames(70);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, custom));
+	bob.Frames(70);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, GLASSES }, 2000ms, custom));
+	bob.Frames(70);
+	CHECK(bob.changes == 3);
+	CHECK(bob.replaces == 0);
+	CHECK(bob.gives == gives + 1);  // the glasses only
+	CHECK(bob.redraws == 1);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+	bob.Frames(400);  // past gear checks
+	CHECK(bob.refits == 0);
+	CHECK(bob.replaces == 0);
+
+	// Another barrel from that plugin: nothing here to build differently, the copy stays.
+	const std::vector<Protocol::ItemMods> longer{ { PISTOL, 3, { STANDARD_RECEIVER, CUSTOM_BARREL_LONG, REFLEX_SIGHT } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, GLASSES }, 2000ms, longer));
+	bob.Frames(70);
+	CHECK(bob.replaces == 0);
+	// A sight this game has swapped at a workbench: its copy is replaced once, and drawn.
+	const std::vector<Protocol::ItemMods> iron{ { PISTOL, 3, { STANDARD_RECEIVER, CUSTOM_BARREL_LONG, IRON_SIGHTS } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, GLASSES }, 2000ms, iron));
+	bob.Frames(70);
+	CHECK(bob.replaces == 1);
+	CHECK((bob.standIn.copies[PISTOL] == Mods{ STANDARD_RECEIVER, IRON_SIGHTS }));
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, iron));
+	bob.Frames(70);
+	CHECK(bob.replaces == 1);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+
+	// She takes the barrel off: her copy is now the one it has, kept.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }, 2000ms, { { PISTOL, 3, { STANDARD_RECEIVER, IRON_SIGHTS } } }));
+	bob.Frames(70);
+	CHECK(bob.replaces == 1);
+}
+
+TEST("stand-in gear: an item whose mods are all from plugins this game hasn't, none at all, or no template combination is given its default copy once and keeps it")
+{
+	Session session;
+	Ours    bob;
+	bob.missing = { CUSTOM_BARREL.mod };
+	const std::vector<Protocol::ItemMods> odd{
+		{ PISTOL, 3, { CUSTOM_BARREL } },  // nothing of it here
+		{ VAULT_SUIT, StandInGear::NO_TEMPLATE, {} },  // an instance extra with nothing on it
+		{ HAT, StandInGear::NO_TEMPLATE, { { 0x0015A3C1, 0, 0 } } },  // mods, but no template combination named
+	};
+	const auto report = session.Report({ PISTOL, VAULT_SUIT, HAT }, 2000ms, odd);
+	REQUIRE(report);
+	CHECK(report->mods == odd);
+	bob.Receive(report);
+	bob.Frames(70);
+	CHECK(bob.standIn.copies[PISTOL] == DEFAULT_COMBINATION);
+	CHECK(bob.standIn.copies[VAULT_SUIT] == DEFAULT_COMBINATION);
+	CHECK(bob.standIn.copies[HAT] == DEFAULT_COMBINATION);
+	CHECK(bob.gives == 3);
+	// A grenade and glasses: nothing of hers is given again.
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT, FRAG }, 2000ms, odd));
+	bob.Frames(70);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT, GLASSES }, 2000ms, odd));
+	bob.Frames(70);
+	CHECK(bob.changes == 2);
+	CHECK(bob.replaces == 0);
+	CHECK(bob.gives == 5);
+	CHECK(bob.redraws == 1);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+}
+
+TEST("stand-in gear: the mods a copy is built with here are theirs less the ones this game hasn't, and none without a template combination")
+{
+	using StandInGear::Buildable;
+	using Mods = std::vector<Protocol::ItemMod>;
+	const auto here = [](std::uint32_t a_mod) { return (a_mod >> 24) != 0x0A; };
+	const Protocol::ItemMods theirs{ PISTOL, 3, { STANDARD_RECEIVER, CUSTOM_BARREL, REFLEX_SIGHT } };
+	const auto built = Buildable(&theirs, here);
+	REQUIRE(built);
+	CHECK(built->item == PISTOL);
+	CHECK(built->templateIndex == 3);
+	CHECK((built->mods == Mods{ STANDARD_RECEIVER, REFLEX_SIGHT }));
+	CHECK(StandInGear::ChooseCopy(&*built, Mods{ REFLEX_SIGHT, STANDARD_RECEIVER }) == StandInGear::Copy::kKeep);
+	CHECK(StandInGear::ChooseCopy(&theirs, Mods{ REFLEX_SIGHT, STANDARD_RECEIVER }) == StandInGear::Copy::kReplace);  // what it used to compare
+	const auto all = [](std::uint32_t) { return true; };
+	CHECK(Buildable(&theirs, all) == theirs);
+	CHECK(!Buildable(nullptr, all));
+	const Protocol::ItemMods none{ PISTOL, 3, {} };
+	CHECK(!Buildable(&none, all));
+	const Protocol::ItemMods untemplated{ PISTOL, StandInGear::NO_TEMPLATE, { STANDARD_RECEIVER } };
+	CHECK(!Buildable(&untemplated, all));
+	const Protocol::ItemMods missing{ PISTOL, 3, { CUSTOM_BARREL, CUSTOM_LINING } };
+	CHECK(!Buildable(&missing, here));
 }

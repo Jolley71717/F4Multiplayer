@@ -236,12 +236,19 @@ namespace Equipment
 			return std::nullopt;
 		}
 
-		// Gives the actor one of the item built as their copy is: with these mods, or, none on record, with the item's
-		// default combination. The console's additem has the engine roll the item's object template for the actor's
-		// level (a stock 10mm showed up on a friend's stand-in with a long barrel). Here the instance extra is made
-		// first, as the engine's own instancing makes it (the mods, then the instance data they make), and the item goes
-		// in with it: a copy that comes with its instance extra keeps it, as an item handed to a companion keeps its
-		// mods. An item with neither mods nor templates is given by the console as before.
+		// Whether this game has the mod: one from a plugin it hasn't is left off the stand-in's copy.
+		bool ModHere(std::uint32_t a_mod)
+		{
+			return RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(a_mod) != nullptr;
+		}
+
+		// Gives the actor one of the item built as their copy is: with the mods of theirs that are here
+		// (StandInGear::Buildable), or, none, with the item's default combination. The console's additem has the engine
+		// roll the item's object template for the actor's level (a stock 10mm showed up on a friend's stand-in with a
+		// long barrel). Here the instance extra is made first, as the engine's own instancing makes it (the mods, then the
+		// instance data they make), and the item goes in with it: a copy that comes with its instance extra keeps it, as
+		// an item handed to a companion keeps its mods. An item with neither mods nor templates is given by the console
+		// as before.
 		void Give(RE::Actor* a_actor, std::uint32_t a_item, const Protocol::ItemMods* a_mods)
 		{
 			const auto form = RE::TESForm::GetFormByID(a_item);
@@ -251,25 +258,34 @@ namespace Equipment
 			} else if (form && form->GetFormType() == RE::ENUM_FORM_ID::kARMO) {
 				object = form->As<RE::TESObjectARMO>();
 			}
-			if (!object || (!a_mods && object->objectTemplate.items.empty())) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), a_item).c_str());
-				return;
-			}
-			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
-			std::size_t                            attached = 0;
-			if (a_mods) {
-				const auto instance = new RE::BGSObjectInstanceExtra();
-				instance->itemIndex = a_mods->templateIndex;
-				for (const auto& entry : a_mods->mods) {
-					// A mod from a plugin this game hasn't is left off; the rest still go on.
+			// Built only with mods that went on and a template combination named: the engine makes instance data from
+			// nothing else (BGSObjectInstanceExtra::CreateBaseInstanceData), and an extra without either is let go before
+			// it is anywhere.
+			std::unique_ptr<RE::BGSObjectInstanceExtra> instance;
+			std::size_t                                 attached = 0;
+			if (const auto buildable = StandInGear::Buildable(a_mods, ModHere); buildable && object) {
+				instance.reset(new RE::BGSObjectInstanceExtra());
+				instance->itemIndex = buildable->templateIndex;
+				for (const auto& entry : buildable->mods) {
 					if (const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(entry.mod)) {
 						instance->AddMod(*mod, entry.index, entry.rank, false);
 						++attached;
 					}
 				}
-				extra->AddExtra(instance);
+				if (attached == 0 || !instance->values || instance->itemIndex == StandInGear::NO_TEMPLATE) {
+					instance.reset();
+					attached = 0;
+				}
+			}
+			if (!object || (!instance && object->objectTemplate.items.empty())) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), a_item).c_str());
+				return;
+			}
+			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
+			if (instance) {
 				RE::BSTSmartPointer<RE::TBO_InstanceData> data;
-				object->ApplyMods(data, instance);
+				instance->CreateBaseInstanceData(*object, data);
+				extra->AddExtra(instance.release());  // the list owns it from here
 				if (data) {
 					extra->AddExtra(new RE::ExtraInstanceData(object, data));
 				}
@@ -277,7 +293,7 @@ namespace Equipment
 				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*object, *extra, nullptr, true);
 			}
 			a_actor->AddInventoryItem(object, extra, 1, nullptr, nullptr, nullptr);
-			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here)", a_item, a_actor->GetFormID(), a_mods ? "their mods" : "its default mods", attached,
+			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here)", a_item, a_actor->GetFormID(), attached ? "their mods" : "its default mods", attached,
 				a_mods ? a_mods->mods.size() : 0);
 		}
 
@@ -286,7 +302,9 @@ namespace Equipment
 		void PutOn(RE::Actor* a_actor, std::uint32_t a_item, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
 		{
 			const auto theirs = StandInGear::ModsOf(a_mods, a_item);
-			const auto copy = StandInGear::ChooseCopy(theirs, CarriedMods(a_actor, a_item));
+			// Checked against the mods its copy is built with here: one of theirs this game hasn't never is on it.
+			const auto buildable = StandInGear::Buildable(theirs, ModHere);
+			const auto copy = StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, CarriedMods(a_actor, a_item));
 			if (a_wearing && copy == StandInGear::Copy::kKeep) {
 				return;
 			}
