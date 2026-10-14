@@ -398,11 +398,16 @@ else skips this: the player is never in those places.
 - Downed and revive (src/game/Downed.cpp): with friends in the session, the player's base form gets
   the essential flag (set directly, so it isn't recorded for the save, and cleared before every
   save). A lethal hit then puts the player in `ACTOR_LIFE_STATE::kEssentialDown`; we set
-  `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed`; a
-  friend within 180 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag
-  and restores health; the game stands them up a few seconds later with full health, which we cut
-  back to 30%. 45 s, giving up or the last friend leaving: essential off and `player.kill`. Both
-  flags are cleared for a save; a save made while down stands the player up when it's loaded.
+  `kNoBleedoutRecovery` so the game doesn't stand them up after ~12 s. Status carries `downed` while
+  the player waits for help (not once helped and getting up, so friends help once); a friend within
+  300 units of the stand-in for 2 s sends `Revive`. The downed player clears the flag and restores
+  health; the game stands them up a few seconds later with full health, which we cut back to 30%.
+  45 s, giving up or the last friend leaving: essential off (base form and the character's own flag)
+  and `player.kill`; essential stays off until they are dead or the game stands them up, and the
+  kill is repeated every 2 s while they are still alive and down. The rules are in
+  src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
+  the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
+  replaced, so it never sits on the ground while its friend is up.
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within
