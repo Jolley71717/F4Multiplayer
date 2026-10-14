@@ -3,6 +3,7 @@
 #include "game/CommandMeter.h"
 #include "game/Equipment.h"
 #include "game/NpcClaims.h"
+#include "game/NpcPlace.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -38,12 +39,9 @@ namespace NpcSync
 		float           frameMs = 1000.0f / 60.0f;  // ours, smoothed
 		Clock::time_point lastFrame{};
 		constexpr auto STALE_AFTER = 1s;
-		// No states for this long (the owner's game is paused, loading or gone): our copy runs its
-		// own AI until they come back.
-		constexpr auto LOST_AFTER = 3s;
-		// The owner's copy is this far from ours (it fast traveled or was moved by a script): ours
-		// isn't dragged across the map (where nothing may be loaded); it runs its own AI meanwhile.
-		constexpr float MAX_FOLLOW_DISTANCE = 4096.0f;  // one exterior cell
+		// No states for this long, or the owner's copy this far from ours: ours runs its own AI (NpcPlace::Follows).
+		constexpr auto  LOST_AFTER = NpcPlace::LOST_AFTER;
+		constexpr float MAX_FOLLOW_DISTANCE = NpcPlace::MAX_FOLLOW_DISTANCE;
 		// An NPC we run that is this far from us, and much nearer a friend, is given to their game:
 		// our game's AI only reacts to our player, so it would ignore the friend standing next to it.
 		constexpr float HANDOFF_FROM = 6000.0f;
@@ -96,7 +94,6 @@ namespace NpcSync
 		RetryBudget::Budget                                  switchOns{ 5s };  // SwitchOn, per NPC: three tries at most
 		RetryBudget::Budget                                  bringIns{ 10s };  // BringIn, the same
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
-		constexpr float                                      BRING_IN_RANGE = 3000.0f;  // of the player: the owner's copy is right here, ours is in some unloaded cell or an interior
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
 		std::uint32_t                                        stateTick = 0;
@@ -513,42 +510,50 @@ namespace NpcSync
 			return RemoteEdits::OwnerBeside(RemotePlayers::LastStateOf, a_owner, a_state);
 		}
 
-		// The owner's copy stands near us outdoors, but ours is somewhere else: in a cell we have not loaded
-		// (a companion that walked here with its player from across the map, say), or loaded in an interior
-		// or another world its own quest left it in (the host finished Concord, so its Preston stands in
-		// Sanctuary; ours still waits in the museum). Ours is moved to where theirs is, through the
-		// console's moveto, which handles the cell change; it is mirrored from there. Left where it was,
-		// UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
-		// Never moved: the player, our own companion (it follows us here), the dead, one in a scene here, and one fighting us.
-		// One loaded in our world already is mirrored, or UpdateMirrors brings it over if it went far.
-		bool MayBringIn(RE::Actor* a_actor, const Protocol::ActorState& a_state)
+		// Where a reference is: its space (SpaceOf) and position.
+		NpcPlace::Spot SpotOf(const RE::Actor* a_ref)
 		{
-			if (a_state.cell != 0) {
-				return false;
+			const auto [cell, worldspace] = SpaceOf(a_ref);
+			return { cell, worldspace, a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z };
+		}
+
+		// Our copy of the NPC as NpcPlace::Decide takes it.
+		NpcPlace::Ours OursOf(RE::Actor* a_actor, std::uint32_t a_id)
+		{
+			if (!a_actor) {
+				return {};
 			}
 			const auto player = RE::PlayerCharacter::GetSingleton();
-			const auto cell = player ? player->GetParentCell() : nullptr;
-			if (!cell || cell->IsInterior() || !cell->worldSpace || cell->worldSpace->GetFormID() != a_state.worldspace) {
-				return false;
-			}
-			if (RE::NiPoint3{ a_state.x, a_state.y, a_state.z }.GetDistance(player->data.location) > BRING_IN_RANGE) {
-				return false;
-			}
-			return !a_actor->IsDeleted() && !a_actor->IsDisabled() && !a_actor->IsDead(false) && !a_actor->IsPlayerRef() && !IsOurCompanion(a_actor) &&
-			       !a_actor->GetCurrentScene() && a_actor->currentCombatTarget.get().get() != player;
+			return {
+				.exists = true,
+				.off = a_actor->IsDisabled(),
+				.unusable = a_actor->IsDeleted() || a_actor->IsDead(false) || a_actor->IsPlayerRef(),
+				.loaded = a_actor->Get3D() != nullptr,
+				.at = SpotOf(a_actor),
+				.companion = IsOurCompanion(a_actor),
+				.inScene = a_actor->GetCurrentScene() != nullptr,
+				.fightingUs = player && a_actor->currentCombatTarget.get().get() == player,
+				.talkingToUs = a_id == talkingTo,
+			};
 		}
 
 		// Our copy of the NPC as one of its owner's states finds it: what RetryBudget::Plan decides the fix-ups on.
+		// The owner's copy stands near us outdoors, but ours is somewhere else: in a cell we have not loaded (a
+		// companion that walked here with its player from across the map, say), or loaded in an interior or another
+		// world its own quest left it in (the host finished Concord, so its Preston stands in Sanctuary; ours still
+		// waits in the museum). Ours is then moved to where theirs is (BringIn) and mirrored from there; left where it
+		// was, UpdateMirrors would only hand it to its own AI, and the friend's Preston would never appear here.
+		// NpcPlace::Decide says when (never out of a cell our player is in with it, nor one busy with us).
 		RetryBudget::Copy CopyFor(const Protocol::ActorState& a_state, std::uint32_t a_owner)
 		{
-			RetryBudget::Copy copy;
-			const auto        actor = Protocol::IsShareableRef(a_state.refId) ? RE::TESForm::GetFormByID<RE::Actor>(a_state.refId) : nullptr;
+			const auto actor = Protocol::IsShareableRef(a_state.refId) ? RE::TESForm::GetFormByID<RE::Actor>(a_state.refId) : nullptr;
 			if (!actor) {
-				return copy;
+				return {};
 			}
-			copy.exists = true;
-			copy.off = actor->IsDisabled();
-			copy.unusable = actor->IsDeleted() || actor->IsDead(false) || actor->IsPlayerRef();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto ours = OursOf(actor, a_state.refId);
+			const auto why = NpcPlace::Decide(RemoteEdits::SpotOf(a_state), ours, player && player->GetParentCell() ? SpotOf(player) : NpcPlace::Spot{}, OwnerBeside(a_owner, a_state));
+			auto       copy = NpcPlace::CopyOf(ours, why);
 			// A character of our own story stays as our story has it: a companion or quest character a friend's
 			// story has brought in, ours has not yet. It is never switched on here.
 			if (copy.off && !copy.unusable && !RemoteEdits::MaySwitchOn(Story::Shared(), WorldSync::DescribeStory(actor))) {
@@ -558,12 +563,9 @@ namespace NpcSync
 					REX::INFO("NpcSync: leaving {:08X} off: its owner's copy runs, but it is a character of our own story", a_state.refId);
 				}
 			}
-			copy.here = actor->Get3D() && SpaceOf(actor) == std::pair{ a_state.cell, a_state.worldspace };
-			// Nor is one moved whose owner's stand-in is not beside it: a companion walks with its player, and their
+			// One whose owner's stand-in is not beside it is not moved: a companion walks with its player, and their
 			// game saying some NPC stands next to us is otherwise only their word for it.
-			copy.movable = !copy.here && MayBringIn(actor, a_state);
-			if (copy.movable && !OwnerBeside(a_owner, a_state)) {
-				copy.movable = false;
+			if (why == NpcPlace::Why::kOwnerAway) {
 				if (notBrought.insert(a_state.refId).second) {
 					++notBroughtOwnerFar;
 					REX::INFO("NpcSync: not bringing {:08X} in: player {}'s stand-in is not beside where their game has it", a_state.refId, a_owner);
@@ -661,8 +663,7 @@ namespace NpcSync
 						REX::INFO("NpcSync: not bringing {:08X} over: player {}'s stand-in is not beside where their game has it", id, owner);
 					}
 				}
-				if (!latest || SpaceOf(actor) != std::pair{ latest->state.cell, latest->state.worldspace } || a_now - latest->received > LOST_AFTER ||
-					actor->data.location.GetDistance({ latest->state.x, latest->state.y, latest->state.z }) > MAX_FOLLOW_DISTANCE) {
+				if (!latest || !NpcPlace::Follows(SpotOf(actor), RemoteEdits::SpotOf(latest->state), a_now - latest->received)) {
 					if (mirror.registered) {
 						++localFallbacks;
 					}

@@ -85,7 +85,7 @@ namespace RetryBudget
 		bool unusable = false;  // deleted, dead or the player: never switched on
 		bool here = false;      // loaded, in the cell or world the owner's copy is in
 		bool movable = false;   // BringIn may move it: the owner's copy is outdoors near us in our world, and ours is on,
-		                        // alive, not our companion, not in a scene here and not fighting us
+		                        // alive, not our companion, not in a scene here, not fighting or talking to us (NpcPlace::Decide)
 	};
 
 	// What to do about one of the owner's states.
