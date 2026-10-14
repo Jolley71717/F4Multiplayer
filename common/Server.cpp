@@ -178,6 +178,7 @@ namespace
 		std::string                name;
 		std::uint32_t              appearance = 0;
 		std::vector<std::uint32_t> equipment;
+		std::vector<Protocol::ItemMods> equipmentMods;  // the mods on those items, as reported with them
 		bool                       equipmentReported = false;  // equipment is what they last reported (not just none yet)
 		std::optional<Protocol::Face> face;
 		bool                       faceDirty = false;  // the latest face hasn't gone to the others yet (Options::faceInterval)
@@ -849,7 +850,7 @@ void Server::Run()
 			// Their last report, even one with nothing on: without one, the newcomer's stand-in of them stays in the
 			// settler's own outfit (StandInGear dresses only from a report) while everyone else's is undressed.
 			if (other.equipmentReported) {
-				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment }, Protocol::MessageType::kPlayerEquipment), true);
+				send(a_player.key, Protocol::Encode(Protocol::Equipment{ other.id, other.equipment, other.equipmentMods }, Protocol::MessageType::kPlayerEquipment), true);
 			}
 			if (other.face) {
 				send(a_player.key, Protocol::Encode(*other.face, Protocol::MessageType::kPlayerFace), true);
@@ -1619,11 +1620,12 @@ void Server::Run()
 		}
 		// The same as they reported last: nothing to tell anyone (a game sending it over and over had everyone else
 		// dress its stand-in again each time). A newcomer is sent their last report as they join.
-		if (a_player.equipmentReported && a_player.equipment == equipment->items) {
+		if (a_player.equipmentReported && a_player.equipment == equipment->items && a_player.equipmentMods == equipment->mods) {
 			return;
 		}
 		equipment->playerId = a_player.id;
 		a_player.equipment = equipment->items;
+		a_player.equipmentMods = equipment->mods;
 		a_player.equipmentReported = true;
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment), true, a_player.key);
 	};

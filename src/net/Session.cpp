@@ -64,7 +64,7 @@ namespace Session
 		// Equipment is checked once a second and sent when it changes (and after joining).
 		constexpr auto                            EQUIPMENT_INTERVAL = 1s;
 		Clock::time_point                         nextEquipmentCheck{};
-		std::optional<std::vector<std::uint32_t>> sentEquipment;
+		std::optional<Protocol::Equipment>        sentEquipment;  // with its mods
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		Refusals          refusals;  // why the server last turned us away, and when to try again
@@ -421,7 +421,7 @@ namespace Session
 				break;
 			case MessageType::kPlayerEquipment:
 				if (auto msg = Protocol::DecodeEquipment(a_data)) {
-					RemotePlayers::SetEquipment(msg->playerId, std::move(msg->items));
+					RemotePlayers::SetEquipment(msg->playerId, std::move(msg->items), std::move(msg->mods));
 				}
 				break;
 			case MessageType::kRefStateChanged:
@@ -888,15 +888,17 @@ namespace Session
 				}
 				sentFace = std::move(face);
 			}
-			auto items = Equipment::Read(RE::PlayerCharacter::GetSingleton());
-			if (!sentEquipment || *sentEquipment != items) {
+			// The mods too: a barrel swapped at a workbench is a change, and their stand-in's copy is built with them.
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			Protocol::Equipment equipment{ 0, Equipment::Read(player), Equipment::ReadMods(player) };
+			if (!sentEquipment || *sentEquipment != equipment) {
 				if (welcomed) {
-					client->Send(Protocol::Encode(Protocol::Equipment{ 0, items }, Protocol::MessageType::kEquipment), true);
+					client->Send(Protocol::Encode(equipment, Protocol::MessageType::kEquipment), true);
 				}
 				if (echo) {
-					RemotePlayers::SetEquipment(ECHO_ID, items);
+					RemotePlayers::SetEquipment(ECHO_ID, equipment.items, equipment.mods);
 				}
-				sentEquipment = std::move(items);
+				sentEquipment = std::move(equipment);
 			}
 		}
 

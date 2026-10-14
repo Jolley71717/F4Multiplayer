@@ -1,10 +1,13 @@
 #pragma once
 
+#include "Protocol.h"
 #include "game/ArmorFrames.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <optional>
+#include <tuple>
 #include <vector>
 
 // What a friend wears and holds, as their stand-in is dressed in it. Kept free of the game so it can be tested.
@@ -15,6 +18,8 @@
 // Now a stand-in is dressed afresh only when it needs it (new, in or out of its power armor frame, or the engine put
 // the NPC's own outfit back on it); a change while it is dressed is put on over what it wears, at most once a
 // CHANGE_GAP, and the gun is drawn again only when the weapons they hold changed.
+// Each item goes on built with the mods their copy carries (Protocol::ItemMods): given by the console's additem, it came
+// with the item's object template rolled for this game's level, and a stock 10mm showed up with a long barrel.
 namespace StandInGear
 {
 	using Clock = std::chrono::steady_clock;
@@ -31,28 +36,70 @@ namespace StandInGear
 	struct Gear
 	{
 		std::vector<std::uint32_t> items;            // what they wear and hold (base forms), as last reported
+		std::vector<Protocol::ItemMods> mods;        // the mods on those of them that carry any, by item
 		bool                       has = false;      // reported at all
 		bool                       dressed = false;  // the stand-in was dressed afresh for what it wears now
 		bool                       changed = false;  // they reported a change since: put on over what it wears
 		std::vector<std::uint32_t> worn;             // what it was dressed in last
+		std::vector<Protocol::ItemMods> wornMods;    // and their mods
 		Clock::time_point          wornAt{};         // when
 		ArmorFrames::Dress         dress = ArmorFrames::Dress::kClothes;  // how the stand-in was dressed last frame
 		Clock::time_point          checkAt{};        // when what it wears is looked at next
 		int                        fixes = 0;        // dressed afresh in a row for wearing something else
 	};
 
-	// A report from their game. False when it is what they have on already, in whatever order: nothing to do.
-	inline bool Report(Gear& a_gear, std::vector<std::uint32_t> a_items)
+	// The mods their copy of the item carries, or nullptr: none on record.
+	inline const Protocol::ItemMods* ModsOf(const std::vector<Protocol::ItemMods>& a_mods, std::uint32_t a_item)
+	{
+		const auto it = std::ranges::find(a_mods, a_item, &Protocol::ItemMods::item);
+		return it != a_mods.end() ? &*it : nullptr;
+	}
+
+	// The same mods, in whatever order the engine keeps them.
+	inline bool SameMods(std::vector<Protocol::ItemMod> a_one, std::vector<Protocol::ItemMod> a_other)
+	{
+		const auto key = [](const Protocol::ItemMod& a_mod) { return std::tuple{ a_mod.mod, a_mod.index, a_mod.rank }; };
+		std::ranges::sort(a_one, {}, key);
+		std::ranges::sort(a_other, {}, key);
+		return a_one == a_other;
+	}
+
+	// How the stand-in gets one item of theirs.
+	enum class Copy
+	{
+		kKeep,     // the copy it has will do
+		kGive,     // it has none: given one built with their mods (or the item's default combination, none on record)
+		kReplace,  // its copy carries other mods: taken away, and one built with theirs given
+	};
+
+	// a_theirs: the mods on their copy (ModsOf), or nullptr. a_ours: the mods on the stand-in's copy, or nullopt when it
+	// has none (a copy without an instance extra carries no mods). With nothing on record whatever copy it has stays: a
+	// copy cannot be checked against nothing.
+	inline Copy ChooseCopy(const Protocol::ItemMods* a_theirs, const std::optional<std::vector<Protocol::ItemMod>>& a_ours)
+	{
+		if (!a_ours) {
+			return Copy::kGive;
+		}
+		return a_theirs && !SameMods(a_theirs->mods, *a_ours) ? Copy::kReplace : Copy::kKeep;
+	}
+
+	// A report from their game. False when it is what they have on already, in whatever order: nothing to do. Mods of an
+	// item not in the list are dropped, and new mods on an item they keep on are a change.
+	inline bool Report(Gear& a_gear, std::vector<std::uint32_t> a_items, std::vector<Protocol::ItemMods> a_mods = {})
 	{
 		std::ranges::sort(a_items);
 		a_items.erase(std::unique(a_items.begin(), a_items.end()), a_items.end());
-		if (a_gear.has && a_gear.items == a_items) {
+		std::erase_if(a_mods, [&](const Protocol::ItemMods& a_entry) { return !std::ranges::binary_search(a_items, a_entry.item); });
+		std::ranges::stable_sort(a_mods, {}, &Protocol::ItemMods::item);
+		a_mods.erase(std::ranges::unique(a_mods, {}, &Protocol::ItemMods::item).begin(), a_mods.end());
+		if (a_gear.has && a_gear.items == a_items && a_gear.mods == a_mods) {
 			return false;
 		}
 		a_gear.items = std::move(a_items);
+		a_gear.mods = std::move(a_mods);
 		a_gear.has = true;
 		// Back to what the stand-in has on (a change and its undoing within the gap) is nothing to put on.
-		a_gear.changed = a_gear.dressed && a_gear.items != a_gear.worn;
+		a_gear.changed = a_gear.dressed && (a_gear.items != a_gear.worn || a_gear.mods != a_gear.wornMods);
 		a_gear.fixes = 0;
 		return true;
 	}
@@ -106,12 +153,20 @@ namespace StandInGear
 	}
 
 	// The step done. Whether the stand-in puts its gun away and draws it again (Puppets::RedrawWeapon): always when
-	// dressed afresh (its weapon was taken off it), and after a change only when the weapons in hand changed.
+	// dressed afresh (its weapon was taken off it), and after a change only when the weapons in hand changed, or the mods
+	// on one of them (its copy is replaced by one built with the new mods; mods no longer on record leave its copy as it is).
 	template <class InHand>
 	bool Done(Gear& a_gear, Step a_step, Clock::time_point a_now, InHand&& a_inHand)
 	{
-		const bool redraw = a_step == Step::kDress || HandWeapons(a_gear.worn, a_inHand) != HandWeapons(a_gear.items, a_inHand);
+		const auto hand = HandWeapons(a_gear.items, a_inHand);
+		const bool remodded = std::ranges::any_of(hand, [&](std::uint32_t a_item) {
+			const auto before = ModsOf(a_gear.wornMods, a_item);
+			const auto after = ModsOf(a_gear.mods, a_item);
+			return after && (!before || !SameMods(before->mods, after->mods));
+		});
+		const bool redraw = a_step == Step::kDress || HandWeapons(a_gear.worn, a_inHand) != hand || remodded;
 		a_gear.worn = a_gear.items;
+		a_gear.wornMods = a_gear.mods;
 		a_gear.wornAt = a_now;
 		a_gear.dressed = true;
 		a_gear.changed = false;

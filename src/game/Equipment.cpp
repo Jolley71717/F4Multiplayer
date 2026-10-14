@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 #include "game/GearPlan.h"
+#include "game/StandInGear.h"
 
 namespace Equipment
 {
@@ -87,6 +88,57 @@ namespace Equipment
 		return items;
 	}
 
+	namespace
+	{
+		// The mods on one copy of an item, as its BGSObjectInstanceExtra lists them. One the engine keeps listed but
+		// disabled is left out, and so is a runtime-created form (0xFF......), which no other game has.
+		std::vector<Protocol::ItemMod> ModsOn(const RE::BGSObjectInstanceExtra& a_extra)
+		{
+			std::vector<Protocol::ItemMod> mods;
+			if (!a_extra.values) {
+				return mods;
+			}
+			for (const auto& data : a_extra.GetIndexData()) {
+				if (data.disabled || data.objectID == 0 || (data.objectID >> 24) == 0xFF) {
+					continue;
+				}
+				mods.push_back({ data.objectID, data.index, data.rank });
+			}
+			return mods;
+		}
+
+		const RE::BGSObjectInstanceExtra* InstanceOf(const RE::BGSInventoryItem::Stack& a_stack)
+		{
+			return a_stack.extra ? a_stack.extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
+		}
+	}
+
+	std::vector<Protocol::ItemMods> ReadMods(RE::Actor* a_actor)
+	{
+		std::vector<Protocol::ItemMods> out;
+		const auto items = Read(a_actor);
+		const auto list = a_actor ? a_actor->inventoryList : nullptr;
+		if (!list || items.empty()) {
+			return out;
+		}
+		RE::BSAutoReadLock l{ list->rwLock };
+		for (auto& item : list->data) {
+			if (!item.object || !std::ranges::binary_search(items, item.object->GetFormID()) || StandInGear::ModsOf(out, item.object->GetFormID())) {
+				continue;
+			}
+			for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+				if (!stack->IsEquipped()) {
+					continue;
+				}
+				if (const auto instance = InstanceOf(*stack); instance && instance->values) {
+					out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
+				}
+				break;
+			}
+		}
+		return out;
+	}
+
 	// Whether the actor carries at least one of the item.
 	bool Has(RE::Actor* a_actor, std::uint32_t a_item)
 	{
@@ -153,7 +205,105 @@ namespace Equipment
 		return static_cast<std::uint32_t>(equip.size());
 	}
 
-	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	namespace
+	{
+		// The mods on the actor's copy of an item (the one it wears, else its first; none on a copy without an instance
+		// extra), or nullopt when it carries none.
+		std::optional<std::vector<Protocol::ItemMod>> CarriedMods(RE::Actor* a_actor, std::uint32_t a_item)
+		{
+			const auto list = a_actor ? a_actor->inventoryList : nullptr;
+			if (!list) {
+				return std::nullopt;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (!entry.object || entry.object->GetFormID() != a_item) {
+					continue;
+				}
+				if (entry.GetCount() == 0) {
+					return std::nullopt;
+				}
+				const RE::BGSInventoryItem::Stack* copy = entry.stackData.get();
+				for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get()) {
+					if (stack->IsEquipped()) {
+						copy = stack;
+						break;
+					}
+				}
+				const auto instance = copy ? InstanceOf(*copy) : nullptr;
+				return instance ? ModsOn(*instance) : std::vector<Protocol::ItemMod>{};
+			}
+			return std::nullopt;
+		}
+
+		// Gives the actor one of the item built as their copy is: with these mods, or, none on record, with the item's
+		// default combination. The console's additem has the engine roll the item's object template for the actor's
+		// level (a stock 10mm showed up on a friend's stand-in with a long barrel). Here the instance extra is made
+		// first, as the engine's own instancing makes it (the mods, then the instance data they make), and the item goes
+		// in with it: a copy that comes with its instance extra keeps it, as an item handed to a companion keeps its
+		// mods. An item with neither mods nor templates is given by the console as before.
+		void Give(RE::Actor* a_actor, std::uint32_t a_item, const Protocol::ItemMods* a_mods)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			RE::TESBoundObject* object = nullptr;
+			if (form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP) {
+				object = form->As<RE::TESObjectWEAP>();
+			} else if (form && form->GetFormType() == RE::ENUM_FORM_ID::kARMO) {
+				object = form->As<RE::TESObjectARMO>();
+			}
+			if (!object || (!a_mods && object->objectTemplate.items.empty())) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", a_actor->GetFormID(), a_item).c_str());
+				return;
+			}
+			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
+			std::size_t                            attached = 0;
+			if (a_mods) {
+				const auto instance = new RE::BGSObjectInstanceExtra();
+				instance->itemIndex = a_mods->templateIndex;
+				for (const auto& entry : a_mods->mods) {
+					// A mod from a plugin this game hasn't is left off; the rest still go on.
+					if (const auto mod = RE::TESForm::GetFormByID<RE::BGSMod::Attachment::Mod>(entry.mod)) {
+						instance->AddMod(*mod, entry.index, entry.rank, false);
+						++attached;
+					}
+				}
+				extra->AddExtra(instance);
+				RE::BSTSmartPointer<RE::TBO_InstanceData> data;
+				object->ApplyMods(data, instance);
+				if (data) {
+					extra->AddExtra(new RE::ExtraInstanceData(object, data));
+				}
+			} else {
+				RE::BGSMod::Template::Items::CreateInstanceDataForObjectAndExtra(*object, *extra, nullptr, true);
+			}
+			a_actor->AddInventoryItem(object, extra, 1, nullptr, nullptr, nullptr);
+			REX::INFO("Equipment: {:08X} given to {:08X} with {} ({} of {} found here)", a_item, a_actor->GetFormID(), a_mods ? "their mods" : "its default mods", attached,
+				a_mods ? a_mods->mods.size() : 0);
+		}
+
+		// Gives the actor its copy of one of their items as StandInGear::ChooseCopy says, and equips it, unless it wears a
+		// copy that will do already.
+		void PutOn(RE::Actor* a_actor, std::uint32_t a_item, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
+		{
+			const auto theirs = StandInGear::ModsOf(a_mods, a_item);
+			const auto copy = StandInGear::ChooseCopy(theirs, CarriedMods(a_actor, a_item));
+			if (a_wearing && copy == StandInGear::Copy::kKeep) {
+				return;
+			}
+			const auto id = a_actor->GetFormID();
+			if (copy == StandInGear::Copy::kReplace) {
+				// Every copy it has: equipitem would pick any of them.
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
+			}
+			// Given only when missing (or carrying other mods): every gear report used to add another copy.
+			if (copy != StandInGear::Copy::kKeep) {
+				Give(a_actor, a_item, theirs);
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, a_item).c_str());
+		}
+	}
+
+	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_actor) {
 			return;
@@ -162,14 +312,10 @@ namespace Equipment
 		const auto wearing = Read(a_actor);
 		for (const auto item : a_items) {
 			const auto form = RE::TESForm::GetFormByID(item);
-			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP) || std::ranges::binary_search(wearing, item)) {
+			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 				continue;
 			}
-			// Given only when missing: every gear report used to add another copy.
-			if (!Has(a_actor, item)) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
-			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
+			PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
 		}
 		// What it wears that they don't comes off, so the two look the same.
 		for (const auto worn : Read(a_actor)) {
@@ -215,7 +361,7 @@ namespace Equipment
 		return armor && armor->HasKeywordString("ArmorTypePower") && !IsFrameItem(armor);
 	}
 
-	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
+	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_actor) {
 			return;
@@ -226,13 +372,10 @@ namespace Equipment
 		// (StandInGear draws it again only when it changed).
 		const auto wearing = Read(a_actor);
 		for (const auto item : a_items) {
-			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item)) || std::ranges::binary_search(wearing, item)) {
+			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
 				continue;
 			}
-			if (!Has(a_actor, item)) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
-			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
+			PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
 		}
 		for (const auto worn : Read(a_actor)) {
 			if (pieceOrWeapon(RE::TESForm::GetFormByID(worn)) && !std::ranges::contains(a_items, worn)) {
@@ -295,7 +438,7 @@ namespace Equipment
 		}
 	}
 
-	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items)
+	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_puppet) {
 			return;
@@ -308,7 +451,7 @@ namespace Equipment
 			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 				continue;
 			}
-			RE::Console::ExecuteCommand(std::format("{:08X}.additem {:08X} 1", id, item).c_str());
+			Give(a_puppet, item, StandInGear::ModsOf(a_mods, item));
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, item).c_str());
 		}
 		HoldThrowable(a_puppet, a_items);

@@ -14,8 +14,8 @@ namespace RemotePlayers
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
 
-	// What the player is wearing and holding (base forms); copied onto their puppet.
-	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items);
+	// What the player is wearing and holding (base forms), and the mods on those that carry any; copied onto their puppet.
+	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items, std::vector<Protocol::ItemMods> a_mods);
 
 	// The player's look; their stand-in is rebuilt with it.
 	void SetFace(std::uint32_t a_id, Protocol::Face a_face);

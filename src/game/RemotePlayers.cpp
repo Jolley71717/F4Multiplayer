@@ -1304,14 +1304,14 @@ namespace RemotePlayers
 		DeleteActor(player);
 	}
 
-	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items)
+	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items, std::vector<Protocol::ItemMods> a_mods)
 	{
 		const auto it = players.find(a_id);
 		if (it == players.end()) {
 			return;
 		}
 		// What they have on already changes nothing; a change is put on over what the stand-in wears (see Update).
-		StandInGear::Report(it->second.gear, std::move(a_items));
+		StandInGear::Report(it->second.gear, std::move(a_items), std::move(a_mods));
 	}
 
 	std::vector<Info> List()
@@ -1765,13 +1765,13 @@ namespace RemotePlayers
 				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });
 			switch (dressing.put) {
 			case StandInGear::Put::kApply:
-				Equipment::Apply(actor, Outfit(remote, dress));
+				Equipment::Apply(actor, Outfit(remote, dress), remote.gear.mods);
 				break;
 			case StandInGear::Put::kWear:
-				Equipment::WearOnStandIn(actor, Outfit(remote, dress));
+				Equipment::WearOnStandIn(actor, Outfit(remote, dress), remote.gear.mods);
 				break;
 			case StandInGear::Put::kWearInArmor:
-				Equipment::WearInArmor(actor, Outfit(remote, dress));
+				Equipment::WearInArmor(actor, Outfit(remote, dress), remote.gear.mods);
 				break;
 			case StandInGear::Put::kNone:
 				break;
