@@ -110,12 +110,19 @@ namespace Prediction
 	// stand-in slowed down and then lurched ahead; and a friend whose game sends at uneven frames was drawn
 	// speeding up and slowing down. The shift between the clocks follows the quickest trip of the last TRIPS
 	// states, by at most FOLLOW seconds a second, so it never jerks the stamps; a state that was only late
-	// does not move it, and a route that got slower is followed within a few seconds.
+	// does not move it, and a route that got slower is followed within a few seconds. Until the window first
+	// fills, though, a trip more than JUMP_OVER quicker than the shift is jumped to: the first state is the zero
+	// point, and when it came late (our game hitched over the welcome on joining, or a relay route was still
+	// settling) following at FOLLOW drew the stand-in that much further behind for many seconds, or held it at
+	// its oldest state. The stamps already given step back with it (steppedBack), so the stand-in skips ahead
+	// once, early on; the jitter of an ordinary trip is still followed gently. Over the first TRIPS states the
+	// quickest trip only falls, so the shift never has to rise until then; after them it follows either way.
 	struct SenderClock
 	{
 		using Clock = std::chrono::steady_clock;
 		static constexpr std::size_t TRIPS = 64;  // about two seconds of states
 		static constexpr float       FOLLOW = 0.03f;
+		static constexpr auto        JUMP_OVER = std::chrono::milliseconds(50);  // more than a trip's usual jitter
 
 		bool                                 started = false;
 		std::uint32_t                        lastSent = 0;  // the last state's sentMs
@@ -127,9 +134,11 @@ namespace Prediction
 		Clock::duration                      shift{};       // what the stamps add to first + sent
 		Clock::time_point                    arrival{};     // when the last state came
 		Clock::time_point                    stamp{};
+		Clock::duration                      steppedBack{};  // how much earlier the stamps given before this one now are
 
 		Clock::time_point Next(Clock::time_point a_arrival, std::uint32_t a_sentMs)
 		{
+			steppedBack = Clock::duration::zero();
 			if (!started) {
 				started = true;
 				lastSent = a_sentMs;
@@ -141,11 +150,18 @@ namespace Prediction
 			const auto delta = static_cast<std::int32_t>(a_sentMs - lastSent);
 			lastSent = a_sentMs;
 			sent += std::chrono::milliseconds((std::max)(delta, 0));
+			const bool warming = tripCount < TRIPS;
 			Add(a_arrival - (first + sent));
 			const auto quickest = *std::min_element(trips.begin(), trips.begin() + static_cast<std::ptrdiff_t>(tripCount));
 			const auto most = std::chrono::duration_cast<Clock::duration>((a_arrival - arrival) * FOLLOW);
 			arrival = a_arrival;
-			shift += std::clamp(quickest - shift, -most, most);
+			if (warming && quickest < shift - JUMP_OVER) {
+				steppedBack = shift - quickest;
+				shift = quickest;
+				stamp -= steppedBack;
+			} else {
+				shift += std::clamp(quickest - shift, -most, most);
+			}
 			stamp = (std::max)(first + sent + shift, stamp + std::chrono::milliseconds(1));
 			return stamp;
 		}

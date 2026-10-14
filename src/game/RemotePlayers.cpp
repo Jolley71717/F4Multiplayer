@@ -1617,7 +1617,8 @@ namespace RemotePlayers
 			const auto& snaps = remote.states.snapshots;
 			movingFrames += !snaps.empty() && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
 			const auto sampled = remote.states.Sample(now);
-			heldFrames += sampled && sampled->held && sampled->state.speed > 0.0f && now - remote.states.arrived < 1s;
+			// The newest state's own speed, as for movingFrames: Sample stops a long hold's speed, and those are the holds to count.
+			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the

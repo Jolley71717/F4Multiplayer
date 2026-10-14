@@ -72,6 +72,12 @@ namespace StateBuffer
 			}
 			const auto steps = snapshots.empty() ? 1u : a_state.sequence - snapshots.back().state.sequence;
 			const auto stamp = a_state.sentMs ? sender.Next(a_now, a_state.sentMs) : arrivals.Next(a_now, steps);
+			if (a_state.sentMs && sender.steppedBack > Clock::duration::zero()) {
+				// The first state came late, so the ones kept were stamped too late as well: they move back with it.
+				for (auto& snapshot : snapshots) {
+					snapshot.stamp -= sender.steppedBack;
+				}
+			}
 			snapshots.push_back({ stamp, a_state });
 			arrived = a_now;
 			while (snapshots.size() > MAX_SNAPSHOTS) {

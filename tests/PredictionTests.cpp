@@ -2,6 +2,7 @@
 
 #include "game/Prediction.h"
 
+#include <algorithm>
 #include <random>
 #include <vector>
 
@@ -139,4 +140,68 @@ TEST("prediction: the sender clock follows a slower route within seconds, and a 
 	}
 	const auto trip = std::chrono::duration<float, std::milli>(stamp - sentAt).count();
 	CHECK(trip > 125.0f && trip < 135.0f);
+}
+
+TEST("prediction: a friend's first state that came late leaves the sender clock's stamps late for a moment, not for seconds")
+{
+	for (const auto late : { 300ms, 1000ms }) {
+		Prediction::SenderClock clock;
+		const auto start = std::chrono::steady_clock::time_point{} + 10s;
+		std::uint32_t sentMs = 5000;
+		auto          sentAt = start;
+		auto          stamp = start;
+		std::vector<std::chrono::steady_clock::duration> steppedBack;
+		const auto send = [&](std::chrono::milliseconds a_trip) {
+			sentMs += 33;
+			sentAt += 33ms;
+			stamp = clock.Next(sentAt + a_trip, sentMs);
+			steppedBack.push_back(clock.steppedBack);
+		};
+		// Our game hitched over the welcome: the first state is handled `late` after the 30 ms trip, the rest on time.
+		send(30ms + late);
+		for (int i = 0; i < 30; ++i) {
+			send(30ms);
+		}
+		// A second on, the stamps sit at the real trip again, not `late` behind it.
+		const auto trip = std::chrono::duration<float, std::milli>(stamp - sentAt).count();
+		CHECK(trip > 25.0f && trip < 35.0f);
+		// They stepped back once, by as much as the first state was late, so the stamps already given can follow.
+		CHECK(std::ranges::count_if(steppedBack, [](auto a_back) { return a_back > 0ms; }) == 1);
+		CHECK(std::abs(std::chrono::duration<float, std::milli>(steppedBack[1] - late).count()) < 1.0f);
+	}
+}
+
+TEST("prediction: once the sender clock has its window of trips, a quicker route is still followed gently")
+{
+	Prediction::SenderClock clock;
+	const auto start = std::chrono::steady_clock::time_point{} + 10s;
+	std::uint32_t sentMs = 5000;
+	auto          sentAt = start;
+	auto          stamp = start;
+	auto          arrival = start;
+	const auto send = [&](std::chrono::milliseconds a_trip) {
+		sentMs += 33;
+		sentAt += 33ms;
+		arrival = (std::max)(sentAt + a_trip, arrival);  // our game handles them in order
+		stamp = clock.Next(arrival, sentMs);
+	};
+	for (int i = 0; i < 100; ++i) {
+		send(130ms);
+	}
+	// The route gets 100 ms quicker: the stamps keep coming 33 ms apart, less what the shift may move, instead of
+	// stepping back at once.
+	auto before = stamp;
+	for (int i = 0; i < 10; ++i) {
+		send(30ms);
+		const auto gap = std::chrono::duration<float, std::milli>(stamp - before).count();
+		CHECK(gap > 31.0f && gap < 34.0f);
+		CHECK(clock.steppedBack == std::chrono::steady_clock::duration::zero());
+		before = stamp;
+	}
+	// And within ten seconds they are that much earlier.
+	for (int i = 0; i < 300; ++i) {
+		send(30ms);
+	}
+	const auto trip = std::chrono::duration<float, std::milli>(stamp - sentAt).count();
+	CHECK(trip > 25.0f && trip < 35.0f);
 }
