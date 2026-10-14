@@ -12,6 +12,7 @@
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/Gait.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/WorkshopSync.h"
@@ -477,7 +478,8 @@ namespace Session
 			state.y = pos.y;
 			state.z = pos.z;
 			state.heading = player->data.angle.z;
-			state.speed = speed;
+			const auto process = player->currentProcess;
+			state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
 			state.sentMs = Protocol::SentMs(a_now);
 			// A downed player's stand-in crouches.

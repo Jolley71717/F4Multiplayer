@@ -2,6 +2,7 @@
 
 #include "game/CommandMeter.h"
 #include "game/Equipment.h"
+#include "game/Gait.h"
 #include "game/NpcClaims.h"
 #include "game/NpcPlace.h"
 #include "game/Prediction.h"
@@ -394,7 +395,8 @@ namespace NpcSync
 				state.y = pos.y;
 				state.z = pos.z;
 				state.heading = actor->data.angle.z;
-				state.speed = speed;
+				const auto process = actor->currentProcess;
+				state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
 				state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*actor).moveMode);
 				if (actor->GetWeaponMagicDrawn()) {
 					state.flags |= Protocol::kWeaponDrawn;

@@ -37,6 +37,16 @@ namespace Gait
 	// slow game's reports swing from frame to frame (live, a 16 fps friend running read 88 to 747 units/s, 350
 	// on average), which switched the gait back and forth.
 	inline constexpr float TAU = 0.4f;
+
+	// The speed a state carries. The owner's own animation speed (MiddleHighProcessData::animationSpeed: what
+	// its legs play, live a steady 373 running, 92.6 walking, 500 sprinting and 0 standing, however unevenly the
+	// owner's frames come) while it has one. The distance covered since the last sample only when it has none
+	// (no process data, or moved by a script, a lift or a vehicle with its legs still): over uneven frames that
+	// read 88 to 747 for a steady run.
+	constexpr float Reported(float a_animationSpeed, float a_travelled)
+	{
+		return a_animationSpeed > 0.0f ? a_animationSpeed : a_travelled;
+	}
 	inline float Smooth(float a_previous, float a_speed, float a_seconds)
 	{
 		const float keep = std::exp(-std::clamp(a_seconds, 0.0f, 0.25f) / TAU);

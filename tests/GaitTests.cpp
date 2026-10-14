@@ -25,6 +25,7 @@ namespace
 		int          gait = WALK;  // the state the graph plays
 		std::int32_t sync = WALK;  // iSyncLocomotionSpeed
 		int          gaitEvents = 0;
+		int          stops = 0;
 
 		bool Notify(const char* a_event)
 		{
@@ -41,6 +42,7 @@ namespace
 					return false;
 				}
 				moving = false;
+				++stops;
 				return true;
 			}
 			const int to = std::strcmp(a_event, "Run") == 0 ? RUN : std::strcmp(a_event, "Jog") == 0 ? 1 : std::strcmp(a_event, "Walk") == 0 ? WALK : -1;
@@ -324,4 +326,34 @@ TEST("gait: a state with no gait in it (an older friend, a scripted NPC) goes by
 	CHECK(Gait::Pick(373.0f, Gait::Kind::kRun, 0x01) == Gait::Kind::kRun);  // forward only
 	CHECK(Gait::Pick(373.0f, Gait::Kind::kRun, WALKING) == Gait::Kind::kWalk);
 	CHECK(Gait::Pick(95.0f, Gait::Kind::kWalk, RUNNING) == Gait::Kind::kRun);
+}
+
+TEST("gait: a slow friend's own animation speed, sent instead of the ground they covered, keeps the run going without a stop")
+{
+	// A 16 fps owner running a steady 373: the ground covered between its samples, live, with the hitches a
+	// slow game has (a sample taken before its next frame moved it at all).
+	constexpr float travelled[] = { 623.0f, 0.0f, 747.0f, 177.0f, 0.0f, 200.0f, 88.0f, 378.0f };
+	const auto      run = [&](bool a_own) {
+		Graph  graph;
+		Puppet puppet;
+		auto   now = t0;
+		for (int i = 0; i < 160; ++i) {
+			Sent(graph, puppet, Gait::Reported(a_own ? 373.0f : 0.0f, travelled[i % 8]), RUNNING, now += FRAME);
+		}
+		return std::pair{ graph, puppet };
+	};
+	const auto [own, ownPuppet] = run(true);
+	CHECK(own.moving);
+	CHECK(own.gait == RUN);
+	CHECK(own.stops == 0);
+	CHECK(own.gaitEvents == 1);
+	CHECK(Gait::Playback(ownPuppet.gaitSpeed, Gait::RUN_CLIP) > 0.95f);
+	CHECK(Gait::Playback(ownPuppet.gaitSpeed, Gait::RUN_CLIP) < 1.05f);
+	// The ground covered alone (no animation speed: an older build's way) stopped and started it on each hitch.
+	const auto [covered, coveredPuppet] = run(false);
+	CHECK(covered.stops > 10);
+	// Standing still is 0 either way, and a friend carried by a lift with their legs still goes by the ground.
+	CHECK(Gait::Reported(0.0f, 0.0f) == 0.0f);
+	CHECK(Gait::Reported(0.0f, 120.0f) == 120.0f);
+	CHECK(Gait::Reported(92.6f, 300.0f) == 92.6f);
 }
