@@ -50,9 +50,10 @@ namespace Equipment
 	[[nodiscard]] bool IsPowerArmorPiece(const RE::TESForm* a_item);
 
 	// In power armor: gives the actor these pieces and weapons (if it doesn't have them) and equips those it doesn't wear
-	// yet, and takes off the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing
-	// leaves its inventory: Apply empties it first, which would take the frame the engine put on it, and clothes put on
-	// would go under the armor at best or into the frame's slots.
+	// yet, and takes off the pieces and weapons it wears that are not among them. A frame item among them goes on in place
+	// of the one the engine picked, which is taken away (see ArmorFrames::Wears); with none, the engine's stays. Nothing
+	// else is touched, and nothing else leaves its inventory: Apply empties it first, which would take the frame item the
+	// engine put on it, and clothes put on would go under the armor at best or into the frame's slots.
 	// Their pieces and weapons are built with their mods as in WearOnStandIn.
 	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 

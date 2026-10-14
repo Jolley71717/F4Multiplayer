@@ -379,6 +379,50 @@ namespace Equipment
 		return armor && armor->HasKeywordString("ArmorTypePower") && !IsFrameItem(armor);
 	}
 
+	namespace
+	{
+		// The frame items the actor carries, worn or not, but a_keep.
+		std::vector<RE::TESBoundObject*> OtherFrames(RE::Actor* a_actor, const RE::TESForm* a_keep)
+		{
+			std::vector<RE::TESBoundObject*> out;
+			const auto list = a_actor->inventoryList;
+			if (!list) {
+				return out;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (entry.object && entry.object != a_keep && entry.GetCount() > 0 && IsFrameItem(entry.object)) {
+					out.push_back(entry.object);
+				}
+			}
+			return out;
+		}
+
+		// Their frame item on the actor in place of the one the engine picked (see ArmorFrames::Wears), the way the engine
+		// changes an actor's frame item itself (PowerArmor's frame swap, 2219428 in 1.11.240): the other taken away, theirs
+		// given, equipped and locked on (the engine locks a frame item on the actor wearing it). The other is unlocked
+		// first, so that theirs going into its slots is not refused, and taken away only once theirs is on: the actor is
+		// never in its frame with no frame item. Nothing is done when it wears theirs and carries no other.
+		void WearFrame(RE::Actor* a_actor, std::uint32_t a_frame, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
+		{
+			const auto theirs = RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_frame);
+			const auto others = OtherFrames(a_actor, theirs);
+			if (!theirs || (a_wearing && others.empty())) {
+				return;
+			}
+			for (const auto other : others) {
+				a_actor->SetEquipStateLocked(other, false);
+			}
+			PutOn(a_actor, a_frame, a_mods, a_wearing);
+			const auto id = a_actor->GetFormID();
+			for (const auto other : others) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, other->GetFormID(), Protocol::MAX_ITEM_COUNT).c_str());
+			}
+			a_actor->SetEquipStateLocked(theirs, true);
+			REX::INFO("Equipment: {:08X} wears their frame {:08X} in place of {}", id, a_frame, others.empty() ? std::string{ "none" } : std::format("{:08X}", others.front()->GetFormID()));
+		}
+	}
+
 	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_actor) {
@@ -389,6 +433,13 @@ namespace Equipment
 		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
 		// (StandInGear draws it again only when it changed).
 		const auto wearing = Read(a_actor);
+		// Their frame item first, when they name one this game has; else the one the engine put on it stays.
+		for (const auto item : a_items) {
+			if (IsFrameItem(RE::TESForm::GetFormByID(item))) {
+				WearFrame(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
+				break;
+			}
+		}
 		for (const auto item : a_items) {
 			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
 				continue;
