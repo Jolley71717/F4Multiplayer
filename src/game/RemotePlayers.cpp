@@ -1,6 +1,7 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/ArmorFrames.h"
 #include "game/DeferredDelete.h"
+#include "game/DownRules.h"
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/SaveGuard.h"
@@ -258,6 +259,7 @@ namespace RemotePlayers
 		std::uint32_t   framesPlaced = 0;
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
+		std::uint32_t   downedStandIns = 0;  // stand-ins replaced because something here put them down (DownRules::StandInBroken)
 		std::uint32_t   spawns = 0;          // stand-ins placed
 		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
@@ -437,10 +439,16 @@ namespace RemotePlayers
 			return ref->As<RE::Actor>();
 		}
 
-		// A dead puppet (killed despite protection, e.g. by a script) is replaced by a fresh one.
+		std::int32_t LifeState(RE::Actor* a_actor)
+		{
+			return static_cast<std::int32_t>(static_cast<RE::ActorState&>(*a_actor).lifeState);
+		}
+
+		// A dead puppet (killed despite protection, e.g. by a script), or one put down by a hit bigger than its whole
+		// health, is replaced by a fresh one.
 		bool IsBroken(RE::Actor* a_actor)
 		{
-			return a_actor->IsDead(false) || a_actor->IsDisabled();
+			return DownRules::StandInBroken(LifeState(a_actor), a_actor->IsDead(false), a_actor->IsDisabled());
 		}
 
 		// Removes the stand-in's light, once its 3D is in (the same rule as for the stand-in itself).
@@ -1733,6 +1741,10 @@ namespace RemotePlayers
 				DeleteActor(remote);
 			}
 			if (actor && IsBroken(actor)) {
+				if (!actor->IsDead(false) && DownRules::IsDownState(LifeState(actor))) {
+					++downedStandIns;
+					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
+				}
 				DeleteActor(remote);
 				actor = nullptr;
 			}
@@ -1919,7 +1931,7 @@ namespace RemotePlayers
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
-			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, respawnWaits, adrift,
+			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 		}
 		if (equipmentFixesTotal) {

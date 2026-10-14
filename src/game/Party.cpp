@@ -189,7 +189,7 @@ namespace Party
 				status.health = static_cast<std::uint8_t>(std::clamp(std::lround(current / maximum * 100.0f), 1L, 100L));
 			}
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
-			status.downed = Downed::IsDown();
+			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the

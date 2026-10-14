@@ -11,7 +11,11 @@ namespace Downed
 	// Call every frame. a_withFriends: in a session with at least one other player.
 	void Frame(bool a_withFriends);
 
+	// On the ground: down, or helped and getting up.
 	[[nodiscard]] bool IsDown();
+
+	// Down and still waiting for help: what friends are told (status `downed`), so they stop helping once one has.
+	[[nodiscard]] bool WaitsForHelp();
 
 	// Die now instead of waiting for help.
 	void GiveUp();
