@@ -5,6 +5,7 @@
 
 #include "Config.h"
 #include "game/Compass.h"
+#include "game/DownRules.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
 #include "game/Hotkeys.h"
@@ -185,9 +186,7 @@ namespace Party
 			Protocol::PlayerStatus status;
 			status.location = player->currentLocation ? player->currentLocation->GetFormID() : 0;
 			status.cell = SpaceOf(player).first;
-			if (!player->IsDead(false) && maximum > 0.0f) {
-				status.health = static_cast<std::uint8_t>(std::clamp(std::lround(current / maximum * 100.0f), 1L, 100L));
-			}
+			status.health = DownRules::StatusHealth(player->IsDead(false), Downed::IsDown(), current, maximum);
 			status.level = static_cast<std::uint16_t>((std::max)(player->GetLevel(), std::int16_t{ 0 }));
 			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
@@ -465,8 +464,8 @@ namespace Party
 		const auto name = RemotePlayers::NameOf(a_status.playerId);
 		if (entry.hasStatus) {
 			const auto& before = entry.status;
-			const bool  wasDead = before.health == 0 && !before.downed;
-			if (a_status.downed && !before.downed) {
+			const auto  news = DownRules::ReadFriendStatus(before.downed, before.health, a_status.downed, a_status.health);
+			if (news == DownRules::FriendNews::kDown) {
 				// Holding the teleport key goes to them.
 				teleportTarget = a_status.playerId;
 				const auto target = FindPlayer(a_status.playerId);
@@ -475,10 +474,10 @@ namespace Party
 				Hud::Notify(where.empty() ?
 								std::format("{} is down! Hold {} to teleport to them and help them up", name, KeyName(Config::Get().keyTeleport)) :
 								std::format("{} is down! Get to them to help them up ({})", name, where));
-			} else if (a_status.health == 0 && !a_status.downed && !wasDead) {
+			} else if (news == DownRules::FriendNews::kDied) {
 				REX::INFO("Party: player {} died", a_status.playerId);
 				Hud::Notify(name + " died");
-			} else if (before.downed && !a_status.downed && a_status.health > 0) {
+			} else if (news == DownRules::FriendNews::kBackUp) {
 				REX::INFO("Party: player {} is back up", a_status.playerId);
 				Hud::Notify(name + " is back up");
 			}

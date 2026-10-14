@@ -1646,7 +1646,7 @@ namespace RemotePlayers
 				DeleteActor(remote);
 			}
 			if (actor && IsBroken(actor)) {
-				if (!actor->IsDead(false) && DownRules::IsDownState(LifeState(actor))) {
+				if (DownRules::IsDownState(LifeState(actor))) {  // the game says dead too while down: only the life state tells
 					++downedStandIns;
 					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
 				}
