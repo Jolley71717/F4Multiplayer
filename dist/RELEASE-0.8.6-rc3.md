@@ -31,3 +31,9 @@ What changed:
 - Semi-auto pistols sound like single shots.
 - A freeze writes a short report; slow saves and loads no longer count as freezes.
 - NPC voice lines now need `bExperimentalVoiceLines = true` in the ini.
+- A player flooding the server with fake kills or explosions is logged once every 10 seconds instead of up to twice a second.
+
+Known issues:
+
+- A friend in power armor is drawn on the AtomCat frame instead of the plain one (hidden under the armor pieces).
+- Two players opening or closing the same door at the same instant can end up seeing it differently; using the door again puts them back in step.
