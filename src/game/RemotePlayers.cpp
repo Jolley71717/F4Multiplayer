@@ -3,6 +3,7 @@
 #include "game/DeferredDelete.h"
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
+#include "game/FriendLight.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/Prediction.h"
@@ -76,7 +77,7 @@ namespace RemotePlayers
 			Clock::time_point    knownAt{};    // when we first heard of them
 			bool                 lightOn = false;  // their Pip-Boy light
 			RE::ObjectRefHandle  light;            // the light that stands in for it, following the stand-in
-			Clock::time_point    lightPlacedAt{};
+			FriendLight::Track   lightTrack;       // when it was placed, and whether its cell was drawn since (see FriendLight::Frame)
 			StandInRange::Track  range;  // the current stand-in: when it was placed and whether it was drawn (see StandInRange::Frame)
 			bool                 powerArmorOn = false;   // they are in power armor
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
@@ -447,44 +448,56 @@ namespace RemotePlayers
 		void DeleteLight(RemotePlayer& a_player)
 		{
 			if (const auto light = a_player.light.get()) {
-				Bury({ .actor = a_player.light, .spawnedAt = a_player.lightPlacedAt });
+				Bury({ .actor = a_player.light, .spawnedAt = a_player.lightTrack.placedAt });
 			}
 			a_player.light = {};
 		}
 
-		// Two references in one place: the same cell, or both outside in the same worldspace (a neighbouring cell
-		// outside is the same place: a stand-in walks on across cell borders). Not known while either is still
-		// attaching (no cell yet).
-		std::optional<bool> SamePlace(RE::TESObjectREFR* a_one, RE::TESObjectREFR* a_other)
+		// Where a reference is, as FriendLight::SamePlace compares places.
+		FriendLight::Place PlaceOf(RE::TESObjectREFR* a_ref)
 		{
-			const auto cell = a_one->GetParentCell();
-			const auto otherCell = a_other->GetParentCell();
-			if (!cell || !otherCell) {
-				return std::nullopt;
+			FriendLight::Place place;
+			if (const auto cell = a_ref ? a_ref->GetParentCell() : nullptr) {
+				place.cell = cell->GetFormID();
+				place.interior = cell->IsInterior();
+				place.worldspace = !place.interior && cell->worldSpace ? cell->worldSpace->GetFormID() : 0;
 			}
-			return cell == otherCell || (cell->IsExterior() && otherCell->IsExterior() && cell->worldSpace == otherCell->worldSpace);
+			return place;
 		}
 
-		// Keeps a light at the stand-in while their Pip-Boy light is on, and removes it when it goes off.
+		// Two references in one place: the same cell, or both outside in the same worldspace (FriendLight::SamePlace).
+		std::optional<bool> SamePlace(RE::TESObjectREFR* a_one, RE::TESObjectREFR* a_other)
+		{
+			return FriendLight::SamePlace(PlaceOf(a_one), PlaceOf(a_other));
+		}
+
+		// Keeps a light at the stand-in while their Pip-Boy light is on, and removes it when it goes off. It is remade only
+		// when the stand-in went into another place, or its own cell is leaving the loaded area (FriendLight::Frame).
 		void UpdateLight(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
 		{
 			auto light = a_player.light.get();
-			if (!a_player.lightOn || !a_actor || !a_actor->Get3D()) {
-				if (light) {
-					DeleteLight(a_player);
+			FriendLight::Facts facts;
+			facts.wanted = a_player.lightOn && a_actor && a_actor->Get3D();
+			facts.lit = static_cast<bool>(light);
+			if (light) {
+				facts.light = PlaceOf(light.get());
+				if (const auto lightCell = light->GetParentCell()) {
+					facts.lightCell = static_cast<StandInRange::CellState>(std::to_underlying(lightCell->cellState));
 				}
+			}
+			if (a_actor) {
+				facts.standIn = PlaceOf(a_actor);
+			}
+			const auto action = FriendLight::Frame(a_player.lightTrack, facts, a_now);
+			if (action == FriendLight::Action::kNone) {
 				return;
 			}
-			// The stand-in went into another place (an interior, out of doors, another worldspace): the light is
-			// remade there (a reference stays in the cell it was created in). Outside, a neighbouring cell is the
-			// same place, as a stand-in's own cell isn't kept up to date while it walks (it was remade every frame
-			// once the stand-in had walked out of its first cell): there the light is remade only once its own
-			// cell has left the loaded area.
-			const auto lightCell = light ? light->GetParentCell() : nullptr;
-			const auto samePlace = light ? SamePlace(light.get(), a_actor) : std::nullopt;
-			if (light && lightCell && ((samePlace && !*samePlace) || !lightCell->IsAttached())) {
+			if (action == FriendLight::Action::kRemove || action == FriendLight::Action::kReplace) {
 				DeleteLight(a_player);
 				light = nullptr;
+			}
+			if (action == FriendLight::Action::kRemove) {
+				return;
 			}
 			RE::NiPoint3 at = a_actor->data.location;
 			at.z += LIGHT_HEIGHT;
@@ -505,7 +518,7 @@ namespace RemotePlayers
 					return;
 				}
 				a_player.light = handle;
-				a_player.lightPlacedAt = a_now;
+				FriendLight::Placed(a_player.lightTrack, a_now);
 				++lightsPlaced;
 				SaveGuard::Track(light.get());
 			}
@@ -1703,7 +1716,7 @@ namespace RemotePlayers
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
 			// engine unloading it would write the record out and crash on the cell it no longer has. A frame copy the
 			// stand-in is in is the engine's: only its record goes (it goes with the stand-in).
-			if (const auto light = remote.light.get(); Adrift(light.get(), remote.lightPlacedAt, now)) {
+			if (const auto light = remote.light.get(); Adrift(light.get(), remote.lightTrack.placedAt, now)) {
 				++adrift;
 				DeleteLight(remote);
 			}
