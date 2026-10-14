@@ -1,5 +1,6 @@
 ﻿#include "game/Puppets.h"
 
+#include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
 
@@ -23,6 +24,9 @@ namespace Puppets
 			Motion                                target;
 			bool                                  hasTarget = false;
 			bool                                  moving = false;  // locomotion graph is in its moving state
+			Gait::Kind                            gait = Gait::Kind::kWalk;  // the gait its graph was last told (Gait.h)
+			float                                 gaitSpeed = 0.0f;           // the smoothed speed it goes by
+			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
@@ -230,9 +234,28 @@ namespace Puppets
 			static const RE::BSFixedString sneakStart{ "sneakStart" };
 			static const RE::BSFixedString sneakStop{ "sneakStop" };
 
+			static const RE::BSFixedString walkMultVar{ "WalkSpeedMult" };
+			static const RE::BSFixedString runMultVar{ "RunSpeedMult" };
+			static const RE::BSFixedString weaponWalkMultVar{ "fLocomotionWalkPlaybackSpeed" };
+			static const RE::BSFixedString weaponRunMultVar{ "fLocomotionRunPlaybackSpeed" };
+			static const RE::BSFixedString gaitSyncVar{ "iSyncLocomotionSpeed" };
+			static const RE::BSFixedString weaponGaitVar{ "iLocomotionSpeedState" };
+
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
 			const auto  now = std::chrono::steady_clock::now();
+
+			// Walk or run (Gait.h): only a humanoid graph has the walk's playback rate. The sync
+			// variables go first, so a moveStart below enters the right gait.
+			float      walkMult = 0.0f;
+			const bool humanoid = graph->GetGraphVariableImplFloat(walkMultVar, walkMult);
+			const float seconds = a_puppet.gaitAt == std::chrono::steady_clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - a_puppet.gaitAt).count();
+			const float gaitSpeed = Gait::Smooth(a_puppet.gaitSpeed, motion.speed, seconds);
+			const auto  gait = humanoid ? Gait::Pick(gaitSpeed, a_puppet.gait, motion.moveMode) : a_puppet.gait;
+			if (humanoid) {
+				graph->SetGraphVariableInt(gaitSyncVar, Gait::SyncValue(gait));
+				graph->SetGraphVariableInt(weaponGaitVar, Gait::WeaponState(gait));
+			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
 			// A refused start is tested with a stop; a mirrored NPC's that the stop does not explain (an idle
@@ -241,6 +264,17 @@ namespace Puppets
 				return graph->NotifyAnimationGraphImpl(a_event == MoveSync::Event::kStart ? moveStart : moveStop);
 			});
 			const bool moving = step.moving;
+			if (humanoid) {
+				graph->SetGraphVariableFloat(walkMultVar, Gait::Playback(gaitSpeed, Gait::WALK_CLIP));
+				graph->SetGraphVariableFloat(runMultVar, Gait::Playback(gaitSpeed, Gait::RUN_CLIP));
+				graph->SetGraphVariableFloat(weaponWalkMultVar, Gait::Playback(gaitSpeed, Gait::WEAPON_WALK_CLIP));
+				graph->SetGraphVariableFloat(weaponRunMultVar, Gait::Playback(gaitSpeed, Gait::WEAPON_RUN_CLIP));
+				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
+					// The graph in use takes its own one and refuses the other.
+					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::Event(gait) });
+					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::WeaponEvent(gait) });
+				}
+			}
 			// What the engine's own move actions keep and our bare events do not: a jump's take-off and
 			// landing, sneaking and standing up, the end of a stagger and the attacks pick their standing or
 			// moving version by it. Set before the sneak and jump events below.
@@ -266,7 +300,7 @@ namespace Puppets
 			graph->SetGraphVariableFloat(speedVar, moving ? motion.speed : 0.0f);
 			graph->SetGraphVariableFloat(directionVar, motion.direction);
 
-			if (step.nextResync != a_puppet.nextResync || moving != a_puppet.moving || motion.flags != a_puppet.appliedFlags) {
+			{
 				std::uint32_t resyncs = 0;
 				{
 					std::scoped_lock l{ lock };
@@ -275,6 +309,9 @@ namespace Puppets
 						entry->resyncsTaken += step.resent != nullptr;
 						resyncs = entry->resyncsTaken;
 						entry->moving = moving;
+						entry->gait = gait;
+						entry->gaitSpeed = gaitSpeed;
+						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
 					}
 				}
