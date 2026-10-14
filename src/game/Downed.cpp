@@ -42,6 +42,13 @@ namespace Downed
 			return DownRules::IsDownState(LifeState(a_actor));
 		}
 
+		// A menu has the game stopped (the pause menu, the Pip-Boy): it stands nobody up meanwhile.
+		bool GamePaused()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			return ui && ui->menuMode > 0;
+		}
+
 		// Dead, or on the way there.
 		bool Dying(RE::Actor* a_actor)
 		{
@@ -189,7 +196,7 @@ namespace Downed
 		const bool enabled = Config::Get().revive && a_withFriends && WorldSync::InWorld();
 		const auto now = Clock::now();
 
-		const DownRules::Facts facts{ .enabled = enabled, .essential = essential, .down = InEssentialDown(player), .dead = Dying(player) };
+		const DownRules::Facts facts{ .enabled = enabled, .essential = essential, .down = InEssentialDown(player), .dead = Dying(player), .paused = GamePaused() };
 		Apply(player, self.Frame(facts, now));
 
 		// With the teleport key off, Party doesn't see the hold: watch the fallback key here.

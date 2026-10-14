@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <set>
@@ -52,6 +54,42 @@ namespace DownRules
 		return a_dead || a_disabled || IsDownState(a_lifeState);
 	}
 
+	// The health friends are told (Party's status), in percent of the maximum; 0 is dead. a_isDead is the game's
+	// IsDead, true while the player is on the ground too; a_onGround is Self::IsDown, down or helped and getting
+	// up, and then the real health is told (at least 1). Helped and still on the ground, the player was told as
+	// no longer down with no health: friends read "Host died", and "is back up" never came.
+	inline std::uint8_t StatusHealth(bool a_isDead, bool a_onGround, float a_current, float a_maximum)
+	{
+		if ((a_isDead && !a_onGround) || a_maximum <= 0.0f) {
+			return 0;
+		}
+		return static_cast<std::uint8_t>(std::clamp(std::lround(a_current / a_maximum * 100.0f), 1L, 100L));
+	}
+
+	// What a friend's new status tells us about them, against the one before.
+	enum class FriendNews
+	{
+		kNone,
+		kDown,    // "... is down!"
+		kDied,    // "... died"
+		kBackUp,  // "... is back up"
+	};
+
+	constexpr FriendNews ReadFriendStatus(bool a_wasDowned, std::uint8_t a_wasHealth, bool a_downed, std::uint8_t a_health)
+	{
+		const bool wasDead = a_wasHealth == 0 && !a_wasDowned;
+		if (a_downed && !a_wasDowned) {
+			return FriendNews::kDown;
+		}
+		if (a_health == 0 && !a_downed && !wasDead) {
+			return FriendNews::kDied;
+		}
+		if (a_wasDowned && !a_downed && a_health > 0) {
+			return FriendNews::kBackUp;
+		}
+		return FriendNews::kNone;
+	}
+
 	// What the game shows of our player this frame.
 	struct Facts
 	{
@@ -59,6 +97,7 @@ namespace DownRules
 		bool essential = false;  // our essential flag is on the player's character
 		bool down = false;       // the game has them down (IsDownState)
 		bool dead = false;       // dead or dying
+		bool paused = false;     // a menu has the game stopped (the pause menu, the Pip-Boy)
 	};
 
 	// What to do about it this frame.
@@ -112,6 +151,7 @@ namespace DownRules
 					phase = Phase::kUp;  // up again by itself (a save and load, a console command)
 					step.stayDown = false;
 				} else if (giveUp || !a_facts.enabled || a_now - downSince >= BLEEDOUT_TIME) {
+					// Bleeding out counts real time, paused or not: friends' games go on while ours is stopped.
 					BleedOut(step, a_now);
 				} else {
 					// A save clears both flags (Downed::OnBeforeSave); still down, so set them again.
@@ -125,11 +165,16 @@ namespace DownRules
 				}
 				break;
 			case Phase::kGettingUp:
+				// A stopped game stands nobody up, so time in a menu does not count toward GET_UP_TIME: a player
+				// who opened the pause menu right after being helped was killed there 20 s later.
+				if (a_facts.paused) {
+					pausedGettingUp += a_now - (std::max)(lastFrame, revivedAt);
+				}
 				if (!a_facts.down) {
 					phase = Phase::kUp;
 					step.stayDown = false;
 					step.trimHealth = true;
-				} else if (a_now - revivedAt >= GET_UP_TIME) {
+				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME) {
 					// Helped up: the game stands the player up on its own. If it somehow doesn't, they die.
 					BleedOut(step, a_now);
 				} else {
@@ -151,6 +196,7 @@ namespace DownRules
 				}
 				break;
 			}
+			lastFrame = a_now;
 			return step;
 		}
 
@@ -163,6 +209,7 @@ namespace DownRules
 			}
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
+			pausedGettingUp = {};
 			++revives;
 			return true;
 		}
@@ -180,6 +227,7 @@ namespace DownRules
 			}
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
+			pausedGettingUp = {};
 			return true;
 		}
 
@@ -210,6 +258,8 @@ namespace DownRules
 		bool              giveUp = false;
 		Clock::time_point downSince{};
 		Clock::time_point revivedAt{};
+		Clock::duration   pausedGettingUp{};  // of the time since revivedAt, how long the game was paused
+		Clock::time_point lastFrame{};
 		Clock::time_point killedAt{};
 		int               reminders = 0;
 	};

@@ -7,7 +7,9 @@
 
 #include "game/DownRules.h"
 
+#include <algorithm>
 #include <array>
+#include <map>
 #include <span>
 
 namespace
@@ -56,13 +58,13 @@ namespace
 		DownRules::Helper helper;
 		Body              body;
 		bool              withFriends = true;
+		bool              paused = false;  // the pause menu is open
 		int               downNotices = 0;
 		int               kills = 0;
 		std::vector<int>  reminders;
 
-		DownRules::Step Frame(Clock::time_point a_now)
+		void GameFrame()
 		{
-			// The game's own frame first: a pending kill, standing up.
 			if (body.killIn > 0 && --body.killIn == 0) {
 				body.killIn = -1;
 				if (!body.essential) {
@@ -80,10 +82,18 @@ namespace
 					body.fullHealth = true;
 				}
 			}
+		}
+
+		DownRules::Step Frame(Clock::time_point a_now)
+		{
+			// The game's own frame first: a pending kill, standing up. A menu stops all of it.
+			if (!paused) {
+				GameFrame();
+			}
 
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
-			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down) };
+			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -305,6 +315,66 @@ TEST("downed: helped, but the game never stands the player up: they die after GE
 	CHECK(game.downNotices == 1);
 }
 
+TEST("downed: helped, then the pause menu for a minute: the player is not killed, and stands up after it")
+{
+	// The game stands nobody up while paused; the get-up clock ran on, and the player was killed in the menu.
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 1s);
+	game.paused = true;
+	game.Run(now, 60s);
+	CHECK(game.kills == 0);
+	CHECK(game.self.Now() == Phase::kGettingUp);
+	CHECK(game.body.down);
+	game.paused = false;
+	game.Run(now, 5s);
+	CHECK(game.kills == 0);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.down);
+	CHECK(game.body.trims == 1);
+}
+
+TEST("downed: helped and never stood up, with a pause in between: only the time out of the menu counts toward GET_UP_TIME")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	game.body.standUpFrames = 100000;
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	game.paused = true;
+	game.Run(now, DownRules::GET_UP_TIME * 3);
+	game.paused = false;
+	game.Run(now, DownRules::GET_UP_TIME - 5s - 1s);
+	CHECK(game.kills == 0);
+	game.Run(now, 2s);
+	CHECK(game.kills == 1);
+	game.Run(now, 5s);
+	CHECK(game.body.dead);
+}
+
+TEST("downed: down and waiting for help, the pause menu does not stop the bleed-out (friends' time goes on)")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	game.paused = true;
+	game.Run(now, DownRules::BLEEDOUT_TIME);
+	CHECK(game.kills == 1);
+	CHECK(game.self.Now() == Phase::kBledOut);
+	game.paused = false;
+	game.Run(now, 3s);
+	CHECK(game.body.dead);
+}
+
 TEST("downed: a save cleared the flags while down; they are set again next frame")
 {
 	Game game;
@@ -458,14 +528,22 @@ namespace
 		std::size_t  revivesRead = 0;
 		int          helpedUp = 0;  // "You helped ... up"
 		std::optional<Protocol::PlayerStatus> told;  // the last status sent
+		std::map<std::uint32_t, Protocol::PlayerStatus> read;  // friends' statuses, as Party::ApplyStatus keeps them
+		std::vector<DownRules::FriendNews>               news;  // what we were told of friends: down, died, back up
 
+		// As Party::SampleStatus, from the game's IsDead, which is true while down and getting up as well.
 		Protocol::PlayerStatus Status() const
 		{
 			Protocol::PlayerStatus status;
-			status.health = game.body.dead ? 0 : 50;
+			status.health = DownRules::StatusHealth(game.body.dead || game.body.down, game.self.IsDown(), 50.0f, 100.0f);
 			status.level = 10;
-			status.downed = game.self.WaitsForHelp();  // as Party::SampleStatus
+			status.downed = game.self.WaitsForHelp();
 			return status;
+		}
+
+		[[nodiscard]] int Heard(DownRules::FriendNews a_news) const
+		{
+			return static_cast<int>(std::ranges::count(news, a_news));
 		}
 	};
 
@@ -497,6 +575,13 @@ namespace
 			for (const auto& [id, seen] : player->client.Friends()) {
 				if (seen.status) {
 					player->game.helper.SetFriendDown(id, seen.status->downed);
+					if (const auto before = player->read.find(id); before != player->read.end()) {
+						const auto news = DownRules::ReadFriendStatus(before->second.downed, before->second.health, seen.status->downed, seen.status->health);
+						if (news != DownRules::FriendNews::kNone) {
+							player->news.push_back(news);
+						}
+					}
+					player->read[id] = *seen.status;
 				}
 			}
 			const auto& revivedBy = player->client.RevivedBy();
@@ -542,6 +627,11 @@ TEST("downed: through the server, a friend next to the downed host helps them up
 	CHECK(!host.game.body.dead);
 	CHECK(!vm.client.FriendById(host.client.Id())->status->downed);
 	CHECK(host.game.kills == 0);
+	// Helped and still on the ground, the host was told to the friend as no longer down with no health (the game
+	// says dead while down): the friend read "Host died", and "is back up" never came.
+	CHECK(vm.Heard(DownRules::FriendNews::kDown) == 1);
+	CHECK(vm.Heard(DownRules::FriendNews::kDied) == 0);
+	CHECK(vm.Heard(DownRules::FriendNews::kBackUp) == 1);
 
 	// Down again later: helped again.
 	host.game.body.LethalHit();
@@ -549,6 +639,10 @@ TEST("downed: through the server, a friend next to the downed host helps them up
 	CHECK(vm.helpedUp == 2);
 	CHECK(host.game.self.revives == 2);
 	CHECK(host.game.self.Now() == Phase::kUp);
+	CHECK(vm.Heard(DownRules::FriendNews::kDown) == 2);
+	CHECK(vm.Heard(DownRules::FriendNews::kDied) == 0);
+	CHECK(vm.Heard(DownRules::FriendNews::kBackUp) == 2);
+	CHECK(vm.client.FriendById(host.client.Id())->status->health > 0);
 }
 
 TEST("downed: through the server, a downed host nobody reaches bleeds out once and stays dead; the friend fighting with god mode on is never shown down")
@@ -578,6 +672,10 @@ TEST("downed: through the server, a downed host nobody reaches bleeds out once a
 	CHECK(!vm.game.self.IsDown());
 	CHECK(vm.client.FriendById(host.client.Id())->status->health == 0);
 	CHECK(!vm.client.FriendById(host.client.Id())->status->downed);
+	CHECK(vm.Heard(DownRules::FriendNews::kDown) == 1);
+	CHECK(vm.Heard(DownRules::FriendNews::kDied) == 1);
+	CHECK(vm.Heard(DownRules::FriendNews::kBackUp) == 0);
+	CHECK(host.news.empty());  // the friend with god mode on: nothing to tell
 }
 
 TEST("downed: through the server, two friends next to the downed host: only one help-up stands them up")
