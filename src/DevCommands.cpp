@@ -119,8 +119,9 @@ namespace DevCommands
 				       const auto faction = RE::TESForm::GetFormByID<RE::TESFaction>(0x00023C01);  // CurrentCompanionFaction
 				       return faction && actor->IsInFaction(faction);
 			       }()) +
-			       std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} sneaking={} 3dWorld=({:.0f},{:.0f},{:.0f})",
-				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), actor->IsSneaking(), w.x, w.y, w.z);
+			       std::format(" vel=({:.0f},{:.0f},{:.0f}) moveMode={:04X} sneaking={} 3dWorld=({:.0f},{:.0f},{:.0f}) rx={:.1f}",
+				velocity.x, velocity.y, velocity.z, static_cast<std::uint32_t>(static_cast<const RE::ActorState&>(*actor).moveMode), actor->IsSneaking(), w.x, w.y, w.z,
+				actor->data.angle.x * TO_DEGREES);  // looking down is positive
 		}
 
 		std::string DescribeRef(RE::TESObjectREFR* a_ref)
@@ -1276,7 +1277,13 @@ namespace DevCommands
 					float                   f = 0.0f;
 					std::int32_t            n = 0;
 					bool                    b = false;
-					if (holder->GetGraphVariableImplFloat(name, f)) {
+					// The float getter copies any variable's raw bits, so a bool or an int read through it showed 0:
+					// those named like one (bAimActive, iSyncIdleLocomotion) are read as one first.
+					if (args[i].starts_with('b') && holder->GetGraphVariableImplBool(name, b)) {
+						out += std::format("{}={}b ", args[i], b);
+					} else if (args[i].starts_with('i') && holder->GetGraphVariableImplInt(name, n)) {
+						out += std::format("{}={}i ", args[i], n);
+					} else if (holder->GetGraphVariableImplFloat(name, f)) {
 						out += std::format("{}={:.3f} ", args[i], f);
 					} else if (holder->GetGraphVariableImplInt(name, n)) {
 						out += std::format("{}={}i ", args[i], n);
@@ -1302,6 +1309,28 @@ namespace DevCommands
 				ok = holder->SetGraphVariableInt(name, static_cast<int>(ParseFloat(args[3]).value_or(0.0f)));
 			}
 			return ok ? "ok" : "error: set failed";
+		}
+
+		// aim <refHex> [pitchDeg|clear]: where an actor aims (Puppets::DescribeAim): its angles, the point the engine
+		// gives its weapon aim and the pitch that point is at, a stand-in's owner's pitch, and the aim modifier's
+		// variables (bAimActive while it turns the arms). With a pitch, gives it a point that far up (+) or down (-)
+		// along its heading; with clear, forgets its point. A stand-in gets its owner's again on its next update.
+		std::string AimCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: aim <actorRefHex> [pitchDeg|clear]";
+			}
+			if (args.size() < 2) {
+				return Puppets::DescribeAim(actor);
+			}
+			if (args[1] == "clear") {
+				return Puppets::AimAt(actor, std::nullopt);
+			}
+			const auto pitch = ParseFloat(args[1]);
+			return pitch ? Puppets::AimAt(actor, *pitch) : "error: usage: aim <actorRefHex> [pitchDeg|clear]";
 		}
 
 		// event <refHex> <animEvent>: sends an animation graph event (e.g. a locomotion start).
@@ -2103,6 +2132,7 @@ namespace DevCommands
 			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
+			Entry{ "aim", AimCommand },
 			Entry{ "event", AnimEvent },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },

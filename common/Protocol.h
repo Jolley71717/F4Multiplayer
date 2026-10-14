@@ -156,8 +156,8 @@ namespace Protocol
 		// The sender's clock when it was sampled, in ms (any start; it wraps after 49 days), so the receiver can
 		// place it in time however late it came; 0 when not known.
 		std::uint32_t sentMs = 0;
-		// The owner's own graph says where they go and look: Direction, travel relative to facing in 256ths of a
-		// turn (0 forward, 64 right, 128 back, 192 left), and Pitch, the aim up (+) or down (-) in degrees.
+		// Where the owner goes and looks: their graph's Direction, travel relative to facing in 256ths of a turn
+		// (0 forward, 64 right, 128 back, 192 left), and the pitch they aim at, up (+) or down (-) in degrees.
 		std::uint8_t direction = 0;
 		std::int8_t  pitch = 0;
 
@@ -181,7 +181,7 @@ namespace Protocol
 		return static_cast<float>(a_direction) / 256.0f;
 	}
 
-	// PlayerState::pitch from the graph's Pitch in degrees, held to a quarter turn either way.
+	// PlayerState::pitch from a pitch in degrees, held to a quarter turn either way.
 	inline std::int8_t PackPitch(float a_degrees)
 	{
 		return std::isfinite(a_degrees) ? static_cast<std::int8_t>(std::clamp(std::lround(a_degrees), -90L, 90L)) : std::int8_t{ 0 };

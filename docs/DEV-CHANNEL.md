@@ -16,7 +16,8 @@ game's own code can:
 - **Run any console command:** `console tgm` (god mode), `console save f4mptest`,
   `console 000AE12F.removeallitems player` (loot a container), `console startquest 0001F25E`.
 - **Read state:** `status`, `pos`, `refinfo <ref>` (position, health, cell), `count <container> <item>`,
-  `quests [name]`, `actors`, `containers`, `paused` and `net status`, which prints every
+  `aim <actor>` (its pitch, the point its weapon aim turns toward, and the aim modifier's graph
+  variables), `quests [name]`, `actors`, `containers`, `paused` and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
   sounds played, and so on.
 - **Open and close menus:** `menu PipboyMenu force`.
