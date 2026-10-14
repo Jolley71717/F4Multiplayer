@@ -2,6 +2,7 @@
 
 #include "game/EngineRefs.h"
 #include "game/RemoteEdits.h"
+#include "game/SaveStrays.h"
 #include "game/SendPacer.h"
 #include "game/WorkshopApply.h"
 #include "game/WorkshopCells.h"
@@ -408,10 +409,11 @@ namespace WorkshopSync
 				return true;
 			case T::kNPC_: {
 				// Workshop mode builds turrets (and, with Automatron, robots); any other actor from a workshop
-				// message is someone placing creatures or people on us.
+				// message is someone placing creatures or people on us. Those keywords are the race's (a
+				// turret's own record has none), so the race's count too.
 				const auto npc = static_cast<const RE::TESNPC*>(a_base);
 				return !npc->IsUnique() && a_base->GetFormID() != 0x00000007 &&
-				       (npc->HasKeywordString("ActorTypeTurret") || npc->HasKeywordString("ActorTypeRobot"));
+				       (npc->HasApplicableKeywordString("ActorTypeTurret") || npc->HasApplicableKeywordString("ActorTypeRobot"));
 			}
 			default:
 				return false;
@@ -483,6 +485,12 @@ namespace WorkshopSync
 			}
 			if (const auto scale = RemoteEdits::ScaleToApply(a_item, 1.0f)) {
 				ref->SetScale(*scale);
+			}
+			// A turret or robot the game builds is the settlement's, on the players' side, through its
+			// workbench's scripts; a copy has none of that and would fire on us. It goes in the player's
+			// faction (rank 0: rank 1 marks a stand-in, SaveStrays::StandInFaction).
+			if (ref->As<RE::Actor>()) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} 0", ref->GetFormID(), SaveStrays::STAND_IN_FACTION).c_str());
 			}
 			return Copy{ handle, Clock::now() };
 		}
