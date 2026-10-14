@@ -135,11 +135,31 @@ namespace Puppets
 			return AimPoint::Point{ point.x, point.y, point.z };
 		}
 
-		// A stand-in aims where its owner aims (AimPoint.h), from where it stands now.
+		void ClearAimPoint(RE::Actor* a_actor)
+		{
+			if (!CanAim(a_actor)) {
+				return;
+			}
+			static REL::Relocation<void (*)(RE::Actor*)> clearLookAt{ CLEAR_LOOK_AT };
+			clearLookAt(a_actor);
+		}
+
+		// A stand-in aims where its owner aims (AimPoint.h), from where it stands now. A mirrored NPC aims at the
+		// pitch its owner's copy aims at, and lowers its gun when that copy aims at nothing (AimPoint::ForMirror).
 		void Aim(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
-			const auto& at = a_actor->data.location;
-			if (const auto point = AimPoint::ForPuppet(a_puppet.kind == Kind::kPlayer, { at.x, at.y, at.z }, a_puppet.target.heading, a_puppet.target.pitch)) {
+			const auto&           at = a_actor->data.location;
+			const AimPoint::Point feet{ at.x, at.y, at.z };
+			if (a_puppet.kind == Kind::kNpc) {
+				const auto order = AimPoint::ForMirror(a_puppet.target.ownerAim, GetAimPoint(a_actor).has_value(), feet, a_puppet.target.heading);
+				if (order.act == AimPoint::MirrorOrder::Act::kSet) {
+					SetAimPoint(a_actor, order.point);
+				} else if (order.act == AimPoint::MirrorOrder::Act::kClear) {
+					ClearAimPoint(a_actor);
+				}
+				return;
+			}
+			if (const auto point = AimPoint::ForPuppet(true, feet, a_puppet.target.heading, a_puppet.target.pitch)) {
 				SetAimPoint(a_actor, *point);
 			}
 		}
@@ -687,8 +707,10 @@ namespace Puppets
 		const AimPoint::Point from{ at.x, at.y, at.z };
 		auto                  out = std::format("angleX={:.1f} angleZ={:.1f}", a_actor->data.angle.x * AimPoint::TO_DEGREES, a_actor->data.angle.z * AimPoint::TO_DEGREES);
 		if (const auto point = GetAimPoint(a_actor)) {
-			out += std::format(" aimPoint=({:.0f},{:.0f},{:.0f}) aimPitch={:.1f} aimHeading={:.1f}", point->x, point->y, point->z, AimPoint::PitchTo(from, *point),
-				AimPoint::HeadingTo(from, *point) * AimPoint::TO_DEGREES);
+			// shoulderPitch: the pitch from AimPoint::MIRROR_HEIGHT, which NpcSync sends for an NPC this game runs and a
+			// mirrored copy is aimed from.
+			out += std::format(" aimPoint=({:.0f},{:.0f},{:.0f}) aimPitch={:.1f} aimHeading={:.1f} shoulderPitch={:.1f}", point->x, point->y, point->z,
+				AimPoint::PitchTo(from, *point), AimPoint::HeadingTo(from, *point) * AimPoint::TO_DEGREES, AimPoint::OwnerPitch(from, *point).value_or(0.0f));
 		} else {
 			out += CanAim(a_actor) ? " aimPoint=none" : " aimPoint=- (no mover)";
 		}
@@ -696,6 +718,9 @@ namespace Puppets
 			std::scoped_lock l{ lock };
 			if (const auto entry = Find(a_actor); entry && entry->kind == Kind::kPlayer) {
 				out += std::format(" ownerPitch={:.0f}", entry->target.pitch);
+			} else if (entry) {
+				// A mirrored NPC: the pitch its owner's copy aims at, as received (none: it aims at nothing there).
+				out += entry->target.ownerAim ? std::format(" ownerAim={:.0f}", *entry->target.ownerAim) : std::string{ " ownerAim=none" };
 			}
 		}
 		// What the weapon behaviour's aim modifier makes of it: bAimActive while it turns the arms, its offsets
@@ -725,10 +750,15 @@ namespace Puppets
 			const auto& at = a_actor->data.location;
 			SetAimPoint(a_actor, AimPoint::Along({ at.x, at.y, at.z }, a_actor->data.angle.z, *a_pitch));
 		} else {
-			static REL::Relocation<void (*)(RE::Actor*)> clearLookAt{ CLEAR_LOOK_AT };
-			clearLookAt(a_actor);
+			ClearAimPoint(a_actor);
 		}
 		return DescribeAim(a_actor);
+	}
+
+	std::optional<RE::NiPoint3> AimPointOf(const RE::Actor* a_actor)
+	{
+		const auto point = GetAimPoint(a_actor);
+		return point ? std::optional<RE::NiPoint3>{ RE::NiPoint3{ point->x, point->y, point->z } } : std::nullopt;
 	}
 
 	std::string Describe()

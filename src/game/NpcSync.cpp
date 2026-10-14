@@ -1,5 +1,6 @@
 #include "game/NpcSync.h"
 
+#include "game/AimPoint.h"
 #include "game/CommandMeter.h"
 #include "game/CreatureGait.h"
 #include "game/Equipment.h"
@@ -422,6 +423,11 @@ namespace NpcSync
 						state.flags |= Protocol::kOwnGait;
 					}
 				}
+				// The pitch it aims its gun at, from the point its combat AI gave its weapon aim; the copies have no AI
+				// to give them one (AimPoint::ForMirror).
+				if (const auto point = Puppets::AimPointOf(actor)) {
+					state.aimPitch = Protocol::PackAimPitch(AimPoint::OwnerPitch({ pos.x, pos.y, pos.z }, AimPoint::Point{ point->x, point->y, point->z }));
+				}
 				if (actor->GetWeaponMagicDrawn()) {
 					state.flags |= Protocol::kWeaponDrawn;
 				}
@@ -528,6 +534,7 @@ namespace NpcSync
 				.flags = state.flags,
 				.gait = state.gait,
 				.gaitRate = state.gaitRate,
+				.ownerAim = Protocol::UnpackAimPitch(state.aimPitch),
 			};
 		}
 

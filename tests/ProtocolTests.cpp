@@ -191,7 +191,7 @@ namespace
 	{
 		return a.refId == b.refId && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
 		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.direction == b.direction &&
-		       a.gait == b.gait && a.gaitRate == b.gaitRate;
+		       a.gait == b.gait && a.gaitRate == b.gaitRate && a.aimPitch == b.aimPitch;
 	}
 }
 
@@ -441,6 +441,10 @@ TEST("protocol: ActorStates round trip with both message types")
 		for (std::uint32_t i = 0; i < MAX_ACTORS_PER_PACKET; ++i) {
 			in.push_back(MakeActorState(i));
 		}
+		// One whose owner's copy aims at nothing, and ones aiming straight up and down.
+		in[1].aimPitch = NO_AIM;
+		in[2].aimPitch = 90;
+		in[3].aimPitch = -90;
 		const auto packet = Encode(in, type);
 		CHECK(PeekType(packet) == type);
 		const auto out = DecodeActorStates(packet);

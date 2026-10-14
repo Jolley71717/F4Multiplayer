@@ -60,14 +60,65 @@ namespace AimPoint
 		return heading < 0.0f ? heading + 2.0f * PI : heading;
 	}
 
+	inline bool IsFinite(const Point& a_point)
+	{
+		return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z);
+	}
+
 	// The aim point a puppet is given each frame, or none. A friend's stand-in aims where its owner aims, from
-	// where it stands. A mirrored NPC is left alone (its owner's copy's aim is not sent), and so is a puppet
-	// whose place is not known.
+	// where it stands. A mirrored NPC is not (ForMirror gives it its owner's copy's aim), nor is a puppet whose
+	// place is not known.
 	inline std::optional<Point> ForPuppet(bool a_standIn, const Point& a_position, float a_heading, float a_pitch)
 	{
-		if (!a_standIn || !std::isfinite(a_position.x) || !std::isfinite(a_position.y) || !std::isfinite(a_position.z)) {
+		if (!a_standIn || !IsFinite(a_position)) {
 			return std::nullopt;
 		}
 		return Along(a_position, a_heading, a_pitch);
+	}
+
+	// A mirrored NPC's aim is measured and given from this high above its feet, about a person's shoulders, where
+	// its arms turn from. Its owner's copy aims at what it shoots at, often near: a bloatfly 300 units up and 200
+	// out is 56 degrees up from the feet but 44 from the shoulders, and the copy's point is REACH away, where the
+	// two hardly differ.
+	inline constexpr float MIRROR_HEIGHT = 110.0f;
+
+	// The pitch (degrees up) an NPC its owner runs aims at, for ActorState::aimPitch: from MIRROR_HEIGHT above its
+	// feet to the point the engine gives its weapon aim (the one its combat AI set), or none while it has none.
+	inline std::optional<float> OwnerPitch(const Point& a_feet, const std::optional<Point>& a_aimPoint)
+	{
+		if (!a_aimPoint || !IsFinite(*a_aimPoint) || !IsFinite(a_feet)) {
+			return std::nullopt;
+		}
+		const float pitch = PitchTo({ a_feet.x, a_feet.y, a_feet.z + MIRROR_HEIGHT }, *a_aimPoint);
+		return std::isfinite(pitch) ? std::optional<float>{ pitch } : std::nullopt;
+	}
+
+	// What a mirrored NPC's aim point is made each frame. Its AI is off, so nothing else gives it one.
+	struct MirrorOrder
+	{
+		enum class Act
+		{
+			kLeave,  // nothing to do
+			kSet,    // give it point
+			kClear,  // forget its point (Actor::ClearLookAtTarget)
+		};
+		Act   act = Act::kLeave;
+		Point point{};
+	};
+
+	// While its owner's copy aims (a_ownerPitch, from ActorState::aimPitch), the copy is given a point REACH units
+	// along its own heading at that pitch, from MIRROR_HEIGHT above where it stands. While the owner's copy aims at
+	// nothing, a point the copy still has (a_hasPoint: its last one from us, or one its own AI set before it was
+	// taken over) is forgotten, so an NPC that stopped fighting there lowers its gun here rather than holding the
+	// aim. A copy whose place is not known is left as it is.
+	inline MirrorOrder ForMirror(std::optional<float> a_ownerPitch, bool a_hasPoint, const Point& a_feet, float a_heading)
+	{
+		if (!IsFinite(a_feet)) {
+			return {};
+		}
+		if (a_ownerPitch) {
+			return { MirrorOrder::Act::kSet, Along({ a_feet.x, a_feet.y, a_feet.z + MIRROR_HEIGHT }, a_heading, *a_ownerPitch) };
+		}
+		return { a_hasPoint ? MirrorOrder::Act::kClear : MirrorOrder::Act::kLeave, {} };
 	}
 }

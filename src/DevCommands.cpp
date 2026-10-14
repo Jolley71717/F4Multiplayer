@@ -1312,9 +1312,10 @@ namespace DevCommands
 		}
 
 		// aim <refHex> [pitchDeg|clear]: where an actor aims (Puppets::DescribeAim): its angles, the point the engine
-		// gives its weapon aim and the pitch that point is at, a stand-in's owner's pitch, and the aim modifier's
-		// variables (bAimActive while it turns the arms). With a pitch, gives it a point that far up (+) or down (-)
-		// along its heading; with clear, forgets its point. A stand-in gets its owner's again on its next update.
+		// gives its weapon aim and the pitch that point is at, a stand-in's owner's pitch or the pitch a mirrored NPC's
+		// owner's copy aims at (ownerAim), and the aim modifier's variables (bAimActive while it turns the arms). With
+		// a pitch, gives it a point that far up (+) or down (-) along its heading; with clear, forgets its point. A
+		// stand-in or a mirrored NPC gets its owner's again on its next update.
 		std::string AimCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);

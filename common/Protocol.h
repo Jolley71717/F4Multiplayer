@@ -479,6 +479,9 @@ namespace Protocol
 		std::uint32_t playerId = 0;  // 0 = nobody
 	};
 
+	// ActorState::aimPitch while the owner's copy aims at nothing: a value PackPitch never gives.
+	inline constexpr std::int8_t NO_AIM = -128;
+
 	struct ActorState
 	{
 		std::uint32_t refId = 0;
@@ -492,12 +495,30 @@ namespace Protocol
 		std::uint8_t  direction = 0;  // with kOwnDirection: the owner's graph's Direction, as PlayerState::direction
 		std::uint8_t  gait = 0;       // with kOwnGait: the state its owner's graph walks, trots or runs in (CreatureGait.h)
 		std::uint8_t  gaitRate = 0;   // with kOwnGait: the rate that state's clip plays at there, in 64ths
+		// The pitch its owner's copy aims its gun at, up (+) or down (-) in degrees (AimPoint.h), or NO_AIM while that
+		// copy has no aim point. The flags have no bit left to say which.
+		std::int8_t aimPitch = NO_AIM;
 
 		[[nodiscard]] bool IsFinite() const
 		{
 			return InWorld(x) && InWorld(y) && InWorld(z) && std::isfinite(heading) && std::isfinite(speed);
 		}
 	};
+
+	// ActorState::aimPitch from the pitch an NPC aims at in degrees (held to a quarter turn either way), or from none.
+	inline std::int8_t PackAimPitch(std::optional<float> a_degrees)
+	{
+		return a_degrees && std::isfinite(*a_degrees) ? PackPitch(*a_degrees) : NO_AIM;
+	}
+
+	// The pitch an ActorState says its owner's copy aims at, or none (NO_AIM, or a value no sender makes).
+	inline std::optional<float> UnpackAimPitch(std::int8_t a_aimPitch)
+	{
+		if (a_aimPitch < -90 || a_aimPitch > 90) {
+			return std::nullopt;
+		}
+		return static_cast<float>(a_aimPitch);
+	}
 
 	// kPlayerHit: playerId is the victim; byPlayer = the sender hit them (friendly fire), not an
 	// NPC in the sender's world. kPlayerDamaged: playerId is the sender of the kPlayerHit.
@@ -1731,6 +1752,7 @@ namespace Protocol
 			w.U8(a.direction);
 			w.U8(a.gait);
 			w.U8(a.gaitRate);
+			w.U8(static_cast<std::uint8_t>(a.aimPitch));
 		});
 	}
 
@@ -1751,6 +1773,7 @@ namespace Protocol
 			a.direction = r.U8();
 			a.gait = r.U8();
 			a.gaitRate = r.U8();
+			a.aimPitch = static_cast<std::int8_t>(r.U8());
 			return a;
 		});
 		if (states && !std::ranges::all_of(*states, [](const ActorState& a) { return a.IsFinite(); })) {

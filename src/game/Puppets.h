@@ -17,6 +17,9 @@ namespace Puppets
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
 		std::uint8_t  gait = 0;          // with Protocol::kOwnGait: a mirrored dog's gait and its clip's rate in its owner's game
 		std::uint8_t  gaitRate = 0;      // (Protocol::ActorState::gait, gaitRate; CreatureGait.h)
+		// A mirrored NPC: the pitch its owner's copy aims its gun at (Protocol::ActorState::aimPitch), none while that
+		// copy aims at nothing (AimPoint::ForMirror).
+		std::optional<float> ownerAim;
 	};
 
 	enum class Kind
@@ -54,12 +57,17 @@ namespace Puppets
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
 
 	// Dev: where any actor aims (AimPoint.h): its angles in degrees, the point the engine gives its weapon aim
-	// (and the pitch and heading that point is at from its feet), the pitch a stand-in's owner sent, and the aim
-	// modifier's graph variables.
+	// (and the pitch and heading that point is at from its feet, and the pitch from its shoulders that NpcSync sends),
+	// the pitch a stand-in's owner sent or a mirrored NPC's owner's copy aims at (ownerAim), and the aim modifier's
+	// graph variables.
 	[[nodiscard]] std::string DescribeAim(const RE::Actor* a_actor);
 
+	// The point the engine gives an actor's weapon aim (the one Actor::SetLookAtTarget left, which an NPC's combat
+	// AI sets to what it shoots at), or none: what NpcSync sends of the NPCs it runs (AimPoint::OwnerPitch).
+	[[nodiscard]] std::optional<RE::NiPoint3> AimPointOf(const RE::Actor* a_actor);
+
 	// Dev: gives any actor an aim point a_pitch degrees up (or down) along its heading, or with none forgets its
-	// point, and describes its aim. A stand-in is given its owner's again on its next update.
+	// point, and describes its aim. A stand-in or a mirrored NPC is given its owner's again on its next update.
 	std::string AimAt(RE::Actor* a_actor, std::optional<float> a_pitch);
 
 	// Lets the engine run the actor's own update (AI and all) for a while, for a furniture interaction
