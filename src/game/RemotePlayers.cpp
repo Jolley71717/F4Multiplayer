@@ -288,25 +288,20 @@ namespace RemotePlayers
 			return KindOf(a_item) == ArmorFrames::Item::kPiece;
 		}
 
-		// The items a stand-in dressed so wears (see ArmorFrames::Wears), in their order.
-		std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, ArmorFrames::Dress a_dress)
+		// The items of a list a stand-in dressed so wears (see ArmorFrames::Kept), in their order; a_theirs is what they have
+		// on, which says whether their frame item counts.
+		std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, const std::vector<std::uint32_t>& a_theirs, ArmorFrames::Dress a_dress)
 		{
-			std::vector<std::uint32_t> out;
-			for (const auto item : a_items) {
-				if (ArmorFrames::Wears(a_dress, KindOf(item))) {
-					out.push_back(item);
-				}
-			}
-			return out;
+			return ArmorFrames::Kept(a_items, a_theirs, a_dress, KindOf);
 		}
 
 		// What a stand-in should wear now, dressed as the engine has it (ArmorFrames::ChooseDress): out of a frame, all the
 		// owner has on but the power armor pieces and the frame (their gear list names those while they are in theirs, and
 		// the stand-in is not in its own until both are loaded, or ever, should the switch not take); in its frame, their
-		// pieces and weapons.
+		// pieces, weapons and frame item (in place of the one the engine picked, see ArmorFrames::Wears).
 		std::vector<std::uint32_t> Outfit(const RemotePlayer& a_player, ArmorFrames::Dress a_dress)
 		{
-			return Kept(a_player.gear.items, a_dress);
+			return Kept(a_player.gear.items, a_player.gear.items, a_dress);
 		}
 
 		std::vector<std::uint32_t> Wearable(const std::vector<std::uint32_t>& a_items)
@@ -1746,17 +1741,18 @@ namespace RemotePlayers
 			}
 
 			// Dressed as the engine has it (ArmorFrames::ChooseDress; StandInGear::Dress says what goes on). Apply empties the
-			// inventory first, which in its frame would take the frame the engine put on it, so in a frame only the pieces and
-			// weapons are put on; what it wears besides them is not looked at there. In its frame but still on its own body
-			// (the rebuild the switch-in queued has not run), nothing is put on or looked at: the pieces would hang off the
-			// wrong skeleton. A change they reported while it is dressed is put on over what it wears (WearOnStandIn takes off what
-			// they no longer have on and leaves the rest), at most once a StandInGear::CHANGE_GAP; its gun is put away and
-			// drawn again only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent.
+			// inventory first, which in its frame would take the frame the engine put on it, so in a frame only the pieces,
+			// weapons and their frame item are put on; what it wears besides them is not looked at there. In its frame but
+			// still on its own body (the rebuild the switch-in queued has not run), nothing is put on or looked at: the pieces
+			// would hang off the wrong skeleton. A change they reported while it is dressed is put on over what it wears
+			// (WearOnStandIn takes off what they no longer have on and leaves the rest), at most once a
+			// StandInGear::CHANGE_GAP; its gun is put away and drawn again only when it was taken off it or swapped: over a
+			// hat or their last grenade, their shots went silent.
 			const bool inArmor = Equipment::InPowerArmor(actor);
 			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
-			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
+			const auto shown = [&](const std::vector<std::uint32_t>& a_theirs) { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), a_theirs, dress) : Equipment::Read(actor); };
 			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
-				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });
+				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown(a_worn)) == Wearable(Kept(a_worn, a_worn, dress)); });
 			switch (dressing.put) {
 			case StandInGear::Put::kApply:
 				Equipment::Apply(actor, Outfit(remote, dress), remote.gear.mods);
@@ -1778,8 +1774,8 @@ namespace RemotePlayers
 			if (dressing.refit) {
 				++equipmentFixesTotal;
 				std::string worn, wanted;
-				for (const auto item : Wearable(shown())) worn += std::format("{:08X} ", item);
-				for (const auto item : Wearable(Kept(remote.gear.worn, dress))) wanted += std::format("{:08X} ", item);
+				for (const auto item : Wearable(shown(remote.gear.worn))) worn += std::format("{:08X} ", item);
+				for (const auto item : Wearable(Kept(remote.gear.worn, remote.gear.worn, dress))) wanted += std::format("{:08X} ", item);
 				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 

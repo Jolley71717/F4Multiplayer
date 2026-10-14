@@ -1,9 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "Protocol.h"
 
@@ -143,8 +145,8 @@ namespace ArmorFrames
 	{
 		kClothes,  // out of power armor: their gear put on afresh (Equipment::Apply empties its inventory first)
 		kWait,     // in its frame, its 3D not rebuilt yet: nothing put on or looked at
-		kArmor,    // in its frame on the power armor skeleton: their pieces and weapons put on, its inventory left as it is
-		           // (emptied, the frame the engine put on it would go too)
+		kArmor,    // in its frame on the power armor skeleton: their pieces, weapons and frame put on, its inventory left
+		           // as it is (emptied, the frame the engine put on it would go too)
 	};
 
 	constexpr Dress ChooseDress(bool a_in, bool a_rebuilt)
@@ -166,17 +168,43 @@ namespace ArmorFrames
 	// Whether the stand-in wears an item of theirs, dressed so. In its frame, clothes put on would go under the armor at
 	// best, or take the frame's slots; out of it, neither a piece nor the frame ever goes on its own body; waiting for
 	// the power armor skeleton, nothing at all.
+	// In its frame their frame item goes on in place of the one the engine picked. The engine picks it by what the actor
+	// wears (PowerArmor's frame pick, 2219424 in 1.11.240): the first frame armor whose other keywords are on an item it
+	// has equipped, else the default frame (PowerArmorDefaultFrameArmor_DO, 001909D6, the AtomCat frame). The plain
+	// frame (0003E577) goes to an actor in a vault suit, which a friend in a frame no longer wears (the frame takes its
+	// body slot), so their stand-in got the AtomCat frame on every wear while they wore the plain one. And once their
+	// pieces are on, every pick (the engine picks again as it puts an actor's outfit back on, 2230445) finds the AtomCat
+	// frame first: its ArmorTypePower keyword is on every piece.
 	constexpr bool Wears(Dress a_dress, Item a_item)
 	{
 		switch (a_dress) {
 		case Dress::kArmor:
-			return a_item == Item::kPiece || a_item == Item::kWeapon;
+			return a_item == Item::kPiece || a_item == Item::kWeapon || a_item == Item::kFrame;
 		case Dress::kWait:
 			return false;
 		case Dress::kClothes:
 			return a_item != Item::kPiece && a_item != Item::kFrame;
 		}
 		return false;
+	}
+
+	// The items of a list a stand-in dressed so wears (Wears), in their order; a_kindOf(item) says what each is. a_theirs
+	// is what they have on: in its frame, a frame item counts only when theirs names one this game has (a_kindOf says
+	// kFrame of it). They name none for a moment as they get in, and one from a plugin this game lacks is no frame here:
+	// the frame the engine picked then stays on it, and is not looked at, or the gear check would find the stand-in in
+	// something else than it was dressed in for as long as they wear that frame.
+	template <class KindOf>
+	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, const std::vector<std::uint32_t>& a_theirs, Dress a_dress, KindOf&& a_kindOf)
+	{
+		const bool frameNamed = std::ranges::any_of(a_theirs, [&](std::uint32_t a_item) { return a_kindOf(a_item) == Item::kFrame; });
+		std::vector<std::uint32_t> out;
+		for (const auto item : a_items) {
+			const auto kind = a_kindOf(item);
+			if (Wears(a_dress, kind) && (kind != Item::kFrame || frameNamed)) {
+				out.push_back(item);
+			}
+		}
+		return out;
 	}
 
 	// Where they were as they got into a pre-placed frame (see ChooseOriginal) is taken from their newest state only
