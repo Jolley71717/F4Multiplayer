@@ -69,6 +69,14 @@ namespace RemoteEdits
 		return a_sharedStory || !FoundDead::IsStoryCharacter(a_npc);
 	}
 
+	// A friend's game killed an NPC that is switched off in ours (it switched it on and it died before any state of it
+	// reached us): ours is switched on to be killed, once its cell is drawn (until then there is nothing to see), and
+	// under the same story rule. Off, it never loads, and the kill waited for good: no corpse, no loot.
+	constexpr bool SwitchOnToKill(bool a_off, bool a_deleted, bool a_cellDrawn, bool a_sharedStory, const FoundDead::Npc& a_npc)
+	{
+		return a_off && !a_deleted && a_cellDrawn && MaySwitchOn(a_sharedStory, a_npc);
+	}
+
 	// A friend's companion is moved to where their game says it is (from a cell we haven't loaded, or after
 	// its owner's copy ran off) only while that is beside the friend's own stand-in: a companion follows its
 	// player. Its uniqueness is no reason to leave it behind (every vanilla companion is unique).

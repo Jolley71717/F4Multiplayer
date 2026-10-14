@@ -198,6 +198,8 @@ namespace WorldSync
 
 		std::uint32_t                     storyKillsKept = 0;  // story characters a friend killed away from us: alive here (own story)
 		std::unordered_set<std::uint32_t> storyKillsLogged;
+		std::uint32_t                     switchedOnToKill = 0;  // off here, on and killed in the reporter's game: switched on to die
+		std::unordered_set<std::uint32_t> switchOnTried;
 
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be, or is not to be), false to try again later.
@@ -219,6 +221,20 @@ namespace WorldSync
 			if (actor && actor->IsDead(false)) {
 				dead.SawDead(a_refId);
 				return true;
+			}
+			// Off here, while the reporter's game switched it on and it died there before any state of it reached us (a
+			// script enabled it: the mole rats that burrow up at Red Rocket): switched on once its cell is drawn, as NpcSync
+			// does for one whose owner's copy runs, so the kill finds it and leaves a corpse here too. Off, it has no 3D and
+			// the kill waited for good. Never a character of our own story (RemoteEdits::MaySwitchOn); tried once.
+			if (actor && actor->IsDisabled() && !actor->IsDeleted()) {
+				const auto cell = actor->GetParentCell();
+				if (RemoteEdits::SwitchOnToKill(true, false, cell && cell->IsAttached(), Story::Shared(), DescribeStory(actor)) && switchOnTried.insert(a_refId).second) {
+					RE::Console::ExecuteCommand(std::format("{:08X}.enable", a_refId).c_str());
+					NpcSync::CountCommands(1);
+					++switchedOnToKill;
+					REX::INFO("WorldSync: switching {:08X} on to kill it: it is off here, and died in player {}'s game", a_refId, a_death.reporter);
+				}
+				return false;  // killed once it has loaded
 			}
 			if (!LoadedActor(a_refId)) {
 				return false;  // not loaded yet; try again when its cell loads
@@ -1386,6 +1402,7 @@ namespace WorldSync
 		dead.Reset(Clock::now());
 		reports.Clear();
 		storyKillsLogged.clear();
+		switchOnTried.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
 		pickedUpKnown.clear();
@@ -1479,6 +1496,6 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
-		       std::format(" storyKillKept={} loadApplied={} retryUs={}/{} revived={} settled={}", storyKillsKept, loadApplied, retryUs, retryUsMax, dead.Revived(), dead.Settled(Clock::now()));
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax, dead.Revived(), dead.Settled(Clock::now()));
 	}
 }

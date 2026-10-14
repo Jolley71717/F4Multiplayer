@@ -138,6 +138,9 @@ namespace RemotePlayers
 			const RE::Actor*                 puppet = nullptr;
 			std::uint32_t                    puppetId = 0;
 			std::uint32_t                    id = 0;  // the reference's form ID, for when its handle stops resolving (SaveGuard::Forget)
+			// A frame whose stand-in is kept for the player's conversation while in it: it waits for the stand-in (hidden
+			// with it), instead of being disabled from under the actor held in it.
+			RE::ObjectRefHandle              wearer;
 		};
 		std::vector<Grave> graveyard;
 		std::uint32_t      flushedBeforeSave = 0;
@@ -196,6 +199,17 @@ namespace RemotePlayers
 			return true;
 		}
 
+		// A frame waits while the stand-in kept in it is still there (see Grave::wearer), hidden with it.
+		bool WaitsForWearer(const Grave& a_grave, RE::TESObjectREFR* a_ref)
+		{
+			const auto wearer = a_grave.wearer.get();
+			if (!wearer || wearer->IsDisabled() || wearer->IsDeleted()) {
+				return false;
+			}
+			Hide(a_ref);
+			return true;
+		}
+
 		// Disables the reference now if it is safe to, and leaves it to the graveyard to delete. One that has lost its
 		// cell already (the cells were cleared under it: a door, a coc, a fast travel) has its record dropped at once
 		// (see SaveGuard::ExcludeOurs), and again each frame while it waits (see Update).
@@ -212,7 +226,8 @@ namespace RemotePlayers
 			if (!ref->GetParentCell()) {
 				SaveGuard::ExcludeOurs(ref.get());
 			}
-			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt) && !HeldForConversation(a_grave, ref.get(), now)) {
+			if (DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt) && !HeldForConversation(a_grave, ref.get(), now) &&
+				!WaitsForWearer(a_grave, ref.get())) {
 				Disable(a_grave, ref.get(), now);
 			}
 			graveyard.push_back(a_grave);
@@ -662,16 +677,17 @@ namespace RemotePlayers
 		// Every frame of ours goes this way, whether or not its stand-in can still be found: the stand-in's own frame is
 		// known from the stand-in, and a copy buried after the game had taken the stand-in from under us used to keep its
 		// promotion in the persistence manager for the rest of the session.
-		void BuryFrame(RE::TESObjectREFR* a_frame, Clock::time_point a_placedAt)
+		// a_wearer: the stand-in kept for the player's conversation while in this frame (see Grave::wearer).
+		void BuryFrame(RE::TESObjectREFR* a_frame, Clock::time_point a_placedAt, RE::ObjectRefHandle a_wearer = {})
 		{
 			Equipment::ReleasePowerArmorFrame(a_frame);
-			Bury({ .actor = a_frame->GetHandle(), .spawnedAt = a_placedAt });
+			Bury({ .actor = a_frame->GetHandle(), .spawnedAt = a_placedAt, .wearer = a_wearer });
 		}
 
 		// The frame placed for the stand-in is removed once they are out of it a while (or the stand-in is gone).
 		// a_standIn is the stand-in the copy was placed for: in it (the engine's, disabled) or standing in it where they
 		// got out, it is never someone here who got into it.
-		void DeleteFrame(RemotePlayer& a_player, const RE::Actor* a_standIn = nullptr)
+		void DeleteFrame(RemotePlayer& a_player, const RE::Actor* a_standIn = nullptr, RE::ObjectRefHandle a_wearer = {})
 		{
 			if (const auto frame = a_player.frame.get()) {
 				// Someone here may have got into the friend's frame copy (it stands drawn and solid where they got out):
@@ -683,7 +699,7 @@ namespace RemotePlayers
 				if (OurFrame(frame.get()) || FrameInUse(frame.get(), a_standIn)) {
 					REX::INFO("RemotePlayers: someone here is in player {}'s frame copy {:08X}; leaving it", a_player.id, frame->GetFormID());
 				} else {
-					BuryFrame(frame.get(), a_player.framePlacedAt);
+					BuryFrame(frame.get(), a_player.framePlacedAt, a_wearer);
 				}
 			}
 			a_player.frame = {};
@@ -1110,11 +1126,11 @@ namespace RemotePlayers
 		// A stand-in in its frame is about to go (never to get out of it): that frame goes with it, let go of by the engine
 		// first (BuryFrame). It is the copy we hold for it (DeleteFrame buries that, stand-in or no stand-in), unless
 		// something else happened; any other one made in this game is buried here.
-		void ReleaseArmor(RemotePlayer& a_player, RE::Actor* a_actor)
+		void ReleaseArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::ObjectRefHandle a_wearer = {})
 		{
 			const auto frame = a_actor ? Equipment::PowerArmorFrameOf(a_actor) : RE::NiPointer<RE::TESObjectREFR>{};
 			if (frame && frame.get() != a_player.frame.get().get() && frame->IsCreated()) {
-				BuryFrame(frame.get(), a_player.framePlacedAt);
+				BuryFrame(frame.get(), a_player.framePlacedAt, a_wearer);
 			}
 		}
 
@@ -1122,8 +1138,12 @@ namespace RemotePlayers
 		{
 			DeleteLight(a_player);
 			const auto actor = GetActor(a_player);
-			ReleaseArmor(a_player, actor);
-			DeleteFrame(a_player, actor);
+			// A stand-in kept for the player's conversation (see HeldForConversation) keeps the frame it is in: the frame
+			// waits for it instead of being disabled from under it (it then went on held in a frame that was gone).
+			const auto heldIn = actor && Dialogue::Holds(actor) ? Equipment::PowerArmorFrameOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
+			const auto wearer = heldIn ? a_player.actor : RE::ObjectRefHandle{};
+			ReleaseArmor(a_player, actor, wearer);
+			DeleteFrame(a_player, actor, heldIn && heldIn.get() == a_player.frame.get().get() ? wearer : RE::ObjectRefHandle{});
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
@@ -1639,7 +1659,8 @@ namespace RemotePlayers
 				SaveGuard::ExcludeOurs(actor.get());
 			}
 			if (!a_grave.disabledAt) {
-				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now)) {
+				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now) ||
+					WaitsForWearer(a_grave, actor.get())) {
 					return false;
 				}
 				Disable(a_grave, actor.get(), now);

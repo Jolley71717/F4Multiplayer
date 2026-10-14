@@ -35,6 +35,16 @@ TEST("remote edits: a friend's game switches on a generic NPC in ours, a story c
 	CHECK(MaySwitchOn(true, RADIANT_TARGET));
 }
 
+TEST("remote edits: an NPC off here that a friend's game switched on and killed is switched on to die, once its cell is drawn")
+{
+	CHECK(SwitchOnToKill(true, false, true, false, RAIDER));  // the Red Rocket mole rat their game enabled and killed at once
+	CHECK(!SwitchOnToKill(true, false, false, false, RAIDER));  // not drawn here yet: waits
+	CHECK(!SwitchOnToKill(false, false, true, false, RAIDER));  // on already: the kill takes it as it is
+	CHECK(!SwitchOnToKill(true, true, true, false, RAIDER));  // deleted here
+	CHECK(!SwitchOnToKill(true, false, true, false, PRESTON));  // our own story's character stays off
+	CHECK(SwitchOnToKill(true, false, true, true, PRESTON));  // unless the story is shared
+}
+
 TEST("remote edits: a friend's kill kills anyone but our own story's unique or essential characters, unless they saw it")
 {
 	CHECK(MayKill(false, RAIDER, false));
