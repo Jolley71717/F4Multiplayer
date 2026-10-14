@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <tuple>
 #include <vector>
@@ -64,6 +65,30 @@ namespace StandInGear
 		return a_one == a_other;
 	}
 
+	// The item index of an instance extra that names no template combination: the engine builds instance data only from an
+	// extra that has mods and names one (BGSObjectInstanceExtra::CreateBaseInstanceData).
+	constexpr std::uint16_t NO_TEMPLATE = 0xFFFF;
+
+	// What of their copy's mods the stand-in's copy is built with here (Equipment::Give). a_resolves(mod): whether this
+	// game has the mod; one from a plugin it hasn't (another load order, a plugin the host ignores) is left off.
+	// Nothing, when they have none on record, none of their mods is here, or their copy names no template combination:
+	// the copy is then given the item's default combination, as with nothing on record. The stand-in's copy is checked
+	// against this, not against everything they listed: a copy built without a mod it cannot have would never match,
+	// and its gun was taken away and given again (and left holstered) on every dressing, for a hat.
+	template <class Resolves>
+	std::optional<Protocol::ItemMods> Buildable(const Protocol::ItemMods* a_theirs, Resolves&& a_resolves)
+	{
+		if (!a_theirs || a_theirs->templateIndex == NO_TEMPLATE) {
+			return std::nullopt;
+		}
+		Protocol::ItemMods out{ a_theirs->item, a_theirs->templateIndex, {} };
+		std::ranges::copy_if(a_theirs->mods, std::back_inserter(out.mods), [&](const Protocol::ItemMod& a_mod) { return a_resolves(a_mod.mod); });
+		if (out.mods.empty()) {
+			return std::nullopt;
+		}
+		return out;
+	}
+
 	// How the stand-in gets one item of theirs.
 	enum class Copy
 	{
@@ -72,7 +97,7 @@ namespace StandInGear
 		kReplace,  // its copy carries other mods: taken away, and one built with theirs given
 	};
 
-	// a_theirs: the mods on their copy (ModsOf), or nullptr. a_ours: the mods on the stand-in's copy, or nullopt when it
+	// a_theirs: the mods on their copy that go on here (Buildable), or nullptr. a_ours: the mods on the stand-in's copy, or nullopt when it
 	// has none (a copy without an instance extra carries no mods). With nothing on record whatever copy it has stays: a
 	// copy cannot be checked against nothing.
 	inline Copy ChooseCopy(const Protocol::ItemMods* a_theirs, const std::optional<std::vector<Protocol::ItemMod>>& a_ours)
