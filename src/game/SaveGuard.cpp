@@ -129,8 +129,10 @@ namespace SaveGuard
 				if (!map) {
 					return {};
 				}
+				// The map's key is the form's id, so the created ones are picked by it, without reading each of the game's
+				// other forms (most of them, many cold in memory) under the lock at every save and load.
 				for (const auto& [id, form] : *map) {
-					if (form && form->IsCreated()) {
+					if (SaveStrays::IsCreatedId(id) && form) {
 						if (const auto ref = form->As<RE::TESObjectREFR>(); ref && !ref->GetParentCell()) {
 							loose.push_back(id);
 						}
