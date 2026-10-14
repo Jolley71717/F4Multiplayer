@@ -70,7 +70,8 @@ namespace ProtocolSamples
 		a.heading = -0.5f;
 		a.speed = 0.0f;
 		a.moveMode = 0xBEEF;
-		a.flags = kSneaking | kInAir | kJumping;
+		a.flags = kSneaking | kInAir | kJumping | kOwnDirection;
+		a.direction = static_cast<std::uint8_t>(64 + a_seed);
 		return a;
 	}
 

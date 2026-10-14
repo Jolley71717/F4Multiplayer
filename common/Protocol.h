@@ -138,6 +138,7 @@ namespace Protocol
 		kInAir = 1 << 3,      // off the ground (jumping or falling)
 		kJumping = 1 << 4,    // left the ground by jumping rather than falling
 		kSwimming = 1 << 5,
+		kOwnDirection = 1 << 6,  // an NPC's direction is its owner's graph's own (ActorState::direction)
 	};
 
 	// A player's transform and movement, sampled on the owning client.
@@ -487,6 +488,7 @@ namespace Protocol
 		float         speed = 0;
 		std::uint16_t moveMode = 0;
 		std::uint8_t  flags = kNone;  // StateFlags
+		std::uint8_t  direction = 0;  // with kOwnDirection: the owner's graph's Direction, as PlayerState::direction
 
 		[[nodiscard]] bool IsFinite() const
 		{
@@ -1723,6 +1725,7 @@ namespace Protocol
 			w.F32(a.speed);
 			w.U16(a.moveMode);
 			w.U8(a.flags);
+			w.U8(a.direction);
 		});
 	}
 
@@ -1740,6 +1743,7 @@ namespace Protocol
 			a.speed = r.F32();
 			a.moveMode = r.U16();
 			a.flags = r.U8();
+			a.direction = r.U8();
 			return a;
 		});
 		if (states && !std::ranges::all_of(*states, [](const ActorState& a) { return a.IsFinite(); })) {

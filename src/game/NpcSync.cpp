@@ -398,6 +398,15 @@ namespace NpcSync
 				const auto process = actor->currentProcess;
 				state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
 				state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*actor).moveMode);
+				// The way its own graph has it go, rather than guessed from its path by the copies.
+				{
+					static const RE::BSFixedString directionVar{ "Direction" };
+					float                          direction = 0.0f;
+					if (static_cast<const RE::IAnimationGraphManagerHolder*>(actor)->GetGraphVariableImplFloat(directionVar, direction)) {
+						state.direction = Protocol::PackDirection(direction);
+						state.flags |= Protocol::kOwnDirection;
+					}
+				}
 				if (actor->GetWeaponMagicDrawn()) {
 					state.flags |= Protocol::kWeaponDrawn;
 				}
@@ -499,7 +508,7 @@ namespace NpcSync
 				.position = { state.x, state.y, state.z },
 				.heading = state.heading,
 				.speed = state.speed,
-				.direction = WrapAngle(motionAngle - state.heading) / (std::numbers::pi_v<float> * 2.0f),
+				.direction = (state.flags & Protocol::kOwnDirection) ? Protocol::UnpackDirection(state.direction) : WrapAngle(motionAngle - state.heading) / (std::numbers::pi_v<float> * 2.0f),
 				.moveMode = state.moveMode,
 				.flags = state.flags,
 			};

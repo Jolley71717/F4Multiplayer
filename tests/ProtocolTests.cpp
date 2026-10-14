@@ -190,7 +190,7 @@ namespace
 	bool SameActorState(const ActorState& a, const ActorState& b)
 	{
 		return a.refId == b.refId && a.cell == b.cell && a.worldspace == b.worldspace && a.x == b.x && a.y == b.y &&
-		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags;
+		       a.z == b.z && a.heading == b.heading && a.speed == b.speed && a.moveMode == b.moveMode && a.flags == b.flags && a.direction == b.direction;
 	}
 }
 
