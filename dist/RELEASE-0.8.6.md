@@ -1,6 +1,6 @@
 ## 0.8.6
 
-Everyone needs 0.8.6 to play together: it uses protocol 29, so a friend on 0.8.5 or on the 0.8.6-rc1, rc2 or rc3 test builds gets "Version mismatch".
+Everyone needs 0.8.6 to play together: it uses protocol 29, so a friend on 0.8.5 or on the 0.8.6-rc1 to rc4 test builds gets "Version mismatch".
 
 Coming from 0.8.5:
 
@@ -24,8 +24,12 @@ What changed:
 - Shared quests move on stage by stage in order, with each stage's own scripts and achievements, and wait while you are loading, paused, talking or haven't started the quest. A friend's stage never takes your caps, and moves you only when you stand with them (the Institute teleport warns you first, then takes you along). Nothing from a session is set in your game after you leave, except finishing a teleport already under way, and your solo progress never reaches a session you join later. A stage you reach while your connection is being remade, a story step too, reaches your friends once you are back; after five minutes without the host you are playing alone, and nothing of it is sent when they return.
 - A friend's grenade kills the enemies beside you in your game, with friendly fire off too. It also hurts you if it lands at your feet. Nothing bigger than a thrown explosive is set off for a friend.
 - Leaving and rejoining no longer gives a joiner a fresh budget of NPC deaths and explosions to report.
-- Power armor: friends show in their suit again, and a suit taken from the world isn't seen twice. A friend's Pip-Boy light follows them.
+- Power armor: friends show in their suit again, and a suit taken from the world isn't seen twice. A friend's Pip-Boy light follows them across cells without flickering.
 - Friends no longer walk on the spot while standing, and a friend's Dogmeat gets up and follows.
+- A friend who runs is shown running, not walking fast: their stand-in follows their own walk, run or sprint at the pace their game plays it, and strafes or backs up when they do. It moves evenly when their game runs slowly, and catches up within a second or two after a hitch while joining. People and creatures another player's game runs strafe and back up as they do there.
+- A friend's gun shows with their own barrel, sights and receiver, and armor and power armor pieces keep their mods.
+- Downed: a player knocked down with friends around waits to be helped up. A friend within a few steps helps them up after 2 seconds; after 45 seconds alone they die once and the game loads their last save. Friends never see a false "died", and pausing while you get up doesn't kill you.
+- A turret or robot a friend builds in a settlement shows up in your game too. A friend's kill of an NPC that is switched off in your game leaves a corpse.
 - A button, switch or sink your friend presses is pressed by their stand-in in your game, not by you: drinking at a sink no longer gives you the rads.
 - Saves and quicksaves no longer crash on a friend's stand-in, and saves already affected heal. No multiplayer work runs during saves and loads (this fixes crashes on load), and quitting the game no longer crashes on the way out.
 - Nothing is written to the HUD for six seconds after a game load, when the engine rebuilds its menus. The host crashed in the HUD text layout three seconds after loading a save; the loading-screen guard from 0.8.5 ended too early for that case.
