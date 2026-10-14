@@ -81,7 +81,9 @@ namespace
 				}
 			}
 
-			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = body.dead };
+			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
+			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
+			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down) };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -600,4 +602,14 @@ TEST("downed: through the server, two friends next to the downed host: only one 
 	CHECK(host.game.self.revives == 1);
 	CHECK(host.game.self.Now() == Phase::kUp);
 	CHECK(host.game.body.trims == 1);
+}
+
+TEST("downed: a character down is not dead, though the game's IsDead says so; dying and dead are")
+{
+	CHECK(!DownRules::Dead(DownRules::LIFE_ESSENTIAL_DOWN, true));
+	CHECK(!DownRules::Dead(DownRules::LIFE_BLEEDOUT, true));
+	CHECK(DownRules::Dead(DownRules::LIFE_DYING, false));
+	CHECK(DownRules::Dead(DownRules::LIFE_DEAD, false));
+	CHECK(DownRules::Dead(0, true));
+	CHECK(!DownRules::Dead(0, false));
 }

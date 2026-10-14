@@ -30,6 +30,18 @@ namespace DownRules
 		return a_lifeState == LIFE_ESSENTIAL_DOWN || a_lifeState == LIFE_BLEEDOUT;
 	}
 
+	// kDying and kDead.
+	inline constexpr std::int32_t LIFE_DYING = 1;
+	inline constexpr std::int32_t LIFE_DEAD = 2;
+
+	// Dead, or on the way there, from the life state and the game's IsDead. That answers true for a character
+	// that is down too (seen live: a player down at -30 health read dead), so a character down is never dead
+	// here: counted dead, nobody ever went down.
+	constexpr bool Dead(std::int32_t a_lifeState, bool a_isDead)
+	{
+		return !IsDownState(a_lifeState) && (a_isDead || a_lifeState == LIFE_DYING || a_lifeState == LIFE_DEAD);
+	}
+
 	// A friend's stand-in that is dead, switched off, or down is replaced by a fresh one. It is essential and
 	// kept at full health every update, but one hit bigger than its whole health (a grenade, a shotgun at
 	// close range) still put it down here; with its AI off nothing stands it up again, so it sat on the

@@ -45,8 +45,7 @@ namespace Downed
 		// Dead, or on the way there.
 		bool Dying(RE::Actor* a_actor)
 		{
-			const auto state = static_cast<RE::ACTOR_LIFE_STATE>(LifeState(a_actor));
-			return a_actor->IsDead(false) || state == RE::ACTOR_LIFE_STATE::kDying || state == RE::ACTOR_LIFE_STATE::kDead;
+			return DownRules::Dead(LifeState(a_actor), a_actor->IsDead(false));
 		}
 
 		// Sets the flag on the player's base form directly (not through `setessential`), so the
