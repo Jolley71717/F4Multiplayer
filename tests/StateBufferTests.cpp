@@ -37,6 +37,7 @@ namespace
 		Clock::duration stall{};
 		Clock::duration pauseAt{};  // the sender sends nothing for `pause` here (a loading screen)
 		Clock::duration pause{};
+		Clock::duration firstLate{};  // the drawing game hitches this long handling the first state (a slow welcome)
 	};
 
 	struct Drawn
@@ -46,6 +47,7 @@ namespace
 		float             x = 0.0f;
 		bool              held = false;
 		float             delay = 0.0f;
+		float             behind = 0.0f;  // seconds behind where the friend really is
 	};
 
 	struct Packet
@@ -116,6 +118,7 @@ namespace
 		StateBuffer::Buffer buffer;
 		std::size_t         next = 0;
 		bool                stalled = false;
+		bool                pushed = false;
 		auto                last = start;
 		for (auto now = start; now < end; now += frameOf(a_setup.fps, a_setup.frameJitter)) {
 			if (a_setup.stall != Clock::duration{} && !stalled && now >= start + a_setup.stallAt) {
@@ -126,6 +129,10 @@ namespace
 				const auto batch = Protocol::DecodePlayerStates(packets[next++].bytes);
 				REQUIRE(batch);
 				for (const auto& entry : batch->players) {
+					if (!pushed) {
+						pushed = true;
+						now += a_setup.firstLate;
+					}
 					buffer.Push(entry.state, now);
 				}
 			}
@@ -134,7 +141,8 @@ namespace
 			const float seconds = std::chrono::duration<float>(now - last).count();
 			last = now;
 			if (sampled && now - start >= 2s) {
-				drawn.push_back({ now, seconds, sampled->state.x, sampled->held, buffer.delay });
+				const float behind = std::chrono::duration<float>(now - start).count() - sampled->state.x / RUN;
+				drawn.push_back({ now, seconds, sampled->state.x, sampled->held, buffer.delay, behind });
 			}
 		}
 		return drawn;
@@ -273,4 +281,36 @@ TEST("state buffer: states that don't say when they were sent are still drawn in
 	CHECK(counts.frames > 250);
 	CHECK(counts.backwards == 0);
 	CHECK(counts.held <= counts.frames / 100);
+}
+
+TEST("state buffer: a friend whose first state we handled late is drawn as close behind as usual a second later")
+{
+	for (const float fps : { 16.0f, 60.0f }) {
+		Setup normal;
+		normal.fps = fps;
+		normal.frameJitter = 0.2f;
+		normal.length = 8s;
+		float usual = 0.0f;
+		for (const auto& frame : Play(normal)) {
+			usual = (std::max)(usual, frame.behind);
+		}
+		for (const auto late : { 300ms, 1000ms }) {
+			// Our game hitched over the welcome on joining, so the first state was handled `late`; frames are kept
+			// from two seconds in, a second after the hitch.
+			auto setup = normal;
+			setup.firstLate = late;
+			const auto drawn = Play(setup);
+			const auto counts = Count(drawn);
+			CHECK(counts.frames > 50);
+			CHECK(counts.backwards == 0);
+			CHECK(counts.held <= counts.frames / 100);
+			CHECK(counts.uneven <= counts.frames / 100);
+			float worst = 0.0f;
+			for (const auto& frame : drawn) {
+				worst = (std::max)(worst, frame.behind);
+			}
+			CHECK(worst < usual + 0.02f);
+			CHECK(worst < 0.2f);
+		}
+	}
 }
