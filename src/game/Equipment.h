@@ -49,11 +49,24 @@ namespace Equipment
 	// Whether this item is a power armor piece (armor with the ArmorTypePower keyword), the frame item aside.
 	[[nodiscard]] bool IsPowerArmorPiece(const RE::TESForm* a_item);
 
+	// The frame item the engine would put on the actor were it switched into a frame now (PowerArmor's frame pick, 2219424
+	// in 1.11.240, picking afresh): the first frame item one of whose own keywords is on an item the actor has equipped,
+	// else the default frame item. 0 when there is none. See ArmorFrames::ChoosePick.
+	[[nodiscard]] std::uint32_t FramePick(RE::Actor* a_actor);
+
+	// An item that makes the engine pick this frame item for an actor that has it on (FramePick): armor that is neither a
+	// frame item nor a piece, with a keyword of the frame item's own (not the frame keyword or ArmorTypePower, which every
+	// frame item has); one of a_prefer if one will do, else the first in the game's list (a vault suit for the plain
+	// frame). 0 when none is (a frame item with no keyword of its own, as the default one; or no frame item here).
+	[[nodiscard]] std::uint32_t FrameKey(std::uint32_t a_frame, const std::vector<std::uint32_t>& a_prefer);
+
+	// Gives the actor the item if it has none and equips it, for the frame pick (FrameKey).
+	void PutOnForPick(RE::Actor* a_actor, std::uint32_t a_item);
+
 	// In power armor: gives the actor these pieces and weapons (if it doesn't have them) and equips those it doesn't wear
-	// yet, and takes off the pieces and weapons it wears that are not among them. A frame item among them goes on in place
-	// of the one the engine picked, which is taken away (see ArmorFrames::Wears); with none, the engine's stays. Nothing
-	// else is touched, and nothing else leaves its inventory: Apply empties it first, which would take the frame item the
-	// engine put on it, and clothes put on would go under the armor at best or into the frame's slots.
+	// yet, and takes off the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing
+	// leaves its inventory: Apply empties it first, which would take the frame the engine put on it, and clothes put on
+	// would go under the armor at best or into the frame's slots.
 	// Their pieces and weapons are built with their mods as in WearOnStandIn.
 	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 

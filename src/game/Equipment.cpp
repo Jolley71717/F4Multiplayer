@@ -4,6 +4,8 @@
 #include "game/GearPlan.h"
 #include "game/StandInGear.h"
 
+#include <unordered_map>
+
 namespace Equipment
 {
 	namespace
@@ -12,6 +14,9 @@ namespace Equipment
 		constexpr REL::ID POWER_ARMOR_FRAME_KEYWORD{ 2194744 };      // PowerArmor::GetFrameKeyword (+374890)
 		constexpr REL::ID POWER_ARMOR_DEFAULT_FRAME{ 2194757 };      // PowerArmor::GetDefaultFrame (+374AB0)
 		constexpr REL::ID POWER_ARMOR_RACE{ 2194755 };               // PowerArmor::GetPowerArmorRace (+374A70)
+		// PowerArmor's frame pick (+987EF0): the frame item the switch-in puts on the actor (see ArmorFrames::ChoosePick).
+		// With true it always picks afresh from what the actor has on, touching nothing.
+		constexpr REL::ID POWER_ARMOR_FRAME_PICK{ 2219424 };
 		// PowerArmor's switch-in (+989D90), the one the Papyrus native SwitchToPowerArmor (+10FC2E0) calls with false
 		// once the frame is furniture with the frame keyword and the actor is in no frame. With false it does, in order:
 		// creates the actor's ExtraPowerArmor (state 1), sets the frame as its frame, unequips what the race's body slot
@@ -379,47 +384,83 @@ namespace Equipment
 		return armor && armor->HasKeywordString("ArmorTypePower") && !IsFrameItem(armor);
 	}
 
+	std::uint32_t FramePick(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return 0;
+		}
+		static REL::Relocation<RE::TESObjectARMO* (*)(RE::Actor*, bool)> pick{ POWER_ARMOR_FRAME_PICK };
+		const auto frame = pick(a_actor, true);
+		return frame ? frame->GetFormID() : 0;
+	}
+
 	namespace
 	{
-		// The frame items the actor carries, worn or not, but a_keep.
-		std::vector<RE::TESBoundObject*> OtherFrames(RE::Actor* a_actor, const RE::TESForm* a_keep)
+		// The keywords of a frame item that make the engine pick it: all its own but the frame keyword and ArmorTypePower,
+		// which every frame item has (and every piece the second).
+		std::vector<const RE::BGSKeyword*> PickKeywords(const RE::TESObjectARMO* a_frame)
 		{
-			std::vector<RE::TESBoundObject*> out;
-			const auto list = a_actor->inventoryList;
-			if (!list) {
-				return out;
-			}
-			RE::BSAutoReadLock l{ list->rwLock };
-			for (auto& entry : list->data) {
-				if (entry.object && entry.object != a_keep && entry.GetCount() > 0 && IsFrameItem(entry.object)) {
-					out.push_back(entry.object);
+			std::vector<const RE::BGSKeyword*> out;
+			const auto frameKeyword = FrameKeyword();
+			static_cast<const RE::BGSKeywordForm*>(a_frame)->ForEachKeyword([&](RE::BGSKeyword* a_keyword) {
+				if (a_keyword != frameKeyword && a_keyword->formEditorID != "ArmorTypePower") {
+					out.push_back(a_keyword);
 				}
-			}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
 			return out;
 		}
 
-		// Their frame item on the actor in place of the one the engine picked (see ArmorFrames::Wears), the way the engine
-		// changes an actor's frame item itself (PowerArmor's frame swap, 2219428 in 1.11.240): the other taken away, theirs
-		// given, equipped and locked on (the engine locks a frame item on the actor wearing it). The other is unlocked
-		// first, so that theirs going into its slots is not refused, and taken away only once theirs is on: the actor is
-		// never in its frame with no frame item. Nothing is done when it wears theirs and carries no other.
-		void WearFrame(RE::Actor* a_actor, std::uint32_t a_frame, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
+		// Armor that makes the engine pick the frame item for an actor wearing it: neither a frame item nor a piece (whose
+		// ArmorTypePower would have it pick the first frame item of all), with one of the frame item's own keywords.
+		bool PicksFrame(const RE::TESForm* a_form, const std::vector<const RE::BGSKeyword*>& a_keywords)
 		{
-			const auto theirs = RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_frame);
-			const auto others = OtherFrames(a_actor, theirs);
-			if (!theirs || (a_wearing && others.empty())) {
-				return;
+			const auto armor = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kARMO ? a_form->As<RE::TESObjectARMO>() : nullptr;
+			if (!armor || IsFrameItem(armor) || armor->HasKeywordString("ArmorTypePower") || (armor->GetFormID() >> 24) == 0xFF) {
+				return false;
 			}
-			for (const auto other : others) {
-				a_actor->SetEquipStateLocked(other, false);
+			const auto keywords = static_cast<const RE::BGSKeywordForm*>(armor);
+			return std::ranges::any_of(a_keywords, [&](const RE::BGSKeyword* a_keyword) { return keywords->HasKeyword(a_keyword); });
+		}
+	}
+
+	std::uint32_t FrameKey(std::uint32_t a_frame, const std::vector<std::uint32_t>& a_prefer)
+	{
+		const auto frame = RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_frame);
+		if (!frame || !IsFrameItem(frame)) {
+			return 0;
+		}
+		const auto keywords = PickKeywords(frame);
+		if (keywords.empty()) {
+			return 0;
+		}
+		for (const auto item : a_prefer) {
+			if (PicksFrame(RE::TESForm::GetFormByID(item), keywords)) {
+				return item;
 			}
-			PutOn(a_actor, a_frame, a_mods, a_wearing);
-			const auto id = a_actor->GetFormID();
-			for (const auto other : others) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, other->GetFormID(), Protocol::MAX_ITEM_COUNT).c_str());
+		}
+		// The first in the game's own list, found once per frame item.
+		static std::unordered_map<std::uint32_t, std::uint32_t> found;
+		if (const auto it = found.find(a_frame); it != found.end()) {
+			return it->second;
+		}
+		std::uint32_t key = 0;
+		if (const auto data = RE::TESDataHandler::GetSingleton()) {
+			for (const auto armor : data->GetFormArray<RE::TESObjectARMO>()) {
+				if (PicksFrame(armor, keywords)) {
+					key = armor->GetFormID();
+					break;
+				}
 			}
-			a_actor->SetEquipStateLocked(theirs, true);
-			REX::INFO("Equipment: {:08X} wears their frame {:08X} in place of {}", id, a_frame, others.empty() ? std::string{ "none" } : std::format("{:08X}", others.front()->GetFormID()));
+		}
+		found.emplace(a_frame, key);
+		return key;
+	}
+
+	void PutOnForPick(RE::Actor* a_actor, std::uint32_t a_item)
+	{
+		if (a_actor && RE::TESForm::GetFormByID(a_item)) {
+			PutOn(a_actor, a_item, {}, std::ranges::binary_search(Read(a_actor), a_item));
 		}
 	}
 
@@ -433,13 +474,6 @@ namespace Equipment
 		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
 		// (StandInGear draws it again only when it changed).
 		const auto wearing = Read(a_actor);
-		// Their frame item first, when they name one this game has; else the one the engine put on it stays.
-		for (const auto item : a_items) {
-			if (IsFrameItem(RE::TESForm::GetFormByID(item))) {
-				WearFrame(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
-				break;
-			}
-		}
 		for (const auto item : a_items) {
 			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
 				continue;

@@ -345,48 +345,46 @@ TEST("armor frames: the pieces go on only once the engine has the stand-in in it
 	CHECK(!Wears(Dress::kClothes, Item::kFrame));
 	CHECK(Wears(Dress::kClothes, Item::kOther));
 	CHECK(Wears(Dress::kClothes, Item::kWeapon));
-	// In its frame, on the power armor skeleton: their pieces, their weapons and their frame item (in place of the one the
-	// engine picked); no clothes (under the armor at best, or in the frame's slots).
+	// In its frame, on the power armor skeleton: their pieces and their weapons; neither clothes (under the armor at best,
+	// or in the frame's slots) nor the frame, which the engine has put on it already.
 	CHECK(ChooseDress(true, true) == Dress::kArmor);
 	CHECK(Wears(Dress::kArmor, Item::kPiece));
 	CHECK(Wears(Dress::kArmor, Item::kWeapon));
 	CHECK(!Wears(Dress::kArmor, Item::kOther));
-	CHECK(Wears(Dress::kArmor, Item::kFrame));
+	CHECK(!Wears(Dress::kArmor, Item::kFrame));
 }
 
-TEST("armor frames: in its frame the stand-in wears the frame item they wear, and keeps the engine's while they name none here")
+TEST("armor frames: the stand-in goes in once the engine will pick their frame item, steered by an item that makes it, never held back long")
 {
-	using ArmorFrames::Dress;
-	using ArmorFrames::Item;
-	using ArmorFrames::Kept;
-	constexpr std::uint32_t PLAIN_FRAME = 0x0003E577;    // theirs: the frame an actor in a vault suit gets
-	constexpr std::uint32_t ATOMCAT_FRAME = 0x001909D6;  // the engine's default frame, which a stand-in gets
-	constexpr std::uint32_t PLUGIN_FRAME = 0x0B000F10;   // a frame from a plugin this game lacks: no frame here
-	constexpr std::uint32_t T45_TORSO = 0x00140C1F;
-	constexpr std::uint32_t PISTOL = 0x0000DF42;
-	constexpr std::uint32_t VAULT_SUIT = 0x0001EED7;
-	const auto kindOf = [&](std::uint32_t a_item) {
-		return a_item == PLAIN_FRAME || a_item == ATOMCAT_FRAME ? Item::kFrame :
-		       a_item == T45_TORSO                              ? Item::kPiece :
-		       a_item == PISTOL                                 ? Item::kWeapon :
-		                                                          Item::kOther;
-	};
-	// What they wear in theirs: their frame item, pieces and gun; the suit is off, the frame has its body slot.
-	const std::vector<std::uint32_t> theirs{ PISTOL, PLAIN_FRAME, T45_TORSO };
-	CHECK(Kept(theirs, theirs, Dress::kArmor, kindOf) == theirs);
-	// The stand-in in the engine's frame item is not in theirs: the gear check sees it, and it is dressed again.
-	const std::vector<std::uint32_t> engines{ PISTOL, ATOMCAT_FRAME, T45_TORSO };
-	CHECK(Kept(engines, theirs, Dress::kArmor, kindOf) != Kept(theirs, theirs, Dress::kArmor, kindOf));
-	// Out of a frame neither frame item is worn.
-	CHECK(Kept(theirs, theirs, Dress::kClothes, kindOf) == std::vector<std::uint32_t>{ PISTOL });
-	// They name no frame here (none yet as they get in, or one from a plugin this game lacks): the engine's frame item is
-	// left out on both sides, so the check finds the stand-in dressed as it should be and never strips it for ever.
-	for (const auto& named : { std::vector<std::uint32_t>{ PISTOL, T45_TORSO }, std::vector<std::uint32_t>{ PISTOL, PLUGIN_FRAME, T45_TORSO } }) {
-		CHECK(Kept(engines, named, Dress::kArmor, kindOf) == Kept(named, named, Dress::kArmor, kindOf));
-		CHECK(Kept(named, named, Dress::kArmor, kindOf) == (std::vector<std::uint32_t>{ PISTOL, T45_TORSO }));
-	}
-	// Their suit never goes on in a frame.
-	CHECK(Kept({ VAULT_SUIT, PLAIN_FRAME }, theirs, Dress::kArmor, kindOf) == std::vector<std::uint32_t>{ PLAIN_FRAME });
+	using ArmorFrames::ChoosePick;
+	using ArmorFrames::Pick;
+	using ArmorFrames::PickFacts;
+	// Their frame item named, and the engine picks it already (the stand-in wears their vault suit): at once.
+	CHECK(ChoosePick({ .named = true, .picksTheirs = true }) == Pick::kSwitch);
+	// It picks another (the AtomCat frame, its default): the item that makes it pick theirs is put on, once, and the
+	// switch-in waits for it to be on.
+	PickFacts facts{ .named = true, .key = true };
+	CHECK(ChoosePick(facts) == Pick::kPutOn);
+	facts.sincePut = 16ms;
+	CHECK(ChoosePick(facts) == Pick::kWait);
+	facts.keyOn = true;
+	facts.sincePut = 1s;
+	CHECK(ChoosePick(facts) == Pick::kWait);  // on, but the engine does not pick by it yet
+	facts.picksTheirs = true;
+	CHECK(ChoosePick(facts) == Pick::kSwitch);
+	// Taken off again (a gear check, a change of theirs) before it worked: put on again, not every frame.
+	facts = { .named = true, .key = true, .sincePut = ArmorFrames::KEY_GAP - 1ms };
+	CHECK(ChoosePick(facts) == Pick::kWait);
+	facts.sincePut = ArmorFrames::KEY_GAP;
+	CHECK(ChoosePick(facts) == Pick::kPutOn);
+	// Nothing makes the engine pick theirs, or it still does not after PICK_WAIT: in all the same, in its pick.
+	CHECK(ChoosePick({ .named = true, .key = false }) == Pick::kGiveUp);
+	CHECK(ChoosePick({ .named = true, .key = true, .keyOn = true, .waited = ArmorFrames::PICK_WAIT, .sincePut = 1s }) == Pick::kGiveUp);
+	// Their frame item not told yet: in once the clothes it was dressed in are on, so the engine picks by what they got
+	// in with; at most PICK_WAIT later.
+	CHECK(ChoosePick({ .named = false, .dressed = true }) == Pick::kSwitch);
+	CHECK(ChoosePick({ .named = false, .dressed = false, .waited = 30ms }) == Pick::kWait);
+	CHECK(ChoosePick({ .named = false, .dressed = false, .waited = ArmorFrames::PICK_WAIT }) == Pick::kGiveUp);
 }
 
 TEST("armor frames: the pieces wait for the power armor skeleton, which the switch-in only queues")

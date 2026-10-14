@@ -31,9 +31,8 @@ namespace
 	constexpr std::uint32_t T60_HELMET = 0x00154ABD;   // a power armor piece
 	constexpr std::uint32_t T60_TORSO = 0x00154AC1;
 	constexpr std::uint32_t FRAME = 0x00031CE5;        // the frame itself as an item
-	constexpr std::uint32_t PLAIN_FRAME = 0x0003E577;    // the frame item an actor in a vault suit gets
-	constexpr std::uint32_t ATOMCAT_FRAME = 0x001909D6;  // the engine's default frame item, which a stand-in gets
-	constexpr std::uint32_t PLUGIN_FRAME = 0x0B000F10;   // a frame item from a plugin Bob's game hasn't: no frame there
+	constexpr std::uint32_t PLAIN_FRAME = 0x0003E577;    // the frame item the engine picks for an actor in a vault suit
+	constexpr std::uint32_t ATOMCAT_FRAME = 0x001909D6;  // the engine's default frame item
 	constexpr std::uint32_t SETTLER_RAGS = 0x0001C2B9;  // the stand-in's own outfit, which the engine can put back on it
 
 	// Mods on her pistol (OMOD forms), each in its attach point (the index the engine keeps with it).
@@ -62,15 +61,16 @@ namespace
 		if (a_item == T60_HELMET || a_item == T60_TORSO) {
 			return ArmorFrames::Item::kPiece;
 		}
-		// A form Bob's game hasn't is no frame there (RemotePlayers' KindOf finds no form).
 		return a_item == FRAME || a_item == PLAIN_FRAME || a_item == ATOMCAT_FRAME ? ArmorFrames::Item::kFrame : ArmorFrames::Item::kOther;
 	}
 
-	// What a stand-in dressed so wears of a list, a_theirs saying whether their frame item counts (RemotePlayers' Kept),
-	// and what of that an NPC's inventory shows as worn (Wearable: a grenade is held, not worn).
-	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, const std::vector<std::uint32_t>& a_theirs, Dress a_dress)
+	// What a stand-in dressed so wears of a list (RemotePlayers' Kept), and what of that an NPC's inventory shows as worn
+	// (Wearable: a grenade is held, not worn).
+	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, Dress a_dress)
 	{
-		return ArmorFrames::Kept(a_items, a_theirs, a_dress, KindOf);
+		std::vector<std::uint32_t> out;
+		std::ranges::copy_if(a_items, std::back_inserter(out), [&](std::uint32_t a_item) { return ArmorFrames::Wears(a_dress, KindOf(a_item)); });
+		return out;
 	}
 
 	std::vector<std::uint32_t> Wearable(std::vector<std::uint32_t> a_items)
@@ -90,6 +90,7 @@ namespace
 		bool                       has3D = true;
 		bool                       inFrame = false;
 		bool                       armorSkeleton = false;  // its 3D rebuilt on the power armor skeleton
+		std::vector<std::uint32_t> on;                     // what the engine has it in: an equip shows to it a frame later
 		Clock::time_point          gunOutAt{};             // its gun is out from then on
 		// The copies of her items it carries, by item, and the mods each was built with.
 		std::map<std::uint32_t, std::vector<Protocol::ItemMod>> copies;
@@ -109,7 +110,7 @@ namespace
 		int               changes = 0;
 		int               redraws = 0;
 		int               refits = 0;   // found in something else, logged and dressed afresh
-		int               frameSwaps = 0;  // the frame item the engine picked taken away for hers
+		int               keyPuts = 0;  // items put on for the engine's frame pick
 		int               gives = 0;     // copies given (built with her mods, or the default combination)
 		int               replaces = 0;  // copies taken away for carrying other mods than hers
 		std::set<std::uint32_t> missing;  // her mods Bob's game hasn't
@@ -161,47 +162,66 @@ namespace
 			StandInGear::Placed(gear);
 		}
 
-		// The engine's frame item for the stand-in (PowerArmor's frame pick): the plain frame for an actor in a vault
-		// suit, else the default, the AtomCat frame; and with pieces on, the AtomCat frame first, whose ArmorTypePower
-		// keyword every piece has.
-		std::uint32_t EnginesFrame() const
-		{
-			const bool piece = std::ranges::any_of(standIn.wears, [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kPiece; });
-			return !piece && std::ranges::contains(standIn.wears, VAULT_SUIT) ? PLAIN_FRAME : ATOMCAT_FRAME;
-		}
+		// The engine's frame pick (Equipment::FramePick) by what the stand-in has on as the engine sees it: the plain
+		// frame item for a vault suit, else the default.
+		std::uint32_t EnginePick() const { return std::ranges::contains(standIn.on, VAULT_SUIT) ? PLAIN_FRAME : ATOMCAT_FRAME; }
 
-		// The switch-in: the frame item the engine picks goes on, in the body slot, so the suit comes off.
-		void SwitchIn()
+		// The switch-in, due this frame (ArmorFrames::ChooseSwitch says kIn), as RemotePlayers::PickReady holds it back:
+		// whether it went in. The engine puts its pick on it, in the body slot (the suit comes off).
+		bool SwitchIn()
 		{
-			const auto frame = EnginesFrame();
+			if (!pickSince) {
+				pickSince = now;
+			}
+			const auto theirs = std::ranges::find_if(gear.items, [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kFrame; });
+			const bool named = theirs != gear.items.end();
+			const auto key = named && *theirs == PLAIN_FRAME ? VAULT_SUIT : 0;  // Equipment::FrameKey
+			auto       on = standIn.on;
+			auto       dressedIn = Wearable(Kept(gear.worn, Dress::kClothes));
+			std::ranges::sort(on);
+			ArmorFrames::PickFacts facts{
+				.named = named,
+				.picksTheirs = named && EnginePick() == *theirs,
+				.key = key != 0,
+				.keyOn = key != 0 && std::ranges::contains(on, key),
+				.dressed = gear.dressed && std::ranges::includes(Wearable(on), dressedIn),
+				.waited = now - *pickSince,
+			};
+			if (keyPutAt) {
+				facts.sincePut = now - *keyPutAt;
+			}
+			switch (ArmorFrames::ChoosePick(facts)) {
+			case ArmorFrames::Pick::kPutOn:
+				++keyPuts;
+				keyPutAt = now;
+				standIn.wears.push_back(key);
+				return false;
+			case ArmorFrames::Pick::kWait:
+				return false;
+			case ArmorFrames::Pick::kSwitch:
+			case ArmorFrames::Pick::kGiveUp:
+				break;
+			}
+			const auto frame = EnginePick();
 			std::erase(standIn.wears, VAULT_SUIT);
 			standIn.wears.push_back(frame);
 			standIn.inFrame = true;
+			standIn.armorSkeleton = true;  // the rebuild, a frame later at most: not what this looks at
+			return true;
 		}
 
-		// The engine picks its frame item again (as it puts the NPC's outfit back on it): the one it wears is swapped.
-		void PickFrameAgain()
-		{
-			const auto frame = EnginesFrame();
-			std::erase_if(standIn.wears, [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kFrame; });
-			standIn.wears.push_back(frame);
-		}
-
-		std::vector<std::uint32_t> FrameItems() const
-		{
-			std::vector<std::uint32_t> out;
-			std::ranges::copy_if(standIn.wears, std::back_inserter(out), [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kFrame; });
-			return out;
-		}
+		std::optional<Clock::time_point> pickSince;
+		std::optional<Clock::time_point> keyPutAt;
 
 		void Frame()
 		{
 			now += 16ms;
+			standIn.on = standIn.wears;  // what was put on last frame is on to the engine now
 			const auto dress = ArmorFrames::ChooseDress(standIn.inFrame, standIn.inFrame && standIn.armorSkeleton);
-			const auto shown = [&](const std::vector<std::uint32_t>& a_theirs) { return dress == Dress::kArmor ? Kept(standIn.wears, a_theirs, dress) : standIn.wears; };
+			const auto shown = dress == Dress::kArmor ? Kept(standIn.wears, dress) : standIn.wears;
 			const auto dressing = StandInGear::Dress(gear, dress, standIn.has3D, now, InHand,
-				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown(a_worn)) == Wearable(Kept(a_worn, a_worn, dress)); });
-			const auto outfit = Kept(gear.items, gear.items, dress);
+				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown) == Wearable(Kept(a_worn, dress)); });
+			const auto outfit = Kept(gear.items, dress);
 			switch (dressing.put) {
 			case Put::kApply:
 				++applies;
@@ -217,17 +237,8 @@ namespace
 			case Put::kWearInArmor:
 				{
 					++inArmor;
-					// Their pieces and weapons on, and their frame item in place of the one the engine picked when they
-					// name one here (Equipment::WearInArmor); else the engine's stays.
-					const auto isFrame = [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kFrame; };
-					const auto theirs = std::ranges::find_if(outfit, isFrame);
-					if (theirs != outfit.end() && std::ranges::any_of(standIn.wears, [&](std::uint32_t a_item) { return isFrame(a_item) && a_item != *theirs; })) {
-						++frameSwaps;
-					}
-					std::erase_if(standIn.wears, [&](std::uint32_t a_item) {
-						const auto kind = KindOf(a_item);
-						return kind == ArmorFrames::Item::kPiece || kind == ArmorFrames::Item::kWeapon || (kind == ArmorFrames::Item::kFrame && theirs != outfit.end());
-					});
+					// Their pieces and weapons on; the frame the engine put on it stays.
+					std::erase_if(standIn.wears, [&](std::uint32_t a_item) { return ArmorFrames::Wears(Dress::kArmor, KindOf(a_item)); });
 					standIn.wears.insert(standIn.wears.end(), outfit.begin(), outfit.end());
 					PutOn(outfit);
 					break;
@@ -478,71 +489,82 @@ TEST("stand-in gear: a friend in power armor gets their pieces only once the sta
 	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
 }
 
-TEST("stand-in gear: a friend in the plain frame is shown in the plain frame, not the AtomCat frame the engine gives their stand-in, and put back in it when the engine picks again")
+TEST("stand-in gear: a friend in the plain frame gets a stand-in in the plain frame, whether their frame item is told before it goes in or after")
 {
-	// The 2026-10-13 report: she wears the plain frame (her game picks it for her vault suit), and her stand-in wore the
-	// AtomCat frame: it wears no vault suit as it goes in (her report has none, the frame has its body slot), and the
-	// engine's default frame item is the AtomCat one.
-	Session session;
-	Ours    bob;
-	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
-	bob.Frames(70);
-	REQUIRE(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
-	bob.Receive(session.Report({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
-	bob.Frames(70);  // still out of its frame: the suit comes off with her report, her frame item does not go on
-	REQUIRE(bob.Wears() == Sorted({ PISTOL }));
-	bob.SwitchIn();
-	CHECK(bob.FrameItems() == std::vector<std::uint32_t>{ ATOMCAT_FRAME });
-	// On the power armor skeleton: dressed in her pieces, and her frame item in place of the engine's.
-	bob.standIn.armorSkeleton = true;
-	bob.Frame();
-	CHECK(bob.inArmor == 1);
-	CHECK(bob.frameSwaps == 1);
-	CHECK(bob.FrameItems() == std::vector<std::uint32_t>{ PLAIN_FRAME });
-	CHECK(bob.Wears() == Sorted({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
-	bob.Frames(400);  // past more gear checks: it stays so
-	CHECK(bob.refits == 0);
-	CHECK(bob.inArmor == 1);
-	// The engine picks again (as it puts an NPC's outfit back on), with her pieces on: the AtomCat frame. The next gear
-	// check finds it, and her frame item goes back on, once.
-	bob.PickFrameAgain();
-	REQUIRE(bob.FrameItems() == std::vector<std::uint32_t>{ ATOMCAT_FRAME });
-	bob.Frames(3000 / 16 + 2);
-	CHECK(bob.refits == 1);
-	CHECK(bob.inArmor == 2);
-	CHECK(bob.frameSwaps == 2);
-	CHECK(bob.FrameItems() == std::vector<std::uint32_t>{ PLAIN_FRAME });
-	bob.Frames(400);
-	CHECK(bob.refits == 1);
-	// She takes a piece off: the frame item is left as it is.
-	bob.Receive(session.Report({ PISTOL, PLAIN_FRAME, T60_TORSO }));
-	bob.Frames(70);
-	CHECK(bob.inArmor == 3);
-	CHECK(bob.frameSwaps == 2);
-	CHECK(bob.Wears() == Sorted({ PISTOL, PLAIN_FRAME, T60_TORSO }));
-}
-
-TEST("stand-in gear: a friend whose frame item Bob's game hasn't, or who names none yet, keeps the engine's frame on their stand-in, never stripped for it")
-{
-	for (const auto& reported : { std::vector<std::uint32_t>{ PISTOL, PLUGIN_FRAME, T60_HELMET, T60_TORSO }, std::vector<std::uint32_t>{ PISTOL, T60_HELMET, T60_TORSO } }) {
+	// The 2026-10-14 report: her stand-in was placed and dressed in her vault suit 30 ms before it was switched in, and
+	// the engine, which picks the frame item by what it has on, gave it the AtomCat frame. Her frame item came 9 s later,
+	// and swapped in then, the engine picked again within seconds (the AtomCat frame, then the Wastelander one).
+	{
 		Session session;
 		Ours    bob;
-		bob.Receive(session.Report({ PISTOL }));
-		bob.Frames(70);
-		bob.Receive(session.Report(reported));
-		bob.SwitchIn();
-		bob.standIn.armorSkeleton = true;
-		bob.Frames(30 * 1000 / 16);  // half a minute of gear checks
-		CHECK(bob.inArmor == 1);
-		CHECK(bob.refits == 0);
-		CHECK(bob.frameSwaps == 0);
-		CHECK(bob.FrameItems() == std::vector<std::uint32_t>{ ATOMCAT_FRAME });
-		CHECK(std::ranges::contains(bob.standIn.wears, T60_HELMET));
-		// Her next report names her frame item: it goes on in place of the engine's.
+		bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+		bob.Place();
+		bob.standIn.has3D = true;
+		bob.Frame();  // dressed now; on to the engine next frame
+		REQUIRE(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
+		CHECK(!bob.SwitchIn());  // the switch-in is due at once: it waits for her suit to be on
+		bob.Frame();
+		CHECK(bob.SwitchIn());
+		CHECK(std::ranges::contains(bob.standIn.wears, PLAIN_FRAME));
+		CHECK(!std::ranges::contains(bob.standIn.wears, ATOMCAT_FRAME));
+		CHECK(bob.now - *bob.pickSince < ArmorFrames::PICK_WAIT);
+		// Her frame item and pieces come: the pieces go on, the frame item stays the engine's, which is hers.
 		bob.Receive(session.Report({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
-		bob.Frames(70);
-		CHECK(bob.frameSwaps == 1);
-		CHECK(bob.FrameItems() == std::vector<std::uint32_t>{ PLAIN_FRAME });
+		bob.Frames(30 * 1000 / 16);
+		CHECK(bob.refits == 0);
+		CHECK(bob.keyPuts == 0);
+		CHECK(bob.Wears() == Sorted({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
+	}
+	// She has been in her frame a while (her stand-in placed again through a door): her report names her frame item, and
+	// has no suit (the frame has its body slot). Her suit is put on the new stand-in for the pick, and it goes in in the
+	// plain frame.
+	{
+		Session session;
+		Ours    bob;
+		bob.Receive(session.Report({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
+		bob.Place();
+		bob.standIn.has3D = true;
+		bob.Frame();
+		REQUIRE(bob.Wears() == Sorted({ PISTOL }));
+		CHECK(!bob.SwitchIn());
+		CHECK(bob.keyPuts == 1);
+		bob.Frame();
+		CHECK(bob.SwitchIn());
+		CHECK(bob.keyPuts == 1);
+		bob.Frames(30 * 1000 / 16);
+		CHECK(bob.refits == 0);
+		CHECK(bob.Wears() == Sorted({ PISTOL, PLAIN_FRAME, T60_HELMET, T60_TORSO }));
+	}
+	// In the AtomCat frame herself: the engine's pick is hers at once, nothing put on.
+	{
+		Session session;
+		Ours    bob;
+		bob.Receive(session.Report({ PISTOL, ATOMCAT_FRAME, T60_HELMET }));
+		bob.Place();
+		bob.standIn.has3D = true;
+		bob.Frame();
+		CHECK(bob.SwitchIn());
+		CHECK(bob.keyPuts == 0);
+		CHECK(std::ranges::contains(bob.standIn.wears, ATOMCAT_FRAME));
+	}
+	// Her clothes never come on to the engine (it keeps undressing the stand-in): in all the same after PICK_WAIT.
+	{
+		Session session;
+		Ours    bob;
+		bob.Receive(session.Report({ PISTOL, VAULT_SUIT }));
+		bob.Place();
+		bob.standIn.has3D = true;
+		int frames = 0;
+		for (; frames < 1000; ++frames) {
+			bob.Frame();
+			bob.standIn.on.clear();
+			if (bob.SwitchIn()) {
+				break;
+			}
+		}
+		CHECK(bob.standIn.inFrame);
+		CHECK(frames * 16ms >= ArmorFrames::PICK_WAIT - 16ms);
+		CHECK(frames * 16ms <= ArmorFrames::PICK_WAIT + 32ms);
 	}
 }
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -145,8 +146,8 @@ namespace ArmorFrames
 	{
 		kClothes,  // out of power armor: their gear put on afresh (Equipment::Apply empties its inventory first)
 		kWait,     // in its frame, its 3D not rebuilt yet: nothing put on or looked at
-		kArmor,    // in its frame on the power armor skeleton: their pieces, weapons and frame put on, its inventory left
-		           // as it is (emptied, the frame the engine put on it would go too)
+		kArmor,    // in its frame on the power armor skeleton: their pieces and weapons put on, its inventory left as it is
+		           // (emptied, the frame the engine put on it would go too)
 	};
 
 	constexpr Dress ChooseDress(bool a_in, bool a_rebuilt)
@@ -167,19 +168,14 @@ namespace ArmorFrames
 
 	// Whether the stand-in wears an item of theirs, dressed so. In its frame, clothes put on would go under the armor at
 	// best, or take the frame's slots; out of it, neither a piece nor the frame ever goes on its own body; waiting for
-	// the power armor skeleton, nothing at all.
-	// In its frame their frame item goes on in place of the one the engine picked. The engine picks it by what the actor
-	// wears (PowerArmor's frame pick, 2219424 in 1.11.240): the first frame armor whose other keywords are on an item it
-	// has equipped, else the default frame (PowerArmorDefaultFrameArmor_DO, 001909D6, the AtomCat frame). The plain
-	// frame (0003E577) goes to an actor in a vault suit, which a friend in a frame no longer wears (the frame takes its
-	// body slot), so their stand-in got the AtomCat frame on every wear while they wore the plain one. And once their
-	// pieces are on, every pick (the engine picks again as it puts an actor's outfit back on, 2230445) finds the AtomCat
-	// frame first: its ArmorTypePower keyword is on every piece.
+	// the power armor skeleton, nothing at all. The frame item is never put on or looked at: the engine puts its own pick
+	// on the stand-in as it switches it in (see ChoosePick), and one swapped for theirs afterwards did not stay (the
+	// engine picked again within seconds, the AtomCat frame and then the Wastelander one).
 	constexpr bool Wears(Dress a_dress, Item a_item)
 	{
 		switch (a_dress) {
 		case Dress::kArmor:
-			return a_item == Item::kPiece || a_item == Item::kWeapon || a_item == Item::kFrame;
+			return a_item == Item::kPiece || a_item == Item::kWeapon;
 		case Dress::kWait:
 			return false;
 		case Dress::kClothes:
@@ -188,23 +184,65 @@ namespace ArmorFrames
 		return false;
 	}
 
-	// The items of a list a stand-in dressed so wears (Wears), in their order; a_kindOf(item) says what each is. a_theirs
-	// is what they have on: in its frame, a frame item counts only when theirs names one this game has (a_kindOf says
-	// kFrame of it). They name none for a moment as they get in, and one from a plugin this game lacks is no frame here:
-	// the frame the engine picked then stays on it, and is not looked at, or the gear check would find the stand-in in
-	// something else than it was dressed in for as long as they wear that frame.
+	// The items of a list a stand-in dressed so wears (Wears), in their order; a_kindOf(item) says what each is.
 	template <class KindOf>
-	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, const std::vector<std::uint32_t>& a_theirs, Dress a_dress, KindOf&& a_kindOf)
+	std::vector<std::uint32_t> Kept(const std::vector<std::uint32_t>& a_items, Dress a_dress, KindOf&& a_kindOf)
 	{
-		const bool frameNamed = std::ranges::any_of(a_theirs, [&](std::uint32_t a_item) { return a_kindOf(a_item) == Item::kFrame; });
 		std::vector<std::uint32_t> out;
-		for (const auto item : a_items) {
-			const auto kind = a_kindOf(item);
-			if (Wears(a_dress, kind) && (kind != Item::kFrame || frameNamed)) {
-				out.push_back(item);
-			}
-		}
+		std::ranges::copy_if(a_items, std::back_inserter(out), [&](std::uint32_t a_item) { return Wears(a_dress, a_kindOf(a_item)); });
 		return out;
+	}
+
+	// The frame item the stand-in wears in its frame is the engine's pick, made as the switch-in puts it in (PowerArmor's
+	// frame pick, 2219424 in 1.11.240), by what it has equipped then: the first frame item one of whose own keywords is on
+	// an item it has on, else the default frame (PowerArmorDefaultFrameArmor_DO, 001909D6, the AtomCat frame). The plain
+	// frame (0003E577) is the vault suit's (usePowerArmorFrameVault). Their game picked theirs by what they had on as they
+	// got in, so the stand-in is switched in only once the engine's pick for it is theirs:
+	// - their gear names their frame item: an item that makes the engine pick it (one with that frame's own keyword, a
+	//   vault suit for the plain frame) is put on, if the pick is not theirs already, and the switch-in waits for it;
+	// - it names none yet (it is told a moment after they get in, or later): the switch-in waits until the stand-in has
+	//   on what it was dressed in (their clothes, dressed a moment ago), so the pick is made by what they had on. Equipped
+	//   30 ms before the switch-in, their vault suit was not on yet to the engine, and the stand-in got the AtomCat frame.
+	// Neither waits longer than PICK_WAIT: switched in all the same then, in whatever the engine picks.
+	constexpr auto PICK_WAIT = std::chrono::milliseconds(1500);
+	// An item put on for the pick that is not on again this long after (a gear check or a change took it off) is put on
+	// again.
+	constexpr auto KEY_GAP = std::chrono::milliseconds(300);
+
+	struct PickFacts
+	{
+		bool     named = false;        // their gear names a frame item this game has
+		bool     picksTheirs = false;  // the engine's pick for the stand-in now is that frame item
+		bool     key = false;          // an item is known that makes the engine pick theirs
+		bool     keyOn = false;        // the stand-in has it on
+		bool     dressed = false;      // the stand-in has on what it was dressed in
+		Duration waited{};             // since the switch-in was first due in this wear
+		Duration sincePut = Duration::max();  // since the item was put on for the pick
+	};
+
+	enum class Pick
+	{
+		kSwitch,  // switched in now: the engine will pick theirs, or the clothes they got in with are on
+		kPutOn,   // the item that makes the engine pick theirs is put on; switched in later
+		kWait,    // switched in later
+		kGiveUp,  // switched in now, the engine's pick not theirs (nothing makes it pick theirs, or PICK_WAIT is over)
+	};
+
+	constexpr Pick ChoosePick(const PickFacts& a_facts)
+	{
+		if (a_facts.named) {
+			if (a_facts.picksTheirs) {
+				return Pick::kSwitch;
+			}
+			if (!a_facts.key || a_facts.waited >= PICK_WAIT) {
+				return Pick::kGiveUp;
+			}
+			return !a_facts.keyOn && a_facts.sincePut >= KEY_GAP ? Pick::kPutOn : Pick::kWait;
+		}
+		if (a_facts.dressed) {
+			return Pick::kSwitch;
+		}
+		return a_facts.waited >= PICK_WAIT ? Pick::kGiveUp : Pick::kWait;
 	}
 
 	// Where they were as they got into a pre-placed frame (see ChooseOriginal) is taken from their newest state only

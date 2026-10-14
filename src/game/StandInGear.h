@@ -205,7 +205,7 @@ namespace StandInGear
 		kNone,
 		kApply,        // emptied and dressed (Equipment::Apply)
 		kWear,         // put on over what it wears (Equipment::Wear)
-		kWearInArmor,  // in its frame: their pieces, weapons and frame put on, its inventory left as it is (Equipment::WearInArmor)
+		kWearInArmor,  // in its frame: their pieces and weapons put on, its inventory left as it is (Equipment::WearInArmor)
 	};
 
 	struct Dressing
