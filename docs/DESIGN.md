@@ -186,7 +186,7 @@
   it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
-  NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
+  NPC. Hits by NPCs made at runtime are sent only for one the attacker's game shares (see Spawns), under its spawn id; the victim ignores hits
   from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
   their game (`UI::menuMode`; `Main::freezeTime` stays false). The damage was resisted by the
   stand-in's copy of the victim's armor; the victim scales it by their own difficulty
@@ -194,6 +194,44 @@
   `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
   effects, limb damage, radiation and stagger.
 - Shots are shared too (see Weapon fire).
+
+## Spawns (src/game/Spawns.cpp, src/game/SpawnBook.h)
+
+NPCs a game makes at runtime (a random encounter's raiders, an ambush, a settlement's attackers) have ids
+(0xFF......) that are that game's own: in another game the same id names something else, or nothing. Playing,
+the host saw mongrels where the joiner saw ghouls, and the joiner's follower fought an enemy only the joiner's
+game had. So each one is shared as a spawn, run by the game that made it for good:
+
+- The owner's NpcSync scan finds one of its runtime NPCs loaded, alive, in combat or hostile to its player (never
+  a stand-in, a copy, the player or its companion), and reports `kReportSpawn {spawn id, base, cell or
+  worldspace, position, heading}`. The spawn id is the NPC's own id first; one another game's spawn has is
+  refused naming that game, and the next one asked for is spread over the runtime range (`CandidateId`). Spawn
+  ids keep the 0xFF prefix (0xFE is light plugins' range), so every check of `IsShareableRef` still turns them
+  away; only the messages about NPCs take them (`IsActorRef`), and each game looks its own NPC up under one.
+- The base is what every game puts together the same: the first of the leveled data's templates that is a whole
+  NPC (no template of its own), else the NPC it was placed as (a leveled one is rolled again by each game), else
+  its own base when that is a plugin's. Without one it isn't shared.
+- The server grants an id to the first game to ask (`actorOwners` names the owner; `spawns` holds the details),
+  sends the others `kSpawned` and everyone the owner. A joiner is sent the spawns before who runs NPCs. Limits:
+  32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
+  the game asks again 10 s later. Nobody else can claim one; a claim to take one over notes the claimer as
+  fighting it.
+- The others place a copy (`CreateReferenceAtLocation`, kept out of saves like a stand-in) while their player is
+  within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
+  of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
+  gear, shots and health.
+- A copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell unloads,
+  before every save and load, and when the spawn is over while it is alive. A dead copy stays as a corpse until
+  its player leaves it.
+- It is over when it dies, when its owner's game lets it go (unloaded) and when its owner leaves: the server
+  forgets it and names nobody as its owner, which ends it in every game. Its death is believed from its owner
+  and from a player fighting their copy of it (health reported, or a takeover claim, within 10 s), never kept
+  with the session's dead, and killed in the owner's game too. Its hits on a stand-in count only from its
+  owner's game.
+- Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
+  carries what its own game gives it until the owner's gear report dresses it, and a copy whose owner's game
+  only knows the leveled NPC it was placed as can come out as another of that list's NPCs. Each game's corpse of a
+  spawn carries its own loot: each player loots their own.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
 
@@ -228,6 +266,7 @@
 
 References are identified by form ID, which matches across players because the load order must match.
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
+(runtime NPCs are shared as spawns under ids of their own: see Spawns)
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
 items, pickups only for loose inventory items that don't fill a quest alias.
@@ -443,7 +482,7 @@ else skips this: the player is never in those places.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 29 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, and to NPC states their owner's graph's direction and a dog's gait). The sections below record each review as it was written.
+Protocol VERSION 29 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -464,6 +503,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | Message | Who may send it | Server check | Receiver check | In the session file |
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
+| `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |

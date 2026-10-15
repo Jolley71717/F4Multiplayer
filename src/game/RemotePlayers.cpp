@@ -1577,6 +1577,11 @@ namespace RemotePlayers
 		});
 	}
 
+	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)
+	{
+		Bury({ .actor = a_ref, .spawnedAt = a_placedAt });
+	}
+
 	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);

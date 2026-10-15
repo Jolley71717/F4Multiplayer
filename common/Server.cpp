@@ -76,6 +76,12 @@ namespace
 	constexpr auto DROPPED_DEATH_LOG_INTERVAL = std::chrono::seconds(10);
 	// A flooder's budget refills and runs out again twice a second: the log says so at most this often.
 	constexpr auto BUDGET_LOG_INTERVAL = std::chrono::seconds(10);
+	// NPCs games made at runtime and share (Protocol::IsSpawnRef): each game's share at once is
+	// Protocol::MAX_SPAWNS_PER_PLAYER, the session's this. A game may share a fight's worth at once, then two a second
+	// (each one is a copy placed in every other game).
+	constexpr std::size_t MAX_SPAWNS = 128;
+	constexpr double      SPAWN_BURST = 32.0;
+	constexpr double      SPAWNS_PER_SECOND = 2.0;
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -163,6 +169,9 @@ namespace
 		std::size_t       explosionsDropped = 0;  // dropped since then
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
+		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		Clock::time_point spawnsLogged{};
+		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
 		std::array<bool, kTables>        shareLogged{};
 		int               connections = 0;  // connections using it (it isn't forgotten while any do)
@@ -316,6 +325,9 @@ void Server::Run()
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
+	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
+	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
+	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
@@ -464,6 +476,7 @@ void Server::Run()
 		pickedUp.clear();
 		refStates.clear();
 		actorOwners.clear();
+		spawns.clear();
 		npcEquipment.clear();
 		workshop.Clear();
 		questStages.clear();
@@ -755,6 +768,7 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
+			spawns.erase(a_entry.first);  // nobody else's game has it to run: the others' copies go
 			return true;
 		});
 		sendOwners(released, 0);
@@ -879,6 +893,12 @@ void Server::Run()
 			other.stateDirty = other.hasState;
 		}
 
+		// The NPCs other games made at runtime and share now: the newcomer places its copies, before it hears who runs them.
+		for (const auto& [ref, spawn] : spawns) {
+			if (spawn.playerId != a_player.id) {
+				send(a_player.key, Protocol::Encode(spawn, Protocol::MessageType::kSpawned), true);
+			}
+		}
 		std::vector<Protocol::ActorOwner> owners;
 		for (const auto& [ref, owner] : actorOwners) {
 			owners.push_back({ ref, owner.playerId });
@@ -949,11 +969,42 @@ void Server::Run()
 	Clock::time_point droppedDeathLogged{};
 	std::size_t       droppedDeaths = 0;  // since the last line about them
 
+	// A spawn died: in its owner's game, or in the game of a player fighting their copy of it (they hurt it or tried to
+	// take it over within Options::deathGrace, as for any NPC another game runs). Not kept with the session's dead: it is
+	// in no save but its owner's, and its id may name another spawn later. Its owner's game kills it (a friend's kill),
+	// the others their copies, and then it is nobody's: an owner of 0 ends it everywhere.
+	const auto handleSpawnDeath = [&](Player& a_player, Protocol::ActorDeath a_death) {
+		const auto it = spawns.find(a_death.refId);
+		if (it == spawns.end() || a_death.foundDead) {
+			return;
+		}
+		const auto now = Clock::now();
+		if (it->second.playerId != a_player.id && !wasFighting(a_player, a_death.refId, now)) {
+			++droppedDeaths;
+			if (now - droppedDeathLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				droppedDeathLogged = now;
+				log(std::format("server: death of spawn {:08X} from player {} dropped: player {} runs it and the reporter wasn't fighting it ({} dropped since the last such line)",
+					a_death.refId, a_player.id, it->second.playerId, std::exchange(droppedDeaths, 0)));
+			}
+			return;
+		}
+		spawns.erase(it);
+		actorOwners.erase(a_death.refId);
+		npcEquipment.erase(a_death.refId);
+		a_death.playerId = a_player.id;
+		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
+		sendOwners({ { a_death.refId, 0 } }, 0);
+	};
+
 	const auto handleDeath = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
 		auto death = Protocol::DecodeActorDeath(a_data);
+		if (death && Protocol::IsSpawnRef(death->refId)) {
+			handleSpawnDeath(a_player, *death);
+			return;
+		}
 		if (!death || !Protocol::IsShareableRef(death->refId)) {
 			return;
 		}
@@ -1046,10 +1097,14 @@ void Server::Run()
 			return;
 		}
 		const auto health = Protocol::DecodeActorHealth(a_data);
-		if (!health || !Protocol::IsShareableRef(health->refId) || deadActors.contains(health->refId)) {
+		// A spawn's health goes to its owner too, whoever hit their copy of it.
+		const bool spawn = health && spawns.contains(health->refId);
+		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId)) || deadActors.contains(health->refId)) {
 			return;
 		}
-		noteHostHadAlive(a_player, health->refId);  // hit and still alive
+		if (!spawn) {
+			noteHostHadAlive(a_player, health->refId);  // hit and still alive
+		}
 		noteFighting(a_player, health->refId, Clock::now());
 		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
 	};
@@ -1178,6 +1233,17 @@ void Server::Run()
 			return actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && *owned < Protocol::MAX_OWNED_PER_PLAYER && (a_reason != Reason::kCompanion || *companions < MAX_COMPANIONS_PER_PLAYER);
 		};
 		for (const auto& claim : *claims) {
+			// A spawn is run by the game that made it, for good: it is in no other game to run. A player fighting their
+			// copy of it is noted, so their kill is believed (handleSpawnDeath), and told who runs it.
+			if (const auto spawn = spawns.find(claim.refId); spawn != spawns.end()) {
+				if (claim.reason == Reason::kInteract) {
+					noteFighting(a_player, claim.refId, now);
+				}
+				if (spawn->second.playerId != a_player.id) {
+					current.push_back({ claim.refId, spawn->second.playerId });
+				}
+				continue;
+			}
 			if (!Protocol::IsShareableRef(claim.refId)) {
 				continue;
 			}
@@ -1349,10 +1415,50 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				spawns.erase(ref);        // a spawn its owner's game let go of (unloaded) is gone: the copies go
 				released.push_back({ ref, 0 });
 			}
 		}
 		sendOwners(released, 0);
+	};
+
+	// An NPC the player's game made at runtime (a random encounter's raider, an ambush): every other game places a copy
+	// of it, and the game that made it runs it for good. Under the spawn id its game picked: one another player's spawn
+	// has is refused (the answer names that player, and the game picks another id), and so is one past the player's or the
+	// session's share, or past their budget (the answer names nobody, and the game asks again later). A granted one is
+	// answered to everyone with its owner, after the copy's details have gone to the others.
+	const auto handleSpawn = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto spawn = Protocol::DecodeSpawn(a_data);
+		if (!spawn) {
+			return;
+		}
+		spawn->playerId = a_player.id;
+		if (const auto it = spawns.find(spawn->refId); it != spawns.end()) {
+			sendOwners({ { spawn->refId, it->second.playerId } }, a_player.key);
+			return;
+		}
+		const auto now = Clock::now();
+		auto&      budget = budgetOf(a_player);
+		const auto theirs = static_cast<std::size_t>(std::ranges::count_if(spawns, [&](const auto& a_entry) { return a_entry.second.playerId == a_player.id; }));
+		const bool room = theirs < Protocol::MAX_SPAWNS_PER_PLAYER && spawns.size() < MAX_SPAWNS && actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS &&
+		                  !actorOwners.contains(spawn->refId);
+		if (!room || !budget.spawns.Take(now)) {
+			++budget.spawnsRefused;
+			if (now - budget.spawnsLogged >= BUDGET_LOG_INTERVAL) {
+				budget.spawnsLogged = now;
+				log(std::format("server: spawn {:08X} from player {} refused: {} ({} refused since the last such line)", spawn->refId, a_player.id,
+					room ? "they share them faster than any fight makes them" : "they or the session share as many as they may", std::exchange(budget.spawnsRefused, 0)));
+			}
+			sendOwners({ { spawn->refId, 0 } }, a_player.key);
+			return;
+		}
+		spawns[spawn->refId] = *spawn;
+		actorOwners[spawn->refId] = { a_player.id, Protocol::ClaimReason::kUnowned, now };
+		broadcast(Protocol::Encode(*spawn, Protocol::MessageType::kSpawned), true, a_player.key);
+		sendOwners({ { spawn->refId, a_player.id } }, 0);
 	};
 
 	const auto handleActorStates = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -1390,6 +1496,13 @@ void Server::Run()
 		// reporter's game (dead in the host's save, alive in a joiner's until the news reaches it).
 		if (!hit->byPlayer && deadActors.contains(hit->attacker)) {
 			return;
+		}
+		// A spawn hits a stand-in only in its owner's game: the reporter's own (the victim's game has a copy of it).
+		if (!hit->byPlayer && Protocol::IsSpawnRef(hit->attacker)) {
+			const auto spawn = spawns.find(hit->attacker);
+			if (spawn == spawns.end() || spawn->second.playerId != a_player.id) {
+				return;
+			}
 		}
 		// No single hit beyond what the strongest weapon does, and no more per second from one
 		// reporter than a fight can produce; the rest is dropped.
@@ -1817,6 +1930,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportActivation:
 			handleActivation(a_player, a_data);
+			break;
+		case MessageType::kReportSpawn:
+			handleSpawn(a_player, a_data);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);

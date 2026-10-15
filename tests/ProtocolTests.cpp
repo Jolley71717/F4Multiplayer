@@ -891,17 +891,19 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has.
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
 	CHECK(!ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
-	CHECK(!ok(10.0f, false, RUNTIME_REF));
+	CHECK(ok(10.0f, false, RUNTIME_REF));
+	CHECK(!ok(10.0f, false, 0xFF000000));
 	CHECK(!ok(-1.0f, false, REF_A));
 }
 
 TEST("protocol: Shot and QuestDone reject references that aren't shared")
 {
 	CHECK(!DecodeShot(Encode(Shot{ 1, PLAYER_REF_ID }, MT::kReportShot)));
-	CHECK(!DecodeShot(Encode(Shot{ 1, RUNTIME_REF }, MT::kShotFired)));
+	CHECK(DecodeShot(Encode(Shot{ 1, RUNTIME_REF }, MT::kShotFired)));  // a spawn's, under its spawn id
+	CHECK(!DecodeShot(Encode(Shot{ 1, 0xFF000000 }, MT::kShotFired)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, 0 }, MT::kReportQuestDone)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, PLAYER_REF_ID }, MT::kQuestDone)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, RUNTIME_REF }, MT::kQuestDone)));

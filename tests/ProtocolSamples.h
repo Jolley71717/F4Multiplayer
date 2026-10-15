@@ -226,6 +226,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
 		}
+		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
+		}
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -268,6 +271,7 @@ namespace ProtocolSamples
 		case MT::kReportWorkshopItem:
 		case MT::kReportExplosion:
 		case MT::kReportActivation:
+		case MT::kReportSpawn:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -301,6 +305,7 @@ namespace ProtocolSamples
 		case MT::kWorkshopItems:
 		case MT::kExplosion:
 		case MT::kActivation:
+		case MT::kSpawned:
 			return true;
 		}
 		return false;

@@ -13,6 +13,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -68,6 +69,7 @@ namespace NpcSync
 			std::deque<Snapshot> snapshots;
 			Prediction::ArrivalClock arrivals{ .gap = 0.05f };  // even stamps for states read in bursts
 			RE::Actor*           registered = nullptr;  // as registered with Puppets
+			std::uint32_t        registeredId = 0;      // its form ID then (a copy of a friend's spawn has its own, not the spawn's)
 			float                delayMs = std::chrono::duration<float, std::milli>(SLOW_DELAY).count();
 		};
 
@@ -148,12 +150,23 @@ namespace NpcSync
 		Clock::time_point     nextStates{};
 
 
+		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
+		// spawn id (Spawns) is our own NPC shared so, or our copy of a friend's. 0: none.
+		std::uint32_t LocalId(std::uint32_t a_id)
+		{
+			if (Protocol::IsSpawnRef(a_id)) {
+				return Spawns::LocalOf(a_id);
+			}
+			return Protocol::IsShareableRef(a_id) ? a_id : 0;  // the player or a stand-in: never something to mirror
+		}
+
 		RE::Actor* LoadedActor(std::uint32_t a_id)
 		{
-			if (!Protocol::IsShareableRef(a_id)) {
-				return nullptr;  // the player, a stand-in or a runtime actor: never something to mirror
+			const auto local = LocalId(a_id);
+			if (local == 0) {
+				return nullptr;
 			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local);
 			return actor && !actor->IsDeleted() && !actor->IsDisabled() && actor->Get3D() && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor) ? actor : nullptr;
 		}
 
@@ -183,14 +196,15 @@ namespace NpcSync
 			if (!a_mirror.registered) {
 				return;
 			}
-			WeaponFire::ReleaseSoundsOf(a_id);  // a replayed burst may still follow the actor's 3D
-			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
+			WeaponFire::ReleaseSoundsOf(a_mirror.registeredId);  // a replayed burst may still follow the actor's 3D
+			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp
 			} else {
-				Puppets::Unregister(a_mirror.registered, a_id);  // the actor is gone; just forget it
+				Puppets::Unregister(a_mirror.registered, a_mirror.registeredId);  // the actor is gone; just forget it
 			}
 			a_mirror.registered = nullptr;
+			a_mirror.registeredId = 0;
 		}
 
 		void StopMirroring(std::uint32_t a_id)
@@ -257,6 +271,15 @@ namespace NpcSync
 				for (const auto& handle : lists->highActorHandles) {
 					const auto ptr = handle.get();
 					const auto actor = ptr.get();
+					// One our game made at runtime is shared under a spawn id (Spawns) and run by our game for good: never
+					// claimed, nor handed off. Loaded while dead too, so it isn't let go before the server has its death.
+					if (actor && Protocol::IsSpawnRef(actor->GetFormID())) {
+						if (const auto spawn = Spawns::Share(actor)) {
+							WeaponFire::InstallForNpcs(actor);
+							loaded.insert(spawn);
+						}
+						continue;
+					}
 					if (!IsCandidate(actor)) {
 						continue;
 					}
@@ -727,6 +750,7 @@ namespace NpcSync
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
+					mirror.registeredId = actor->GetFormID();
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
@@ -785,10 +809,15 @@ namespace NpcSync
 			if (owner == 0 || owner == localId) {
 				continue;
 			}
+			// A friend's spawn: our copy is placed where their game has it (Spawns), never switched on or brought in.
+			const bool spawn = Protocol::IsSpawnRef(state.refId);
+			if (spawn) {
+				Spawns::OnState(state);
+			}
 			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
 			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
 			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
-			const auto fixes = RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
+			const auto fixes = spawn ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
 			if (RetryBudget::Go(fixes.switchOn)) {
 				SwitchOn(state, fixes.switchOn);
 			}
@@ -909,7 +938,9 @@ namespace NpcSync
 			SendOwnedGear();
 			std::vector<std::uint32_t> ids;
 			for (const auto& [id, track] : owned) {
-				ids.push_back(id);
+				if (const auto local = LocalId(id)) {
+					ids.push_back(local);  // WeaponFire's animation events name our game's NPC
+				}
 			}
 			WeaponFire::SetOwnedNpcs(std::move(ids));
 		}
@@ -955,6 +986,11 @@ namespace NpcSync
 	std::vector<Outgoing> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
+	}
+
+	void DropMirror(std::uint32_t a_refId)
+	{
+		StopMirroring(a_refId);
 	}
 
 	void ReleaseMirrors()

@@ -15,6 +15,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
@@ -48,6 +49,9 @@ namespace WorldSync
 		// player's is decided in Frame(), where who runs what can be read (CopyHealth::Credited).
 		using Killers = std::unordered_map<std::uint32_t, std::uint32_t>;
 		Killers killInbox;
+		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
+		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
+		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
 		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
 		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
 		// Every shareable reference whose 3D loaded (any kind: containers, loose items and doors too), for
@@ -197,6 +201,13 @@ namespace WorldSync
 				return nullptr;
 			}
 			return actor;
+		}
+
+		// The id the wire names one of our actors by: a plugin's reference's own, or the spawn id a runtime NPC is shared
+		// under (Spawns: ours, or our copy of a friend's). 0: none.
+		std::uint32_t WireId(std::uint32_t a_local)
+		{
+			return IsShareableRef(a_local) ? a_local : Spawns::IdOf(a_local);
 		}
 
 		FoundDead::Npc DescribeDead(RE::Actor* a_actor);
@@ -360,6 +371,12 @@ namespace WorldSync
 					++playerKills;
 				}
 				if (!IsShareableRef(id)) {
+					if (actor && Protocol::IsSpawnRef(id)) {
+						std::scoped_lock l{ inboxLock };
+						if (runtimeDeathInbox.size() < MAX_RUNTIME_DEATHS) {
+							runtimeDeathInbox.emplace_back(id, byPlayer);
+						}
+					}
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				WeaponFire::NoteDeath(id);
@@ -530,13 +547,13 @@ namespace WorldSync
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// An NPC in our world (or we, with friendly fire on) hit another player's stand-in:
-				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame(). NPCs
-				// made at runtime (random encounters, spawned enemies) exist only in our game, so
-				// their hits would come from nowhere in the victim's: not passed on.
+				// that player takes the damage. Hits on mirrored NPCs are dropped in Frame(). One made
+				// at runtime (random encounters, spawned enemies) is passed on only if our game shares
+				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
 				const auto victim = target->As<RE::Actor>();
-				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker))) {
+				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker) || Protocol::IsSpawnRef(attacker))) {
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
@@ -546,9 +563,10 @@ namespace WorldSync
 					}
 				}
 				// Only damage dealt to others (not the attacker itself); each game reports its own hits: our player's, and
-				// those of the actors our game runs (decided in Frame()).
+				// those of the actors our game runs (decided in Frame()). One made at runtime
+				// is reported if it is shared (Frame() asks Spawns).
 				const auto actor = target->As<RE::Actor>();
-				if (actor && target != cause && (byPlayer || cause->As<RE::Actor>()) && IsShareableRef(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
+				if (actor && target != cause && (byPlayer || cause->As<RE::Actor>()) && (IsShareableRef(target->GetFormID()) || Protocol::IsSpawnRef(target->GetFormID())) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
 					if (byPlayer || hitInbox.size() < MAX_HIT_INBOX) {
 						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID() });
@@ -863,6 +881,21 @@ namespace WorldSync
 				dead.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 				reports.Forget(id);
 				pendingHealth.erase(id);
+			}
+		}
+
+		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
+		// reported under its spawn id. Not kept with the session's dead: the id may name another spawn later.
+		void ReportRuntimeDeaths(const std::vector<std::pair<std::uint32_t, bool>>& a_deaths)
+		{
+			for (const auto& [local, byUs] : a_deaths) {
+				const auto id = Spawns::OnLocalDeath(local);
+				if (id == 0) {
+					continue;
+				}
+				const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(local);
+				const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};
+				ReportDead({ .refId = id, .killed = byUs, .x = at.x, .y = at.y, .z = at.z });
 			}
 		}
 
@@ -1274,6 +1307,10 @@ namespace WorldSync
 
 	void ApplyRemoteDeath(const Protocol::ActorDeath& a_death)
 	{
+		if (Protocol::IsSpawnRef(a_death.refId)) {
+			Spawns::ApplyDeath(a_death);  // a spawn's: its death is the session's for no longer than it lives
+			return;
+		}
 		TakeDeath(a_death.refId, reports.Received(a_death, Clock::now()), CanApply());
 	}
 
@@ -1352,6 +1389,13 @@ namespace WorldSync
 
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health)
 	{
+		// A spawn's: our own NPC, or our copy of a friend's (none placed: there is nothing to set).
+		if (Protocol::IsSpawnRef(a_refId)) {
+			if (const auto local = Spawns::LocalOf(a_refId)) {
+				TrySetHealth(local, a_health, CanApply());
+			}
+			return;
+		}
 		if (!IsShareableRef(a_refId) || dead.Contains(a_refId)) {
 			return;
 		}
@@ -1433,9 +1477,11 @@ namespace WorldSync
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
 		std::vector<Move>          newMoves;
+		std::vector<std::pair<std::uint32_t, bool>> newRuntimeDeaths;
 		{
 			std::scoped_lock l{ inboxLock };
 			newDeaths.swap(deathInbox);
+			newRuntimeDeaths.swap(runtimeDeathInbox);
 			newLoads.swap(loadInbox);
 			newRefLoads.swap(refLoadInbox);
 			killers.swap(killInbox);
@@ -1448,6 +1494,7 @@ namespace WorldSync
 		}
 
 		ReportDeaths(newDeaths, killers);
+		ReportRuntimeDeaths(newRuntimeDeaths);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
 
@@ -1457,13 +1504,14 @@ namespace WorldSync
 		// Report the health of actors we hit last frame (damage has been applied by now).
 		if (const auto info = HealthInfo(); info && !hitLastFrame.empty()) {
 			for (const auto id : hitLastFrame) {
-				const auto actor = LoadedActor(id);
+				const auto wire = WireId(id);
+				const auto actor = wire ? LoadedActor(id) : nullptr;
 				if (actor && !actor->IsDead(false) && !dead.Contains(id)) {
 					const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
 					const float maximum = values.GetPermanentActorValue(*info);
 					if (maximum > 0.0f) {
 						const float fraction = values.GetActorValue(*info) / maximum;
-						Queue(Protocol::Encode(Protocol::ActorHealth{ id, fraction }, Protocol::MessageType::kReportHealth));
+						Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
 					}
 				}
 			}
@@ -1474,7 +1522,12 @@ namespace WorldSync
 		// brings it over to ours; another actor of ours claims it only with the blow that killed it (CopyHealth::After).
 		const auto local = NpcSync::LocalPlayer();
 		for (const auto& hit : newHits) {
-			const auto owner = NpcSync::Owner(hit.target);
+			// The id the session knows it by (a runtime NPC's spawn id); one not shared is nothing to report.
+			const auto wire = WireId(hit.target);
+			if (wire == 0) {
+				continue;
+			}
+			const auto owner = NpcSync::Owner(wire);
 			// Another actor's hit on an NPC our game runs, or nobody does, is nothing to report: not looked into.
 			const bool copy = owner != 0 && local != 0 && owner != local;
 			const auto hitter = hit.cause == Protocol::PLAYER_REF_ID ? CopyHealth::Hitter::kOurPlayer :
@@ -1487,7 +1540,7 @@ namespace WorldSync
 				hitLastFrame.insert(hit.target);
 			}
 			if (after.claim) {
-				NpcSync::OnLocalInteraction(hit.target);
+				NpcSync::OnLocalInteraction(wire);
 			}
 		}
 		for (const auto& activation : newActivations) {
@@ -1501,8 +1554,14 @@ namespace WorldSync
 			}
 		}
 		for (const auto& hit : newStandInHits) {
+			// One made at runtime hits under the spawn id our game shares it as: only our own (a copy of a friend's
+			// hits in its owner's game; one not shared is in no other game).
+			const auto attacker = hit.byPlayer || IsShareableRef(hit.attacker) ? hit.attacker : Spawns::OwnIdOf(hit.attacker);
+			if (!hit.byPlayer && attacker == 0) {
+				continue;
+			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
-				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, hit.attacker }, Protocol::MessageType::kPlayerHit));
+				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
 			}
 		}
 
@@ -1555,16 +1614,19 @@ namespace WorldSync
 		std::vector<std::uint32_t> deaths;
 		Killers                    killers;
 		std::vector<Move>          moves;
+		std::vector<std::pair<std::uint32_t, bool>> runtimeDeaths;
 		{
 			std::scoped_lock l{ inboxLock };
 			deaths.swap(deathInbox);
 			killers.swap(killInbox);
 			moves.swap(lootInbox);
+			runtimeDeaths.swap(runtimeDeathInbox);
 		}
 		// The deaths first, as in a frame: a corpse looted in the last moments goes out dead, so the others
 		// put its loot in (after a load Reset would forget the death, and they would hold the loot as a
 		// living NPC's until they gave up on it).
 		ReportDeaths(deaths, killers);
+		ReportRuntimeDeaths(runtimeDeaths);
 		ReportMoves(moves);
 	}
 
@@ -1606,6 +1668,7 @@ namespace WorldSync
 		activateInbox.clear();
 		deathInbox.clear();
 		killInbox.clear();
+		runtimeDeathInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
 		std::scoped_lock o{ outgoingLock };
