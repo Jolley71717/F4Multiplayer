@@ -831,11 +831,12 @@ namespace DevCommands
 			return seen;
 		}
 
-		// The loaded actors within a_radius of a point.
-		std::vector<EnemyList::Seen> SeeActors(RE::PlayerCharacter* a_player, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_center, float a_radius)
+		// The loaded actors within a_radius of a point, in every loaded cell: outdoors an enemy across the cell
+		// border counts too.
+		std::vector<EnemyList::Seen> SeeActors(RE::PlayerCharacter* a_player, const RE::NiPoint3& a_center, float a_radius)
 		{
 			std::vector<EnemyList::Seen> out;
-			a_cell->ForEachReferenceInRange(a_center, a_radius, [&](RE::TESObjectREFR* a_ref) {
+			RE::TES::GetSingleton()->ForEachReferenceInRange(a_center, a_radius, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
 				if (actor && !actor->IsPlayerRef() && !actor->IsDisabled() && out.size() < 200) {
 					out.push_back(SeeActor(a_player, actor));
@@ -867,14 +868,14 @@ namespace DevCommands
 				}
 				const RE::NiPoint3 spot{ *x, *y, player->data.location.z };
 				// The search reaches as far up and down as across: the spot's height is the player's, not the actor's.
-				const auto found = EnemyList::Like(SeeActors(player, cell, spot, within * 2.0f), *base, *x, *y, within);
+				const auto found = EnemyList::Like(SeeActors(player, spot, within * 2.0f), *base, *x, *y, within);
 				return found ? EnemyList::Describe(*found) : "none";
 			}
 			const float radius = args.empty() ? 3000.0f : ParseFloat(args[0]).value_or(-1.0f);
 			if (!(radius > 0.0f && radius <= 20000.0f)) {
 				return "error: usage: enemies [radius] | enemies like <baseHex|any> <x> <y> [within]";
 			}
-			return EnemyList::List(SeeActors(player, cell, player->data.location, radius));
+			return EnemyList::List(SeeActors(player, player->data.location, radius));
 		}
 
 		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
