@@ -84,6 +84,14 @@
   onto the copy (tint layers are rebuilt by vtable, pointing at the race's template entries by
   uniqueID) and spawns the stand-in from it. A changed face deletes the stand-in; it respawns with
   a fresh copy. Copies are never freed (forms can't be).
+  With LooksMenu (f4ee.dll) installed, the face also carries its body sliders (protocol 29; at most
+  128, names up to 64 characters, values within +-2): `src/game/LooksMenu.cpp` reads the player's
+  through LooksMenu's Papyrus script BodyGen (GetMorphs, then GetMorph under no keyword, both answered
+  on the VM's threads; again every 15 s with no menu open) and the face waits for the first read.
+  A receiver with LooksMenu sets them on each new stand-in (SetMorph; UpdateMorphs once every set is
+  answered, if its 3D was built meanwhile) and removes them (RemoveAllMorphs) when the stand-in goes,
+  since LooksMenu keeps them by form ID and the next runtime reference may get that ID. Without
+  LooksMenu on either side nothing is called (`src/game/BodyMorphs.h` holds the rules, tested).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders a friend in the past
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto

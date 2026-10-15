@@ -15,6 +15,7 @@
 #include "game/StateBuffer.h"
 
 #include "game/Face.h"
+#include "game/LooksMenu.h"
 #include "Config.h"
 #include "game/Equipment.h"
 #include "game/Puppets.h"
@@ -1184,6 +1185,7 @@ namespace RemotePlayers
 			DeleteFrame(a_player, actor, heldIn && heldIn.get() == a_player.frame.get().get() ? wearer : RE::ObjectRefHandle{});
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
+				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
@@ -1570,6 +1572,11 @@ namespace RemotePlayers
 				if (values->assistance) {
 					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
 				}
+			}
+			// Their LooksMenu body sliders, when both games have LooksMenu (LooksMenu keeps them by reference, not on
+			// the base: so on each stand-in).
+			if (a_player.face) {
+				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs);
 			}
 
 			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);
