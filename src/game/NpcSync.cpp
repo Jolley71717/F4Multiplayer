@@ -498,11 +498,13 @@ namespace NpcSync
 			if (a_mirror.snapshots.empty()) {
 				return std::nullopt;
 			}
-			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(a_mirror.delayMs));
+			const auto behind = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(a_mirror.delayMs));
+			const auto renderTime = a_now - behind;
 			const auto& snaps = a_mirror.snapshots;
 
 			Protocol::ActorState state = snaps.back().state;
 			float                motionAngle = state.heading;
+			std::size_t          next = snaps.size();  // the first state the path goes on through (MotionPath.h)
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
 				const auto& a = snaps[i - 1];
 				const auto& b = snaps[i];
@@ -521,6 +523,7 @@ namespace NpcSync
 				if (dx * dx + dy * dy > 1.0f) {
 					motionAngle = std::atan2(dx, dy);
 				}
+				next = i - 1;
 				break;
 			}
 			if (a_now - snaps.back().received > STALE_AFTER) {
@@ -536,6 +539,7 @@ namespace NpcSync
 				.gait = state.gait,
 				.gaitRate = state.gaitRate,
 				.ownerAim = Protocol::UnpackAimPitch(state.aimPitch),
+				.path = MotionPath::Ahead({ a_now, state.x, state.y, state.z, state.heading }, state.cell, state.worldspace, snaps, next, behind, &Snapshot::received),
 			};
 		}
 

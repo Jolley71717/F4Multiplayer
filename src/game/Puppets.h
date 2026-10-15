@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "game/MotionPath.h"
+
 // Puppets are actors driven entirely by us: remote players' stand-ins, and NPCs whose AI runs in
 // another player's game. Their AI update is replaced with the engine's no-AI update, and their
 // transform and animation state are forced to a target every frame.
@@ -20,6 +22,9 @@ namespace Puppets
 		// A mirrored NPC: the pitch its owner's copy aims its gun at (Protocol::ActorState::aimPitch), none while that
 		// copy aims at nothing (AimPoint::ForMirror).
 		std::optional<float> ownerAim;
+		// Where it goes from the moment this motion was sampled (MotionPath.h): the engine's update puts it where the path is
+		// at the moment that update runs. Empty: at position and heading.
+		MotionPath::Path path;
 	};
 
 	enum class Kind

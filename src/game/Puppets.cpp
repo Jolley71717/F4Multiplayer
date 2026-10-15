@@ -442,7 +442,8 @@ namespace Puppets
 				return;
 			}
 			// Climbing into or out of power armor is a furniture interaction the AI drives: let it.
-			if (std::chrono::steady_clock::now() < puppet->aiUntil) {
+			const auto now = std::chrono::steady_clock::now();
+			if (now < puppet->aiUntil) {
 				originalUpdate(a_this, a_delta);
 				return;
 			}
@@ -453,6 +454,12 @@ namespace Puppets
 			}
 			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
+				// Where its path is now (MotionPath.h), not where it was when our frame's work last ran, which comes at
+				// another moment of each frame than this update does.
+				if (const auto at = puppet->target.path.At(now)) {
+					puppet->target.position = { at->x, at->y, at->z };
+					puppet->target.heading = at->heading;
+				}
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
