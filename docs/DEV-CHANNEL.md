@@ -20,6 +20,13 @@ game's own code can:
   owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paused` and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
   sounds played, and so on.
+- **Find enemies:** `enemies [radius]` lists the actors near the player that are hostile to it, or
+  fighting a player, nearest first: whether the player can see each one (`los`), what it fights as a
+  session player number (`targetPlayer`, the same in every game, where a friend's stand-in has another
+  form ID in each), and who runs it (`owner`, `here`; a copy of an NPC another game runs fights nothing
+  here, so ask that game). An enemy made at runtime (`made=true`: a random encounter, a spawned enemy)
+  has another form ID in each game: `enemies like <base|any> <x> <y> [within]` finds this game's actor
+  of that base at that spot. Made for a test script playing a co-op follower.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
   characters say; HUD messages name players and are never logged) until the game restarts, `log
