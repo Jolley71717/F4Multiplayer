@@ -2052,7 +2052,7 @@ namespace DevCommands
 			event.idCode = a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1;
 			event.disabled = false;
 			event.value = a_down ? 1.0f : 0.0f;
-			event.heldDownSecs = a_down ? 0.0f : std::chrono::duration<float>(a_press.hold).count();
+			event.heldDownSecs = a_down ? 0.0f : InjectInput::ReleaseHeldSecs(a_press);
 			const auto input = reinterpret_cast<const RE::InputEvent*>(&event);
 			std::string out;
 			const auto  menus = RE::MenuControls::GetSingleton();

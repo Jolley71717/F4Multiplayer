@@ -29,6 +29,10 @@ namespace InjectInput
 	constexpr auto DEFAULT_HOLD = std::chrono::milliseconds(100);
 	constexpr auto MAX_HOLD = std::chrono::milliseconds(10000);
 
+	// The shortest hold a release tells the game: one frame. The game counts a button released only when
+	// its release says it was held some time (ButtonEvent::QReleased), so hold=0 would never let go.
+	constexpr auto MIN_RELEASE_HOLD = std::chrono::milliseconds(16);
+
 	struct Press
 	{
 		std::string                  userEvent;  // the control map's name for it: Activate, Accept, Cancel, Up, Pipboy...
@@ -102,8 +106,16 @@ namespace InjectInput
 		return press;
 	}
 
+	// The seconds the release of the press says it was held (ButtonEvent::heldDownSecs): its hold, at least
+	// a frame. The game tells a tap from a hold by it (a held Pip-Boy button is the light).
+	[[nodiscard]] inline float ReleaseHeldSecs(const Press& a_press)
+	{
+		return std::chrono::duration<float>((std::max)(a_press.hold, MIN_RELEASE_HOLD)).count();
+	}
+
 	// Presses waiting for their release, stepped once a frame. A button is never pressed twice without a
-	// release between (no real one can be): a new press of one still held releases it first.
+	// release between (no real one can be): a new press of one still held releases it first, saying it
+	// was held as long as it really was.
 	class Releases
 	{
 	public:
@@ -119,7 +131,10 @@ namespace InjectInput
 			std::vector<Press> first;
 			std::erase_if(pending, [&](const Pending& a_pending) {
 				if (Same(a_pending.press, a_press)) {
-					first.push_back(a_pending.press);
+					auto       released = a_pending.press;
+					const auto pressedAt = a_pending.due - released.hold;
+					released.hold = std::clamp(std::chrono::duration_cast<std::chrono::milliseconds>(a_now - pressedAt), std::chrono::milliseconds::zero(), released.hold);
+					first.push_back(std::move(released));
 					return true;
 				}
 				return false;

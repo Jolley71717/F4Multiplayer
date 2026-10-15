@@ -52,6 +52,7 @@ using System;
 using System.Runtime.InteropServices;
 public static class F4HangCatch {
 	[DllImport("user32.dll")] public static extern bool IsHungAppWindow(IntPtr hWnd);
+	[DllImport("ntdll.dll")] public static extern int NtResumeProcess(IntPtr processHandle);
 }
 '@
 
@@ -65,7 +66,8 @@ function Remove-Old([string]$pattern) {
 }
 
 # Attaches, writes the dump and the stacks, detaches. The debugger gets two minutes: a stuck debugger is
-# killed, and with -pv that leaves the game as it was (it is resumed when the debugger's process ends).
+# killed. With -pv it suspended every thread of the game and only its detach (qd) resumes them; a thread's
+# suspension outlives the process that asked for it, so after a kill the game is resumed here, once.
 function Invoke-Catch([System.Diagnostics.Process]$game, [string]$why) {
 	$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 	$dump = Join-Path $OutDir "hang-$stamp.dmp"
@@ -92,6 +94,13 @@ function Invoke-Catch([System.Diagnostics.Process]$game, [string]$why) {
 	if (-not $cdbProcess.WaitForExit(120000)) {
 		Write-Line 'the debugger took over two minutes: stopped'
 		Stop-Process -Id $cdbProcess.Id -Force -ErrorAction SilentlyContinue
+		$cdbProcess.WaitForExit(10000) | Out-Null
+		try {
+			$status = [F4HangCatch]::NtResumeProcess($game.Handle)
+			Write-Line ("resumed the game's threads (status {0:X8})" -f $status)
+		} catch {
+			Write-Line "could not resume the game's threads: $($_.Exception.Message)"
+		}
 	}
 	Remove-Item $script -Force -ErrorAction SilentlyContinue
 	if ((Test-Path $errors) -and (Get-Item $errors).Length -eq 0) { Remove-Item $errors -Force }

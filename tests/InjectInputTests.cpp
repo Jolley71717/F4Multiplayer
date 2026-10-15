@@ -119,7 +119,7 @@ TEST("inject input: pressing a held button again releases it first")
 	REQUIRE(first.size() == 1);
 	CHECK(first[0].userEvent == "Up");
 	CHECK(first[0].device == Device::kKeyboard);
-	CHECK(first[0].hold == 1000ms);
+	CHECK(first[0].hold == 200ms);  // the release says how long it really was held, not the hold it was meant for
 	CHECK(releases.Waiting() == 3);
 	// The new press keeps its own, shorter hold.
 	const auto due = releases.Due(START + 300ms);
@@ -136,4 +136,21 @@ TEST("inject input: a button pressed with its code is another button than the sa
 	CHECK(PressNow(releases, "Up id=C8 hold=1000", START).empty());
 	CHECK(releases.Waiting() == 2);
 	CHECK(PressNow(releases, "Up id=11 hold=10", START + 1ms).size() == 1);
+}
+
+TEST("inject input: a release always says the button was held, so the game lets go of a zero hold")
+{
+	Releases releases;
+	CHECK(PressNow(releases, "Activate hold=0", START).empty());
+	const auto due = releases.Due(START);
+	REQUIRE(due.size() == 1);
+	CHECK(due[0].hold == 0ms);
+	CHECK(InjectInput::ReleaseHeldSecs(due[0]) > 0.0f);  // ButtonEvent::QReleased needs heldDownSecs above zero
+	CHECK(InjectInput::ReleaseHeldSecs(ParseOk("Activate hold=250")) == 0.25f);
+	// Pressed again the instant it went down: released first, still said to be held a frame.
+	CHECK(PressNow(releases, "Pipboy hold=1000", START).empty());
+	const auto first = PressNow(releases, "Pipboy hold=1000", START);
+	REQUIRE(first.size() == 1);
+	CHECK(first[0].hold == 0ms);
+	CHECK(InjectInput::ReleaseHeldSecs(first[0]) > 0.0f);
 }
