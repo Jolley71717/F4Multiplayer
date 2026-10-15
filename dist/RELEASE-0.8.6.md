@@ -1,6 +1,6 @@
 ## 0.8.6
 
-Everyone needs 0.8.6 to play together: it uses protocol 29, so a friend on 0.8.5 or on the 0.8.6-rc1 to rc4 test builds gets "Version mismatch".
+Everyone needs 0.8.6 to play together: it uses protocol 30, so a friend on 0.8.5 or on the 0.8.6-rc1 to rc4 test builds gets "Version mismatch".
 
 Coming from 0.8.5:
 
@@ -21,8 +21,8 @@ What changed:
 - NPCs killed in a session come back when their cell resets in the host's game, as they would playing alone, instead of staying dead for the whole session.
 - Enemies dead in the host's world stay dead for friends. Settlement junk the host scrapped is gone for friends too (never a container you keep things in).
 - Quest NPCs a friend has moved on (Preston's group in Sanctuary) show up for you even if your copy of that quest hasn't.
-- Shared quests move on stage by stage in order, with each stage's own scripts and achievements, and wait while you are loading, paused, talking or haven't started the quest. A friend's stage never takes your caps, and moves you only when you stand with them (the Institute teleport warns you first, then takes you along). Nothing from a session is set in your game after you leave, except finishing a teleport already under way, and your solo progress never reaches a session you join later. A stage you reach while your connection is being remade, a story step too, reaches your friends once you are back; after five minutes without the host you are playing alone, and nothing of it is sent when they return.
-- A friend's grenade kills the enemies beside you in your game, with friendly fire off too. It also hurts you if it lands at your feet. Nothing bigger than a thrown explosive is set off for a friend. An enemy another player's game runs is hurt in your game only by players' hits, so its own side's grenades no longer kill it in one game while it fights on in the other (your companion's and turrets' hits on it don't count yet).
+- Shared quests move on for everyone, whoever plays them, stage by stage in order, with each stage's own scripts and achievements; a quest a friend moves on is started in your game if you hadn't, and stages wait while you are loading, paused or talking. A friend who joins partway through is caught up to the host's story, and never set back if further along. Stages that take items (Vault 81's fusion cores) are left out. A friend's stage never takes your caps, and moves you only when you stand with them (the Institute teleport warns you first, then takes you along). Nothing from a session is set in your game after you leave, except finishing a teleport already under way, and your solo progress never reaches a session you join later. A stage you reach while your connection is being remade, a story step too, reaches your friends once you are back; after five minutes without the host you are playing alone, and nothing of it is sent when they return.
+- A friend's grenade kills the enemies beside you in your game, with friendly fire off too. It also hurts you if it lands at your feet. Nothing bigger than a thrown explosive is set off for a friend. An enemy another player's game runs is hurt in your game only by players' hits, so its own side's grenades no longer kill it in one game while it fights on in the other. Your companion's and your NPCs' hits on it count, and your kill of it counts in the other game too, with a gun, a grenade or a mine.
 - Leaving and rejoining no longer gives a joiner a fresh budget of NPC deaths and explosions to report.
 - Power armor: friends show in their suit again, and a suit taken from the world isn't seen twice. A friend's Pip-Boy light follows them across cells without flickering, and a friend in power armor is drawn on the frame they wear.
 - Friends no longer walk on the spot while standing, and a friend's Dogmeat gets up and follows.
@@ -35,6 +35,10 @@ What changed:
 - Nothing is written to the HUD for six seconds after a game load, when the engine rebuilds its menus. The host crashed in the HUD text layout three seconds after loading a save; the loading-screen guard from 0.8.5 ended too early for that case.
 - The F1 menu's first button is always Close or Back. Tab presses a message box's first button, so leaving the menu with Tab could start hosting, leave the game or stop hosting by accident, and a host who did that lost shooting, the Pip-Boy and the map until a restart.
 - Semi-auto pistols sound like single shots.
+- Raiders and creatures a random encounter or ambush makes appear in every friend's game. Hitting a friend's stand-in no longer turns it hostile or leaves you in combat.
+- A friend calling an elevator no longer forces yours open onto an empty shaft, and doors no longer reopen themselves. The host's talk at Vault 81's intercom, and the vault door, reach friends.
+- Scrapping in workshop mode, or going in and out of it, can no longer freeze the game, and leaving a settlement where a friend's stand-in stood no longer crashes the host.
+- A friend's power armor stands where they parked it. Dogmeat, saved dead by mistake, comes back. A friend who shaped their body in LooksMenu has that body on their stand-in when you have LooksMenu too.
 - A freeze writes a short report. Slow saves and loads no longer count as freezes.
 - NPC voice lines now need `bExperimentalVoiceLines = true` in the ini.
 - Newer builds are on GitHub first; Nexus follows less often.
