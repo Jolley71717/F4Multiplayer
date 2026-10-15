@@ -3,6 +3,7 @@
 #include "MainThread.h"
 #include "game/CopyWatch.h"
 #include "game/DeathReports.h"
+#include "game/DoorShare.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
 #include "game/LootScope.h"
@@ -117,6 +118,8 @@ namespace WorldSync
 		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
+		DoorShare::Book                                        refBook;      // what the session last said of each door: a world state's repeats aren't applied again
+		std::unordered_map<std::uint32_t, bool>                opensShared;  // per reference with an open state: whether a player's opening it is shared
 
 		// Container changes are numbered by the server. Everything before the ledger's next number is in
 		// our world already or waits in the loot's queue (its container isn't loaded, or an NPC lives here);
@@ -872,7 +875,57 @@ namespace WorldSync
 			std::erase_if(unmatchedPickups, expired);
 		}
 
-		// Current open/lock state of a loaded reference, or nullopt if it isn't loaded or has neither.
+		// Whether a script is attached to the reference (from its base, or of its own). A plain ObjectReference
+		// object is only Papyrus holding the reference somewhere, not a script on it.
+		bool ScriptAttached(RE::TESObjectREFR* a_ref)
+		{
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!vm) {
+				return false;
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), a_ref);
+			if (handle == handles.EmptyHandle()) {
+				return false;
+			}
+			bool                                                                                      scripted = false;
+			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+				const auto type = a_object ? a_object->type.get() : nullptr;
+				if (type && _stricmp(type->GetName(), "ObjectReference") != 0) {
+					scripted = true;
+					return RE::BSContainer::ForEachResult::kStop;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			} };
+			vm->ForEachBoundObject(handle, visit);
+			return scripted;
+		}
+
+		// Whether a loaded reference's open state is a player's to share (DoorShare::SharesOpen), worked out
+		// once per reference: an elevator's, or a gear door's, is its script's.
+		bool OpensShared(RE::TESObjectREFR* a_ref)
+		{
+			if (const auto it = opensShared.find(a_ref->GetFormID()); it != opensShared.end()) {
+				return it->second;
+			}
+			const auto       base = a_ref->GetObjectReference();
+			const auto       door = base ? base->As<RE::TESObjectDOOR>() : nullptr;
+			DoorShare::Facts facts;
+			facts.door = door != nullptr;
+			facts.doorFlags = door ? static_cast<std::uint8_t>(door->flags) : 0;
+			facts.scripted = door && ScriptAttached(a_ref);
+			const bool shared = DoorShare::SharesOpen(facts);
+			if (!shared) {
+				REX::INFO("WorldSync: {:08X} (base {:08X}) is opened by {}; its open state isn't shared", a_ref->GetFormID(), base ? base->GetFormID() : 0,
+					!door ? "a script (not a door)" : facts.scripted ? "a script on the door" : "itself (an automatic door)");
+			}
+			opensShared.emplace(a_ref->GetFormID(), shared);
+			return shared;
+		}
+
+		// The shared open/lock state of a loaded reference (see DoorShare::Shared; either part may be
+		// unknown), or nullopt if it isn't loaded.
 		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref)
 		{
 			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D() || a_ref->As<RE::Actor>()) {
@@ -895,8 +948,8 @@ namespace WorldSync
 			if (const auto lock = a_ref->GetLock()) {
 				state.locked = (lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? Protocol::RefState::kYes : Protocol::RefState::kNo;
 			}
-			if (state.open == Protocol::RefState::kUnknown && state.locked == Protocol::RefState::kUnknown) {
-				return std::nullopt;
+			if (state.open != Protocol::RefState::kUnknown) {
+				state = DoorShare::Shared(state, OpensShared(a_ref));
 			}
 			return state;
 		}
@@ -914,6 +967,9 @@ namespace WorldSync
 			const auto current = ReadRefState(ref);
 			if (!current) {
 				return ref && ref->IsDeleted();  // gone for good: drop it
+			}
+			if (!DoorShare::Says(*current)) {
+				return true;  // here, and nothing of it is shared (an elevator's open state is its script's)
 			}
 			if (a_state.locked != Protocol::RefState::kUnknown && current->locked != Protocol::RefState::kUnknown && a_state.locked != current->locked) {
 				ref->GetLock()->SetLocked(a_state.locked == Protocol::RefState::kYes);
@@ -966,12 +1022,14 @@ namespace WorldSync
 			for (auto it = watched.begin(); it != watched.end();) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(it->first);
 				const auto state = ReadRefState(ref);
-				if (!state || a_now > it->second.until) {
+				if (!state || !DoorShare::Says(*state) || a_now > it->second.until) {
 					it = watched.erase(it);
 					continue;
 				}
-				if (*state != it->second.lastSent) {
+				// The same state is no news whoever said it: one we took from a friend names them, ours doesn't.
+				if (!state->SameState(it->second.lastSent)) {
 					it->second.lastSent = *state;
+					refBook.Sent(*state);
 					Queue(Protocol::Encode(*state, Protocol::MessageType::kReportRefState));
 				}
 				++it;
@@ -1157,6 +1215,10 @@ namespace WorldSync
 						return;
 					}
 				}
+			}
+			// A world state repeats what we know each time it comes: only news is applied (DoorShare::Book).
+			if (!refBook.Take(a_state)) {
+				return;
 			}
 			// So our own watcher doesn't report this change back.
 			if (const auto it = watched.find(a_state.refId); it != watched.end()) {
@@ -1455,6 +1517,8 @@ namespace WorldSync
 		recentActivations.clear();
 		watched.clear();
 		pendingRefStates.clear();
+		refBook.Clear();
+		opensShared.clear();
 		unmatchedPickups.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
