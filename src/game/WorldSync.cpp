@@ -201,6 +201,22 @@ namespace WorldSync
 
 		FoundDead::Npc DescribeDead(RE::Actor* a_actor);
 
+		std::uint32_t                     downNotDead = 0;    // a death event or a found-dead check on one that only went down (not reported)
+		std::uint32_t                     essentialHolds = 0;  // deaths heard of for one essential here: held, not applied
+		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
+
+		// Down, and gets up again (SessionDeaths::GetsUp: Dogmeat at the end of his health): alive for the session.
+		bool GetsUp(RE::Actor* a_actor)
+		{
+			return SessionDeaths::GetsUp(static_cast<std::int32_t>(static_cast<RE::ActorState&>(*a_actor).lifeState), IsEssential(a_actor));
+		}
+
+		// Dead in our game, not just down (the game's IsDead answers true for one that is down).
+		bool DeadHere(RE::Actor* a_actor)
+		{
+			return a_actor->IsDead(false) && !GetsUp(a_actor);
+		}
+
 		// Where an actor of our world is, as players' states name places.
 		RemoteEdits::Spot SpotOf(const RE::Actor* a_actor)
 		{
@@ -234,7 +250,7 @@ namespace WorldSync
 			if (actor && (actor->IsPlayerRef() || Puppets::IsPuppet(actor))) {
 				return true;
 			}
-			if (actor && actor->IsDead(false)) {
+			if (actor && DeadHere(actor)) {
 				dead.SawDead(a_refId);
 				return true;
 			}
@@ -272,6 +288,18 @@ namespace WorldSync
 				return true;
 			case DeathReports::Verdict::kKill:
 				break;
+			}
+			// Essential here: the kill would only knock it down, and the death would pass for applied. It is held, and
+			// tried again: a quest that killed it in the reporter's game can keep it essential in ours a while, and once
+			// the flag goes it dies here too. Meanwhile our game may offer to run it, marked essential (MayClaim): from
+			// the host's game that undoes a death an older build saved by mistake (Dogmeat, taken for dead as he went
+			// down), and the owner the server then gives it tells us it lives (OnActorOwners).
+			if (IsEssential(actor)) {
+				if (essentialHeld.insert(a_refId).second) {
+					++essentialHolds;
+					REX::INFO("WorldSync: {:08X} is essential here; its death waits until it can die here", a_refId);
+				}
+				return false;
 			}
 
 			// The console kill goes through the engine's normal death path (death animation,
@@ -385,10 +413,10 @@ namespace WorldSync
 				// Killed here a while ago and loaded alive: its cell reset (days away, or a long sleep). It is no longer
 				// dead for us, so our game offers to run it again; the host's game doing so brings it back for everyone.
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				const bool alive = actor && !actor->IsDeleted() && actor->Get3D() && !actor->IsDead(false);
+				const bool alive = actor && !actor->IsDeleted() && actor->Get3D() && !DeadHere(actor);
 				if (dead.OnLoaded(id, alive, reports.Holds(id) || pendingHealth.contains(id), now)) {
 					REX::INFO("WorldSync: {:08X} is alive again here (its cell reset); no longer dead for us", id);
-				} else if (actor && actor->IsDead(false)) {
+				} else if (actor && DeadHere(actor)) {
 					dead.SawDead(id);  // its corpse
 				}
 				FoundDead::TrackLoad(loadedActors, id, [](std::uint32_t a_id) {
@@ -430,6 +458,10 @@ namespace WorldSync
 			for (const auto id : toCheck) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.Contains(id)) {
+					continue;
+				}
+				if (!DeadHere(actor)) {
+					++downNotDead;  // down, and gets up again
 					continue;
 				}
 				if (!FoundDead::Shared(Story::Shared(), DescribeDead(actor))) {
@@ -815,6 +847,14 @@ namespace WorldSync
 		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const Killers& a_killers)
 		{
 			for (const auto id : a_deaths) {
+				// Gone down, not dead: it gets up again (Dogmeat at the end of his health). Never reported, nor known dead
+				// here: the session would have it dead for good.
+				if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id); actor && GetsUp(actor)) {
+					if (++downNotDead <= 20) {
+						REX::INFO("WorldSync: {:08X} went down but gets up again; not reported dead", id);
+					}
+					continue;
+				}
 				if (dead.Add(id, Clock::now())) {
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
@@ -1325,9 +1365,24 @@ namespace WorldSync
 		}
 	}
 
-	bool MayClaim(std::uint32_t a_refId)
+	bool MayClaim(std::uint32_t a_refId, bool a_essential)
 	{
-		return dead.MayClaim(a_refId, Clock::now());
+		return dead.MayClaim(a_refId, Clock::now(), a_essential);
+	}
+
+	bool IsEssential(RE::Actor* a_actor)
+	{
+		const auto npc = a_actor->GetNPC();
+		if ((npc && npc->IsEssential()) || a_actor->boolFlags.all(RE::Actor::BOOL_FLAGS::kEssential)) {
+			return true;
+		}
+		// A quest's alias that holds it can make it essential (a companion's).
+		const auto aliases = a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraAliasInstanceArray>() : nullptr;
+		if (!aliases) {
+			return false;
+		}
+		const RE::BSAutoReadLock l{ aliases->aliasArrayLock };
+		return std::ranges::any_of(aliases->aliasArray, [](const RE::BGSRefAliasInstanceData& a_entry) { return a_entry.alias && a_entry.alias->flags.all(RE::BGSBaseAlias::FLAGS::kEssential); });
 	}
 
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners)
@@ -1337,6 +1392,14 @@ namespace WorldSync
 		for (const auto& owner : a_owners) {
 			if (owner.playerId != 0 && !loot.Ours(owner.playerId) && IsShareableRef(owner.refId)) {
 				toCheck.insert(owner.refId);
+			}
+			// An owner for one whose death we hold (essential here, or not loaded yet): the death was undone, so our
+			// copy lives on. One we already killed stays dead.
+			if (owner.playerId != 0 && reports.Holds(owner.refId)) {
+				reports.Forget(owner.refId);
+				dead.Forget(owner.refId);
+				essentialHeld.erase(owner.refId);
+				REX::INFO("WorldSync: {:08X} lives after all (player {} runs it); its death is forgotten here", owner.refId, owner.playerId);
 			}
 		}
 	}
@@ -1521,6 +1584,7 @@ namespace WorldSync
 		dead.Reset(Clock::now());
 		reports.Clear();
 		storyKillsLogged.clear();
+		essentialHeld.clear();
 		switchOnTried.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
@@ -1618,7 +1682,7 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
-				   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped);
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds);
 	}
 }

@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (29), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 29 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), a layout to come (30), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -149,12 +149,19 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	std::memcpy(&version, bytes.data() + 4, sizeof(version));
 	CHECK(version == SessionFile::FORMAT);
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
-	// The protocol versions that wrote this same layout before the file had its own version (28: the shared-quest
-	// test builds, before rc3 gave the file its own).
+	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the
+	// shared-quest test builds, before rc3 gave the file its own, 26): the same, less the list of deaths that may be
+	// mistakes, which are all of them there.
+	auto legacy = bytes;
+	const std::size_t at = 4 + 2 + 4 + 8 + 4 + 2 + MakeSnapshot().identities.size() * 12;
+	legacy.erase(legacy.begin() + at, legacy.begin() + at + 4);
 	for (std::uint16_t written = 23; written <= 28; ++written) {
-		auto old = bytes;
+		auto old = legacy;
 		std::memcpy(old.data() + 4, &written, sizeof(written));
-		CHECK(SessionFile::Decode(old));
+		const auto out = SessionFile::Decode(old);
+		REQUIRE(out);
+		CHECK(out->deadActors == MakeSnapshot().deadActors);
+		CHECK(out->healable == out->deadActors);
 	}
 }
 
@@ -199,8 +206,36 @@ TEST("session file: a file 0.8.5 wrote (protocol 26 in its header) still loads")
 	REQUIRE(out->workshopItems.size() == 1);
 	CHECK(out->workshopItems[0].refId == 0xFF000F3A);
 	CHECK(out->workshopItems[0].position[0] == -80358.0f);
-	// Written again, it is the same file: 0.8.5 can still read what this version writes.
-	CHECK(SessionFile::Encode(*out) == bytes);
+	// Its deaths may be mistakes (that build took an essential NPC going down for dead), and stay so when it is written
+	// again, in the new layout.
+	CHECK(out->healable == out->deadActors);
+	const auto again = SessionFile::Decode(SessionFile::Encode(*out));
+	REQUIRE(again);
+	CHECK(again->healable == out->deadActors);
+	CHECK(again->deadActors == out->deadActors);
+	CHECK(again->workshopItems.size() == 1);
+}
+
+TEST("session file: the deaths an older build saved stay marked through the new layout, and a death since is never one")
+{
+	auto in = MakeSnapshot();
+	in.healable = { 0x0001D41F };
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->healable == in.healable);
+	CHECK(out->deadActors == in.deadActors);
+
+	in.healable.clear();
+	const auto none = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(none);
+	CHECK(none->healable.empty());
+
+	// A list longer than what follows it is damage: the file is refused whole.
+	auto bytes = SessionFile::Encode(in);
+	const std::size_t   at = 4 + 2 + 4 + 8 + 4 + 2 + in.identities.size() * 12;
+	const std::uint32_t lots = 0x40000000;
+	std::memcpy(bytes.data() + at, &lots, sizeof(lots));
+	CHECK(!SessionFile::Decode(bytes));
 }
 
 TEST("session file: save then load through a file; a missing file is nothing")

@@ -340,6 +340,10 @@ void Server::Run()
 	// world (see handleClaims). Not saved.
 	std::unordered_map<std::uint32_t, Clock::time_point>  diedAt;
 	std::size_t                                           aliveAgain = 0;
+	// Deaths a build before session layout 29 saved (SessionFile::Snapshot::healable): one may be an essential NPC
+	// that only went down, which the host's game can undo (see handleClaims). Saved, so a death seen in any run since
+	// is never one, however many times the server restarts.
+	std::unordered_set<std::uint32_t>                     healable;
 
 	// A full table stops that kind of sharing for everyone (until the session file goes), so the log says
 	// when one gets near, once at 80% and once full.
@@ -370,6 +374,11 @@ void Server::Run()
 				identities[identity] = id;
 			}
 			deadActors.insert(saved->deadActors.begin(), saved->deadActors.end());
+			for (const auto id : saved->healable) {
+				if (deadActors.contains(id)) {
+					healable.insert(id);
+				}
+			}
 			containerChanges = saved->containerChanges;
 			containersAuthored.clear();
 			for (const auto& change : containerChanges) {
@@ -419,6 +428,7 @@ void Server::Run()
 			snapshot.identities.emplace_back(identity, id);
 		}
 		snapshot.deadActors.assign(deadActors.begin(), deadActors.end());
+		snapshot.healable.assign(healable.begin(), healable.end());
 		snapshot.containerChanges = containerChanges;
 		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
 		for (const auto& [id, state] : refStates) {
@@ -446,6 +456,7 @@ void Server::Run()
 
 	const auto resetWorld = [&] {
 		deadActors.clear();
+		healable.clear();
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
@@ -937,7 +948,18 @@ void Server::Run()
 			return;
 		}
 		auto death = Protocol::DecodeActorDeath(a_data);
-		if (!death || !Protocol::IsShareableRef(death->refId) || deadActors.size() >= maxWorldEntries || deadActors.contains(death->refId)) {
+		if (!death || !Protocol::IsShareableRef(death->refId)) {
+			return;
+		}
+		// Dead already. A game reporting it again saw it die (or found it dead): an older build's death is then no
+		// mistake, and the host's game can no longer undo it (see handleClaims).
+		if (deadActors.contains(death->refId)) {
+			if (healable.erase(death->refId)) {
+				touched();
+			}
+			return;
+		}
+		if (deadActors.size() >= maxWorldEntries) {
 			return;
 		}
 		// An NPC another player's game runs dies in that game; a report from anyone else is a mistake
@@ -1141,6 +1163,14 @@ void Server::Run()
 		// packet of new IDs cost a scan of the whole table each).
 		std::optional<std::size_t> owned;
 		std::optional<std::size_t> companions;
+		// Whether the player may run one more NPC nobody runs.
+		const auto roomFor = [&](Reason a_reason) {
+			if (!owned) {
+				owned = ownedBy(a_player.id);
+				companions = companionsOf(a_player.id);
+			}
+			return actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && *owned < Protocol::MAX_OWNED_PER_PLAYER && (a_reason != Reason::kCompanion || *companions < MAX_COMPANIONS_PER_PLAYER);
+		};
 		for (const auto& claim : *claims) {
 			if (!Protocol::IsShareableRef(claim.refId)) {
 				continue;
@@ -1153,6 +1183,24 @@ void Server::Run()
 			// A joiner's game can't do this (its world is not the session's), nor can anyone on a dedicated server. Nor
 			// can the host's game while its last request for the world is unanswered (owed while its budget refills, or
 			// dropped): what it has alive may be from the save it loaded.
+			// An NPC the claiming game keeps essential never died there (its game holds the death: WorldSync::TryKill), so it
+			// can't have come back. Its claim undoes only a death an older build saved by mistake (healable: those builds
+			// took Dogmeat going down for dead, and he then went unrun and dead in everyone else's game), and only from the
+			// host's game, whose world is the session's, offering to run it (not a hit or a press), with the claim granted:
+			// the owner it gets tells every game it lives (WorldSync::OnActorOwners). A death seen in any run of this layout
+			// stays: a quest's script kills even an essential NPC, and a friend's game can still keep it essential for a while.
+			if (deadActors.contains(claim.refId) && claim.essential) {
+				// With no room to grant it, it stays dead until the host's game offers it again.
+				if (!a_player.local || claim.reason == Reason::kInteract || !healable.contains(claim.refId) || !roomFor(claim.reason)) {
+					continue;
+				}
+				deadActors.erase(claim.refId);
+				healable.erase(claim.refId);
+				deathPositions.erase(claim.refId);
+				diedAt.erase(claim.refId);
+				touched();
+				log(std::format("server: {:08X}, dead in the saved session, is alive in the host's world and can't die there (essential); no longer dead in the session", claim.refId));
+			}
 			if (deadActors.contains(claim.refId)) {
 				const auto died = diedAt.find(claim.refId);
 				const bool cameBack = a_player.local && !a_player.worldStale && claim.reason == Reason::kUnowned && now - a_player.worldAskedAt >= options.aliveAgainGrace &&
@@ -1161,6 +1209,7 @@ void Server::Run()
 					continue;
 				}
 				deadActors.erase(claim.refId);
+				healable.erase(claim.refId);
 				deathPositions.erase(claim.refId);
 				if (died != diedAt.end()) {
 					diedAt.erase(died);
@@ -1177,12 +1226,7 @@ void Server::Run()
 			const auto it = actorOwners.find(claim.refId);
 			bool       grant = false;
 			if (it == actorOwners.end()) {
-				if (!owned) {
-					owned = ownedBy(a_player.id);
-					companions = companionsOf(a_player.id);
-				}
-				grant = actorOwners.size() < Protocol::MAX_WORLD_STATE_ACTORS && *owned < Protocol::MAX_OWNED_PER_PLAYER &&
-				        (claim.reason != Reason::kCompanion || *companions < MAX_COMPANIONS_PER_PLAYER);
+				grant = roomFor(claim.reason);
 			} else if (it->second.playerId == a_player.id) {
 				if (companions && it->second.reason != Reason::kCompanion && claim.reason == Reason::kCompanion) {
 					++*companions;

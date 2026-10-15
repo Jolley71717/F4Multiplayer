@@ -18,7 +18,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 29;
+	inline constexpr std::uint16_t VERSION = 30;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -471,6 +471,10 @@ namespace Protocol
 	{
 		std::uint32_t refId = 0;
 		ClaimReason   reason = ClaimReason::kUnowned;
+		// The sender's game won't let it die (essential: at the end of its health it goes down and gets up), so a
+		// death the session has for it was never applied there. From the host's game, this claim undoes a death an
+		// older build saved by mistake (Dogmeat went down and was taken for dead): Server's handleClaims.
+		bool          essential = false;
 	};
 
 	struct ActorOwner
@@ -1702,13 +1706,22 @@ namespace Protocol
 
 	inline std::vector<std::uint8_t> Encode(const std::vector<ActorClaim>& a_msg)
 	{
-		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(std::to_underlying(a.reason)); });
+		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(std::to_underlying(a.reason)); w.U8(a.essential ? 1 : 0); });
 	}
 
 	inline auto DecodeClaims(std::span<const std::uint8_t> a_data)
 	{
-		auto claims = DecodeList<ActorClaim>(a_data, [](Reader& r) { ActorClaim a; a.refId = r.U32(); a.reason = static_cast<ClaimReason>(r.U8()); return a; });
-		if (claims && !std::ranges::all_of(*claims, [](const ActorClaim& a) { return a.reason <= ClaimReason::kCompanion; })) {
+		bool flagsKnown = true;  // the essential byte is 0 or 1
+		auto claims = DecodeList<ActorClaim>(a_data, [&](Reader& r) {
+			ActorClaim a;
+			a.refId = r.U32();
+			a.reason = static_cast<ClaimReason>(r.U8());
+			const auto essential = r.U8();
+			flagsKnown = flagsKnown && essential <= 1;
+			a.essential = essential != 0;
+			return a;
+		});
+		if (claims && (!flagsKnown || !std::ranges::all_of(*claims, [](const ActorClaim& a) { return a.reason <= ClaimReason::kCompanion; }))) {
 			return decltype(claims){};
 		}
 		return claims;
