@@ -465,6 +465,11 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	CHECK(theirs.LocalOf(SPAWN) == COPY);
 	CHECK(theirs.IdOf(COPY) == SPAWN);
 	CHECK(theirs.Decide(SPAWN, Placed(1100.0f), T0) == Act::kNone);
+	// Its 3D is not in yet, as after every placing: kept while the engine loads it, then taken for one that unloaded.
+	auto loading = Placed(1100.0f);
+	loading.copyLoaded = false;
+	CHECK(theirs.Decide(SPAWN, loading, T0 + 7s) == Act::kNone);
+	CHECK(theirs.Decide(SPAWN, loading, T0 + 6s + SpawnBook::LOAD_WAIT) == Act::kDiscard);
 	// Its owner's game moves it: kept while we stand near it.
 	theirs.Moved(SPAWN, At(4000.0f), 1.0f);
 	CHECK(theirs.Find(SPAWN)->at.x == 4000.0f);

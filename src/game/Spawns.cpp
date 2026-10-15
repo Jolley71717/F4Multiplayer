@@ -332,8 +332,10 @@ namespace Spawns
 				const auto it = placed.find(id);
 				const auto ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
-				if (facts.copyThere && ref->Get3D() && ref->GetParentCell()) {
+				// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT): not taken for one that unloaded.
+				if (facts.copyThere && ref->GetParentCell()) {
 					facts.copyAt = SpotOf(ref.get());
+					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
 				facts.baseOk = BaseOk(copy->spawn.base);

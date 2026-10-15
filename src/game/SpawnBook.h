@@ -210,6 +210,9 @@ namespace SpawnBook
 	constexpr float KEEP_RANGE = 9000.0f;
 	constexpr int   PLACE_TRIES = 3;  // placing it failed this often: left unplaced
 	constexpr auto  PLACE_RETRY = std::chrono::seconds(5);
+	// A copy just placed has no 3D for a moment (the engine loads it on another thread): it counts as unloaded only once
+	// its 3D is still missing this long after it was placed, or has gone.
+	constexpr auto  LOAD_WAIT = std::chrono::seconds(10);
 
 	// What the game sees of one spawn, for Theirs::Decide.
 	struct Facts
@@ -217,7 +220,8 @@ namespace SpawnBook
 		Spot                player;             // where our player is
 		std::optional<Spot> owner;              // where its owner's stand-in last said it was (nothing: not heard from)
 		bool                copyThere = false;  // our copy is still there (its handle resolves, not deleted)
-		std::optional<Spot> copyAt;             // where it stands, when it is loaded
+		std::optional<Spot> copyAt;             // where it stands, while it is in a cell
+		bool                copyLoaded = true;  // its 3D is in
 		bool                baseOk = true;      // its base is an NPC we place copies of (not unique, not the player's)
 	};
 
@@ -245,6 +249,7 @@ namespace SpawnBook
 			bool              gone = false;      // its owner's game let go of it (an owner of 0)
 			int               tries = 0;         // placements that failed in a row
 			Clock::time_point triedAt{};
+			Clock::time_point placedAt{};       // when our copy was placed
 		};
 
 		// A friend's game shares one. False when it is ours (the server never grants one id twice, but a book can lag),
@@ -307,8 +312,9 @@ namespace SpawnBook
 				if (copy.gone && !copy.dead) {
 					return Act::kDiscard;
 				}
-				// Not loaded (its cell went), or we left it behind: it goes, a corpse too.
-				if (!a_facts.copyAt || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.copyAt, a_facts.player), KEEP_RANGE)) {
+				// Not loaded (its cell went: no 3D, past the wait for its first), or we left it behind: it goes, a corpse too.
+				const bool unloaded = !a_facts.copyLoaded && a_now - copy.placedAt >= LOAD_WAIT;
+				if (!a_facts.copyAt || unloaded || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.copyAt, a_facts.player), KEEP_RANGE)) {
 					return Act::kDiscard;
 				}
 				return Act::kNone;
@@ -341,6 +347,7 @@ namespace SpawnBook
 				return;
 			}
 			it->second.local = a_local;
+			it->second.placedAt = a_now;
 			it->second.tries = 0;
 			byLocal[a_local] = a_id;
 		}

@@ -230,7 +230,8 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   owner's game.
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, and a copy whose owner's game
-  only knows the leveled NPC it was placed as can come out as another of that list's NPCs.
+  only knows the leveled NPC it was placed as can come out as another of that list's NPCs. Each game's corpse of a
+  spawn carries its own loot: each player loots their own.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
 
