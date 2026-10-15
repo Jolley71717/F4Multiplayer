@@ -1204,10 +1204,14 @@ namespace WorldSync
 		// The server sends the changes our world doesn't have: those made since our save. Our own
 		// are skipped (see ContainerLedger::Receiver).
 		engine.inWorld = inWorld;
+		const auto strays = loot.Numbers().Numbers().Stats().strays;
 		const auto lost = loot.CatchUp(a_state.containerFirstIndex, a_state.containerChanges, Clock::now(), engine);
 		engine.inWorld.reset();
 		if (lost) {
 			REX::WARN("WorldSync: the server's log is shorter than our save (lost {} changes); counting again from #{}", lost, a_state.containerFirstIndex);
+		}
+		if (const auto letGo = loot.Numbers().Numbers().Stats().strays - strays) {
+			REX::WARN("WorldSync: the server's log ends at #{}; let go of {} waiting container changes numbered past it", a_state.containerFirstIndex, letGo);
 		}
 		for (const auto id : a_state.pickedUp) {
 			OfferPickup(id, inWorld);
@@ -1345,10 +1349,18 @@ namespace WorldSync
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
-		// server is asked again (the answer to the last request may have been refused, or never come).
-		if (const auto request = loot.Due(now)) {
+		// server is asked again (the answer to the last request may have been refused, or never come), and
+		// after asking long enough the gap is skipped (ContainerLedger::Ledger::Skip).
+		const auto& numbers = loot.Numbers().Numbers();
+		const auto  skippedBefore = numbers.Stats().skipped;
+		const auto  nextBefore = numbers.Next();
+		if (const auto request = loot.Due(now, engine)) {
 			Queue(Protocol::Encode(*request));
-			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, loot.Numbers().Numbers().Waiting());
+			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, numbers.Waiting());
+		}
+		if (const auto skipped = numbers.Stats().skipped - skippedBefore) {
+			REX::WARN("WorldSync: gave up on container changes #{} to #{} after asking {} times; the {} after them went in ({} still waiting)", nextBefore,
+				nextBefore + skipped - 1, ContainerLedger::Ledger::SKIP_AFTER, numbers.Next() - nextBefore - skipped, numbers.Waiting());
 		}
 		WarnIfLootFull();
 		// Remote changes waiting for their reference: tried as it loads; all of them when the player comes out
@@ -1506,6 +1518,7 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax, dead.Revived(), dead.Settled(Clock::now()));
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+				   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped);
 	}
 }

@@ -255,9 +255,12 @@ namespace LootSync
 		// Whether something waits for a living NPC (its wait runs out: see NOT_YET_DEAD_LIMIT).
 		[[nodiscard]] bool WaitsForTheLiving() const { return std::ranges::any_of(pending, &Pending::alive); }
 
-		std::optional<Protocol::WorldRequest> Due(Clock::time_point a_now)
+		// A gap asked for long enough is skipped instead, what waited behind it going into a_world (see
+		// Ledger::Skip). Neither while we aren't in a session: nobody would answer, and the hello that
+		// reconnects asks for everything our world lacks.
+		std::optional<Protocol::WorldRequest> Due(Clock::time_point a_now, World& a_world)
 		{
-			if (!receiver.Due(a_now)) {
+			if (live == 0 || !receiver.Due(a_now, [&](const Protocol::IndexedContainerChange& a_ready) { ApplyInOrder(a_ready, a_world); })) {
 				return std::nullopt;
 			}
 			return receiver.Request(a_now);
