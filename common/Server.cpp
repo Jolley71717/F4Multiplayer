@@ -788,9 +788,15 @@ void Server::Run()
 			}
 			// A different mod list makes the stored form IDs meaningless: start a fresh session. (On a
 			// dedicated server, which has no local player, the first arrival decides.)
+			// A session saved by an older version, before the texture pack counted, is the same load order's when
+			// its hash matches the old way.
 			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
-				log("server: load order changed; starting a new session");
-				resetWorld();
+				if (Protocol::LoadOrderHashBeforeTexturePack(hello->plugins) == sessionContentHash) {
+					log("server: the saved session has this load order (hashed as older versions did, without the HD texture pack); it carries on");
+				} else {
+					log("server: load order changed; starting a new session");
+					resetWorld();
+				}
 			}
 			sessionContentHash = hello->contentHash;
 			sessionPlugins = hello->plugins;

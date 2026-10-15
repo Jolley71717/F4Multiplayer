@@ -1009,6 +1009,19 @@ namespace Protocol
 		return hash;
 	}
 
+	// The hash older versions sent for a hello's load order: the texture pack left out wherever it loads. A session
+	// saved with it is this load order's when it matches, so a host whose pack now counts keeps their shared world.
+	// None for a list that is missing or cut short (MAX_PLUGINS).
+	[[nodiscard]] inline std::optional<std::uint32_t> LoadOrderHashBeforeTexturePack(const std::vector<std::string>& a_plugins)
+	{
+		if (a_plugins.empty() || a_plugins.size() >= MAX_PLUGINS) {
+			return std::nullopt;
+		}
+		auto plugins = a_plugins;
+		std::erase_if(plugins, [](const std::string& a_name) { return SamePluginName(a_name, TEXTURE_PACK); });
+		return LoadOrderHash(plugins);
+	}
+
 	// Whether two load orders give every plugin the same form IDs once the ignored plugins (the host's list) are left
 	// out of both: the same plugins, in the same order, and each at the same place among its kind (full or light, split
 	// by LIGHT_PLUGINS; a list without it is taken as all full). An ignored plugin that only one player has moves every

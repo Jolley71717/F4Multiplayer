@@ -1415,3 +1415,53 @@ TEST("server session: texture plugins the host lets differ that load last, full 
 	CHECK(SameFormIds(host, fullOnly));
 	REQUIRE(f.Join(3, HelloWith("Carol", fullOnly)));
 }
+
+TEST("server session file: a host whose HD texture pack now counts keeps the world saved by an older version; another load order still starts fresh")
+{
+	// The host's game: the pack, then a story mod. Older versions left the pack out of the hash wherever it loaded.
+	const LoadOrder host{ Official({ "DLCUltraHighResolution.esm", "Story.esp" }), { "Weapons.esl" } };
+	const auto      oldHash = Protocol::LoadOrderHash(Protocol::ComparedLoadOrder(Official({ "Story.esp" }), host.light));
+	REQUIRE(HelloWith("Host", host).contentHash != oldHash);
+	CHECK(Protocol::LoadOrderHashBeforeTexturePack(HelloWith("Host", host).plugins) == oldHash);
+	CHECK(!Protocol::LoadOrderHashBeforeTexturePack({}));
+
+	constexpr std::uint32_t STORY_NPC = 0x08000004;
+	const auto saveOld = [&](const TempSessionFile& a_file) {
+		SessionFile::Snapshot saved;
+		saved.contentHash = oldHash;
+		saved.sessionId = 0x5E55;
+		saved.deadActors = { STORY_NPC };
+		REQUIRE(SessionFile::Save(a_file.path, saved));
+	};
+	{
+		const TempSessionFile file;
+		saveOld(file);
+		Server::Options options;
+		options.sessionFile = file.path.string();
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, HelloWith("Host", host));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId == 0x5E55);
+		CHECK(f.Logged("hashed as older versions did"));
+		CHECK(!f.Logged("load order changed"));
+		const auto world = WorldStates(Received(f, 1));
+		REQUIRE(world.size() == 1);
+		CHECK(std::ranges::contains(world[0].deadActors, STORY_NPC));
+
+		// A friend on the new version with the host's load order joins on the hash; one without the pack is refused.
+		REQUIRE(f.Join(2, HelloWith("Friend", host)));
+		CHECK(JoinRejected(f, 3, Protocol::Encode(HelloWith("Other", { Official({ "Story.esp" }), host.light }))));
+	}
+	{
+		// A load order whose old hash is not the saved one is another load order: a fresh session.
+		const TempSessionFile file;
+		saveOld(file);
+		Server::Options options;
+		options.sessionFile = file.path.string();
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, HelloWith("Host", { Official({ "DLCUltraHighResolution.esm", "Other.esp" }), host.light }));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId != 0x5E55);
+		CHECK(f.Logged("load order changed"));
+	}
+}
