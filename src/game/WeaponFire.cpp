@@ -188,7 +188,13 @@ namespace WeaponFire
 			if (IsThrowEvent(npcTag, npcPayload) && HoldsReplayedRelease(id)) {
 				return RE::BSEventNotifyControl::kContinue;
 			}
-			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
+			// A plugin's NPC, or one our game made at runtime that we run under a spawn id (Spawns): a stand-in, a copy of a
+			// friend's spawn or one not shared is in no other game to replay it.
+			const bool shared = Protocol::IsShareableRef(id) || (Protocol::IsSpawnRef(id) && [&] {
+				std::scoped_lock l{ actionLock };
+				return ownedNpcs.contains(id);
+			}());
+			if (shared && IsThrowEvent(npcTag, npcPayload)) {
 				std::scoped_lock l{ actionLock };
 				// Only an NPC we run: one mirrored from a friend's game threw in theirs, and their game reports what
 				// went off. Watched here too, the same explosion could be reported from both games.
@@ -198,7 +204,7 @@ namespace WeaponFire
 					}
 					ArmExplosionWatch();
 				}
-			} else if (Protocol::IsShareableRef(id) && IsAttackEvent(npcTag)) {
+			} else if (shared && IsAttackEvent(npcTag)) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);
@@ -206,7 +212,7 @@ namespace WeaponFire
 			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
 				++throwAttaches;
 			}
-			if (const auto action = Protocol::IsShareableRef(id) && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
+			if (const auto action = shared && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
 				std::scoped_lock l{ actionLock };
 				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
 					npcActions.push_back({ id, *action });

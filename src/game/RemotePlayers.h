@@ -73,6 +73,9 @@ namespace RemotePlayers
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();
+	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
+	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
+	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

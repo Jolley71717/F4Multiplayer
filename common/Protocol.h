@@ -50,6 +50,24 @@ namespace Protocol
 		return a_id != 0 && a_id != PLAYER_REF_ID && (a_id >> 24) != 0xFF;
 	}
 
+	// An NPC a game made at runtime (a random encounter's raider, an ambush) is shared under a spawn id that game picks
+	// and the server grants it (kReportSpawn): every other game places a copy of it (kSpawned), and the game that made it
+	// runs it for good. A spawn id is in the runtime range too, so no game ever takes one for a reference of its own: each
+	// game looks it up in its own book of spawns (src/game/SpawnBook.h), and the server in its own.
+	[[nodiscard]] constexpr bool IsSpawnRef(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF && a_id != 0xFF000000;
+	}
+
+	// An NPC the session can name: one from a plugin file, or a spawn.
+	[[nodiscard]] constexpr bool IsActorRef(std::uint32_t a_id)
+	{
+		return IsShareableRef(a_id) || IsSpawnRef(a_id);
+	}
+
+	// Spawns one game may share at once (a settlement's attackers are a dozen or two).
+	inline constexpr std::size_t MAX_SPAWNS_PER_PLAYER = 32;
+
 	// Largest item count a single container change may move.
 	inline constexpr std::int32_t MAX_ITEM_COUNT = 1'000'000;
 
@@ -91,6 +109,7 @@ namespace Protocol
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
+		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -121,6 +140,7 @@ namespace Protocol
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
 		kExplosion = 132,         // an explosion from another player's throw
 		kActivation = 133,        // another player pressed one
+		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -477,6 +497,21 @@ namespace Protocol
 	{
 		std::uint32_t refId = 0;
 		std::uint32_t playerId = 0;  // 0 = nobody
+	};
+
+	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and
+	// where. playerId is its owner (ignored client -> server; the server sets it). Its owner's states move the copies on.
+	struct Spawn
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;       // the spawn id
+		std::uint32_t base = 0;        // the NPC to place: one from a plugin file, never a runtime one
+		std::uint32_t cell = 0;        // interior cell form ID, or 0 when outside
+		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;
+
+		bool operator==(const Spawn&) const = default;
 	};
 
 	// ActorState::aimPitch while the owner's copy aims at nothing: a value PackPitch never gives.
@@ -1214,6 +1249,43 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const Spawn& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.base);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		w.F32(a_msg.heading);
+		return w.Data();
+	}
+
+	// A spawn id, a base every game has, a place in the world, and in one space: an interior or a worldspace.
+	inline std::optional<Spawn> DecodeSpawn(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Spawn msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.base = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		msg.heading = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.refId) || !IsShareableRef(msg.base) || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) ||
+			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const ActorHealth& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -1661,7 +1733,7 @@ namespace Protocol
 		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
 			msg.items.push_back(r.U32());
 		}
-		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1802,7 +1874,7 @@ namespace Protocol
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
-			(msg.byPlayer ? msg.attacker != 0 : !IsShareableRef(msg.attacker))) {
+			(msg.byPlayer ? msg.attacker != 0 : !IsActorRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1827,7 +1899,7 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.action = r.U8();
 		msg.sound = r.U32();
-		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId)) || msg.action > ShotAction::kMax) {
+		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsActorRef(msg.refId)) || msg.action > ShotAction::kMax) {
 			return std::nullopt;
 		}
 		return msg;

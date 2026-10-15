@@ -55,6 +55,10 @@ namespace NpcSync
 	// Gives every mirrored NPC back to its own AI (before saving, and when leaving the session).
 	void ReleaseMirrors();
 
+	// Lets go of one mirrored NPC (before Spawns deletes our copy of a friend's spawn); its owner's next state mirrors it
+	// again if it is still there.
+	void DropMirror(std::uint32_t a_refId);
+
 	// Forget everything (on disconnect).
 	void Reset();
 
