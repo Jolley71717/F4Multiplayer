@@ -864,3 +864,49 @@ TEST("stage queue: a lock's stage that has to wait doesn't let a stage overtake 
 	game.Poll(queue, now);
 	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ105, 100 } }));
 }
+
+TEST("stage log: a friend's stages say why they wait: a quest not running or not started here, a conversation, a loading screen, the opening")
+{
+	using StageLog::Wait;
+	StageLog::QuestHere quest;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kNotRunning);
+	quest.running = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kNotStarted);  // Vault 81 at its door: running, no objective shown
+	quest.started = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kNone);
+	quest.busy = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kBusy);
+	quest.inWorld = false;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kLoading);
+	quest.inWorld = true;
+	quest.opening = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kOpening);
+}
+
+TEST("stage log: stages reached just before a quest was started are reported with it, ones from long before aren't")
+{
+	StageLog::Unstarted unstarted;
+	const auto          start = Clock::time_point{} + 1h;
+	CHECK((unstarted.Take(SIDE, { 20 }, start) == StageLog::Stages{ 20 }));
+
+	unstarted.Add(SIDE, { 5 }, start);  // the game moved it on in the background
+	unstarted.Add(MQ105, { 10 }, start);
+	unstarted.Expire(start + StageLog::Unstarted::WINDOW);
+	CHECK(!unstarted.Has(SIDE));
+	CHECK(unstarted.Size() == 0);
+
+	unstarted.Add(SIDE, { 10, 15 }, start);       // the conversation that starts it
+	unstarted.Add(SIDE, { 55 }, start + 30s);     // the stage whose script shows the first objective
+	CHECK(unstarted.Has(SIDE));
+	CHECK(unstarted.Size() == 3);
+	CHECK((unstarted.Take(SIDE, {}, start + 31s) == StageLog::Stages{ 10, 15, 55 }));
+	CHECK(!unstarted.Has(SIDE));
+
+	unstarted.Add(SIDE, { 10 }, start);
+	unstarted.Add(SIDE, { 50 }, start + 50s);
+	CHECK((unstarted.Take(SIDE, { 20, 60 }, start + 70s) == StageLog::Stages{ 20, 50, 60 }));  // 10 is too old
+
+	unstarted.Add(SIDE, { 10 }, start);
+	unstarted.Clear();
+	CHECK(!unstarted.Has(SIDE));
+}

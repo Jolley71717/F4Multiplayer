@@ -161,6 +161,74 @@ namespace StageLog
 		std::size_t                      sentThisSecond = 0;
 	};
 
+	// Stages a quest reached here shortly before the player started it (before its first objective was
+	// shown). Only a started quest's stages are reported, since the game moves many quests on in the
+	// background long before the player comes across them. But the stage whose script shows the first
+	// objective reads done before that script has run, and the conversation that starts a quest sets
+	// stages before it: Vault 81's intercom talk sets its stages, then 55 opens the vault door and shows
+	// the objective. Dropped, they never reached the friends, and the vault door stayed shut in their
+	// games. They are kept for WINDOW, and reported with the quest's next stages if it is started by then.
+	class Unstarted
+	{
+	public:
+		static constexpr auto WINDOW = std::chrono::seconds(60);
+
+		void Add(std::uint32_t a_quest, const Stages& a_stages, Clock::time_point a_now)
+		{
+			auto& kept = quests[a_quest];
+			for (const auto stage : a_stages) {
+				kept.push_back({ stage, a_now });
+			}
+		}
+
+		// The quest has started: the stages kept for it (those within WINDOW) and a_fresh, ascending.
+		Stages Take(std::uint32_t a_quest, Stages a_fresh, Clock::time_point a_now)
+		{
+			const auto it = quests.find(a_quest);
+			if (it == quests.end()) {
+				return a_fresh;
+			}
+			for (const auto& kept : it->second) {
+				if (a_now - kept.at < WINDOW) {
+					Insert(a_fresh, kept.stage);
+				}
+			}
+			quests.erase(it);
+			return a_fresh;
+		}
+
+		// Drops what is older than WINDOW: those quests weren't started in time.
+		void Expire(Clock::time_point a_now)
+		{
+			for (auto it = quests.begin(); it != quests.end();) {
+				std::erase_if(it->second, [&](const Kept& a_kept) { return a_now - a_kept.at >= WINDOW; });
+				it = it->second.empty() ? quests.erase(it) : std::next(it);
+			}
+		}
+
+		void Clear() { quests.clear(); }
+
+		[[nodiscard]] bool Has(std::uint32_t a_quest) const { return quests.contains(a_quest); }
+
+		[[nodiscard]] std::size_t Size() const
+		{
+			std::size_t size = 0;
+			for (const auto& [quest, kept] : quests) {
+				size += kept.size();
+			}
+			return size;
+		}
+
+	private:
+		struct Kept
+		{
+			std::uint16_t     stage = 0;
+			Clock::time_point at{};
+		};
+
+		std::map<std::uint32_t, std::vector<Kept>> quests;
+	};
+
 	// What a quest in this game says about the stages waiting for it.
 	enum class Quest
 	{
@@ -168,6 +236,49 @@ namespace StageLog
 		kWait,   // not yet: it isn't running or started here, or the player is in a conversation
 		kReady,  // a stage can be set now
 	};
+
+	// Why other players' stages of a quest wait here (kNone: they don't).
+	enum class Wait
+	{
+		kNone,
+		kLoading,     // a loading screen or the main menu: no quest script may run
+		kOpening,     // a new character still in the opening
+		kNotRunning,  // the quest isn't running here
+		kNotStarted,  // the player hasn't started it here: none of its objectives has been shown
+		kBusy,        // the player is in a conversation or a scene
+	};
+
+	// A quest with stages from other players waiting, as this game has it.
+	struct QuestHere
+	{
+		bool inWorld = true;
+		bool opening = false;
+		bool running = false;
+		bool started = false;  // one of its objectives has been shown
+		bool busy = false;
+	};
+
+	// Friends' stages wait until the player has started the quest too (the game runs many quests in the
+	// background long before the player comes across them), and not in a conversation or scene. Quest
+	// scripts must not run at the main menu or during a loading screen. The reason is logged: a friend
+	// whose quest waits silently sees nothing happen (Vault 81's door stayed shut for one who hadn't
+	// started the quest).
+	inline Wait WaitsFor(const QuestHere& a_quest)
+	{
+		if (!a_quest.inWorld) {
+			return Wait::kLoading;
+		}
+		if (a_quest.opening) {
+			return Wait::kOpening;
+		}
+		if (!a_quest.running) {
+			return Wait::kNotRunning;
+		}
+		if (!a_quest.started) {
+			return Wait::kNotStarted;
+		}
+		return a_quest.busy ? Wait::kBusy : Wait::kNone;
+	}
 
 	// What became of a stage whose turn came.
 	enum class Set

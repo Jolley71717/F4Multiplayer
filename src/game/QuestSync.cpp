@@ -87,6 +87,8 @@ namespace QuestSync
 		std::unordered_map<std::uint32_t, Clock::time_point> remoteStageAt;  // when another player last moved it
 		StageLog::Queue                                  waiting;  // stages from other players, until they are set here
 		std::unordered_set<std::uint32_t>                waited;   // quests whose stages waited for the quest to start here
+		std::unordered_map<std::uint32_t, StageLog::Wait> waitLogged;  // why each quest's stages wait, as last logged
+		StageLog::Unstarted                              unstarted;  // stages done here just before their quest was started
 		struct Live
 		{
 			Clock::time_point at;
@@ -240,22 +242,57 @@ namespace QuestSync
 			return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest);
 		}
 
-		// Whether stages from other players can be set on this quest now. They wait until this player
-		// has started the quest too (an objective is shown; the game runs some quests in the background
-		// long before that), possibly because another quest's stage starts it (MQ104's 210 starts MQ105).
-		// A lock's quests go on after the session, when the story is no longer shared (StageLog::Settable).
+		const char* WhyWaiting(StageLog::Wait a_wait)
+		{
+			switch (a_wait) {
+			case StageLog::Wait::kLoading:
+				return "the game is loading";
+			case StageLog::Wait::kOpening:
+				return "the player is still in the opening";
+			case StageLog::Wait::kNotRunning:
+				return "the quest isn't running here";
+			case StageLog::Wait::kNotStarted:
+				return "the player hasn't started the quest (no objective shown)";
+			case StageLog::Wait::kBusy:
+				return "the player is in a conversation or a scene";
+			default:
+				return "";
+			}
+		}
+
+		// Whether stages from other players can be set on this quest now (see StageLog::WaitsFor). They
+		// wait until this player has started the quest too, possibly because another quest's stage starts
+		// it (MQ104's 210 starts MQ105). A lock's quests go on after the session, when the story is no
+		// longer shared (StageLog::Settable). Why a quest's stages wait is logged once for each reason.
 		StageLog::Quest StateOf(std::uint32_t a_quest)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
 			if (!quest || !StageLog::Settable(Shared(quest), Unlocking(a_quest)) || StageLog::Finished(quest->data.flags)) {
 				return StageLog::Quest::kGone;
 			}
+			StageLog::QuestHere here;
 			// Quest scripts must not run at the main menu or during a loading screen.
-			if (!WorldSync::InWorld() || Story::InOpening() || !(quest->data.flags & QUEST_RUNNING) || !PlayerStarted(quest)) {
-				waited.insert(a_quest);
-				return StageLog::Quest::kWait;
+			here.inWorld = WorldSync::InWorld();
+			here.opening = Story::InOpening();
+			here.running = (quest->data.flags & QUEST_RUNNING) != 0;
+			here.started = PlayerStarted(quest);
+			here.busy = busy;
+			const auto wait = StageLog::WaitsFor(here);
+			if (wait == StageLog::Wait::kNone) {
+				waitLogged.erase(a_quest);
+				return StageLog::Quest::kReady;
 			}
-			return busy ? StageLog::Quest::kWait : StageLog::Quest::kReady;
+			if (wait != StageLog::Wait::kBusy) {
+				waited.insert(a_quest);
+			}
+			if (wait != StageLog::Wait::kLoading && waitLogged[a_quest] != wait) {
+				waitLogged[a_quest] = wait;
+				const char* name = quest->GetFullName();
+				const auto  stages = waiting.Waiting(a_quest);
+				REX::INFO("QuestSync: {} stage(s) of {:08X} '{}' from friends wait (the first {}): {}", stages.size(), a_quest, name ? name : "",
+					stages.empty() ? 0 : stages.front(), WhyWaiting(wait));
+			}
+			return StageLog::Quest::kWait;
 		}
 
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
@@ -620,6 +657,7 @@ namespace QuestSync
 			RepairStory(now);
 		}
 
+		unstarted.Expire(now);
 		for (const auto quest : AllQuests()) {
 			if (!quest || !Watched(quest)) {
 				continue;
@@ -656,23 +694,29 @@ namespace QuestSync
 				known->second = std::move(stages);
 				continue;
 			}
-			const auto fresh = StageLog::NewlyDone(known->second, std::move(stages));
-			if (fresh.empty()) {
+			auto fresh = StageLog::NewlyDone(known->second, std::move(stages));
+			if (!fresh.empty()) {
+				lastStageChange = now;
+			} else if (!unstarted.Has(id)) {
 				continue;
 			}
-			lastStageChange = now;
 			// Only of quests this player has started: the game moves some quests along in the background,
-			// and a new game sets up many while the player is still in the opening.
+			// and a new game sets up many while the player is still in the opening. What it reached just
+			// before it was started goes once it is (StageLog::Unstarted).
 			const auto remote = remoteStageAt.find(id);
 			const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
 			// The story's stages whatever the story is now while the connection is being remade: it is the
 			// player's own then (Story::SetShared(false)), and these stages are seen done only now. The outbox
 			// sends them only if the welcome says the session shares the story (StageLog::Outbox).
 			const bool story = IsStory(quest);
-			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || !PlayerStarted(quest) ||
-				Story::InOpening()) {
+			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || Story::InOpening()) {
 				continue;
 			}
+			if (!PlayerStarted(quest)) {
+				unstarted.Add(id, fresh, now);
+				continue;
+			}
+			fresh = unstarted.Take(id, std::move(fresh), now);
 			for (const auto stage : fresh) {
 				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story);
 				++reported;
@@ -708,6 +752,7 @@ namespace QuestSync
 		warnedAt.reset();
 		sceneSince.reset();
 		lockWaitLogged.clear();
+		waitLogged.clear();
 		remoteStageAt.clear();
 		// Reporting goes on without a new settle (not reportFrom.reset): a stage done while the connection is
 		// remade is reported once it is back (outgoing), and playing alone the reports are dropped.
@@ -728,6 +773,8 @@ namespace QuestSync
 		warnedAt.reset();
 		sceneSince.reset();
 		lockWaitLogged.clear();
+		waitLogged.clear();
+		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
 		outgoing.Clear();  // progress of the game before the load
 	}
@@ -739,7 +786,7 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={}{}",
-			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(), locked ? " locked" : "");
+		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
+			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(), unstarted.Size(), locked ? " locked" : "");
 	}
 }

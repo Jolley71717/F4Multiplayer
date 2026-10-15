@@ -23,10 +23,12 @@ namespace
 	constexpr std::uint32_t MQ105 = 0x000229E6;  // Getting a Clue: 177 pays a bribe out of the player's caps
 	constexpr std::uint32_t MQ206 = 0x000B1752;  // Molecular Level: 500 takes the controls, 1000 is the teleporter, 1200 gives them back
 	constexpr std::uint32_t LONG = 0x0001ED88;   // a side quest given hundreds of stages, none of which does anything to the player
+	constexpr std::uint32_t V81 = 0x000B8464;    // Vault 81 (V81_00_Intro): the intercom talk's stages show no objective; 55 opens the vault door
 
 	constexpr const char* SIDE_ACHIEVEMENT = "the side quest's achievement";
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
 	constexpr const char* INSTITUTE_ACHIEVEMENT = "the Institute's achievement";
+	constexpr const char* VAULT_DOOR_OPENS = "Vault 81's door and walkway open";
 
 	using Stages = std::set<std::uint16_t>;
 	using History = std::vector<std::pair<std::uint32_t, std::uint16_t>>;
@@ -124,6 +126,23 @@ namespace
 			}
 		}
 		return out;
+	}
+
+	// Vault 81 as the game has it at the vault door: the game started the quest when the player came near
+	// (10 turns the intercom on, 15 plays its first lines), and none of its objectives is shown until the
+	// vault door opens. The talk at the intercom sets 20 to 51; 55's script opens the gear door and
+	// extends the walkway (the quest script's OpenGearDoor), then shows the first objective.
+	Quest AtVault81Door()
+	{
+		Quest quest;
+		quest.stages = { 0, 10, 15, 20, 30, 40, 50, 51, 55, 60, 70, 100, 200, 300, 310, 400, 500, 1000 };
+		quest.running = true;
+		quest.done = { 10, 15 };
+		quest.current = 15;
+		quest.quiet = { 10, 15, 20, 30, 40, 50, 51 };
+		quest.showsLater = { 55 };
+		quest.awards = { { 55, VAULT_DOOR_OPENS } };
+		return quest;
 	}
 
 	Server::Options SharedStory()
@@ -366,6 +385,76 @@ TEST("sim quests: a friend's progress in a quest you haven't come across yet wai
 	CHECK((Done(host, SIDE2) == Stages{ 5, 10, 20 }));
 	CHECK(host.Quests().caughtUp == 1);
 	CHECK((Done(bob, SIDE2) == Stages{ 10, 20 }));  // the host's 5 is below Bob's: his quest is past it
+}
+
+TEST("sim quests: the host's talk at Vault 81's intercom and the vault door it opens reach the friends, though the host had no objective of it yet")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	GiveQuests({ &host, &bob, &carol });
+	host.GiveQuest(V81, AtVault81Door());
+	auto started = AtVault81Door();
+	started.started = true;  // Bob has the quest in his Pip-Boy
+	bob.GiveQuest(V81, started);
+	carol.GiveQuest(V81, AtVault81Door());  // Carol's game played the intercom's first lines too, no more
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	Settled(s);
+
+	Reach(host, V81, { 20, 30, 50, 51 });  // the talk at the intercom
+	s.PlayFor(3s);
+	CHECK(!bob.Quests().Has(V81, 20));  // not yet: the host hasn't started the quest
+	host.Stage(V81, 55);  // the overseer opens the door; its script shows the objective a moment later
+	s.PlayFor(8s);
+
+	CHECK(host.Quests().Achievements().contains(VAULT_DOOR_OPENS));
+	CHECK(host.Quests().reported == 5);
+	CHECK((Order(bob, V81) == std::vector<std::uint16_t>{ 20, 30, 50, 51, 55 }));
+	CHECK(bob.Quests().Achievements().contains(VAULT_DOOR_OPENS));
+	CHECK(bob.Quests().WaitingCount() == 0);
+	// Carol hasn't started the quest: they reached her game and wait there until she does.
+	CHECK((carol.Quests().Waiting(V81) == StageLog::Stages{ 20, 30, 50, 51, 55 }));
+	CHECK(!carol.Quests().Achievements().contains(VAULT_DOOR_OPENS));
+}
+
+TEST("sim quests: what your game did in a quest just before you started it reaches your friends, and what it did in the background long before doesn't")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	auto background = NotStarted({ 5, 10, 20, 50 });
+	background.quiet = { 5 };
+	host.GiveQuest(SIDE2, background);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	host.Stage(SIDE2, 5);  // the game moves it on in the background
+	s.PlayFor(2min);
+	host.Stage(SIDE2, 10);  // the host starts it, minutes later
+	s.PlayFor(5s);
+	CHECK((Order(bob, SIDE2) == std::vector<std::uint16_t>{ 10 }));
+
+	auto quick = NotStarted({ 5, 10, 20, 30, 40 });
+	quick.quiet = { 5, 10 };
+	quick.showsLater = { 20 };
+	host.GiveQuest(SIDE, quick);
+	bob.GiveQuest(SIDE, Started({ 5, 10, 20, 30, 40 }));
+	s.PlayFor(1s);
+	host.Stage(SIDE, 5);  // a conversation that leads to the quest
+	s.PlayFor(20s);
+	host.Stage(SIDE, 10);
+	s.PlayFor(1s);
+	host.Stage(SIDE, 20);  // whose script shows the first objective a moment after the stage reads done
+	s.PlayFor(5s);
+	CHECK((Order(bob, SIDE) == std::vector<std::uint16_t>{ 5, 10, 20 }));
+	host.Stage(SIDE, 30);
+	s.PlayFor(3s);
+	CHECK((Order(bob, SIDE) == std::vector<std::uint16_t>{ 5, 10, 20, 30 }));
 }
 
 // ---- leaving, solo play, coming back --------------------------------------------------------------
