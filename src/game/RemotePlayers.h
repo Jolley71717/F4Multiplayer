@@ -26,8 +26,9 @@ namespace RemotePlayers
 	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
 	void SetLight(std::uint32_t a_id, bool a_on);
 	// Their power armor state, the base form of the frame they are in and, when every game has that frame (a
-	// pre-placed one), its reference (else 0).
-	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef);
+	// pre-placed one), its reference (else 0); out of it, the frame they got out of last, where it stands in their world
+	// (a copy is shown there).
+	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef, const std::optional<Protocol::ParkedFrame>& a_parked = std::nullopt);
 	// The form ID of a player's stand-in, or 0 when they have none right now.
 	std::uint32_t ActorIdOf(std::uint32_t a_id);
 

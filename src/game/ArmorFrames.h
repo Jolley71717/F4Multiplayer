@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -28,7 +29,8 @@ namespace ArmorFrames
 {
 	using Duration = std::chrono::steady_clock::duration;
 
-	// The copy, once they are out: drawn where they got out for this long, then deleted.
+	// The copy, once they are out: drawn where they got out for this long, then deleted; unless their status says where
+	// their frame stands by then, and it is moved there and kept as their parked frame (see ChoosePark).
 	constexpr auto KEEP_AFTER_OUT = std::chrono::seconds(4);
 	// A copy whose 3D has not come in this long after it was placed is placed again.
 	constexpr auto LOAD_LIMIT = std::chrono::seconds(10);
@@ -409,6 +411,7 @@ namespace ArmorFrames
 		bool                 ours = false;     // our player is in it or last left it: our own suit, not theirs
 		bool                 inUse = false;    // another actor of ours is in it
 		bool                 moved = false;    // earlier in this wear it was not where they got in (or moved, or was used)
+		bool                 away = false;     // it was hidden as they got in: theirs stood parked somewhere else, and they got into it there
 		float                fromStart = 0.0f; // how far it stands from where it stood before it was first moved here (0: never moved)
 		std::optional<float> fromSpot;         // how far it stands from where they got in; none when that is another place
 	};
@@ -425,6 +428,7 @@ namespace ArmorFrames
 		kQuest,      // a quest of ours holds it: our player may have to find it or get into it
 		kElsewhere,  // not where they got in: left alone for the rest of this wear
 		kUsed,       // moved in our world since it was placed (our player used it): our own suit, left alone
+		kThere,      // (parked) ours stands where they left theirs: it stands for theirs, shown, and no copy is placed
 	};
 
 	constexpr Original ChooseOriginal(std::uint32_t a_ref, std::uint32_t a_frameBase, const OriginalFacts& a_facts)
@@ -450,6 +454,11 @@ namespace ArmorFrames
 		if (!(a_facts.fromStart <= START_TOLERANCE)) {
 			return Original::kUsed;
 		}
+		// They took theirs away and left it parked elsewhere (ChooseParkedOriginal hid ours), and got in again there:
+		// it is still the suit we hid, wherever they got in.
+		if (a_facts.away) {
+			return a_facts.loaded ? Original::kHide : Original::kNotLoaded;
+		}
 		if (a_facts.moved) {
 			return Original::kElsewhere;
 		}
@@ -458,6 +467,152 @@ namespace ArmorFrames
 		}
 		if (!a_facts.fromSpot || !(*a_facts.fromSpot <= ORIGINAL_RADIUS)) {
 			return Original::kElsewhere;
+		}
+		return Original::kHide;
+	}
+
+	// A frame a friend left standing: the one they got out of last, where their game has it now (Protocol::ParkedFrame).
+	// Their frames are not references every game shares (a pre-placed one is a reference of each game's own world, and
+	// one made in their game is none in ours), so a copy is shown in its place: in a power armor station they parked it
+	// in, or wherever they got out and walked off. It used to be shown only while they wore it and for a few seconds
+	// after, at the spot their stand-in stood as they got out (the exit steps the wearer out of the frame, so that spot
+	// was some 76 units off the frame); then it was gone, and a friend's suit parked in a station stood only in their game.
+
+	// Our player's last frame, as Party::SampleStatus finds it (PlayerCharacter::lastUsedPowerArmor).
+	struct LastFrame
+	{
+		bool          found = false;     // it exists and is not deleted
+		bool          disabled = false;  // the engine disables a frame while it is worn
+		bool          frame = false;     // its base is a power armor frame
+		std::uint32_t ref = 0;
+		std::uint32_t base = 0;
+		std::uint32_t cell = 0;          // interior cell, or 0 outside
+		std::uint32_t worldspace = 0;    // or 0 inside
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;
+	};
+
+	// What friends are told of it: only while we are out of power armor (in it, they show the frame with our stand-in),
+	// and only once the engine has it standing in the world again (enabled where we got out).
+	// Its place is told to the unit and its heading to a hundredth of a radian: a frame the physics nudges by a hair is not
+	// news to send.
+	inline std::optional<Protocol::ParkedFrame> TellParked(bool a_on, const LastFrame& a_last)
+	{
+		if (a_on || !a_last.found || a_last.disabled || !a_last.frame) {
+			return std::nullopt;
+		}
+		const Protocol::ParkedFrame parked{
+			.base = a_last.base,
+			.ref = Protocol::IsShareableRef(a_last.ref) ? a_last.ref : 0,
+			.cell = a_last.cell,
+			.worldspace = a_last.worldspace,
+			.x = std::round(a_last.x),
+			.y = std::round(a_last.y),
+			.z = std::round(a_last.z),
+			.heading = std::round(a_last.heading * 100.0f) / 100.0f,
+		};
+		if (!parked.Valid()) {
+			return std::nullopt;
+		}
+		return parked;
+	}
+
+	// A parked copy further than this from where they parked theirs, or turned further than PARK_TURN, is moved there;
+	// one more than MOVE_LIMIT off is placed again.
+	constexpr float PARK_FOLLOW = 1.0f;
+	constexpr float PARK_TURN = 0.02f;  // radians
+
+	struct ParkFacts
+	{
+		bool                told = false;       // they are out of power armor and tell a parked frame whose base is a frame here
+		bool                inView = false;     // where it stands is in the area the engine draws around our player
+		bool                oursThere = false;  // our own reference of that ID (a pre-placed frame) of that base stands there (ORIGINAL_RADIUS)
+		bool                taken = false;      // somebody here got into the copy we showed of this very frame there
+		bool                exists = false;     // a parked copy of ours stands
+		bool                sameBase = false;   // it is a copy of the base they tell
+		bool                occupied = false;   // somebody here got into it
+		bool                loaded = false;     // its 3D is in
+		std::optional<bool> samePlace;          // it is in the place they parked theirs; none while it is still attaching
+		float               distance = 0.0f;    // from where they parked theirs
+		float               turn = 0.0f;        // from the way theirs faces, radians
+		Duration            sincePlaced{};
+		bool                leftCopy = false;   // the copy their stand-in left as they got out stands, of that base, nobody in it
+	};
+
+	enum class Park
+	{
+		kNone,     // nothing to do: none wanted, or its 3D is still coming
+		kPlace,    // a copy is placed where they parked theirs
+		kAdopt,    // the copy their stand-in left as they got out becomes the parked copy (moved there next)
+		kShow,     // drawn where they parked theirs, solid once nobody stands in it
+		kMove,     // moved onto where they parked theirs (they parked it a little way off, or it was the left copy)
+		kReplace,  // in another place, far off, of another base or never loaded: deleted, placed again next update
+		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, or ours stands there): deleted
+		kAbandon,  // somebody here is in it: theirs now, neither moved nor deleted
+		kDropLeft, // ours stands where they parked theirs: the copy their stand-in left as they got out goes at once
+	};
+
+	constexpr Park ChoosePark(const ParkFacts& a_facts)
+	{
+		if (a_facts.exists) {
+			if (a_facts.occupied) {
+				return Park::kAbandon;
+			}
+			if (!a_facts.told || !a_facts.inView || a_facts.oursThere) {
+				return Park::kDelete;
+			}
+			if (!a_facts.sameBase || (a_facts.samePlace && !*a_facts.samePlace) || a_facts.distance > MOVE_LIMIT) {
+				return Park::kReplace;
+			}
+			if (!a_facts.loaded) {
+				return a_facts.sincePlaced > LOAD_LIMIT ? Park::kReplace : Park::kNone;
+			}
+			return a_facts.distance > PARK_FOLLOW || a_facts.turn > PARK_TURN ? Park::kMove : Park::kShow;
+		}
+		if (!a_facts.told || !a_facts.inView || a_facts.taken) {
+			return Park::kNone;
+		}
+		// Ours stands for theirs (got in and out on the spot, as on the museum roof): the copy left where the stand-in
+		// stepped out to, some 76 units off, would be a second, empty suit beside it for a few seconds.
+		if (a_facts.oursThere) {
+			return a_facts.leftCopy ? Park::kDropLeft : Park::kNone;
+		}
+		return a_facts.leftCopy ? Park::kAdopt : Park::kPlace;
+	}
+
+	// Our copy of a pre-placed frame a friend left parked (their ParkedFrame names it): the same suit, standing in two
+	// places. Ours is hidden while theirs stands parked elsewhere, by the rules of a worn one (ChooseOriginal): not when
+	// it is our player's own, someone here is in it, a quest of ours holds it, or it has been moved in our world. When
+	// ours stands where they parked theirs, it stands for theirs (kThere): shown, and no copy is placed on it.
+	// a_facts.fromSpot: how far ours stands from where they parked theirs.
+	constexpr Original ChooseParkedOriginal(std::uint32_t a_ref, std::uint32_t a_frameBase, const OriginalFacts& a_facts)
+	{
+		if (a_ref == 0 || (a_ref >> 24) == 0xFF || a_frameBase == 0) {
+			return Original::kNone;
+		}
+		if (!a_facts.found || a_facts.created || a_facts.base != a_frameBase) {
+			return Original::kMissing;
+		}
+		if (!a_facts.frame) {
+			return Original::kNotFrame;
+		}
+		if (a_facts.fromSpot && *a_facts.fromSpot <= ORIGINAL_RADIUS) {
+			return Original::kThere;
+		}
+		if (a_facts.ours) {
+			return Original::kOurs;
+		}
+		if (a_facts.inUse) {
+			return Original::kInUse;
+		}
+		if (a_facts.quest) {
+			return Original::kQuest;
+		}
+		if (!(a_facts.fromStart <= START_TOLERANCE)) {
+			return Original::kUsed;
+		}
+		if (!a_facts.loaded) {
+			return Original::kNotLoaded;
 		}
 		return Original::kHide;
 	}

@@ -173,6 +173,32 @@ namespace Party
 			return out;
 		}
 
+		// The frame our player got out of last, as the engine keeps it (PlayerCharacter::lastUsedPowerArmor).
+		ArmorFrames::LastFrame LastFrameOf(RE::PlayerCharacter* a_player)
+		{
+			ArmorFrames::LastFrame last;
+			const auto frame = a_player->lastUsedPowerArmor.get();
+			if (!frame || frame->IsDeleted()) {
+				return last;
+			}
+			const auto base = frame->GetObjectReference();
+			const auto cell = frame->GetParentCell();
+			last.found = true;
+			last.disabled = frame->IsDisabled();
+			last.frame = Equipment::IsPowerArmorFrame(base);
+			last.ref = frame->GetFormID();
+			last.base = base ? base->GetFormID() : 0;
+			if (cell) {
+				last.cell = cell->IsInterior() ? cell->GetFormID() : 0;
+				last.worldspace = !cell->IsInterior() && cell->worldSpace ? cell->worldSpace->GetFormID() : 0;
+			}
+			last.x = frame->data.location.x;
+			last.y = frame->data.location.y;
+			last.z = frame->data.location.z;
+			last.heading = frame->data.angle.z;
+			return last;
+		}
+
 		std::optional<Protocol::PlayerStatus> SampleStatus()
 		{
 			const auto player = Player();
@@ -207,6 +233,9 @@ namespace Party
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
 			status.powerArmorFrameRef = wear.frameRef;
+			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
+			// there, in the station we parked it in or wherever we left it.
+			status.parked = ArmorFrames::TellParked(status.powerArmor, LastFrameOf(player));
 			if (wear.unknown) {
 				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", wear.seat);
 			}
@@ -485,7 +514,7 @@ namespace Party
 		entry.status = a_status;
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
-		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame, a_status.powerArmorFrameRef);
+		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame, a_status.powerArmorFrameRef, a_status.parked);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}
