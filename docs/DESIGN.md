@@ -364,7 +364,8 @@ else skips this: the player is never in those places.
   engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
   stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is
   moved when the frame is, placed again when far off or never loaded, and none is placed where the
-  receiver's own copy of that very pre-placed frame stands within 200 units (that one stands for it).
+  receiver's own copy of that very pre-placed frame stands within 200 units (that one stands for it,
+  and the copy left where the stand-in stood goes at once).
   The receiver's own copy of a pre-placed frame they left parked elsewhere is hidden by the same
   guards as a worn one (`ChooseParkedOriginal`), and stays hidden when they get into it again there.
   Its pieces are not shown: a copy stands empty. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC

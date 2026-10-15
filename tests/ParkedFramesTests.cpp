@@ -94,6 +94,7 @@ namespace
 		Point  ours = MUSEUM_ROOF;  // its museum suit, where the world placed it
 		bool   oursQuest = false;
 		bool   oursHidden = false;
+		std::optional<Original> parkedChoice;  // the last choice for its museum suit as the frame they left parked
 
 		bool                       on = false;
 		std::uint32_t              frameRef = 0;
@@ -104,6 +105,7 @@ namespace
 		bool                       away = false;
 		int                        placed = 0;
 		int                        deleted = 0;
+		int                        droppedLeft = 0;
 
 		// Takes what the server sent through the next status, as Party::ApplyStatus hands it to SetPowerArmor.
 		bool Hear(Fixture& a_f)
@@ -115,7 +117,7 @@ namespace
 			const auto status = Protocol::DecodePlayerStatus(packets.back());
 			REQUIRE(status);
 			if (status->powerArmor && status->powerArmorFrameRef != 0 && (!on || status->powerArmorFrameRef != frameRef)) {
-				away = parked && parked->ref == status->powerArmorFrameRef && oursHidden;
+				away = parked && parked->ref == status->powerArmorFrameRef && (oursHidden || parkedChoice == Original::kNotLoaded);
 			}
 			on = status->powerArmor;
 			frameRef = status->powerArmorFrameRef;
@@ -186,6 +188,10 @@ namespace
 				taken = parked;
 				parkedCopy.reset();
 				break;
+			case Park::kDropLeft:
+				leftCopy.reset();
+				++droppedLeft;
+				break;
 			case Park::kNone:
 			case Park::kShow:
 				break;
@@ -213,6 +219,7 @@ namespace
 				}
 				choice = ArmorFrames::ChooseParkedOriginal(parked ? parked->ref : 0, VANILLA_FRAME, facts);
 			}
+			parkedChoice = on ? std::nullopt : std::optional{ choice };
 			if (choice == Original::kHide) {
 				oursHidden = true;
 			} else if (choice != Original::kNotLoaded) {
@@ -445,6 +452,32 @@ TEST("parked frames: a friend's suit parked in a station far from where it was p
 	CHECK(vm.LookAtOurs(SANCTUARY_STATION) == Original::kElsewhere);
 }
 
+TEST("parked frames: our copy of a suit a friend parked elsewhere stays hidden when they get back in, though we were never near it meanwhile")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	Wearer host{ .peer = 1, .on = true, .frameRef = MUSEUM_SUIT };
+	Hearer vm{ .peer = 2 };
+	host.Send(f);
+	REQUIRE(vm.Hear(f));
+	// She parks the museum's suit at Sanctuary; the VM stays there, its own suit on the roof never loaded, so never hidden.
+	host.Leave(MUSEUM_SUIT, SANCTUARY_STATION);
+	host.Send(f);
+	REQUIRE(vm.Hear(f));
+	CHECK(vm.LookAtOurs() == Original::kNotLoaded);
+	CHECK(!vm.oursHidden);
+	// She gets in again at the station: it is still the suit that would be hidden, and is once the VM comes near it
+	// (without that, ChooseOriginal finds it not where she got in and shows it: two of one suit).
+	host.on = true;
+	host.last.disabled = true;
+	host.Send(f);
+	REQUIRE(vm.Hear(f));
+	CHECK(vm.away);
+	vm.us = MUSEUM_ROOF;
+	CHECK(vm.LookAtOurs(SANCTUARY_STATION) == Original::kHide);
+}
+
 TEST("parked frames: a friend who joins later sees a suit parked before they came")
 {
 	Fixture f;
@@ -477,9 +510,15 @@ TEST("parked frames: a suit got out of where our own copy of it stands is ours t
 	REQUIRE(vm.Hear(f));
 	CHECK(vm.LookAtOurs(MUSEUM_ROOF) == Original::kHide);
 	// In and out on the roof: hers stands a few units from where ours stands.
+	// Her stand-in, stepped out some 76 units off, left a copy where it stood before her frame was told.
 	host.Leave(MUSEUM_SUIT, { MUSEUM_ROOF.x + 30.0f, MUSEUM_ROOF.y, MUSEUM_ROOF.z });
 	host.Send(f);
 	REQUIRE(vm.Hear(f));
+	vm.leftCopy = Copy{ .at = { MUSEUM_ROOF.x + 30.0f, MUSEUM_ROOF.y + 76.0f, MUSEUM_ROOF.z }, .placedAt = Clock::now() };
+	// Ours stands for hers: the left copy goes at once rather than standing beside it as a second suit.
+	CHECK(vm.Step(Clock::now()) == Park::kDropLeft);
+	CHECK(!vm.leftCopy);
+	CHECK(vm.droppedLeft == 1);
 	CHECK(vm.Step(Clock::now()) == Park::kNone);
 	CHECK(!vm.parkedCopy);
 	CHECK(vm.LookAtOurs() == Original::kThere);
@@ -557,6 +596,7 @@ TEST("parked frames: the parked copy is moved when the frame is, placed again wh
 	CHECK(ArmorFrames::ChoosePark({}) == Park::kNone);
 	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = false }) == Park::kNone);
 	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .oursThere = true }) == Park::kNone);
+	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .oursThere = true, .leftCopy = true }) == Park::kDropLeft);
 	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .taken = true }) == Park::kNone);
 	CHECK(ArmorFrames::ChoosePark({ .told = true, .inView = true, .leftCopy = true }) == Park::kAdopt);
 }

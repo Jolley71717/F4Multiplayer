@@ -549,6 +549,7 @@ namespace ArmorFrames
 		kReplace,  // in another place, far off, of another base or never loaded: deleted, placed again next update
 		kDelete,   // no longer wanted (they got in, parked none, it is out of our sight, or ours stands there): deleted
 		kAbandon,  // somebody here is in it: theirs now, neither moved nor deleted
+		kDropLeft, // ours stands where they parked theirs: the copy their stand-in left as they got out goes at once
 	};
 
 	constexpr Park ChoosePark(const ParkFacts& a_facts)
@@ -568,8 +569,13 @@ namespace ArmorFrames
 			}
 			return a_facts.distance > PARK_FOLLOW || a_facts.turn > PARK_TURN ? Park::kMove : Park::kShow;
 		}
-		if (!a_facts.told || !a_facts.inView || a_facts.oursThere || a_facts.taken) {
+		if (!a_facts.told || !a_facts.inView || a_facts.taken) {
 			return Park::kNone;
+		}
+		// Ours stands for theirs (got in and out on the spot, as on the museum roof): the copy left where the stand-in
+		// stepped out to, some 76 units off, would be a second, empty suit beside it for a few seconds.
+		if (a_facts.oursThere) {
+			return a_facts.leftCopy ? Park::kDropLeft : Park::kNone;
 		}
 		return a_facts.leftCopy ? Park::kAdopt : Park::kPlace;
 	}

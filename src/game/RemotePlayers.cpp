@@ -1375,6 +1375,10 @@ namespace RemotePlayers
 				a_player.parkedCopy = {};
 				a_player.parkedCollisionOff = nullptr;
 				break;
+			case ArmorFrames::Park::kDropLeft:
+				REX::INFO("RemotePlayers: player {} left their frame where our own copy of it stands; the copy left where their stand-in stood goes", a_player.id);
+				DeleteFrame(a_player, a_standIn);
+				break;
 			}
 		}
 
@@ -1770,13 +1774,16 @@ namespace RemotePlayers
 			// they are is their newest state if it came just now, else the next one. Ours hidden while theirs stood parked
 			// elsewhere, and they got into that one, stays hidden wherever they got in (ArmorFrames::OriginalFacts::away).
 			if (a_on && a_frameBase && a_frameRef != 0 && (!player.powerArmorOn || a_frameRef != player.powerArmorFrameRef)) {
+				// Hidden as their parked suit, or to be once its 3D comes (we have not been near it since they parked theirs).
 				const auto hidden = player.original.get();
-				player.originalAway = player.parked && player.parked->ref == a_frameRef && hidden && hidden->GetFormID() == a_frameRef;
+				const bool stillHidden = hidden && hidden->GetFormID() == a_frameRef;
+				const bool hidesWhenLoaded = player.originalParked && player.originalChoice == static_cast<int>(ArmorFrames::Original::kNotLoaded);
+				player.originalAway = player.parked && player.parked->ref == a_frameRef && (stillHidden || hidesWhenLoaded);
 				player.wornAt.reset();
 				player.wornAtWanted = true;
 				player.originalMoved = false;
 				player.originalChoice = -1;
-				player.originalCounted = player.originalAway;  // still the hide counted as theirs was parked
+				player.originalCounted = player.originalAway && stillHidden;  // still the hide counted as theirs was parked
 				if (!player.states.snapshots.empty() && ArmorFrames::FreshEnough(Clock::now() - player.states.arrived)) {
 					TakeWornAt(player, player.states.snapshots.back().state);
 				}
