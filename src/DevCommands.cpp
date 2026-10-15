@@ -8,6 +8,7 @@
 #include <random>
 
 #include "game/Dialogue.h"
+#include "game/EnemyList.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
@@ -794,6 +795,86 @@ namespace DevCommands
 			const auto target = actor->currentCombatTarget.get();
 			return std::format("inCombat={} target={:08X} dead={} hp={:.0f}", actor->IsInCombat(), target ? target->GetFormID() : 0, actor->IsDead(false),
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
+		}
+
+		// What the enemies command reads of one actor (src/game/EnemyList.h).
+		EnemyList::Seen SeeActor(RE::PlayerCharacter* a_player, RE::Actor* a_actor)
+		{
+			EnemyList::Seen seen;
+			seen.id = a_actor->GetFormID();
+			const auto base = a_actor->GetObjectReference();
+			seen.base = base ? base->GetFormID() : 0;
+			seen.name = base ? std::string{ RE::TESFullName::GetFullName(*base) } : std::string{};
+			const auto& at = a_actor->data.location;
+			const auto& me = a_player->data.location;
+			seen.x = at.x;
+			seen.y = at.y;
+			seen.z = at.z;
+			seen.distance = std::sqrt((at.x - me.x) * (at.x - me.x) + (at.y - me.y) * (at.y - me.y) + (at.z - me.z) * (at.z - me.z));
+			seen.dead = a_actor->IsDead(false);
+			seen.standIn = Puppets::IsPuppet(a_actor) || RemotePlayers::PlayerIdFor(seen.id) != 0;
+			seen.companion = NpcSync::IsOurCompanion(a_actor);  // in the current companion faction here (a friend's may be only in theirs)
+			seen.owner = NpcSync::Owner(seen.id);
+			seen.runsHere = EnemyList::RunsHere(seen.owner, NpcSync::LocalPlayer());
+			if (seen.dead || seen.standIn) {
+				return seen;
+			}
+			seen.hostile = a_actor->GetHostileToActor(a_player);
+			seen.inCombat = a_actor->IsInCombat();
+			const auto target = a_actor->currentCombatTarget.get();
+			seen.target = target ? target->GetFormID() : 0;
+			seen.targetPlayer = seen.target == Protocol::PLAYER_REF_ID ? NpcSync::LocalPlayer() : RemotePlayers::PlayerIdFor(seen.target);
+			if (a_actor->Get3D()) {
+				bool picked = false;
+				seen.lineOfSight = a_player->HasLOSToTarget(a_actor, &picked);
+			}
+			return seen;
+		}
+
+		// The loaded actors within a_radius of a point.
+		std::vector<EnemyList::Seen> SeeActors(RE::PlayerCharacter* a_player, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_center, float a_radius)
+		{
+			std::vector<EnemyList::Seen> out;
+			a_cell->ForEachReferenceInRange(a_center, a_radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && !actor->IsPlayerRef() && !actor->IsDisabled() && out.size() < 200) {
+					out.push_back(SeeActor(a_player, actor));
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return out;
+		}
+
+		// enemies [radius] | enemies like <baseHex|any> <x> <y> [within]: the actors near the player hostile to it, or
+		// fighting a player, nearest first, with whether the player can see them (los), what they fight as a session
+		// player number (targetPlayer) and who runs them (owner, here). `like` finds this game's actor for one another
+		// game listed, by base and place: an actor made at runtime (made=true) has another form ID in each game.
+		std::string Enemies(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "like") {
+				const auto base = args.size() > 1 ? (args[1] == "any" ? std::optional<std::uint32_t>{ 0 } : ParseHex(args[1])) : std::nullopt;
+				const auto x = args.size() > 2 ? ParseFloat(args[2]) : std::nullopt;
+				const auto y = args.size() > 3 ? ParseFloat(args[3]) : std::nullopt;
+				const float within = args.size() > 4 ? ParseFloat(args[4]).value_or(EnemyList::LIKE_WITHIN) : EnemyList::LIKE_WITHIN;
+				if (!base || !x || !y || !(within > 0.0f && within <= 10000.0f)) {
+					return "error: usage: enemies like <baseHex|any> <x> <y> [within]";
+				}
+				const RE::NiPoint3 spot{ *x, *y, player->data.location.z };
+				// The search reaches as far up and down as across: the spot's height is the player's, not the actor's.
+				const auto found = EnemyList::Like(SeeActors(player, cell, spot, within * 2.0f), *base, *x, *y, within);
+				return found ? EnemyList::Describe(*found) : "none";
+			}
+			const float radius = args.empty() ? 3000.0f : ParseFloat(args[0]).value_or(-1.0f);
+			if (!(radius > 0.0f && radius <= 20000.0f)) {
+				return "error: usage: enemies [radius] | enemies like <baseHex|any> <x> <y> [within]";
+			}
+			return EnemyList::List(SeeActors(player, cell, player->data.location, radius));
 		}
 
 		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
@@ -2107,6 +2188,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
 			Entry{ "combat", Combat },
+			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "findgear", FindGear },

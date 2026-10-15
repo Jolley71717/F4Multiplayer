@@ -510,7 +510,9 @@ that changes the world cannot ship without a row here.
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
-  waiting), `status` (cell, worldspace and location), `log level info|debug`
+  waiting), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
+  line of sight, what they fight as a session player and who runs them; this game's actor for a spawned one
+  another game listed), `status` (cell, worldspace and location), `log level info|debug`
   (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
