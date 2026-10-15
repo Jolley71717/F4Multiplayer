@@ -1,7 +1,7 @@
 // A friend's explosion set off in our game is kept from our copies of NPCs another game runs (BlastShield, used by
 // WeaponFire::ApplyExplosion). The sessions below go through the real server (tests/sim/Sim.h): the thrower's game
 // reports the throw and the explosion, the server passes it on, and the friend's game sets it off in a model of its
-// world that keeps health the way the engine does (base, a temporary modifier, damage), with BlastShield's own
+// world that keeps health the way the engine does (Npc below), with BlastShield's own
 // rules deciding what is lent and given back. Each test names what the players would see go wrong if it failed.
 
 #include "sim/Sim.h"
@@ -24,27 +24,41 @@ namespace
 	constexpr std::uint32_t FRAG = 0x0001D2EE;  // a frag grenade's explosion
 	constexpr float         FRAG_RADIUS = 500.0f;
 
-	// An NPC as one game has it: its health the way the engine keeps it (what it has from its record, a temporary
-	// modifier such as the health lent against an explosion, and the damage it took), where it stands, and whether
-	// it died there. The engine kills an actor whose health reaches nothing.
+	// An NPC as one game has it: its health the way the engine keeps it, where it stands, and whether it died there.
+	// Health is what the record gives plus a permanent, a temporary and a damage modifier. Healing never takes it past
+	// the permanent maximum (the record's and the permanent modifier) and puts it there when it is above: the live
+	// test's raider, lent 100000 as a temporary modifier and hurt for 251, was "given back" 251 and came down to 30,
+	// and taking the loan away killed it. Any change that leaves a living actor with no health kills it.
 	struct Npc
 	{
 		float x = 0.0f, y = 0.0f;
 		float base = 100.0f;
+		float permanent = 0.0f;
 		float temporary = 0.0f;
 		float damage = 0.0f;
 		bool  dead = false;
 
-		[[nodiscard]] float Health() const { return base + temporary + damage; }
+		[[nodiscard]] float Maximum() const { return base + permanent; }
+		[[nodiscard]] float Health() const { return base + permanent + temporary + damage; }
+		void Settle() { dead = dead || Health() <= 0.0f; }
 		void Hurt(float a_amount)
 		{
 			if (dead) {
 				return;
 			}
 			damage -= a_amount;
-			dead = Health() <= 0.0f;
+			Settle();
 		}
-		void Restore(float a_amount) { damage = std::min(0.0f, damage + a_amount); }  // never past its maximum
+		void Restore(float a_amount)  // RestoreActorValue
+		{
+			if (a_amount > 0.0f) {
+				damage += std::min(Health() + a_amount, Maximum()) - Health();
+				Settle();
+			}
+		}
+		void ModDamage(float a_amount) { damage += a_amount, Settle(); }
+		void ModPermanent(float a_amount) { permanent += a_amount, Settle(); }
+		void ModTemporary(float a_amount) { temporary += a_amount, Settle(); }
 	};
 
 	// One player's game: its NPCs, and what WeaponFire and WorldSync do there with a friend's explosion, our own
@@ -66,7 +80,13 @@ namespace
 			};
 			for (auto& [id, npc] : npcs) {
 				if (!npc.dead && reach(npc, FRAG_RADIUS + BlastShield::MARGIN) && BlastShield::Shields(client.OwnerOf(id), client.Id())) {
-					npc.temporary += lending.Begin(id, npc.Health(), now);
+					const float was = npc.Health();
+					if (const float amount = lending.Begin(id, was, now); amount > 0.0f) {
+						npc.ModPermanent(amount);
+						if (npc.Health() < was + amount * 0.5f) {
+							npc.Restore(amount);
+						}
+					}
 				}
 			}
 			for (auto& [id, npc] : npcs) {
@@ -84,21 +104,30 @@ namespace
 			}
 		}
 
-		// WeaponFire::EndLendingOf.
+		// WeaponFire::EndLendingOf: the copy is set to what it keeps with the loan still in it (damage down, healing
+		// up), then the loan is taken away, then a copy our player's blows killed is killed.
 		void EndLending(std::uint32_t a_id)
 		{
 			auto&      npc = npcs.at(a_id);
+			const bool wasDead = npc.dead;
 			const auto release = lending.End(a_id, npc.Health(), npc.dead);
 			if (!release) {
 				return;
 			}
-			npc.Restore(release->restore);
+			const float delta = release->health + release->lent - npc.Health();
+			if (delta < 0.0f) {
+				npc.ModDamage(delta);
+			} else {
+				npc.Restore(delta);
+			}
+			npc.ModPermanent(-release->lent);
+			// Paying the loan back never kills a copy, nor leaves the loan's worth on a corpse.
+			CHECK((wasDead || !npc.dead));
+			CHECK(npc.permanent == 0.0f);
+			CHECK(npc.Health() > -1.0f);
 			if (release->kill) {
 				npc.dead = true;  // the console's kill
 			}
-			npc.temporary -= release->lent;
-			// Taking the lent health away never leaves a living copy at nothing (the engine would not know what to do).
-			CHECK((npc.dead || npc.Health() > 0.0f));
 			Died(a_id);
 		}
 
@@ -238,7 +267,7 @@ TEST("blast shield: a host raider's grenade set off in a friend's game leaves th
 	CHECK(c.bobGame.npcs[RAIDER_3].dead);   // so does one nobody runs
 	c.bobGame.Wait(BlastShield::HOLD);
 	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 60.0f);  // what it had before: nothing the blast took is kept
-	CHECK(c.bobGame.npcs[RAIDER_1].temporary == 0.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].permanent == 0.0f);
 	CHECK(c.bobGame.lending.Size() == 0);
 	c.s.Settle();
 
@@ -251,6 +280,88 @@ TEST("blast shield: a host raider's grenade set off in a friend's game leaves th
 	}
 	CHECK(bob.OwnerOf(RAIDER_1) == host.Id());
 	CHECK(!c.s.Logged("death of 0002A001"));  // nothing was reported for it to drop
+}
+
+TEST("blast shield: a host raider throwing four grenades two seconds apart, each throw replayed by the friend's copy, is alive in both games afterwards")
+{
+	// The live test: the host's raider 0007BCED (30 health, all of it) threw four times, two seconds apart. The friend's
+	// copy replays each throw (its own grenade is removed: WeaponFire's ghost watch) and each explosion is set off
+	// beside it; one of its own grenades escapes the watch and goes off at its feet too.
+	Corvega c;
+	auto&   host = c.host;
+	auto&   bob = c.bob;
+	for (auto* game : { &c.hostGame, &c.bobGame }) {
+		game->npcs[RAIDER_1].base = 30.0f;
+	}
+	const auto shotsBefore = bob.Heard(MT::kShotFired);
+	const float blasts[] = { 70.0f, 60.0f, 66.0f, 55.0f };  // 251 in all
+	for (int i = 0; i < 4; ++i) {
+		host.Raw(NpcThrow(RAIDER_1), false);
+		host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
+		c.s.Settle();
+		REQUIRE(bob.Explosions().size() == static_cast<std::size_t>(i + 1));
+		c.bobGame.SetOff(bob.Explosions().back(), blasts[i]);
+		CHECK(!c.bobGame.npcs[RAIDER_1].dead);
+		if (i == 1) {
+			c.bobGame.Wait(std::chrono::seconds{ 1 });
+			c.bobGame.Hurt(RAIDER_1, 40.0f);  // the escaped grenade: under the loan
+			c.bobGame.Wait(std::chrono::seconds{ 1 });
+		} else {
+			c.bobGame.Wait(std::chrono::seconds{ 2 });
+		}
+		CHECK(c.bobGame.lending.Lent(RAIDER_1));  // each explosion holds the loan on
+	}
+	CHECK(bob.Heard(MT::kShotFired) - shotsBefore == 4);  // each throw reached the friend's game, to be replayed
+	c.bobGame.Wait(BlastShield::HOLD);
+	CHECK(!c.bobGame.lending.Lent(RAIDER_1));
+	CHECK(!c.bobGame.npcs[RAIDER_1].dead);
+	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 30.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].permanent == 0.0f);
+
+	// A fifth, after the loan ended: lent afresh, and paid back again.
+	host.Raw(NpcThrow(RAIDER_1), false);
+	host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
+	c.s.Settle();
+	REQUIRE(bob.Explosions().size() == 5);
+	c.bobGame.SetOff(bob.Explosions().back(), 50.0f);
+	c.bobGame.Wait(BlastShield::HOLD);
+	CHECK(!c.bobGame.npcs[RAIDER_1].dead);
+	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 30.0f);
+	c.s.Settle();
+	for (const auto player : { &host, &bob }) {
+		CHECK(!player->WorldNow().dead.contains(RAIDER_1));
+	}
+	CHECK(bob.OwnerOf(RAIDER_1) == host.Id());
+	CHECK(!c.s.Logged("death of 0002A001"));
+}
+
+TEST("blast shield: the first loan, a temporary modifier, killed the copy when it was paid back")
+{
+	// Why the live test's copy died with -100020 health: healing never goes past the permanent maximum, so giving a
+	// copy lent health as a temporary modifier back the 251 the grenades took set it to that maximum, 30, and taking
+	// the loan away left it 99970 below nothing, dead (the fifth grenade then hit the corpse for 50).
+	Npc raider{ .base = 30.0f };
+	raider.ModTemporary(BlastShield::LEND);
+	raider.Hurt(251.0f);
+	CHECK(!raider.dead);
+	raider.Restore(251.0f);
+	CHECK(raider.Health() == 30.0f);
+	raider.ModTemporary(-BlastShield::LEND);
+	CHECK(raider.dead);
+	CHECK(raider.Health() == 30.0f - BlastShield::LEND);
+
+	// Lent as a permanent modifier and paid back as WeaponFire does now, it keeps its 30.
+	Npc copy{ .base = 30.0f };
+	copy.ModPermanent(BlastShield::LEND);
+	copy.Hurt(251.0f);
+	BlastShield::Book book;
+	book.Begin(RAIDER_1, 30.0f, {});
+	const auto release = book.End(RAIDER_1, copy.Health(), copy.dead);
+	REQUIRE(release);
+	copy.Restore(release->health + release->lent - copy.Health());
+	copy.ModPermanent(-release->lent);
+	CHECK(!copy.dead);
+	CHECK(copy.Health() == 30.0f);
 }
 
 TEST("blast shield: without the lending, the friend's copy would die of the host raider's grenade only in the friend's game")
@@ -318,7 +429,7 @@ TEST("blast shield: a copy kept from a friend's explosion that the player then s
 	c.bobGame.OurBlow(RAIDER_1, 25.0f);
 	CHECK(!c.bobGame.lending.Lent(RAIDER_1));
 	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 35.0f);
-	CHECK(c.bobGame.npcs[RAIDER_1].temporary == 0.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].permanent == 0.0f);
 
 	// Another grenade from the host's raider, then Bob's shotgun: the pellets alone are more than it has left.
 	host.Raw(NpcThrow(RAIDER_1), false);
@@ -345,7 +456,7 @@ TEST("blast shield: a health report for a lent copy is measured without the lent
 	c.bobGame.HealthReport(RAIDER_1, 0.3f);  // the host shot it meanwhile
 	CHECK(!c.bobGame.lending.Lent(RAIDER_1));
 	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 30.0f);
-	CHECK(c.bobGame.npcs[RAIDER_1].temporary == 0.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].permanent == 0.0f);
 	c.bobGame.Wait(BlastShield::HOLD);  // nothing left to give back
 	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 30.0f);
 }
@@ -361,16 +472,16 @@ TEST("blast shield: lending is kept once per copy however many explosions, ends 
 	CHECK(book.Due(t0 + std::chrono::seconds{ 2 } + BlastShield::HOLD).size() == 1);
 	const auto back = book.End(RAIDER_1, 60.0f + BlastShield::LEND - 300.0f, false);
 	REQUIRE(back);
-	CHECK(back->restore == 300.0f);
+	CHECK(back->health == 60.0f);  // what it had: the 300 the blasts took come back
 	CHECK(back->lent == BlastShield::LEND);
 	CHECK(!back->kill);
 	CHECK(!book.End(RAIDER_1, 60.0f, false));  // ended already
 
-	// Its owner's game said it died (a console kill): only the lent health goes.
+	// Its owner's game said it died (a console kill): the loan goes, and the corpse never reads its worth below nothing.
 	CHECK(book.Begin(RAIDER_2, 60.0f, t0) == BlastShield::LEND);
 	const auto dead = book.End(RAIDER_2, 0.0f, true);
 	REQUIRE(dead);
-	CHECK(dead->restore == 0.0f);
+	CHECK(dead->health == 0.0f);
 	CHECK(!dead->kill);
 	CHECK(dead->lent == BlastShield::LEND);
 
@@ -378,7 +489,7 @@ TEST("blast shield: lending is kept once per copy however many explosions, ends 
 	CHECK(book.Begin(RAIDER_3, 60.0f, t0) == BlastShield::LEND);
 	const auto healed = book.End(RAIDER_3, 90.0f + BlastShield::LEND, false);
 	REQUIRE(healed);
-	CHECK(healed->restore == 0.0f);
+	CHECK(healed->health == 90.0f);
 
 	// A copy with no health left is none of the lending's business, and only so many are lent at once.
 	CHECK(book.Begin(0x0002B000, 0.0f, t0) == 0.0f);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -16,12 +17,20 @@
 // fighting on the host's screen.
 //
 // So while a friend's explosion goes off, those copies are lent so much health that it cannot kill them, and
-// when the lending ends (or sooner, see below) what the blast took is given back. Lent as a temporary modifier
-// of health, the way the engine fortifies it, which a save never keeps. Our own player's blows meanwhile are
-// ours to deal (the server believes a kill of ours), so they stay: one that hits a lent copy ends its lending
-// at once, keeping its own damage, and a copy those blows take to nothing dies. A health report for the copy
-// from another game ends the lending first too, so the report is measured without the lent health. Pure, so
-// it can be tested without the game.
+// when the lending ends (or sooner, see below) what the blast took is given back. Our own player's blows
+// meanwhile are ours to deal (the server believes a kill of ours), so they stay: one that hits a lent copy ends
+// its lending at once, keeping its own damage, and a copy those blows take to nothing dies. A health report for
+// the copy from another game ends the lending first too, so the report is measured without the lent health.
+//
+// How the engine keeps health decides how the loan is made and paid back. Its health is what the record gives
+// plus a permanent, a temporary and a damage modifier. Healing (RestoreActorValue) never takes it past the
+// permanent maximum, the record's health and the permanent modifier, and puts it there when it is above: lent
+// as a temporary modifier, a copy the blast had hurt was "given back" its health right down to that maximum, and
+// taking the loan away then left it 100000 below nothing, dead. And changing a modifier so that a living actor
+// has no health left kills it. So the loan is a permanent modifier (healing then reaches the lent health too;
+// WeaponFire ends every loan before a save, which would keep it), and when it ends the copy is first set to the
+// health it is to keep with the loan still in it (a damage modifier down, healing up), and only then is the loan
+// taken away, from a copy that has more than it. Pure, so it can be tested without the game.
 namespace BlastShield
 {
 	using Clock = std::chrono::steady_clock;
@@ -29,12 +38,15 @@ namespace BlastShield
 	// More than any thrown explosion takes (a Fat Man's shell is a few hundred).
 	constexpr float LEND = 100000.0f;
 	// How long a copy is lent health after a friend's explosion set off near it: the engine deals an explosion's
-	// damage within its first frames.
+	// damage within its first frames. Another explosion meanwhile holds it longer.
 	constexpr Clock::duration HOLD = std::chrono::seconds{ 3 };
 	// Copies reached this far beyond the explosion's own radius are lent health too (the engine measures to their
 	// bodies, not their feet).
 	constexpr float MARGIN = 256.0f;
 	constexpr std::size_t MAX_LENT = 256;  // copies lent health at once (a guard)
+	// What a copy our player's blows killed under the loan is left with when the loan goes, before it is killed: some
+	// health, so taking the loan away does not kill it first, with nobody to blame.
+	constexpr float BEFORE_KILL = 1.0f;
 
 	// Whether a friend's explosion set off in our game is kept from hurting this NPC: a_owner runs it (0 nobody),
 	// a_local is our player. Ours, and those nobody runs, it hurts.
@@ -43,12 +55,13 @@ namespace BlastShield
 		return a_owner != 0 && a_owner != a_local;
 	}
 
-	// What to do to the copy's health when its lending ends, in this order.
+	// What to do when a copy's loan ends, in this order: set its health to health + lent (the loan still in it), take
+	// the loan away (leaving it health), and kill it if it is to die.
 	struct Release
 	{
-		float restore = 0.0f;  // given back first, while the lent health is still there
-		bool  kill = false;    // our player's blows took it to nothing: it dies
-		float lent = 0.0f;     // then the lent health is taken away again
+		float health = 0.0f;  // what it keeps
+		float lent = 0.0f;
+		bool  kill = false;   // our player's blows took it to nothing
 	};
 
 	class Book
@@ -59,7 +72,7 @@ namespace BlastShield
 		float Begin(std::uint32_t a_id, float a_health, Clock::time_point a_now)
 		{
 			if (const auto it = entries.find(a_id); it != entries.end()) {
-				it->second.until = a_now + HOLD;
+				it->second.until = std::max(it->second.until, a_now + HOLD);
 				return 0.0f;
 			}
 			if (entries.size() >= MAX_LENT || !(a_health > 0.0f)) {
@@ -80,7 +93,7 @@ namespace BlastShield
 			}
 		}
 
-		// The copies whose lending is over.
+		// The copies whose loan is over.
 		[[nodiscard]] std::vector<std::uint32_t> Due(Clock::time_point a_now) const
 		{
 			std::vector<std::uint32_t> due;
@@ -92,8 +105,8 @@ namespace BlastShield
 			return due;
 		}
 
-		// Ends the copy's lending: a_health is its health now (the lent health in it), a_dead whether it died
-		// meanwhile (its owner's game said so). Nothing if it was lent none.
+		// Ends the copy's loan: a_health is its health now (the loan in it), a_dead whether it died meanwhile (its
+		// owner's game said so). Nothing if it was lent none; each loan ends once.
 		std::optional<Release> End(std::uint32_t a_id, float a_health, bool a_dead)
 		{
 			const auto it = entries.find(a_id);
@@ -102,17 +115,18 @@ namespace BlastShield
 			}
 			const Entry entry = it->second;
 			entries.erase(it);
+			const float without = a_health - entry.lent;  // what it has of its own
 			if (a_dead) {
-				return Release{ .lent = entry.lent };
+				// A corpse keeps what it had, and never reads the loan's worth below nothing.
+				return Release{ .health = std::max(without, 0.0f), .lent = entry.lent };
 			}
-			// What it had, less what our player took: whatever else it lost meanwhile (the blast) comes back. It
+			// What it had, less what our player took: whatever else it lost meanwhile (the blasts) comes back. It
 			// keeps health it gained meanwhile.
 			const float keep = entry.before - entry.ours;
 			if (!(keep > 0.0f)) {
-				return Release{ .kill = true, .lent = entry.lent };
+				return Release{ .health = BEFORE_KILL, .lent = entry.lent, .kill = true };
 			}
-			const float restore = keep + entry.lent - a_health;
-			return Release{ .restore = restore > 0.0f ? restore : 0.0f, .lent = entry.lent };
+			return Release{ .health = std::max(keep, without), .lent = entry.lent };
 		}
 
 		// The copy is gone (deleted, or never found again): nothing to give back.
@@ -121,7 +135,7 @@ namespace BlastShield
 	private:
 		struct Entry
 		{
-			float             before = 0.0f;  // its health when the explosion went off
+			float             before = 0.0f;  // its health when the first explosion went off
 			float             lent = 0.0f;
 			float             ours = 0.0f;    // what our player's blows took since
 			Clock::time_point until{};

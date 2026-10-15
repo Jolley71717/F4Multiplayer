@@ -513,9 +513,12 @@ namespace WeaponFire
 		{
 			Clock::time_point until;
 			Clock::time_point sampleAt;  // zero once logged
+			Clock::time_point started;
+			std::uint32_t     removed = 0;  // its projectiles removed so far
 		};
 		std::unordered_map<std::uint32_t, ThrowWatch>  ghostWatch;  // stand-in -> watch
 		std::uint32_t                                  ghostsRemoved = 0;
+		std::uint32_t                                  ghostsLogged = 0;
 		// The references around a throwing stand-in are walked this often, not every frame: a grenade lives far longer.
 		constexpr auto                                 GHOST_CHECK_INTERVAL = 50ms;
 		Clock::time_point                              nextGhostCheck{};
@@ -568,7 +571,7 @@ namespace WeaponFire
 	void ArmGhostWatch(std::uint32_t a_actorId)
 	{
 		const auto now = Clock::now();
-		ghostWatch[a_actorId] = { now + GHOST_WATCH, now + MID_THROW };
+		ghostWatch[a_actorId] = { now + GHOST_WATCH, now + MID_THROW, now };
 	}
 
 	std::uint32_t GhostsRemoved()
@@ -586,7 +589,17 @@ namespace WeaponFire
 			return;
 		}
 		nextGhostCheck = now + GHOST_CHECK_INTERVAL;
-		std::erase_if(ghostWatch, [&](const auto& a_entry) { return now > a_entry.second.until; });
+		std::erase_if(ghostWatch, [&](const auto& a_entry) {
+			if (now <= a_entry.second.until) {
+				return false;
+			}
+			// A grenade it let go of later than this is a real one in our world: it goes off here, hurting what is beside it.
+			if (a_entry.second.removed == 0 && ghostsLogged < 40) {
+				++ghostsLogged;
+				REX::INFO("WeaponFire: no projectile of {:08X}'s removed in the {} ms after its replayed throw", a_entry.first, std::chrono::duration_cast<std::chrono::milliseconds>(GHOST_WATCH).count());
+			}
+			return true;
+		});
 		const auto tes = RE::TES::GetSingleton();
 		if (!tes) {
 			return;
@@ -617,6 +630,11 @@ namespace WeaponFire
 					ghost->Disable();
 					ghost->SetDelete(true);
 					++ghostsRemoved;
+					++watch.removed;
+					if (ghostsLogged < 40) {
+						++ghostsLogged;
+						REX::INFO("WeaponFire: removed {:08X}'s own projectile {:08X} {} ms after its replayed throw", actorId, ghost->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(now - watch.started).count());
+					}
 				}
 			}
 		}
@@ -627,6 +645,7 @@ namespace WeaponFire
 	{
 		BlastShield::Book lending;
 		std::uint32_t     lendingLogged = 0;
+		std::uint32_t     loanEndsLogged = 0;
 
 		const RE::ActorValueInfo* HealthValue()
 		{
@@ -656,26 +675,39 @@ namespace WeaponFire
 			});
 			const auto  now = BlastShield::Clock::now();
 			std::string lent;
+			std::string held;
 			for (const auto id : copies) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 				if (!actor) {
 					continue;
 				}
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
-				const float amount = lending.Begin(id, values.GetActorValue(*health), now);
-				if (amount > 0.0f) {
-					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *health, amount);
-					++copiesLent;
-					lent += std::format(" {:08X}(player {}'s)", id, NpcSync::Owner(id));
+				const float was = values.GetActorValue(*health);
+				const float amount = lending.Begin(id, was, now);
+				if (amount <= 0.0f) {
+					if (lending.Lent(id)) {
+						held += std::format(" {:08X}", id);
+					}
+					continue;
 				}
+				// A permanent modifier, so healing reaches the lent health too (BlastShield). It raises the health with the
+				// maximum; should it raise only the maximum, the copy is healed up to it.
+				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, amount);
+				if (values.GetActorValue(*health) < was + amount * 0.5f) {
+					values.RestoreActorValue(*health, amount);
+				}
+				++copiesLent;
+				lent += std::format(" {:08X}(player {}'s, {:.0f} -> {:.0f})", id, NpcSync::Owner(id), was, values.GetActorValue(*health));
 			}
-			if (!lent.empty() && lendingLogged < 20) {
+			if ((!lent.empty() || !held.empty()) && lendingLogged < 40) {
 				++lendingLogged;
-				REX::INFO("WeaponFire: player {}'s explosion kept from hurting our copies of NPCs other games run:{}", a_from, lent);
+				REX::INFO("WeaponFire: player {}'s explosion kept from hurting our copies of NPCs other games run:{}{}{}", a_from, lent.empty() ? " none newly" : lent,
+					held.empty() ? "" : "; still lent from an earlier one:", held);
 			}
 		}
 
-		// Ends the copy's lending: what the explosion took comes back, and the lent health goes again.
+		// Ends the copy's loan: it is set to the health it keeps with the loan still in it (what the explosions took
+		// comes back), and only then is the loan taken away, from a copy that has more than it (BlastShield).
 		void EndLendingOf(std::uint32_t a_id)
 		{
 			if (!lending.Lent(a_id)) {
@@ -688,24 +720,45 @@ namespace WeaponFire
 				return;
 			}
 			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
-			const auto  release = lending.End(a_id, values.GetActorValue(*health), actor->IsDead(false));
+			const float had = values.GetActorValue(*health);
+			const bool  dead = actor->IsDead(false);
+			const auto  release = lending.End(a_id, had, dead);
 			if (!release) {
 				return;
 			}
-			if (release->restore > 0.0f) {
-				values.RestoreActorValue(*health, release->restore);
-				++blastsUndone;
-				if (blastsUndone <= 20) {
-					REX::INFO("WeaponFire: gave {:08X} back the {:.0f} health a friend's explosion took (player {}'s game runs it)", a_id, release->restore, NpcSync::Owner(a_id));
+			const auto setTo = [&](float a_target) {
+				const float delta = a_target - values.GetActorValue(*health);
+				if (delta < 0.0f) {
+					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, delta);
+				} else if (delta > 0.0f) {
+					values.RestoreActorValue(*health, delta);
 				}
+			};
+			setTo(release->health + release->lent);
+			const float set = values.GetActorValue(*health);
+			if (!dead && set - release->lent < release->health - 0.5f) {
+				// Healing fell short: a damage modifier up instead, so taking the loan away cannot kill it.
+				REX::WARN("WeaponFire: healing {:08X} to {:.0f} (with the loan) left it at {:.0f}; raising its damage modifier instead", a_id, release->health + release->lent, set);
+				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, release->health + release->lent - set);
+			}
+			values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, -release->lent);
+			const float after = values.GetActorValue(*health);
+			if (!dead && !release->kill && had - release->lent < release->health - 0.5f) {
+				++blastsUndone;
+			}
+			if (!dead && !release->kill && after <= 0.0f) {
+				REX::WARN("WeaponFire: {:08X} has {:.0f} health after its loan ended", a_id, after);
+			}
+			if (loanEndsLogged < 40 || release->kill) {
+				++loanEndsLogged;
+				REX::INFO("WeaponFire: {:08X}'s loan ended (player {}'s game runs it): {:.0f} of its own before, {:.0f} now{}{}", a_id, NpcSync::Owner(a_id), had - release->lent, after,
+					dead ? ", dead meanwhile" : "", release->kill ? ", killed by our player's blows" : "");
 			}
 			if (release->kill) {
-				// Our player's blows alone took it to nothing while it had the lent health: it dies of them now.
+				// Our player's blows alone took it to nothing while it had the loan: it dies of them now.
 				++lentKilled;
-				REX::INFO("WeaponFire: {:08X} dies of our player's blows, held off while it was kept from a friend's explosion", a_id);
 				RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_id).c_str());
 			}
-			values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *health, -release->lent);
 		}
 	}
 
