@@ -40,12 +40,19 @@ namespace WorldSync
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
 	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
 	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
-	// character: FoundDead::Shared).
+	// character: FoundDead::Shared). The server gives nobody a dead NPC, so a death we hold for one that now has
+	// an owner was undone (an older build's mistake, undone by the host's game): it is forgotten, our copy alive.
 	void OnActorOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	// Whether our game may offer to run this NPC (NpcSync): not one the session has dead, nor any until the session's
 	// world state has come after a load or a welcome (our game may have it alive from a save older than its death).
-	// One whose cell reset since our game killed it is ours to offer again (SessionDeaths).
-	[[nodiscard]] bool MayClaim(std::uint32_t a_refId);
+	// One whose cell reset since our game killed it is ours to offer again (SessionDeaths). a_essential: our game
+	// keeps it essential (IsEssential), so a death the session has for it is held, not applied, and it may be offered
+	// marked so (the host's game's offer undoes an older build's mistake: Server's handleClaims).
+	[[nodiscard]] bool MayClaim(std::uint32_t a_refId, bool a_essential = false);
+	// The game won't let it die: essential by its base, or on the reference (a quest's alias: Dogmeat's). At the
+	// end of its health it goes down and gets up, so going down is never reported as a death, and a death heard
+	// of for it waits until it can die here.
+	[[nodiscard]] bool IsEssential(RE::Actor* a_actor);
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change);
 	void ApplyRemotePickup(std::uint32_t a_refId);
 	void ApplyRemoteRefState(const Protocol::RefState& a_state);

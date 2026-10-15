@@ -406,13 +406,14 @@ TEST("protocol: Equipment carries the mods on each item, and only for items it l
 
 TEST("protocol: actor claim, release and owner lists round trip")
 {
-	const std::vector<ActorClaim> claims{ { REF_A, ClaimReason::kUnowned }, { REF_B, ClaimReason::kInteract }, { 0x00033333, ClaimReason::kCompanion } };
+	const std::vector<ActorClaim> claims{ { REF_A, ClaimReason::kUnowned }, { REF_B, ClaimReason::kInteract }, { 0x00033333, ClaimReason::kCompanion, true } };
 	const auto                    c = DecodeClaims(Encode(claims));
 	REQUIRE(c);
 	REQUIRE(c->size() == 3);
 	for (std::size_t i = 0; i < 3; ++i) {
 		CHECK((*c)[i].refId == claims[i].refId);
 		CHECK((*c)[i].reason == claims[i].reason);
+		CHECK((*c)[i].essential == claims[i].essential);
 	}
 
 	const std::vector<std::uint32_t> released{ REF_A, REF_B, 7 };
@@ -1004,9 +1005,34 @@ TEST("protocol: claims with an unknown reason are rejected")
 	w.U8(2);
 	w.U32(REF_A);
 	w.U8(std::to_underlying(ClaimReason::kCompanion));
+	w.U8(0);
 	w.U32(REF_B);
 	w.U8(std::to_underlying(ClaimReason::kCompanion) + 1);
+	w.U8(0);
 	CHECK(!DecodeClaims(w.Data()));
+}
+
+TEST("protocol: a claim's essential mark is 0 or 1, and one without it is refused")
+{
+	const auto claim = [](std::uint8_t a_essential) {
+		Writer w{ MT::kClaimActors };
+		w.U8(1);
+		w.U32(REF_A);
+		w.U8(std::to_underlying(ClaimReason::kCompanion));
+		w.U8(a_essential);
+		return w.Data();
+	};
+	REQUIRE(DecodeClaims(claim(0)));
+	CHECK(!DecodeClaims(claim(0))->front().essential);
+	REQUIRE(DecodeClaims(claim(1)));
+	CHECK(DecodeClaims(claim(1))->front().essential);
+	CHECK(!DecodeClaims(claim(2)));
+	// What protocol 29 sent: no mark.
+	Writer old{ MT::kClaimActors };
+	old.U8(1);
+	old.U32(REF_A);
+	old.U8(std::to_underlying(ClaimReason::kCompanion));
+	CHECK(!DecodeClaims(old.Data()));
 }
 
 TEST("protocol: RefState values above kUnknown are rejected")

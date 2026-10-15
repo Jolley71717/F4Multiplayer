@@ -274,9 +274,12 @@ namespace NpcSync
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
 					// and nothing at all until its dead list is in after a load: the server would take a copy alive only in
 					// an older save for one that came back (WorldSync::MayClaim). Not again while a claim awaits its answer, nor for a
-					// while after another player who has it as a companion too kept it (NpcClaims::Book::Offer).
-					if (const auto reason = claimBook.Offer(id, owner, localId, IsOurCompanion(actor), WorldSync::MayClaim(id), a_now)) {
-						claims.push_back({ id, *reason });
+					// while after another player who has it as a companion too kept it (NpcClaims::Book::Offer). One our game
+					// keeps essential is offered marked so, even with the session having it dead: its death waits here, and from
+					// the host's game the claim undoes one an older build saved by mistake (Dogmeat, taken for dead as he went down).
+					const bool essential = WorldSync::IsEssential(actor);
+					if (const auto reason = claimBook.Offer(id, owner, localId, IsOurCompanion(actor), WorldSync::MayClaim(id, essential), a_now)) {
+						claims.push_back({ id, *reason, essential });
 					}
 				}
 			}
