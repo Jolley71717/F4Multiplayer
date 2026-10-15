@@ -41,7 +41,7 @@ namespace OpenMenus
 		void Seen(std::string_view a_name, bool a_opening)
 		{
 			for (std::size_t i = 0; i < NAMES.size(); ++i) {
-				if (a_name == NAMES[i]) {
+				if (SameName(a_name, NAMES[i])) {
 					const auto bit = 1u << i;
 					if (a_opening) {
 						bits.fetch_or(bit);
@@ -68,6 +68,22 @@ namespace OpenMenus
 		}
 
 	private:
+		// The game's strings are case-blind (BSFixedString, and the UI's own lookup): its string pool keeps a name in the
+		// case it was first made in, which need not be the menu's own.
+		static constexpr bool SameName(std::string_view a_lhs, std::string_view a_rhs)
+		{
+			constexpr auto lower = [](char a_c) { return a_c >= 'A' && a_c <= 'Z' ? static_cast<char>(a_c - 'A' + 'a') : a_c; };
+			if (a_lhs.size() != a_rhs.size()) {
+				return false;
+			}
+			for (std::size_t i = 0; i < a_lhs.size(); ++i) {
+				if (lower(a_lhs[i]) != lower(a_rhs[i])) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 		static constexpr std::uint32_t Bit(Menu a_menu) { return 1u << static_cast<std::uint32_t>(a_menu); }
 
 		std::atomic<std::uint32_t> bits{ 0 };

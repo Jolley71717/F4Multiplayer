@@ -18,7 +18,7 @@
 using OpenMenus::Book;
 using enum OpenMenus::Menu;
 
-TEST("open menus: each menu is known by the game's own name, and is open from its opening to its closing")
+TEST("open menus: each menu is known by the game's own name (in any case), and is open from its opening to its closing")
 {
 	for (std::size_t i = 0; i < OpenMenus::NAMES.size(); ++i) {
 		Book       book;
@@ -35,7 +35,12 @@ TEST("open menus: each menu is known by the game's own name, and is open from it
 	Book book;
 	book.Seen("WorkshopMenu", true);
 	CHECK(book.Open(kWorkshop));
-	book.Seen("workshopmenu", false);  // the events carry the exact name
+	book.Seen("workshopmenu", false);  // case-blind, as the game's strings are
+	CHECK(!book.Open(kWorkshop));
+	book.Seen("WORKSHOPMENU", true);
+	CHECK(book.Open(kWorkshop));
+	book.Seen("WorkshopMenu2", false);  // another name, however it starts
+	book.Seen("Workshop", false);
 	CHECK(book.Open(kWorkshop));
 }
 
