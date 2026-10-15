@@ -7,6 +7,7 @@
 #include "game/Equipment.h"
 #include "game/Gait.h"
 #include "game/NpcClaims.h"
+#include "game/NpcHold.h"
 #include "game/NpcPlace.h"
 #include "game/OpenMenus.h"
 #include "game/Prediction.h"
@@ -85,6 +86,7 @@ namespace NpcSync
 
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
 		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
+		NpcHold::Book                                        hold;       // NPCs our player fights, and ours that are dying
 		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
@@ -231,15 +233,16 @@ namespace NpcSync
 			}
 		}
 
-		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one holding us (NpcPlace::StaysWithUs), or one
-		// fighting us.
+		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one holding us (NpcPlace::StaysWithUs), one
+		// fighting us, nor one our player hit lately (NpcHold): a long shot's target stays ours, so our killing blow lands
+		// where it runs.
 		bool ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			if (const auto last = handedOffAt.find(a_id); last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) {
 				return false;
 			}
-			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player) {
+			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
 				return false;
 			}
 			const auto& at = a_actor->data.location;
@@ -315,17 +318,21 @@ namespace NpcSync
 				}
 			}
 			claimBook.Expire(a_now);
+			hold.Expire(a_now);
 			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
-			// NPCs we run that are no longer loaded (or died) go back to the pool, and so do the
-			// ones a friend is much nearer to (their game claims them). What we said they wear is
-			// forgotten with them, as the server forgets it: when we run one again we report it afresh.
+			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
+			// much nearer to (their game claims them). One that died here is kept until our report of its
+			// death ends it (NpcHold): released as it fell, a friend's game where it still lived took it
+			// over, and our kill was not believed. What we said they wear is forgotten with them, as the
+			// server forgets it: when we run one again we report it afresh.
 			std::vector<std::uint32_t> released;
 			for (const auto id : handOff) {
 				owners.erase(id);
 				owned.erase(id);
 				sentGear.erase(id);
+				hold.Forget(id);
 				handedOffAt[id] = a_now;
 				released.push_back(id);
 				++handOffs;
@@ -333,6 +340,12 @@ namespace NpcSync
 			}
 			for (auto it = owned.begin(); it != owned.end();) {
 				if (!loaded.contains(it->first)) {
+					const auto actor = LoadedActor(it->first);
+					if (hold.Keep(it->first, actor && actor->IsDead(false), a_now)) {
+						++it;
+						continue;
+					}
+					hold.Forget(it->first);
 					released.push_back(it->first);
 					owners.erase(it->first);
 					sentGear.erase(it->first);
@@ -380,6 +393,7 @@ namespace NpcSync
 			}
 			owned.clear();
 			claimBook.Clear();
+			hold.Clear();
 			switchOns.Clear();
 			bringIns.Clear();
 			for (auto& [id, mirror] : mirrors) {
@@ -781,6 +795,9 @@ namespace NpcSync
 		const auto now = Clock::now();
 		for (const auto& entry : a_owners) {
 			claimBook.Answered(entry.refId, entry.playerId, localId, now);
+			if (entry.playerId != localId) {
+				hold.Forget(entry.refId);  // no longer ours to keep while it dies
+			}
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
@@ -878,6 +895,7 @@ namespace NpcSync
 
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
+		hold.Fought(a_refId, Clock::now());  // ours or not: one we run is not handed away mid-fight
 		const auto owner = OwnerOf(a_refId);
 		if (localId == 0 || owner == 0 || owner == localId || Story::InOpening()) {
 			return;
@@ -890,6 +908,11 @@ namespace NpcSync
 		lastTakeover[a_refId] = now;
 		claimBook.Claimed(a_refId, Protocol::ClaimReason::kInteract, now);
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
+	}
+
+	bool FoughtLately(std::uint32_t a_refId)
+	{
+		return hold.FoughtLately(a_refId, Clock::now());
 	}
 
 	void OnActivated(std::uint32_t a_refId)
@@ -1027,6 +1050,7 @@ namespace NpcSync
 		knownGear.clear();
 		owners.clear();
 		claimBook.Clear();
+		hold.Clear();
 		lastTakeover.clear();
 		handedOffAt.clear();
 		talkingTo = 0;
