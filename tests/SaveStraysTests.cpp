@@ -2,7 +2,9 @@
 #include "game/SaveStrays.h"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
+#include <thread>
 
 // Which created actors are kept out of a save (SaveGuard).
 TEST("save strays: an actor in a cell is never one")
@@ -432,4 +434,275 @@ TEST("save strays: a forgotten reference is kept out only while its id still nam
 	keep(0x0020A578);
 	CHECK(kept.size() == SaveStrays::Forgotten::MAX);
 	CHECK(kept.front() == 0xFF001005);
+}
+
+TEST("save strays: the engine is told no only for the stand-in at that address, under that id, with that base")
+{
+	SaveStrays::Unpromoted unpromoted;
+	int        standIn = 0;
+	int        other = 0;
+	const auto at = static_cast<const void*>(&standIn);
+	unpromoted.Add(at, 0xFF000EB8, FACE_COPY);
+	unpromoted.Add(nullptr, 0xFF000EB9, FACE_COPY);  // nothing there
+	unpromoted.Add(&other, 0, FACE_COPY);            // no id
+	CHECK(unpromoted.Size() == 1);
+	CHECK(unpromoted.Refuses(at, 0xFF000EB8, FACE_COPY));
+	// The game hands addresses and ids out again: an actor of its own under the old address and id has another base.
+	CHECK(!unpromoted.Refuses(at, 0xFF000EB8, SETTLER));
+	CHECK(!unpromoted.Refuses(at, 0xFF000EC0, FACE_COPY));
+	CHECK(!unpromoted.Refuses(&other, 0xFF000EB8, FACE_COPY));
+	CHECK(unpromoted.Refused() == 1);
+
+	// A new stand-in under the same id, or at the same address, takes the old one's place.
+	unpromoted.Add(&other, 0xFF000EB8, FACE_COPY);
+	CHECK(unpromoted.Size() == 1);
+	CHECK(!unpromoted.Refuses(at, 0xFF000EB8, FACE_COPY));
+	CHECK(unpromoted.Refuses(&other, 0xFF000EB8, FACE_COPY));
+	unpromoted.Add(&other, 0xFF000EC0, SETTLER);
+	CHECK(unpromoted.Size() == 1);
+	CHECK(unpromoted.Refuses(&other, 0xFF000EC0, SETTLER));
+
+	// Let go of by the id and the base it was placed from: an entry a newer stand-in made under the id stays.
+	unpromoted.Remove(0xFF000EC0, FACE_COPY);
+	CHECK(unpromoted.Size() == 1);
+	unpromoted.Remove(0xFF000EC0, SETTLER);
+	CHECK(unpromoted.Size() == 0);
+	CHECK(!unpromoted.Refuses(&other, 0xFF000EC0, SETTLER));
+
+	// The oldest go past MAX, and a load forgets them all; what was refused stays counted.
+	std::vector<int> many(SaveStrays::Unpromoted::MAX + 5);
+	for (std::uint32_t i = 0; i < many.size(); ++i) {
+		unpromoted.Add(&many[i], 0xFF001000 + i, FACE_COPY);
+	}
+	CHECK(unpromoted.Size() == SaveStrays::Unpromoted::MAX);
+	CHECK(!unpromoted.Refuses(&many[4], 0xFF001004, FACE_COPY));
+	CHECK(unpromoted.Refuses(&many[5], 0xFF001005, FACE_COPY));
+	unpromoted.Clear();
+	CHECK(unpromoted.Size() == 0);
+	CHECK(unpromoted.Refused() == 4);
+}
+
+TEST("save strays: the engine may ask from any thread while stand-ins come and go")
+{
+	SaveStrays::Unpromoted unpromoted;
+	std::vector<int>       actors(64);
+	std::atomic<bool>      stop{ false };
+	std::atomic<int>       wrong{ 0 };
+	unpromoted.Add(&actors[0], 0xFF000EB8, FACE_COPY);
+	std::vector<std::thread> askers;
+	for (int t = 0; t < 4; ++t) {
+		askers.emplace_back([&] {
+			while (!stop) {
+				wrong += !unpromoted.Refuses(&actors[0], 0xFF000EB8, FACE_COPY);  // never taken away
+				wrong += unpromoted.Refuses(&actors[1], 0xFF000EB8, SETTLER);    // never ours
+			}
+		});
+	}
+	for (std::uint32_t round = 0; round < 2000; ++round) {
+		const auto i = 2 + round % 60;
+		unpromoted.Add(&actors[i], 0xFF002000 + i, FACE_COPY);
+		unpromoted.Remove(0xFF002000 + i, FACE_COPY);
+	}
+	stop = true;
+	for (auto& asker : askers) {
+		asker.join();
+	}
+	CHECK(wrong == 0);
+	CHECK(unpromoted.Size() == 1);
+}
+
+namespace
+{
+	// The engine's dynamic persistence as it is read from its code (1.11.240), around the Engine above. Something of the
+	// game's that holds a reference promotes it (BGSDynamicPersistenceManager::PromoteReference, with itself as the
+	// owner), which keeps it in memory past its cell. Letting go of an actor waits for the end of the frame
+	// (DemoteQueuedActors); the last owner gone, one whose cell is not loaded is unloaded (BGSSaveLoadGame::UnloadForm):
+	// a record of changes is written out under its cell or else its worldspace, and with neither the game crashes. Both
+	// ask the reference first whether it may be promoted, and do nothing more on a no: SaveGuard's hook, answered by
+	// the real SaveStrays::Unpromoted. Cells cleared under the player (a door, a fast travel, walking off) unload what
+	// is in them, but leave a promoted reference in memory in no cell.
+	struct Persistence
+	{
+		Engine                                               engine;
+		SaveStrays::Unpromoted                               unpromoted;
+		std::map<std::uint32_t, int>                         address;  // where each reference is in memory
+		std::vector<int>                                     memory = std::vector<int>(16);
+		std::map<std::uint32_t, std::vector<std::uint32_t>>  owners;
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> queued;  // actor, owner
+		bool                                                 crashed = false;
+		std::vector<std::uint32_t>                           unloaded;
+
+		const void* At(std::uint32_t a_id) { return &memory[address.at(a_id)]; }
+
+		// The engine asking (TESObjectREFR::GetAllowPromoteToPersistent, hooked).
+		bool Allowed(std::uint32_t a_id) { return !unpromoted.Refuses(At(a_id), a_id, engine.refs.at(a_id).base); }
+
+		std::uint32_t Place(Engine::Ref a_ref, int a_address)
+		{
+			const auto id = engine.Place(a_ref);
+			address[id] = a_address;
+			return id;
+		}
+
+		// RemotePlayers::Spawn: Track, then KeepUnpromoted.
+		std::uint32_t PlaceStandIn(int a_address, bool a_keepUnpromoted)
+		{
+			const auto id = engine.PlaceOurs(FACE_COPY, true);
+			address[id] = a_address;
+			if (a_keepUnpromoted) {
+				unpromoted.Add(At(id), id, FACE_COPY);
+			}
+			return id;
+		}
+
+		void Promote(std::uint32_t a_id, std::uint32_t a_owner)
+		{
+			if (Allowed(a_id)) {
+				owners[a_id].push_back(a_owner);
+			}
+		}
+
+		void Demote(std::uint32_t a_id, std::uint32_t a_owner)
+		{
+			if (engine.refs.contains(a_id) && Allowed(a_id)) {  // a holder whose handle no longer resolves lets go of nothing
+				queued.emplace_back(a_id, a_owner);  // an actor's waits for the end of the frame
+			}
+		}
+
+		void Unload(std::uint32_t a_id)
+		{
+			const auto& ref = engine.refs.at(a_id);
+			crashed |= ref.record && !ref.inCell && !ref.worldspace;
+			unloaded.push_back(a_id);
+			engine.refs.erase(a_id);
+			owners.erase(a_id);
+		}
+
+		// The player leaves the cells: what is not promoted goes with them (its record kept under its cell), what is
+		// promoted stays in memory with neither a cell nor a worldspace.
+		void ClearCells(const std::vector<std::uint32_t>& a_ids)
+		{
+			for (const auto id : a_ids) {
+				if (owners.contains(id) && !owners[id].empty()) {
+					engine.refs[id].inCell = false;
+					engine.refs[id].worldspace = false;
+				} else {
+					Unload(id);
+				}
+			}
+		}
+
+		// The end of the frame (Main::OnIdle): DemoteQueuedActors.
+		void EndOfFrame()
+		{
+			for (const auto& [id, owner] : std::exchange(queued, {})) {
+				if (!engine.refs.contains(id) || !Allowed(id)) {
+					continue;
+				}
+				std::erase(owners[id], owner);
+				if (owners[id].empty() && !engine.refs[id].inCell) {
+					Unload(id);
+				}
+			}
+		}
+
+		// A frame of ours: RemotePlayers drops the record of one of ours in no cell (SaveGuard::ExcludeOurs), and lets go
+		// of the ones the game took (SaveGuard::Forget, then Frame: KeepForgotten, LetGoOfGone).
+		void OurFrame(const std::vector<std::uint32_t>& a_ours)
+		{
+			for (const auto id : a_ours) {
+				if (!engine.refs.contains(id)) {
+					engine.book.Forget(id);
+				} else if (!engine.refs[id].inCell) {
+					engine.refs[id].record = false;
+				}
+			}
+			engine.book.KeepForgotten(engine.BaseNow(), [&](std::uint32_t a_id) { engine.refs[a_id].record = false; });
+			for (const auto& [id, base] : engine.book.TakeGone()) {
+				unpromoted.Remove(id, base);
+			}
+		}
+	};
+
+	constexpr std::uint32_t QUEST = 0x000229E4;  // a quest of the settlement's, filling an alias with who stands there
+}
+
+TEST("save strays: leaving Red Rocket, a quest letting go of the friend's stand-in it held crashed the game in the same frame; told no, the stand-in goes with its cell")
+{
+	// Before: the quest promotes the stand-in, the cells are cleared as the host leaves, and the quest, stopped with the
+	// location left, lets go of it in that same update. The end of the frame unloads it in no cell with its record: the
+	// crash, before any frame of ours could drop the record.
+	{
+		Persistence game;
+		const auto  standIn = game.PlaceStandIn(0, false);
+		game.Promote(standIn, QUEST);
+		game.ClearCells({ standIn });
+		game.Demote(standIn, QUEST);
+		game.EndOfFrame();
+		CHECK(game.crashed);
+	}
+	// Now: the engine is told no, so the stand-in is never promoted, goes with its cell (its record kept under it, as
+	// for any reference the game placed), and the quest letting go of it does nothing. The settlement's own settler
+	// the quest holds is promoted and let go of as before.
+	Persistence game;
+	const auto  standIn = game.PlaceStandIn(0, true);
+	const auto  settler = game.Place({ .base = SETTLER, .actor = true }, 1);
+	game.Promote(standIn, QUEST);
+	game.Promote(settler, QUEST);
+	CHECK(game.owners[standIn].empty());
+	CHECK(game.owners[settler].size() == 1);
+	game.ClearCells({ standIn });
+	CHECK(game.unloaded == std::vector<std::uint32_t>{ standIn });
+	game.Demote(standIn, QUEST);
+	game.Demote(settler, QUEST);
+	game.EndOfFrame();
+	CHECK(!game.crashed);
+	CHECK(game.owners[settler].empty());
+	CHECK(game.engine.refs.contains(settler));
+	CHECK(game.unpromoted.Refused() == 1);  // the promotion; the demotion found it gone already
+
+	// Our frame finds the stand-in gone, and once its form is, it is no longer ours to refuse: an actor of the game's
+	// placed after it under the same address and id (the game hands both out again) is promoted and let go of.
+	game.OurFrame({ standIn });
+	CHECK(game.unpromoted.Size() == 0);
+	game.engine.nextId = standIn;
+	const auto newcomer = game.Place({ .base = FACE_COPY, .actor = true }, 0);
+	CHECK(newcomer == standIn);
+	game.Promote(newcomer, QUEST);
+	CHECK(game.owners[newcomer].size() == 1);
+	game.Demote(newcomer, QUEST);
+	game.EndOfFrame();
+	CHECK(game.owners[newcomer].empty());
+	CHECK(!game.crashed);
+}
+
+TEST("save strays: a stand-in promoted before it was told no is safe only with its record dropped before it is let go of, and once told no it stays out of every save")
+{
+	// A frame of ours between the cells clearing and the holder letting go drops the record, and the unload finds
+	// nothing to write.
+	Persistence game;
+	const auto  standIn = game.PlaceStandIn(0, false);
+	game.Promote(standIn, QUEST);
+	game.ClearCells({ standIn });
+	game.OurFrame({ standIn });
+	game.Demote(standIn, QUEST);
+	game.EndOfFrame();
+	CHECK(!game.crashed);
+
+	// One an earlier version saved promoted (SaveGuard::AfterLoad drops its record, then tells the engine no): never
+	// let go of, it stays in memory in no cell, and a record a later change makes is kept out of the save.
+	Persistence kept;
+	const auto  loaded = kept.PlaceStandIn(0, false);
+	kept.Promote(loaded, QUEST);
+	kept.ClearCells({ loaded });
+	kept.engine.refs[loaded].record = false;
+	kept.unpromoted.Add(kept.At(loaded), loaded, FACE_COPY);
+	kept.Demote(loaded, QUEST);
+	kept.EndOfFrame();
+	CHECK(!kept.crashed);
+	CHECK(kept.engine.refs.contains(loaded));
+	kept.engine.refs[loaded].record = true;
+	const auto saved = kept.engine.Save();
+	CHECK(!saved.crashed);
+	CHECK(!Has(saved.written, loaded));
 }

@@ -1275,6 +1275,7 @@ namespace RemotePlayers
 
 			Puppets::Register(actor);
 			SaveGuard::Track(actor);
+			SaveGuard::KeepUnpromoted(actor);
 			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
 			// and hitting it isn't a crime. That faction and rank also tell SaveGuard a stand-in an
 			// earlier version saved, so they stay as every version since 0.4.0 set them.
