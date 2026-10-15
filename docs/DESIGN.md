@@ -58,7 +58,13 @@
   pointer and copy the top of its stack (system calls only: the main thread may be stopped holding
   the heap or loader lock), then resumes it and names the instruction and the return addresses it
   finds on the copy as module+offset, from `VirtualQuery` and the image's mapped file name (no
-  dbghelp, no loader lock). The report goes to the log and to `F4Multiplayer-hang-<time>.txt` next to
+  dbghelp, no loader lock). It then times every thread of the game over half a second
+  (`GetThreadTimes` on a Toolhelp thread snapshot) and looks the same way at up to four other threads
+  that kept a processor at least half busy meanwhile: a main thread stuck in a wait is waiting for one
+  of them (a host froze on 2026-10-11 with the main thread waiting for the physics step while a job
+  thread went round an endless loop in Havok on a ragdoll whose bodies had become NaN, which only a
+  full dump showed). The report says too how busy the main thread itself was, so a loop of its own
+  reads differently from a wait. The report goes to the log and to `F4Multiplayer-hang-<time>.txt` next to
   it (the newest 3 kept, leftovers of an interrupted write removed at start-up); it names modules,
   never paths. A minidump (`.dmp`) is written too only with `bHangDump`: `MiniDumpWriteDump` in the
   hung process suspends every thread and then needs the loader and heap locks, so it can turn a

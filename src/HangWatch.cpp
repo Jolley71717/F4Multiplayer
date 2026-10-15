@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <DbgHelp.h>
 #include <Psapi.h>
+#include <TlHelp32.h>
 
 #include <array>
 #include <cstring>
@@ -188,6 +189,66 @@ namespace HangWatch
 			return callers;
 		}
 
+		std::uint64_t Ticks(const FILETIME& a_time)
+		{
+			return (std::uint64_t{ a_time.dwHighDateTime } << 32) | a_time.dwLowDateTime;
+		}
+
+		// The processor time each of the game's threads has used so far (HangDetector.h, ThreadTime). The list of
+		// threads is the kernel's, from a Toolhelp thread snapshot (unlike a module snapshot, it doesn't read the
+		// loader's lists), and each thread is asked only for its times.
+		std::vector<ThreadTime> ThreadTimes()
+		{
+			std::vector<ThreadTime> times;
+			const auto              snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+			if (snapshot == INVALID_HANDLE_VALUE) {
+				return times;
+			}
+			const auto    process = GetCurrentProcessId();
+			THREADENTRY32 entry{};
+			entry.dwSize = sizeof(entry);
+			for (auto more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
+				if (entry.th32OwnerProcessID != process) {
+					continue;
+				}
+				if (const auto thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ThreadID)) {
+					FILETIME created{}, exited{}, kernel{}, user{};
+					if (GetThreadTimes(thread, &created, &exited, &kernel, &user)) {
+						times.push_back({ entry.th32ThreadID, Ticks(kernel) + Ticks(user) });
+					}
+					CloseHandle(thread);
+				}
+			}
+			CloseHandle(snapshot);
+			return times;
+		}
+
+		// Where another busy thread was, looked at the way the main thread is (Capture). Its id is checked to be still
+		// one of the game's: a thread that ended since the snapshot can have its id taken by another program's, which
+		// mustn't be stopped.
+		Report::Busy LookAt(const BusyThread& a_thread, Modules& a_modules)
+		{
+			Report::Busy busy{ .id = a_thread.id, .percent = a_thread.percent };
+			if (const auto thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE, a_thread.id)) {
+				Snapshot snapshot;
+				if (GetProcessIdOfThread(thread) == GetCurrentProcessId() && Capture(thread, snapshot)) {
+					busy.where = a_modules.Describe(snapshot.ip);
+					busy.callers = Callers(snapshot, a_modules);
+				}
+				CloseHandle(thread);
+			}
+			return busy;
+		}
+
+		std::string Joined(const std::vector<std::string>& a_callers)
+		{
+			std::string joined;
+			for (const auto& caller : a_callers) {
+				joined += (joined.empty() ? "" : ", ") + caller;
+			}
+			return joined.empty() ? "none found"s : joined;
+		}
+
 		// Written under a temporary name and renamed when done, so a game closed mid-write leaves no
 		// broken file behind (the next start-up removes the leftover). a_write returns the Windows error,
 		// 0 when written; so does this.
@@ -247,14 +308,35 @@ namespace HangWatch
 				report.where = modules.Describe(snapshot.ip);
 				report.callers = Callers(snapshot, modules);
 			}
+			// Then every thread of the game, timed for a moment: one that kept a processor busy while the main
+			// thread waits is likely what it waits for, and a busy main thread is in a loop of its own.
+			const auto before = ThreadTimes();
+			const auto from = Clock::now();
+			std::this_thread::sleep_for(THREAD_LOOK);
+			const auto after = ThreadTimes();
+			const auto between = Clock::now() - from;
+			report.timed = !before.empty() && !after.empty();
+			if (report.timed) {
+				report.mainPercent = CpuPercent(before, after, a_watch.mainThreadId, between);
+				const std::array<std::uint32_t, 2> skip{ static_cast<std::uint32_t>(a_watch.mainThreadId), static_cast<std::uint32_t>(GetCurrentThreadId()) };
+				for (const auto& busy : BusyThreads(before, after, between, skip)) {
+					report.busy.push_back(LookAt(busy, modules));
+				}
+			}
 
 			REX::WARN("Hang: the game's main thread (thread {}) hasn't read its window messages for {} s, {}", report.threadId, report.stalledSeconds, Describe(a_phase));
 			if (captured) {
-				std::string callers;
-				for (const auto& caller : report.callers) {
-					callers += (callers.empty() ? "" : ", ") + caller;
-				}
-				REX::WARN("Hang: it was at {}; return addresses on its stack: {}", report.where, callers.empty() ? "none found"s : callers);
+				REX::WARN("Hang: it was at {}; return addresses on its stack: {}", report.where, Joined(report.callers));
+			}
+			if (report.mainPercent) {
+				REX::WARN("Hang: it used {}% of a processor over {} ms", *report.mainPercent, std::chrono::duration_cast<std::chrono::milliseconds>(THREAD_LOOK).count());
+			}
+			for (const auto& busy : report.busy) {
+				REX::WARN("Hang: thread {} kept a processor {}% busy meanwhile, at {}; return addresses on its stack: {}", busy.id, busy.percent,
+					busy.where.empty() ? "an unknown place"s : busy.where, Joined(busy.callers));
+			}
+			if (report.timed && report.busy.empty()) {
+				REX::WARN("Hang: no other thread of the game kept a processor busy meanwhile");
 			}
 			if (a_watch.folder.empty()) {
 				REX::WARN("Hang: no report file (no Documents folder)");

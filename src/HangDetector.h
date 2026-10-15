@@ -198,9 +198,80 @@ namespace HangWatch
 		return out;
 	}
 
+	// --- the other threads ---
+
+	// A main thread stuck in a wait is waiting for another thread. In a host's freeze on 2026-10-11 it waited for
+	// the physics step while one of the engine's job threads went round an endless loop in Havok's constraint
+	// setup (a ragdoll whose bodies had all become NaN), and the main thread's stack alone said only that it
+	// waited. So the watch also times every thread of the game for a moment and names those that kept a
+	// processor busy meanwhile, with where each one was.
+	constexpr auto        THREAD_LOOK = std::chrono::milliseconds(500);
+	constexpr int         BUSY_PERCENT = 50;  // of one processor, over the look
+	constexpr std::size_t MAX_BUSY_THREADS = 4;
+
+	// One thread's processor time so far: kernel and user, in GetThreadTimes' 100 ns units.
+	struct ThreadTime
+	{
+		std::uint32_t id = 0;
+		std::uint64_t cpu = 0;
+	};
+
+	// How much of one processor thread a_id used between the two looks a_between apart, in percent (at most
+	// 100: the clock behind those times moves in coarse steps). None when the thread isn't in both looks.
+	inline std::optional<int> CpuPercent(std::span<const ThreadTime> a_before, std::span<const ThreadTime> a_after, std::uint32_t a_id, Clock::duration a_between)
+	{
+		using Ticks = std::chrono::duration<std::int64_t, std::ratio<1, 10'000'000>>;
+		const auto ticks = std::chrono::duration_cast<Ticks>(a_between).count();
+		const auto before = std::ranges::find(a_before, a_id, &ThreadTime::id);
+		const auto after = std::ranges::find(a_after, a_id, &ThreadTime::id);
+		if (ticks <= 0 || before == a_before.end() || after == a_after.end() || after->cpu < before->cpu) {
+			return std::nullopt;
+		}
+		return static_cast<int>((std::min)((after->cpu - before->cpu) * 100 / static_cast<std::uint64_t>(ticks), std::uint64_t{ 100 }));
+	}
+
+	struct BusyThread
+	{
+		std::uint32_t id = 0;
+		int           percent = 0;
+	};
+
+	// The threads that used at least BUSY_PERCENT of a processor between the two looks, busiest first, at most
+	// MAX_BUSY_THREADS of them, leaving out a_skip (the main thread, which the report has on its own, and the
+	// watch's own thread). A thread that began or ended between the looks isn't one.
+	inline std::vector<BusyThread> BusyThreads(std::span<const ThreadTime> a_before, std::span<const ThreadTime> a_after, Clock::duration a_between,
+		std::span<const std::uint32_t> a_skip)
+	{
+		std::vector<BusyThread> busy;
+		for (const auto& thread : a_after) {
+			if (std::ranges::find(a_skip, thread.id) != a_skip.end()) {
+				continue;
+			}
+			if (const auto percent = CpuPercent(a_before, a_after, thread.id, a_between); percent && *percent >= BUSY_PERCENT) {
+				busy.push_back({ thread.id, *percent });
+			}
+		}
+		std::ranges::sort(busy, [](const BusyThread& a_left, const BusyThread& a_right) {
+			return a_left.percent != a_right.percent ? a_left.percent > a_right.percent : a_left.id < a_right.id;
+		});
+		if (busy.size() > MAX_BUSY_THREADS) {
+			busy.resize(MAX_BUSY_THREADS);
+		}
+		return busy;
+	}
+
 	// What a hang report says (HangWatch.cpp fills it in).
 	struct Report
 	{
+		// Another thread that kept a processor busy while the main thread was stalled.
+		struct Busy
+		{
+			std::uint32_t            id = 0;
+			int                      percent = 0;
+			std::string              where;    // as the main thread's; empty: it couldn't be looked at
+			std::vector<std::string> callers;
+		};
+
 		std::string              version;  // the plugin's
 		std::string              time;     // local, as in the file's name
 		Phase                    phase = Phase::kPlay;
@@ -209,6 +280,9 @@ namespace HangWatch
 		std::uint32_t            threadId = 0;
 		std::string              where;    // the main thread's instruction ("Fallout4.exe+0x1A2B3C"); empty: not looked at
 		std::vector<std::string> callers;  // return addresses found on its stack, nearest first
+		bool                     timed = false;  // the game's threads were timed (THREAD_LOOK); nothing below is known otherwise
+		std::optional<int>       mainPercent;    // how busy the main thread itself was then
+		std::vector<Busy>        busy;           // the other threads that were busy then, busiest first
 	};
 
 	inline std::string ReportText(const Report& a_report)
@@ -217,17 +291,41 @@ namespace HangWatch
 			"F4Multiplayer {} hang report, {}\n"
 			"The game's main thread (thread {}) hadn't read its window messages for {} s ({}; the limit there is {} s).\n",
 			a_report.version, a_report.time, a_report.threadId, a_report.stalledSeconds, Describe(a_report.phase), a_report.limitSeconds);
+		const auto callers = [&](const std::vector<std::string>& a_callers, std::string_view a_indent) {
+			for (const auto& caller : a_callers) {
+				text += std::format("{}{}\n", a_indent, caller);
+			}
+			if (a_callers.empty()) {
+				text += std::format("{}none found\n", a_indent);
+			}
+		};
 		if (a_report.where.empty()) {
 			text += "Where it was: unknown (the main thread couldn't be looked at).\n";
+		} else {
+			text += std::format("Where it was: {}\n", a_report.where);
+			text += "Return addresses on its stack, nearest first (a scan, so some may be left over from earlier calls):\n";
+			callers(a_report.callers, "  ");
+		}
+		if (!a_report.timed) {
 			return text;
 		}
-		text += std::format("Where it was: {}\n", a_report.where);
-		text += "Return addresses on its stack, nearest first (a scan, so some may be left over from earlier calls):\n";
-		for (const auto& caller : a_report.callers) {
-			text += std::format("  {}\n", caller);
+		const auto look = std::chrono::duration_cast<std::chrono::milliseconds>(THREAD_LOOK).count();
+		if (a_report.mainPercent) {
+			text += std::format("Over {} ms the main thread used {}% of a processor: {}.\n", look, *a_report.mainPercent,
+				*a_report.mainPercent >= BUSY_PERCENT ? "it is working, in a loop of its own" : "it is waiting");
 		}
-		if (a_report.callers.empty()) {
-			text += "  none found\n";
+		if (a_report.busy.empty()) {
+			text += std::format("No other thread of the game kept a processor busy over those {} ms.\n", look);
+			return text;
+		}
+		text += std::format("Other threads of the game that kept a processor busy over those {} ms (what the main thread may wait for), busiest first:\n", look);
+		for (const auto& thread : a_report.busy) {
+			if (thread.where.empty()) {
+				text += std::format("  thread {} ({}%): couldn't be looked at\n", thread.id, thread.percent);
+				continue;
+			}
+			text += std::format("  thread {} ({}%) at {}; return addresses on its stack, nearest first:\n", thread.id, thread.percent, thread.where);
+			callers(thread.callers, "    ");
 		}
 		return text;
 	}

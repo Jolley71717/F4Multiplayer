@@ -2,6 +2,8 @@
 
 #include "HangDetector.h"
 
+#include <array>
+
 using namespace std::chrono_literals;
 using HangWatch::Detector;
 using HangWatch::Phase;
@@ -267,6 +269,117 @@ TEST("hang watch: the report says the phase, how long, where the main thread was
 	CHECK(HangWatch::ReportText(report).find("none found") != std::string::npos);
 	report.where.clear();
 	CHECK(HangWatch::ReportText(report).find("unknown") != std::string::npos);
+}
+
+TEST("hang watch: a freeze where the main thread waits on a job thread's endless loop names that thread and where it was")
+{
+	using HangWatch::ThreadTime;
+	// The host's freeze of 2026-10-11, as the watch would see it: the main thread waits for the physics step,
+	// one job thread goes round an endless loop in Havok, the network threads sleep in select.
+	constexpr std::uint32_t MAIN = 15780, PHYSICS_JOB = 29312, NETWORK = 35280, WATCH = 4096, BORN = 5000, QUIET = 900;
+	auto       d = MakeDetector();
+	const auto start = HangWatch::Clock::time_point{} + 1h;
+	Detector::Result hang;
+	for (auto t = 1s; t <= 20s && hang.event != Event::kHang; t += 1s) {
+		hang = d.Tick(start + t, STALLED);
+	}
+	REQUIRE(hang.event == Event::kHang);
+
+	// 500 ms apart, in 100 ns units: 5,000,000 is all of one processor.
+	const std::vector<ThreadTime> before{
+		{ MAIN, 90'000'000 }, { PHYSICS_JOB, 400'000'000 }, { NETWORK, 7'000'000 }, { WATCH, 1'000 }, { QUIET, 12'000'000 } };
+	const std::vector<ThreadTime> after{
+		{ MAIN, 90'000'000 }, { PHYSICS_JOB, 405'000'000 }, { NETWORK, 7'050'000 }, { WATCH, 6'000'000 }, { BORN, 9'000'000 }, { QUIET, 14'600'000 } };
+	const std::array<std::uint32_t, 2> skip{ MAIN, WATCH };
+	const auto busy = HangWatch::BusyThreads(before, after, 500ms, skip);
+	REQUIRE(busy.size() == 2);
+	CHECK(busy[0].id == PHYSICS_JOB);
+	CHECK(busy[0].percent == 100);
+	CHECK(busy[1].id == QUIET);  // 52%: a loop that sleeps now and then is still named
+	CHECK(busy[1].percent == 52);
+
+	HangWatch::Report report;
+	report.version = "0.8.6";
+	report.time = "2026-10-11 19:53:46";
+	report.phase = hang.phase;
+	report.stalledSeconds = std::chrono::duration_cast<std::chrono::seconds>(hang.stalled).count();
+	report.limitSeconds = std::chrono::duration_cast<std::chrono::seconds>(d.Limit(hang.phase)).count();
+	report.threadId = MAIN;
+	report.where = "ntdll.dll+0x160E44";
+	report.callers = { "KERNELBASE.dll+0x1BE9F", "Fallout4.exe+0xC346C0", "Fallout4.exe+0xC315C0" };
+	report.timed = true;
+	report.mainPercent = HangWatch::CpuPercent(before, after, MAIN, 500ms);
+	for (const auto& thread : busy) {
+		report.busy.push_back({ .id = thread.id, .percent = thread.percent });
+	}
+	report.busy[0].where = "Fallout4.exe+0x15718E3";
+	report.busy[0].callers = { "Fallout4.exe+0x14E334F", "Fallout4.exe+0x14E6532", "Fallout4.exe+0x187D573" };
+	const auto text = HangWatch::ReportText(report);
+	CHECK(text.find("for 15 s (in play or a menu; the limit there is 15 s)") != std::string::npos);
+	CHECK(text.find("used 0% of a processor: it is waiting") != std::string::npos);
+	CHECK(text.find("thread 29312 (100%) at Fallout4.exe+0x15718E3") != std::string::npos);
+	CHECK(text.find("    Fallout4.exe+0x14E334F") < text.find("    Fallout4.exe+0x187D573"));
+	CHECK(text.find("thread 29312") < text.find("thread 900 (52%): couldn't be looked at"));
+	CHECK(text.find("thread 4096") == std::string::npos);
+	CHECK(text.find("thread 35280") == std::string::npos);
+	CHECK(text.find('\\') == std::string::npos);
+}
+
+TEST("hang watch: a main thread in a loop of its own is called working, and a quiet game says no thread was busy")
+{
+	using HangWatch::ThreadTime;
+	const std::vector<ThreadTime> before{ { 1, 0 }, { 2, 100 } };
+	const std::vector<ThreadTime> after{ { 1, 4'900'000 }, { 2, 200 } };
+	HangWatch::Report report;
+	report.threadId = 1;
+	report.where = "Fallout4.exe+0x1000";
+	report.timed = true;
+	report.mainPercent = HangWatch::CpuPercent(before, after, 1, 500ms);
+	CHECK(report.mainPercent == 98);
+	const std::array<std::uint32_t, 1> skip{ 1 };
+	CHECK(HangWatch::BusyThreads(before, after, 500ms, skip).empty());
+	auto text = HangWatch::ReportText(report);
+	CHECK(text.find("used 98% of a processor: it is working, in a loop of its own") != std::string::npos);
+	CHECK(text.find("No other thread of the game kept a processor busy") != std::string::npos);
+
+	// The threads couldn't be timed: the report says nothing about them, the main thread's place still.
+	report.timed = false;
+	text = HangWatch::ReportText(report);
+	CHECK(text.find("processor") == std::string::npos);
+	CHECK(text.find("Where it was: Fallout4.exe+0x1000") != std::string::npos);
+	// Nor could the main thread be looked at: the busy threads are still named.
+	report.where.clear();
+	report.timed = true;
+	report.busy.push_back({ .id = 7, .percent = 100, .where = "Fallout4.exe+0x2000" });
+	text = HangWatch::ReportText(report);
+	CHECK(text.find("unknown") != std::string::npos);
+	CHECK(text.find("thread 7 (100%) at Fallout4.exe+0x2000") != std::string::npos);
+	CHECK(text.find("      none found") == std::string::npos);
+	CHECK(text.find("    none found") != std::string::npos);
+}
+
+TEST("hang watch: busy threads are timed only across both looks, at most four, the busiest first")
+{
+	using HangWatch::CpuPercent;
+	using HangWatch::ThreadTime;
+	const std::vector<ThreadTime> before{ { 1, 1'000 }, { 2, 5'000'000 } };
+	const std::vector<ThreadTime> after{ { 1, 9'000'000 }, { 2, 4'000'000 }, { 3, 2'000'000 } };
+	CHECK(CpuPercent(before, after, 1, 500ms) == 100);       // the clock's coarse steps: never more than all of one processor
+	CHECK(!CpuPercent(before, after, 2, 500ms).has_value());  // its time went back: not the same thread
+	CHECK(!CpuPercent(before, after, 3, 500ms).has_value());  // began between the looks
+	CHECK(!CpuPercent(before, after, 1, 0ms).has_value());
+	CHECK(CpuPercent(before, after, 1, 1s) == 89);
+
+	std::vector<ThreadTime> manyBefore, manyAfter;
+	for (std::uint32_t id = 10; id < 20; ++id) {
+		manyBefore.push_back({ id, 0 });
+		manyAfter.push_back({ id, id < 15 ? 5'000'000u : 3'000'000u });  // five at 100%, five at 60%
+	}
+	const auto busy = HangWatch::BusyThreads(manyBefore, manyAfter, 500ms, {});
+	REQUIRE(busy.size() == HangWatch::MAX_BUSY_THREADS);
+	CHECK(busy[0].id == 10);
+	CHECK(busy[3].id == 13);
+	CHECK(std::ranges::all_of(busy, [](const HangWatch::BusyThread& a_thread) { return a_thread.percent == 100; }));
 }
 
 TEST("hang watch: file names sort by time, and only the newest three of each kind are kept")

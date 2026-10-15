@@ -4,7 +4,8 @@
 
 // The hang watch. A freeze leaves no crash log, so a thread of ours looks at the game once a second:
 // when the main thread hasn't read its window messages for iHangSeconds (a save, a load or a loading
-// screen gets four times as long), it logs that with where the main thread is stuck, writes the same
+// screen gets four times as long), it logs that with where the main thread is stuck and which other
+// threads kept a processor busy meanwhile (what it may be waiting for), and where they were, writes the same
 // as a short text report next to the log (F4Multiplayer-hang-<time>.txt, the newest three are kept),
 // and logs again when the game answers. A minidump of every thread's stack is written as well only
 // with bHangDump (HangWatch.cpp says why it is off by default). Once the player quits, the watch stops:
