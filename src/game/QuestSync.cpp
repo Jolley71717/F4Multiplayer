@@ -11,6 +11,8 @@
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
+#include <deque>
+
 namespace QuestSync
 {
 	namespace
@@ -80,6 +82,11 @@ namespace QuestSync
 		constexpr std::uint32_t MQ105 = 0x000229E6;
 		constexpr std::uint16_t MQ105_FIRST = 10;
 
+		// The host's progress reported when its session starts: at most this many stages (a story played to
+		// its end has a few thousand), put in the outbox this many at a time (it keeps MAX_UNSENT).
+		constexpr std::size_t MAX_BASELINE = 8192;
+		constexpr std::size_t BASELINE_BATCH = 256;
+
 		std::unordered_map<std::uint32_t, std::uint16_t> knownStages;  // last current stage seen per quest
 		std::unordered_map<std::uint32_t, StageLog::Stages> doneStages;  // the stages seen done per quest
 		std::unordered_map<std::uint32_t, bool>          knownDone;    // last completed state seen per quest
@@ -88,6 +95,20 @@ namespace QuestSync
 		std::unordered_set<std::uint32_t>                waited;   // quests whose stages waited for the quest to start here
 		std::unordered_map<std::uint32_t, StageLog::Wait> waitLogged;  // why each quest's stages wait, as last logged
 		StageLog::Unstarted                              unstarted;  // stages done here just before their quest was started
+		std::unordered_set<std::uint32_t>                startedHere;  // quests not started here that a friend's stage started for the session
+		std::unordered_set<std::uint32_t>                catchingUp;   // ... with friends' stages still to set (logged once they are)
+		std::unordered_map<std::uint64_t, Clock::duration> startHolds;  // a stage that started its quest: the start-up stage's hold too
+		bool                                             inSession = false;  // the last Frame's
+		// The host's progress so far, to report (QueueBaseline): a few at a time, so the outbox keeps them all.
+		struct Baselined
+		{
+			std::uint32_t quest;
+			std::uint16_t stage;
+			bool          story;
+		};
+		std::deque<Baselined>                            baseline;
+		bool                                             baselineQueued = false;
+		std::uint32_t                                    baselined = 0;  // reported of it
 		struct Live
 		{
 			Clock::time_point at;
@@ -255,15 +276,26 @@ namespace QuestSync
 				return "the player hasn't started the quest (no objective shown)";
 			case StageLog::Wait::kBusy:
 				return "the player is in a conversation or a scene";
+			case StageLog::Wait::kStopped:
+				return "the quest ran here before and was stopped; starting it again would start it over";
+			case StageLog::Wait::kStart:
+				return "the quest isn't started here; they start it for the session once the stages that came before them are set";
 			default:
 				return "";
 			}
 		}
 
-		// Whether stages from other players can be set on this quest now (see StageLog::WaitsFor). They
-		// wait until this player has started the quest too, possibly because another quest's stage starts
-		// it (MQ104's 210 starts MQ105). A lock's quests go on after the session, when the story is no
-		// longer shared (StageLog::Settable). Why a quest's stages wait is logged once for each reason.
+		// The quest ran here before and was stopped (it isn't running now): stages done, or past its first.
+		bool RanBefore(const RE::TESQuest* a_quest)
+		{
+			return (a_quest->data.flags & QUEST_COMPLETED) || a_quest->currentStage > 0 || !QuestStageLayout::Done(a_quest).empty();
+		}
+
+		// Whether stages from other players can be set on this quest now (see StageLog::WaitsFor). A quest
+		// this player hasn't started is started for the session by the first of them (Quest::kStart), after
+		// the stages that came before it: another quest's stage may start it (MQ104's 210 starts MQ105). A
+		// lock's quests go on after the session, when the story is no longer shared (StageLog::Settable).
+		// Why a quest's stages wait is logged once for each reason.
 		StageLog::Quest StateOf(std::uint32_t a_quest)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
@@ -277,12 +309,15 @@ namespace QuestSync
 			here.running = (quest->data.flags & QUEST_RUNNING) != 0;
 			here.started = PlayerStarted(quest);
 			here.busy = busy;
+			here.inSession = inSession && Shared(quest);
+			here.ranBefore = !here.running && RanBefore(quest);
+			here.startedHere = startedHere.contains(a_quest);
 			const auto wait = StageLog::WaitsFor(here);
 			if (wait == StageLog::Wait::kNone) {
 				waitLogged.erase(a_quest);
 				return StageLog::Quest::kReady;
 			}
-			if (wait != StageLog::Wait::kBusy) {
+			if (wait != StageLog::Wait::kBusy || !here.running || !(here.started || here.startedHere)) {
 				waited.insert(a_quest);
 			}
 			if (wait != StageLog::Wait::kLoading && waitLogged[a_quest] != wait) {
@@ -292,7 +327,7 @@ namespace QuestSync
 				REX::INFO("QuestSync: {} stage(s) of {:08X} '{}' from friends wait (the first {}): {}", stages.size(), a_quest, name ? name : "",
 					stages.empty() ? 0 : stages.front(), WhyWaiting(wait));
 			}
-			return StageLog::Quest::kWait;
+			return wait == StageLog::Wait::kStart ? StageLog::Quest::kStart : StageLog::Quest::kWait;
 		}
 
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
@@ -374,7 +409,12 @@ namespace QuestSync
 			const char* name = quest->GetFullName();
 			const auto  file = FileOf(quest);
 			const auto  local = a_quest & 0x00FFFFFF;
-			const auto  rule = file ? StageRules::Find(*file, local, a_stage) : nullptr;
+			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
+			// game runs its start-up stage too.
+			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!PlayerStarted(quest) && !startedHere.contains(a_quest));
+			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
+			const auto  judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
+			const auto  rule = judged ? &*judged : nullptr;
 			const auto  lock = file ? StageRules::FindLock(*file, local, a_stage) : nullptr;
 			const auto  releaseId = lock ? (a_quest & 0xFF000000) | lock->releaseQuest : 0u;
 
@@ -419,7 +459,13 @@ namespace QuestSync
 			}
 
 			SetStageHere(quest, a_stage);
-			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live ? "" : " (catching up)");
+			REX::INFO("QuestSync: set {:08X} '{}' stage {} (was {}){}{}", a_quest, name ? name : "", a_stage, quest->currentStage, now.live ? "" : " (catching up)",
+				starting ? " (starting the quest here for the session)" : "");
+			if (starting) {
+				startedHere.insert(a_quest);
+				catchingUp.insert(a_quest);
+				startHolds[Key(a_quest, a_stage)] = StageRules::Hold(rule);
+			}
 			if (lock) {
 				locked = Locked{ a_quest, a_stage, releaseId, lock->releaseStage };
 				waiting.Lock(a_quest, releaseId);
@@ -485,7 +531,14 @@ namespace QuestSync
 			StageLog::Quest Quest(std::uint32_t a_quest) const { return StateOf(a_quest); }
 			bool            Settled(std::uint32_t a_quest, std::uint16_t a_stage) const { return IsSettled(a_quest, a_stage); }
 			StageLog::Set   Set(std::uint32_t a_quest, std::uint16_t a_stage) const { return SetHere(a_quest, a_stage, now); }
-			Clock::duration Hold(std::uint32_t a_quest, std::uint16_t a_stage) const { return StageRules::Hold(RuleFor(a_quest, a_stage)); }
+			Clock::duration Hold(std::uint32_t a_quest, std::uint16_t a_stage) const
+			{
+				// A stage that started its quest: the start-up stage's script may run on too (SetHere).
+				if (const auto start = startHolds.extract(Key(a_quest, a_stage))) {
+					return start.mapped();
+				}
+				return StageRules::Hold(RuleFor(a_quest, a_stage));
+			}
 		};
 
 		// An older version set only the highest stage of a friend's quest. MQ104 went straight to 1000,
@@ -533,6 +586,41 @@ namespace QuestSync
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			++repaired;
 			Hud::Notify(std::format("Your main story was stuck; it goes on with {}", shown));
+		}
+
+		// The session's story starts where the host's is: every stage done in the host's game of the shared
+		// quests its player has started or finished (the story's only if it is shared), quest by quest in
+		// the game's order and each quest's in ascending order. The server keeps those it doesn't have yet
+		// like any of the session's stages, so a friend joining now or later is pushed through them in order
+		// (StageLog::Queue: scripts, holds, locks, never backwards), not only through what was done since
+		// hosting began. Only the host's game does this: a joiner's progress before joining stays theirs.
+		void QueueBaseline()
+		{
+			baseline.clear();
+			std::size_t quests = 0;
+			std::size_t left = 0;
+			for (const auto quest : AllQuests()) {
+				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared())) {
+					continue;
+				}
+				if (!PlayerStarted(quest) && !(quest->data.flags & QUEST_COMPLETED)) {
+					continue;  // run in the background, not the player's progress
+				}
+				const auto done = QuestStageLayout::Done(quest);
+				if (done.empty()) {
+					continue;
+				}
+				++quests;
+				for (const auto stage : done) {
+					if (baseline.size() < MAX_BASELINE) {
+						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest) });
+					} else {
+						++left;
+					}
+				}
+			}
+			REX::INFO("QuestSync: the session starts from this game's story: {} stages of {} quests{}", baseline.size(), quests,
+				left ? std::format(" ({} more left out)", left) : std::string());
 		}
 	}
 
@@ -588,13 +676,14 @@ namespace QuestSync
 		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));
 	}
 
-	void Frame(bool a_inSession)
+	void Frame(bool a_inSession, bool a_hosting)
 	{
 		const auto now = Clock::now();
 		if (now < nextPoll) {
 			return;
 		}
 		nextPoll = now + POLL_INTERVAL;
+		inSession = a_inSession;
 
 		if (!WorldSync::InWorld()) {
 			// A loading screen: no script runs, so no hold runs out.
@@ -640,6 +729,15 @@ namespace QuestSync
 					std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::TIMEOUT).count());
 			}
 			std::erase_if(waited, [](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
+			std::erase_if(catchingUp, [](std::uint32_t a_quest) {
+				if (waiting.Contains(a_quest)) {
+					return false;
+				}
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+				const char* name = quest ? quest->GetFullName() : nullptr;
+				REX::INFO("QuestSync: caught up on {:08X} '{}' to stage {} (started here for the session)", a_quest, name ? name : "", quest ? quest->currentStage : 0);
+				return true;
+			});
 			FlushCaughtUp(now);
 			if (!paused) {
 				CheckLock(a_inSession);
@@ -650,6 +748,19 @@ namespace QuestSync
 			reportFrom = now + SETTLE_TIME;
 		}
 		const bool report = now >= *reportFrom;
+
+		// The session's story starts from the host's: once its own server has welcomed it (and again after
+		// a drop or a load), the host's game reports its progress so far (QueueBaseline).
+		if (a_hosting && a_inSession && report && !Story::InOpening() && !baselineQueued) {
+			baselineQueued = true;
+			QueueBaseline();
+		}
+		while (!baseline.empty() && outgoing.Size() < BASELINE_BATCH) {
+			outgoing.Add(Protocol::Encode(Protocol::QuestStage{ baseline.front().quest, baseline.front().stage }, Protocol::MessageType::kReportQuestStage),
+				baseline.front().story);
+			baseline.pop_front();
+			++baselined;
+		}
 
 		// Every poll, not once: the catch-up itself can leave MQ104 past 210 without it (a session
 		// file from before 210 was reported), after this check first ran.
@@ -712,7 +823,7 @@ namespace QuestSync
 			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || Story::InOpening()) {
 				continue;
 			}
-			if (!PlayerStarted(quest)) {
+			if (!PlayerStarted(quest) && !startedHere.contains(id)) {
 				unstarted.Add(id, fresh, now);
 				continue;
 			}
@@ -754,6 +865,12 @@ namespace QuestSync
 		lockWaitLogged.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
+		startedHere.clear();
+		catchingUp.clear();
+		startHolds.clear();
+		// A host's game reports its progress again once its server welcomes it back (QueueBaseline).
+		baseline.clear();
+		baselineQueued = false;
 		// Reporting goes on without a new settle (not reportFrom.reset): a stage done while the connection is
 		// remade is reported once it is back (outgoing), and playing alone the reports are dropped.
 	}
@@ -777,6 +894,11 @@ namespace QuestSync
 		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
 		outgoing.Clear();  // progress of the game before the load
+		startedHere.clear();
+		catchingUp.clear();
+		startHolds.clear();
+		baseline.clear();  // a host's game reports the loaded save's progress instead
+		baselineQueued = false;
 	}
 
 	Clock::time_point LastStageChange()
@@ -786,7 +908,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} applied={} caughtUp={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
-			reported, applied, caughtUp, waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(), unstarted.Size(), locked ? " locked" : "");
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(),
+			unstarted.Size(), locked ? " locked" : "");
 	}
 }

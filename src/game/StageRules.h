@@ -408,6 +408,22 @@ namespace StageRules
 		return it != std::end(LOCKS) ? &*it : nullptr;
 	}
 
+	// A stage that starts its quest here (the quest isn't running: setting a stage starts it) runs the
+	// quest's start-up stage first, its 0 in the game's quests (MQ105's 0 moves the player): the stage is
+	// judged and held for what both do. Null if neither does anything.
+	inline std::optional<Rule> Starting(const Rule* a_start, const Rule* a_stage)
+	{
+		if (!a_start) {
+			return a_stage ? std::optional<Rule>(*a_stage) : std::nullopt;
+		}
+		Rule rule = a_stage ? *a_stage : *a_start;
+		if (a_stage) {
+			rule.flags = static_cast<std::uint8_t>(a_start->flags | a_stage->flags);
+			rule.wait = (std::max)(a_start->wait, a_stage->wait);
+		}
+		return rule;
+	}
+
 	// How long after a stage reads done its script may still be running: nothing that came after it is
 	// set until then (a script that waits is overtaken otherwise).
 	inline Clock::duration Hold(const Rule* a_rule)

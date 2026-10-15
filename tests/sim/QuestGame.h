@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <format>
 #include <functional>
 #include <map>
@@ -102,7 +103,12 @@ namespace Sim
 				return;
 			}
 			auto& quest = it->second;
-			quest.running = true;  // SetStage starts a quest that isn't running
+			// SetStage starts a quest that isn't running, and starting it runs its start-up stage (its 0).
+			if (!quest.running && a_stage != 0 && quest.stages.contains(0) && !quest.done.contains(0)) {
+				quest.running = true;
+				Do(a_id, 0);
+			}
+			quest.running = true;
 			if (quest.showsLater.contains(a_stage)) {
 				showing.emplace_back(a_id, now + POLL_INTERVAL);
 			} else if (!quest.quiet.contains(a_stage)) {
@@ -168,10 +174,12 @@ namespace Sim
 		}
 
 		// One poll (QuestSync::Frame, then Session's TakeOutgoing): POLL_INTERVAL of play. a_inSession:
-		// welcomed; a_wanted: in a session or joining or rejoining one. Returns the reports to send.
-		std::vector<Packet> Poll(bool a_inSession, bool a_wanted, Position a_me, const FriendAt& a_friendAt)
+		// welcomed; a_wanted: in a session or joining or rejoining one; a_hosting: this game runs the
+		// session's server. Returns the reports to send.
+		std::vector<Packet> Poll(bool a_inSession, bool a_wanted, Position a_me, const FriendAt& a_friendAt, bool a_hosting = false)
 		{
 			now += POLL_INTERVAL;
+			inSession = a_inSession;
 			me = a_me;
 			std::erase_if(showing, [&](const auto& a_show) {
 				if (a_show.second >= now) {
@@ -194,6 +202,7 @@ namespace Sim
 				Game game{ *this };
 				gaveUp += waiting.Poll(now, game, paused).size();
 				std::erase_if(waited, [&](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
+				caughtUpStarted += std::erase_if(catchingUp, [&](std::uint32_t a_quest) { return !waiting.Contains(a_quest); });
 				if (!paused) {
 					CheckLock(a_inSession);
 				}
@@ -208,6 +217,23 @@ namespace Sim
 			}
 			const bool report = now >= *reportFrom;
 			unstarted.Expire(now);
+			// QuestSync::QueueBaseline: the host's progress so far, once its own server has welcomed it.
+			if (a_hosting && a_inSession && report && !opening && !baselineQueued) {
+				baselineQueued = true;
+				for (const auto& [id, quest] : quests) {
+					if (Shared(quest) && (quest.started || quest.completed)) {
+						for (const auto stage : quest.done) {
+							baseline.push_back({ id, stage, quest.story });
+						}
+					}
+				}
+			}
+			while (!baseline.empty() && outbox.Size() < BASELINE_BATCH) {
+				outbox.Add(Protocol::Encode(Protocol::QuestStage{ baseline.front().quest, baseline.front().stage }, Protocol::MessageType::kReportQuestStage),
+					baseline.front().story);
+				baseline.pop_front();
+				++baselined;
+			}
 			for (const auto& [id, quest] : quests) {
 				StageLog::Stages done(quest.done.begin(), quest.done.end());
 				const auto [known, firstLook] = doneStages.try_emplace(id);
@@ -222,7 +248,7 @@ namespace Sim
 				if ((fresh.empty() && !unstarted.Has(id)) || !report || reaction || (quest.story && a_inSession && !story) || opening) {
 					continue;
 				}
-				if (!quest.started) {
+				if (!quest.started && !startedHere.contains(id)) {
 					unstarted.Add(id, fresh, now);
 					continue;
 				}
@@ -247,6 +273,11 @@ namespace Sim
 			liveAt.clear();
 			warnedAt.reset();
 			remoteStageAt.clear();
+			startedHere.clear();
+			catchingUp.clear();
+			startHolds.clear();
+			baseline.clear();
+			baselineQueued = false;
 			story = false;
 		}
 
@@ -271,6 +302,11 @@ namespace Sim
 			showing.clear();
 			unstarted.Clear();
 			outbox.Clear();
+			startedHere.clear();
+			catchingUp.clear();
+			startHolds.clear();
+			baseline.clear();
+			baselineQueued = false;
 		}
 
 		[[nodiscard]] QuestSave Save() const { return { quests, achievements, controls }; }
@@ -296,6 +332,9 @@ namespace Sim
 		std::size_t gaveUp = 0;
 		std::size_t unknown = 0;
 		std::size_t released = 0;  // controls given back by the lock's timeout
+		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
+		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
+		std::vector<std::uint32_t> started;  // quests a friend's stage started here, in order
 
 	private:
 		// QuestSync's own timings.
@@ -303,6 +342,14 @@ namespace Sim
 		static constexpr auto SCRIPT_REACTION_WINDOW = std::chrono::seconds(3);
 		static constexpr auto AFTER_COMBAT = std::chrono::seconds(5);
 		static constexpr auto MAX_COMBAT_HOLD = std::chrono::seconds(60);
+		static constexpr std::size_t BASELINE_BATCH = 256;
+
+		struct Baselined
+		{
+			std::uint32_t quest = 0;
+			std::uint16_t stage = 0;
+			bool          story = false;
+		};
 
 		struct Live
 		{
@@ -328,6 +375,9 @@ namespace Sim
 			StageLog::Set   Set(std::uint32_t a_quest, std::uint16_t a_stage) const { return self.SetHere(a_quest, a_stage); }
 			Clock::duration Hold(std::uint32_t a_quest, std::uint16_t a_stage) const
 			{
+				if (const auto start = self.startHolds.extract(Key(a_quest, a_stage))) {
+					return start.mapped();
+				}
 				return StageRules::Hold(StageRules::Find(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage));
 			}
 		};
@@ -349,20 +399,24 @@ namespace Sim
 			if (it == quests.end() || !StageLog::Settable(Shared(it->second), Unlocking(a_id)) || StageLog::Finished(Flags(it->second))) {
 				return StageLog::Quest::kGone;
 			}
+			const auto&         quest = it->second;
 			StageLog::QuestHere here;
 			here.inWorld = !loading;
 			here.opening = opening;
-			here.running = it->second.running;
-			here.started = it->second.started;
+			here.running = quest.running;
+			here.started = quest.started;
 			here.busy = busy;
+			here.inSession = inSession && Shared(quest);
+			here.ranBefore = !quest.running && (quest.completed || quest.current > 0 || !quest.done.empty());
+			here.startedHere = startedHere.contains(a_id);
 			const auto wait = StageLog::WaitsFor(here);
 			if (wait == StageLog::Wait::kNone) {
 				return StageLog::Quest::kReady;
 			}
-			if (wait != StageLog::Wait::kBusy) {
+			if (wait != StageLog::Wait::kBusy || !here.running || !(here.started || here.startedHere)) {
 				waited.insert(a_id);
 			}
-			return StageLog::Quest::kWait;
+			return wait == StageLog::Wait::kStart ? StageLog::Quest::kStart : StageLog::Quest::kWait;
 		}
 
 		bool Settled(std::uint32_t a_id, std::uint16_t a_stage) const
@@ -408,9 +462,13 @@ namespace Sim
 
 		StageLog::Set SetHere(std::uint32_t a_id, std::uint16_t a_stage)
 		{
-			const auto local = a_id & 0x00FFFFFF;
-			const auto rule = StageRules::Find(StageRules::File::kFallout4, local, a_stage);
-			const auto lock = StageRules::FindLock(StageRules::File::kFallout4, local, a_stage);
+			const auto  local = a_id & 0x00FFFFFF;
+			const auto& quest = quests.at(a_id);
+			const bool  starting = !quest.running || (!quest.started && !startedHere.contains(a_id));
+			const auto  startRule = quest.running ? nullptr : StageRules::Find(StageRules::File::kFallout4, local, 0);
+			const auto  judged = StageRules::Starting(startRule, StageRules::Find(StageRules::File::kFallout4, local, a_stage));
+			const auto  rule = judged ? &*judged : nullptr;
+			const auto  lock = StageRules::FindLock(StageRules::File::kFallout4, local, a_stage);
 			const auto releaseId = lock ? (a_id & 0xFF000000) | lock->releaseQuest : 0u;
 
 			StageRules::Situation situation;
@@ -447,6 +505,12 @@ namespace Sim
 				break;
 			}
 			SetStageHere(a_id, a_stage);
+			if (starting) {
+				startedHere.insert(a_id);
+				catchingUp.insert(a_id);
+				startHolds[Key(a_id, a_stage)] = StageRules::Hold(rule);
+				started.push_back(a_id);
+			}
 			if (lock) {
 				locked = LockHeld{ a_id, a_stage, releaseId, lock->releaseStage };
 				waiting.Lock(a_id, releaseId);
@@ -509,6 +573,12 @@ namespace Sim
 		StageLog::Outbox<Packet>                            outbox;
 		bool                                                busy = false;
 		bool                                                combatHold = false;
+		bool                                                inSession = false;
+		std::set<std::uint32_t>                             startedHere;
+		std::set<std::uint32_t>                             catchingUp;
+		std::map<std::uint64_t, Clock::duration>            startHolds;
+		std::deque<Baselined>                               baseline;
+		bool                                                baselineQueued = false;
 		std::optional<Clock::time_point>                    combatSince;
 		Clock::time_point                                   lastCombat{};
 	};

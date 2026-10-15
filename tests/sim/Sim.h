@@ -1122,8 +1122,8 @@ namespace Sim
 			}
 			return Position{ it->second.state->x, it->second.state->y, it->second.state->z };
 		};
-		// Session: QuestSync::Frame(welcomed), then TakeOutgoing(welcomed, in a session or joining one).
-		for (auto& packet : questGame.Poll(welcomed, welcomed || wantSession, { me.x, me.y, me.z }, friendAt)) {
+		// Session: QuestSync::Frame(welcomed, hosting), then TakeOutgoing(welcomed, in a session or joining one).
+		for (auto& packet : questGame.Poll(welcomed, welcomed || wantSession, { me.x, me.y, me.z }, friendAt, host)) {
 			Send(std::move(packet), true);
 		}
 	}

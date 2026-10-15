@@ -2,6 +2,7 @@
 
 #include "game/StageLog.h"
 
+#include <algorithm>
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -41,6 +42,7 @@ namespace
 		std::vector<Stage>                                             commands;  // not run yet
 		std::function<void(std::uint32_t, std::uint16_t)>              onStage;
 		bool                                                           busy = false;
+		std::set<std::uint32_t>                                        startable;  // not running, and a friend's stage starts them (Quest::kStart)
 		std::map<std::pair<std::uint32_t, std::uint16_t>, StageLog::Set> verdicts;  // kSet if not here
 		std::map<std::pair<std::uint32_t, std::uint16_t>, Clock::duration> holds;
 
@@ -49,6 +51,9 @@ namespace
 		void SetStage(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			auto& quest = quests[a_quest];
+			if (!(quest.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest)) {
+				quest.flags |= StageLog::QUEST_RUNNING;  // SetStage starts a quest that isn't running
+			}
 			if (!(quest.flags & StageLog::QUEST_RUNNING) || quest.missing.contains(a_stage) || quest.done.contains(a_stage)) {
 				return;
 			}
@@ -72,6 +77,9 @@ namespace
 			const auto it = quests.find(a_quest);
 			if (it == quests.end() || StageLog::Finished(it->second.flags)) {
 				return StageLog::Quest::kGone;
+			}
+			if (!(it->second.flags & StageLog::QUEST_RUNNING) && startable.contains(a_quest)) {
+				return busy ? StageLog::Quest::kWait : StageLog::Quest::kStart;
 			}
 			return !(it->second.flags & StageLog::QUEST_RUNNING) || busy ? StageLog::Quest::kWait : StageLog::Quest::kReady;
 		}
@@ -909,4 +917,157 @@ TEST("stage log: stages reached just before a quest was started are reported wit
 	unstarted.Add(SIDE, { 10 }, start);
 	unstarted.Clear();
 	CHECK(!unstarted.Has(SIDE));
+}
+
+TEST("stage log: in a session, a shared quest not started here is started by friends' stages, unless it ran here and was stopped")
+{
+	using StageLog::Wait;
+	StageLog::QuestHere quest;
+	quest.inSession = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kStart);  // not running here: the first stage starts it
+	quest.running = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kStart);  // Vault 81 at its door: running in the background, no objective shown
+	quest.busy = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kBusy);
+	quest.busy = false;
+	quest.startedHere = true;  // a friend's stage started it, and none of its objectives is shown yet
+	CHECK(StageLog::WaitsFor(quest) == Wait::kNone);
+	quest.startedHere = false;
+	quest.started = true;
+	CHECK(StageLog::WaitsFor(quest) == Wait::kNone);
+
+	StageLog::QuestHere stopped;
+	stopped.inSession = true;
+	stopped.ranBefore = true;  // failed, or stopped by its own script: starting it again would start it over
+	CHECK(StageLog::WaitsFor(stopped) == Wait::kStopped);
+	stopped.inSession = false;
+	CHECK(StageLog::WaitsFor(stopped) == Wait::kNotRunning);
+
+	StageLog::QuestHere alone;  // out of a session (a lock's quest after leaving): the player's own
+	CHECK(StageLog::WaitsFor(alone) == Wait::kNotRunning);
+	alone.running = true;
+	CHECK(StageLog::WaitsFor(alone) == Wait::kNotStarted);
+	alone.inWorld = false;
+	alone.inSession = true;
+	CHECK(StageLog::WaitsFor(alone) == Wait::kLoading);
+	alone.inWorld = true;
+	alone.opening = true;
+	CHECK(StageLog::WaitsFor(alone) == Wait::kOpening);
+}
+
+TEST("stage queue: a quest not started here is started by the first of its stages, in order, once nothing before it is still to be set")
+{
+	FakeGame game;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	queue.Add(SIDE, 20);
+	queue.Add(MQ207, 10);  // came after SIDE's
+	queue.Add(MQ207, 20);
+	queue.Add(SIDE, 30);   // came after MQ207's first: doesn't hold it up once SIDE's 10 and 20 are set
+
+	auto now = Start();
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+	game.Run(queue, now);
+	CHECK(queue.Size() == 0);
+	// SIDE's first stages, then MQ207 is started (by its 10) a moment after SIDE's last read done, and goes on.
+	CHECK(std::ranges::find(game.set, Stage{ MQ207, 10 }) > std::ranges::find(game.set, Stage{ SIDE, 20 }));
+	CHECK(std::ranges::find(game.set, Stage{ MQ207, 20 }) > std::ranges::find(game.set, Stage{ MQ207, 10 }));
+	CHECK(game.quests[MQ207].current == 20);
+	CHECK(game.quests[SIDE].current == 30);
+}
+
+TEST("stage queue: a quest another quest's stage starts isn't started again by the queue (MQ104 210 starts MQ105), even when it could start itself")
+{
+	FakeGame game;
+	game.quests[MQ104].flags = 0;
+	game.quests[MQ105].flags = 0;
+	game.startable = { MQ104, MQ105 };  // the friend hasn't started either
+	std::vector<Stage> started;  // by MQ104's 210
+	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		if (a_quest == MQ104 && a_stage == 210) {
+			started.push_back({ MQ105, 10 });
+			game.SetStage(MQ105, 10);
+			game.SetStage(MQ104, 1000);
+		}
+	};
+	StageLog::Queue queue;
+	for (const auto& [quest, stage] : std::vector<Stage>{ { MQ104, 200 }, { MQ104, 210 }, { MQ104, 1000 }, { MQ105, 10 }, { MQ105, 20 } }) {
+		CHECK(queue.Add(quest, stage));
+	}
+
+	auto now = Start();
+	game.Run(queue, now);
+	CHECK(queue.Size() == 0);
+	// The queue started MQ104 with its 200; MQ105 was started by 210's script, never by the queue.
+	CHECK((game.set == std::vector<Stage>{ { MQ104, 200 }, { MQ104, 210 }, { MQ105, 20 } }));
+	CHECK((started == std::vector<Stage>{ { MQ105, 10 } }));
+	CHECK(game.quests[MQ105].current == 20);
+}
+
+TEST("stage queue: a quest not started here waits a moment after the last stage set here read done, its script may start it")
+{
+	FakeGame game;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	queue.Add(MQ207, 10);
+
+	auto now = Start();
+	game.Poll(queue, now);  // SIDE's 10 set
+	game.Tick();
+	now += 500ms;
+	game.Poll(queue, now);  // it reads done: MQ207 waits START_GRACE
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+	now += StageLog::Queue::START_GRACE - 500ms;
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 } }));
+	now += 500ms;
+	game.Poll(queue, now);
+	CHECK((game.set == std::vector<Stage>{ { SIDE, 10 }, { MQ207, 10 } }));
+}
+
+TEST("stage queue: a quest waiting for good, or a lock waiting for its release, holds up no start")
+{
+	FakeGame game;
+	game.quests[SIDE].flags = 0;  // stopped here before: kWait for good
+	game.quests[MQ206].current = 400;
+	game.verdicts[{ MQ206, 500 }] = StageLog::Set::kQuestWaits;  // 1200 isn't coming
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	queue.Add(MQ206, 500);
+	queue.Add(MQ207, 10);
+
+	auto now = Start();
+	game.Run(queue, now, 10);
+	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 } }));
+	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10 }));
+	CHECK((queue.Waiting(MQ206) == StageLog::Stages{ 500 }));
+}
+
+TEST("stage queue: a quest not started here isn't started while the player is busy or the game is paused")
+{
+	FakeGame game;
+	game.quests[MQ207].flags = 0;
+	game.startable = { MQ207 };
+	StageLog::Queue queue;
+	queue.Add(MQ207, 10);
+
+	auto now = Start();
+	game.busy = true;
+	game.Run(queue, now, 10);
+	CHECK(game.set.empty());
+	game.busy = false;
+	game.Poll(queue, now, true);
+	CHECK(game.set.empty());
+	game.Run(queue, now, 10);
+	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 } }));
+	CHECK(game.Running(MQ207));
 }

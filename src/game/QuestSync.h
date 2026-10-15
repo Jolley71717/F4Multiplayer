@@ -3,8 +3,11 @@
 #include "Protocol.h"
 
 // Quest progress: each stage a side quest (or, with a shared story, a story or faction quest) gets
-// done in one player's game is set in the others' games too, in the order it was done, once they have
-// started that quest, and not in the middle of a conversation or scene, nor in the opening. A stage
+// done in one player's game during a session is set in the others' games too, in the order it was done,
+// and not in the middle of a conversation or scene, nor in the opening. Whoever moves a quest on pushes
+// everyone else along: a player who hasn't started it has it started for the session
+// (StageLog::WaitsFor). The session starts from the host's story: the host's game reports its progress so far
+// when its server welcomes it, so a friend joining mid-quest is caught up to where the host is. A stage
 // that would move the player away, take their caps or move their own story on is left out (see
 // StageRules). Misc quests (radiant, ambient) are not shared because their targets differ per game.
 // Main thread only.
@@ -25,8 +28,8 @@ namespace QuestSync
 	void ApplyDone(const Protocol::QuestDone& a_done);
 
 	// Looks for stages done here (twice a second) and, during a session, sets the next waiting stages
-	// from other players.
-	void Frame(bool a_inSession);
+	// from other players. a_hosting: this game runs the session's server (its story is the session's start).
+	void Frame(bool a_inSession, bool a_hosting);
 
 	// The reports to send (a_sending: welcomed), a few hundred a second at most. While joining or
 	// rejoining a session (a_inSession) they are kept for when the connection is back, since a stage is

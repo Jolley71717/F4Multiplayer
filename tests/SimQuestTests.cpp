@@ -361,30 +361,204 @@ TEST("sim quests: a stage a friend reaches while your game is loading, paused or
 	CHECK(host.Quests().WaitingCount() == 0);
 }
 
-TEST("sim quests: a friend's progress in a quest you haven't come across yet waits until you start it, then catches you up")
+TEST("sim quests: a friend's progress in a quest you haven't come across yet pushes you along: it starts in your game, the host's too, in order")
 {
 	Session s;
 	auto&   host = s.Host();
 	auto&   bob = s.Player("Bob");
 	GiveQuests({ &host, &bob });
-	host.GiveQuest(SIDE2, NotStarted({ 5, 10, 20, 50 }));
+	host.GiveQuest(SIDE2, NotStarted({ 5, 10, 20, 50 }));  // run in the background in the host's game
+	auto notRunning = NotStarted({ 0, 10, 20, 30, 40 });
+	notRunning.running = false;
+	host.GiveQuest(LONG, notRunning);  // not even running there
+	bob.GiveQuest(LONG, Started({ 0, 10, 20, 30, 40 }));
 	REQUIRE(host.Join());
 	REQUIRE(bob.Join());
 	Settled(s);
 
+	// Bob is the one talking to the quests' people: the host goes along.
 	bob.Stage(SIDE2, 10);
 	bob.Stage(SIDE2, 20);
-	bob.Stage(SIDE, 10);  // a quest both have started isn't held up by it
-	s.PlayFor(5s);
-	CHECK(Done(host, SIDE2).empty());
+	bob.Stage(SIDE, 10);
+	Reach(bob, LONG, { 10, 20, 30 });
+	s.PlayFor(10s);
+	CHECK((Order(host, SIDE2) == std::vector<std::uint16_t>{ 10, 20 }));
 	CHECK((Done(host, SIDE) == Stages{ 10 }));
-	CHECK((host.Quests().Waiting(SIDE2) == StageLog::Stages{ 10, 20 }));
+	// Starting LONG ran its start-up stage, then Bob's stages in order.
+	CHECK((Order(host, LONG) == std::vector<std::uint16_t>{ 0, 10, 20, 30 }));
+	CHECK((host.Quests().started == std::vector<std::uint32_t>{ SIDE2, LONG }));
+	CHECK(host.Quests().caughtUp == 2);
+	CHECK(host.Quests().caughtUpStarted == 2);
+	CHECK(host.Quests().WaitingCount() == 0);
+	CHECK(host.Quests().reported == 0);  // what Bob pushed isn't sent back as the host's own
 
-	host.Stage(SIDE2, 5);  // the host picks it up
+	// Now the quests go on whoever moves them: the host's next step reaches Bob.
+	host.Stage(LONG, 40);
 	s.PlayFor(3s);
-	CHECK((Done(host, SIDE2) == Stages{ 5, 10, 20 }));
-	CHECK(host.Quests().caughtUp == 1);
-	CHECK((Done(bob, SIDE2) == Stages{ 10, 20 }));  // the host's 5 is below Bob's: his quest is past it
+	CHECK(bob.Quests().Has(LONG, 40));
+}
+
+TEST("sim quests: the host's progress pushes a friend who hasn't started the quest along, and three players all go along with whoever moves it")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	GiveQuests({ &host, &bob, &carol });
+	host.GiveQuest(SIDE2, Started({ 10, 20, 30, 40 }));
+	auto fresh = NotStarted({ 10, 20, 30, 40 });
+	fresh.running = false;
+	bob.GiveQuest(SIDE2, fresh);
+	carol.GiveQuest(SIDE2, fresh);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	host.Move(0.0f, 0.0f);
+	bob.Move(300.0f, 0.0f);
+	carol.Move(50000.0f, 0.0f);  // across the map: being pushed along doesn't need her near
+	Settled(s);
+
+	host.Stage(SIDE2, 10);
+	host.Stage(SIDE2, 20);
+	s.PlayFor(6s);
+	for (const auto player : { &bob, &carol }) {
+		CHECK((Order(*player, SIDE2) == std::vector<std::uint16_t>{ 10, 20 }));
+		CHECK((player->Quests().started == std::vector<std::uint32_t>{ SIDE2 }));
+	}
+
+	// Carol talks to the quest's people next: the host and Bob go along.
+	carol.Stage(SIDE2, 30);
+	s.PlayFor(5s);
+	CHECK(host.Quests().Has(SIDE2, 30));
+	CHECK(bob.Quests().Has(SIDE2, 30));
+	// Then Bob, a while after (a step straight after a friend's is taken for his game's script reacting to it).
+	bob.Stage(SIDE2, 40);
+	s.PlayFor(3s);
+	for (const auto player : { &host, &bob, &carol }) {
+		CHECK((Done(*player, SIDE2) == Stages{ 10, 20, 30, 40 }));
+		CHECK(player->Quests().WaitingCount() == 0);
+	}
+	CHECK(carol.Quests().moved == 0);
+}
+
+TEST("sim quests: with a shared story, a friend who hasn't started the main story's quests is pushed through them, the next one started by the step that starts it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	AtValentine(host);
+	AtValentine(bob);
+	auto valentine = bob.Quests().Of(MQ104);
+	valentine.running = false;  // Bob hasn't come across Unlikely Valentine
+	valentine.started = false;
+	bob.GiveQuest(MQ104, valentine);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	host.Move(0.0f, 0.0f);
+	bob.Move(300.0f, 0.0f);
+	Settled(s);
+
+	Reach(host, MQ104, { 200, 210 });  // 210 starts Getting a Clue at 10 and ...
+	host.Stage(MQ104, 1000);
+	host.Stage(MQ105, 100);
+	s.PlayFor(10s);
+	CHECK((Order(bob, MQ104) == std::vector<std::uint16_t>{ 200, 210, 1000 }));
+	CHECK((Order(bob, MQ105) == std::vector<std::uint16_t>{ 10, 100 }));
+	// MQ104 was started by the host's 200; MQ105 by Bob's own 210, never twice.
+	CHECK((bob.Quests().started == std::vector<std::uint32_t>{ MQ104 }));
+	CHECK(bob.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: a quest that ran in your game and was stopped isn't started over by a friend's progress, and none is started outside a session")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	auto stopped = NotStarted({ 10, 20, 30 });
+	stopped.running = false;
+	stopped.done = { 10 };  // Bob failed it long ago
+	stopped.current = 10;
+	bob.GiveQuest(SIDE2, stopped);
+	auto fresh = NotStarted({ 10, 20, 30 });
+	fresh.running = false;
+	bob.GiveQuest(LONG, fresh);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	host.Stage(SIDE2, 20);
+	s.PlayFor(5s);
+	CHECK((Done(bob, SIDE2) == Stages{ 10 }));
+	CHECK((bob.Quests().Waiting(SIDE2) == StageLog::Stages{ 20 }));
+	CHECK(bob.Quests().started.empty());
+
+	bob.Quests().loading = true;  // a stage of a quest Bob hasn't started is waiting when he leaves
+	host.Stage(LONG, 10);
+	s.PlayFor(2s);
+	bob.Leave();
+	bob.Quests().loading = false;
+	s.PlayFor(5s);
+	CHECK(!bob.Quests().Of(LONG).running);
+	CHECK(bob.Quests().started.empty());
+}
+
+TEST("sim quests: a friend joining mid-quest is caught up to where the host's story is, from before the host hosted, and nothing goes backwards")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	auto&   dave = s.Player("Dave");
+	GiveQuests({ &host, &bob, &carol, &dave });
+	// The host played SIDE2 to its 20 and SIDE to its 20 alone, before hosting.
+	auto midway = Started({ 5, 10, 20, 50 });
+	midway.done = { 5, 10, 20 };
+	midway.current = 20;
+	host.GiveQuest(SIDE2, midway);
+	auto side = Started({ 10, 20, 30, 40 }, { { 30, SIDE_ACHIEVEMENT } });
+	side.done = { 10, 20 };
+	side.current = 20;
+	host.GiveQuest(SIDE, side);
+	auto background = NotStarted({ 1, 2 });
+	background.done = { 1 };  // a quest the host's game moved on in the background: not the player's progress
+	background.current = 1;
+	host.GiveQuest(LONG, background);
+	// Bob hasn't started SIDE2; Carol is further on in it than the host, and has a stage of her own the host hasn't.
+	auto fresh = NotStarted({ 5, 10, 20, 50 });
+	fresh.running = false;
+	bob.GiveQuest(SIDE2, fresh);
+	auto ahead = Started({ 5, 10, 20, 50 });
+	ahead.done = { 5, 50 };
+	ahead.current = 50;
+	carol.GiveQuest(SIDE2, ahead);
+	bob.GiveQuest(LONG, NotStarted({ 1, 2 }));
+
+	REQUIRE(host.Join());
+	s.PlayFor(8s);
+	CHECK(host.Quests().baselined == 5);
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	s.PlayFor(10s);
+	CHECK((Order(bob, SIDE2) == std::vector<std::uint16_t>{ 5, 10, 20 }));
+	CHECK((Order(bob, SIDE) == std::vector<std::uint16_t>{ 10, 20 }));
+	CHECK(Done(bob, LONG).empty());
+	// Carol's quest is past the host's: nothing of it is set again, and her own 50 never reaches the host.
+	CHECK(Order(carol, SIDE2).empty());
+	CHECK((Done(carol, SIDE2) == Stages{ 5, 50 }));
+	CHECK(!host.Quests().Has(SIDE2, 50));
+	CHECK((Order(carol, SIDE) == std::vector<std::uint16_t>{ 10, 20 }));
+
+	// The host goes on; Dave joins later and gets all of it, in order.
+	host.Stage(SIDE, 30);
+	s.PlayFor(3s);
+	REQUIRE(dave.Join());
+	s.PlayFor(10s);
+	CHECK((Order(dave, SIDE) == std::vector<std::uint16_t>{ 10, 20, 30 }));
+	CHECK(dave.Quests().Achievements().contains(SIDE_ACHIEVEMENT));
+	CHECK((Order(dave, SIDE2) == std::vector<std::uint16_t>{ 5, 10, 20 }));
+	CHECK(bob.Quests().Has(SIDE, 30));
 }
 
 TEST("sim quests: the host's talk at Vault 81's intercom and the vault door it opens reach the friends, though the host had no objective of it yet")
@@ -415,9 +589,11 @@ TEST("sim quests: the host's talk at Vault 81's intercom and the vault door it o
 	CHECK((Order(bob, V81) == std::vector<std::uint16_t>{ 20, 30, 50, 51, 55 }));
 	CHECK(bob.Quests().Achievements().contains(VAULT_DOOR_OPENS));
 	CHECK(bob.Quests().WaitingCount() == 0);
-	// Carol hasn't started the quest: they reached her game and wait there until she does.
-	CHECK((carol.Quests().Waiting(V81) == StageLog::Stages{ 20, 30, 50, 51, 55 }));
-	CHECK(!carol.Quests().Achievements().contains(VAULT_DOOR_OPENS));
+	// Carol hadn't started the quest: the host's talk pushes her along too, and her vault door opens.
+	CHECK((Order(carol, V81) == std::vector<std::uint16_t>{ 20, 30, 50, 51, 55 }));
+	CHECK(carol.Quests().Achievements().contains(VAULT_DOOR_OPENS));
+	CHECK((carol.Quests().started == std::vector<std::uint32_t>{ V81 }));
+	CHECK(carol.Quests().WaitingCount() == 0);
 }
 
 TEST("sim quests: what your game did in a quest just before you started it reaches your friends, and what it did in the background long before doesn't")
@@ -670,7 +846,7 @@ TEST("sim quests: what you do alone after your host quits never reaches the next
 	CHECK(carol.Quests().Has(SIDE, 30));
 }
 
-TEST("sim quests: a host who stops hosting, plays alone and hosts again shares none of what they did alone")
+TEST("sim quests: a host who stops hosting, plays alone and hosts again starts the session from where their story is now")
 {
 	Session s;
 	auto&   host = s.Host();
@@ -688,7 +864,9 @@ TEST("sim quests: a host who stops hosting, plays alone and hosts again shares n
 	REQUIRE(host.Join());
 	REQUIRE(bob.Join());
 	s.PlayFor(5s);
-	CHECK(!bob.Quests().Has(SIDE, 10));
+	// The session's story is the host's (QuestSync::QueueBaseline): Bob is caught up to it.
+	CHECK(bob.Quests().Has(SIDE, 10));
+	CHECK(host.Quests().baselined == 1);
 }
 
 TEST("sim quests: a friend who rejoins catches up on what the others did while they were away, and nothing twice")
@@ -901,9 +1079,11 @@ TEST("sim quests: leaving the session in the middle of the Institute teleport st
 	bob.Move(100.0f, 0.0f);
 	Settled(s);
 
-	bob.GiveQuest(SIDE2, NotStarted({ 5, 10, 20, 50 }));  // Bob hasn't come across this one yet
-	host.Stage(SIDE2, 10);
+	// Bob hasn't come across this one yet: it would start in his game once the teleport's steps before it are set.
+	bob.GiveQuest(SIDE2, NotStarted({ 5, 10, 20, 50 }));
 	Reach(host, MQ206, { 500, 1000, 1050, 1200 });
+	s.PlayFor(500ms);
+	host.Stage(SIDE2, 10);
 	s.PlayFor(1s);
 	REQUIRE(bob.Quests().Has(MQ206, 500));
 	REQUIRE(!bob.Quests().Controls());

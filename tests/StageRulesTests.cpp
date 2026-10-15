@@ -120,3 +120,30 @@ TEST("stage rules: starting a stuck main story's next quest (MQ105, whose start 
 	now.held = false;
 	CHECK(StageRules::Judge(rule, now) == Verdict::kSet);
 }
+
+TEST("stage rules: a friend's stage that starts its quest here is judged and held for the quest's start-up stage too")
+{
+	using StageRules::Starting;
+	CHECK(!Starting(nullptr, nullptr));
+	// MQ105's 10 does nothing to the player; starting MQ105 with it runs its 0 first, which moves them.
+	const auto clue = Starting(Find(0x0229E6, 0), Find(0x0229E6, 10));
+	REQUIRE(clue);
+	CHECK(clue->flags == (StageRules::kMoves | StageRules::kBridge));
+	CHECK(StageRules::Hold(&*clue) == StageRules::Hold(Find(0x0229E6, 0)));
+	StageRules::Situation now;
+	now.sharedStory = true;
+	CHECK(StageRules::Judge(&*clue, now) == Verdict::kWarn);
+	// MS07a's 17 waits 1.5 s; its 0 moves the player (no bridge) and waits 4 s: from the session it isn't
+	// set, but it is with the friend who just did it.
+	const auto ms07a = Starting(Find(0x01CB51, 0), Find(0x01CB51, 17));
+	REQUIRE(ms07a);
+	CHECK(ms07a->flags == StageRules::kMoves);
+	CHECK(ms07a->wait == 40);
+	CHECK(StageRules::Judge(&*ms07a, {}) == Verdict::kSkip);
+	CHECK(StageRules::Judge(&*ms07a, { .live = true, .nearFriend = true }) == Verdict::kSet);
+	// A quest whose start-up stage does nothing: the stage's own rule.
+	const auto vault = Starting(nullptr, Find(0x0B8464, 400));
+	REQUIRE(vault);
+	CHECK(StageRules::Judge(&*vault, { .live = true }) == Verdict::kSkip);  // Vault 81's 400 takes the player's fusion cores
+	CHECK((FlagsOf(0x0B8464, 400) & StageRules::kPays) != 0);
+}

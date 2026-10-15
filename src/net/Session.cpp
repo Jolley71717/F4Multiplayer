@@ -928,7 +928,7 @@ namespace Session
 		if (welcomed) {
 			NpcSync::Frame();
 		}
-		QuestSync::Frame(welcomed);
+		QuestSync::Frame(welcomed, hostedServer && hostedServer->Running());
 		Achievements::Frame();
 		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
 		// server is one), and playing alone they are dropped: a session joined later doesn't get them.

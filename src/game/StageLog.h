@@ -233,7 +233,8 @@ namespace StageLog
 	enum class Quest
 	{
 		kGone,   // nothing more to set: the quest isn't here or shared, or it is finished
-		kWait,   // not yet: it isn't running or started here, or the player is in a conversation
+		kWait,   // not yet: a loading screen, the opening, a conversation, or a quest that isn't to be started here
+		kStart,  // not started here: its next stage starts it, once every stage that came before it is set
 		kReady,  // a stage can be set now
 	};
 
@@ -243,9 +244,11 @@ namespace StageLog
 		kNone,
 		kLoading,     // a loading screen or the main menu: no quest script may run
 		kOpening,     // a new character still in the opening
-		kNotRunning,  // the quest isn't running here
-		kNotStarted,  // the player hasn't started it here: none of its objectives has been shown
+		kNotRunning,  // the quest isn't running here (out of a session, or a quest the session doesn't share)
+		kNotStarted,  // the player hasn't started it here: none of its objectives has been shown (likewise)
 		kBusy,        // the player is in a conversation or a scene
+		kStopped,     // it ran here before and was stopped: starting it again would start it over
+		kStart,       // not started here: the next of them starts it for the session, once the stages before it are set
 	};
 
 	// A quest with stages from other players waiting, as this game has it.
@@ -256,13 +259,21 @@ namespace StageLog
 		bool running = false;
 		bool started = false;  // one of its objectives has been shown
 		bool busy = false;
+		bool inSession = false;    // in a session, which shares this quest
+		bool ranBefore = false;    // its stages done here, or it is past its first, or completed
+		bool startedHere = false;  // a friend's stage started it here for this session
 	};
 
-	// Friends' stages wait until the player has started the quest too (the game runs many quests in the
-	// background long before the player comes across them), and not in a conversation or scene. Quest
-	// scripts must not run at the main menu or during a loading screen. The reason is logged: a friend
-	// whose quest waits silently sees nothing happen (Vault 81's door stayed shut for one who hadn't
-	// started the quest).
+	// Quest scripts must not run at the main menu or during a loading screen, nor stages be set in a
+	// conversation or scene. Whoever moves a shared quest on in a session (the one talking to its people,
+	// usually) moves everyone else along with them: a player who hasn't started it (it isn't running
+	// here, or the game runs it in the background with no objective shown) has it started for the session
+	// and caught up, so they see the same gates and doors open (Diamond City's, Vault 81's), the same
+	// people and scenes, and their save keeps that progress. The host's game too: the one talking may be
+	// a friend. Not out of a session (what the player does alone is theirs), and not a quest that ran here
+	// and was stopped (failed, or stopped by its own script without completing): starting it again would
+	// start it over, the stages it had done undone. The reason is logged: a friend whose quest waits
+	// silently sees nothing happen.
 	inline Wait WaitsFor(const QuestHere& a_quest)
 	{
 		if (!a_quest.inWorld) {
@@ -271,11 +282,14 @@ namespace StageLog
 		if (a_quest.opening) {
 			return Wait::kOpening;
 		}
-		if (!a_quest.running) {
-			return Wait::kNotRunning;
-		}
-		if (!a_quest.started) {
-			return Wait::kNotStarted;
+		if (!a_quest.running || (!a_quest.started && !a_quest.startedHere)) {
+			if (!a_quest.inSession) {
+				return a_quest.running ? Wait::kNotStarted : Wait::kNotRunning;
+			}
+			if (!a_quest.running && a_quest.ranBefore) {
+				return Wait::kStopped;
+			}
+			return a_quest.busy ? Wait::kBusy : Wait::kStart;
 		}
 		return a_quest.busy ? Wait::kBusy : Wait::kNone;
 	}
@@ -306,6 +320,12 @@ namespace StageLog
 	// nothing of other quests holds them up, and if they do nothing for LOCK_TIMEOUT of play (nothing
 	// being set, no script of theirs running on, the game not paused) the lock is overdue: its release
 	// is to be set outright rather than leave the player unable to move.
+	//
+	// A quest not started here (Quest::kStart) is started with the first of its stages only once nothing
+	// that came before it is still to be set or running on, and START_GRACE after the last stage set here
+	// read done: a stage of another quest may start it (MQ104's 210 starts MQ105, its script a moment
+	// later), and starting it as well would set its first stage twice. A quest that waits for good (one not
+	// to be started here, a lock waiting for its release) holds no start up.
 	class Queue
 	{
 	public:
@@ -315,6 +335,7 @@ namespace StageLog
 		static constexpr std::size_t MAX_WAITING = 16384;  // stages in all; more are refused
 		// MQ206's teleport between its 500 and 1200 takes about 10 s, its loading screen not counted.
 		static constexpr auto LOCK_TIMEOUT = std::chrono::seconds(90);
+		static constexpr auto START_GRACE = std::chrono::seconds(2);
 
 		struct Stage
 		{
@@ -354,11 +375,14 @@ namespace StageLog
 					entry.since += sinceLast;
 					entry.holdUntil += sinceLast;
 				}
+				lastSettled += sinceLast;
 				return {};
 			}
 			std::vector<Stage>                                                gaveUp;
 			std::vector<std::tuple<bool, std::uint64_t, std::uint32_t>>      ready;  // (not the lock's, when its first stage came, quest)
 			std::uint64_t                                                     blockedFrom = NONE;  // what came from here on waits
+			std::vector<std::pair<std::uint64_t, std::uint32_t>>              starts;  // quests to start here: (when their first stage came, quest)
+			std::uint64_t                                                     pendingFrom = NONE;  // the first stage still to be set or running on
 			for (auto it = quests.begin(); it != quests.end();) {
 				const auto id = it->first;
 				auto&      entry = it->second;
@@ -370,6 +394,7 @@ namespace StageLog
 				}
 				if (entry.setting) {
 					if (a_game.Settled(id, entry.setting->stage)) {
+						lastSettled = a_now;
 						count -= entry.stages.erase(entry.setting->stage);
 						entry.holdUntil = a_now + entry.setting->hold;
 						entry.holdFrom = entry.setting->from;
@@ -386,17 +411,34 @@ namespace StageLog
 				} else if (holding) {
 					blockedFrom = (std::min)(blockedFrom, entry.holdFrom);
 				}
-				if (state == Quest::kReady && !entry.setting) {
+				const bool goesOn = state == Quest::kReady || state == Quest::kStart;
+				if (goesOn && !entry.setting) {
 					count -= std::erase_if(entry.stages, [&](const auto& a_stage) { return a_game.Settled(id, a_stage.first); });
 				}
 				if (entry.stages.empty() && !holding) {
 					it = quests.erase(it);
 					continue;
 				}
-				if (state == Quest::kReady && !entry.setting && !holding && !entry.stages.empty()) {
-					ready.emplace_back(!Locks(id), First(entry), id);
+				if (holding) {
+					pendingFrom = (std::min)(pendingFrom, entry.holdFrom);
+				}
+				if (!entry.stages.empty() && (entry.setting || (goesOn && !entry.questWaits))) {
+					pendingFrom = (std::min)(pendingFrom, First(entry));
+				}
+				if (goesOn && !entry.setting && !holding && !entry.stages.empty()) {
+					if (state == Quest::kReady) {
+						ready.emplace_back(!Locks(id), First(entry), id);
+					} else {
+						starts.emplace_back(First(entry), id);
+					}
 				}
 				++it;
+			}
+
+			for (const auto& [from, id] : starts) {
+				if (from <= pendingFrom && a_now - lastSettled >= START_GRACE) {
+					ready.emplace_back(!Locks(id), from, id);
+				}
 			}
 
 			std::ranges::sort(ready);
@@ -409,7 +451,9 @@ namespace StageLog
 				}
 				auto&      entry = quests.at(id);
 				const auto stage = entry.stages.begin()->first;
-				switch (a_game.Set(id, stage)) {
+				const auto verdict = a_game.Set(id, stage);
+				entry.questWaits = verdict == Set::kQuestWaits;
+				switch (verdict) {
 				case Set::kSet:
 					{
 						const auto hold = (std::min)(Clock::duration(a_game.Hold(id, stage)), Clock::duration(MAX_HOLD));
@@ -524,6 +568,7 @@ namespace StageLog
 			Clock::time_point                      since{};
 			Clock::time_point                      holdUntil{};  // the last stage's script may still be running
 			std::uint64_t                          holdFrom = 0;
+			bool                                   questWaits = false;  // its next stage waited at its last turn (Set::kQuestWaits)
 		};
 
 		struct LockState
@@ -550,5 +595,6 @@ namespace StageLog
 		std::uint64_t                    next = 0;
 		std::optional<Clock::time_point> lastPoll;
 		std::optional<LockState>         lock;
+		Clock::time_point                lastSettled{};  // when a stage set here last read done
 	};
 }
