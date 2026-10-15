@@ -10,6 +10,7 @@
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
+#include "game/StandInSpace.h"
 #include "game/StateBuffer.h"
 
 #include "game/Face.h"
@@ -253,6 +254,8 @@ namespace RemotePlayers
 		// this is more than a few percent.
 		std::uint32_t                         movingFrames = 0;
 		std::uint32_t                         heldFrames = 0;
+		// Frames a stand-in was drawn a body's room away from us instead of at its friend's spot, which was ours (StandInSpace).
+		std::uint32_t                         spacedFrames = 0;
 
 		// The items we can put on a stand-in here (forms another game has but ours doesn't are skipped).
 		// A grenade or mine the owner holds: given to the stand-in (its replayed throw needs one in hand,
@@ -1084,6 +1087,24 @@ namespace RemotePlayers
 			}
 		}
 
+		// Where a friend's stand-in is put this frame: their spot, or a body's room out from us when that is ours
+		// (StandInSpace), wider when either of us is in power armor. Counted for net status while it is moved.
+		RE::NiPoint3 SpotOf(const RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us)
+		{
+			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
+			if (!a_us) {
+				return at;
+			}
+			const auto& us = a_us->data.location;
+			const float clear = a_player.inPowerArmor || Equipment::InPowerArmor(a_us) ? StandInSpace::CLEAR_ARMOR : StandInSpace::CLEAR;
+			const auto  spot = StandInSpace::Clear({ at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, clear);
+			if (spot.x == at.x && spot.y == at.y) {
+				return at;
+			}
+			++spacedFrames;
+			return { spot.x, spot.y, spot.z };
+		}
+
 		// While the friend stands still, their stand-in should be found each frame where it was put the frame
 		// before; when it isn't, something in the engine moves it. Counted for net status, and logged now and
 		// then with what may be holding it, such as its power armor frame copy.
@@ -1735,6 +1756,9 @@ namespace RemotePlayers
 				}
 				continue;
 			}
+			// Their spot, unless it is ours: never through our own body (StandInSpace). Placed, followed by its frame copy, checked
+			// for holding still and put there each frame from this.
+			const auto spot = SpotOf(remote, *state, player);
 
 			if (actor && look.left != StandInRange::Left::kKeep) {
 				++leftBehind;
@@ -1772,7 +1796,11 @@ namespace RemotePlayers
 				if (!look.mayPlace) {
 					continue;  // the last one was never drawn where it stood
 				}
-				actor = Spawn(remote, *state, localCell);
+				auto placed = *state;
+				placed.x = spot.x;
+				placed.y = spot.y;
+				placed.z = spot.z;
+				actor = Spawn(remote, placed, localCell);
 				if (!actor) {
 					continue;
 				}
@@ -1797,8 +1825,8 @@ namespace RemotePlayers
 			}
 
 			UpdateLight(remote, actor, localCell, now);
-			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
-			CheckHold(remote, actor, { state->x, state->y, state->z }, state->speed, now);
+			UpdatePowerArmor(remote, actor, localCell, spot, state->heading, now);
+			CheckHold(remote, actor, spot, state->speed, now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -1845,7 +1873,7 @@ namespace RemotePlayers
 			}
 
 			Puppets::SetTarget(actor, Puppets::Motion{
-				.position = { state->x, state->y, state->z },
+				.position = spot,
 				.heading = state->heading,
 				.speed = state->speed,
 				.direction = Protocol::UnpackDirection(state->direction),
@@ -1901,6 +1929,9 @@ namespace RemotePlayers
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
+		}
+		if (spacedFrames) {
+			out += std::format(" spaced={}", spacedFrames);
 		}
 		if (equipmentFixesTotal) {
 			out += std::format(" gearFixes={}", equipmentFixesTotal);
