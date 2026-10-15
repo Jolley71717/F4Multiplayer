@@ -7,8 +7,10 @@
 // StageRules::Judge decides each stage (one that moves the player, a payment, a side quest moving the
 // story on, a lock whose release isn't coming); StageRules::Hold, Find and FindLock read the table
 // generated from the game's quest fragments; StageLog::Settable says which quests still take stages after
-// leaving; StageLog::NewlyDone finds what this game reports; and StageLog::Outbox keeps or drops those
-// reports while not connected (the story's sent only if the welcome shares it), at a pace the server takes.
+// leaving; StageLog::WaitsFor says whether a quest takes them now; StageLog::NewlyDone finds what this
+// game reports, StageLog::Unstarted keeps what was reached just before the quest was started; and
+// StageLog::Outbox keeps or drops those reports while not connected (the story's sent only if the
+// welcome shares it), at a pace the server takes.
 // The glue between them is a copy of QuestSync.cpp's and only as good as that copy: when a stage counts
 // as live, the friend nearby, the combat hold, the warning and its cover, the lock and its release (looked
 // at before the queue's poll), what is dropped when the session ends (with Session's
@@ -17,8 +19,8 @@
 // and the type checks (a test says which quests are the story).
 //
 // The model of a quest: the stages it has, which are done, the current one, whether it is running and
-// started here (an objective shown), and what its stages' scripts do (start another quest, complete this
-// one, award an achievement). What a stage does to the player comes from StageRules' table by its form ID
+// started here (an objective shown, by any stage but a quiet one, or a moment later), and what its stages'
+// scripts do (start another quest, complete this one, award an achievement). What a stage does to the player comes from StageRules' table by its form ID
 // (Fallout4.esm's, load order index 00): moved, made to pay, controls taken and given back.
 
 #include "Protocol.h"
@@ -26,6 +28,7 @@
 #include "game/StageLog.h"
 #include "game/StageRules.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <format>
@@ -46,6 +49,11 @@ namespace Sim
 		std::set<std::uint16_t> stages;           // the stages it has
 		bool                    running = false;
 		bool                    started = false;  // an objective has been shown (QuestSync::PlayerStarted)
+		// Stages whose scripts show none of its objectives (a stage set starts the quest, but shows the
+		// first objective only if its script does), and those whose scripts show it a moment after the
+		// stage reads done (the game runs a stage's script a moment after setting it).
+		std::set<std::uint16_t> quiet;
+		std::set<std::uint16_t> showsLater;
 		bool                    completed = false;
 		std::uint16_t           current = 0;
 		std::set<std::uint16_t> done;
@@ -95,7 +103,11 @@ namespace Sim
 			}
 			auto& quest = it->second;
 			quest.running = true;  // SetStage starts a quest that isn't running
-			quest.started = true;  // ... and the stage shows its objective
+			if (quest.showsLater.contains(a_stage)) {
+				showing.emplace_back(a_id, now + POLL_INTERVAL);
+			} else if (!quest.quiet.contains(a_stage)) {
+				quest.started = true;  // ... and the stage shows its objective
+			}
 			quest.done.insert(a_stage);
 			quest.current = (std::max)(quest.current, a_stage);
 			const auto rule = StageRules::Find(StageRules::File::kFallout4, a_id & 0x00FFFFFF, a_stage);
@@ -161,6 +173,13 @@ namespace Sim
 		{
 			now += POLL_INTERVAL;
 			me = a_me;
+			std::erase_if(showing, [&](const auto& a_show) {
+				if (a_show.second >= now) {
+					return false;
+				}
+				quests[a_show.first].started = true;  // the stage's script has run
+				return true;
+			});
 			friendAt = a_friendAt;
 			if (loading) {
 				Game game{ *this };
@@ -188,6 +207,7 @@ namespace Sim
 				reportFrom = now + SETTLE_TIME;
 			}
 			const bool report = now >= *reportFrom;
+			unstarted.Expire(now);
 			for (const auto& [id, quest] : quests) {
 				StageLog::Stages done(quest.done.begin(), quest.done.end());
 				const auto [known, firstLook] = doneStages.try_emplace(id);
@@ -195,13 +215,18 @@ namespace Sim
 					known->second = std::move(done);
 					continue;
 				}
-				const auto fresh = StageLog::NewlyDone(known->second, std::move(done));
+				auto       fresh = StageLog::NewlyDone(known->second, std::move(done));
 				const auto remote = remoteStageAt.find(id);
 				const bool reaction = remote != remoteStageAt.end() && now - remote->second < SCRIPT_REACTION_WINDOW;
 				// The story's too while not welcomed, whatever the story is then (the outbox sends them if the welcome shares it).
-				if (fresh.empty() || !report || reaction || (quest.story && a_inSession && !story) || !quest.started || opening) {
+				if ((fresh.empty() && !unstarted.Has(id)) || !report || reaction || (quest.story && a_inSession && !story) || opening) {
 					continue;
 				}
+				if (!quest.started) {
+					unstarted.Add(id, fresh, now);
+					continue;
+				}
+				fresh = unstarted.Take(id, std::move(fresh), now);
 				for (const auto stage : fresh) {
 					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
 					++reported;
@@ -243,6 +268,8 @@ namespace Sim
 			warnedAt.reset();
 			locked.reset();
 			console.clear();
+			showing.clear();
+			unstarted.Clear();
 			outbox.Clear();
 		}
 
@@ -322,11 +349,20 @@ namespace Sim
 			if (it == quests.end() || !StageLog::Settable(Shared(it->second), Unlocking(a_id)) || StageLog::Finished(Flags(it->second))) {
 				return StageLog::Quest::kGone;
 			}
-			if (loading || opening || !it->second.running || !it->second.started) {
-				waited.insert(a_id);
-				return StageLog::Quest::kWait;
+			StageLog::QuestHere here;
+			here.inWorld = !loading;
+			here.opening = opening;
+			here.running = it->second.running;
+			here.started = it->second.started;
+			here.busy = busy;
+			const auto wait = StageLog::WaitsFor(here);
+			if (wait == StageLog::Wait::kNone) {
+				return StageLog::Quest::kReady;
 			}
-			return busy ? StageLog::Quest::kWait : StageLog::Quest::kReady;
+			if (wait != StageLog::Wait::kBusy) {
+				waited.insert(a_id);
+			}
+			return StageLog::Quest::kWait;
 		}
 
 		bool Settled(std::uint32_t a_id, std::uint16_t a_stage) const
@@ -468,6 +504,8 @@ namespace Sim
 		std::map<std::uint32_t, Clock::time_point>          remoteStageAt;
 		std::optional<Clock::time_point>                    reportFrom;
 		std::vector<std::pair<std::uint32_t, std::uint16_t>> console;  // set, to run at the end of the poll
+		std::vector<std::pair<std::uint32_t, Clock::time_point>> showing;  // objectives a stage's script shows a moment later
+		StageLog::Unstarted                                 unstarted;
 		StageLog::Outbox<Packet>                            outbox;
 		bool                                                busy = false;
 		bool                                                combatHold = false;
