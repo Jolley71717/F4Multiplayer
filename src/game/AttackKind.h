@@ -15,6 +15,20 @@ namespace AttackKind
 		return a_holdsWeapon && a_weaponType == GUN_TYPE;
 	}
 
+	// Whether an actor with these weapons equipped (their types, in the order the engine lists them) replays as a gun:
+	// any one of them a gun. A grenade or a mine is equipped beside the gun, and at times listed before it: taken as
+	// what it holds, a friend's shots were replayed as swings with their gun out, and went unheard.
+	template <class Types>
+	constexpr bool HoldsGun(const Types& a_weaponTypes)
+	{
+		for (const std::int32_t type : a_weaponTypes) {
+			if (ReplaysAsGun(type, true)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	enum class Replay
 	{
 		kNone,       // nothing: a swing or a punch with the weapon put away

@@ -72,15 +72,16 @@ namespace RemotePlayers
 			bool                 inPowerArmor = false;   // they are in a frame here: the stand-in goes into its copy as soon as it can (see ArmorFrames)
 			RE::ObjectRefHandle  frame;                  // the frame we placed for it: the stand-in's to get into, the engine's while it is in, or where they got out
 			Clock::time_point    framePlacedAt{};
-			Clock::time_point    frameActionAt{};        // when they last got out (the copy stands where they did a while)
+			ArmorFrames::PlayTime framePlacedPlayed{};    // the same, in the time the game ran (see ArmorFrames::PlayClock)
+			ArmorFrames::PlayTime frameActionAt{};        // when they last got out (the copy stands where they did a while)
 			const RE::NiAVObject* frameCollisionOff = nullptr;  // the frame's 3D whose collision we turned off; only compared
 			int                  switchTries = 0;        // switch-ins in this wear that did not take, or whose skeleton never came (see ArmorFrames::ChooseSwitch)
-			Clock::time_point    switchTriedAt{};
-			Clock::time_point    switchedAt{};           // when the switch-in took for this stand-in
+			ArmorFrames::PlayTime switchTriedAt{};
+			ArmorFrames::PlayTime switchedAt{};           // when the switch-in took for this stand-in
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
 			bool                 switchGaveUp = false;   // logged
-			std::optional<Clock::time_point> pickSince;  // when the switch-in was first due for this stand-in in this wear (see ArmorFrames::ChoosePick)
-			Clock::time_point    keyPutAt{};             // when the item that makes the engine pick their frame item was put on it
+			std::optional<ArmorFrames::PlayTime> pickSince;  // when the switch-in was first due for this stand-in in this wear (see ArmorFrames::ChoosePick)
+			std::optional<ArmorFrames::PlayTime> keyPutAt;   // when the item that makes the engine pick their frame item was put on it
 			int                  pickLogged = -1;        // the last ArmorFrames::Pick logged for this stand-in
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
@@ -851,6 +852,7 @@ namespace RemotePlayers
 		std::uint32_t   switchesIn = 0;    // stand-ins the engine took into their frame copy
 		std::uint32_t   switchesOut = 0;   // stand-ins replaced as their friend got out
 		std::uint32_t   switchFails = 0;   // switch-ins that did not take
+		ArmorFrames::Played played;        // the time the game ran, which the power armor limits go by
 
 		// The frame copy until the stand-in is in it: not drawn (a drawn one trailed it as a second, empty suit), without
 		// collision (moved onto the stand-in each time the friend walks or turns, it shoved the stand-in aside while we put
@@ -917,7 +919,7 @@ namespace RemotePlayers
 		}
 
 		// Places a copy of a frame at the stand-in, or where it stood as they got out, in our player's cell (a_cell).
-		bool PlaceFrame(RemotePlayer& a_player, RE::TESBoundObject* a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
+		bool PlaceFrame(RemotePlayer& a_player, RE::TESBoundObject* a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			if (!a_cell) {
 				return false;
@@ -928,12 +930,13 @@ namespace RemotePlayers
 			}
 			a_player.frame = handle;
 			a_player.framePlacedAt = a_now;
+			a_player.framePlacedPlayed = a_played;
 			a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
 			return true;
 		}
 
 		// Into its copy (see ArmorFrames::ChooseSwitch and Equipment::SwitchIntoPowerArmor).
-		void SwitchIn(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectREFR* a_frame, Clock::time_point a_now)
+		void SwitchIn(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectREFR* a_frame, ArmorFrames::PlayTime a_now)
 		{
 			a_player.switchTriedAt = a_now;
 			if (Equipment::SwitchIntoPowerArmor(a_actor, a_frame)) {
@@ -957,7 +960,7 @@ namespace RemotePlayers
 		// Whether the stand-in may be switched in now, so that the engine's pick of its frame item is theirs (see
 		// ArmorFrames::ChoosePick): the item that makes the engine pick their frame item is put on it first, or the clothes
 		// it was dressed in are let come on, for at most ArmorFrames::PICK_WAIT.
-		bool PickReady(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		bool PickReady(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_now)
 		{
 			if (!a_player.pickSince) {
 				a_player.pickSince = a_now;
@@ -979,8 +982,8 @@ namespace RemotePlayers
 				.dressed = a_player.gear.dressed && std::ranges::includes(worn, dressedIn),
 				.waited = a_now - *a_player.pickSince,
 			};
-			if (a_player.keyPutAt != Clock::time_point{}) {
-				facts.sincePut = a_now - a_player.keyPutAt;
+			if (a_player.keyPutAt) {
+				facts.sincePut = a_now - *a_player.keyPutAt;
 			}
 			const auto choice = ArmorFrames::ChoosePick(facts);
 			// Logged once a choice for each stand-in in a wear (a wait is not logged).
@@ -1010,7 +1013,7 @@ namespace RemotePlayers
 
 		// Whether the stand-in's 3D is built on the power armor skeleton (Equipment::HasPowerArmorSkeleton): the rebuild
 		// the switch-in queued has run. Looked for once per 3D, and logged as it comes.
-		bool OnArmorSkeleton(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		bool OnArmorSkeleton(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_now)
 		{
 			const auto root = a_actor->Get3D();
 			if (!root) {
@@ -1029,7 +1032,7 @@ namespace RemotePlayers
 		}
 
 		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest).
-		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now)
+		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_now)
 		{
 			const bool in = Equipment::InPowerArmor(a_actor);
 			return {
@@ -1042,7 +1045,7 @@ namespace RemotePlayers
 			};
 		}
 
-		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
+		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			if (!a_actor) {
 				return;
@@ -1052,7 +1055,7 @@ namespace RemotePlayers
 			if (worn != a_player.inPowerArmor) {
 				a_player.inPowerArmor = worn;
 				if (!worn) {
-					a_player.frameActionAt = a_now;  // the copy stands where they got out a while
+					a_player.frameActionAt = a_played;  // the copy stands where they got out a while
 				}
 				REX::INFO("RemotePlayers: player {} is {} power armor (frame {:08X})", a_player.id, worn ? "in" : "out of", a_player.powerArmorFrame);
 			}
@@ -1069,8 +1072,9 @@ namespace RemotePlayers
 				facts.loaded = frame->Get3D() != nullptr;
 				facts.samePlace = SamePlace(frame.get(), a_actor);
 				facts.distance = frame->data.location.GetDistance(a_actor->data.location);
-				facts.sincePlaced = a_now - a_player.framePlacedAt;
-				facts.sinceOut = a_now - a_player.frameActionAt;
+				facts.sincePlaced = a_played - a_player.framePlacedPlayed;
+				facts.sinceOut = a_played - a_player.frameActionAt;
+				facts.sameBase = frame->GetObjectReference() == base;
 			}
 			const auto copy = ArmorFrames::ChooseCopy(facts);
 			switch (copy) {
@@ -1079,7 +1083,7 @@ namespace RemotePlayers
 			case ArmorFrames::Copy::kPlace:
 				// Once the stand-in is drawn: one whose 3D never comes needs none.
 				if (has3D) {
-					PlaceFrame(a_player, base, a_cell, a_actor->data.location, a_actor->data.angle.z, a_now);
+					PlaceFrame(a_player, base, a_cell, a_actor->data.location, a_actor->data.angle.z, a_now, a_played);
 				}
 				break;
 			case ArmorFrames::Copy::kHold:
@@ -1112,13 +1116,13 @@ namespace RemotePlayers
 			}
 
 			const auto process = a_actor->currentProcess;
-			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now);
+			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_played);
 			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false);
 			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
 			case ArmorFrames::Switch::kIn:
-				if (PickReady(a_player, a_actor, a_now)) {
-					SwitchIn(a_player, a_actor, frame.get(), a_now);
+				if (PickReady(a_player, a_actor, a_played)) {
+					SwitchIn(a_player, a_actor, frame.get(), a_played);
 				}
 				break;
 			case ArmorFrames::Switch::kGaveUp:
@@ -1196,7 +1200,7 @@ namespace RemotePlayers
 		// They are out of their armor and the stand-in is still in its frame (ArmorFrames::Switch::kOut): the stand-in goes
 		// with that frame (see ArmorFrames for why it is not switched out), a fresh one is placed out of armor at once, and a
 		// copy of the frame is left where the old one stood, drawn a while (ArmorFrames::ChooseCopy).
-		void LeaveArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now)
+		void LeaveArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const auto  frame = Equipment::PowerArmorFrameOf(a_actor);
 			const auto  base = frame ? frame->GetObjectReference() : nullptr;
@@ -1211,8 +1215,8 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: player {}'s frame copy {:08X} stands where their frame is, {:.0f} units from where their stand-in stood", a_player.id, parked->GetFormID(), parked->data.location.GetDistance(at));
 				return;
 			}
-			if (Equipment::IsPowerArmorFrame(base) && PlaceFrame(a_player, base, a_cell, at, heading, a_now)) {
-				a_player.frameActionAt = a_now;
+			if (Equipment::IsPowerArmorFrame(base) && PlaceFrame(a_player, base, a_cell, at, heading, a_now, a_played)) {
+				a_player.frameActionAt = a_played;
 			}
 		}
 
@@ -1931,6 +1935,7 @@ namespace RemotePlayers
 		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
 
 		const auto now = Clock::now();
+		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
 		// each frame: any change the engine makes to it makes a new one, and the engine unloading it would write that
 		// out and crash on the cell it no longer has.
@@ -2064,16 +2069,16 @@ namespace RemotePlayers
 			// does one the engine has in its frame but never gave the power armor skeleton (the rebuild the switch-in queued
 			// did not come): the fresh one is tried afresh, and the tries of this wear add up (ArmorFrames::MAX_SWITCH_TRIES).
 			if (actor) {
-				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, now))) {
+				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, playedNow))) {
 				case ArmorFrames::Switch::kOut:
-					LeaveArmor(remote, actor, localCell, now);
+					LeaveArmor(remote, actor, localCell, now, playedNow);
 					actor = nullptr;
 					break;
 				case ArmorFrames::Switch::kStuck:
 					++remote.switchTries;
 					++switchFails;
 					REX::WARN("RemotePlayers: player {} stand-in {:08X} is still on its own skeleton {} ms after it was switched into its frame copy; placed again (try {} of {})", remote.id, actor->GetFormID(),
-						std::chrono::duration_cast<std::chrono::milliseconds>(now - remote.switchedAt).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES);
+						std::chrono::duration_cast<std::chrono::milliseconds>(playedNow - remote.switchedAt).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES);
 					DeleteActor(remote);
 					actor = nullptr;
 					break;
@@ -2115,8 +2120,8 @@ namespace RemotePlayers
 			}
 
 			UpdateLight(remote, actor, localCell, now);
-			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now);
-			CheckHold(remote, actor, { state->x, state->y, state->z }, state->speed, now);
+			UpdatePowerArmor(remote, actor, localCell, { state->x, state->y, state->z }, state->heading, now, playedNow);
+			CheckHold(remote, actor, { state->x, state->y, state->z }, sampled->OwnSpeed(), now);
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -2132,7 +2137,7 @@ namespace RemotePlayers
 			// they no longer have on and leaves the rest), at most once a StandInGear::CHANGE_GAP; its gun is put away and
 			// drawn again only when it was taken off it or swapped: over a hat or their last grenade, their shots went silent.
 			const bool inArmor = Equipment::InPowerArmor(actor);
-			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, now));
+			const auto dress = ArmorFrames::ChooseDress(inArmor, inArmor && OnArmorSkeleton(remote, actor, playedNow));
 			const auto shown = [&] { return dress == ArmorFrames::Dress::kArmor ? Kept(Equipment::Read(actor), dress) : Equipment::Read(actor); };
 			const auto dressing = StandInGear::Dress(remote.gear, dress, actor->Get3D() != nullptr, now, HandWeapon,
 				[&](const std::vector<std::uint32_t>& a_worn) { return Wearable(shown()) == Wearable(Kept(a_worn, dress)); });

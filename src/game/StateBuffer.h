@@ -48,6 +48,11 @@ namespace StateBuffer
 		Protocol::PlayerState state;
 		float                 motionAngle = 0.0f;  // world heading of travel, radians
 		bool                  held = false;        // past the newest state: it stands where that one put it
+		float                 heldSpeed = 0.0f;    // when held: the speed the newest state said (state.speed is stopped once states dry up)
+
+		// The friend's own speed in the state it was put by: moving still while their next state is late, though it is
+		// held, and drawn, standing.
+		[[nodiscard]] float OwnSpeed() const { return held ? heldSpeed : state.speed; }
 		// Where it is from now on, for the engine's update of the stand-in, which may come before or after our next frame's
 		// work (MotionPath.h): here now, then each newer state a delay after its stamp.
 		MotionPath::Path      path;
@@ -189,6 +194,7 @@ namespace StateBuffer
 			}
 			auto out = sampled(held, held.heading, snaps.size());
 			out.held = true;
+			out.heldSpeed = snaps.back().state.speed;
 			return out;
 		}
 	};
