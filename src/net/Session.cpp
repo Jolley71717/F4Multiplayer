@@ -23,6 +23,7 @@
 #include "game/Party.h"
 #include "game/WorldClock.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -201,9 +202,8 @@ namespace Session
 				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
 				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
 			}
-			const auto ui = RE::UI::GetSingleton();
 			const auto vats = RE::VATS::GetSingleton();
-			if (ui && ui->GetMenuOpen("VATSMenu"sv)) {
+			if (OpenMenus::Open(OpenMenus::Menu::kVats)) {
 				mult *= GameSettingFloat("fVATSPlayerMenuDamageMult", 1.0f);
 			} else if (vats && vats->mode.any(RE::VATS::VATS_MODE_ENUM::kPlayback)) {
 				mult *= GameSettingFloat("fVATSPlayerDamageMult", 0.1f);

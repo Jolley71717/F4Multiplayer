@@ -8,6 +8,7 @@
 #include "game/Gait.h"
 #include "game/NpcClaims.h"
 #include "game/NpcPlace.h"
+#include "game/OpenMenus.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -945,8 +946,7 @@ namespace NpcSync
 			WeaponFire::SetOwnedNpcs(std::move(ids));
 		}
 		// The partner is found when the conversation starts and kept until it ends.
-		const auto ui = RE::UI::GetSingleton();
-		const bool inConversation = ui && ui->GetMenuOpen("DialogueMenu"sv);
+		const bool inConversation = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 		if (!inConversation) {
 			talkingTo = 0;
 		} else if (talkingTo == 0) {

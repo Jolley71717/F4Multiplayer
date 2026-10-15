@@ -7,6 +7,7 @@
 
 #include "Net.h"
 #include "Redact.h"
+#include "SourceTree.h"
 
 #include <algorithm>
 #include <cctype>
@@ -410,28 +411,6 @@ TEST("log privacy: over the real UDP transport, a wrong password, a join and a q
 // default) slipped back in once with a merge; with this, the next one fails the tests instead of a bug report.
 namespace
 {
-	// The repository the tests were built in (they run from its build folder), or else the one they run inside.
-	std::optional<std::filesystem::path> SourceRoot()
-	{
-		std::vector<std::filesystem::path> starts;
-		if (char* exe = nullptr; _get_pgmptr(&exe) == 0 && exe && *exe) {
-			starts.emplace_back(std::filesystem::path{ exe }.parent_path());
-		}
-		starts.emplace_back(std::filesystem::current_path());
-		for (auto at : starts) {
-			for (;; at = at.parent_path()) {
-				std::error_code error;
-				if (std::filesystem::exists(at / "src" / "game" / "RemotePlayers.cpp", error) && std::filesystem::exists(at / "common" / "Server.cpp", error)) {
-					return at;
-				}
-				if (at == at.parent_path()) {
-					break;
-				}
-			}
-		}
-		return std::nullopt;
-	}
-
 	struct LogCall
 	{
 		int         line = 0;
@@ -486,10 +465,7 @@ namespace
 			if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
 				continue;
 			}
-			std::ifstream      file{ entry.path(), std::ios::binary };
-			std::ostringstream text;
-			text << file.rdbuf();
-			for (const auto& call : LogCalls(text.str(), a_calls)) {
+			for (const auto& call : LogCalls(SourceTree::Read(entry.path()), a_calls)) {
 				if (ReadsAName(call)) {
 					out.push_back(std::format("{}:{}", std::filesystem::relative(entry.path(), a_folder.parent_path()).generic_string(), call.line));
 				}
@@ -519,7 +495,7 @@ TEST("log privacy: the guard on the game's log finds a line that names a friend,
 
 TEST("log privacy: no line the game or the server logs names a friend; they are \"player N\" (a bug report's log names nobody)")
 {
-	const auto root = SourceRoot();
+	const auto root = SourceTree::Root();
 	REQUIRE(root);  // run the tests from the repository or its build folder
 	auto named = NamedInLog(*root / "src", { "REX::INFO(", "REX::WARN(", "REX::ERROR(", "REX::DEBUG(", "REX::TRACE(", "REX::CRITICAL(" });
 	std::ranges::move(NamedInLog(*root / "common", { "log(", "a_log(" }), std::back_inserter(named));

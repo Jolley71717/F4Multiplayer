@@ -1215,8 +1215,7 @@ namespace WorldSync
 		if (!player || !player->GetParentCell()) {
 			return false;
 		}
-		const auto ui = RE::UI::GetSingleton();
-		return !ui || !ui->GetMenuOpen("LoadingMenu"sv);
+		return !Hud::LoadingScreenUp();
 	}
 
 	void Install()

@@ -3,6 +3,8 @@
 #include "game/RemotePlayers.h"
 #include "Config.h"
 #include "game/Hud.h"
+#include "game/OpenMenus.h"
+#include "MainThread.h"
 
 namespace Compass
 {
@@ -82,39 +84,16 @@ namespace Compass
 			a_threads.insert(std::this_thread::get_id());
 		}
 
-		// Menus during which the HUD is left alone, one bit each, kept from the menus' open and close
-		// events. Asking the UI instead (GetMenuOpen) takes a reference to the menu; from the HUD's update,
-		// which runs beside the main thread's drawing, such a reference can decide which thread destroys a
-		// closing menu, and the workshop menu destroyed mid-draw deadlocks the game.
-		constexpr std::array OTHER_MENUS{ "DialogueMenu"sv, "PipboyMenu"sv, "WorkshopMenu"sv, "LooksMenu"sv, "PowerArmorModMenu"sv };
-		std::atomic<std::uint32_t> otherMenus{ 0 };
-
+		// Menus during which the HUD is left alone. Asked of OpenMenus, never the UI: from the HUD's update,
+		// which runs beside the main thread's drawing, a reference to a menu can decide which thread destroys
+		// a closing one, and the workshop menu destroyed mid-draw deadlocks the game.
 		bool OtherMenuOpen()
 		{
+			using enum OpenMenus::Menu;
 			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || otherMenus.load() != 0;
+			return !ui || ui->menuMode != 0 || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
 		}
 
-		class MenuWatcher :
-			public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-		{
-		public:
-			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
-			{
-				for (std::size_t i = 0; i < OTHER_MENUS.size(); ++i) {
-					if (a_event.menuName == OTHER_MENUS[i]) {
-						const auto bit = 1u << i;
-						if (a_event.opening) {
-							otherMenus.fetch_or(bit);
-						} else {
-							otherMenus.fetch_and(~bit);
-						}
-					}
-				}
-				return RE::BSEventNotifyControl::kContinue;
-			}
-		};
-		MenuWatcher watcher;
 		std::atomic<std::uint32_t> shown{ 0 };
 		std::atomic<std::uint32_t> made{ 0 };
 
@@ -299,6 +278,9 @@ namespace Compass
 			if (hookedHudVtable != 0) {
 				return;  // one HUD class; never patched twice, and the HUD isn't looked up again
 			}
+			// The plugin's one menu lookup (see OpenMenus): on the main thread, between frames, and for the HUD, which
+			// the UI keeps for the whole game; the reference is let go before anything is drawn.
+			MainThread::Assert("Compass::HookHud");
 			const auto ui = RE::UI::GetSingleton();
 			const auto menu = ui ? ui->GetMenu("HUDMenu") : nullptr;
 			if (!menu) {
@@ -338,13 +320,6 @@ namespace Compass
 				targets.push_back({ info.id, std::clamp(x, -HALF_WIDTH, HALF_WIDTH), std::abs(x) > HALF_WIDTH });
 			}
 			return targets;
-		}
-	}
-
-	void Install()
-	{
-		if (const auto ui = RE::UI::GetSingleton()) {
-			ui->RegisterSink<RE::MenuOpenCloseEvent>(&watcher);
 		}
 	}
 

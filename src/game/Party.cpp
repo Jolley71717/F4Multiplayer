@@ -12,6 +12,7 @@
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/Menu.h"
+#include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
@@ -376,8 +377,7 @@ namespace Party
 			if (Story::InOpening()) {
 				return "until you've left Vault 111";
 			}
-			const auto ui = RE::UI::GetSingleton();
-			if (ui && ui->GetMenuOpen("DialogueMenu"sv)) {
+			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return "while talking";
 			}
 			if (a_player->GetCurrentScene()) {

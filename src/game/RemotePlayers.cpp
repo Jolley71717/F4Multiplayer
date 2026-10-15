@@ -5,6 +5,7 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/FriendLight.h"
+#include "game/Hud.h"
 #include "game/MoveSync.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
@@ -1939,7 +1940,7 @@ namespace RemotePlayers
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto localCell = player ? player->GetParentCell() : nullptr;
 		const auto ui = RE::UI::GetSingleton();
-		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
+		const bool loading = Hud::LoadingScreenUp();
 
 		const auto now = Clock::now();
 		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
