@@ -67,6 +67,9 @@ namespace WeaponFire
 	// The same for every copy, before a save (the lent health is never saved, the damage would be).
 	void EndAllLending();
 
+	// An NPC died in our world (a_killer 0 if nothing killed it): a copy that was lent health lately goes to the log.
+	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
+
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
 

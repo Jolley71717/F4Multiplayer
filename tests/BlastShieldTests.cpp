@@ -8,10 +8,13 @@
 
 #include "game/BlastShield.h"
 #include "game/RemoteEdits.h"
+#include "game/ThrowReplays.h"
 
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
+#include <vector>
 
 using namespace Sim;
 using Reason = Protocol::ClaimReason;
@@ -28,19 +31,36 @@ namespace
 	// Health is what the record gives plus a permanent, a temporary and a damage modifier. Healing never takes it past
 	// the permanent maximum (the record's and the permanent modifier) and puts it there when it is above: the live
 	// test's raider, lent 100000 as a temporary modifier and hurt for 251, was "given back" 251 and came down to 30,
-	// and taking the loan away killed it. Any change that leaves a living actor with no health kills it.
+	// and taking the loan away killed it. Any change that leaves a living actor with no health kills it. A change of a
+	// modifier through the engine is judged by the health the actor had at the last frame too (seen): the live test's
+	// two copies, 33 and 18 below nothing of their own under the loan, were healed to their 30 with the loan in it and
+	// then had it taken away; both read 30 at once and lay dead at 0 a moment later (a kill leaves a living actor at
+	// 0). Modifiers written directly (Write) are judged by nothing.
 	struct Npc
 	{
-		float x = 0.0f, y = 0.0f;
-		float base = 100.0f;
-		float permanent = 0.0f;
-		float temporary = 0.0f;
-		float damage = 0.0f;
-		bool  dead = false;
+		float                x = 0.0f, y = 0.0f;
+		float                base = 100.0f;
+		float                permanent = 0.0f;
+		float                temporary = 0.0f;
+		float                damage = 0.0f;
+		bool                 dead = false;
+		std::optional<float> seen;  // its health at the last frame
 
 		[[nodiscard]] float Maximum() const { return base + permanent; }
 		[[nodiscard]] float Health() const { return base + permanent + temporary + damage; }
-		void Settle() { dead = dead || Health() <= 0.0f; }
+		void Frame() { seen = Health(); }
+		void Settle(float a_change = 0.0f)
+		{
+			if (dead) {
+				return;
+			}
+			if (Health() <= 0.0f) {
+				dead = true;
+			} else if (a_change < 0.0f && seen && *seen + a_change <= 0.0f) {
+				dead = true;
+				damage -= Health();
+			}
+		}
 		void Hurt(float a_amount)
 		{
 			if (dead) {
@@ -56,20 +76,42 @@ namespace
 				Settle();
 			}
 		}
-		void ModDamage(float a_amount) { damage += a_amount, Settle(); }
-		void ModPermanent(float a_amount) { permanent += a_amount, Settle(); }
-		void ModTemporary(float a_amount) { temporary += a_amount, Settle(); }
+		void ModDamage(float a_amount) { damage += a_amount, Settle(a_amount); }
+		void ModPermanent(float a_amount) { permanent += a_amount, Settle(a_amount); }
+		void ModTemporary(float a_amount) { temporary += a_amount, Settle(a_amount); }
+		void Write(const BlastShield::Modifiers& a_modifiers)
+		{
+			permanent = a_modifiers.permanent;
+			temporary = a_modifiers.temporary;
+			damage = a_modifiers.damage;
+		}
+		[[nodiscard]] BlastShield::Modifiers Modifiers() const { return { permanent, temporary, damage }; }
 	};
 
-	// One player's game: its NPCs, and what WeaponFire and WorldSync do there with a friend's explosion, our own
-	// player's blows and another game's health report. A death goes out once, as WorldSync reports it.
+	constexpr float GRENADE_DAMAGE = 100.0f;                    // a grenade of a copy's own, at its feet
+	constexpr auto  FUSE = std::chrono::milliseconds{ 1000 };    // from leaving the hand to going off
+
+	// One player's game: its NPCs, and what WeaponFire and WorldSync do there with a friend's explosion, a friend's
+	// throw replayed on a copy, our own player's blows and another game's health report. A death goes out once, as
+	// WorldSync reports it. Time goes by a frame at a time (Wait).
 	struct Game
 	{
 		Client&                        client;
 		std::map<std::uint32_t, Npc>   npcs;
 		BlastShield::Book              lending;
+		ThrowReplays::Book             throws;
 		BlastShield::Clock::time_point now{};
 		std::set<std::uint32_t>        reported;
+		// Loans paid back as WeaponFire did before: healed with the loan in it, then the loan taken away, through the
+		// engine.
+		bool throughEngine = false;
+
+		struct Grenade
+		{
+			float                          x = 0.0f, y = 0.0f;
+			BlastShield::Clock::time_point at{};
+		};
+		std::vector<Grenade> grenades;  // real ones in this game, thrown by our copies themselves
 
 		// WeaponFire::ApplyExplosion: our copies of NPCs another game runs are lent health first, then the
 		// explosion hurts everyone in reach (a_damage, the same to each here).
@@ -96,6 +138,18 @@ namespace
 			}
 		}
 
+		// WeaponFire::PlayAction: a friend's throw replayed on our copy of the thrower.
+		void ReplayThrow(std::uint32_t a_id) { throws.Arm(a_id, now); }
+
+		// The copy's graph lets go of a throw (WeaponFire's NPC animation hook): a replayed throw's release is kept
+		// from the engine; any other throws the grenade it holds, which goes off at its feet.
+		void LetGo(std::uint32_t a_id)
+		{
+			if (!throws.Release(a_id, now)) {
+				grenades.push_back({ npcs.at(a_id).x, npcs.at(a_id).y, now + FUSE });
+			}
+		}
+
 		// WorldSync::ReportDeaths.
 		void Died(std::uint32_t a_id)
 		{
@@ -104,8 +158,8 @@ namespace
 			}
 		}
 
-		// WeaponFire::EndLendingOf: the copy is set to what it keeps with the loan still in it (damage down, healing
-		// up), then the loan is taken away, then a copy our player's blows killed is killed.
+		// WeaponFire::EndLendingOf: the copy's modifiers are written to leave it the health it keeps with the loan gone,
+		// then a copy our player's blows killed is killed.
 		void EndLending(std::uint32_t a_id)
 		{
 			auto&      npc = npcs.at(a_id);
@@ -114,29 +168,52 @@ namespace
 			if (!release) {
 				return;
 			}
-			const float delta = release->health + release->lent - npc.Health();
-			if (delta < 0.0f) {
-				npc.ModDamage(delta);
+			if (throughEngine) {
+				const float delta = release->health + release->lent - npc.Health();
+				if (delta < 0.0f) {
+					npc.ModDamage(delta);
+				} else {
+					npc.Restore(delta);
+				}
+				npc.ModPermanent(-release->lent);
 			} else {
-				npc.Restore(delta);
+				npc.Write(BlastShield::Repaid(npc.Modifiers(), npc.base, release->lent, release->health));
+				// Paying the loan back never kills a copy, nor leaves the loan's worth on a corpse.
+				CHECK((wasDead || !npc.dead));
+				CHECK(npc.permanent == 0.0f);
+				CHECK(npc.Health() > -1.0f);
+				CHECK((wasDead || release->kill || npc.Health() == release->health));
 			}
-			npc.ModPermanent(-release->lent);
-			// Paying the loan back never kills a copy, nor leaves the loan's worth on a corpse.
-			CHECK((wasDead || !npc.dead));
-			CHECK(npc.permanent == 0.0f);
-			CHECK(npc.Health() > -1.0f);
 			if (release->kill) {
 				npc.dead = true;  // the console's kill
 			}
 			Died(a_id);
 		}
 
-		// Time goes by in this game: lending that is over ends (WeaponFire::Frame).
+		// Time goes by in this game, a frame at a time: grenades go off, lending that is over ends (WeaponFire::Frame).
 		void Wait(BlastShield::Clock::duration a_for)
 		{
-			now += a_for;
-			for (const auto id : lending.Due(now)) {
-				EndLending(id);
+			constexpr BlastShield::Clock::duration FRAME = std::chrono::milliseconds{ 50 };
+			const auto                             until = now + a_for;
+			while (now < until) {
+				now = std::min(now + FRAME, until);
+				std::erase_if(grenades, [&](const Grenade& a_grenade) {
+					if (now < a_grenade.at) {
+						return false;
+					}
+					for (auto& [id, npc] : npcs) {
+						if (RemoteEdits::Within(std::hypot(npc.x - a_grenade.x, npc.y - a_grenade.y), FRAG_RADIUS)) {
+							Hurt(id, GRENADE_DAMAGE);
+						}
+					}
+					return true;
+				});
+				for (const auto id : lending.Due(now)) {
+					EndLending(id);
+				}
+				for (auto& [id, npc] : npcs) {
+					npc.Frame();
+				}
 			}
 		}
 
@@ -285,8 +362,9 @@ TEST("blast shield: a host raider's grenade set off in a friend's game leaves th
 TEST("blast shield: a host raider throwing four grenades two seconds apart, each throw replayed by the friend's copy, is alive in both games afterwards")
 {
 	// The live test: the host's raider 0007BCED (30 health, all of it) threw four times, two seconds apart. The friend's
-	// copy replays each throw (its own grenade is removed: WeaponFire's ghost watch) and each explosion is set off
-	// beside it; one of its own grenades escapes the watch and goes off at its feet too.
+	// copy replays each throw, its graph letting go of each half a second after the next replay (later than the two
+	// seconds the ghost watch once kept), and each explosion is set off beside it; someone's grenade goes off at its
+	// feet under the loan too.
 	Corvega c;
 	auto&   host = c.host;
 	auto&   bob = c.bob;
@@ -297,22 +375,32 @@ TEST("blast shield: a host raider throwing four grenades two seconds apart, each
 	const float blasts[] = { 70.0f, 60.0f, 66.0f, 55.0f };  // 251 in all
 	for (int i = 0; i < 4; ++i) {
 		host.Raw(NpcThrow(RAIDER_1), false);
+		c.s.Settle();
+		REQUIRE(bob.Heard(MT::kShotFired) - shotsBefore == static_cast<std::size_t>(i + 1));  // to be replayed
+		c.bobGame.ReplayThrow(RAIDER_1);
 		host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
 		c.s.Settle();
 		REQUIRE(bob.Explosions().size() == static_cast<std::size_t>(i + 1));
 		c.bobGame.SetOff(bob.Explosions().back(), blasts[i]);
 		CHECK(!c.bobGame.npcs[RAIDER_1].dead);
+		c.bobGame.Wait(std::chrono::milliseconds{ 500 });
+		if (i > 0) {
+			c.bobGame.LetGo(RAIDER_1);  // the last throw's release, 2.5 s after its replay
+		}
 		if (i == 1) {
-			c.bobGame.Wait(std::chrono::seconds{ 1 });
-			c.bobGame.Hurt(RAIDER_1, 40.0f);  // the escaped grenade: under the loan
+			c.bobGame.Wait(std::chrono::milliseconds{ 500 });
+			c.bobGame.Hurt(RAIDER_1, 40.0f);  // someone's grenade, under the loan
 			c.bobGame.Wait(std::chrono::seconds{ 1 });
 		} else {
-			c.bobGame.Wait(std::chrono::seconds{ 2 });
+			c.bobGame.Wait(std::chrono::milliseconds{ 1500 });
 		}
 		CHECK(c.bobGame.lending.Lent(RAIDER_1));  // each explosion holds the loan on
 	}
-	CHECK(bob.Heard(MT::kShotFired) - shotsBefore == 4);  // each throw reached the friend's game, to be replayed
-	c.bobGame.Wait(BlastShield::HOLD);
+	c.bobGame.Wait(std::chrono::milliseconds{ 500 });
+	c.bobGame.LetGo(RAIDER_1);
+	CHECK(c.bobGame.grenades.empty());  // not one of the copy's own left its hand
+	CHECK(c.bobGame.throws.Size() == 0);
+	c.bobGame.Wait(BlastShield::HOLD + FUSE);
 	CHECK(!c.bobGame.lending.Lent(RAIDER_1));
 	CHECK(!c.bobGame.npcs[RAIDER_1].dead);
 	CHECK(c.bobGame.npcs[RAIDER_1].Health() == 30.0f);
@@ -354,14 +442,184 @@ TEST("blast shield: the first loan, a temporary modifier, killed the copy when i
 	Npc copy{ .base = 30.0f };
 	copy.ModPermanent(BlastShield::LEND);
 	copy.Hurt(251.0f);
+	copy.Frame();
 	BlastShield::Book book;
 	book.Begin(RAIDER_1, 30.0f, {});
 	const auto release = book.End(RAIDER_1, copy.Health(), copy.dead);
 	REQUIRE(release);
-	copy.Restore(release->health + release->lent - copy.Health());
-	copy.ModPermanent(-release->lent);
+	copy.Write(BlastShield::Repaid(copy.Modifiers(), copy.base, release->lent, release->health));
 	CHECK(!copy.dead);
 	CHECK(copy.Health() == 30.0f);
+	CHECK(copy.permanent == 0.0f);
+	CHECK(copy.damage == 0.0f);
+}
+
+TEST("blast shield: the second loan, paid back through the engine's changes, killed the copies a blast took below nothing of their own")
+{
+	// Why the live test's two copies lay dead at 0 a moment after their loans ended with 30 each: the blast had left
+	// them 33 and 18 below nothing of their own, they were healed to 30 with the loan in them, and taking the loan away
+	// was judged by the health they had before that healing.
+	Npc raider{ .base = 30.0f };
+	raider.ModPermanent(BlastShield::LEND);
+	raider.Hurt(63.0f);
+	raider.Frame();
+	raider.Restore(63.0f);
+	CHECK(raider.Health() == 30.0f + BlastShield::LEND);
+	raider.ModPermanent(-BlastShield::LEND);
+	CHECK(raider.dead);
+	CHECK(raider.Health() == 0.0f);
+
+	// One the blast left with some of its own came through it (a blast of 20).
+	Npc spared{ .base = 30.0f };
+	spared.ModPermanent(BlastShield::LEND);
+	spared.Hurt(20.0f);
+	spared.Frame();
+	spared.Restore(20.0f);
+	spared.ModPermanent(-BlastShield::LEND);
+	CHECK(!spared.dead);
+
+	// The loan paid back by writing the modifiers, from the same state: alive with its 30, and nothing lent left.
+	Npc copy{ .base = 30.0f };
+	copy.ModPermanent(BlastShield::LEND);
+	copy.Hurt(63.0f);
+	copy.Frame();
+	copy.Write(BlastShield::Repaid(copy.Modifiers(), copy.base, BlastShield::LEND, 30.0f));
+	CHECK(!copy.dead);
+	CHECK(copy.Health() == 30.0f);
+	CHECK(copy.permanent == 0.0f);
+
+	// What Repaid leaves: the loan out of the permanent modifier, the temporary one as it was, the damage one making up
+	// the rest, never above nothing.
+	const auto repaid = BlastShield::Repaid({ .permanent = BlastShield::LEND + 5.0f, .temporary = 10.0f, .damage = -300.0f }, 30.0f, BlastShield::LEND, 25.0f);
+	CHECK(repaid.permanent == 5.0f);
+	CHECK(repaid.temporary == 10.0f);
+	CHECK(repaid.damage == -20.0f);  // 30 + 5 + 10 - 20 = 25
+	CHECK(BlastShield::Repaid({ .permanent = BlastShield::LEND }, 30.0f, BlastShield::LEND, 80.0f).damage == 0.0f);  // no more than its maximum
+	CHECK(BlastShield::Repaid({ .permanent = BlastShield::LEND, .damage = -500.0f }, 30.0f, BlastShield::LEND, 0.0f).damage == -30.0f);  // a corpse at 0
+}
+
+namespace
+{
+	constexpr std::uint32_t RAIDER_4 = 0x0002A004;
+
+	// The live test's third round: the host's raider (RAIDER_1, 30 health) throws once; the friend's copy replays the
+	// throw (a_kept: as WeaponFire does now, keeping its release from the engine), and its graph lets go of it two and
+	// a half seconds later, after the two seconds the ghost watch once kept. The owner's explosion arrives a moment
+	// after the replay and takes 63 from each copy beside it, the raider's and another raider the host's game runs
+	// (RAIDER_4, 30 health); their loans end three seconds later.
+	void ThrowOnceBesideTwo(Corvega& c, bool a_kept)
+	{
+		c.host.Claim(RAIDER_4);
+		c.s.Settle();
+		REQUIRE(c.bob.OwnerOf(RAIDER_4) == c.host.Id());
+		c.host.RunNpc(RAIDER_4, 1180.0f, 2120.0f);
+		c.s.Settle();
+		for (auto* game : { &c.hostGame, &c.bobGame }) {
+			game->npcs[RAIDER_1].base = 30.0f;
+			game->npcs[RAIDER_4] = Npc{ .x = 1180.0f, .y = 2120.0f, .base = 30.0f };
+		}
+		const auto shotsBefore = c.bob.Heard(MT::kShotFired);
+		c.host.Raw(NpcThrow(RAIDER_1), false);
+		c.s.Settle();
+		REQUIRE(c.bob.Heard(MT::kShotFired) == shotsBefore + 1);
+		if (a_kept) {
+			c.bobGame.ReplayThrow(RAIDER_1);
+		}
+		c.bobGame.Wait(std::chrono::milliseconds{ 150 });
+		c.host.Raw(ExplosionAt(1220.0f, 2100.0f), false);
+		c.s.Settle();
+		REQUIRE(c.bob.Explosions().size() == 1);
+		c.bobGame.SetOff(c.bob.Explosions().front(), 63.0f);
+		CHECK(!c.bobGame.npcs[RAIDER_1].dead);
+		CHECK(!c.bobGame.npcs[RAIDER_4].dead);
+		c.bobGame.Wait(std::chrono::milliseconds{ 2350 });
+		c.bobGame.LetGo(RAIDER_1);
+		c.bobGame.Wait(std::chrono::seconds{ 10 });
+		c.s.Settle();
+	}
+}
+
+TEST("blast shield: a host raider's throw replayed by the friend's copy throws no grenade of the copy's own, however late its graph lets go")
+{
+	Corvega c;
+	ThrowOnceBesideTwo(c, true);
+	CHECK(c.bobGame.grenades.empty());
+	CHECK(c.bobGame.throws.Size() == 0);
+	for (const auto id : { RAIDER_1, RAIDER_4 }) {
+		CHECK(!c.bobGame.npcs[id].dead);
+		CHECK(c.bobGame.npcs[id].Health() == 30.0f);
+		CHECK(c.bobGame.npcs[id].permanent == 0.0f);
+		for (const auto player : { &c.host, &c.bob }) {
+			CHECK(!player->WorldNow().dead.contains(id));
+		}
+	}
+	CHECK(!c.s.Logged("death of 0002A001"));
+	CHECK(!c.s.Logged("death of 0002A004"));
+}
+
+TEST("blast shield: had the copy's graph let go of the replayed throw to the engine, its own grenade would have killed both copies after their loans, in the friend's game only")
+{
+	Corvega c;
+	ThrowOnceBesideTwo(c, false);
+	for (const auto id : { RAIDER_1, RAIDER_4 }) {
+		CHECK(c.bobGame.npcs[id].dead);
+		CHECK(c.bobGame.npcs[id].Health() < -1.0f);  // a grenade's damage: not the 0 the live test showed
+		CHECK(c.bob.WorldNow().dead.contains(id));
+		CHECK(!c.host.WorldNow().dead.contains(id));
+	}
+	CHECK(c.s.Logged("death of 0002A001 from player"));
+}
+
+TEST("blast shield: the third round's copies, their loans paid back through the engine's changes, lay dead at 0 in the friend's game only")
+{
+	Corvega c;
+	c.bobGame.throughEngine = true;
+	ThrowOnceBesideTwo(c, true);
+	CHECK(c.bobGame.grenades.empty());
+	for (const auto id : { RAIDER_1, RAIDER_4 }) {
+		CHECK(c.bobGame.npcs[id].dead);
+		CHECK(c.bobGame.npcs[id].Health() == 0.0f);  // "hp=-0"
+		CHECK(c.bob.WorldNow().dead.contains(id));
+		CHECK(!c.host.WorldNow().dead.contains(id));
+	}
+	CHECK(c.s.Logged("death of 0002A001 from player"));
+}
+
+TEST("blast shield: a replayed throw's release is kept once per replay, within the window, and only the replayed actor's")
+{
+	using ThrowReplays::Book;
+	const ThrowReplays::Clock::time_point t0{};
+	using std::chrono::milliseconds;
+	Book book;
+	CHECK(!book.Release(RAIDER_1, t0));  // its own throw: nothing replayed
+	book.Arm(RAIDER_1, t0);
+	CHECK(book.Unreleased(RAIDER_1));
+	CHECK(!book.Release(RAIDER_2, t0 + milliseconds{ 600 }));  // another actor's
+	const auto first = book.Release(RAIDER_1, t0 + milliseconds{ 2500 });
+	REQUIRE(first);
+	CHECK(*first == milliseconds{ 2500 });
+	CHECK(!book.Release(RAIDER_1, t0 + milliseconds{ 2600 }));  // one per replay
+	CHECK(!book.Unreleased(RAIDER_1));
+
+	// Two throws replayed before the first is let go of: both releases are kept, each against its own replay.
+	book.Arm(RAIDER_1, t0);
+	book.Arm(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Release(RAIDER_1, t0 + milliseconds{ 2500 }) == std::optional{ ThrowReplays::Clock::duration{ milliseconds{ 2500 } } });
+	CHECK(book.Release(RAIDER_1, t0 + milliseconds{ 4500 }) == std::optional{ ThrowReplays::Clock::duration{ milliseconds{ 2500 } } });
+	CHECK(book.Size() == 0);
+
+	// A release long after its replay is the actor's own (the replay's was refused or never came).
+	book.Arm(RAIDER_1, t0);
+	CHECK(!book.Release(RAIDER_1, t0 + ThrowReplays::WINDOW + milliseconds{ 1 }));
+	CHECK(book.Size() == 0);
+	book.Arm(RAIDER_2, t0);
+	book.Expire(t0 + ThrowReplays::WINDOW);
+	CHECK(book.Size() == 1);
+	book.Expire(t0 + ThrowReplays::WINDOW + milliseconds{ 1 });
+	CHECK(book.Size() == 0);
+	book.Arm(RAIDER_3, t0);
+	book.Forget(RAIDER_3);
+	CHECK(!book.Unreleased(RAIDER_3));
 }
 
 TEST("blast shield: without the lending, the friend's copy would die of the host raider's grenade only in the friend's game")

@@ -320,6 +320,7 @@ namespace WorldSync
 				if (!IsShareableRef(id)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				WeaponFire::NoteDeath(id, killer ? killer->GetFormID() : 0);
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
 				if (byPlayer) {

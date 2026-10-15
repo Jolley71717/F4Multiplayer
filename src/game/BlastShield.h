@@ -28,9 +28,13 @@
 // as a temporary modifier, a copy the blast had hurt was "given back" its health right down to that maximum, and
 // taking the loan away then left it 100000 below nothing, dead. And changing a modifier so that a living actor
 // has no health left kills it. So the loan is a permanent modifier (healing then reaches the lent health too;
-// WeaponFire ends every loan before a save, which would keep it), and when it ends the copy is first set to the
-// health it is to keep with the loan still in it (a damage modifier down, healing up), and only then is the loan
-// taken away, from a copy that has more than it. Pure, so it can be tested without the game.
+// WeaponFire ends every loan before a save, which would keep it). Paid back through the engine's own changes, the
+// copy healed to the health it keeps with the loan still in it and the loan then taken away, the live test's two
+// copies read their own 30 at once and lay dead at 0 a moment later: the blast had left them 33 and 18 below
+// nothing of their own, and the engine seems to judge the change by that. A kill of a living actor leaves it at 0;
+// any damage would have left it below. So the loan is paid back by writing the copy's three health modifiers as
+// Repaid says, which gives the engine no change to judge (WeaponFire checks first that they read as the engine
+// reads them, and pays back through the engine only if they do not). Pure, so it can be tested without the game.
 namespace BlastShield
 {
 	using Clock = std::chrono::steady_clock;
@@ -55,14 +59,31 @@ namespace BlastShield
 		return a_owner != 0 && a_owner != a_local;
 	}
 
-	// What to do when a copy's loan ends, in this order: set its health to health + lent (the loan still in it), take
-	// the loan away (leaving it health), and kill it if it is to die.
+	// What to do when a copy's loan ends: leave it with health and the loan gone (Repaid), and kill it if it is to die.
 	struct Release
 	{
 		float health = 0.0f;  // what it keeps
 		float lent = 0.0f;
 		bool  kill = false;   // our player's blows took it to nothing
 	};
+
+	// A copy's health modifiers, as the engine keeps them.
+	struct Modifiers
+	{
+		float permanent = 0.0f;
+		float temporary = 0.0f;
+		float damage = 0.0f;
+	};
+
+	// The modifiers that leave a copy whose record gives it a_base health, and whose modifiers are a_now with a loan of
+	// a_lent in them, with a_keep health and the loan gone: the loan comes out of the permanent modifier and the damage
+	// modifier makes up the rest. Never above nothing: health past the maximum is not kept (healing keeps none).
+	constexpr Modifiers Repaid(Modifiers a_now, float a_base, float a_lent, float a_keep)
+	{
+		Modifiers out{ .permanent = a_now.permanent - a_lent, .temporary = a_now.temporary };
+		out.damage = std::min(0.0f, a_keep - (a_base + out.permanent + out.temporary));
+		return out;
+	}
 
 	class Book
 	{

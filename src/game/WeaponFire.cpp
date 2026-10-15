@@ -8,6 +8,7 @@
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
+#include "game/ThrowReplays.h"
 
 #include "game/ShotLoops.h"
 
@@ -65,6 +66,47 @@ namespace WeaponFire
 
 		std::atomic<std::uint32_t> throwAttaches{ 0 };
 
+		// A friend's throw replayed on a stand-in or our copy of an NPC plays, but its release is kept from the engine,
+		// so nothing leaves the hand (ThrowReplays). The release comes on the animation threads.
+		std::mutex                 replayLock;
+		ThrowReplays::Book         throwReplays;  // under replayLock
+		std::atomic<std::uint32_t> releasesHeld{ 0 };
+		std::atomic<std::uint32_t> releasesLogged{ 0 };
+
+		void ArmReplayedThrow(std::uint32_t a_actorId)
+		{
+			std::scoped_lock l{ replayLock };
+			throwReplays.Arm(a_actorId, ThrowReplays::Clock::now());
+		}
+
+		// Whether the actor's graph never let go of its replayed throw; it is waited for no longer.
+		bool ForgetReplayedThrow(std::uint32_t a_actorId)
+		{
+			std::scoped_lock l{ replayLock };
+			const bool unreleased = throwReplays.Unreleased(a_actorId);
+			throwReplays.Forget(a_actorId);
+			return unreleased;
+		}
+
+		// Whether this release of a throw is a replayed throw's, kept from the engine.
+		bool HoldsReplayedRelease(std::uint32_t a_actorId)
+		{
+			std::optional<ThrowReplays::Clock::duration> after;
+			{
+				std::scoped_lock l{ replayLock };
+				after = throwReplays.Release(a_actorId, ThrowReplays::Clock::now());
+			}
+			if (!after) {
+				return false;
+			}
+			++releasesHeld;
+			if (releasesLogged.fetch_add(1) < 40) {
+				REX::INFO("WeaponFire: {:08X} let go of its replayed throw {} ms after the replay; kept from the engine, so no grenade of its own leaves its hand", a_actorId,
+					std::chrono::duration_cast<std::chrono::milliseconds>(*after).count());
+			}
+			return true;
+		}
+
 		// Other things the graph tells us the actor did, replayed on the stand-in as ShotActions.
 		std::optional<std::uint8_t> ActionOf(std::string_view a_tag)
 		{
@@ -93,6 +135,7 @@ namespace WeaponFire
 		std::uint32_t            copiesLent = 0;     // our copies of NPCs other games run, kept from a friend's explosion (BlastShield)
 		std::uint32_t            blastsUndone = 0;   // ... given back what it took from them
 		std::uint32_t            lentKilled = 0;     // ... killed by our player's blows meanwhile
+		std::uint32_t            lentDied = 0;       // ... that died while lent, or soon after (a death the log looks into)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -139,6 +182,10 @@ namespace WeaponFire
 			const auto id = actor->GetFormID();
 			const std::string_view npcTag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
 			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
+			// A friend's throw replayed here: the engine is not told the grenade left the hand, so it launches none.
+			if (IsThrowEvent(npcTag, npcPayload) && HoldsReplayedRelease(id)) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
 				std::scoped_lock l{ actionLock };
 				// Only an NPC we run: one mirrored from a friend's game threw in theirs, and their game reports what
@@ -306,6 +353,10 @@ namespace WeaponFire
 	void ScanExplosions();
 	void RemoveGhostGrenades();
 	void EndDueLending();
+	namespace
+	{
+		void ReportLentDeaths();
+	}
 
 	void Frame()
 	{
@@ -315,6 +366,7 @@ namespace WeaponFire
 		ScanExplosions();
 		RemoveGhostGrenades();
 		EndDueLending();
+		ReportLentDeaths();
 	}
 
 	namespace
@@ -422,8 +474,11 @@ namespace WeaponFire
 			++actionsPlayed;
 			return;
 		}
-		// A throw needs no drawn weapon: the grenade in the stand-in's hand (Equipment::HoldThrowable) flies.
+		// A throw needs no drawn weapon, only the grenade in the actor's hand (Equipment::HoldThrowable), which the
+		// throw shows and never lets go of: its release is kept from the engine (ThrowReplays). The owner's explosion
+		// comes as its own report.
 		if (a_action == Protocol::ShotAction::kThrow) {
+			ArmReplayedThrow(a_actor->GetFormID());
 			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(THROW);
 			const bool taken = action && a_actor->PerformAction(action, nullptr);
 			actionsPlayed += taken;
@@ -474,7 +529,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} lent={}/{}/{}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesLent, blastsUndone, lentKilled);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} lent={}/{}/{} lentDied={} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesLent, blastsUndone, lentKilled, lentDied, releasesHeld.load());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -505,8 +560,9 @@ namespace WeaponFire
 
 		// A stand-in that replayed a throw really throws the grenade it holds (the equipment sync gave it
 		// one), so the friend's game got a second grenade landing at the stand-in's feet on top of the
-		// owner's explosion. For a moment after the replay, anything the stand-in shoots is removed.
-		constexpr auto                                        GHOST_WATCH = 2s;
+		// owner's explosion. Its release is kept from the engine now (ThrowReplays); should a grenade leave
+		// its hand all the same, anything the stand-in (or copy) shoots while the release is waited for is removed.
+		constexpr auto                                        GHOST_WATCH = ThrowReplays::WINDOW;
 		// The wind-up is where the grenade should show: what the engine holds then goes to the log once.
 		constexpr auto                                        MID_THROW = 400ms;
 		struct ThrowWatch
@@ -594,9 +650,11 @@ namespace WeaponFire
 				return false;
 			}
 			// A grenade it let go of later than this is a real one in our world: it goes off here, hurting what is beside it.
+			const bool unreleased = ForgetReplayedThrow(a_entry.first);
 			if (a_entry.second.removed == 0 && ghostsLogged < 40) {
 				++ghostsLogged;
-				REX::INFO("WeaponFire: no projectile of {:08X}'s removed in the {} ms after its replayed throw", a_entry.first, std::chrono::duration_cast<std::chrono::milliseconds>(GHOST_WATCH).count());
+				REX::INFO("WeaponFire: no projectile of {:08X}'s removed in the {} ms after its replayed throw{}", a_entry.first, std::chrono::duration_cast<std::chrono::milliseconds>(GHOST_WATCH).count(),
+					unreleased ? "; its graph never let go of the throw" : "");
 			}
 			return true;
 		});
@@ -706,8 +764,39 @@ namespace WeaponFire
 			}
 		}
 
-		// Ends the copy's loan: it is set to the health it keeps with the loan still in it (what the explosions took
-		// comes back), and only then is the loan taken away, from a copy that has more than it (BlastShield).
+		// The copy's health modifiers where the engine keeps them (the layout CommonLib gives), if they read as the
+		// engine reads them: each as GetModifier has it, and with the record's health adding up to its health.
+		RE::Modifiers* HealthModifiersOf(RE::Actor* a_actor, const RE::ActorValueInfo& a_health)
+		{
+			const auto& values = static_cast<const RE::ActorValueOwner&>(*a_actor);
+			auto&       held = a_actor->healthModifiers;
+			float       sum = values.GetBaseActorValue(a_health);
+			for (const auto modifier : { RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ACTOR_VALUE_MODIFIER::kDamage }) {
+				const float value = held.modifiers[std::to_underlying(modifier)];
+				if (!(std::abs(value - values.GetModifier(modifier, a_health)) <= 0.01f)) {
+					return nullptr;
+				}
+				sum += value;
+			}
+			return std::abs(sum - values.GetActorValue(a_health)) <= 0.5f ? &held : nullptr;
+		}
+
+		std::string DescribeModifiers(RE::Actor* a_actor, const RE::ActorValueInfo& a_health)
+		{
+			const auto& values = static_cast<const RE::ActorValueOwner&>(*a_actor);
+			return std::format("permanent {:.1f}, temporary {:.1f}, damage {:.1f}", values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kPermanent, a_health),
+				values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_health), values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, a_health));
+		}
+
+		// Copies whose loan ended lately, and when: a death of one soon after goes to the log (ReportLentDeaths).
+		std::unordered_map<std::uint32_t, BlastShield::Clock::time_point> loansEnded;
+		constexpr auto                                                    AFTER_LOAN = 30s;
+		bool                                                              throughEngineWarned = false;
+
+		// Ends the copy's loan: its health modifiers are written to leave it the health it keeps with the loan gone
+		// (what the explosions took comes back), which gives the engine no change to judge (BlastShield). Should they
+		// not read as the engine's, it is set to that health with the loan still in it and only then is the loan
+		// taken away, through the engine.
 		void EndLendingOf(std::uint32_t a_id)
 		{
 			if (!lending.Lent(a_id)) {
@@ -726,22 +815,38 @@ namespace WeaponFire
 			if (!release) {
 				return;
 			}
-			const auto setTo = [&](float a_target) {
-				const float delta = a_target - values.GetActorValue(*health);
-				if (delta < 0.0f) {
-					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, delta);
-				} else if (delta > 0.0f) {
-					values.RestoreActorValue(*health, delta);
+			constexpr auto PERMANENT = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kPermanent);
+			constexpr auto TEMPORARY = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kTemporary);
+			constexpr auto DAMAGE = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kDamage);
+			const auto     held = HealthModifiersOf(actor, *health);
+			// The loan must be in the permanent modifier to come out of it.
+			const bool written = held && held->modifiers[PERMANENT] >= release->lent * 0.5f;
+			if (written) {
+				const auto repaid = BlastShield::Repaid({ held->modifiers[PERMANENT], held->modifiers[TEMPORARY], held->modifiers[DAMAGE] }, values.GetBaseActorValue(*health), release->lent, release->health);
+				held->modifiers[PERMANENT] = repaid.permanent;
+				held->modifiers[TEMPORARY] = repaid.temporary;
+				held->modifiers[DAMAGE] = repaid.damage;
+			} else {
+				if (!std::exchange(throughEngineWarned, true)) {
+					REX::WARN("WeaponFire: {:08X}'s health modifiers do not read as the engine's ({}); its loan is paid back through the engine", a_id, DescribeModifiers(actor, *health));
 				}
-			};
-			setTo(release->health + release->lent);
-			const float set = values.GetActorValue(*health);
-			if (!dead && set - release->lent < release->health - 0.5f) {
-				// Healing fell short: a damage modifier up instead, so taking the loan away cannot kill it.
-				REX::WARN("WeaponFire: healing {:08X} to {:.0f} (with the loan) left it at {:.0f}; raising its damage modifier instead", a_id, release->health + release->lent, set);
-				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, release->health + release->lent - set);
+				const auto setTo = [&](float a_target) {
+					const float delta = a_target - values.GetActorValue(*health);
+					if (delta < 0.0f) {
+						values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, delta);
+					} else if (delta > 0.0f) {
+						values.RestoreActorValue(*health, delta);
+					}
+				};
+				setTo(release->health + release->lent);
+				const float set = values.GetActorValue(*health);
+				if (!dead && set - release->lent < release->health - 0.5f) {
+					// Healing fell short: a damage modifier up instead, so taking the loan away cannot kill it.
+					REX::WARN("WeaponFire: healing {:08X} to {:.0f} (with the loan) left it at {:.0f}; raising its damage modifier instead", a_id, release->health + release->lent, set);
+					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, release->health + release->lent - set);
+				}
+				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, -release->lent);
 			}
-			values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, -release->lent);
 			const float after = values.GetActorValue(*health);
 			if (!dead && !release->kill && had - release->lent < release->health - 0.5f) {
 				++blastsUndone;
@@ -749,16 +854,69 @@ namespace WeaponFire
 			if (!dead && !release->kill && after <= 0.0f) {
 				REX::WARN("WeaponFire: {:08X} has {:.0f} health after its loan ended", a_id, after);
 			}
+			if (loansEnded.size() > BlastShield::MAX_LENT) {
+				loansEnded.clear();
+			}
+			loansEnded[a_id] = BlastShield::Clock::now();
 			if (loanEndsLogged < 40 || release->kill) {
 				++loanEndsLogged;
-				REX::INFO("WeaponFire: {:08X}'s loan ended (player {}'s game runs it): {:.0f} of its own before, {:.0f} now{}{}", a_id, NpcSync::Owner(a_id), had - release->lent, after,
-					dead ? ", dead meanwhile" : "", release->kill ? ", killed by our player's blows" : "");
+				REX::INFO("WeaponFire: {:08X}'s loan ended (player {}'s game runs it): {:.0f} of its own before, {:.1f} now ({}){}{}{}", a_id, NpcSync::Owner(a_id), had - release->lent, after,
+					DescribeModifiers(actor, *health), written ? "" : ", paid back through the engine", dead ? ", dead meanwhile" : "", release->kill ? ", killed by our player's blows" : "");
 			}
 			if (release->kill) {
 				// Our player's blows alone took it to nothing while it had the loan: it dies of them now.
 				++lentKilled;
 				RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_id).c_str());
 			}
+		}
+
+		// Deaths in our world (WorldSync's death watch, on whatever thread the engine sends them), looked at in Frame.
+		struct Death
+		{
+			std::uint32_t id = 0;
+			std::uint32_t killer = 0;
+		};
+		std::mutex         deathLock;
+		std::vector<Death> deathsSeen;
+		std::uint32_t      lentDeathsLogged = 0;
+
+		// A copy that dies while lent health, or soon after its loan ended, goes to the log with what it has, and what
+		// killed it if anything did.
+		void ReportLentDeaths()
+		{
+			std::vector<Death> deaths;
+			{
+				std::scoped_lock l{ deathLock };
+				deaths.swap(deathsSeen);
+			}
+			const auto now = BlastShield::Clock::now();
+			std::erase_if(loansEnded, [&](const auto& a_entry) { return now - a_entry.second > AFTER_LOAN; });
+			const auto health = HealthValue();
+			for (const auto& death : deaths) {
+				const bool lent = lending.Lent(death.id);
+				const auto ended = loansEnded.find(death.id);
+				if (!lent && ended == loansEnded.end()) {
+					continue;
+				}
+				++lentDied;
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.id);
+				if (!actor || !health || lentDeathsLogged >= 40) {
+					continue;
+				}
+				++lentDeathsLogged;
+				const auto when = lent ? std::string{ "while lent health" } :
+				                         std::format("{} ms after its loan ended", std::chrono::duration_cast<std::chrono::milliseconds>(now - ended->second).count());
+				REX::INFO("WeaponFire: our copy {:08X} died {} (killer {:08X}): health {:.1f} ({})", death.id, when, death.killer,
+					static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*health), DescribeModifiers(actor, *health));
+			}
+		}
+	}
+
+	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer)
+	{
+		std::scoped_lock l{ deathLock };
+		if (deathsSeen.size() < 256) {
+			deathsSeen.push_back({ a_refId, a_killer });
 		}
 	}
 
