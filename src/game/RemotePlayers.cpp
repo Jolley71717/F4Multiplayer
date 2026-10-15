@@ -1852,6 +1852,7 @@ namespace RemotePlayers
 				.pitch = static_cast<float>(state->pitch),
 				.moveMode = state->moveMode,
 				.flags = state->flags,
+				.path = sampled->path,
 			});
 		}
 	}
