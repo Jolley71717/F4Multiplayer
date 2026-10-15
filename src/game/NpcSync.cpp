@@ -3,6 +3,7 @@
 #include "game/AimPoint.h"
 #include "game/CommandMeter.h"
 #include "game/CreatureGait.h"
+#include "game/Dialogue.h"
 #include "game/Equipment.h"
 #include "game/Gait.h"
 #include "game/NpcClaims.h"
@@ -83,6 +84,7 @@ namespace NpcSync
 		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
 		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
+		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
@@ -214,14 +216,15 @@ namespace NpcSync
 			}
 		}
 
-		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one fighting us.
+		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one holding us (NpcPlace::StaysWithUs), or one
+		// fighting us.
 		bool ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			if (const auto last = handedOffAt.find(a_id); last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) {
 				return false;
 			}
-			if (a_id == talkingTo || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player) {
+			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player) {
 				return false;
 			}
 			const auto& at = a_actor->data.location;
@@ -247,6 +250,7 @@ namespace NpcSync
 			std::vector<std::uint32_t> handOff;
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
+			holding.clear();
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			if (lists) {
@@ -259,6 +263,9 @@ namespace NpcSync
 					WeaponFire::InstallForNpcs(actor);  // no-op once hooked
 					const auto id = actor->GetFormID();
 					loaded.insert(id);
+					if (Dialogue::Holds(actor)) {
+						holding.push_back(id);
+					}
 
 					const auto owner = OwnerOf(id);
 					if (owner == localId) {
@@ -353,6 +360,7 @@ namespace NpcSync
 			}
 			mirrors.clear();
 			talkingTo = 0;
+			holding.clear();
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
 		}
 
@@ -570,6 +578,7 @@ namespace NpcSync
 				.inScene = a_actor->GetCurrentScene() != nullptr,
 				.fightingUs = player && a_actor->currentCombatTarget.get().get() == player,
 				.talkingToUs = a_id == talkingTo,
+				.holdsUs = Dialogue::Holds(a_actor),
 			};
 		}
 
@@ -665,16 +674,10 @@ namespace NpcSync
 					it = mirrors.erase(it);
 					continue;
 				}
-				// We're talking to it: our own copy talks to us (dialogue is each game's own), so it
-				// runs its own AI here until the conversation ends.
-				if (id == talkingTo) {
-					StopMirroring(id, mirror);
-					++it;
-					continue;
-				}
-				// Our own companion follows us here, whoever runs it elsewhere (two players can
-				// have the same companion).
-				if (IsOurCompanion(actor)) {
+				// We're talking to it, or it is in the scene we're in: our own copy talks to us (dialogue and scenes are
+				// each game's own), so it runs its own AI here until they end. Our own companion follows us here (two
+				// players can have the same companion). Whoever runs it elsewhere (NpcPlace::StaysWithUs).
+				if (NpcPlace::StaysWithUs({ .companion = IsOurCompanion(actor), .talkingToUs = id == talkingTo, .holdsUs = Dialogue::Holds(actor) })) {
 					StopMirroring(id, mirror);
 					++it;
 					continue;
@@ -916,13 +919,23 @@ namespace NpcSync
 				REX::INFO("NpcSync: talking to {:08X} (owner {})", talkingTo, OwnerOf(talkingTo));
 			}
 		}
-		if (talkingTo && now >= nextTalkClaim) {
+		// The NPC we talk to, and those holding us (the conversation's speaker, the others in our scene), are claimed
+		// again while that lasts when we run them, so nobody takes them over mid-scene; else they're taken over.
+		if ((talkingTo || !holding.empty()) && now >= nextTalkClaim) {
 			nextTalkClaim = now + TALK_CLAIM_INTERVAL;
-			if (OwnerOf(talkingTo) == localId) {
-				outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkingTo, Protocol::ClaimReason::kInteract } }), true });
-			} else {
-				OnLocalInteraction(talkingTo);
+			auto keep = holding;
+			if (talkingTo && !std::ranges::contains(keep, talkingTo)) {
+				keep.push_back(talkingTo);
 			}
+			std::vector<Protocol::ActorClaim> claims;
+			for (const auto id : keep) {
+				if (OwnerOf(id) == localId) {
+					claims.push_back({ id, Protocol::ClaimReason::kInteract });
+				} else {
+					OnLocalInteraction(id);
+				}
+			}
+			SendList(claims, [](const std::vector<Protocol::ActorClaim>& a) { return Protocol::Encode(a); }, true);
 		}
 		UpdateMirrors(now);
 	}
@@ -974,6 +987,7 @@ namespace NpcSync
 		lastTakeover.clear();
 		handedOffAt.clear();
 		talkingTo = 0;
+		holding.clear();
 		owned.clear();
 		switchOns.Clear();
 		bringIns.Clear();

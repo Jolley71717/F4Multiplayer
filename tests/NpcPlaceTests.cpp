@@ -154,8 +154,9 @@ namespace
 					ours.loaded = true;
 				}
 			}
-			// UpdateMirrors: talking to us or our companion, ours runs its own AI; else it follows theirs when near.
-			mirrored[a_state.refId] = ours.exists && ours.loaded && !ours.off && !ours.unusable && !ours.talkingToUs && !ours.companion &&
+			// UpdateMirrors: talking to us, holding us in a scene or our companion, ours runs its own AI; else it follows
+			// theirs when near.
+			mirrored[a_state.refId] = ours.exists && ours.loaded && !ours.off && !ours.unusable && !NpcPlace::StaysWithUs(ours) &&
 			                          NpcPlace::Follows(ours.at, theirs, 0s);
 			now += spacing;
 		}
@@ -312,6 +313,39 @@ TEST("npc place: a copy the joiner's own game is using is left where it is: in a
 	CHECK(joiner.why[JUN] == Why::kBusy);
 }
 
+TEST("npc place: a story mod's NPC another game runs is not mirrored here while its scene holds our player (no weapons or Pip-Boy until it ends), and is once the scene lets go")
+{
+	// A story mod's character (a load order of the mod's: 09000004), in its opening scene with our player. A friend
+	// joining, or talking to the same NPC in their game, gets their game to run it; mirrored here, its AI would be off,
+	// its scene would never end, and the engine would keep our player in it.
+	constexpr std::uint32_t DANIEL = 0x09000004;
+	Session s;
+	auto&   game = s.joiner;
+	game.player = Off(SANCTUARY, 100.0f);
+	game.npcs[DANIEL] = LoadedAt(Off(SANCTUARY, 250.0f));
+	game.npcs[DANIEL].inScene = true;
+	game.npcs[DANIEL].holdsUs = true;
+	s.HostStands(Off(SANCTUARY, 300.0f));
+	s.HostRuns({ DANIEL });
+
+	const std::vector<std::pair<std::uint32_t, Spot>> beside{ { DANIEL, Off(SANCTUARY, 260.0f) } };
+	s.HostReports(beside, 10);
+	CHECK(game.why[DANIEL] == Why::kHere);  // loaded where theirs is: nothing to move
+	CHECK(!game.mirrored[DANIEL]);           // but it runs its own AI, and its scene goes on
+	CheckAt(game.npcs[DANIEL], Off(SANCTUARY, 250.0f));
+
+	// Its last line said, the scene leaves only the conversation's speaker holding us: still ours.
+	game.npcs[DANIEL].inScene = false;
+	s.HostReports(beside, 10);
+	CHECK(!game.mirrored[DANIEL]);
+
+	// The conversation over, it is mirrored from the game that runs it.
+	game.npcs[DANIEL].holdsUs = false;
+	s.HostReports(beside, 10);
+	CHECK(game.mirrored[DANIEL]);
+	CHECK(game.moves == 0);
+}
+
 TEST("npc place: a joiner across Sanctuary from the host's Preston leaves theirs in the museum until they walk up")
 {
 	Session s;
@@ -449,10 +483,23 @@ TEST("npc place: each reason ours stays or moves, and when it is mirrored")
 		ours.*change = true;
 		CHECK(NpcPlace::Decide(theirs, ours, us, true) == Why::kCannot);
 	}
-	for (const auto change : { &NpcPlace::Ours::companion, &NpcPlace::Ours::inScene, &NpcPlace::Ours::fightingUs, &NpcPlace::Ours::talkingToUs }) {
+	for (const auto change : { &NpcPlace::Ours::companion, &NpcPlace::Ours::inScene, &NpcPlace::Ours::fightingUs, &NpcPlace::Ours::talkingToUs, &NpcPlace::Ours::holdsUs }) {
 		auto ours = museum;
 		ours.*change = true;
 		CHECK(NpcPlace::Decide(theirs, ours, us, true) == Why::kBusy);
+	}
+	// Ours keeps its own AI, whoever runs it elsewhere, while it follows us or holds us; in a scene of its own (one our
+	// player isn't in) or fighting us, it is mirrored.
+	CHECK(!NpcPlace::StaysWithUs(museum));
+	for (const auto change : { &NpcPlace::Ours::companion, &NpcPlace::Ours::talkingToUs, &NpcPlace::Ours::holdsUs }) {
+		auto ours = museum;
+		ours.*change = true;
+		CHECK(NpcPlace::StaysWithUs(ours));
+	}
+	for (const auto change : { &NpcPlace::Ours::inScene, &NpcPlace::Ours::fightingUs }) {
+		auto ours = museum;
+		ours.*change = true;
+		CHECK(!NpcPlace::StaysWithUs(ours));
 	}
 
 	const auto moving = NpcPlace::CopyOf(museum, Why::kMove);

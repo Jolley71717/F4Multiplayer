@@ -797,7 +797,7 @@ void Server::Run()
 		} else if (hello->contentHash != sessionContentHash) {
 			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
 			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
-				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins));
+				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins, options.ignoredPlugins));
 				return;
 			}
 			// Not their name, and they have no player number yet: where they come from (masked) says which
