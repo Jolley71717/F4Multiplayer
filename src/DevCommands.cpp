@@ -1346,6 +1346,19 @@ namespace DevCommands
 			return holder->NotifyAnimationGraphImpl(RE::BSFixedString{ args[1] }) ? "ok" : "rejected";
 		}
 
+		// throw <actorHex>: the actor performs the engine's throw action (ActionThrow 00004E32) with the throwable it holds,
+		// as an NPC's AI does in combat. A test shortcut: a fight that throws a grenade on cue.
+		std::string Throw(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			const auto action = RE::TESForm::GetFormByID<RE::BGSAction>(0x00004E32);
+			if (!actor || !action) {
+				return "error: usage: throw <actorHex>";
+			}
+			return actor->PerformAction(action, nullptr) ? "thrown" : "refused";
+		}
+
 		// animlog on|off [actorHex]: records the player's (and that actor's) animation events; returns what was recorded so far.
 		std::string AnimLog(std::string_view a_args)
 		{
@@ -2135,6 +2148,7 @@ namespace DevCommands
 			Entry{ "graph", Graph },
 			Entry{ "aim", AimCommand },
 			Entry{ "event", AnimEvent },
+			Entry{ "throw", Throw },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
 			Entry{ "friendlight", FriendLight },
