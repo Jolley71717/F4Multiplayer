@@ -132,10 +132,10 @@ namespace WeaponFire
 		std::uint32_t            explosionsReported = 0;  // explosions seen after our throws and sent
 		std::uint32_t            explosionsSetOff = 0;    // explosions from other players set off here
 		std::uint32_t            explosionRefusedRadius = 0;  // ... not set off: no throw makes one that big (or it has no radius)
-		std::uint32_t            copiesLent = 0;     // our copies of NPCs other games run, kept from a friend's explosion (BlastShield)
-		std::uint32_t            blastsUndone = 0;   // ... given back what it took from them
-		std::uint32_t            lentKilled = 0;     // ... killed by our player's blows meanwhile
-		std::uint32_t            lentDied = 0;       // ... that died while lent, or soon after (a death the log looks into)
+		std::uint32_t            copiesShielded = 0;  // our copies of NPCs other games run made ghosts against a friend's explosion (BlastShield)
+		std::uint32_t            shieldsEnded = 0;    // ... and no ghosts again
+		std::uint32_t            shieldsHurt = 0;     // ... that lost health meanwhile all the same
+		std::uint32_t            shieldedDied = 0;    // ... that died meanwhile all the same
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -352,10 +352,9 @@ namespace WeaponFire
 
 	void ScanExplosions();
 	void RemoveGhostGrenades();
-	void EndDueLending();
 	namespace
 	{
-		void ReportLentDeaths();
+		void EndDueShields();
 	}
 
 	void Frame()
@@ -365,8 +364,7 @@ namespace WeaponFire
 		}));
 		ScanExplosions();
 		RemoveGhostGrenades();
-		EndDueLending();
-		ReportLentDeaths();
+		EndDueShields();
 	}
 
 	namespace
@@ -529,7 +527,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} lent={}/{}/{} lentDied={} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesLent, blastsUndone, lentKilled, lentDied, releasesHeld.load());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, releasesHeld.load());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -701,27 +699,56 @@ namespace WeaponFire
 	// --- Copies kept from a friend's explosion (BlastShield) -----------------------------------
 	namespace
 	{
-		BlastShield::Book lending;
-		std::uint32_t     lendingLogged = 0;
-		std::uint32_t     loanEndsLogged = 0;
+		BlastShield::Book shields;
+		std::uint64_t     frames = 0;  // WeaponFire::Frame calls, for the ghost's frames
+		std::uint32_t     shieldsLogged = 0;
+		std::uint32_t     shieldEndsLogged = 0;
+		std::uint32_t     wereGhosts = 0;  // copies left alone, ghosts already (their own story's, not ours to clear)
+		// The copies' health when they were made ghosts, for the log when the ghost comes off (a ghost the explosion
+		// still hurt shows there).
+		std::unordered_map<std::uint32_t, float> healthWhenShielded;
+		std::unordered_set<std::uint32_t>        unghostLater;  // ghosts of ours not loaded when they were to come off
 
-		const RE::ActorValueInfo* HealthValue()
+		float HealthOf(RE::Actor* a_actor)
 		{
 			const auto values = RE::ActorValue::GetSingleton();
-			return values ? values->health : nullptr;
+			return values && values->health ? static_cast<RE::ActorValueOwner*>(a_actor)->GetActorValue(*values->health) : -1.0f;
 		}
 
-		// Lends health to our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
-		// set off: their owner's game deals its damage to them, and a death of one here would not be believed.
-		void LendNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
+		// The actor's ghost flag as its extra data holds it (a flag after the extra data's header): "on", "off", or
+		// "none" when it has no such data. For the log, and to leave alone an actor that is a ghost already.
+		const char* GhostData(RE::Actor* a_actor)
 		{
-			const auto health = HealthValue();
+			const auto extra = a_actor->extraList ? a_actor->extraList->GetByType(RE::EXTRA_DATA_TYPE::kGhost) : nullptr;
+			if (!extra) {
+				return "none";
+			}
+			return *reinterpret_cast<const bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData)) ? "on" : "off";
+		}
+
+		bool WasGhost(RE::Actor* a_actor)
+		{
+			const auto npc = a_actor->GetNPC();
+			return (npc && npc->IsGhost()) || std::string_view{ GhostData(a_actor) } == "on";
+		}
+
+		void SetGhost(std::uint32_t a_id, bool a_on)
+		{
+			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", a_id, a_on ? 1 : 0).c_str());
+			NpcSync::CountCommands(1);
+		}
+
+		// Makes ghosts of our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
+		// set off: their owner's game deals its damage to them, and a death of one here would not be believed.
+		void ShieldNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
+		{
 			const auto tes = RE::TES::GetSingleton();
 			const auto local = NpcSync::LocalPlayer();
-			if (!health || !tes || local == 0) {
+			if (!tes || local == 0) {
 				return;
 			}
-			// Nothing is changed while the engine walks its lists: the copies are collected first.
+			// Nothing is changed while the engine walks its lists: the copies are collected first. Never the player, a
+			// stand-in (a puppet), an NPC our game runs or one nobody does (BlastShield::Shields).
 			std::vector<std::uint32_t> copies;
 			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
@@ -732,227 +759,135 @@ namespace WeaponFire
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			const auto  now = BlastShield::Clock::now();
-			std::string lent;
+			std::string made;
 			std::string held;
 			for (const auto id : copies) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 				if (!actor) {
 					continue;
 				}
-				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
-				const float was = values.GetActorValue(*health);
-				const float amount = lending.Begin(id, was, now);
-				if (amount <= 0.0f) {
-					if (lending.Lent(id)) {
+				if (!shields.Shielded(id) && WasGhost(actor)) {
+					++wereGhosts;
+					continue;
+				}
+				if (!shields.Begin(id, now, frames)) {
+					if (shields.Shielded(id)) {
 						held += std::format(" {:08X}", id);
 					}
 					continue;
 				}
-				// A permanent modifier, so healing reaches the lent health too (BlastShield). It raises the health with the
-				// maximum; should it raise only the maximum, the copy is healed up to it.
-				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, amount);
-				if (values.GetActorValue(*health) < was + amount * 0.5f) {
-					values.RestoreActorValue(*health, amount);
-				}
-				++copiesLent;
-				lent += std::format(" {:08X}(player {}'s, {:.0f} -> {:.0f})", id, NpcSync::Owner(id), was, values.GetActorValue(*health));
+				SetGhost(id, true);
+				++copiesShielded;
+				healthWhenShielded[id] = HealthOf(actor);
+				made += std::format(" {:08X}(player {}'s, health {:.0f}, ghost {})", id, NpcSync::Owner(id), HealthOf(actor), GhostData(actor));
 			}
-			if ((!lent.empty() || !held.empty()) && lendingLogged < 40) {
-				++lendingLogged;
-				REX::INFO("WeaponFire: player {}'s explosion kept from hurting our copies of NPCs other games run:{}{}{}", a_from, lent.empty() ? " none newly" : lent,
-					held.empty() ? "" : "; still lent from an earlier one:", held);
+			if ((!made.empty() || !held.empty()) && shieldsLogged < 40) {
+				++shieldsLogged;
+				REX::INFO("WeaponFire: player {}'s explosion passes by our copies of NPCs other games run, made ghosts:{}{}{}", a_from, made.empty() ? " none newly" : made,
+					held.empty() ? "" : "; ghosts still from an earlier one:", held);
 			}
 		}
 
-		// The copy's health modifiers where the engine keeps them (the layout CommonLib gives), if they read as the
-		// engine reads them: each as GetModifier has it, and with the record's health adding up to its health.
-		RE::Modifiers* HealthModifiersOf(RE::Actor* a_actor, const RE::ActorValueInfo& a_health)
+		// Takes the copy's ghost off (it was put on by ShieldNear), and logs what the explosion took meanwhile: nothing,
+		// if ghosts are passed by as they should be.
+		void Unshield(std::uint32_t a_id, const char* a_why)
 		{
-			const auto& values = static_cast<const RE::ActorValueOwner&>(*a_actor);
-			auto&       held = a_actor->healthModifiers;
-			float       sum = values.GetBaseActorValue(a_health);
-			for (const auto modifier : { RE::ACTOR_VALUE_MODIFIER::kPermanent, RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ACTOR_VALUE_MODIFIER::kDamage }) {
-				const float value = held.modifiers[std::to_underlying(modifier)];
-				if (!(std::abs(value - values.GetModifier(modifier, a_health)) <= 0.01f)) {
-					return nullptr;
-				}
-				sum += value;
+			const auto before = healthWhenShielded.find(a_id);
+			const float was = before != healthWhenShielded.end() ? before->second : -1.0f;
+			if (before != healthWhenShielded.end()) {
+				healthWhenShielded.erase(before);
 			}
-			return std::abs(sum - values.GetActorValue(a_health)) <= 0.5f ? &held : nullptr;
-		}
-
-		std::string DescribeModifiers(RE::Actor* a_actor, const RE::ActorValueInfo& a_health)
-		{
-			const auto& values = static_cast<const RE::ActorValueOwner&>(*a_actor);
-			return std::format("permanent {:.1f}, temporary {:.1f}, damage {:.1f}", values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kPermanent, a_health),
-				values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, a_health), values.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, a_health));
-		}
-
-		// Copies whose loan ended lately, and when: a death of one soon after goes to the log (ReportLentDeaths).
-		std::unordered_map<std::uint32_t, BlastShield::Clock::time_point> loansEnded;
-		constexpr auto                                                    AFTER_LOAN = 30s;
-		bool                                                              throughEngineWarned = false;
-
-		// Ends the copy's loan: its health modifiers are written to leave it the health it keeps with the loan gone
-		// (what the explosions took comes back), which gives the engine no change to judge (BlastShield). Should they
-		// not read as the engine's, it is set to that health with the loan still in it and only then is the loan
-		// taken away, through the engine.
-		void EndLendingOf(std::uint32_t a_id)
-		{
-			if (!lending.Lent(a_id)) {
-				return;
-			}
-			const auto health = HealthValue();
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-			if (!health || !actor || actor->IsDeleted()) {
-				lending.Forget(a_id);
+			if (!actor || actor->IsDeleted()) {
+				// Not loaded now: its ghost comes off when it is again.
+				if (unghostLater.size() < BlastShield::MAX_SHIELDED) {
+					unghostLater.insert(a_id);
+				}
 				return;
 			}
-			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
-			const float had = values.GetActorValue(*health);
-			const bool  dead = actor->IsDead(false);
-			const auto  release = lending.End(a_id, had, dead);
-			if (!release) {
-				return;
+			SetGhost(a_id, false);
+			++shieldsEnded;
+			const float now = HealthOf(actor);
+			if (now < was - 0.5f) {
+				++shieldsHurt;
 			}
-			constexpr auto PERMANENT = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kPermanent);
-			constexpr auto TEMPORARY = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kTemporary);
-			constexpr auto DAMAGE = std::to_underlying(RE::ACTOR_VALUE_MODIFIER::kDamage);
-			const auto     held = HealthModifiersOf(actor, *health);
-			// The loan must be in the permanent modifier to come out of it.
-			const bool written = held && held->modifiers[PERMANENT] >= release->lent * 0.5f;
-			if (written) {
-				const auto repaid = BlastShield::Repaid({ held->modifiers[PERMANENT], held->modifiers[TEMPORARY], held->modifiers[DAMAGE] }, values.GetBaseActorValue(*health), release->lent, release->health);
-				held->modifiers[PERMANENT] = repaid.permanent;
-				held->modifiers[TEMPORARY] = repaid.temporary;
-				held->modifiers[DAMAGE] = repaid.damage;
-			} else {
-				if (!std::exchange(throughEngineWarned, true)) {
-					REX::WARN("WeaponFire: {:08X}'s health modifiers do not read as the engine's ({}); its loan is paid back through the engine", a_id, DescribeModifiers(actor, *health));
-				}
-				const auto setTo = [&](float a_target) {
-					const float delta = a_target - values.GetActorValue(*health);
-					if (delta < 0.0f) {
-						values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, delta);
-					} else if (delta > 0.0f) {
-						values.RestoreActorValue(*health, delta);
-					}
-				};
-				setTo(release->health + release->lent);
-				const float set = values.GetActorValue(*health);
-				if (!dead && set - release->lent < release->health - 0.5f) {
-					// Healing fell short: a damage modifier up instead, so taking the loan away cannot kill it.
-					REX::WARN("WeaponFire: healing {:08X} to {:.0f} (with the loan) left it at {:.0f}; raising its damage modifier instead", a_id, release->health + release->lent, set);
-					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *health, release->health + release->lent - set);
-				}
-				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kPermanent, *health, -release->lent);
-			}
-			const float after = values.GetActorValue(*health);
-			if (!dead && !release->kill && had - release->lent < release->health - 0.5f) {
-				++blastsUndone;
-			}
-			if (!dead && !release->kill && after <= 0.0f) {
-				REX::WARN("WeaponFire: {:08X} has {:.0f} health after its loan ended", a_id, after);
-			}
-			if (loansEnded.size() > BlastShield::MAX_LENT) {
-				loansEnded.clear();
-			}
-			loansEnded[a_id] = BlastShield::Clock::now();
-			if (loanEndsLogged < 40 || release->kill) {
-				++loanEndsLogged;
-				REX::INFO("WeaponFire: {:08X}'s loan ended (player {}'s game runs it): {:.0f} of its own before, {:.1f} now ({}){}{}{}", a_id, NpcSync::Owner(a_id), had - release->lent, after,
-					DescribeModifiers(actor, *health), written ? "" : ", paid back through the engine", dead ? ", dead meanwhile" : "", release->kill ? ", killed by our player's blows" : "");
-			}
-			if (release->kill) {
-				// Our player's blows alone took it to nothing while it had the loan: it dies of them now.
-				++lentKilled;
-				RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_id).c_str());
+			if (shieldEndsLogged < 40 || now < was - 0.5f) {
+				++shieldEndsLogged;
+				REX::INFO("WeaponFire: {:08X} is no ghost again ({}): health {:.0f} then, {:.0f} now{}, ghost {}", a_id, a_why, was, now, actor->IsDead(false) ? ", dead" : "",
+					GhostData(actor));
 			}
 		}
 
 		// Deaths in our world (WorldSync's death watch, on whatever thread the engine sends them), looked at in Frame.
-		struct Death
-		{
-			std::uint32_t id = 0;
-			std::uint32_t killer = 0;
-		};
-		std::mutex         deathLock;
-		std::vector<Death> deathsSeen;
-		std::uint32_t      lentDeathsLogged = 0;
+		std::mutex                 deathLock;
+		std::vector<std::uint32_t> deathsSeen;
 
-		// A copy that dies while lent health, or soon after its loan ended, goes to the log with what it has, and what
-		// killed it if anything did.
-		void ReportLentDeaths()
+		// A copy that dies while it is a ghost of ours is one the explosion still reached: counted and logged.
+		void ReportShieldedDeaths()
 		{
-			std::vector<Death> deaths;
+			std::vector<std::uint32_t> deaths;
 			{
 				std::scoped_lock l{ deathLock };
 				deaths.swap(deathsSeen);
 			}
-			const auto now = BlastShield::Clock::now();
-			std::erase_if(loansEnded, [&](const auto& a_entry) { return now - a_entry.second > AFTER_LOAN; });
-			const auto health = HealthValue();
-			for (const auto& death : deaths) {
-				const bool lent = lending.Lent(death.id);
-				const auto ended = loansEnded.find(death.id);
-				if (!lent && ended == loansEnded.end()) {
-					continue;
+			for (const auto id : deaths) {
+				if (shields.Shielded(id)) {
+					++shieldedDied;
+					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+					REX::WARN("WeaponFire: our copy {:08X} died while a ghost against a friend's explosion (health {:.0f}, ghost {})", id, actor ? HealthOf(actor) : -1.0f,
+						actor ? GhostData(actor) : "?");
 				}
-				++lentDied;
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.id);
-				if (!actor || !health || lentDeathsLogged >= 40) {
-					continue;
+			}
+		}
+
+		void EndDueShields()
+		{
+			++frames;
+			ReportShieldedDeaths();
+			std::erase_if(unghostLater, [](std::uint32_t a_id) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
+					return false;
 				}
-				++lentDeathsLogged;
-				const auto when = lent ? std::string{ "while lent health" } :
-				                         std::format("{} ms after its loan ended", std::chrono::duration_cast<std::chrono::milliseconds>(now - ended->second).count());
-				REX::INFO("WeaponFire: our copy {:08X} died {} (killer {:08X}): health {:.1f} ({})", death.id, when, death.killer,
-					static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*health), DescribeModifiers(actor, *health));
+				SetGhost(a_id, false);
+				REX::INFO("WeaponFire: {:08X} is no ghost again, loaded once more", a_id);
+				return true;
+			});
+			if (shields.Size() == 0) {
+				return;
+			}
+			// A copy whose NPC is no longer another game's (ours now, or nobody's) is no ghost of ours a frame longer.
+			const auto local = NpcSync::LocalPlayer();
+			for (const auto id : shields.Ids()) {
+				if (!BlastShield::Shields(NpcSync::Owner(id), local) && shields.End(id)) {
+					Unshield(id, "no longer another game's");
+				}
+			}
+			for (const auto id : shields.Due(BlastShield::Clock::now(), frames)) {
+				Unshield(id, "the explosion is over");
 			}
 		}
 	}
 
-	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer)
+	void NoteDeath(std::uint32_t a_refId)
 	{
 		std::scoped_lock l{ deathLock };
 		if (deathsSeen.size() < 256) {
-			deathsSeen.push_back({ a_refId, a_killer });
+			deathsSeen.push_back(a_refId);
 		}
 	}
 
-	void EndDueLending()
+	void EndShield(std::uint32_t a_refId)
 	{
-		if (lending.Size() == 0) {
-			return;
-		}
-		for (const auto id : lending.Due(BlastShield::Clock::now())) {
-			EndLendingOf(id);
+		if (shields.End(a_refId)) {
+			Unshield(a_refId, "no longer mirrored");
 		}
 	}
 
-	void OurBlows(const std::vector<std::pair<std::uint32_t, float>>& a_blows)
+	void EndAllShields()
 	{
-		if (lending.Size() == 0) {
-			return;
-		}
-		// All of a frame's blows counted first (a shotgun's pellets), then each copy's lending ends once.
-		for (const auto& [id, damage] : a_blows) {
-			lending.OurBlow(id, damage);
-		}
-		for (const auto& [id, damage] : a_blows) {
-			EndLendingOf(id);
-		}
-	}
-
-	void EndLending(std::uint32_t a_refId)
-	{
-		EndLendingOf(a_refId);
-	}
-
-	void EndAllLending()
-	{
-		for (const auto id : lending.Due(BlastShield::Clock::time_point::max())) {
-			EndLendingOf(id);
+		for (const auto id : shields.EndAll()) {
+			Unshield(id, "a save, a load or the session's end");
 		}
 	}
 
@@ -994,7 +929,7 @@ namespace WeaponFire
 			return;
 		}
 		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
-		LendNear(at, radius, a_explosion.playerId);
+		ShieldNear(at, radius, a_explosion.playerId);
 		RE::NEW_REFR_DATA data;
 		data.location = at;
 		data.object = base;

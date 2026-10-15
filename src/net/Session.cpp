@@ -544,6 +544,7 @@ namespace Session
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
 			NpcSync::Reset();
+			WeaponFire::EndAllShields();
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
@@ -994,7 +995,7 @@ namespace Session
 		SendWorldEvents();
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
-		WeaponFire::EndAllLending();  // health lent against a friend's explosion is never saved; what it took is given back
+		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
 		Downed::OnBeforeSave();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {

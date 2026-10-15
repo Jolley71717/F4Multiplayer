@@ -53,22 +53,17 @@ namespace WeaponFire
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId);
 	[[nodiscard]] std::vector<Protocol::Explosion> TakeExplosions();
 	// Sets off an explosion another player reported, if it is in our space and near enough to matter. Our copies
-	// of NPCs another game runs are kept from its damage (BlastShield): their owner's game deals it.
+	// of NPCs another game runs are made ghosts while it goes off (BlastShield): their owner's game deals its damage.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
 
-	// Our player's blows this frame (NPC, health it took): a copy kept from a friend's explosion that our player hits
-	// is ours to hurt again at once, keeping what the blows took (BlastShield).
-	void OurBlows(const std::vector<std::pair<std::uint32_t, float>>& a_blows);
+	// Our copy of this NPC stops being mirrored: a ghost of ours against a friend's explosion comes off now.
+	void EndShield(std::uint32_t a_refId);
 
-	// Gives back what a friend's explosion took from our copy of this NPC, before another game's report of its
-	// health is applied (measured without the health lent against the explosion).
-	void EndLending(std::uint32_t a_refId);
+	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
+	void EndAllShields();
 
-	// The same for every copy, before a save (the lent health is never saved, the damage would be).
-	void EndAllLending();
-
-	// An NPC died in our world (a_killer 0 if nothing killed it): a copy that was lent health lately goes to the log.
-	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
+	// An NPC died in our world: a copy that was a ghost of ours then is counted and logged (the explosion reached it).
+	void NoteDeath(std::uint32_t a_refId);
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);

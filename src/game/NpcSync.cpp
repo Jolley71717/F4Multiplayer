@@ -177,6 +177,7 @@ namespace NpcSync
 
 		void StopMirroring(std::uint32_t a_id, Mirror& a_mirror)
 		{
+			WeaponFire::EndShield(a_id);  // a ghost made against a friend's explosion, if it is one now
 			if (!a_mirror.registered) {
 				return;
 			}
