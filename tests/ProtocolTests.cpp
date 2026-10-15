@@ -1221,9 +1221,9 @@ TEST("protocol: LoadOrderDifference names what only one side has, or the order")
 	CHECK(LoadOrderDifference({ "Fallout4.esm", "X.esp", "Y.esp" }, session).size() <= MAX_REASON_LENGTH);
 }
 
-TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists")
+TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists where they move no other plugin")
 {
-	const std::vector<std::string> session{ "Fallout4.esm", "HDTextures.esp", "A.esp" };
+	const std::vector<std::string> session{ "Fallout4.esm", "A.esp", "HDTextures.esp" };
 	const std::vector<std::string> ignore{ "hdtextures.esp" };
 	CHECK(SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, ignore));
 	CHECK(SameLoadOrderIgnoring({ "fallout4.esm", "a.esp", "HDTextures.esp" }, session, ignore));
@@ -1231,6 +1231,60 @@ TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of b
 	CHECK(!SameLoadOrderIgnoring({ "A.esp", "Fallout4.esm" }, session, ignore));  // order still counts
 	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, {}));
 	CHECK(!SameLoadOrderIgnoring({}, session, ignore));
+}
+
+TEST("protocol: SameLoadOrderIgnoring refuses an ignored plugin that moves a kept one's form IDs, counting full and light plugins apart")
+{
+	const std::vector<std::string> ignore{ "Textures.esp", "Textures.esl" };
+	const std::vector<std::string> before{ "Fallout4.esm", "Textures.esp", "Story.esp" };
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "Story.esp" }, before, ignore));  // Story.esp is 02 there, 01 here
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "Story.esp", "Textures.esp" }, before, ignore));
+	CHECK(SameLoadOrderIgnoring({ "Fallout4.esm", "Textures.esp", "Story.esp" }, before, ignore));
+
+	const auto light = [](std::vector<std::string> a_full, std::initializer_list<std::string> a_light) {
+		return ComparedLoadOrder(std::move(a_full), std::vector<std::string>(a_light));
+	};
+	// A full plugin last, then light ones: the light ones keep their places.
+	CHECK(SameLoadOrderIgnoring(light({ "Fallout4.esm", "Story.esp", "Textures.esp" }, { "Weapons.esl" }), light({ "Fallout4.esm", "Story.esp" }, { "Weapons.esl" }), ignore));
+	// A light one before another light one moves it.
+	CHECK(!SameLoadOrderIgnoring(light({ "Fallout4.esm" }, { "Textures.esl", "Weapons.esl" }), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+	CHECK(SameLoadOrderIgnoring(light({ "Fallout4.esm" }, { "Weapons.esl", "Textures.esl" }), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+	// A light plugin is not the full plugin of the same place.
+	CHECK(!SameLoadOrderIgnoring(light({ "Fallout4.esm", "Weapons.esl" }, {}), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+}
+
+TEST("protocol: the HD texture pack is left out of the compared load order only when no full plugin loads after it")
+{
+	const std::vector<std::string> official{ "Fallout4.esm", "DLCNukaWorld.esm" };
+	auto withPack = official;
+	withPack.emplace_back("dlcultrahighresolution.esm");
+	CHECK(ComparedFullPlugins(withPack) == official);
+	CHECK(LoadOrderHash(ComparedLoadOrder(withPack, { "a.esl" })) == LoadOrderHash(ComparedLoadOrder(official, { "a.esl" })));
+
+	auto modded = withPack;
+	modded.emplace_back("Story.esp");
+	CHECK(ComparedFullPlugins(modded) == modded);
+	auto moddedWithout = official;
+	moddedWithout.emplace_back("Story.esp");
+	CHECK(LoadOrderHash(ComparedLoadOrder(modded, {})) != LoadOrderHash(ComparedLoadOrder(moddedWithout, {})));
+
+	// The hello's list carries the mark between the kinds; the hash ignores case.
+	const auto order = ComparedLoadOrder(official, { "A.esl" });
+	CHECK(order.size() == 4);
+	CHECK(order[2] == LIGHT_PLUGINS);
+	CHECK(LoadOrderHash(order) == LoadOrderHash(ComparedLoadOrder({ "FALLOUT4.ESM", "dlcnukaworld.esm" }, { "a.esl" })));
+}
+
+TEST("protocol: LoadOrderDifference never names the light plugins' mark, and says texture plugins may differ only last")
+{
+	const auto session = ComparedLoadOrder({ "Fallout4.esm", "Textures.esp", "Story.esp" }, { "A.esl" });
+	const auto theirs = ComparedLoadOrder({ "Fallout4.esm", "Story.esp" }, { "A.esl" });
+	const auto reason = LoadOrderDifference(theirs, session, { "textures.esp" });
+	CHECK(reason.find("You are missing: Textures.esp.") != std::string::npos);
+	CHECK(reason.find("Texture plugins may differ only when they load last.") != std::string::npos);
+	CHECK(reason.find(LIGHT_PLUGINS) == std::string::npos);
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "A.esl" }, session).find(LIGHT_PLUGINS) == std::string::npos);  // a list without the mark
+	CHECK(LoadOrderDifference(theirs, ComparedLoadOrder({ "Fallout4.esm", "Story.esp", "B.esp" }, { "A.esl" })).find("Texture plugins") == std::string::npos);
 }
 
 TEST("protocol: Activation round trips and needs a shareable ref")

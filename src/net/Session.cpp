@@ -95,38 +95,25 @@ namespace Session
 			Hud::Notify(a_message);
 		}
 
-		// FNV-1a over the load order, so players with different mods are told up front.
+		// FNV-1a over the load order, so players with different mods are told up front. The free high-resolution
+		// texture pack is textures only (its plugin is empty), so a player without it can play with one who has it;
+		// unless other plugins load after it, whose form IDs it moves up a place (Protocol::ComparedFullPlugins).
 		std::uint32_t ComputeContentHash()
 		{
-			std::uint32_t hash = 2166136261u;
-			const auto    mix = [&](std::string_view a_text) {
-                for (const char c : a_text) {
-                    hash ^= static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c)));
-                    hash *= 16777619u;
-                }
-                hash ^= '|';
-                hash *= 16777619u;
-			};
-
-			// The free high-resolution texture pack is textures only (its plugin is empty), so a
-			// player without it can play with one who has it.
-			const auto texturesOnly = [](std::string_view a_name) {
-				return std::ranges::equal(a_name, std::string_view{ "dlcultrahighresolution.esm" }, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
-			};
-			const auto data = RE::TESDataHandler::GetSingleton();
-			plugins.clear();
+			const auto               data = RE::TESDataHandler::GetSingleton();
+			std::vector<std::string> full;
+			std::vector<std::string> light;
 			for (const auto file : data->compiledFileCollection.files) {
-				if (!texturesOnly(file->GetFilename())) {
-					mix(file->GetFilename());
-					plugins.emplace_back(file->GetFilename());
-				}
+				full.emplace_back(file->GetFilename());
 			}
-			mix("--light--");
 			for (const auto file : data->compiledFileCollection.smallFiles) {
-				mix(file->GetFilename());
-				plugins.emplace_back(file->GetFilename());
+				light.emplace_back(file->GetFilename());
 			}
-			return hash;
+			plugins = Protocol::ComparedLoadOrder(std::move(full), light);
+			if (std::ranges::any_of(plugins, [](const std::string& a_name) { return Protocol::SamePluginName(a_name, Protocol::TEXTURE_PACK); })) {
+				REX::INFO("Session: the HD texture pack counts in the load order: the plugins after it have other form IDs without it");
+			}
+			return Protocol::LoadOrderHash(plugins);
 		}
 
 		std::string PlayerName()

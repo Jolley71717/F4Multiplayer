@@ -11,7 +11,9 @@ in your game, or on nothing.
 ## What is checked today
 
 At startup the plugin hashes the names of the loaded plugins, in order (FNV-1a, 32 bits), skipping
-the free HD texture pack. The hash travels in the hello message. The server keeps the first
+the free HD texture pack when it is the last full plugin (it holds no records, but it takes a place
+in the load order: with mods after it, a mod's NPC is 09000004 with it and 08000004 without, so it
+counts then). The hash travels in the hello message. The server keeps the first
 player's hash; a later hello with a different one is refused, and the refusal names the plugins only
 the joiner has and the ones they are missing (the plugin list travels with the hello; protocol 23),
 or says the order differs. Nothing else is compared: not plugin versions, not file contents, not F4SE
@@ -30,7 +32,8 @@ plugins, not INI settings.
 
 ## Recommendation
 
-C and D are done (protocol 23; `sIgnoredPlugins` in the host's ini, compared on the plugin lists). Next B with a conservative built-in list (the
+C and D are done (protocol 23; `sIgnoredPlugins` in the host's ini, compared on the plugin lists, full and light plugins apart: an
+ignored plugin may differ only where no kept plugin of its kind loads after it, since it would move that one's form IDs). Next B with a conservative built-in list (the
 official HD pack is already there; add the common texture and audio replacers, and any plugin whose
 record types are all outside what the mod shares) and D so hosts can extend it. Leave E and F out:
 E is a large, silent-failure change for a problem that matching load orders solves, and F cannot

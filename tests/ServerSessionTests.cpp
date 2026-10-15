@@ -1265,3 +1265,203 @@ TEST("server session: a load order that differs only in the host's ignored plugi
 	REQUIRE(reject);
 	CHECK(Contains(reject->reason, "Only you have: Other.esp"));
 }
+
+namespace
+{
+	// A game's plugins as the engine loads them: the full ones (the HD texture pack among the game's own, when
+	// installed) and the light ones.
+	struct LoadOrder
+	{
+		std::vector<std::string> full;
+		std::vector<std::string> light;
+	};
+
+	// The hello that game's Session sends: its load order as compared, and that list's hash.
+	Protocol::Hello HelloWith(std::string a_name, const LoadOrder& a_game)
+	{
+		auto hello = Fixture::MakeHello(std::move(a_name));
+		hello.plugins = Protocol::ComparedLoadOrder(a_game.full, a_game.light);
+		hello.contentHash = Protocol::LoadOrderHash(hello.plugins);
+		return hello;
+	}
+
+	// The first byte of the form IDs the game gives a plugin's records (FE for a light plugin, whose place among
+	// the light ones is in the next 12 bits), or nullopt when the game hasn't it.
+	std::optional<std::uint32_t> PrefixOf(const LoadOrder& a_game, std::string_view a_plugin)
+	{
+		for (std::size_t i = 0; i < a_game.full.size(); ++i) {
+			if (Protocol::SamePluginName(a_game.full[i], a_plugin)) {
+				return static_cast<std::uint32_t>(i) << 24;
+			}
+		}
+		for (std::size_t i = 0; i < a_game.light.size(); ++i) {
+			if (Protocol::SamePluginName(a_game.light[i], a_plugin)) {
+				return 0xFE000000u | (static_cast<std::uint32_t>(i) << 12);
+			}
+		}
+		return std::nullopt;
+	}
+
+	// Whether a mod's NPC, quest or topic is the same form in both games: every plugin both have gets the same form IDs.
+	bool SameFormIds(const LoadOrder& a_one, const LoadOrder& a_other)
+	{
+		for (const auto& list : { a_one.full, a_one.light }) {
+			for (const auto& plugin : list) {
+				const auto theirs = PrefixOf(a_other, plugin);
+				if (theirs && *theirs != *PrefixOf(a_one, plugin)) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	const std::vector<std::string> OFFICIAL{ "Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm", "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm" };
+
+	std::vector<std::string> Official(std::initializer_list<std::string> a_after)
+	{
+		auto out = OFFICIAL;
+		out.insert(out.end(), a_after);
+		return out;
+	}
+}
+
+TEST("server session: with a story mod, a friend without the host's HD texture pack is refused, naming it: the mod's NPC would be another form in each game")
+{
+	// The report: a story mod and its companion mod after the game's own files. With the texture pack the mod's NPC
+	// is 09000004, without it 08000004.
+	const LoadOrder host{ Official({ "DLCUltraHighResolution.esm", "AmericaRising2.esp", "DanielTheRemnant.esp" }), { "ccbgsfo4044-hellfirepowerarmor.esl" } };
+	const LoadOrder withoutPack{ Official({ "AmericaRising2.esp", "DanielTheRemnant.esp" }), host.light };
+	CHECK(*PrefixOf(host, "DanielTheRemnant.esp") == 0x09000000u);
+	CHECK(*PrefixOf(withoutPack, "DanielTheRemnant.esp") == 0x08000000u);
+	CHECK(!SameFormIds(host, withoutPack));
+
+	Fixture f;
+	REQUIRE(f.Join(1, HelloWith("Host", host)));
+	f.fake->Take(1);
+	const auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Friend", withoutPack)));
+	REQUIRE(reject);
+	CHECK(Contains(reject->reason, "You are missing: DLCUltraHighResolution.esm"));
+	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+
+	// A friend with the pack too has the host's load order.
+	CHECK(SameFormIds(host, host));
+	REQUIRE(f.Join(3, HelloWith("Friend", host)));
+}
+
+TEST("server session: without mods after it, the HD texture pack still makes no difference: the friend without it gets in")
+{
+	const LoadOrder host{ Official({ "DLCUltraHighResolution.esm" }), { "ccbgsfo4044-hellfirepowerarmor.esl" } };
+	const LoadOrder withoutPack{ OFFICIAL, host.light };
+	CHECK(SameFormIds(host, withoutPack));
+	CHECK(HelloWith("Host", host).contentHash == HelloWith("Friend", withoutPack).contentHash);
+
+	Fixture f;
+	REQUIRE(f.Join(1, HelloWith("Host", host)));
+	REQUIRE(f.Join(2, HelloWith("Friend", withoutPack)));
+}
+
+TEST("server session: a plugin the host lets differ gets a friend in only where it moves no other plugin's form IDs")
+{
+	Server::Options options;
+	options.ignoredPlugins = { "Textures.esp", "LightTextures.esl" };
+	Fixture f{ options };
+	// The host's texture plugin loads before the story mod: the story mod's forms are 09 in the host's game.
+	const LoadOrder host{ Official({ "Textures.esp", "Story.esp" }), { "LightTextures.esl", "Weapons.esl" } };
+	REQUIRE(f.Join(1, HelloWith("Host", host)));
+	f.fake->Take(1);
+
+	// Without the texture plugin, the story mod's forms are 08: refused, and told why.
+	const LoadOrder without{ Official({ "Story.esp" }), host.light };
+	CHECK(!SameFormIds(host, without));
+	auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Bob", without)));
+	REQUIRE(reject);
+	CHECK(Contains(reject->reason, "You are missing: Textures.esp"));
+	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+
+	// With it, but after the story mod: refused too.
+	const LoadOrder after{ Official({ "Story.esp", "Textures.esp" }), host.light };
+	CHECK(!SameFormIds(host, after));
+	reject = JoinRejected(f, 3, Protocol::Encode(HelloWith("Carol", after)));
+	REQUIRE(reject);
+
+	// A light texture plugin missing before a light weapons plugin moves that one's form IDs the same way.
+	const LoadOrder withoutLight{ host.full, { "Weapons.esl" } };
+	CHECK(!SameFormIds(host, withoutLight));
+	reject = JoinRejected(f, 4, Protocol::Encode(HelloWith("Dave", withoutLight)));
+	REQUIRE(reject);
+	CHECK(Contains(reject->reason, "You are missing: LightTextures.esl"));
+
+	// The same load order gets in.
+	REQUIRE(f.Join(5, HelloWith("Erin", host)));
+}
+
+TEST("server session: texture plugins the host lets differ that load last, full or light, let a friend without them in")
+{
+	Server::Options options;
+	options.ignoredPlugins = { "Textures.esp", "LightTextures.esl" };
+	Fixture f{ options };
+	const LoadOrder host{ Official({ "Story.esp", "Textures.esp" }), { "Weapons.esl", "LightTextures.esl" } };
+	REQUIRE(f.Join(1, HelloWith("Host", host)));
+
+	// Nothing after either: every plugin both have is the same forms in both games.
+	const LoadOrder without{ Official({ "Story.esp" }), { "Weapons.esl" } };
+	CHECK(SameFormIds(host, without));
+	REQUIRE(f.Join(2, HelloWith("Bob", without)));
+	CHECK(f.Logged("ignored plugins"));
+
+	// A full texture plugin last moves no light plugin: they are numbered apart.
+	const LoadOrder fullOnly{ Official({ "Story.esp" }), host.light };
+	CHECK(SameFormIds(host, fullOnly));
+	REQUIRE(f.Join(3, HelloWith("Carol", fullOnly)));
+}
+
+TEST("server session file: a host whose HD texture pack now counts keeps the world saved by an older version; another load order still starts fresh")
+{
+	// The host's game: the pack, then a story mod. Older versions left the pack out of the hash wherever it loaded.
+	const LoadOrder host{ Official({ "DLCUltraHighResolution.esm", "Story.esp" }), { "Weapons.esl" } };
+	const auto      oldHash = Protocol::LoadOrderHash(Protocol::ComparedLoadOrder(Official({ "Story.esp" }), host.light));
+	REQUIRE(HelloWith("Host", host).contentHash != oldHash);
+	CHECK(Protocol::LoadOrderHashBeforeTexturePack(HelloWith("Host", host).plugins) == oldHash);
+	CHECK(!Protocol::LoadOrderHashBeforeTexturePack({}));
+
+	constexpr std::uint32_t STORY_NPC = 0x08000004;
+	const auto saveOld = [&](const TempSessionFile& a_file) {
+		SessionFile::Snapshot saved;
+		saved.contentHash = oldHash;
+		saved.sessionId = 0x5E55;
+		saved.deadActors = { STORY_NPC };
+		REQUIRE(SessionFile::Save(a_file.path, saved));
+	};
+	{
+		const TempSessionFile file;
+		saveOld(file);
+		Server::Options options;
+		options.sessionFile = file.path.string();
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, HelloWith("Host", host));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId == 0x5E55);
+		CHECK(f.Logged("hashed as older versions did"));
+		CHECK(!f.Logged("load order changed"));
+		const auto world = WorldStates(Received(f, 1));
+		REQUIRE(world.size() == 1);
+		CHECK(std::ranges::contains(world[0].deadActors, STORY_NPC));
+
+		// A friend on the new version with the host's load order joins on the hash; one without the pack is refused.
+		REQUIRE(f.Join(2, HelloWith("Friend", host)));
+		CHECK(JoinRejected(f, 3, Protocol::Encode(HelloWith("Other", { Official({ "Story.esp" }), host.light }))));
+	}
+	{
+		// A load order whose old hash is not the saved one is another load order: a fresh session.
+		const TempSessionFile file;
+		saveOld(file);
+		Server::Options options;
+		options.sessionFile = file.path.string();
+		Fixture    f{ options };
+		const auto welcome = f.Join(1, HelloWith("Host", { Official({ "DLCUltraHighResolution.esm", "Other.esp" }), host.light }));
+		REQUIRE(welcome);
+		CHECK(welcome->sessionId != 0x5E55);
+		CHECK(f.Logged("load order changed"));
+	}
+}

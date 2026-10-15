@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -961,8 +962,75 @@ namespace Protocol
 		return msg;
 	}
 
-	// Whether two load orders are the same once the ignored plugins (the host's list) are left out of
-	// both: same names, same order. False when either list is unknown.
+	// In a hello's load order, between the full plugins and the light ones (.esl files, and plugins flagged light).
+	// The two kinds are numbered apart: a full plugin's form IDs start with its place among the full ones (09000004),
+	// a light one's with FE and its place among the light ones.
+	inline constexpr std::string_view LIGHT_PLUGINS = "--light--";
+
+	// The free high resolution texture pack's plugin. It holds no records, so a player without it can play with one
+	// who has it; but it takes a place in the load order like any other plugin.
+	inline constexpr std::string_view TEXTURE_PACK = "DLCUltraHighResolution.esm";
+
+	[[nodiscard]] inline bool SamePluginName(std::string_view a_a, std::string_view a_b)
+	{
+		return std::ranges::equal(a_a, a_b, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
+	}
+
+	// The full plugins, in load order, as players' load orders are compared: the texture pack is left out only when no
+	// other full plugin loads after it. With mods after it, it moves them all up a place: a story mod's NPC is 09000004
+	// with the pack and 08000004 without, and shared by form ID it would be some other mod's form, or nothing, in a
+	// friend's game.
+	[[nodiscard]] inline std::vector<std::string> ComparedFullPlugins(std::vector<std::string> a_full)
+	{
+		if (!a_full.empty() && SamePluginName(a_full.back(), TEXTURE_PACK)) {
+			a_full.pop_back();
+		}
+		return a_full;
+	}
+
+	// A game's load order as its hello carries it: the full plugins (ComparedFullPlugins), LIGHT_PLUGINS, the light ones.
+	[[nodiscard]] inline std::vector<std::string> ComparedLoadOrder(std::vector<std::string> a_full, const std::vector<std::string>& a_light)
+	{
+		auto out = ComparedFullPlugins(std::move(a_full));
+		out.emplace_back(LIGHT_PLUGINS);
+		out.insert(out.end(), a_light.begin(), a_light.end());
+		return out;
+	}
+
+	// FNV-1a over a load order (ComparedLoadOrder), names in any case: the hello's content hash. Players whose hashes
+	// match play together without the lists being compared.
+	[[nodiscard]] inline std::uint32_t LoadOrderHash(const std::vector<std::string>& a_plugins)
+	{
+		std::uint32_t hash = 2166136261u;
+		for (const auto& name : a_plugins) {
+			for (const char c : name) {
+				hash ^= static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c)));
+				hash *= 16777619u;
+			}
+			hash ^= '|';
+			hash *= 16777619u;
+		}
+		return hash;
+	}
+
+	// The hash older versions sent for a hello's load order: the texture pack left out wherever it loads. A session
+	// saved with it is this load order's when it matches, so a host whose pack now counts keeps their shared world.
+	// None for a list that is missing or cut short (MAX_PLUGINS).
+	[[nodiscard]] inline std::optional<std::uint32_t> LoadOrderHashBeforeTexturePack(const std::vector<std::string>& a_plugins)
+	{
+		if (a_plugins.empty() || a_plugins.size() >= MAX_PLUGINS) {
+			return std::nullopt;
+		}
+		auto plugins = a_plugins;
+		std::erase_if(plugins, [](const std::string& a_name) { return SamePluginName(a_name, TEXTURE_PACK); });
+		return LoadOrderHash(plugins);
+	}
+
+	// Whether two load orders give every plugin the same form IDs once the ignored plugins (the host's list) are left
+	// out of both: the same plugins, in the same order, and each at the same place among its kind (full or light, split
+	// by LIGHT_PLUGINS; a list without it is taken as all full). An ignored plugin that only one player has moves every
+	// plugin of its kind after it, so it may differ only after the rest: the ones after it would be other forms in each
+	// game. False when either list is unknown.
 	inline bool SameLoadOrderIgnoring(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored)
 	{
 		if (a_theirs.empty() || a_sessions.empty()) {
@@ -974,13 +1042,21 @@ namespace Protocol
 			}
 			return a_s;
 		};
+		// Each kept plugin: its name, whether it is light, and its place among its kind.
 		const auto kept = [&](const std::vector<std::string>& a_names) {
-			std::vector<std::string> out;
+			std::vector<std::tuple<std::string, bool, std::size_t>> out;
+			bool                                                    light = false;
+			std::size_t                                             place = 0;
 			for (const auto& name : a_names) {
-				const auto l = lower(name);
-				if (std::ranges::none_of(a_ignored, [&](const std::string& a_ignore) { return lower(a_ignore) == l; })) {
-					out.push_back(l);
+				if (name == LIGHT_PLUGINS) {
+					light = true;
+					place = 0;
+					continue;
 				}
+				if (std::ranges::none_of(a_ignored, [&](const std::string& a_ignore) { return SamePluginName(a_ignore, name); })) {
+					out.emplace_back(lower(name), light, place);
+				}
+				++place;
 			}
 			return out;
 		};
@@ -990,7 +1066,7 @@ namespace Protocol
 	// What a refused player needs to hear: the plugins only they have, and the ones only the session
 	// has (in load-order terms: names and order; a different order shows as both sides "having"
 	// nothing extra, so the order is named then). Fits a Reject.
-	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions)
+	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored = {})
 	{
 		const auto lower = [](std::string a_s) {
 			for (char& c : a_s) {
@@ -1002,7 +1078,7 @@ namespace Protocol
 			std::vector<std::string> out;
 			for (const auto& name : a_in) {
 				const auto l = lower(name);
-				if (std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
+				if (name != LIGHT_PLUGINS && std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
 					out.push_back(name);
 				}
 			}
@@ -1032,6 +1108,13 @@ namespace Protocol
 		}
 		if (mine.empty() && missing.empty()) {
 			out += " Same mods, different order: sort yours like theirs.";
+		}
+		// A plugin that may differ (the texture pack, or one the host lets differ) is named because others load after it.
+		const auto mayDiffer = [&](const std::string& a_name) {
+			return SamePluginName(a_name, TEXTURE_PACK) || std::ranges::any_of(a_ignored, [&](const std::string& a_ignore) { return SamePluginName(a_ignore, a_name); });
+		};
+		if (std::ranges::any_of(mine, mayDiffer) || std::ranges::any_of(missing, mayDiffer)) {
+			out += " Texture plugins may differ only when they load last.";
 		}
 		return out;
 	}
