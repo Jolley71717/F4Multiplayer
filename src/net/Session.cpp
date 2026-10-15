@@ -16,6 +16,7 @@
 #include "game/Face.h"
 #include "game/Gait.h"
 #include "game/Hud.h"
+#include "game/LooksMenu.h"
 #include "game/MapShare.h"
 #include "game/WorkshopSync.h"
 #include "game/Voice.h"
@@ -894,7 +895,10 @@ namespace Session
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
 			auto face = Face::Read(RE::PlayerCharacter::GetSingleton()->GetNPC());
-			if (face.race != 0 && (!sentFace || *sentFace != face)) {
+			// With LooksMenu, its body sliders too: the face waits for the first read of them (a moment), so that
+			// friends do not make our stand-in once without them and again with them.
+			face.bodyMorphs = LooksMenu::PlayerMorphs();
+			if (face.race != 0 && LooksMenu::Settled() && (!sentFace || *sentFace != face)) {
 				if (welcomed) {
 					client->Send(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);
 				}
@@ -982,6 +986,9 @@ namespace Session
 			}
 		}
 
+		if (InGame()) {
+			LooksMenu::Frame();
+		}
 		RemotePlayers::Update();
 		Compass::Frame();
 		Puppets::Tick();
@@ -1032,6 +1039,7 @@ namespace Session
 		Downed::OnGameLoaded();
 		Party::OnGameLoaded();
 		RemotePlayers::OnGameLoaded();
+		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		WorkshopSync::OnGameLoaded();
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
@@ -1072,7 +1080,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + LooksMenu::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

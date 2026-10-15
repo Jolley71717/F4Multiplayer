@@ -121,6 +121,7 @@ namespace ProtocolSamples
 		f.bones = { { 7, { 0.1f, 0.0f, -0.2f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.1f } } };
 		f.tints = { { 1001, 1, 90, 0xFFC08060, 3 }, { 1003, 2, 100, 0, 0 } };
 		f.bodyTint[0] = 200, f.bodyTint[3] = 255;
+		f.bodyMorphs = { { "Breasts", 0.4f }, { "Waist", -0.25f } };
 		return f;
 	}
 

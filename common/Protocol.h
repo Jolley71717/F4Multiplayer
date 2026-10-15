@@ -358,6 +358,13 @@ namespace Protocol
 	inline constexpr std::size_t MAX_FACE_SLIDERS = 256;
 	inline constexpr std::size_t MAX_FACE_BONES = 256;
 	inline constexpr std::size_t MAX_FACE_TINTS = 96;
+	// LooksMenu's body sliders (F4EE body morphs), for players who have it: a morph's name as BodySlide
+	// built it into the body's meshes, and its strength. Only that many, with names that long, travel; a
+	// value is brought into the range below (LooksMenu's own sliders stay well inside it), so a modified
+	// game cannot stretch a friend's stand-in out of shape in every game.
+	inline constexpr std::size_t MAX_BODY_MORPHS = 128;
+	inline constexpr std::size_t MAX_BODY_MORPH_NAME = 64;
+	inline constexpr float       MAX_BODY_MORPH_VALUE = 2.0f;
 
 	// A workshop object (a wall, a turret, a crop...) placed, moved or scrapped by a player. refId is
 	// the object's reference ID in the sender's game (runtime IDs differ per game, so receivers map
@@ -428,6 +435,14 @@ namespace Protocol
 		bool operator==(const FaceTint&) const = default;
 	};
 
+	struct BodyMorph
+	{
+		std::string name;  // the morph (a BodySlide slider), at most MAX_BODY_MORPH_NAME long
+		float       value = 0.0f;
+
+		bool operator==(const BodyMorph&) const = default;
+	};
+
 	struct Face
 	{
 		std::uint32_t              playerId = 0;  // ignored client -> server
@@ -441,6 +456,9 @@ namespace Protocol
 		std::vector<FaceBone>      bones;
 		std::vector<FaceTint>      tints;
 		std::uint8_t               bodyTint[4] = {};  // RGBA
+		// LooksMenu's body sliders, sorted by name; empty when the sender has no LooksMenu (or never moved one).
+		// A receiver without LooksMenu leaves them be.
+		std::vector<BodyMorph>     bodyMorphs;
 
 		bool operator==(const Face&) const = default;
 	};
@@ -1551,6 +1569,18 @@ namespace Protocol
 		for (const auto v : a_msg.bodyTint) {
 			w.U8(v);
 		}
+		// A name too long to travel whole is left out rather than cut to another morph's name.
+		std::vector<const BodyMorph*> morphs;
+		for (const auto& m : a_msg.bodyMorphs) {
+			if (morphs.size() < MAX_BODY_MORPHS && !m.name.empty() && m.name.size() <= MAX_BODY_MORPH_NAME) {
+				morphs.push_back(&m);
+			}
+		}
+		w.U8(static_cast<std::uint8_t>(morphs.size()));
+		for (const auto m : morphs) {
+			w.Str(m->name, MAX_BODY_MORPH_NAME);
+			w.F32(m->value);
+		}
 		return w.Data();
 	}
 
@@ -1617,6 +1647,20 @@ namespace Protocol
 		}
 		for (auto& v : msg.bodyTint) {
 			v = r.U8();
+		}
+		const auto morphs = r.U8();
+		if (morphs > MAX_BODY_MORPHS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < morphs && r.Ok(); ++i) {
+			BodyMorph m;
+			m.name = r.Str(MAX_BODY_MORPH_NAME);
+			m.value = r.F32();
+			if (r.Ok() && (m.name.empty() || !std::isfinite(m.value))) {
+				return std::nullopt;
+			}
+			m.value = std::clamp(m.value, -MAX_BODY_MORPH_VALUE, MAX_BODY_MORPH_VALUE);
+			msg.bodyMorphs.push_back(std::move(m));
 		}
 		if (!r.Ok() || !r.AtEnd() || msg.race == 0) {
 			return std::nullopt;

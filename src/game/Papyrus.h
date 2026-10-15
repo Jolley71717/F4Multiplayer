@@ -15,6 +15,7 @@ namespace Papyrus
 
 		// Slots from the game's IVirtualMachine vtable.
 		constexpr std::size_t CREATE_OBJECT_SLOT = 0x17;          // CreateObject(name, out)
+		constexpr std::size_t DISPATCH_STATIC_SLOT = 0x2C;         // DispatchStaticCall(script, function, ...)
 		constexpr std::size_t DISPATCH_METHOD_OBJECT_SLOT = 0x2D;  // DispatchMethodCall(object, ...)
 
 		inline std::uintptr_t Slot(void* a_object, std::size_t a_index)
@@ -34,26 +35,32 @@ namespace Papyrus
 			const Callback none{};
 			return reinterpret_cast<fn_t>(Slot(a_vm, DISPATCH_METHOD_OBJECT_SLOT))(a_vm, a_self, a_function, a_args, none);
 		}
+
+		inline bool DispatchStaticCall(RE::BSScript::IVirtualMachine* a_vm, const RE::BSFixedString& a_script, const RE::BSFixedString& a_function, const ArgsFn& a_args, const Callback& a_callback)
+		{
+			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSFixedString&, const RE::BSFixedString&, const ArgsFn&, const Callback&);
+			return reinterpret_cast<fn_t>(Slot(a_vm, DISPATCH_STATIC_SLOT))(a_vm, a_script, a_function, a_args, a_callback);
+		}
 	}
 
-	// T must be the object's script type (e.g. RE::Actor for actors).
+	// The script object bound to a game object (T its script type, e.g. RE::Actor for actors), or null.
 	// a_create: make a script object for the reference if none is bound (needed for references made
 	// at runtime). Leave it off for calls that may hit many references: creating an object inside
 	// the VM has crashed the game (BSScript VirtualMachine::CreateObject) on a mirrored NPC.
-	template <class T, class... Args>
-	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
+	template <class T>
+	RE::BSTSmartPointer<RE::BSScript::Object> BoundObject(T* a_object, std::string_view a_scriptName, bool a_create)
 	{
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
 		if (!vm || !a_object) {
-			return false;
+			return {};
 		}
 
 		const auto& handles = vm->GetObjectHandlePolicy();
 		const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<T>(), a_object);
 		if (handle == handles.EmptyHandle()) {
-			REX::WARN("Papyrus: no handle for {}.{}", a_scriptName, a_function);
-			return false;
+			REX::WARN("Papyrus: no handle for a {}", a_scriptName);
+			return {};
 		}
 
 		// Objects created at runtime may not have a script object bound yet.
@@ -61,13 +68,43 @@ namespace Papyrus
 		RE::BSTSmartPointer<RE::BSScript::Object> object;
 		if (!vm->FindBoundObject(handle, scriptName.c_str(), false, object, false) || !object) {
 			if (!a_create) {
-				return false;
+				return {};
 			}
 			if (!detail::CreateObject(vm.get(), scriptName, object) || !object) {
 				REX::WARN("Papyrus: could not create {} object", a_scriptName);
-				return false;
+				return {};
 			}
 			vm->GetObjectBindPolicy().BindObject(object, handle);
+		}
+		return object;
+	}
+
+	// Calls a script's global function (a plugin's native one, say) with the arguments a_args fills in. a_callback,
+	// if any, is told the result, or that the call was cancelled, later on one of the VM's threads. False if the
+	// call could not be queued.
+	inline bool CallStatic(std::string_view a_script, std::string_view a_function, const std::function<void(RE::BSScrapArray<RE::BSScript::Variable>&)>& a_args, const detail::Callback& a_callback = {})
+	{
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		if (!vm) {
+			return false;
+		}
+		const detail::ArgsFn args{ [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+			a_args(a_out);
+			return true;
+		} };
+		return detail::DispatchStaticCall(vm.get(), RE::BSFixedString{ a_script }, RE::BSFixedString{ a_function }, args, a_callback);
+	}
+
+	// T must be the object's script type (e.g. RE::Actor for actors). a_create: see BoundObject.
+	template <class T, class... Args>
+	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
+	{
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		const auto object = BoundObject(a_object, a_scriptName, a_create);
+		if (!vm || !object) {
+			return false;
 		}
 
 		const detail::ArgsFn args{ [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
