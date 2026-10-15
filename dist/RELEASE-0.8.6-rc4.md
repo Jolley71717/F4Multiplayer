@@ -9,7 +9,8 @@ What changed since rc3:
 - A friend who runs is shown running, not walking fast: their stand-in follows their own walk, run or sprint, at the pace their own game plays it, and strafes or backs up when they do.
 - A friend's stand-in moves more evenly when their game runs slowly, and no longer slows down and lurches after a stall. A friend whose game hitched while joining is drawn close behind within a second or two, not trailing for half a minute.
 - People and creatures another player's game runs strafe, back up and turn the way they do in that game, instead of flipping between directions. Dogmeat walks, trots and runs as he does in that game.
-- A friend's stand-in aims its gun up and down where they look.
+- A friend's stand-in aims its gun up and down where they look. People another player's game runs aim up and down at what they shoot at there, not level.
+- An enemy another player's game runs is hurt in your game only by players' hits: its own side's grenades, and the fire they leave, no longer kill your copy of it while it fights on in their game.
 - A friend's gun shows on their stand-in with their own barrel, sights and receiver, not a set rolled for your level. Armor and power armor pieces keep their mods too; a mod from a plugin you don't have is left off instead of the gun being handed over again and again.
 - A friend in power armor is drawn on the frame they wear (the plain one, not the AtomCat frame).
 - Downed: a player knocked down with friends around waits to be helped up again (rc3 could kill them outright). A friend within a few steps helps them up after 2 seconds; after 45 seconds alone they die once and the game loads their last save. Friends see "is back up", never a false "died", and pausing while you get up doesn't kill you. A friend's stand-in no longer sits on the ground while they fight.
@@ -22,3 +23,4 @@ What changed since rc3:
 Known issues:
 
 - Two players opening or closing the same door at the same instant can end up seeing it differently; using the door again puts them back in step.
+- Your companion's or turret's hits on an enemy another player's game runs don't count yet: only players' hits wear it down.
