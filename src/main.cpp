@@ -8,6 +8,7 @@
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Menu.h"
+#include "game/MenuWatch.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -238,6 +239,9 @@ namespace
 		case F4SE::MessagingInterface::kGameDataReady:
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
 			Compass::Install();
+			if (Config::Get().devChannel) {
+				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
+			}
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
