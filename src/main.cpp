@@ -36,6 +36,22 @@ namespace
 {
 	bool gameDataReady = false;
 
+	// Set at the game's shutdown stage (ExitMusic::AtShutdown), on the main thread, as Main::Shutdown begins: from there
+	// on the engine tears the world down, and no game work of ours runs (see Quitting).
+	std::atomic<bool> shutdownStage{ false };
+
+	// Whether the game is quitting: the shutdown stage has come, or the engine has set Main's quit flag (the menu,
+	// the console, a script, or the window being destroyed), on which it leaves its main loop for Main::Shutdown.
+	// Main itself is deleted late in that shutdown and its pointer cleared, after the stage: it is not read then.
+	bool Quitting()
+	{
+		if (shutdownStage.load(std::memory_order_relaxed)) {
+			return true;
+		}
+		const auto main = RE::Main::GetSingleton();
+		return !main || std::atomic_ref{ main->quitGame }.load(std::memory_order_relaxed);
+	}
+
 	// The thread the plugin was loaded on: the game's main thread (WinMain).
 	std::thread::id mainThread;
 	std::atomic<bool>          mainThreadChecked{ false };  // MainThread::Capture
@@ -242,6 +258,7 @@ namespace
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
 			ExitMusic::AtShutdown([] {
+				shutdownStage = true;  // first: a frame message the engine dispatches from here on runs nothing
 				try {
 					Session::Shutdown();
 				} catch (const std::exception& e) {
@@ -370,6 +387,7 @@ namespace
 	unsigned int             frameMessage = 0;
 	std::atomic<bool>        windowFailed{ false };                 // read by net status (MainThread::HookState)
 	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
+	bool                     quitSeen = false;  // main thread only: a message came after the game began quitting (logged once)
 	NestedPump::Check        pumpCheck = NestedPump::Check::kUnknown;  // main thread only
 	std::atomic<bool>        framePosted{ false };
 	std::chrono::steady_clock::time_point postedAt{};
@@ -431,6 +449,7 @@ namespace
 	struct WindowCalls
 	{
 		void             Taken() { framePosted = false; }  // the next drawn frame posts another
+		bool             Quitting() { return ::Quitting(); }
 		NestedPump::Seen Where() { return WhereDispatched(); }
 		void             Posted() { SaveLoadHold::Global().RunPosted(); }
 		void             Frame() { RunFrame(true); }
@@ -447,7 +466,9 @@ namespace
 			// An exception must never escape into the game's message loop, the stack check's included.
 			try {
 				WindowCalls calls;
-				NestedPump::Dispatch(a_wparam == WAKE, inFrame, calls);
+				if (NestedPump::Dispatch(a_wparam == WAKE, inFrame, calls) == NestedPump::Action::kQuit && !std::exchange(quitSeen, true)) {
+					REX::INFO("Frame: the game is quitting; no more game work runs");
+				}
 			} catch (const std::exception& e) {
 				REX::ERROR("Frame: {}", e.what());
 			}
@@ -494,6 +515,10 @@ namespace
 	// The F4SE permanent task (see NewFrame for when it runs).
 	void OnFrame()
 	{
+		// The game is on its way out: nothing more is posted (the window may be gone), nor run here.
+		if (gameDataReady && Quitting()) {
+			return;
+		}
 		const auto now = std::chrono::steady_clock::now();
 		if (!NewFrame(now)) {
 			return;
