@@ -1,0 +1,35 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+namespace RE
+{
+	class Actor;
+	class TESHitEvent;
+}
+
+// Our copies of NPCs another game runs: nothing in our world but our player's hits is to take their health
+// (CopyHealth), and what does hit them, or kill them, goes to the log. Main thread, except the Note* calls.
+namespace CopyWatch
+{
+	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
+	void NoteHit(const RE::TESHitEvent& a_event);
+
+	// A death in our world, and what killed it (0: nothing).
+	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
+
+	// Another player's report set the copy's health (WorldSync::TrySetHealth): where it stands from now on.
+	void HealthSet(std::uint32_t a_refId, float a_before, float a_health);
+
+	// Gives copies back what something other than our player took, and logs the hits and deaths. Every frame.
+	void Frame();
+
+	void Reset();
+
+	// Whether the actor is a ghost, as the engine says and as its extra data holds it: "on (extra on)", "off (extra
+	// none)" and so on ("?" for no actor).
+	[[nodiscard]] std::string GhostState(RE::Actor* a_actor);
+
+	[[nodiscard]] std::string Describe();
+}

@@ -1,6 +1,7 @@
 #include "game/WorldSync.h"
 
 #include "MainThread.h"
+#include "game/CopyWatch.h"
 #include "game/DeathReports.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
@@ -320,6 +321,7 @@ namespace WorldSync
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				WeaponFire::NoteDeath(id);
+				CopyWatch::NoteDeath(id, killer ? killer->GetFormID() : 0);
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
 				if (byPlayer) {
@@ -455,12 +457,14 @@ namespace WorldSync
 			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 			const float maximum = values.GetPermanentActorValue(*info);
 			const float target = std::clamp(a_fraction, 0.0f, 1.0f) * maximum;
-			const float delta = target - values.GetActorValue(*info);
+			const float before = values.GetActorValue(*info);
+			const float delta = target - before;
 			if (delta < 0.0f) {
 				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, delta);
 			} else if (delta > 0.0f) {
 				values.RestoreActorValue(*info, delta);
 			}
+			CopyWatch::HealthSet(a_refId, before, values.GetActorValue(*info));
 			return true;
 		}
 
@@ -470,6 +474,8 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESHitEvent& a_event, RE::BSTEventSource<RE::TESHitEvent>*) override
 			{
+				// Any hit, by anything (a hazard's has no cause): our copies of NPCs other games run are watched.
+				CopyWatch::NoteHit(a_event);
 				const auto target = a_event.target.get();
 				const auto cause = a_event.cause.get();
 				if (!target || !cause) {
@@ -1268,6 +1274,7 @@ namespace WorldSync
 	void Frame(bool a_hosting)
 	{
 		MainThread::Assert("WorldSync::Frame");
+		CopyWatch::Frame();
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::vector<std::uint32_t>                  newRefLoads;
@@ -1416,6 +1423,7 @@ namespace WorldSync
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
 		checkAllLoaded = true;
+		CopyWatch::Reset();
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
 		standInHits.clear();

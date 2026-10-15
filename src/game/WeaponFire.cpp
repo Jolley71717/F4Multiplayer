@@ -1,6 +1,7 @@
 #include "game/WeaponFire.h"
 
 #include "game/BlastShield.h"
+#include "game/CopyWatch.h"
 #include "game/DeferredDelete.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
@@ -136,6 +137,7 @@ namespace WeaponFire
 		std::uint32_t            shieldsEnded = 0;    // ... and no ghosts again
 		std::uint32_t            shieldsHurt = 0;     // ... that lost health meanwhile all the same
 		std::uint32_t            shieldedDied = 0;    // ... that died meanwhile all the same
+		std::uint32_t            ghostsStuck = 0;     // ... still ghosts five frames after we took the ghost off
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -527,7 +529,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, releasesHeld.load());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -732,10 +734,51 @@ namespace WeaponFire
 			return (npc && npc->IsGhost()) || std::string_view{ GhostData(a_actor) } == "on";
 		}
 
+		// What a copy's ghost reads a frame, and five, after we set it or took it off: whether the console's command
+		// takes at once or a frame later, and whether a ghost taken off stays off. For the log.
+		struct GhostReadback
+		{
+			std::uint32_t id = 0;
+			bool          on = false;
+			std::uint64_t frame = 0;
+		};
+
+		constexpr std::uint64_t    READBACK_LAST = 5;
+		std::vector<GhostReadback> ghostReadbacks;
+		std::uint32_t              readbacksLogged = 0;
+
 		void SetGhost(std::uint32_t a_id, bool a_on)
 		{
 			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", a_id, a_on ? 1 : 0).c_str());
 			NpcSync::CountCommands(1);
+			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id); actor && readbacksLogged < 120) {
+				++readbacksLogged;
+				REX::INFO("WeaponFire: {:08X}.setghost {} sent, the ghost reads {} at once", a_id, a_on ? 1 : 0, CopyWatch::GhostState(actor));
+			}
+			if (ghostReadbacks.size() < BlastShield::MAX_SHIELDED) {
+				ghostReadbacks.push_back({ a_id, a_on, frames });
+			}
+		}
+
+		void ReadBackGhosts()
+		{
+			std::erase_if(ghostReadbacks, [](const GhostReadback& a_readback) {
+				const auto after = frames - a_readback.frame;
+				if (after != 1 && after != READBACK_LAST) {
+					return after > READBACK_LAST;
+				}
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_readback.id);
+				const bool still = actor && a_readback.on != actor->GetGhost();
+				if (after == READBACK_LAST && still && !a_readback.on) {
+					++ghostsStuck;
+				}
+				if (readbacksLogged < 120 || (after == READBACK_LAST && still)) {
+					++readbacksLogged;
+					REX::INFO("WeaponFire: {:08X}, {} frame{} after setghost {}: the ghost reads {}{}", a_readback.id, after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
+						CopyWatch::GhostState(actor), still ? ", not yet as set" : "");
+				}
+				return after == READBACK_LAST;
+			});
 		}
 
 		// Makes ghosts of our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
@@ -779,7 +822,7 @@ namespace WeaponFire
 				SetGhost(id, true);
 				++copiesShielded;
 				healthWhenShielded[id] = HealthOf(actor);
-				made += std::format(" {:08X}(player {}'s, health {:.0f}, ghost {})", id, NpcSync::Owner(id), HealthOf(actor), GhostData(actor));
+				made += std::format(" {:08X}(player {}'s, health {:.0f}, ghost {})", id, NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
 			}
 			if ((!made.empty() || !held.empty()) && shieldsLogged < 40) {
 				++shieldsLogged;
@@ -813,8 +856,7 @@ namespace WeaponFire
 			}
 			if (shieldEndsLogged < 40 || now < was - 0.5f) {
 				++shieldEndsLogged;
-				REX::INFO("WeaponFire: {:08X} is no ghost again ({}): health {:.0f} then, {:.0f} now{}, ghost {}", a_id, a_why, was, now, actor->IsDead(false) ? ", dead" : "",
-					GhostData(actor));
+				REX::INFO("WeaponFire: {:08X} is no ghost again ({}): health {:.0f} then, {:.0f} now{}", a_id, a_why, was, now, actor->IsDead(false) ? ", dead" : "");
 			}
 		}
 
@@ -835,7 +877,7 @@ namespace WeaponFire
 					++shieldedDied;
 					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 					REX::WARN("WeaponFire: our copy {:08X} died while a ghost against a friend's explosion (health {:.0f}, ghost {})", id, actor ? HealthOf(actor) : -1.0f,
-						actor ? GhostData(actor) : "?");
+						CopyWatch::GhostState(actor));
 				}
 			}
 		}
@@ -843,6 +885,7 @@ namespace WeaponFire
 		void EndDueShields()
 		{
 			++frames;
+			ReadBackGhosts();
 			ReportShieldedDeaths();
 			std::erase_if(unghostLater, [](std::uint32_t a_id) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);

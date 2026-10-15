@@ -8,6 +8,7 @@
 #include "sim/Sim.h"
 
 #include "game/BlastShield.h"
+#include "game/CopyHealth.h"
 #include "game/RemoteEdits.h"
 #include "game/ThrowReplays.h"
 
@@ -52,14 +53,18 @@ namespace
 	};
 
 	// One player's game: its NPCs, and what WeaponFire and WorldSync do there with a friend's explosion, a friend's
-	// throw replayed on a copy, our own player's blows and another game's health report. A death goes out once, as
-	// WorldSync reports it. Time goes by a frame at a time (Wait).
+	// throw replayed on a copy, our own player's blows and another game's health report, and what CopyWatch gives
+	// back to a copy that something other than our player hurt. A death goes out once, as WorldSync reports it. Time
+	// goes by a frame at a time (Wait).
 	struct Game
 	{
 		Client&                        client;
 		std::map<std::uint32_t, Npc>   npcs;
 		BlastShield::Book              shields;
 		ThrowReplays::Book             throws;
+		CopyHealth::Book               copies;
+		bool                           watchCopies = true;  // CopyWatch (off: as before it)
+		float                          givenBack = 0.0f;
 		BlastShield::Clock::time_point now{};
 		std::uint64_t                  frame = 0;
 		std::set<std::uint32_t>        reported;
@@ -158,6 +163,28 @@ namespace
 				for (const auto id : shields.Due(now, frame)) {
 					Unshield(id);
 				}
+				WatchCopies();
+			}
+		}
+
+		// CopyWatch::Frame: a living copy of an NPC another game runs gets back what it lost with no blow of our
+		// player's on it.
+		void WatchCopies()
+		{
+			if (!watchCopies) {
+				return;
+			}
+			for (auto& [id, npc] : npcs) {
+				const auto owner = client.OwnerOf(id);
+				if (npc.dead || owner == 0 || owner == client.Id()) {
+					continue;
+				}
+				const float give = copies.Check(id, npc.health, now);
+				if (give > 0.0f) {
+					npc.health += give;
+					givenBack += give;
+					copies.Set(id, npc.health);
+				}
 			}
 		}
 
@@ -170,13 +197,18 @@ namespace
 
 		// Our player hits an NPC (WorldSync's HitWatcher, then its Frame): a shot that lands on a copy another game
 		// runs claims it (which tells the server we fight it) and sends its health; a ghost's passes it by, no hit.
-		void OurBlow(std::uint32_t a_id, float a_damage)
+		// The hit's event can be heard a frame after its damage (a_heardLate).
+		void OurBlow(std::uint32_t a_id, float a_damage, bool a_heardLate = false)
 		{
 			auto& npc = npcs.at(a_id);
 			if (npc.ghost || npc.ownGhost || npc.dead) {
 				return;
 			}
 			npc.Hurt(a_damage);
+			if (a_heardLate) {
+				Wait(std::chrono::milliseconds{ 50 });
+			}
+			copies.OurHit(a_id, now);
 			if (client.OwnerOf(a_id) != client.Id()) {
 				client.Claim(a_id, Reason::kInteract);
 			}
@@ -192,6 +224,7 @@ namespace
 			auto& npc = npcs.at(a_id);
 			if (!npc.dead) {
 				npc.health = a_fraction * 100.0f;
+				copies.Set(a_id, npc.health);
 			}
 		}
 	};
@@ -296,6 +329,34 @@ namespace
 		c.bobGame.LetGo(RAIDER_1);
 		c.bobGame.Wait(std::chrono::seconds{ 10 });
 		c.s.Settle();
+	}
+
+	// The live test of the ghosts, fourth round: the host's raider (RAIDER_1) threw four times beside RAIDER_4, both
+	// with 30 health, and kept it in the host's game. In the friend's game both copies were ghosts for each explosion
+	// (their health then the same as before), but between the explosions something there burned RAIDER_1's copy down,
+	// 30, 26, 21, 19, 12, 11, until it lay dead at 0. Here a fire burns both copies half a point a frame between the
+	// explosions (a ghost is passed by): eighty points in all, more than either has. Returns the least health either
+	// copy had along the way.
+	float BurnedBetweenFourThrows(Corvega& c)
+	{
+		c.SecondHostRaider(30.0f);
+		float least = 30.0f;
+		for (int i = 0; i < 4; ++i) {
+			c.HostRaiderThrows();
+			c.bobGame.Wait(std::chrono::milliseconds{ 150 });
+			c.HostExplosionReachesBob(63.0f);
+			for (int tick = 0; tick < 40; ++tick) {
+				for (const auto id : { RAIDER_1, RAIDER_4 }) {
+					c.bobGame.Hurt(id, 0.5f);
+					least = std::min(least, c.bobGame.npcs[id].health);
+				}
+				c.bobGame.Wait(std::chrono::milliseconds{ 50 });
+			}
+			c.bobGame.LetGo(RAIDER_1);
+		}
+		c.bobGame.Wait(std::chrono::seconds{ 1 });
+		c.s.Settle();
+		return least;
 	}
 }
 
@@ -605,4 +666,115 @@ TEST("blast shield: a replayed throw's release is kept once per replay, within t
 	book.Arm(RAIDER_3, t0);
 	book.Forget(RAIDER_3);
 	CHECK(!book.Unreleased(RAIDER_3));
+}
+
+TEST("copy health: the friend's copies of the host's raiders, burned between the explosions by something in the friend's world, are given back what they lost and live on as in the host's")
+{
+	Corvega c;
+	const float least = BurnedBetweenFourThrows(c);
+	CHECK(least >= 28.0f);  // given back a tenth of a second after each burn, never worn down
+	for (const auto id : { RAIDER_1, RAIDER_4 }) {
+		CHECK(!c.bobGame.npcs[id].dead);
+		CHECK(c.bobGame.npcs[id].health == 30.0f);
+		CHECK(!c.bob.WorldNow().dead.contains(id));
+		CHECK(!c.host.WorldNow().dead.contains(id));
+	}
+	CHECK(c.bobGame.givenBack > 0.0f);
+	CHECK(!c.s.Logged("death of 0002A001 from player"));
+}
+
+TEST("copy health: without the copies watched, the burn would have killed the friend's copy of the host's raider in the friend's game only")
+{
+	Corvega c;
+	c.bobGame.watchCopies = false;
+	BurnedBetweenFourThrows(c);
+	CHECK(c.bobGame.npcs[RAIDER_1].dead);
+	CHECK(c.bob.WorldNow().dead.contains(RAIDER_1));
+	CHECK(!c.host.WorldNow().dead.contains(RAIDER_1));
+	CHECK(c.s.Logged("death of 0002A001 from player"));
+}
+
+TEST("copy health: the player's own blows on a copy are kept, one heard a frame after its damage among them, and a kill of theirs is believed")
+{
+	Corvega c;
+	auto&   host = c.host;
+	auto&   bob = c.bob;
+	c.bobGame.Wait(std::chrono::milliseconds{ 50 });
+	c.bobGame.OurBlow(RAIDER_1, 25.0f, true);
+	c.bobGame.Wait(std::chrono::seconds{ 1 });
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 75.0f);
+	c.bobGame.OurBlow(RAIDER_1, 25.0f);
+	c.bobGame.Wait(std::chrono::seconds{ 3 });
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 50.0f);
+	CHECK(c.bobGame.givenBack == 0.0f);
+
+	// The host's game still runs it (Bob fights it, which the server knows): a fire in Bob's game three seconds
+	// after his last blow is not his, and is given back.
+	c.s.Settle();
+	REQUIRE(bob.OwnerOf(RAIDER_1) == host.Id());
+	c.bobGame.Hurt(RAIDER_1, 10.0f);
+	c.bobGame.Wait(std::chrono::seconds{ 1 });
+	CHECK(c.bobGame.npcs[RAIDER_1].health == 50.0f);
+	CHECK(c.bobGame.givenBack == 10.0f);
+	c.bobGame.OurBlow(RAIDER_1, 50.0f);
+	CHECK(c.bobGame.npcs[RAIDER_1].dead);
+	c.s.Settle();
+	CHECK(host.WorldNow().dead.contains(RAIDER_1));
+	CHECK(bob.WorldNow().dead.contains(RAIDER_1));
+}
+
+TEST("copy health: a copy's drop is judged after a tenth of a second, kept around our player's hit, and set by a report")
+{
+	using CopyHealth::Book;
+	using std::chrono::milliseconds;
+	const CopyHealth::Clock::time_point t0{};
+	Book book;
+
+	// First seen: where it stands. Gaining health, or losing less than rounding, is kept.
+	CHECK(book.Check(RAIDER_1, 30.0f, t0) == 0.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 30.0f });
+	CHECK(book.Check(RAIDER_1, 40.0f, t0 + milliseconds{ 50 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 39.97f, t0 + milliseconds{ 100 }) == 0.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 39.97f });
+	book.Set(RAIDER_1, 30.0f);
+
+	// A drop with no hit of ours: given back once it has stood a tenth of a second, all of it.
+	CHECK(book.Check(RAIDER_1, 26.0f, t0 + milliseconds{ 1000 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 25.0f, t0 + milliseconds{ 1050 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 24.0f, t0 + milliseconds{ 1000 } + CopyHealth::JUDGE_AFTER) == 6.0f);
+	book.Set(RAIDER_1, 30.0f);
+
+	// Our player's hit, heard before the drop or a frame after it: kept.
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 2000 });
+	CHECK(book.Check(RAIDER_1, 20.0f, t0 + milliseconds{ 2050 }) == 0.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 20.0f });
+	CHECK(book.Check(RAIDER_1, 15.0f, t0 + milliseconds{ 5000 }) == 0.0f);
+	book.OurHit(RAIDER_1, t0 + milliseconds{ 5050 });
+	CHECK(book.Check(RAIDER_1, 15.0f, t0 + milliseconds{ 5100 }) == 0.0f);
+	CHECK(book.Health(RAIDER_1) == std::optional{ 15.0f });
+
+	// Long after our hit, a drop is something else's again.
+	CHECK(book.Check(RAIDER_1, 10.0f, t0 + milliseconds{ 8000 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 10.0f, t0 + milliseconds{ 8000 } + CopyHealth::JUDGE_AFTER) == 5.0f);
+
+	// A report sets where it stands, lower or higher, and nothing is given back for it.
+	book.Set(RAIDER_1, 5.0f);
+	CHECK(book.Check(RAIDER_1, 5.0f, t0 + milliseconds{ 9000 }) == 0.0f);
+	CHECK(book.Check(RAIDER_1, 5.0f, t0 + milliseconds{ 9500 }) == 0.0f);
+
+	// A hit of ours before it was first seen counts too; a copy no longer watched is forgotten.
+	book.OurHit(RAIDER_2, t0);
+	CHECK(!book.Health(RAIDER_2));
+	CHECK(book.Check(RAIDER_2, 50.0f, t0) == 0.0f);
+	CHECK(book.Check(RAIDER_2, 40.0f, t0 + milliseconds{ 500 }) == 0.0f);
+	CHECK(book.Check(RAIDER_2, 40.0f, t0 + milliseconds{ 900 }) == 0.0f);
+	CHECK(book.Size() == 2);
+	book.Prune([](std::uint32_t a_id) { return a_id == RAIDER_2; });
+	CHECK(book.Size() == 1);
+	book.Forget(RAIDER_2);
+	CHECK(book.Size() == 0);
+	for (std::uint32_t i = 0; i < CopyHealth::MAX_COPIES + 1; ++i) {
+		book.Set(0x0003A000 + i, 10.0f);
+	}
+	CHECK(book.Size() == CopyHealth::MAX_COPIES);
 }
