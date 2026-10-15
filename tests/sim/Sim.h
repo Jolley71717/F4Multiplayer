@@ -257,6 +257,9 @@ namespace Sim
 		// last move, outlast a lost packet).
 		void StandStill(int a_states = 3);
 		void Kill(std::uint32_t a_ref, float a_x = 0.0f, float a_y = 0.0f, float a_z = 0.0f);
+		// An NPC died in this game, reported as WorldSync does: a_killed when it was our player's kill (theirs, or our
+		// companion's: CopyHealth::Credited), not when something else of ours or nothing killed it.
+		void Died(std::uint32_t a_ref, bool a_killed);
 		void Hurt(std::uint32_t a_ref, float a_health);
 		void Loot(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
 		void PickUp(std::uint32_t a_ref);
@@ -338,6 +341,18 @@ namespace Sim
 		{
 			const auto it = owners.find(a_ref);
 			return it != owners.end() ? it->second : 0;
+		}
+		// The health another game last reported for an NPC (a fraction), if any came.
+		[[nodiscard]] std::optional<float> HealthHeard(std::uint32_t a_ref) const
+		{
+			const auto it = npcHealth.find(a_ref);
+			return it != npcHealth.end() ? std::optional{ it->second } : std::nullopt;
+		}
+		// The player whose kill an NPC's death was, as the session told us (0: nobody's kill); nothing if no death came.
+		[[nodiscard]] std::optional<std::uint32_t> KilledBy(std::uint32_t a_ref) const
+		{
+			const auto it = killedBy.find(a_ref);
+			return it != killedBy.end() ? std::optional{ it->second } : std::nullopt;
 		}
 		[[nodiscard]] const std::map<std::uint32_t, Protocol::ActorState>&        NpcStates() const { return npcStates; }
 		[[nodiscard]] const std::map<std::uint32_t, std::vector<std::uint32_t>>& NpcGearSeen() const { return npcGear; }
@@ -425,6 +440,7 @@ namespace Sim
 		std::map<std::uint32_t, Protocol::ActorState> npcStates;
 		std::map<std::uint32_t, std::vector<std::uint32_t>> npcGear;
 		std::map<std::uint32_t, float>                npcHealth;
+		std::map<std::uint32_t, std::uint32_t>        killedBy;  // deaths the session told us of: whose kill (0: nobody's)
 		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;  // the others' builds, waiting for their settlement's cell
 		std::set<WorkshopKey>                         copyKeys;
 		std::map<std::uint32_t, std::uint32_t>        hiddenFrames;  // our copy of a placed frame -> the friend wearing theirs
@@ -815,6 +831,7 @@ namespace Sim
 		npcStates.clear();
 		npcGear.clear();
 		npcHealth.clear();
+		killedBy.clear();
 		copies.Clear();
 		copyKeys.clear();
 		hiddenFrames.clear();
@@ -881,6 +898,13 @@ namespace Sim
 		world.dead.insert(a_ref);
 		heardDead.insert(a_ref);
 		Send(Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, true, a_x, a_y, a_z }, MT::kReportDeath), true);
+	}
+
+	inline void Client::Died(std::uint32_t a_ref, bool a_killed)
+	{
+		world.dead.insert(a_ref);
+		heardDead.insert(a_ref);
+		Send(Protocol::Encode(Protocol::ActorDeath{ .refId = a_ref, .killed = a_killed }, MT::kReportDeath), true);
 	}
 
 	inline void Client::Hurt(std::uint32_t a_ref, float a_health)
@@ -1331,6 +1355,7 @@ namespace Sim
 			if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
 				heardDead.insert(msg->refId);
 				world.dead.insert(msg->refId);
+				killedBy[msg->refId] = msg->killed ? msg->playerId : 0;
 			} else {
 				unless(false);
 			}

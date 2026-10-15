@@ -13,12 +13,14 @@
 // explosions it was a ghost for, and then lay dead at 0: something in the friend's world wore it down where the owner's
 // game did not (what, CopyWatch's log of hits on copies names), and its death there was never believed.
 //
-// So a copy that loses health with no hit of our player's on it (from OURS_GRACE before the drop on) is given it back
-// (CopyWatch, each frame). A drop is judged only once it has stood for JUDGE_AFTER, so that our player's hit, whose event
-// can come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed)
-// is given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
-// passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on. Pure, so it can be
-// tested without the game.
+// So a copy that loses health with no hit of ours on it (from OURS_GRACE before the drop on) is given it back
+// (CopyWatch, each frame). A drop is judged only once it has stood for JUDGE_AFTER, so that our hit, whose event can
+// come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
+// given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
+// passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on.
+//
+// Our hits are our player's and those of the actors our game is answerable for (Judge): each hit is to count in one
+// game only, the game that runs whoever struck it. Pure, so it can be tested without the game.
 namespace CopyHealth
 {
 	using Clock = std::chrono::steady_clock;
@@ -28,10 +30,87 @@ namespace CopyHealth
 	constexpr float           SLACK = 0.05f;      // smaller drops are rounding
 	constexpr std::size_t     MAX_COPIES = 1024;  // copies watched at once (a guard)
 
+	// What struck a hit (or a killing blow), as our game knows it on the main thread a frame later.
+	struct Cause
+	{
+		bool          player = false;        // our player
+		bool          actor = false;         // an actor at all (not: no cause, a hazard, a trap, or gone since)
+		bool          standIn = false;       // a friend's stand-in (Puppets::IsPuppet)
+		bool          shareable = false;     // a reference every game has (Protocol::IsShareableRef)
+		std::uint32_t owner = 0;             // the player whose game runs it (NpcSync::Owner; 0: nobody, or not shareable)
+		bool          ourCompanion = false;  // it follows our player (NpcSync::IsOurCompanion)
+	};
+
+	enum class Hitter : std::uint8_t
+	{
+		kNotOurs,
+		kOurPlayer,
+		kOurs,  // an actor our game runs: our companion, a settler, an enemy, or a robot companion only our game has
+	};
+
+	// Whose hit it is, with a_local our player (0: out of a session). Our player's are ours. An actor every game has is
+	// ours when our game runs it (NpcSync gives each NPC to one game): our companion, as our game claims it, and any
+	// other NPC our game runs, friend or foe. A raider our game runs that shoots a friend's settler hurts it in our game
+	// only: in the friend's game our raider is a copy that only plays its shots (WeaponFire), so its hits count here or
+	// nowhere. One another game runs is that game's: our copy of it is a mirror, or (a companion two players share) our
+	// own of one their game runs, and it fights for real in that game. An actor made at runtime exists in its own game
+	// only, and among those only our companion is ours (a robot built at a robot workbench, never seen by friends): a
+	// random encounter of our game's would hurt a friend's NPC with something their game never shows. Not the turrets
+	// and robots built in workshop mode either: WorkshopSync places a copy of each in every friend's game, a live one in
+	// the player's faction, so it fires there too, at the NPCs that game runs, and those hits are real there; ours
+	// counted here as well would count every turret twice, as would a friend's copy here. Stand-ins (their player's game
+	// reports their hits), hazards and nothing at all are nobody's.
+	constexpr Hitter Judge(const Cause& a_cause, std::uint32_t a_local)
+	{
+		if (a_cause.player) {
+			return Hitter::kOurPlayer;
+		}
+		if (!a_cause.actor || a_cause.standIn || a_local == 0) {
+			return Hitter::kNotOurs;
+		}
+		if (a_cause.shareable) {
+			return a_cause.owner == a_local ? Hitter::kOurs : Hitter::kNotOurs;
+		}
+		return a_cause.ourCompanion ? Hitter::kOurs : Hitter::kNotOurs;
+	}
+
+	// What WorldSync does after a hit by a_hitter on an NPC every game has, a_owner's to run (0: nobody's): reports its
+	// health, and claims it, which also tells the server we fight it, so our kill of it is believed (Server.cpp,
+	// handleDeath). Our player's hits do both, on any such NPC. The rest of ours count only on a copy, an NPC another
+	// game runs (one ours runs is hurt for real here): its health is reported, which tells the server we fight it too,
+	// and a blow that killed it (a_killed) claims it, for a kill in one blow with no report before it. A claim for every
+	// blow of a companion's or a settler's would move NPCs from game to game every few seconds in a fight beside a friend.
+	struct AfterHit
+	{
+		bool report = false;
+		bool claim = false;
+	};
+
+	constexpr AfterHit After(Hitter a_hitter, std::uint32_t a_owner, std::uint32_t a_local, bool a_killed)
+	{
+		if (a_hitter == Hitter::kOurPlayer) {
+			return { .report = true, .claim = true };
+		}
+		const bool copy = a_owner != 0 && a_local != 0 && a_owner != a_local;
+		if (a_hitter != Hitter::kOurs || !copy) {
+			return {};
+		}
+		return { .report = true, .claim = a_killed };
+	}
+
+	// Whether a death a_cause dealt is our player's kill (ActorDeath::killed: the friends' kill feed names our player, and
+	// our stand-in pushes the corpse): our player's, and our companion's when its hits are ours. Not every NPC our game
+	// runs: a raider of ours that kills a settler is no kill of our player's.
+	constexpr bool Credited(const Cause& a_cause, std::uint32_t a_local)
+	{
+		const auto hitter = Judge(a_cause, a_local);
+		return hitter == Hitter::kOurPlayer || (hitter == Hitter::kOurs && a_cause.ourCompanion);
+	}
+
 	class Book
 	{
 	public:
-		// Our player hit the copy now.
+		// A hit of ours (Judge) on the copy now.
 		void OurHit(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			if (auto it = entries.find(a_id); it != entries.end()) {
@@ -69,7 +148,7 @@ namespace CopyHealth
 			if (!entry.dropSince) {
 				entry.dropSince = a_now;
 			}
-			// Our player's hit around the drop: the copy is ours to hurt.
+			// A hit of ours around the drop: the copy is ours to hurt.
 			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
 				entry.health = a_health;
 				entry.dropSince.reset();

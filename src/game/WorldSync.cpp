@@ -43,14 +43,25 @@ namespace WorldSync
 		// Game events can arrive on any thread, so sinks only queue IDs; Frame() does the work.
 		std::mutex                 inboxLock;
 		std::vector<std::uint32_t> deathInbox;
-		std::unordered_set<std::uint32_t> killInbox;  // deaths in deathInbox the player caused
+		// Deaths in deathInbox an actor dealt, and that actor (our player's own ID for theirs). Whether the kill is our
+		// player's is decided in Frame(), where who runs what can be read (CopyHealth::Credited).
+		using Killers = std::unordered_map<std::uint32_t, std::uint32_t>;
+		Killers killInbox;
 		// Actors whose 3D loaded (true) or unloaded (false), in order (the host checks them for deaths no event reported).
 		std::vector<std::pair<std::uint32_t, bool>> loadInbox;
 		// Every shareable reference whose 3D loaded (any kind: containers, loose items and doors too), for
 		// what waits for it to load.
 		std::vector<std::uint32_t> refLoadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
-		std::vector<std::uint32_t> hitInbox;
+		// Hits by an actor (our player's, or any other's) on NPCs every game has. Which are ours to report is decided
+		// in Frame(), where who runs what can be read (CopyHealth::Judge).
+		struct Hit
+		{
+			std::uint32_t target = 0;
+			std::uint32_t cause = 0;
+		};
+		constexpr std::size_t MAX_HIT_INBOX = 512;  // other actors' hits a frame (a big fight); our player's are always kept
+		std::vector<Hit>      hitInbox;
 		// Items the player moved between their inventory and a container or an NPC. Whether one is the
 		// session's is decided in Frame(), on the main thread, where the references can be read.
 		using Move = LootSync::Move;
@@ -325,7 +336,9 @@ namespace WorldSync
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
 				if (byPlayer) {
-					killInbox.insert(id);
+					killInbox[id] = Protocol::PLAYER_REF_ID;
+				} else if (killer && killer->As<RE::Actor>() && killer != ref) {
+					killInbox[id] = killer->GetFormID();
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -497,14 +510,14 @@ namespace WorldSync
 						}
 					}
 				}
-				if (!byPlayer) {
-					return RE::BSEventNotifyControl::kContinue;
-				}
-				// Only damage we dealt to others (not ourselves); each player reports their own hits.
+				// Only damage dealt to others (not the attacker itself); each game reports its own hits: our player's, and
+				// those of the actors our game runs (decided in Frame()).
 				const auto actor = target->As<RE::Actor>();
-				if (actor && IsShareableRef(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
+				if (actor && target != cause && (byPlayer || cause->As<RE::Actor>()) && IsShareableRef(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
-					hitInbox.push_back(target->GetFormID());
+					if (byPlayer || hitInbox.size() < MAX_HIT_INBOX) {
+						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID() });
+					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -789,13 +802,20 @@ namespace WorldSync
 		}
 
 		// Deaths in our world: reported, unless someone else reported them (we caused those because they did).
-		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const std::unordered_set<std::uint32_t>& a_killedByUs)
+		// Our player's kill: theirs, or our companion's (CopyHealth::Credited).
+		bool KilledByUs(const Killers& a_killers, std::uint32_t a_id)
+		{
+			const auto it = a_killers.find(a_id);
+			return it != a_killers.end() && CopyHealth::Credited(CopyWatch::CauseOf(it->second), NpcSync::LocalPlayer());
+		}
+
+		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const Killers& a_killers)
 		{
 			for (const auto id : a_deaths) {
 				if (dead.Add(id, Clock::now())) {
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
-					ReportDead({ .refId = id, .killed = a_killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
+					ReportDead({ .refId = id, .killed = KilledByUs(a_killers, id), .x = at.x, .y = at.y, .z = at.z });
 				}
 				dead.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 				reports.Forget(id);
@@ -1278,8 +1298,8 @@ namespace WorldSync
 		std::vector<std::uint32_t> newDeaths;
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::vector<std::uint32_t>                  newRefLoads;
-		std::unordered_set<std::uint32_t> killedByUs;
-		std::vector<std::uint32_t> newHits;
+		Killers                    killers;
+		std::vector<Hit>           newHits;
 		std::vector<std::uint32_t> newPickups;
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
@@ -1289,7 +1309,7 @@ namespace WorldSync
 			newDeaths.swap(deathInbox);
 			newLoads.swap(loadInbox);
 			newRefLoads.swap(refLoadInbox);
-			killedByUs.swap(killInbox);
+			killers.swap(killInbox);
 			killInbox.clear();
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
@@ -1298,7 +1318,7 @@ namespace WorldSync
 			newMoves.swap(lootInbox);
 		}
 
-		ReportDeaths(newDeaths, killedByUs);
+		ReportDeaths(newDeaths, killers);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
 
@@ -1320,10 +1340,26 @@ namespace WorldSync
 			}
 		}
 		hitLastFrame.clear();
-		hitLastFrame.insert(newHits.begin(), newHits.end());
-		// Fighting or talking to an NPC another player's game runs brings it over to ours.
-		for (const auto id : newHits) {
-			NpcSync::OnLocalInteraction(id);
+		// Our hits (CopyHealth::Judge): our player's, and on a copy of an NPC another game runs, those of the actors our
+		// game runs (our companion, a settler, a raider of ours). Fighting or talking to an NPC another player's game runs
+		// brings it over to ours; another actor of ours claims it only with the blow that killed it (CopyHealth::After).
+		const auto local = NpcSync::LocalPlayer();
+		for (const auto& hit : newHits) {
+			const auto owner = NpcSync::Owner(hit.target);
+			// Another actor's hit on an NPC our game runs, or nobody does, is nothing to report: not looked into.
+			const bool copy = owner != 0 && local != 0 && owner != local;
+			const auto hitter = hit.cause == Protocol::PLAYER_REF_ID ? CopyHealth::Hitter::kOurPlayer :
+			                    copy                                 ? CopyHealth::Judge(CopyWatch::CauseOf(hit.cause), local) :
+			                                                           CopyHealth::Hitter::kNotOurs;
+			const auto target = hitter != CopyHealth::Hitter::kNotOurs ? RE::TESForm::GetFormByID<RE::Actor>(hit.target) : nullptr;
+			const bool killed = dead.Contains(hit.target) || (target && target->IsDead(false));
+			const auto after = CopyHealth::After(hitter, owner, local, killed);
+			if (after.report) {
+				hitLastFrame.insert(hit.target);
+			}
+			if (after.claim) {
+				NpcSync::OnLocalInteraction(hit.target);
+			}
 		}
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
@@ -1379,19 +1415,19 @@ namespace WorldSync
 	void FlushLoot()
 	{
 		MainThread::Assert("WorldSync::FlushLoot");
-		std::vector<std::uint32_t>        deaths;
-		std::unordered_set<std::uint32_t> killedByUs;
-		std::vector<Move>                 moves;
+		std::vector<std::uint32_t> deaths;
+		Killers                    killers;
+		std::vector<Move>          moves;
 		{
 			std::scoped_lock l{ inboxLock };
 			deaths.swap(deathInbox);
-			killedByUs.swap(killInbox);
+			killers.swap(killInbox);
 			moves.swap(lootInbox);
 		}
 		// The deaths first, as in a frame: a corpse looted in the last moments goes out dead, so the others
 		// put its loot in (after a load Reset would forget the death, and they would hold the loot as a
 		// living NPC's until they gave up on it).
-		ReportDeaths(deaths, killedByUs);
+		ReportDeaths(deaths, killers);
 		ReportMoves(moves);
 	}
 

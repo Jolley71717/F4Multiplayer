@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/CopyHealth.h"
+
 #include <cstdint>
 #include <string>
 
@@ -9,10 +11,14 @@ namespace RE
 	class TESHitEvent;
 }
 
-// Our copies of NPCs another game runs: nothing in our world but our player's hits is to take their health
-// (CopyHealth), and what does hit them, or kill them, goes to the log. Main thread, except the Note* calls.
+// Our copies of NPCs another game runs: nothing in our world but our hits (our player's, and those of the actors our
+// game runs: CopyHealth::Judge) is to take their health (CopyHealth), and what does hit them, or kill them, goes to the
+// log. Main thread, except the Note* calls.
 namespace CopyWatch
 {
+	// What the reference is as the cause of a hit or a death, for CopyHealth::Judge (0, or gone: nothing).
+	[[nodiscard]] CopyHealth::Cause CauseOf(std::uint32_t a_refId);
+
 	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
 	void NoteHit(const RE::TESHitEvent& a_event);
 
@@ -22,7 +28,7 @@ namespace CopyWatch
 	// Another player's report set the copy's health (WorldSync::TrySetHealth): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_before, float a_health);
 
-	// Gives copies back what something other than our player took, and logs the hits and deaths. Every frame.
+	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
 	void Frame();
 
 	void Reset();
