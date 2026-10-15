@@ -121,6 +121,7 @@ namespace ProtocolSamples
 		f.bones = { { 7, { 0.1f, 0.0f, -0.2f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.1f } } };
 		f.tints = { { 1001, 1, 90, 0xFFC08060, 3 }, { 1003, 2, 100, 0, 0 } };
 		f.bodyTint[0] = 200, f.bodyTint[3] = 255;
+		f.bodyMorphs = { { "Breasts", 0.4f }, { "Waist", -0.25f } };
 		return f;
 	}
 
@@ -226,6 +227,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
 		}
+		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
+			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
+		}
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -268,6 +272,7 @@ namespace ProtocolSamples
 		case MT::kReportWorkshopItem:
 		case MT::kReportExplosion:
 		case MT::kReportActivation:
+		case MT::kReportSpawn:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -301,6 +306,7 @@ namespace ProtocolSamples
 		case MT::kWorkshopItems:
 		case MT::kExplosion:
 		case MT::kActivation:
+		case MT::kSpawned:
 			return true;
 		}
 		return false;

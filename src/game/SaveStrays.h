@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -205,15 +206,15 @@ namespace SaveStrays
 		}
 
 		// Keeps the ones whose form is still there with the base it was placed from: a_baseNow(id) gives the base of
-		// the form under the id now, or nothing when there is none. Calls a_kept(id) for each one kept, and a_gone(id)
-		// for each one let go of.
+		// the form under the id now, or nothing when there is none. Calls a_kept(id) for each one kept, and a_gone(id, base)
+		// for each one let go of, with the base it was placed from.
 		template <class F, class G, class H>
 		void Keep(F&& a_baseNow, G&& a_kept, H&& a_gone)
 		{
 			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
 				const std::optional<std::uint32_t> base = a_baseNow(a_entry.first);
 				if (!base || *base != a_entry.second) {
-					a_gone(a_entry.first);
+					a_gone(a_entry.first, a_entry.second);
 					return true;
 				}
 				a_kept(a_entry.first);
@@ -224,7 +225,7 @@ namespace SaveStrays
 		template <class F, class G>
 		void Keep(F&& a_baseNow, G&& a_kept)
 		{
-			Keep(a_baseNow, a_kept, [](std::uint32_t) {});
+			Keep(a_baseNow, a_kept, [](std::uint32_t, std::uint32_t) {});
 		}
 
 		void Clear() { entries.clear(); }
@@ -270,12 +271,19 @@ namespace SaveStrays
 		}
 
 		// The forgotten ones still there (a_kept(id) for each, its record to be dropped); one whose form is gone is let
-		// go of, and is not ours any more (its id may be handed out again).
+		// go of, and is not ours any more (its id may be handed out again; see TakeGone).
 		template <class B, class K>
 		void KeepForgotten(B&& a_baseNow, K&& a_kept)
 		{
-			forgotten.Keep(a_baseNow, a_kept, [&](std::uint32_t a_id) { placed.Erase(a_id); });
+			forgotten.Keep(a_baseNow, a_kept, [&](std::uint32_t a_id, std::uint32_t a_base) {
+				placed.Erase(a_id);
+				gone.emplace_back(a_id, a_base);
+			});
 		}
+
+		// The ids let go of since the last call (KeepForgotten, BeforeSave), their forms gone, with the base each was placed
+		// from: what else holds them as ours lets go of them too (see Unpromoted). A load forgets them with the rest.
+		[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint32_t>> TakeGone() { return std::exchange(gone, {}); }
 
 		// The strays among what a sweep found, each with whose it is.
 		template <class S>
@@ -306,6 +314,7 @@ namespace SaveStrays
 		{
 			placed.Clear();
 			forgotten.Clear();
+			gone.clear();
 			return JudgeAll(Strays(std::move(a_found), a_standIn), When::kLoad);
 		}
 
@@ -338,7 +347,93 @@ namespace SaveStrays
 			return out;
 		}
 
-		Placed    placed;
-		Forgotten forgotten;
+		Placed                                               placed;
+		Forgotten                                            forgotten;
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> gone;  // id, base
+	};
+
+	// The stand-ins the engine is not let keep persistent. Something of the game's (a quest alias filled with one, a
+	// scene, an AI package aimed at it) asks the engine to promote a reference it holds (BGSDynamicPersistenceManager::
+	// PromoteReference), which keeps it in memory past its cell. A stand-in held so when the player leaves (a door, a
+	// fast travel, walking off: the crash leaving Red Rocket) is left in no cell, and when the holder lets go of it (a
+	// quest stopping with the location left, an actor's AI moving on) the engine demotes it: an actor's demotion waits
+	// for the end of the frame (DemoteQueuedActors), and one in no cell is then unloaded, its record of changes written
+	// out under its cell or else its worldspace, read without a check. It has neither, and the game crashes
+	// (BGSSaveLoadInitialData::SaveInitialData). That can come in the same engine update that cleared its cell, before
+	// any frame of ours could drop its record (SaveGuard::ExcludeOurs). The engine asks the reference first whether it
+	// may be promoted (TESObjectREFR::GetAllowPromoteToPersistent), for a promotion and for a demotion alike; SaveGuard
+	// answers no for these, so a stand-in is neither promoted nor demoted, its holder keeps only a handle, and it is
+	// unloaded with its cell like any reference the game placed and never promoted.
+	//
+	// The engine asks from any thread, so this has its own lock and calls nothing under it. An entry is the actor's
+	// address, form ID and base: the game hands addresses and ids out again, often the ones just let go of, and an actor
+	// of the game's placed under a stand-in's old address and id has another base, so it is still told yes. An entry
+	// goes when its form is gone (Book::TakeGone) or at a load; past MAX the oldest go.
+	class Unpromoted
+	{
+	public:
+		static constexpr std::size_t MAX = 256;
+
+		void Add(const void* a_ref, std::uint32_t a_id, std::uint32_t a_base)
+		{
+			if (!a_ref || a_id == 0) {
+				return;
+			}
+			const std::scoped_lock l{ lock };
+			std::erase_if(entries, [&](const Entry& a_entry) { return a_entry.ref == a_ref || a_entry.id == a_id; });
+			if (entries.size() >= MAX) {
+				entries.erase(entries.begin());
+			}
+			entries.push_back({ a_ref, a_id, a_base });
+		}
+
+		// The one placed under the id from the base, its form gone (an entry a newer stand-in made under the id stays).
+		void Remove(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			const std::scoped_lock l{ lock };
+			std::erase_if(entries, [&](const Entry& a_entry) { return a_entry.id == a_id && a_entry.base == a_base; });
+		}
+
+		void Clear()
+		{
+			const std::scoped_lock l{ lock };
+			entries.clear();
+		}
+
+		// The engine's question about the reference at a_ref, with its id and base now: whether to say no. Each no is
+		// counted (Refused).
+		[[nodiscard]] bool Refuses(const void* a_ref, std::uint32_t a_id, std::uint32_t a_base)
+		{
+			const std::scoped_lock l{ lock };
+			const bool refuses = std::ranges::any_of(entries, [&](const Entry& a_entry) {
+				return a_entry.ref == a_ref && a_entry.id == a_id && a_entry.base == a_base;
+			});
+			refused += refuses;
+			return refuses;
+		}
+
+		[[nodiscard]] std::size_t Size() const
+		{
+			const std::scoped_lock l{ lock };
+			return entries.size();
+		}
+
+		[[nodiscard]] std::uint32_t Refused() const
+		{
+			const std::scoped_lock l{ lock };
+			return refused;
+		}
+
+	private:
+		struct Entry
+		{
+			const void*   ref = nullptr;
+			std::uint32_t id = 0;
+			std::uint32_t base = 0;
+		};
+
+		mutable std::mutex lock;
+		std::vector<Entry> entries;
+		std::uint32_t      refused = 0;
 	};
 }

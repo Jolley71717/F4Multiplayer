@@ -843,3 +843,229 @@ TEST("container ledger: a load with no session joined leaves the save's record a
 	CHECK(!loot.AfterLoad(Clock::now()));  // not in a session now: nothing to ask for
 	CHECK(loot.Point().containerFrom == 3);
 }
+
+// ---- numbers nobody will ever send, and gaps nobody fills -----------------------------------------
+
+TEST("container ledger: an answer to our request that ends before what waits lets that go, and only that")
+{
+	const Clock::time_point t0{};
+	Ledger ledger;
+	ledger.Restart(148);
+	for (const auto index : { 150u, 400u, 900u }) {
+		ledger.Offer(Change(index), false, t0);
+	}
+	// Nobody asked: a WorldState says nothing about what waits.
+	CHECK(ledger.OnChunk(148, 0, t0) == 0);
+	CHECK(ledger.Waiting() == 3);
+
+	// Asked from #148, answered with #148..#151: the server's log ends at #152. #150 was its own.
+	ledger.OnRequest(148, t0);
+	CHECK(ledger.OnChunk(148, 4, t0) == 0);
+	CHECK(ledger.Waiting() == 1);
+	CHECK(ledger.Stats().strays == 2);
+	CHECK(Indices(ledger.Offer(Change(148), true, t0)) == std::vector<std::uint32_t>{ 148 });
+	CHECK(Indices(ledger.Offer(Change(149), true, t0)) == (std::vector<std::uint32_t>{ 149, 150 }));
+	CHECK(ledger.Offer(Change(150), true, t0).empty());  // the reply's copy of the one that waited
+	CHECK(Indices(ledger.Offer(Change(151), true, t0)) == std::vector<std::uint32_t>{ 151 });
+	CHECK(ledger.Next() == 152);
+
+	// Asked from #152, answered with nothing from #152: what waits past it goes, our count stays.
+	ledger.Offer(Change(160), false, t0);
+	ledger.OnRequest(152, t0);
+	CHECK(ledger.OnChunk(152, 0, t0) == 0);
+	CHECK(ledger.Waiting() == 0);
+	CHECK(ledger.Stats().strays == 3);
+	CHECK(ledger.Next() == 152);
+	CHECK(!ledger.Due(t0 + 1h));  // nothing left to ask for
+
+	// A full chunk may have more behind it: nothing is let go.
+	ledger.Offer(Change(152 + static_cast<std::uint32_t>(Protocol::WORLD_STATE_CHUNK) + 1), false, t0);
+	ledger.OnRequest(152, t0);
+	CHECK(ledger.OnChunk(152, Protocol::WORLD_STATE_CHUNK, t0) == 0);
+	CHECK(ledger.Waiting() == 1);
+}
+
+TEST("container ledger: a gap asked for five times that never fills is skipped at the next ask, and what waited behind it goes in")
+{
+	const Clock::time_point t0{};
+	ContainerLedger::Receiver receiver;
+	receiver.OnWelcome(1, 1);
+	Applied applied;
+	receiver.Live(Change(0), t0, applied.Fn());
+	receiver.Live(Change(3), t0, applied.Fn());
+	receiver.Live(Change(4), t0, applied.Fn());
+	receiver.Live(Change(6), t0, applied.Fn());
+	CHECK(applied.indices == std::vector<std::uint32_t>{ 0 });
+
+	// Asked at 15, 45, 105, 165 and 225 s; nothing answers.
+	std::uint32_t asks = 0;
+	for (auto t = t0; t <= t0 + 284s; t += 1s) {
+		asks += receiver.Due(t, applied.Fn()) ? 1 : 0;
+	}
+	CHECK(asks == Ledger::SKIP_AFTER);
+	CHECK(receiver.Numbers().Next() == 1);
+	CHECK(applied.indices.size() == 1);
+
+	// The sixth ask is due: #1 and #2 are given up, #3 and #4 go in; #5 is a gap of its own, asked for again.
+	CHECK(!receiver.Due(t0 + 285s, applied.Fn()));
+	CHECK(applied.indices == (std::vector<std::uint32_t>{ 0, 3, 4 }));
+	CHECK(receiver.Numbers().Next() == 5);
+	CHECK(receiver.Numbers().Waiting() == 1);
+	CHECK(receiver.Numbers().Stats().skips == 1);
+	CHECK(receiver.Numbers().Stats().skipped == 2);
+	CHECK(receiver.Due(t0 + 345s, applied.Fn()));
+
+	// A change going in starts the count of asks again: #5 comes, then a gap at #7 is asked for five times
+	// before anything is skipped.
+	receiver.Live(Change(5), t0 + 350s, applied.Fn());
+	CHECK(applied.indices == (std::vector<std::uint32_t>{ 0, 3, 4, 5, 6 }));
+	receiver.Live(Change(8), t0 + 350s, applied.Fn());
+	asks = 0;
+	for (auto t = t0 + 350s; t <= t0 + 634s; t += 1s) {
+		asks += receiver.Due(t, applied.Fn()) ? 1 : 0;
+	}
+	CHECK(asks == Ledger::SKIP_AFTER);
+	CHECK(receiver.Numbers().Stats().skips == 1);
+	CHECK(!receiver.Due(t0 + 635s, applied.Fn()));
+	CHECK(receiver.Numbers().Stats().skips == 2);
+	CHECK(applied.indices.back() == 8);
+	CHECK(receiver.Numbers().Waiting() == 0);
+}
+
+TEST("loot sync: changes numbered past the end of the server's log, as the fuzz command makes up, are let go at the first ask, and a friend's loot after them reaches the host whole")
+{
+	Fixture f;
+	Game    host{ 1, 0xA11CE }, joiner{ 2, 0xB0B };
+	host.Join(f, "Host");
+	joiner.Join(f, "Joiner");
+	for (auto* game : { &host, &joiner }) {
+		game->holders[CHEST] = { { AMMO, 100 } };
+		game->holders[SAFE] = { { CAPS, 50 } };
+	}
+	joiner.Take(f, CHEST, AMMO, 10);  // #0
+	host.Receive(f);
+	const auto& numbers = host.loot.Numbers().Numbers();
+	REQUIRE(numbers.Next() == 1);
+
+	// Live changes with made-up numbers reach the host's game: the one after the next the server will
+	// make, and two far past it. Nothing goes in; they wait for #1.
+	for (const auto index : { 2u, 400u, 900u }) {
+		host.Handle(f, { Protocol::Encode(Protocol::IndexedContainerChange{ index, joiner.localId, { SAFE, CAPS, -5 } }) });
+	}
+	CHECK(numbers.Waiting() == 3);
+	CHECK(host.In(SAFE, CAPS) == 50);
+
+	// The first ask, 15 s on; the server's answer ends at #1, so they go, and nothing is asked for again.
+	CHECK(!host.Wait(f, 14s));
+	CHECK(host.Wait(f, 1s));
+	host.Receive(f);
+	CHECK(numbers.Waiting() == 0);
+	CHECK(numbers.Stats().strays == 3);
+	CHECK(numbers.Next() == 1);
+	CHECK(!host.Wait(f, 10min));
+	CHECK(numbers.Stats().asked == 1);
+
+	// The joiner's next loot takes #1 and #2, and both go into the host's world as the joiner made them.
+	joiner.Take(f, CHEST, AMMO, 5);  // #1
+	joiner.Take(f, SAFE, CAPS, 1);   // #2
+	host.Receive(f);
+	CHECK(numbers.Next() == 3);
+	CHECK(numbers.Stats().duplicates == 0);
+	CHECK(host.In(CHEST, AMMO) == 85);
+	CHECK(host.In(SAFE, CAPS) == 49);
+	CHECK(host.holders == joiner.holders);
+	CHECK(host.applied == 3);
+}
+
+TEST("loot sync: a joiner that rejoins holding a made-up number catches up on what it missed and lets the made-up one go with that answer")
+{
+	Fixture f;
+	Game    host{ 1, 0xA11CE }, joiner{ 2, 0xB0B };
+	host.Join(f, "Host");
+	joiner.Join(f, "Joiner");
+	for (auto* game : { &host, &joiner }) {
+		game->holders[CHEST] = { { AMMO, 100 } };
+	}
+	host.Take(f, CHEST, AMMO, 10);  // #0
+	joiner.Receive(f);
+	const auto& numbers = joiner.loot.Numbers().Numbers();
+	joiner.Handle(f, { Protocol::Encode(Protocol::IndexedContainerChange{ 50, host.localId, { CHEST, AMMO, -40 } }) });
+	REQUIRE(numbers.Waiting() == 1);
+
+	// Its connection drops. Away for ten minutes, it asks nothing and skips nothing; the host loots meanwhile.
+	f.fake->Drop(joiner.peer);
+	joiner.loot.OnDisconnected();
+	CHECK(!joiner.Wait(f, 10min));
+	CHECK(numbers.Stats().skips == 0);
+	host.Take(f, CHEST, AMMO, 10);  // #1
+	host.Take(f, CHEST, AMMO, 10);  // #2
+
+	// It comes back on a new connection: the hello asks from #1, and the answer brings #1 and #2.
+	joiner.peer = 3;
+	joiner.Join(f, "Joiner");
+	joiner.Receive(f);
+	CHECK(numbers.Next() == 3);
+	CHECK(joiner.In(CHEST, AMMO) == 70);
+	CHECK(numbers.Stats().strays == 1);  // that answer ended at #3: #50 went with it
+	CHECK(numbers.Waiting() == 0);
+	CHECK(!joiner.Wait(f, 5min));
+
+	// The host's next loot goes in as it was made.
+	host.Take(f, CHEST, AMMO, 1);  // #3
+	joiner.Receive(f);
+	CHECK(numbers.Next() == 4);
+	CHECK(joiner.In(CHEST, AMMO) == 69);
+	CHECK(numbers.Stats().skips == 0);
+}
+
+TEST("loot sync: a gap whose answers never arrive is skipped after five asks, and the friend's loot behind it and after it goes in")
+{
+	// The game's clock runs minutes here in moments of the server's: its budget of world states mustn't
+	// hold Bob's live changes back while the five asks seem to come at once.
+	Server::Options options;
+	options.worldStateRefill = std::chrono::milliseconds{ 0 };
+	Fixture f{ options };
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	alice.Join(f, "Alice");
+	bob.Join(f, "Bob");
+	for (auto* game : { &alice, &bob }) {
+		game->holders[CHEST] = { { AMMO, 100 } };
+	}
+	const auto& numbers = bob.loot.Numbers().Numbers();
+	const auto  withoutWorldStates = [](LootTest::Packets a_packets) {
+		std::erase_if(a_packets, [](const std::vector<std::uint8_t>& a_packet) { return LootTest::IsType(a_packet, MT::kWorldState); });
+		return a_packets;
+	};
+
+	// Bob's copy of #1 is lost on the way, and every answer to his asks is lost too.
+	alice.Take(f, CHEST, AMMO, 10);  // #0
+	alice.Take(f, CHEST, AMMO, 10);  // #1
+	alice.Take(f, CHEST, AMMO, 10);  // #2
+	auto toBob = bob.Fetch(f);
+	const auto lost = FindLive(toBob, 1);
+	REQUIRE(lost != toBob.end());
+	toBob.erase(lost);
+	bob.Handle(f, toBob);
+	CHECK(numbers.Next() == 1);
+	CHECK(numbers.Waiting() == 1);
+	const auto before = bob.requests;
+	bob.Wait(f, 284s);
+	bob.Handle(f, withoutWorldStates(bob.Fetch(f)));
+	CHECK(bob.requests - before == Ledger::SKIP_AFTER);
+	CHECK(numbers.Next() == 1);
+	CHECK(bob.In(CHEST, AMMO) == 90);
+
+	// At the sixth ask #1 is given up and #2 goes in.
+	CHECK(!bob.Wait(f, 1s));
+	CHECK(numbers.Next() == 3);
+	CHECK(numbers.Stats().skips == 1);
+	CHECK(numbers.Stats().skipped == 1);
+	CHECK(bob.In(CHEST, AMMO) == 80);
+
+	// Alice's next loot goes straight in.
+	alice.Take(f, CHEST, AMMO, 5);  // #3
+	bob.Receive(f);
+	CHECK(numbers.Next() == 4);
+	CHECK(bob.In(CHEST, AMMO) == 75);
+	CHECK(alice.In(CHEST, AMMO) == 65);  // the change Bob gave up is the difference
+}

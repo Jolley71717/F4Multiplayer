@@ -26,16 +26,21 @@ namespace SessionFile
 	// doesn't hold (protocol 27 changed only the shot, 28 only the live quest stage, which now says who
 	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
 	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
-	// the layout has not changed since the file came (protocol 23), and writing 26 keeps it readable by
-	// 0.8.x (protocol 26) after a downgrade.
-	inline constexpr std::uint16_t FORMAT = 26;
+	// the layout did not change from the file's first (protocol 23) until 29, which added the deaths an
+	// older build saved (Snapshot::healable) after the identities.
+	inline constexpr std::uint16_t FORMAT = 29;
 
-	// The header values that mean this layout: the protocol versions it was written under before it
+	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28). The next layout takes 29.
-	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 30.
+	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
+	}
+
+	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
+	{
+		return Legacy(a_format) || a_format == FORMAT;
 	}
 
 	struct Snapshot
@@ -47,6 +52,10 @@ namespace SessionFile
 		std::uint32_t                                       nextId = 1;
 		std::vector<std::pair<std::uint64_t, std::uint32_t>> identities;  // hello identity -> player ID
 		std::vector<std::uint32_t>                          deadActors;
+		// The deaths a build before layout 29 saved, which may be mistakes: those builds took an essential NPC
+		// going down (Dogmeat) for dead. The host's game can undo one of these (Server's handleClaims), never a
+		// death saved since. Every death of an older layout's file is one, until undone or reported again.
+		std::vector<std::uint32_t>                          healable;
 		std::vector<Protocol::IndexedContainerChange>       containerChanges;  // in index order
 		std::vector<std::uint32_t>                          pickedUp;
 		std::vector<Protocol::RefState>                     refStates;
@@ -81,6 +90,10 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.identities.size() && i < 65535; ++i) {
 			put(a_snapshot.identities[i].first);
 			put(a_snapshot.identities[i].second);
+		}
+		put(static_cast<std::uint32_t>(a_snapshot.healable.size()));
+		for (const auto id : a_snapshot.healable) {
+			put(id);
 		}
 
 		// World state in the same chunks a joiner gets.
@@ -146,6 +159,16 @@ namespace SessionFile
 			}
 			snapshot.identities.emplace_back(identity, id);
 		}
+		if (!Legacy(version)) {
+			std::uint32_t healableCount = 0;
+			if (!take(healableCount) || healableCount > (a_data.size() - offset) / sizeof(std::uint32_t)) {
+				return std::nullopt;
+			}
+			snapshot.healable.resize(healableCount);
+			for (auto& id : snapshot.healable) {
+				take(id);
+			}
+		}
 		while (offset < a_data.size()) {
 			std::uint32_t length = 0;
 			if (!take(length) || length == 0 || offset + length > a_data.size()) {
@@ -199,6 +222,9 @@ namespace SessionFile
 			default:
 				return std::nullopt;
 			}
+		}
+		if (Legacy(version)) {
+			snapshot.healable = snapshot.deadActors;  // saved by a build that took an essential NPC going down for dead
 		}
 		return snapshot;
 	}

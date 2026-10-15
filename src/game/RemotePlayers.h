@@ -26,8 +26,9 @@ namespace RemotePlayers
 	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
 	void SetLight(std::uint32_t a_id, bool a_on);
 	// Their power armor state, the base form of the frame they are in and, when every game has that frame (a
-	// pre-placed one), its reference (else 0).
-	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef);
+	// pre-placed one), its reference (else 0); out of it, the frame they got out of last, where it stands in their world
+	// (a copy is shown there).
+	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef, const std::optional<Protocol::ParkedFrame>& a_parked = std::nullopt);
 	// The form ID of a player's stand-in, or 0 when they have none right now.
 	std::uint32_t ActorIdOf(std::uint32_t a_id);
 
@@ -73,6 +74,9 @@ namespace RemotePlayers
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
 	// Used before saving and loading so puppets never end up in a save file.
 	void DespawnAll();
+	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
+	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
+	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

@@ -58,7 +58,13 @@
   pointer and copy the top of its stack (system calls only: the main thread may be stopped holding
   the heap or loader lock), then resumes it and names the instruction and the return addresses it
   finds on the copy as module+offset, from `VirtualQuery` and the image's mapped file name (no
-  dbghelp, no loader lock). The report goes to the log and to `F4Multiplayer-hang-<time>.txt` next to
+  dbghelp, no loader lock). It then times every thread of the game over half a second
+  (`GetThreadTimes` on a Toolhelp thread snapshot) and looks the same way at up to four other threads
+  that kept a processor at least half busy meanwhile: a main thread stuck in a wait is waiting for one
+  of them (a host froze on 2026-10-11 with the main thread waiting for the physics step while a job
+  thread went round an endless loop in Havok on a ragdoll whose bodies had become NaN, which only a
+  full dump showed). The report says too how busy the main thread itself was, so a loop of its own
+  reads differently from a wait. The report goes to the log and to `F4Multiplayer-hang-<time>.txt` next to
   it (the newest 3 kept, leftovers of an interrupted write removed at start-up); it names modules,
   never paths. A minidump (`.dmp`) is written too only with `bHangDump`: `MiniDumpWriteDump` in the
   hung process suspends every thread and then needs the loader and heap locks, so it can turn a
@@ -84,6 +90,14 @@
   onto the copy (tint layers are rebuilt by vtable, pointing at the race's template entries by
   uniqueID) and spawns the stand-in from it. A changed face deletes the stand-in; it respawns with
   a fresh copy. Copies are never freed (forms can't be).
+  With LooksMenu (f4ee.dll) installed, the face also carries its body sliders (protocol 29; at most
+  128, names up to 64 characters, values within +-2): `src/game/LooksMenu.cpp` reads the player's
+  through LooksMenu's Papyrus script BodyGen (GetMorphs, then GetMorph under no keyword, both answered
+  on the VM's threads; again every 15 s with no menu open) and the face waits for the first read.
+  A receiver with LooksMenu sets them on each new stand-in (SetMorph; UpdateMorphs once every set is
+  answered, if its 3D was built meanwhile) and removes them (RemoveAllMorphs) when the stand-in goes,
+  since LooksMenu keeps them by form ID and the next runtime reference may get that ID. Without
+  LooksMenu on either side nothing is called (`src/game/BodyMorphs.h` holds the rules, tested).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders a friend in the past
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
@@ -162,7 +176,9 @@
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
   our own current companion (two players can both have Dogmeat).
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
-  claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
+  claims it. One that dies is kept until its death is reported (up to 15 s, `NpcHold`), and one our player hit
+  in the last 10 s is not handed to a nearer friend. Mirrored NPCs are handed back to their own AI before saving.
+  New players get the current
   owner list on join.
 - Gear: each game rolls NPC gear on its own, so the owner reports what its NPCs wear when it changes
   (`ReportNpcEquipment`, owner only) and the server keeps the last report for newcomers. A copy is dressed
@@ -186,7 +202,7 @@
   it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
-  NPC. Hits by NPCs made at runtime (only in the attacker's game) aren't sent; the victim ignores hits
+  NPC. Hits by NPCs made at runtime are sent only for one the attacker's game shares (see Spawns), under its spawn id; the victim ignores hits
   from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
   their game (`UI::menuMode`; `Main::freezeTime` stays false). The damage was resisted by the
   stand-in's copy of the victim's armor; the victim scales it by their own difficulty
@@ -194,6 +210,44 @@
   `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
   effects, limb damage, radiation and stagger.
 - Shots are shared too (see Weapon fire).
+
+## Spawns (src/game/Spawns.cpp, src/game/SpawnBook.h)
+
+NPCs a game makes at runtime (a random encounter's raiders, an ambush, a settlement's attackers) have ids
+(0xFF......) that are that game's own: in another game the same id names something else, or nothing. Playing,
+the host saw mongrels where the joiner saw ghouls, and the joiner's follower fought an enemy only the joiner's
+game had. So each one is shared as a spawn, run by the game that made it for good:
+
+- The owner's NpcSync scan finds one of its runtime NPCs loaded, alive, in combat or hostile to its player (never
+  a stand-in, a copy, the player or its companion), and reports `kReportSpawn {spawn id, base, cell or
+  worldspace, position, heading}`. The spawn id is the NPC's own id first; one another game's spawn has is
+  refused naming that game, and the next one asked for is spread over the runtime range (`CandidateId`). Spawn
+  ids keep the 0xFF prefix (0xFE is light plugins' range), so every check of `IsShareableRef` still turns them
+  away; only the messages about NPCs take them (`IsActorRef`), and each game looks its own NPC up under one.
+- The base is what every game puts together the same: the first of the leveled data's templates that is a whole
+  NPC (no template of its own), else the NPC it was placed as (a leveled one is rolled again by each game), else
+  its own base when that is a plugin's. Without one it isn't shared.
+- The server grants an id to the first game to ask (`actorOwners` names the owner; `spawns` holds the details),
+  sends the others `kSpawned` and everyone the owner. A joiner is sent the spawns before who runs NPCs. Limits:
+  32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
+  the game asks again 10 s later. Nobody else can claim one; a claim to take one over notes the claimer as
+  fighting it.
+- The others place a copy (`CreateReferenceAtLocation`, kept out of saves like a stand-in) while their player is
+  within 6000 units of where the owner's game has it, in the same space, and the owner's stand-in is within 8000
+  of it; 2 a frame at most, 3 tries. NpcSync mirrors it under the spawn id as any NPC another game runs: states,
+  gear, shots and health.
+- A copy goes when its player leaves it 9000 units behind (placed again on coming back), when its cell unloads,
+  before every save and load, and when the spawn is over while it is alive. A dead copy stays as a corpse until
+  its player leaves it.
+- It is over when it dies, when its owner's game lets it go (unloaded) and when its owner leaves: the server
+  forgets it and names nobody as its owner, which ends it in every game. Its death is believed from its owner
+  and from a player fighting their copy of it (health reported, or a takeover claim, within 10 s), never kept
+  with the session's dead, and killed in the owner's game too. Its hits on a stand-in count only from its
+  owner's game.
+- Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
+  carries what its own game gives it until the owner's gear report dresses it, and a copy whose owner's game
+  only knows the leveled NPC it was placed as can come out as another of that list's NPCs. Each game's corpse of a
+  spawn carries its own loot: each player loots their own.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
 
@@ -228,6 +282,7 @@
 
 References are identified by form ID, which matches across players because the load order must match.
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
+(runtime NPCs are shared as spawns under ids of their own: see Spawns)
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
 form types before acting: kills only for actors, loot only between containers/NPCs and inventory
 items, pickups only for loose inventory items that don't fill a quest alias.
@@ -267,7 +322,7 @@ menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health or asked to take it over within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Others are dropped, with a log line at most every 10 s |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
@@ -357,7 +412,18 @@ else skips this: the player is never in those places.
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
   10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
   nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
-  to them. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
+  to them. Out of power armor, the status also carries the frame they got out of last
+  (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
+  its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
+  The receiver keeps a copy of it there for as long as they are out and the spot is in the area its
+  engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
+  stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is
+  moved when the frame is, placed again when far off or never loaded, and none is placed where the
+  receiver's own copy of that very pre-placed frame stands within 200 units (that one stands for it,
+  and the copy left where the stand-in stood goes at once).
+  The receiver's own copy of a pre-placed frame they left parked elsewhere is hidden by the same
+  guards as a worn one (`ChooseParkedOriginal`), and stays hidden when they get into it again there.
+  Its pieces are not shown: a copy stands empty. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
   (`TESFurniture::Activate` begins power armor use only for the player; an NPC gets in only through
   its AI package), so the stand-in sent in never got in, and pieces that waited for it left the
   friend shown without armor. The receiver's own copy of a shared frame reference is hidden (not
@@ -443,7 +509,7 @@ else skips this: the player is never in those places.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 29 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, and to NPC states their owner's graph's direction and a dog's gait). The sections below record each review as it was written.
+Protocol VERSION 30 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -464,6 +530,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | Message | Who may send it | Server check | Receiver check | In the session file |
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
+| `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
@@ -510,8 +577,18 @@ that changes the world cannot ship without a row here.
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
-  waiting), `status` (cell, worldspace and location), `log level info|debug`
+  waiting), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
+  line of sight, what they fight as a session player and who runs them; this game's actor for a spawned one
+  another game listed), `status` (cell, worldspace and location), `log level info|debug`
   (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
+- Dev commands for the menu stress loop: `menus` (the menus open and for how long, and how often each
+  opened and closed, kept from their own events: no reference to a menu is taken), `input <userEvent>
+  [hold=<ms>] [device=key|mouse|pad] [id=<hex>]` (a button press handed to the game's own input receivers, past
+  Windows and DirectInput), `controls [context]` (the control map's input contexts and their user events),
+  `workshop [enter|exit|junk|select <ref>|scrap <ref>]`, and `dialogue menu` (the dialogue menu's own state).
+- `tools/menustress.sh`: workshop mode, the Pip-Boy and a conversation over and over on one game or both,
+  logging whatever gets stuck. `tools/hangcatch.ps1`: when the game stops answering for 10 s, a debugger
+  writes every thread's stack and a minidump.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session

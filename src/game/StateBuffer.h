@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/MotionPath.h"
 #include "game/Prediction.h"
 #include "game/StandInHold.h"
 
@@ -28,7 +29,8 @@ namespace StateBuffer
 	constexpr auto  MIN_DELAY = 70ms;
 	constexpr auto  MAX_DELAY = 250ms;
 	constexpr float DELAY_SLACK = 0.01f;  // seconds
-	constexpr float DELAY_SLEW = 0.002f;  // seconds per frame, so the drawn time never jumps
+	constexpr float DELAY_SLEW = 0.05f;   // seconds per second, so the drawn time never jumps: it runs at most 5% fast or slow
+	constexpr float SLEW_FRAME_LIMIT = 0.1f;  // seconds: a longer frame (a stall) eases it no further
 	constexpr auto  LEAD_LIMIT = 500ms;
 	constexpr std::size_t LEADS = 64;
 	constexpr std::size_t LEADS_LEFT_OUT = 64;  // one in this many: the furthest frames, which may stand still
@@ -46,6 +48,14 @@ namespace StateBuffer
 		Protocol::PlayerState state;
 		float                 motionAngle = 0.0f;  // world heading of travel, radians
 		bool                  held = false;        // past the newest state: it stands where that one put it
+		float                 heldSpeed = 0.0f;    // when held: the speed the newest state said (state.speed is stopped once states dry up)
+
+		// The friend's own speed in the state it was put by: moving still while their next state is late, though it is
+		// held, and drawn, standing.
+		[[nodiscard]] float OwnSpeed() const { return held ? heldSpeed : state.speed; }
+		// Where it is from now on, for the engine's update of the stand-in, which may come before or after our next frame's
+		// work (MotionPath.h): here now, then each newer state a delay after its stamp.
+		MotionPath::Path      path;
 	};
 
 	inline float LerpAngle(float a_from, float a_to, float a_t)
@@ -60,9 +70,11 @@ namespace StateBuffer
 		Prediction::ArrivalClock arrivals;  // for states that don't say when they were sent
 		Clock::time_point        arrived{};  // when the last state came
 		float                    delay = std::chrono::duration<float>(MIN_DELAY).count();  // seconds behind now it is drawn
-		std::array<float, LEADS> leads{};  // how far past the newest state's stamp each recent frame was, seconds
+		std::array<float, LEADS> leads{};  // how far past the newest state our last frame handed over each recent frame was, seconds
 		std::size_t              leadCount = 0;
 		std::size_t              leadNext = 0;
+		Clock::time_point        handedTo{};  // the newest state's stamp when the last frame sampled: where the path it handed over ends
+		Clock::time_point        framed{};    // when Frame last ran
 
 		// Takes a state that came at a_now; false (and nothing kept) when it is no newer than the newest held.
 		bool Push(const Protocol::PlayerState& a_state, Clock::time_point a_now)
@@ -76,6 +88,9 @@ namespace StateBuffer
 				// The first state came late, so the ones kept were stamped too late as well: they move back with it.
 				for (auto& snapshot : snapshots) {
 					snapshot.stamp -= sender.steppedBack;
+				}
+				if (handedTo != Clock::time_point{}) {
+					handedTo -= sender.steppedBack;
 				}
 			}
 			snapshots.push_back({ stamp, a_state });
@@ -97,7 +112,9 @@ namespace StateBuffer
 		}
 
 		// Once a frame, before Sample: drops states too old to be drawn again, notes how far past the newest
-		// one now is, and eases the delay toward what that asks for.
+		// one the frames since the last were, and eases the delay toward what that asks for. Between our frames the
+		// engine draws the stand-in on the path the last one handed over (MotionPath.h), which ends at the newest state
+		// it had: that is how far past it they went, up to now, when our work comes late in a frame or misses one.
 		void Frame(Clock::time_point a_now)
 		{
 			while (snapshots.size() > 2 && a_now - snapshots[1].stamp > MIN_DELAY + 1s) {
@@ -106,13 +123,19 @@ namespace StateBuffer
 			if (snapshots.empty()) {
 				return;
 			}
-			if (const auto lead = a_now - snapshots.back().stamp; lead < LEAD_LIMIT) {
+			const auto newest = snapshots.back().stamp;
+			const auto handed = handedTo != Clock::time_point{} ? (std::min)(handedTo, newest) : newest;
+			handedTo = newest;
+			if (const auto lead = a_now - handed; lead < LEAD_LIMIT) {
 				leads[leadNext] = std::chrono::duration<float>(lead).count();
 				leadNext = (leadNext + 1) % LEADS;
 				leadCount = (std::min)(leadCount + 1, LEADS);
 			}
+			// By time, not by frame: 2 ms a frame moved a 60 fps game's stand-in 12% fast or slow while the delay changed.
+			const float seconds = framed != Clock::time_point{} ? std::clamp(std::chrono::duration<float>(a_now - framed).count(), 0.0f, SLEW_FRAME_LIMIT) : 0.0f;
+			framed = a_now;
 			if (leadCount) {
-				delay += std::clamp(Wanted() - delay, -DELAY_SLEW, DELAY_SLEW);
+				delay += std::clamp(Wanted() - delay, -DELAY_SLEW * seconds, DELAY_SLEW * seconds);
 			}
 		}
 
@@ -124,9 +147,16 @@ namespace StateBuffer
 				return std::nullopt;
 			}
 
-			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(delay));
+			const auto behind = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(delay));
+			const auto renderTime = a_now - behind;
+			// What it is drawn as now, and the path on from there through the states from a_next.
+			const auto sampled = [&](const Protocol::PlayerState& a_state, float a_motionAngle, std::size_t a_next) {
+				Sampled out{ a_state, a_motionAngle };
+				out.path = MotionPath::Ahead({ a_now, a_state.x, a_state.y, a_state.z, a_state.heading }, a_state.cell, a_state.worldspace, snaps, a_next, behind, &Snapshot::stamp);
+				return out;
+			};
 			if (renderTime <= snaps.front().stamp) {
-				return Sampled{ snaps.front().state, snaps.front().state.heading };
+				return sampled(snaps.front().state, snaps.front().state.heading, 0);
 			}
 
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
@@ -138,7 +168,7 @@ namespace StateBuffer
 
 				// Don't blend across a cell or worldspace change (doors, fast travel).
 				if (a.state.cell != b.state.cell || a.state.worldspace != b.state.worldspace) {
-					return Sampled{ b.state, b.state.heading };
+					return sampled(b.state, b.state.heading, i);
 				}
 
 				const float span = std::chrono::duration<float>(b.stamp - a.stamp).count();
@@ -153,7 +183,7 @@ namespace StateBuffer
 				const float dx = b.state.x - a.state.x;
 				const float dy = b.state.y - a.state.y;
 				const float motionAngle = dx * dx + dy * dy > 1.0f ? std::atan2(dx, dy) : out.heading;
-				return Sampled{ out, motionAngle };
+				return sampled(out, motionAngle, i);
 			}
 
 			// Past the newest snapshot: hold position rather than guessing ahead, and stop
@@ -162,7 +192,10 @@ namespace StateBuffer
 			if (a_now - snaps.back().stamp > MIN_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
-			return Sampled{ held, held.heading, true };
+			auto out = sampled(held, held.heading, snaps.size());
+			out.held = true;
+			out.heldSpeed = snaps.back().state.speed;
+			return out;
 		}
 	};
 }

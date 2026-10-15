@@ -38,6 +38,13 @@ namespace
 		Clock::duration pauseAt{};  // the sender sends nothing for `pause` here (a loading screen)
 		Clock::duration pause{};
 		Clock::duration firstLate{};  // the drawing game hitches this long handling the first state (a slow welcome)
+		// Our frame's work (reading what has come, sampling the stand-in) runs apart from the engine's update of the
+		// stand-in, which draws it halfway through each frame: our work comes early in a frame or late, at random, and
+		// in `skipWork` of frames not at all (the window message went to the next frame). Otherwise both are at the
+		// frame's start.
+		bool  workApart = false;
+		float skipWork = 0.1f;
+		bool  byPath = true;  // the update puts it where the sampled path is at its moment (Puppets); false: where our work sampled it
 	};
 
 	struct Drawn
@@ -113,37 +120,67 @@ namespace
 			std::ranges::stable_sort(packets, {}, &Packet::arrives);
 		}
 
-		// The drawing game: reads what has come, then draws.
-		std::vector<Drawn>  drawn;
-		StateBuffer::Buffer buffer;
-		std::size_t         next = 0;
-		bool                stalled = false;
-		bool                pushed = false;
-		auto                last = start;
-		for (auto now = start; now < end; now += frameOf(a_setup.fps, a_setup.frameJitter)) {
-			if (a_setup.stall != Clock::duration{} && !stalled && now >= start + a_setup.stallAt) {
-				stalled = true;
-				now += a_setup.stall;
-			}
-			while (next < packets.size() && packets[next].arrives <= now) {
+		// The drawing game: our work reads what has come and samples the stand-in (RemotePlayers::Update), and the
+		// engine's update of the stand-in puts it where that sample says (Puppets), which is where it is drawn.
+		std::vector<Drawn>                  drawn;
+		StateBuffer::Buffer                 buffer;
+		std::optional<StateBuffer::Sampled> target;
+		std::size_t                         next = 0;
+		bool                                stalled = false;
+		bool                                pushed = false;
+		auto                                last = start;
+		const auto work = [&](Clock::time_point& a_now) {
+			while (next < packets.size() && packets[next].arrives <= a_now) {
 				const auto batch = Protocol::DecodePlayerStates(packets[next++].bytes);
 				REQUIRE(batch);
 				for (const auto& entry : batch->players) {
 					if (!pushed) {
 						pushed = true;
-						now += a_setup.firstLate;
+						a_now += a_setup.firstLate;
 					}
-					buffer.Push(entry.state, now);
+					buffer.Push(entry.state, a_now);
 				}
 			}
-			buffer.Frame(now);
-			const auto sampled = buffer.Sample(now);
-			const float seconds = std::chrono::duration<float>(now - last).count();
-			last = now;
-			if (sampled && now - start >= 2s) {
-				const float behind = std::chrono::duration<float>(now - start).count() - sampled->state.x / RUN;
-				drawn.push_back({ now, seconds, sampled->state.x, sampled->held, buffer.delay, behind });
+			buffer.Frame(a_now);
+			target = buffer.Sample(a_now);
+		};
+		const auto draw = [&](Clock::time_point a_now) {
+			const float seconds = std::chrono::duration<float>(a_now - last).count();
+			last = a_now;
+			if (!target || a_now - start < 2s) {
+				return;
 			}
+			float x = target->state.x;
+			if (const auto at = a_setup.byPath ? target->path.At(a_now) : std::nullopt) {
+				x = at->x;
+			}
+			const float behind = std::chrono::duration<float>(a_now - start).count() - x / RUN;
+			drawn.push_back({ a_now, seconds, x, target->held, buffer.delay, behind });
+		};
+		for (auto now = start; now < end;) {
+			const auto length = frameOf(a_setup.fps, a_setup.frameJitter);
+			if (a_setup.stall != Clock::duration{} && !stalled && now >= start + a_setup.stallAt) {
+				stalled = true;
+				now += a_setup.stall;
+			}
+			if (!a_setup.workApart) {
+				work(now);
+				draw(now);
+				now += length;
+				continue;
+			}
+			const float roll = unit(random);
+			const bool  skipped = roll < a_setup.skipWork;
+			const bool  early = roll < (1.0f + a_setup.skipWork) * 0.5f;
+			auto        at = now + (early ? length / 10 : length * 8 / 10);
+			if (!skipped && early) {
+				work(at);
+			}
+			draw(now + length / 2);
+			if (!skipped && !early) {
+				work(at);
+			}
+			now += length;
 		}
 		return drawn;
 	}
@@ -312,5 +349,37 @@ TEST("state buffer: a friend whose first state we handled late is drawn as close
 			CHECK(worst < usual + 0.02f);
 			CHECK(worst < 0.2f);
 		}
+	}
+}
+
+TEST("state buffer: a stand-in is drawn evenly though our frame's work comes at another moment of each frame than the engine's update")
+{
+	for (const float fps : { 16.0f, 30.0f, 60.0f }) {
+		for (unsigned seed = 1; seed <= 3; ++seed) {
+			Setup setup;
+			setup.fps = fps;
+			setup.frameJitter = 0.2f;
+			setup.seed = seed;
+			setup.workApart = true;
+			const auto drawn = Play(setup);
+			const auto counts = Count(drawn, FirstAfter(drawn, 5s));  // once the delay has grown to what this asks for
+			CHECK(counts.frames > 200);
+			CHECK(counts.backwards == 0);
+			// Uneven only where its path ran out: about as often as the delay leaves out the furthest frames (StateBuffer::LEADS_LEFT_OUT).
+			CHECK(counts.uneven <= counts.frames / 50);
+		}
+	}
+}
+
+TEST("state buffer: put where our work last sampled it, the same stand-in ran unevenly (what a friend saw)")
+{
+	for (const float fps : { 16.0f, 60.0f }) {
+		Setup setup;
+		setup.fps = fps;
+		setup.frameJitter = 0.2f;
+		setup.workApart = true;
+		setup.byPath = false;
+		const auto counts = Count(Play(setup));
+		CHECK(counts.uneven > counts.frames / 5);
 	}
 }

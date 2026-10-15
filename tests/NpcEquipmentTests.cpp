@@ -27,8 +27,10 @@ TEST("protocol: NPC equipment round trip")
 	const auto decoded = Protocol::DecodeNpcEquipment(Protocol::Encode(msg, MT::kNpcEquipment));
 	REQUIRE(decoded);
 	CHECK(*decoded == msg);
-	// A runtime reference (0xFF......) isn't the same NPC in another game.
-	CHECK(!Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, 0xFF000123, {} }, MT::kNpcEquipment)));
+	// A runtime NPC is named by its spawn id (SpawnBook.h); the player and the runtime range's first id name no NPC.
+	CHECK(Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, 0xFF000123, {} }, MT::kNpcEquipment)));
+	CHECK(!Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, 0xFF000000, {} }, MT::kNpcEquipment)));
+	CHECK(!Protocol::DecodeNpcEquipment(Protocol::Encode(Protocol::NpcEquipment{ 7, Protocol::PLAYER_REF_ID, {} }, MT::kNpcEquipment)));
 }
 
 TEST("npc gear: the owner's report reaches the others with the owner's ID")

@@ -39,9 +39,73 @@ namespace SaveGuard
 		std::uint32_t lastStray = 0;
 		std::uint32_t searches = 0;          // of all forms, for strays
 
-		SaveStrays::Book      book;  // what we placed, and what of it the game took from under us
-		constexpr auto        FORGOTTEN_CHECK_INTERVAL = std::chrono::seconds(1);
-		Clock::time_point     forgottenCheckAt{};
+		SaveStrays::Book       book;        // what we placed, and what of it the game took from under us
+		SaveStrays::Unpromoted unpromoted;  // the stand-ins the engine is not let keep persistent (see KeepUnpromoted)
+		constexpr auto         FORGOTTEN_CHECK_INTERVAL = std::chrono::seconds(1);
+		Clock::time_point      forgottenCheckAt{};
+
+		// TESObjectREFR::GetAllowPromoteToPersistent (RE/T/TESObjectREFR.h, slot 0x59): the engine asks it first in
+		// BGSDynamicPersistenceManager::PromoteReference and DemoteReference, and does nothing more on a no. An actor answers
+		// yes (it is not overridden; read from disk, 1.11.240). Hooked on the vtable of the stand-ins (the Actor class),
+		// where every other actor still gets the original answer.
+		constexpr std::size_t ALLOW_PROMOTE_INDEX = 0x59;
+		using AllowPromoteFn = bool (*)(const RE::TESObjectREFR*);
+		std::uintptr_t        promoteVtable = 0;
+		AllowPromoteFn        originalAllowPromote = nullptr;
+		std::uint32_t         refusalsLogged = 0;
+		Clock::time_point     refusalsLoggedAt{};
+		constexpr auto        REFUSALS_LOG_INTERVAL = std::chrono::seconds(10);
+
+		// Runs on whichever thread asks (a quest filling an alias, a task, the main thread); reads only the reference's own
+		// fields.
+		bool AllowPromoteHook(const RE::TESObjectREFR* a_this)
+		{
+			if (a_this) {
+				const auto base = a_this->GetObjectReference();
+				if (unpromoted.Refuses(a_this, a_this->GetFormID(), base ? base->GetFormID() : 0)) {
+					return false;
+				}
+			}
+			return originalAllowPromote(a_this);
+		}
+
+		bool InstallPromoteHook(RE::Actor* a_actor)
+		{
+			const auto vtable = *reinterpret_cast<std::uintptr_t*>(a_actor);
+			if (promoteVtable == vtable) {
+				return true;
+			}
+			if (promoteVtable != 0) {
+				REX::WARN("SaveGuard: actor {:08X} uses another vtable; the engine may still keep it persistent", a_actor->GetFormID());
+				return false;
+			}
+			const auto slot = vtable + sizeof(void*) * ALLOW_PROMOTE_INDEX;
+			originalAllowPromote = *reinterpret_cast<AllowPromoteFn*>(slot);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&AllowPromoteHook));
+			promoteVtable = vtable;
+			REX::INFO("SaveGuard: hooked the engine's persistence question (vtable {:X})", vtable);
+			return true;
+		}
+
+		// What KeepForgotten found gone is no longer ours to refuse.
+		void LetGoOfGone()
+		{
+			for (const auto& [id, base] : book.TakeGone()) {
+				unpromoted.Remove(id, base);
+			}
+		}
+
+		// Now and then, how often the engine was told no (each one a stand-in it would have kept past its cell).
+		void LogRefusals(Clock::time_point a_now)
+		{
+			const auto refused = unpromoted.Refused();
+			if (refused == refusalsLogged || a_now < refusalsLoggedAt + REFUSALS_LOG_INTERVAL) {
+				return;
+			}
+			REX::INFO("SaveGuard: the engine asked {} more time(s) to keep a stand-in persistent or let it go; told no ({} in all)", refused - refusalsLogged, refused);
+			refusalsLogged = refused;
+			refusalsLoggedAt = a_now;
+		}
 
 		void* SaveLoadGame()
 		{
@@ -239,14 +303,25 @@ namespace SaveGuard
 		book.Forget(a_id);
 	}
 
+	void KeepUnpromoted(RE::Actor* a_actor)
+	{
+		if (!a_actor || !InstallPromoteHook(a_actor)) {
+			return;
+		}
+		const auto base = a_actor->GetObjectReference();
+		unpromoted.Add(a_actor, a_actor->GetFormID(), base ? base->GetFormID() : 0);
+	}
+
 	void Frame()
 	{
 		const auto now = Clock::now();
+		LogRefusals(now);
 		if (book.ForgottenCount() == 0 || now < forgottenCheckAt) {
 			return;
 		}
 		forgottenCheckAt = now + FORGOTTEN_CHECK_INTERVAL;
 		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); });
+		LetGoOfGone();
 	}
 
 	std::uint32_t BeforeSave()
@@ -262,6 +337,7 @@ namespace SaveGuard
 				}
 			},
 			Sweep(), StandIn);
+		LetGoOfGone();
 		for (const auto& [c, verdict] : strays) {
 			const bool doomed = SaveStrays::Doomed(c.seen);
 			const bool hasChanges = HasChanges(c.id);
@@ -293,6 +369,7 @@ namespace SaveGuard
 	{
 		// What we placed before the load is gone, and its ids name the loaded game's references now (see
 		// SaveStrays::Book::AfterLoad).
+		unpromoted.Clear();
 		const auto strays = book.AfterLoad(Sweep(), StandIn);
 		for (const auto& [c, verdict] : strays) {
 			lastStray = c.id;
@@ -302,6 +379,11 @@ namespace SaveGuard
 			if (verdict == SaveStrays::Verdict::kExclude) {
 				ExcludeId(c.id);
 				REX::WARN("SaveGuard: the save brought back {}, a stand-in or one of its things; its record is dropped", Describe(c, hasChanges));
+				// An earlier version's stand-in comes back promoted when the save kept it so: its holder letting go would unload it
+				// in no cell (see SaveStrays::Unpromoted), so it is told no from now on and stays as it is, kept out of every save.
+				if (const auto actor = c.actor ? RE::TESForm::GetFormByID<RE::Actor>(c.id) : nullptr) {
+					KeepUnpromoted(actor);
+				}
 			} else if (doomed) {
 				foreignDoomed += hasChanges;
 				REX::WARN("SaveGuard: the save brought back {}, not ours, with neither a cell nor a worldspace; left to the sweep before the next save", Describe(c, hasChanges));
@@ -315,6 +397,7 @@ namespace SaveGuard
 
 	void NewGame()
 	{
+		unpromoted.Clear();
 		book.AfterLoad({}, StandIn);  // what was placed before it is gone, as after a load
 	}
 
@@ -353,7 +436,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} lastStray={:08X} placed={} forgotten={} searches={}", excluded,
-			straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, lastStray, book.PlacedCount(), book.ForgottenCount(), searches);
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+			unpromoted.Refused());
 	}
 }

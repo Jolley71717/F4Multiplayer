@@ -39,6 +39,10 @@ can join. Optionally set the same `sPassword` for everyone.
 If a friend has a purely cosmetic mod you don't (textures, sounds, UI), the host can list its plugin
 in `sIgnoredPlugins` (comma-separated) and the load orders are compared without it. Only do that for
 mods that add nothing the session shares: an NPC, item or settlement mod listed there desyncs quietly.
+Such a plugin must load after all your other plugins (an `.esl` or light one after the other light
+ones): one earlier changes the form IDs of every mod after it, so the friend is refused. The free HD
+texture pack works the same way: without other mods it never matters, with mods it loads before them,
+so everyone needs it or nobody does.
 
 ## Playing
 

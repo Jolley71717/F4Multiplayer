@@ -8,13 +8,17 @@
 #include <random>
 
 #include "game/Dialogue.h"
+#include "game/EnemyList.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
+#include "game/MenuWatch.h"
 #include "game/FrameStats.h"
 #include "game/Hotkeys.h"
+#include "game/InjectInput.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -794,6 +798,87 @@ namespace DevCommands
 			const auto target = actor->currentCombatTarget.get();
 			return std::format("inCombat={} target={:08X} dead={} hp={:.0f}", actor->IsInCombat(), target ? target->GetFormID() : 0, actor->IsDead(false),
 				RE::ActorValue::GetSingleton()->health ? static_cast<RE::ActorValueOwner*>(actor)->GetActorValue(*RE::ActorValue::GetSingleton()->health) : -1.0f);
+		}
+
+		// What the enemies command reads of one actor (src/game/EnemyList.h).
+		EnemyList::Seen SeeActor(RE::PlayerCharacter* a_player, RE::Actor* a_actor)
+		{
+			EnemyList::Seen seen;
+			seen.id = a_actor->GetFormID();
+			const auto base = a_actor->GetObjectReference();
+			seen.base = base ? base->GetFormID() : 0;
+			seen.name = base ? std::string{ RE::TESFullName::GetFullName(*base) } : std::string{};
+			const auto& at = a_actor->data.location;
+			const auto& me = a_player->data.location;
+			seen.x = at.x;
+			seen.y = at.y;
+			seen.z = at.z;
+			seen.distance = std::sqrt((at.x - me.x) * (at.x - me.x) + (at.y - me.y) * (at.y - me.y) + (at.z - me.z) * (at.z - me.z));
+			seen.dead = a_actor->IsDead(false);
+			seen.standIn = Puppets::IsPuppet(a_actor) || RemotePlayers::PlayerIdFor(seen.id) != 0;
+			seen.companion = NpcSync::IsOurCompanion(a_actor);  // in the current companion faction here (a friend's may be only in theirs)
+			seen.owner = NpcSync::Owner(seen.id);
+			seen.runsHere = EnemyList::RunsHere(seen.owner, NpcSync::LocalPlayer());
+			if (seen.dead || seen.standIn) {
+				return seen;
+			}
+			seen.hostile = a_actor->GetHostileToActor(a_player);
+			seen.inCombat = a_actor->IsInCombat();
+			const auto target = a_actor->currentCombatTarget.get();
+			seen.target = target ? target->GetFormID() : 0;
+			seen.targetPlayer = seen.target == Protocol::PLAYER_REF_ID ? NpcSync::LocalPlayer() : RemotePlayers::PlayerIdFor(seen.target);
+			if (a_actor->Get3D()) {
+				bool picked = false;
+				seen.lineOfSight = a_player->HasLOSToTarget(a_actor, &picked);
+			}
+			return seen;
+		}
+
+		// The loaded actors within a_radius of a point, in every loaded cell: outdoors an enemy across the cell
+		// border counts too.
+		std::vector<EnemyList::Seen> SeeActors(RE::PlayerCharacter* a_player, const RE::NiPoint3& a_center, float a_radius)
+		{
+			std::vector<EnemyList::Seen> out;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(a_center, a_radius, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && !actor->IsPlayerRef() && !actor->IsDisabled() && out.size() < 200) {
+					out.push_back(SeeActor(a_player, actor));
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return out;
+		}
+
+		// enemies [radius] | enemies like <baseHex|any> <x> <y> [within]: the actors near the player hostile to it, or
+		// fighting a player, nearest first, with whether the player can see them (los), what they fight as a session
+		// player number (targetPlayer) and who runs them (owner, here). `like` finds this game's actor for one another
+		// game listed, by base and place: an actor made at runtime (made=true) has another form ID in each game.
+		std::string Enemies(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return "error: not in game";
+			}
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "like") {
+				const auto base = args.size() > 1 ? (args[1] == "any" ? std::optional<std::uint32_t>{ 0 } : ParseHex(args[1])) : std::nullopt;
+				const auto x = args.size() > 2 ? ParseFloat(args[2]) : std::nullopt;
+				const auto y = args.size() > 3 ? ParseFloat(args[3]) : std::nullopt;
+				const float within = args.size() > 4 ? ParseFloat(args[4]).value_or(EnemyList::LIKE_WITHIN) : EnemyList::LIKE_WITHIN;
+				if (!base || !x || !y || !(within > 0.0f && within <= 10000.0f)) {
+					return "error: usage: enemies like <baseHex|any> <x> <y> [within]";
+				}
+				const RE::NiPoint3 spot{ *x, *y, player->data.location.z };
+				// The search reaches as far up and down as across: the spot's height is the player's, not the actor's.
+				const auto found = EnemyList::Like(SeeActors(player, spot, within * 2.0f), *base, *x, *y, within);
+				return found ? EnemyList::Describe(*found) : "none";
+			}
+			const float radius = args.empty() ? 3000.0f : ParseFloat(args[0]).value_or(-1.0f);
+			if (!(radius > 0.0f && radius <= 20000.0f)) {
+				return "error: usage: enemies [radius] | enemies like <baseHex|any> <x> <y> [within]";
+			}
+			return EnemyList::List(SeeActors(player, player->data.location, radius));
 		}
 
 		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
@@ -1928,13 +2013,348 @@ namespace DevCommands
 			const auto ui = RE::UI::GetSingleton();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
-				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
 				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
 		}
 
-		// dialogue: the conversation the player is in, and whether the speaker is saying something.
-		std::string Dialogue(std::string_view)
+		// menus: the menus open now and for how long, and how often each opened and closed, kept from their own
+		// events (game/MenuLog.h has the line's fields). It takes no reference to any menu, so the stress loop
+		// asks it every second without changing which thread destroys a closing one.
+		std::string Menus(std::string_view)
 		{
+			if (!MenuWatch::Installed()) {
+				return "error: the menu watch isn't running (it starts once the game's data is loaded, with the dev channel on)";
+			}
+			return MenuWatch::Describe();
+		}
+
+		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
+		// own input receivers, the menus' (MenuControls) and then the player's controls (PlayerControls), and
+		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
+		// from `key` goes through: see game/InjectInput.h. Without an id the button is the one the control map
+		// gives the event in the uppermost input context that has it (`controls` lists them).
+
+		// A ButtonEvent laid out as the game's. RE::ButtonEvent can't be made here: its base class's virtual
+		// functions exist only in the game. The vtable is the game's own.
+		struct GameButtonEvent
+		{
+			std::uintptr_t    vtable = 0;               // 00
+			std::int32_t      device = 0;               // 08
+			std::int32_t      deviceID = 0;             // 0C
+			std::int32_t      eventType = 0;            // 10
+			const void*       next = nullptr;           // 18
+			std::uint32_t     timeCode = 0xFFFFFFFF;    // 20
+			std::int32_t      handled = 0;              // 24
+			RE::BSFixedString strUserEvent;             // 28
+			std::int32_t      idCode = -1;              // 30
+			bool              disabled = false;         // 34
+			float             value = 0.0f;             // 38
+			float             heldDownSecs = 0.0f;      // 3C
+		};
+		static_assert(sizeof(GameButtonEvent) == sizeof(RE::ButtonEvent));
+
+		InjectInput::Releases inputReleases;
+
+		// Whether the object is the game's of that class: its vtable is one of the class's.
+		template <std::size_t N>
+		bool IsGameObject(const void* a_object, const std::array<REL::ID, N>& a_vtables)
+		{
+			if (!a_object) {
+				return false;
+			}
+			const auto vtable = *static_cast<const std::uintptr_t*>(a_object);
+			return std::ranges::any_of(a_vtables, [&](const REL::ID& a_id) { return a_id.address() == vtable; });
+		}
+
+		std::string_view HandledName(std::int32_t a_handled)
+		{
+			switch (a_handled) {
+			case 0:
+				return "unhandled";
+			case 1:
+				return "continue";
+			case 2:
+				return "stop";
+			default:
+				return "?";
+			}
+		}
+
+		// The key the control map gives a user event on a device: in the uppermost input context that has
+		// it (the priority stack's last is the uppermost), else in any context. a_context: where it was found.
+		std::optional<std::int32_t> ControlMapKey(std::string_view a_event, InjectInput::Device a_device, int& a_context)
+		{
+			const auto map = RE::ControlMap::GetSingleton();
+			if (!map) {
+				return std::nullopt;
+			}
+			const auto device = static_cast<std::size_t>(a_device);  // the game's numbering: keyboard 0, mouse 1, gamepad 2
+			const auto find = [&](std::int32_t a_id) -> std::optional<std::int32_t> {
+				if (a_id < 0 || a_id >= static_cast<std::int32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal) || !map->controlMaps[a_id]) {
+					return std::nullopt;
+				}
+				for (const auto& mapping : map->controlMaps[a_id]->deviceMappings[device]) {
+					if (mapping.eventID == a_event) {
+						a_context = a_id;
+						return mapping.inputKey;
+					}
+				}
+				return std::nullopt;
+			};
+			const auto& stack = map->contextPriorityStack;
+			for (auto i = stack.size(); i-- > 0;) {
+				if (const auto key = find(static_cast<std::int32_t>(stack[i].get()))) {
+					return key;
+				}
+			}
+			for (std::int32_t id = 0; id < static_cast<std::int32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal); ++id) {
+				if (const auto key = find(id)) {
+					return key;
+				}
+			}
+			return std::nullopt;
+		}
+
+		// One button event to the receivers, as the game's input code hands them a frame's events: the menus
+		// first, the player's controls unless a menu stopped it. Returns what each did with it.
+		std::string DeliverButton(const InjectInput::Press& a_press, bool a_down)
+		{
+			// The events stay readable after the call (a receiver might keep the pointer for later in the
+			// frame): a few slots used in turn, never freed.
+			static auto       slots = new std::array<GameButtonEvent, 8>{};
+			static std::size_t next = 0;
+			auto&             event = (*slots)[next++ % slots->size()];
+			event.vtable = RE::VTABLE::ButtonEvent[0].address();
+			event.device = static_cast<std::int32_t>(a_press.device);
+			event.deviceID = 0;
+			event.eventType = static_cast<std::int32_t>(RE::INPUT_EVENT_TYPE::kButton);
+			event.next = nullptr;
+			event.timeCode = 0xFFFFFFFF;
+			event.handled = 0;
+			event.strUserEvent = a_press.userEvent.c_str();
+			event.idCode = a_press.id ? static_cast<std::int32_t>(*a_press.id) : -1;
+			event.disabled = false;
+			event.value = a_down ? 1.0f : 0.0f;
+			event.heldDownSecs = a_down ? 0.0f : InjectInput::ReleaseHeldSecs(a_press);
+			const auto input = reinterpret_cast<const RE::InputEvent*>(&event);
+			std::string out;
+			const auto  menus = RE::MenuControls::GetSingleton();
+			if (IsGameObject(menus, RE::VTABLE::MenuControls)) {
+				menus->PerformInputProcessing(input);
+				out = std::format("menus={}", HandledName(event.handled));
+			} else {
+				out = "menus=missing";
+			}
+			const auto player = RE::PlayerControls::GetSingleton();
+			if (event.handled == 2) {
+				out += " player=skipped";
+			} else if (IsGameObject(player, RE::VTABLE::PlayerControls)) {
+				player->PerformInputProcessing(input);
+				out += std::format(" player={}", HandledName(event.handled));
+			} else {
+				out += " player=missing";
+			}
+			return out;
+		}
+
+		std::string Input(std::string_view a_args)
+		{
+			auto parsed = InjectInput::Parse(a_args);
+			if (const auto error = std::get_if<std::string>(&parsed)) {
+				return error->starts_with("error: ") ? *error : "error: " + *error;
+			}
+			auto press = std::get<InjectInput::Press>(std::move(parsed));
+			int  context = -1;
+			if (!press.id) {
+				const auto key = ControlMapKey(press.userEvent, press.device, context);
+				if (!key) {
+					return std::format("error: the control map has no {} for that device; give id=<hex>", press.userEvent);
+				}
+				press.id = static_cast<std::uint32_t>(*key);
+			}
+			std::string out;
+			for (const auto& held : inputReleases.Pressed(press, std::chrono::steady_clock::now())) {
+				out += std::format("released the held {} first ({}); ", held.userEvent, DeliverButton(held, false));
+			}
+			out += std::format("pressed {} id={:X}{} {}; release in {} ms", press.userEvent, *press.id, context >= 0 ? std::format(" context={:X}", context) : "",
+				DeliverButton(press, true), press.hold.count());
+			return out;
+		}
+
+		void InputFrame()
+		{
+			if (!inputReleases.Waiting()) {
+				return;
+			}
+			for (const auto& press : inputReleases.Due(std::chrono::steady_clock::now())) {
+				const auto what = DeliverButton(press, false);
+				REX::DEBUG("DevCommands: released {}: {}", press.userEvent, what);
+			}
+		}
+
+		// The input contexts the control map has stacked, uppermost last, by number (UserEvents::INPUT_CONTEXT_ID).
+		std::string ContextStack()
+		{
+			const auto map = RE::ControlMap::GetSingleton();
+			if (!map) {
+				return "none";
+			}
+			std::string out;
+			for (const auto& context : map->contextPriorityStack) {
+				out += std::format("{}{:X}", out.empty() ? "" : ",", static_cast<std::int32_t>(context.get()));
+			}
+			return out.empty() ? "none" : out;
+		}
+
+		// controls [contextHex]: the control map's stack of input contexts (uppermost last), and with a context,
+		// its user events and their keys (keyboard, mouse, pad), for `input`. 0 is gameplay, 1 menu navigation,
+		// 10 workshop (UserEvents::INPUT_CONTEXT_ID has the rest).
+		std::string Controls(std::string_view a_args)
+		{
+			const auto map = RE::ControlMap::GetSingleton();
+			if (!map) {
+				return "error: no control map";
+			}
+			auto out = std::format("stack={}", ContextStack());
+			if (a_args.empty()) {
+				return out;
+			}
+			const auto id = ParseHex(a_args);
+			if (!id || *id >= static_cast<std::uint32_t>(RE::UserEvents::INPUT_CONTEXT_ID::kTotal)) {
+				return "error: usage: controls [contextHex below 21]";
+			}
+			const auto context = map->controlMaps[*id];
+			if (!context) {
+				return out + " context=none";
+			}
+			constexpr std::array DEVICES{ "key", "mouse", "pad" };
+			for (std::size_t device = 0; device < DEVICES.size(); ++device) {
+				out += std::format(" {}:", DEVICES[device]);
+				for (const auto& mapping : context->deviceMappings[device]) {
+					out += std::format(" {}={:X}", mapping.eventID.c_str(), mapping.inputKey);
+				}
+			}
+			return out;
+		}
+
+		// workshop: whether workshop mode is up (its menu, from the menu watch) and the workbench nearest the
+		// player. workshop enter [benchHex]: starts workshop mode at that workbench, or the nearest the game
+		// lets the player use. workshop exit [reentry]: asks the game to leave it. workshop junk [radius]: the
+		// nearest references workshop mode would let the player scrap, inside the workbench's build area.
+		// workshop select <refHex>: makes it the highlighted piece. workshop scrap <refHex>: scraps it with the
+		// game's own scrap (Workshop::ScrapReference), as if the player had; what it gives back is dropped.
+		std::string Workshop(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell()) {
+				return "error: not in game";
+			}
+			const auto args = SplitArgs(a_args);
+			const auto bench = RE::Workshop::FindNearestValidWorkshop(*player);
+			const auto mode = [&] {
+				return std::format("menu={} for={:.1f} bench={:08X} inArea={}", MenuWatch::IsOpen("WorkshopMenu"sv),
+					std::chrono::duration<float>(MenuWatch::OpenFor("WorkshopMenu"sv)).count(), bench ? bench->GetFormID() : 0,
+					bench && RE::Workshop::IsLocationWithinBuildableArea(*bench, player->data.location));
+			};
+			if (args.empty()) {
+				return mode();
+			}
+			if (args[0] == "enter") {
+				const auto target = args.size() > 1 ? LookupRef(args[1]) : bench;
+				if (!target || !WorkshopSync::IsWorkbenchAnchor(target)) {
+					return "error: no workbench (stand in a settlement's build area, or give one)";
+				}
+				RE::Workshop::StartWorkshop(target);
+				return std::format("entering at {:08X}", target->GetFormID());
+			}
+			if (args[0] == "exit") {
+				RE::Workshop::RequestExitWorkshop(args.size() > 1 && args[1] == "reentry");
+				return "exit requested";
+			}
+			if (args[0] == "junk") {
+				if (!bench) {
+					return "error: no workbench near";
+				}
+				const float radius = args.size() > 1 ? ParseFloat(args[1]).value_or(1500.0f) : 1500.0f;
+				std::vector<std::pair<float, RE::TESObjectREFR*>> found;
+				RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+					if (a_ref && a_ref != player && !a_ref->As<RE::Actor>() && !a_ref->IsDisabled() && !a_ref->IsDeleted() && a_ref->GetObjectReference() &&
+						RE::Workshop::IsLocationWithinBuildableArea(*bench, a_ref->data.location) && WorkshopSync::WorkshopModeScraps(*a_ref)) {
+						found.emplace_back(a_ref->data.location.GetDistance(player->data.location), a_ref);
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				});
+				std::ranges::sort(found, {}, &std::pair<float, RE::TESObjectREFR*>::first);
+				std::string out;
+				for (std::size_t i = 0; i < found.size() && i < 8; ++i) {
+					const auto [distance, ref] = found[i];
+					const auto base = ref->GetObjectReference();
+					out += std::format("{}{:08X} base={:08X} '{}' dist={:.0f}", i ? "; " : "", ref->GetFormID(), base->GetFormID(), RE::TESFullName::GetFullName(*base), distance);
+				}
+				return out.empty() ? "none" : out;
+			}
+			if ((args[0] == "select" || args[0] == "scrap") && args.size() == 2) {
+				const auto ref = LookupRef(args[1]);
+				if (!ref || ref->IsDeleted()) {
+					return "error: no such reference";
+				}
+				if (!MenuWatch::IsOpen("WorkshopMenu"sv)) {
+					return "error: not in workshop mode";
+				}
+				RE::Workshop::SetSelectedEditItem(ref->GetHandle());
+				if (args[0] == "select") {
+					return std::format("selected {:08X}", ref->GetFormID());
+				}
+				if (!WorkshopSync::WorkshopModeScraps(*ref)) {
+					return "error: workshop mode doesn't scrap that";
+				}
+				// The library declares it with a handle smart pointer it doesn't define; that is the game's
+				// intrusive pointer to the reference, as NiPointer is.
+				using ScrapFn = void (*)(const RE::Workshop::ContextData&, RE::NiPointer<RE::TESObjectREFR>&, RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>>*);
+				static REL::Relocation<ScrapFn> scrap{ RE::ID::Workshop::ScrapReference };
+				const RE::Workshop::ContextData context{ player };
+				RE::NiPointer<RE::TESObjectREFR> target{ ref };
+				RE::BSTArray<RE::BSTTuple<RE::TESBoundObject*, std::uint32_t>> rewards;
+				scrap(context, target, &rewards);
+				return std::format("scrapped {:08X} disabled={} deleted={} parts={}", ref->GetFormID(), ref->IsDisabled(), ref->IsDeleted(), rewards.size());
+			}
+			return "error: usage: workshop [enter [benchHex] | exit [reentry] | junk [radius] | select <refHex> | scrap <refHex>]";
+		}
+
+		// The dialogue menu as the UI holds it, for telling a menu that ignores input from input that never
+		// reached it: whether it is on the menu stack and the uppermost menu, whether it handles input at all,
+		// whether its option buttons are shown, and the input context it put up. Takes a reference to the
+		// menu for the moment it reads it, here on the main thread (the stress loop doesn't ask this).
+		std::string DialogueMenuState()
+		{
+			const auto ui = RE::UI::GetSingleton();
+			if (!ui) {
+				return "menu=none";
+			}
+			const auto menu = ui->GetMenu("DialogueMenu"sv);
+			if (!menu || !IsGameObject(menu.get(), RE::VTABLE::DialogueMenu)) {
+				return "menu=none";
+			}
+			const auto dialogue = static_cast<RE::DialogueMenu*>(menu.get());
+			const auto& stack = ui->menuStack;
+			const char* top = !stack.empty() && stack.back() ? stack.back()->menuName.c_str() : "";
+			return std::format("menu=yes onStack={} uppermost={} topMenu='{}' handlesInput={} buttonsShown={} lookingAtPlayer={} context={:X} menuContext={:X} layer={} flags={:08X}",
+				dialogue->OnStack(), !stack.empty() && stack.back().get() == menu.get(), top ? top : "", dialogue->inputEventHandlingEnabled, dialogue->areButtonsShown,
+				dialogue->isLookingAtPlayer, static_cast<std::int32_t>(dialogue->currentContext), static_cast<std::int32_t>(dialogue->inputContext.get()),
+				dialogue->inputLayer != nullptr, dialogue->menuFlags.underlying());
+		}
+
+		// dialogue [menu]: the conversation the player is in, and whether the speaker is saying something; the
+		// input the game lets through now (the enable manager's user event flags) and the stacked input
+		// contexts. With menu, the dialogue menu itself (DialogueMenuState).
+		std::string Dialogue(std::string_view a_args)
+		{
+			if (a_args == "menu") {
+				return DialogueMenuState();
+			}
+			if (!a_args.empty()) {
+				return "error: usage: dialogue [menu]";
+			}
 			const auto topics = ::Dialogue::TopicManager();  // not RE::MenuTopicManager::GetSingleton(): see game/Dialogue.cpp
 			if (!topics) {
 				return "none";
@@ -1942,13 +2362,14 @@ namespace DevCommands
 			const auto speaker = topics->speaker.get();
 			const auto actor = speaker ? speaker->As<RE::Actor>() : nullptr;
 			const auto last = topics->lastSpeaker.get();
-			const auto ui = RE::UI::GetSingleton();
-			const bool dialogueMenu = ui && ui->GetMenuOpen("DialogueMenu"sv);
+			const bool dialogueMenu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto scene = player ? player->GetCurrentScene() : nullptr;
-			return std::format("last={:08X} dialogueMenu={} menuOpen={} inDialogue={} allowInput={} speaker={:08X} talking={} voiceTimer={:.2f} overSceneActor={} playerScene={:08X} {}",
+			const auto enable = RE::BSInputEnableManager::GetSingleton();
+			return std::format("last={:08X} dialogueMenu={} menuOpen={} inDialogue={} allowInput={} speaker={:08X} talking={} voiceTimer={:.2f} overSceneActor={} playerScene={:08X} inputFlags={:08X} contexts={} {}",
 				last ? last->GetFormID() : 0, dialogueMenu, topics->menuOpen, RE::IsPlayerInDialogue(), topics->allowInput, speaker ? speaker->GetFormID() : 0,
-				speaker ? speaker->IsTalking() : false, actor ? actor->voiceTimer : -1.0f, topics->overSceneActor, scene ? scene->GetFormID() : 0, ::Dialogue::Describe());
+				speaker ? speaker->IsTalking() : false, actor ? actor->voiceTimer : -1.0f, topics->overSceneActor, scene ? scene->GetFormID() : 0,
+				enable ? enable->cachedInputUserEventsFlags.underlying() : 0, ContextStack(), ::Dialogue::Describe());
 		}
 
 		// markers [text]: map markers (name from their data) with the first bytes of their data.
@@ -2107,6 +2528,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
 			Entry{ "combat", Combat },
+			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "findgear", FindGear },
@@ -2159,12 +2581,17 @@ namespace DevCommands
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "wsbenches", WsBenches },
+			Entry{ "menus", Menus },
+			Entry{ "input", Input },
+			Entry{ "controls", Controls },
+			Entry{ "workshop", Workshop },
 		};
 	}
 
 	void Frame()
 	{
 		TraceFrame();
+		InputFrame();
 		if (!turn.active) {
 			return;
 		}

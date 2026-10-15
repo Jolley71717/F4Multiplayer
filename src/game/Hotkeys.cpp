@@ -1,6 +1,7 @@
 #include "game/Hotkeys.h"
 
 #include "Config.h"
+#include "game/OpenMenus.h"
 
 // user32/kernel32 (windows.h clashes with CommonLibF4's names).
 extern "C" {
@@ -47,9 +48,8 @@ namespace Hotkeys
 
 		bool MenuOpen()
 		{
-			static const RE::BSFixedString console{ "Console" };
 			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || ui->GetMenuOpen(console);
+			return !ui || ui->menuMode != 0 || OpenMenus::Open(OpenMenus::Menu::kConsole);
 		}
 
 		bool IsDown(std::uint32_t a_vk)
@@ -110,14 +110,13 @@ namespace Hotkeys
 
 	std::string Describe()
 	{
-		static const RE::BSFixedString console{ "Console" };
 		const auto&                    settings = Config::Get();
 		const auto                     ui = RE::UI::GetSingleton();
 		const auto                     key = [](const char* a_name, std::uint32_t a_vk) {
 			return std::format(" {}={:02X}{}", a_name, a_vk, IsDown(a_vk) ? "(down)" : "");
 		};
 		return std::format("hotkeys: focus={} menuMode={} console={} chord: alt={} ctrl={} win={} polls={} fired={} blocked={} keys:",
-				   GameHasFocus(), ui ? static_cast<int>(ui->menuMode) : -1, ui && ui->GetMenuOpen(console), IsDown(0x12), IsDown(0x11), IsDown(0x5B) || IsDown(0x5C),
+				   GameHasFocus(), ui ? static_cast<int>(ui->menuMode) : -1, OpenMenus::Open(OpenMenus::Menu::kConsole), IsDown(0x12), IsDown(0x11), IsDown(0x5B) || IsDown(0x5C),
 				   polls, actionsFired, blockedPresses) +
 		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("voice", settings.keyVoice);
 	}

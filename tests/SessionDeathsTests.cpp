@@ -5,12 +5,15 @@
 
 #include "ServerFixture.h"
 
+#include "SessionFile.h"
 #include "game/NpcClaims.h"
 #include "game/SessionDeaths.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -71,9 +74,9 @@ namespace
 		return dead;
 	}
 
-	std::vector<std::uint8_t> Claim(std::uint32_t a_ref, Reason a_reason = Reason::kUnowned)
+	std::vector<std::uint8_t> Claim(std::uint32_t a_ref, Reason a_reason = Reason::kUnowned, bool a_essential = false)
 	{
-		return Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, a_reason } });
+		return Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_ref, a_reason, a_essential } });
 	}
 
 	std::vector<std::uint8_t> Kill(std::uint32_t a_ref, float a_x = 0.0f)
@@ -81,13 +84,14 @@ namespace
 		return Protocol::Encode(Protocol::ActorDeath{ a_ref, 0, true, a_x, 0.0f, 0.0f }, MT::kReportDeath);
 	}
 
-	// An NPC as one game has it. Essential: essential in this game only (its quest is in another state there), so a
-	// console kill leaves it standing.
+	// An NPC as one game has it. Essential: the game won't let it die (in this game only, when its quest is in another
+	// state there), so its death is held rather than applied (WorldSync::TryKill). Following: our companion.
 	struct Npc
 	{
 		bool loaded = false;
 		bool alive = true;
 		bool essential = false;
+		bool following = false;
 	};
 
 	// One player's game: its peer, what it knows of the session's deaths, its claims, and its NPCs.
@@ -100,7 +104,7 @@ namespace
 		NpcClaims::Book                                  claims;
 		std::unordered_map<std::uint32_t, std::uint32_t> owners;
 		std::unordered_map<std::uint32_t, Npc>           world;
-		std::unordered_set<std::uint32_t>                pending;  // deaths waiting for the NPC to load (WorldSync's)
+		std::unordered_set<std::uint32_t>                pending;  // deaths waiting for the NPC to load, or held while it is essential (WorldSync's)
 
 		// Joins (as the host's own game, or not) and takes the welcome's world state.
 		Game(Fixture& a_f, PeerId a_peer, std::string a_name, bool a_host = false) :
@@ -120,7 +124,7 @@ namespace
 		[[nodiscard]] bool Alive(std::uint32_t a_ref) { return world[a_ref].alive; }
 
 		// WorldSync::TryKill, and the death event it brings: a loaded copy is killed with the console, a corpse is
-		// seen dead, one not loaded waits.
+		// seen dead, one not loaded waits, and one essential here is held (the kill would only knock it down).
 		void TryKill(std::uint32_t a_ref)
 		{
 			auto& npc = world[a_ref];
@@ -129,15 +133,13 @@ namespace
 				pending.erase(a_ref);
 				return;
 			}
-			if (!npc.loaded) {
+			if (!npc.loaded || npc.essential) {
 				pending.insert(a_ref);
 				return;
 			}
 			pending.erase(a_ref);
-			if (!npc.essential) {
-				npc.alive = false;
-				deaths.SawDead(a_ref);  // its death event
-			}
+			npc.alive = false;
+			deaths.SawDead(a_ref);  // its death event
 		}
 
 		// WorldSync::ApplyRemoteDeath.
@@ -178,6 +180,10 @@ namespace
 						} else {
 							owners[entry.refId] = entry.playerId;
 						}
+						// WorldSync::OnActorOwners: the server gives nobody a dead NPC, so a death held here was undone.
+						if (entry.playerId != 0 && pending.erase(entry.refId)) {
+							deaths.Forget(entry.refId);
+						}
 					}
 				}
 			}
@@ -204,7 +210,7 @@ namespace
 		void Unloads(std::uint32_t a_ref) { world[a_ref].loaded = false; }
 
 		// NpcSync's scan of one NPC at a_now: a loaded, living one is offered when NpcClaims::Book::Offer says so (with
-		// WorldSync::MayClaim from the ledger). True if a claim was sent.
+		// WorldSync::MayClaim from the ledger), marked essential when it is here. True if a claim was sent.
 		bool Scan(std::uint32_t a_ref, Clock::time_point a_now)
 		{
 			const auto& npc = world[a_ref];
@@ -212,11 +218,11 @@ namespace
 				return false;
 			}
 			const auto owner = owners.contains(a_ref) ? owners[a_ref] : 0;
-			const auto reason = claims.Offer(a_ref, owner, id, false, deaths.MayClaim(a_ref, a_now), a_now);
+			const auto reason = claims.Offer(a_ref, owner, id, npc.following, deaths.MayClaim(a_ref, a_now, npc.essential), a_now);
 			if (!reason) {
 				return false;
 			}
-			f.fake->Deliver(peer, Claim(a_ref, *reason));
+			f.fake->Deliver(peer, Claim(a_ref, *reason, npc.essential));
 			return true;
 		}
 
@@ -432,7 +438,7 @@ TEST("alive again: the host quickloading so often that the server refuses its wo
 	CHECK(!f.Logged("alive again"));
 }
 
-TEST("alive again: a raider essential only in the host's game, which the kill command leaves standing, doesn't undo Bob's kill when it loads again")
+TEST("alive again: a raider essential only in the host's game doesn't undo Bob's kill: its death waits there, and its claims change nothing")
 {
 	Fixture f{ HostedOptions() };
 	Game    host{ f, 1, "Host", true };
@@ -441,18 +447,28 @@ TEST("alive again: a raider essential only in the host's game, which the kill co
 	bob.Kills(RAIDER);
 	host.Pump();
 	CHECK(host.deaths.Contains(RAIDER));
-	CHECK(host.Alive(RAIDER));  // it went down and got up again
-	CHECK(host.pending.empty());  // the kill ran
+	CHECK(host.Alive(RAIDER));             // the kill command would only knock it down
+	CHECK(host.pending.contains(RAIDER));  // so its death is held
 
-	// The host walks off and comes back: it loads alive, as it has been all along.
+	// The host walks off and comes back: it loads alive, as it has been all along. Its game offers to run it, marked
+	// essential; a death seen this session is no mistake, so nobody gets it and it stays dead.
 	std::this_thread::sleep_for(GRACE + 50ms);
 	const auto later = Clock::now() + DAYS_LATER;
 	host.Unloads(RAIDER);
 	CHECK(!host.Loads(RAIDER, true, later));
-	CHECK(!host.Scan(RAIDER, later));
+	CHECK(host.Scan(RAIDER, later));
+	CHECK(Owners(host.Pump()).empty());
+	CHECK(Owners(bob.Pump()).empty());
 	CHECK(!f.Logged("alive again"));
+	CHECK(!f.Logged("no longer dead"));
 	Game carol{ f, 3, "Carol" };
 	CHECK(carol.deaths.Contains(RAIDER));
+
+	// Its quest moves on in the host's game and the flag goes: it dies there too.
+	host.world[RAIDER].essential = false;
+	host.TryKill(RAIDER);
+	CHECK(!host.Alive(RAIDER));
+	CHECK(host.pending.empty());
 }
 
 TEST("alive again: a raider the host's game heard of while its cell was unloaded is killed when it loads, not taken for a respawn")
@@ -546,6 +562,173 @@ TEST("alive again: a raider back in the host's world stays alive after the serve
 	std::filesystem::remove(path);
 }
 
+// --- essential NPCs taken for dead ------------------------------------------------------------
+// Builds before session layout 29 took an essential NPC going down for dead: Dogmeat was saved dead, killed in the
+// friends' games, and run by nobody, while the host's game kept him alive (essential). Only such a death, one an older
+// build saved, can be undone, and only by the host's game offering to run the NPC it has alive and essential.
+
+namespace
+{
+	constexpr std::uint32_t DOGMEAT = 0x0001D162;
+	constexpr std::uint32_t PIPER = 0x00002F1E;  // another essential companion, elsewhere when the host first plays again
+
+	// A session file as a build before layout 29 wrote it: no list of deaths that may be mistakes after the identities.
+	void SaveLegacy(const std::filesystem::path& a_path, std::vector<std::uint32_t> a_dead)
+	{
+		SessionFile::Snapshot snapshot;
+		snapshot.contentHash = 0x1234;  // Fixture::MakeHello's
+		snapshot.sessionId = 0x5E55;
+		snapshot.identities = { { HOST_IDENTITY, 1 } };
+		snapshot.deadActors = std::move(a_dead);
+		auto                  bytes = SessionFile::Encode(snapshot);
+		constexpr std::size_t HEALABLE_AT = 4 + 2 + 4 + 8 + 4 + 2 + 12;  // after the header and the one identity
+		bytes.erase(bytes.begin() + HEALABLE_AT, bytes.begin() + HEALABLE_AT + 4);
+		const std::uint16_t layout = 26;  // what rc3 wrote
+		std::memcpy(bytes.data() + 4, &layout, sizeof(layout));
+		std::ofstream out{ a_path, std::ios::binary | std::ios::trunc };
+		out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	}
+
+	Server::Options SavedOptions(const TempSessionFile& a_file)
+	{
+		auto options = HostedOptions();
+		options.sessionFile = a_file.path.string();
+		return options;
+	}
+
+	// An essential companion as the host's game has them: alive and following, essential by their companion alias.
+	constexpr Npc HOSTS_COMPANION{ .loaded = true, .alive = true, .essential = true, .following = true };
+}
+
+TEST("essential: Dogmeat, saved dead by an older build, comes back for everyone once the host's game offers to run him")
+{
+	const TempSessionFile file;
+	SaveLegacy(file.path, { DOGMEAT, PIPER, RAIDER });
+	{
+		Fixture f{ SavedOptions(file) };
+		Game    host{ f, 1, "Host", true };
+		Game    bob{ f, 2, "Bob" };
+		CHECK(host.deaths.Contains(DOGMEAT));
+		CHECK(bob.pending.contains(DOGMEAT));  // not loaded in Bob's game yet: his death waits there
+
+		// The host's game has Dogmeat at its side, alive: his death is held there (the kill would only knock him down),
+		// and its game offers to run him, marked essential.
+		host.world[DOGMEAT] = HOSTS_COMPANION;
+		host.TryKill(DOGMEAT);
+		CHECK(host.Alive(DOGMEAT));
+		CHECK(host.pending.contains(DOGMEAT));
+		REQUIRE(host.Scan(DOGMEAT, Clock::now()));
+		CHECK(HasOwner(Owners(host.Pump()), DOGMEAT, host.id));
+		CHECK(f.Logged(std::format("{:08X}, dead in the saved session, is alive in the host's world", DOGMEAT)));
+		CHECK(!host.pending.contains(DOGMEAT));
+		CHECK(!host.deaths.Contains(DOGMEAT));
+
+		// Bob's game hears who runs him: the death it held is forgotten, and Dogmeat walks in alive.
+		CHECK(HasOwner(Owners(bob.Pump()), DOGMEAT, host.id));
+		CHECK(!bob.deaths.Contains(DOGMEAT));
+		CHECK(!bob.Loads(DOGMEAT, true, Clock::now()));
+		CHECK(bob.Alive(DOGMEAT));
+
+		// Someone joining now isn't told he is dead. The raider, no companion, stays dead, and so does Piper for now.
+		Game carol{ f, 3, "Carol" };
+		CHECK(!carol.deaths.Contains(DOGMEAT));
+		CHECK(carol.deaths.Contains(RAIDER));
+		CHECK(carol.deaths.Contains(PIPER));
+	}  // stopping saves, in the new layout
+
+	// Piper's death came from the older build too and may still be a mistake, saved as such; Dogmeat's is gone.
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(!std::ranges::contains(saved->deadActors, DOGMEAT));
+	CHECK(std::ranges::contains(saved->healable, PIPER));
+	CHECK(std::ranges::contains(saved->healable, RAIDER));
+	CHECK(!std::ranges::contains(saved->healable, DOGMEAT));
+
+	// Another evening: the host meets Piper, alive and essential in its game. Undone across the restart too.
+	Fixture f{ SavedOptions(file) };
+	Game    host{ f, 1, "Host", true };
+	CHECK(!host.deaths.Contains(DOGMEAT));
+	host.world[PIPER] = HOSTS_COMPANION;
+	host.TryKill(PIPER);
+	REQUIRE(host.Scan(PIPER, Clock::now()));
+	CHECK(HasOwner(Owners(host.Pump()), PIPER, host.id));
+}
+
+TEST("essential: a real death of an NPC the host's game still keeps essential stays, through any number of server restarts")
+{
+	const TempSessionFile file;
+	for (int run = 0; run < 3; ++run) {
+		Fixture f{ SavedOptions(file) };
+		Game    host{ f, 1, "Host", true };
+		Game    bob{ f, 2, "Bob" };
+		if (run == 0) {
+			// A quest's script kills Piper in Bob's game; the host's game, whose quest isn't there yet, keeps her essential.
+			bob.Kills(PIPER);
+			host.Pump();
+		}
+		CHECK(host.deaths.Contains(PIPER));
+		host.world[PIPER] = HOSTS_COMPANION;
+		host.TryKill(PIPER);
+		CHECK(host.pending.contains(PIPER));  // held, not undone
+
+		// Its game offers to run her, marked essential, long after the death and the host's hello: nobody gets her.
+		std::this_thread::sleep_for(GRACE + 50ms);
+		REQUIRE(host.Scan(PIPER, Clock::now()));
+		CHECK(Owners(host.Pump()).empty());
+		CHECK(Owners(bob.Pump()).empty());
+		CHECK(!f.Logged("no longer dead"));
+		CHECK(bob.deaths.Contains(PIPER));
+	}
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(std::ranges::contains(saved->deadActors, PIPER));
+	CHECK(saved->healable.empty());
+}
+
+TEST("essential: an older build's death that a game reports again is no longer undone")
+{
+	const TempSessionFile file;
+	SaveLegacy(file.path, { PIPER });
+	Fixture f{ SavedOptions(file) };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+	// Bob's game saw her die (it loaded before the session's dead list came, say): no mistake.
+	f.fake->Deliver(2, Kill(PIPER));
+	bob.Pump();
+	host.world[PIPER] = HOSTS_COMPANION;
+	host.TryKill(PIPER);
+	REQUIRE(host.Scan(PIPER, Clock::now()));
+	CHECK(Owners(host.Pump()).empty());
+	CHECK(!f.Logged("no longer dead"));
+	Game carol{ f, 3, "Carol" };
+	CHECK(carol.deaths.Contains(PIPER));
+}
+
+TEST("essential: only the host's game, offering to run him, undoes an older build's death; a friend's claim or the host's hit changes nothing")
+{
+	const TempSessionFile file;
+	SaveLegacy(file.path, { DOGMEAT });
+	Fixture f{ SavedOptions(file) };
+	Game    host{ f, 1, "Host", true };
+	Game    bob{ f, 2, "Bob" };
+
+	// Bob's game has Dogmeat alive and essential too (he recruited him in his own save): its world isn't the session's.
+	for (const auto reason : { Reason::kUnowned, Reason::kCompanion, Reason::kInteract }) {
+		f.fake->Deliver(2, Claim(DOGMEAT, reason, true));
+	}
+	// The host's hit or press can be on a corpse; and an offer not marked essential is a cell reset's, which this isn't
+	// (and a companion's never is).
+	f.fake->Deliver(1, Claim(DOGMEAT, Reason::kInteract, true));
+	f.fake->Deliver(1, Claim(DOGMEAT, Reason::kCompanion, false));
+	CHECK(Owners(host.Pump()).empty());
+	CHECK(Owners(bob.Pump()).empty());
+	CHECK(host.deaths.Contains(DOGMEAT));
+	CHECK(!f.Logged("no longer dead"));
+
+	f.fake->Deliver(1, Claim(DOGMEAT, Reason::kUnowned, true));
+	CHECK(HasOwner(Owners(bob.Pump()), DOGMEAT, host.id));
+}
+
 // --- the ledger on its own -------------------------------------------------------------------
 
 TEST("session deaths: nothing is offered between a load and the session's dead list, or for long if it never comes")
@@ -582,4 +765,32 @@ TEST("session deaths: only a death seen here, learned of a while ago, and an act
 	CHECK(!deaths.OnLoaded(RAIDER2, true, false, t0 + DAYS_LATER));  // never dead here: nothing came back
 	deaths.SawDead(RAIDER2);                                          // nor does seeing one we don't know of add it
 	CHECK(!deaths.Contains(RAIDER2));
+}
+
+TEST("session deaths: one that only went down gets up again and is no death; an essential one a script kills is")
+{
+	using namespace SessionDeaths;
+	for (const auto down : { LIFE_ESSENTIAL_DOWN, LIFE_BLEEDOUT, LIFE_UNCONSCIOUS, LIFE_RESTRAINED }) {
+		CHECK(GetsUp(down, true));
+		CHECK(GetsUp(down, false));  // a protected one hit by anyone but the player bleeds out too
+	}
+	CHECK(GetsUp(0, true));  // the game called it dead, but it is standing: essential
+	CHECK(!GetsUp(LIFE_DYING, true));
+	CHECK(!GetsUp(LIFE_DEAD, true));
+	CHECK(!GetsUp(LIFE_DYING, false));
+	CHECK(!GetsUp(LIFE_DEAD, false));
+	CHECK(!GetsUp(0, false));  // a death event for an ordinary NPC: dead, whatever its state reads yet
+}
+
+TEST("session deaths: one the session has dead may be offered only by a game that keeps it essential, once the dead list is in")
+{
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	deaths.Reset(t0);
+	deaths.Add(RAIDER, t0);
+	CHECK(!deaths.MayClaim(RAIDER, t0, true));  // nothing before the session's dead list
+	deaths.Settle();
+	CHECK(!deaths.MayClaim(RAIDER, t0));
+	CHECK(deaths.MayClaim(RAIDER, t0, true));
+	CHECK(deaths.MayClaim(RAIDER2, t0, true));
 }

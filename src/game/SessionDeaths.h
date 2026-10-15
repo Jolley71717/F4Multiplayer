@@ -15,6 +15,25 @@ namespace SessionDeaths
 {
 	using Clock = std::chrono::steady_clock;
 
+	// The engine's ACTOR_LIFE_STATE values that matter here.
+	inline constexpr std::int32_t LIFE_DYING = 1;
+	inline constexpr std::int32_t LIFE_DEAD = 2;
+	inline constexpr std::int32_t LIFE_UNCONSCIOUS = 3;
+	inline constexpr std::int32_t LIFE_RESTRAINED = 6;
+	inline constexpr std::int32_t LIFE_ESSENTIAL_DOWN = 7;
+	inline constexpr std::int32_t LIFE_BLEEDOUT = 8;
+
+	// Whether an NPC the game calls dead (a death event, or its IsDead, which answers true for one that is down too)
+	// only went down and gets up again. Dogmeat, essential, was taken for dead as he went down, saved dead in the
+	// session, and went unrun and dead in everyone else's game. Down (essential down, bleeding out,
+	// unconscious, restrained) gets up; so does an essential one that is not dying or dead. An essential one really
+	// dying was killed by a quest's script, which kills even those: that death is real.
+	constexpr bool GetsUp(std::int32_t a_lifeState, bool a_essential)
+	{
+		const bool down = a_lifeState == LIFE_ESSENTIAL_DOWN || a_lifeState == LIFE_BLEEDOUT || a_lifeState == LIFE_UNCONSCIOUS || a_lifeState == LIFE_RESTRAINED;
+		return down || (a_essential && a_lifeState != LIFE_DYING && a_lifeState != LIFE_DEAD);
+	}
+
 	// The session's dead list follows every welcome and every request after a load at once, on the reliable
 	// channel. If it never comes (the server refuses world states asked for too often), we carry on after this.
 	constexpr auto SETTLE_FALLBACK = std::chrono::seconds(15);
@@ -82,8 +101,14 @@ namespace SessionDeaths
 		}
 
 		// Whether our game may offer to run this NPC: once the session's dead list is in after a reset (our game
-		// may have it alive from a save older than its death), and never one known dead.
-		[[nodiscard]] bool MayClaim(std::uint32_t a_id, Clock::time_point a_now) const { return Settled(a_now) && !dead.contains(a_id); }
+		// may have it alive from a save older than its death), and never one known dead, unless our game keeps it
+		// essential (a_essentialHere): then its death was never applied here (WorldSync::TryKill holds it), and the
+		// claim, marked essential, is how the host's game undoes a death an older build saved by mistake (Server's
+		// handleClaims; it ignores the claim for any other death).
+		[[nodiscard]] bool MayClaim(std::uint32_t a_id, Clock::time_point a_now, bool a_essentialHere = false) const
+		{
+			return Settled(a_now) && (a_essentialHere || !dead.contains(a_id));
+		}
 
 		[[nodiscard]] std::uint32_t Revived() const { return revived; }
 

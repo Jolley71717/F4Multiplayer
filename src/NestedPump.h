@@ -53,11 +53,15 @@ namespace NestedPump
 		kRunPosted,  // a save's or load's wake: only the work it handed over
 		kRunFrame,
 		kDefer,      // a frame message inside the engine's pump: the next drawn frame posts another
+		kQuit,       // the game is quitting: nothing runs, a wake's work included (see Dispatch)
 	};
 
 	// What the window procedure does with our message. a_seen is only looked at for a frame message.
-	constexpr Action Choose(bool a_wake, bool a_inFrame, Seen a_seen)
+	constexpr Action Choose(bool a_quitting, bool a_wake, bool a_inFrame, Seen a_seen)
 	{
+		if (a_quitting) {
+			return Action::kQuit;
+		}
 		if (a_inFrame) {
 			return Action::kSkip;
 		}
@@ -73,16 +77,22 @@ namespace NestedPump
 	// message outside a frame of ours; a_calls.Posted() runs what a save's or load's thread handed over, a_calls.Frame()
 	// a frame, a_calls.Deferred() counts one put off. a_inFrame is set while Posted or Frame runs (an engine call inside
 	// either can pump messages) and cleared after, whatever they throw.
+	//
+	// Once the game quits (a_calls.Quitting(): its main loop has ended, or Main::Shutdown has begun) nothing runs at all:
+	// the engine is tearing the world and its menus down, and a frame's game work there (a dev command moving the player,
+	// a menu, a load's leftover work on the stand-ins) would touch cells and actors on their way out. A save's or load's
+	// thread waiting on a wake does its own work after its wait, as it does whenever the main thread does not come.
 	template <class Calls>
 	Action Dispatch(bool a_wake, bool& a_inFrame, Calls& a_calls)
 	{
 		if (!a_wake) {
 			a_calls.Taken();
 		}
-		const auto action = Choose(a_wake, a_inFrame, a_wake || a_inFrame ? Seen::kNeither : a_calls.Where());
+		const bool quitting = a_calls.Quitting();
+		const auto action = Choose(quitting, a_wake, a_inFrame, quitting || a_wake || a_inFrame ? Seen::kNeither : a_calls.Where());
 		if (action == Action::kDefer) {
 			a_calls.Deferred();
-		} else if (action != Action::kSkip) {
+		} else if (action == Action::kRunPosted || action == Action::kRunFrame) {
 			struct Inside
 			{
 				bool& inFrame;

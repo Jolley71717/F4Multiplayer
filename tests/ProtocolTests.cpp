@@ -406,13 +406,14 @@ TEST("protocol: Equipment carries the mods on each item, and only for items it l
 
 TEST("protocol: actor claim, release and owner lists round trip")
 {
-	const std::vector<ActorClaim> claims{ { REF_A, ClaimReason::kUnowned }, { REF_B, ClaimReason::kInteract }, { 0x00033333, ClaimReason::kCompanion } };
+	const std::vector<ActorClaim> claims{ { REF_A, ClaimReason::kUnowned }, { REF_B, ClaimReason::kInteract }, { 0x00033333, ClaimReason::kCompanion, true } };
 	const auto                    c = DecodeClaims(Encode(claims));
 	REQUIRE(c);
 	REQUIRE(c->size() == 3);
 	for (std::size_t i = 0; i < 3; ++i) {
 		CHECK((*c)[i].refId == claims[i].refId);
 		CHECK((*c)[i].reason == claims[i].reason);
+		CHECK((*c)[i].essential == claims[i].essential);
 	}
 
 	const std::vector<std::uint32_t> released{ REF_A, REF_B, 7 };
@@ -535,7 +536,7 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U32(3);
 	w.U8(50);
 	w.U16(10);
-	w.U8(0xFE);  // opening set, downed clear, unknown bits set
+	w.U8(0xEE);  // opening set, downed clear, unknown bits set (bit 4, a parked frame, would have its fields follow)
 	w.U32(0);  // no frame
 	w.U32(0);  // no frame reference
 	const auto out = DecodePlayerStatus(w.Data());
@@ -890,17 +891,19 @@ TEST("protocol: PlayerHit checks the attacker against byPlayer")
 	// Hit by a player: there is no NPC attacker.
 	CHECK(!ok(10.0f, true, REF_A));
 	CHECK(!ok(10.0f, true, PLAYER_REF_ID));
-	// Hit by an NPC: it must be one everyone has.
+	// Hit by an NPC: it must be one everyone has, or a spawn (one made at runtime, shared under a spawn id).
 	CHECK(!ok(10.0f, false, 0));
 	CHECK(!ok(10.0f, false, PLAYER_REF_ID));
-	CHECK(!ok(10.0f, false, RUNTIME_REF));
+	CHECK(ok(10.0f, false, RUNTIME_REF));
+	CHECK(!ok(10.0f, false, 0xFF000000));
 	CHECK(!ok(-1.0f, false, REF_A));
 }
 
 TEST("protocol: Shot and QuestDone reject references that aren't shared")
 {
 	CHECK(!DecodeShot(Encode(Shot{ 1, PLAYER_REF_ID }, MT::kReportShot)));
-	CHECK(!DecodeShot(Encode(Shot{ 1, RUNTIME_REF }, MT::kShotFired)));
+	CHECK(DecodeShot(Encode(Shot{ 1, RUNTIME_REF }, MT::kShotFired)));  // a spawn's, under its spawn id
+	CHECK(!DecodeShot(Encode(Shot{ 1, 0xFF000000 }, MT::kShotFired)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, 0 }, MT::kReportQuestDone)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, PLAYER_REF_ID }, MT::kQuestDone)));
 	CHECK(!DecodeQuestDone(Encode(QuestDone{ 1, RUNTIME_REF }, MT::kQuestDone)));
@@ -1004,9 +1007,34 @@ TEST("protocol: claims with an unknown reason are rejected")
 	w.U8(2);
 	w.U32(REF_A);
 	w.U8(std::to_underlying(ClaimReason::kCompanion));
+	w.U8(0);
 	w.U32(REF_B);
 	w.U8(std::to_underlying(ClaimReason::kCompanion) + 1);
+	w.U8(0);
 	CHECK(!DecodeClaims(w.Data()));
+}
+
+TEST("protocol: a claim's essential mark is 0 or 1, and one without it is refused")
+{
+	const auto claim = [](std::uint8_t a_essential) {
+		Writer w{ MT::kClaimActors };
+		w.U8(1);
+		w.U32(REF_A);
+		w.U8(std::to_underlying(ClaimReason::kCompanion));
+		w.U8(a_essential);
+		return w.Data();
+	};
+	REQUIRE(DecodeClaims(claim(0)));
+	CHECK(!DecodeClaims(claim(0))->front().essential);
+	REQUIRE(DecodeClaims(claim(1)));
+	CHECK(DecodeClaims(claim(1))->front().essential);
+	CHECK(!DecodeClaims(claim(2)));
+	// What protocol 29 sent: no mark.
+	Writer old{ MT::kClaimActors };
+	old.U8(1);
+	old.U32(REF_A);
+	old.U8(std::to_underlying(ClaimReason::kCompanion));
+	CHECK(!DecodeClaims(old.Data()));
 }
 
 TEST("protocol: RefState values above kUnknown are rejected")
@@ -1195,9 +1223,9 @@ TEST("protocol: LoadOrderDifference names what only one side has, or the order")
 	CHECK(LoadOrderDifference({ "Fallout4.esm", "X.esp", "Y.esp" }, session).size() <= MAX_REASON_LENGTH);
 }
 
-TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists")
+TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists where they move no other plugin")
 {
-	const std::vector<std::string> session{ "Fallout4.esm", "HDTextures.esp", "A.esp" };
+	const std::vector<std::string> session{ "Fallout4.esm", "A.esp", "HDTextures.esp" };
 	const std::vector<std::string> ignore{ "hdtextures.esp" };
 	CHECK(SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, ignore));
 	CHECK(SameLoadOrderIgnoring({ "fallout4.esm", "a.esp", "HDTextures.esp" }, session, ignore));
@@ -1205,6 +1233,60 @@ TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of b
 	CHECK(!SameLoadOrderIgnoring({ "A.esp", "Fallout4.esm" }, session, ignore));  // order still counts
 	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "A.esp" }, session, {}));
 	CHECK(!SameLoadOrderIgnoring({}, session, ignore));
+}
+
+TEST("protocol: SameLoadOrderIgnoring refuses an ignored plugin that moves a kept one's form IDs, counting full and light plugins apart")
+{
+	const std::vector<std::string> ignore{ "Textures.esp", "Textures.esl" };
+	const std::vector<std::string> before{ "Fallout4.esm", "Textures.esp", "Story.esp" };
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "Story.esp" }, before, ignore));  // Story.esp is 02 there, 01 here
+	CHECK(!SameLoadOrderIgnoring({ "Fallout4.esm", "Story.esp", "Textures.esp" }, before, ignore));
+	CHECK(SameLoadOrderIgnoring({ "Fallout4.esm", "Textures.esp", "Story.esp" }, before, ignore));
+
+	const auto light = [](std::vector<std::string> a_full, std::initializer_list<std::string> a_light) {
+		return ComparedLoadOrder(std::move(a_full), std::vector<std::string>(a_light));
+	};
+	// A full plugin last, then light ones: the light ones keep their places.
+	CHECK(SameLoadOrderIgnoring(light({ "Fallout4.esm", "Story.esp", "Textures.esp" }, { "Weapons.esl" }), light({ "Fallout4.esm", "Story.esp" }, { "Weapons.esl" }), ignore));
+	// A light one before another light one moves it.
+	CHECK(!SameLoadOrderIgnoring(light({ "Fallout4.esm" }, { "Textures.esl", "Weapons.esl" }), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+	CHECK(SameLoadOrderIgnoring(light({ "Fallout4.esm" }, { "Weapons.esl", "Textures.esl" }), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+	// A light plugin is not the full plugin of the same place.
+	CHECK(!SameLoadOrderIgnoring(light({ "Fallout4.esm", "Weapons.esl" }, {}), light({ "Fallout4.esm" }, { "Weapons.esl" }), ignore));
+}
+
+TEST("protocol: the HD texture pack is left out of the compared load order only when no full plugin loads after it")
+{
+	const std::vector<std::string> official{ "Fallout4.esm", "DLCNukaWorld.esm" };
+	auto withPack = official;
+	withPack.emplace_back("dlcultrahighresolution.esm");
+	CHECK(ComparedFullPlugins(withPack) == official);
+	CHECK(LoadOrderHash(ComparedLoadOrder(withPack, { "a.esl" })) == LoadOrderHash(ComparedLoadOrder(official, { "a.esl" })));
+
+	auto modded = withPack;
+	modded.emplace_back("Story.esp");
+	CHECK(ComparedFullPlugins(modded) == modded);
+	auto moddedWithout = official;
+	moddedWithout.emplace_back("Story.esp");
+	CHECK(LoadOrderHash(ComparedLoadOrder(modded, {})) != LoadOrderHash(ComparedLoadOrder(moddedWithout, {})));
+
+	// The hello's list carries the mark between the kinds; the hash ignores case.
+	const auto order = ComparedLoadOrder(official, { "A.esl" });
+	CHECK(order.size() == 4);
+	CHECK(order[2] == LIGHT_PLUGINS);
+	CHECK(LoadOrderHash(order) == LoadOrderHash(ComparedLoadOrder({ "FALLOUT4.ESM", "dlcnukaworld.esm" }, { "a.esl" })));
+}
+
+TEST("protocol: LoadOrderDifference never names the light plugins' mark, and says texture plugins may differ only last")
+{
+	const auto session = ComparedLoadOrder({ "Fallout4.esm", "Textures.esp", "Story.esp" }, { "A.esl" });
+	const auto theirs = ComparedLoadOrder({ "Fallout4.esm", "Story.esp" }, { "A.esl" });
+	const auto reason = LoadOrderDifference(theirs, session, { "textures.esp" });
+	CHECK(reason.find("You are missing: Textures.esp.") != std::string::npos);
+	CHECK(reason.find("Texture plugins may differ only when they load last.") != std::string::npos);
+	CHECK(reason.find(LIGHT_PLUGINS) == std::string::npos);
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "A.esl" }, session).find(LIGHT_PLUGINS) == std::string::npos);  // a list without the mark
+	CHECK(LoadOrderDifference(theirs, ComparedLoadOrder({ "Fallout4.esm", "Story.esp", "B.esp" }, { "A.esl" })).find("Texture plugins") == std::string::npos);
 }
 
 TEST("protocol: Activation round trips and needs a shareable ref")

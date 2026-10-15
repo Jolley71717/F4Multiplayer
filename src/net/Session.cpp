@@ -16,16 +16,19 @@
 #include "game/Face.h"
 #include "game/Gait.h"
 #include "game/Hud.h"
+#include "game/LooksMenu.h"
 #include "game/MapShare.h"
 #include "game/WorkshopSync.h"
 #include "game/Voice.h"
 #include "game/Party.h"
 #include "game/WorldClock.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -95,38 +98,25 @@ namespace Session
 			Hud::Notify(a_message);
 		}
 
-		// FNV-1a over the load order, so players with different mods are told up front.
+		// FNV-1a over the load order, so players with different mods are told up front. The free high-resolution
+		// texture pack is textures only (its plugin is empty), so a player without it can play with one who has it;
+		// unless other plugins load after it, whose form IDs it moves up a place (Protocol::ComparedFullPlugins).
 		std::uint32_t ComputeContentHash()
 		{
-			std::uint32_t hash = 2166136261u;
-			const auto    mix = [&](std::string_view a_text) {
-                for (const char c : a_text) {
-                    hash ^= static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c)));
-                    hash *= 16777619u;
-                }
-                hash ^= '|';
-                hash *= 16777619u;
-			};
-
-			// The free high-resolution texture pack is textures only (its plugin is empty), so a
-			// player without it can play with one who has it.
-			const auto texturesOnly = [](std::string_view a_name) {
-				return std::ranges::equal(a_name, std::string_view{ "dlcultrahighresolution.esm" }, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
-			};
-			const auto data = RE::TESDataHandler::GetSingleton();
-			plugins.clear();
+			const auto               data = RE::TESDataHandler::GetSingleton();
+			std::vector<std::string> full;
+			std::vector<std::string> light;
 			for (const auto file : data->compiledFileCollection.files) {
-				if (!texturesOnly(file->GetFilename())) {
-					mix(file->GetFilename());
-					plugins.emplace_back(file->GetFilename());
-				}
+				full.emplace_back(file->GetFilename());
 			}
-			mix("--light--");
 			for (const auto file : data->compiledFileCollection.smallFiles) {
-				mix(file->GetFilename());
-				plugins.emplace_back(file->GetFilename());
+				light.emplace_back(file->GetFilename());
 			}
-			return hash;
+			plugins = Protocol::ComparedLoadOrder(std::move(full), light);
+			if (std::ranges::any_of(plugins, [](const std::string& a_name) { return Protocol::SamePluginName(a_name, Protocol::TEXTURE_PACK); })) {
+				REX::INFO("Session: the HD texture pack counts in the load order: the plugins after it have other form IDs without it");
+			}
+			return Protocol::LoadOrderHash(plugins);
 		}
 
 		std::string PlayerName()
@@ -171,7 +161,9 @@ namespace Session
 		bool AttackerHere(const RE::PlayerCharacter* a_player, std::uint32_t a_attacker)
 		{
 			constexpr float RANGE = 10000.0f;  // about 140 m: a sniper rifle's reach
-			const auto      actor = RE::TESForm::GetFormByID<RE::Actor>(a_attacker);
+			// A friend's spawn (made in their game at runtime) is here as our copy of it, if we placed one.
+			const auto      local = Protocol::IsSpawnRef(a_attacker) ? Spawns::LocalOf(a_attacker) : a_attacker;
+			const auto      actor = local ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
 			if (!actor || !actor->Get3D() || actor->IsDead(false)) {
 				return false;
 			}
@@ -210,9 +202,8 @@ namespace Session
 				const auto level = std::clamp(static_cast<int>(a_player->GetDifficultyLevel()), 0, static_cast<int>(DIFFICULTY.size()) - 1);
 				mult *= GameSettingFloat(DIFFICULTY[level], 1.0f);
 			}
-			const auto ui = RE::UI::GetSingleton();
 			const auto vats = RE::VATS::GetSingleton();
-			if (ui && ui->GetMenuOpen("VATSMenu"sv)) {
+			if (OpenMenus::Open(OpenMenus::Menu::kVats)) {
 				mult *= GameSettingFloat("fVATSPlayerMenuDamageMult", 1.0f);
 			} else if (vats && vats->mode.any(RE::VATS::VATS_MODE_ENUM::kPlayback)) {
 				mult *= GameSettingFloat("fVATSPlayerDamageMult", 0.1f);
@@ -301,7 +292,14 @@ namespace Session
 				break;
 			case MessageType::kActorDied:
 				if (const auto msg = Protocol::DecodeActorDeath(a_data)) {
-					Party::OnActorDied(*msg);  // before the kill: the victim's name is still readable either way
+					// Before the kill: the victim's name is still readable either way. A spawn's is our NPC under it.
+					if (!Protocol::IsSpawnRef(msg->refId)) {
+						Party::OnActorDied(*msg);
+					} else if (const auto local = Spawns::LocalOf(msg->refId)) {
+						auto named = *msg;
+						named.refId = local;
+						Party::OnActorDied(named);
+					}
 					WorldSync::ApplyRemoteDeath(*msg);
 				}
 				break;
@@ -327,8 +325,14 @@ namespace Session
 				break;
 			case MessageType::kActorOwners:
 				if (const auto msg = Protocol::DecodeOwners(a_data)) {
+					Spawns::OnOwners(*msg);  // first: NpcSync finds our spawns under the ids granted here
 					NpcSync::ApplyOwners(*msg);
 					WorldSync::OnActorOwners(*msg);
+				}
+				break;
+			case MessageType::kSpawned:
+				if (const auto msg = Protocol::DecodeSpawn(a_data)) {
+					Spawns::Add(*msg);
 				}
 				break;
 			case MessageType::kActorStatesRelay:
@@ -544,6 +548,7 @@ namespace Session
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
+			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
 			Party::Reset();
@@ -850,10 +855,12 @@ namespace Session
 			for (std::uint32_t i = 0; i < shots; ++i) {
 				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound }, Protocol::MessageType::kReportShot), false);
 			}
+			// One our game made at runtime fires under the spawn id we share it as.
 			for (const auto id : npcShots) {
-				if (NpcSync::RunsLocally(id)) {
+				const auto wire = Protocol::IsSpawnRef(id) ? Spawns::OwnIdOf(id) : id;
+				if (wire && NpcSync::RunsLocally(wire)) {
 					const auto npcSound = WeaponFire::ShotSound(RE::TESForm::GetFormByID<RE::Actor>(id));
-					client->Send(Protocol::Encode(Protocol::Shot{ 0, id, Protocol::ShotAction::kShot, npcSound }, Protocol::MessageType::kReportShot), false);
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, wire, Protocol::ShotAction::kShot, npcSound }, Protocol::MessageType::kReportShot), false);
 				}
 			}
 		}
@@ -879,8 +886,9 @@ namespace Session
 				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, action }, Protocol::MessageType::kReportShot), false);
 			}
 			for (const auto& [id, action] : npcActions) {
-				if (NpcSync::RunsLocally(id)) {
-					client->Send(Protocol::Encode(Protocol::Shot{ 0, id, action }, Protocol::MessageType::kReportShot), false);
+				const auto wire = Protocol::IsSpawnRef(id) ? Spawns::OwnIdOf(id) : id;
+				if (wire && NpcSync::RunsLocally(wire)) {
+					client->Send(Protocol::Encode(Protocol::Shot{ 0, wire, action }, Protocol::MessageType::kReportShot), false);
 				}
 			}
 		}
@@ -894,7 +902,10 @@ namespace Session
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
 			auto face = Face::Read(RE::PlayerCharacter::GetSingleton()->GetNPC());
-			if (face.race != 0 && (!sentFace || *sentFace != face)) {
+			// With LooksMenu, its body sliders too: the face waits for the first read of them (a moment), so that
+			// friends do not make our stand-in once without them and again with them.
+			face.bodyMorphs = LooksMenu::PlayerMorphs();
+			if (face.race != 0 && LooksMenu::Settled() && (!sentFace || *sentFace != face)) {
 				if (welcomed) {
 					client->Send(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);
 				}
@@ -927,6 +938,7 @@ namespace Session
 
 		if (welcomed) {
 			NpcSync::Frame();
+			Spawns::Frame();
 		}
 		QuestSync::Frame(welcomed, hostedServer && hostedServer->Running());
 		Achievements::Frame();
@@ -936,7 +948,13 @@ namespace Session
 			client->Send(std::move(packet), true);
 		}
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
-		// WorldSync found this frame (see above).
+		// WorldSync found this frame (see above). Our runtime NPCs' spawns (and their release after a load) go ahead of
+		// NpcSync's states and releases of them.
+		for (auto& packet : Spawns::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet), true);
+			}
+		}
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {
 				client->Send(std::move(packet.data), packet.reliable);
@@ -982,6 +1000,9 @@ namespace Session
 			}
 		}
 
+		if (InGame()) {
+			LooksMenu::Frame();
+		}
 		RemotePlayers::Update();
 		Compass::Frame();
 		Puppets::Tick();
@@ -994,6 +1015,7 @@ namespace Session
 		// request they are in its answer, numbered before it.
 		WorldSync::FlushLoot();
 		SendWorldEvents();
+		Spawns::DiscardCopies();  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
@@ -1032,6 +1054,8 @@ namespace Session
 		Downed::OnGameLoaded();
 		Party::OnGameLoaded();
 		RemotePlayers::OnGameLoaded();
+		Spawns::OnGameLoaded();
+		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		WorkshopSync::OnGameLoaded();
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
@@ -1072,7 +1096,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + LooksMenu::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

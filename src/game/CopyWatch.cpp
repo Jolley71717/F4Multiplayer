@@ -40,6 +40,7 @@ namespace CopyWatch
 
 		constexpr std::size_t MAX_INBOX = 512;
 		constexpr auto        LAST_HIT_KEPT = 30s;
+		constexpr auto        COPY_SEEN_KEPT = 2s;
 
 		std::mutex         inboxLock;
 		std::vector<Hit>   hitInbox;
@@ -47,8 +48,13 @@ namespace CopyWatch
 
 		CopyHealth::Book                          book;
 		std::unordered_map<std::uint32_t, LastHit> lastHits;  // the last hit on each copy, for the logs
+		// When each copy was last seen alive as one (for COPY_SEEN_KEPT): a death is a copy's only if it was one just
+		// before. An NPC our game ran that a friend's game took over as it died (their player's blow claimed it) dies
+		// here as theirs, but no copy of ours died.
+		std::unordered_map<std::uint32_t, Clock::time_point> copiesSeen;
 
 		std::uint32_t hitsOnCopies = 0;
+		std::uint32_t allyHits = 0;       // hits on copies by actors our game runs (our companion, our NPCs), kept as ours
 		std::uint32_t restores = 0;       // times a copy was given back what something else took
 		float         healthRestored = 0.0f;
 		std::uint32_t copiesDied = 0;
@@ -100,23 +106,25 @@ namespace CopyWatch
 			if (Puppets::IsPuppet(actor)) {
 				return "a friend's stand-in";
 			}
+			const auto companion = NpcSync::IsOurCompanion(actor) ? ", our companion" : "";
 			if (!Protocol::IsShareableRef(a_id)) {
-				return "an NPC of our game's own";
+				return std::format("an NPC of our game's own{}", companion);
 			}
 			const auto owner = NpcSync::Owner(a_id);
 			if (owner == 0) {
-				return "an NPC nobody runs";
+				return std::format("an NPC nobody runs{}", companion);
 			}
 			if (owner == NpcSync::LocalPlayer()) {
-				return "an NPC we run";
+				return std::format("an NPC we run{}", companion);
 			}
-			return std::format("player {}'s NPC", owner);
+			return std::format("player {}'s NPC{}", owner, companion);
 		}
 
-		std::string Describe(const Hit& a_hit)
+		std::string Describe(const Hit& a_hit, bool a_ours)
 		{
-			return std::format("by {:08X} ({}), weapon {:08X}, source {:08X}, projectile {:08X}{}, damage {}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer), a_hit.weapon,
-				a_hit.source, a_hit.projectile, a_hit.explosion ? ", an explosion's" : "", a_hit.usesHitData ? std::format("{:.1f}", a_hit.damage) : std::string{ "unknown" });
+			return std::format("by {:08X} ({}{}), weapon {:08X}, source {:08X}, projectile {:08X}{}, damage {}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer),
+				a_ours ? "; ours, reported" : "", a_hit.weapon, a_hit.source, a_hit.projectile, a_hit.explosion ? ", an explosion's" : "",
+				a_hit.usesHitData ? std::format("{:.1f}", a_hit.damage) : std::string{ "unknown" });
 		}
 
 		std::string LastHitOn(std::uint32_t a_id, Clock::time_point a_now)
@@ -156,6 +164,23 @@ namespace CopyWatch
 		const auto  extra = a_actor->extraList ? a_actor->extraList->GetByType(RE::EXTRA_DATA_TYPE::kGhost) : nullptr;
 		const char* held = !extra ? "none" : *reinterpret_cast<const bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData)) ? "on" : "off";
 		return std::format("{} (extra {})", a_actor->GetGhost() ? "on" : "off", held);
+	}
+
+	CopyHealth::Cause CauseOf(std::uint32_t a_refId)
+	{
+		CopyHealth::Cause cause;
+		const auto        form = a_refId != 0 ? RE::TESForm::GetFormByID(a_refId) : nullptr;
+		const auto        actor = form ? form->As<RE::Actor>() : nullptr;
+		if (!actor || actor->IsDeleted()) {
+			return cause;
+		}
+		cause.actor = true;
+		cause.player = actor->IsPlayerRef();
+		cause.standIn = Puppets::IsPuppet(actor);
+		cause.shareable = Protocol::IsShareableRef(a_refId);
+		cause.owner = cause.shareable ? NpcSync::Owner(a_refId) : 0;
+		cause.ourCompanion = NpcSync::IsOurCompanion(actor);
+		return cause;
 	}
 
 	void NoteHit(const RE::TESHitEvent& a_event)
@@ -215,17 +240,25 @@ namespace CopyWatch
 			deaths.swap(deathInbox);
 		}
 		const auto now = Clock::now();
+		const auto local = NpcSync::LocalPlayer();
 
 		for (const auto& hit : hits) {
-			if (hit.byPlayer) {
+			const auto owner = OtherOwner(hit.target);
+			// Our player's hit on anything, as it may become a copy of ours; another actor's matters only on a copy.
+			const auto hitter = hit.byPlayer ? CopyHealth::Hitter::kOurPlayer :
+			                    owner != 0   ? CopyHealth::Judge(CauseOf(hit.cause), local) :
+			                                   CopyHealth::Hitter::kNotOurs;
+			if (hitter != CopyHealth::Hitter::kNotOurs) {
 				book.OurHit(hit.target, hit.at);
 			}
-			const auto owner = OtherOwner(hit.target);
 			if (owner == 0) {
 				continue;
 			}
 			++hitsOnCopies;
-			const auto what = Describe(hit);
+			if (hitter == CopyHealth::Hitter::kOurs) {
+				++allyHits;
+			}
+			const auto what = Describe(hit, hitter != CopyHealth::Hitter::kNotOurs);
 			lastHits[hit.target] = { what, hit.at };
 			if (hitsLogged < 100) {
 				++hitsLogged;
@@ -235,7 +268,7 @@ namespace CopyWatch
 			}
 		}
 
-		// Every loaded copy: what something other than our player took comes back.
+		// Every loaded copy: what something other than our hits took comes back.
 		std::unordered_set<std::uint32_t> seen;
 		const auto                        info = HealthInfo();
 		const auto                        lists = RE::ProcessLists::GetSingleton();
@@ -253,6 +286,7 @@ namespace CopyWatch
 			for (const auto actor : copies) {
 				const auto id = actor->GetFormID();
 				seen.insert(id);
+				copiesSeen[id] = now;
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
 				const float give = book.Check(id, health, now);
@@ -266,7 +300,7 @@ namespace CopyWatch
 				healthRestored += give;
 				if (restoresLogged < 60) {
 					++restoresLogged;
-					REX::INFO("CopyWatch: our copy {:08X} (player {}'s) lost {:.1f} health with no hit of our player's on it ({:.1f} -> {:.1f}); given back, {:.1f} now. Last hit on it: {}; hazards near:{}",
+					REX::INFO("CopyWatch: our copy {:08X} (player {}'s) lost {:.1f} health with no hit of ours on it ({:.1f} -> {:.1f}); given back, {:.1f} now. Last hit on it: {}; hazards near:{}",
 						id, NpcSync::Owner(id), give, health + give, health, after, LastHitOn(id, now), HazardsNear(actor));
 				}
 			}
@@ -279,16 +313,26 @@ namespace CopyWatch
 			if (owner == 0) {
 				continue;
 			}
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.id);
+			const auto killer = RE::TESForm::GetFormByID(death.killer);
+			const auto killedBy = KindOf(death.killer, killer && killer->As<RE::Actor>() && killer->As<RE::Actor>()->IsPlayerRef());
+			if (!copiesSeen.contains(death.id)) {
+				// Not a copy of ours a moment ago: player N's game took it over as it died (ours ran it, or nobody).
+				if (deathsLogged < 40) {
+					++deathsLogged;
+					REX::INFO("CopyWatch: {:08X} died here just as it became player {}'s (no copy of ours a moment before): killer {:08X} ({}); not a copy's death", death.id, owner,
+						death.killer, killedBy);
+				}
+				continue;
+			}
 			++copiesDied;
 			if (deathsLogged < 40) {
 				++deathsLogged;
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.id);
-				const auto killer = RE::TESForm::GetFormByID(death.killer);
 				REX::INFO("CopyWatch: our copy {:08X} (player {}'s) died here: killer {:08X} ({}), health {:.1f}, ghost {}. Last hit on it: {}; hazards near:{}", death.id, owner,
-					death.killer, KindOf(death.killer, killer && killer->As<RE::Actor>() && killer->As<RE::Actor>()->IsPlayerRef()), actor ? HealthOf(actor) : -1.0f,
-					GhostState(actor), LastHitOn(death.id, now), actor ? HazardsNear(actor) : std::string{ " ?" });
+					death.killer, killedBy, actor ? HealthOf(actor) : -1.0f, GhostState(actor), LastHitOn(death.id, now), actor ? HazardsNear(actor) : std::string{ " ?" });
 			}
 		}
+		std::erase_if(copiesSeen, [&](const auto& a_entry) { return now - a_entry.second > COPY_SEEN_KEPT; });
 	}
 
 	void Reset()
@@ -300,10 +344,12 @@ namespace CopyWatch
 		}
 		book.Clear();
 		lastHits.clear();
+		copiesSeen.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyRestores={}/{:.0f} copyReports={} copyDeaths={}", book.Size(), hitsOnCopies, restores, healthRestored, reportsSet, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDeaths={}", book.Size(), hitsOnCopies, allyHits, restores,
+			healthRestored, reportsSet, copiesDied);
 	}
 }

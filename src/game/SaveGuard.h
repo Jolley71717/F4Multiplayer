@@ -26,6 +26,10 @@ namespace SaveGuard
 	// BeforeSave).
 	void Track(RE::TESObjectREFR* a_ref);
 
+	// A stand-in was placed: the engine is not let make it persistent (or let go of it so) from now on, so it is never kept
+	// in memory past its cell and unloaded later with no cell (see SaveStrays::Unpromoted). Until its form is gone or a load.
+	void KeepUnpromoted(RE::Actor* a_actor);
+
 	// A reference of ours (Track) whose handle stopped resolving: the game took it from under us, and its form may
 	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is.
 	void Forget(std::uint32_t a_id);

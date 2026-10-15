@@ -31,6 +31,9 @@ namespace WorkshopSync
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
+	// Dev: whether workshop mode lets the player scrap the reference (the game's own test).
+	[[nodiscard]] bool WorkshopModeScraps(RE::TESObjectREFR& a_ref);
+
 	// Dev: reports an existing reference as if the player had just placed (or scrapped) it.
 	void Report(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op);
 

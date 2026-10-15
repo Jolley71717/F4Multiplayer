@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "game/Achievements.h"
 #include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/QuestStageLayout.h"
 #include "game/RemotePlayers.h"
 #include "game/StageLog.h"
@@ -170,8 +171,7 @@ namespace QuestSync
 		// of a quest with stages waiting here only holds them for MAX_SCENE_HOLD.
 		bool PlayerBusy(Clock::time_point a_now)
 		{
-			const auto ui = RE::UI::GetSingleton();
-			if (ui && ui->GetMenuOpen("DialogueMenu"sv)) {
+			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
 				return true;
 			}
 			const auto player = RE::PlayerCharacter::GetSingleton();

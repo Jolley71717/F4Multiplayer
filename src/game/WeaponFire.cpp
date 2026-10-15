@@ -188,7 +188,13 @@ namespace WeaponFire
 			if (IsThrowEvent(npcTag, npcPayload) && HoldsReplayedRelease(id)) {
 				return RE::BSEventNotifyControl::kContinue;
 			}
-			if (Protocol::IsShareableRef(id) && IsThrowEvent(npcTag, npcPayload)) {
+			// A plugin's NPC, or one our game made at runtime that we run under a spawn id (Spawns): a stand-in, a copy of a
+			// friend's spawn or one not shared is in no other game to replay it.
+			const bool shared = Protocol::IsShareableRef(id) || (Protocol::IsSpawnRef(id) && [&] {
+				std::scoped_lock l{ actionLock };
+				return ownedNpcs.contains(id);
+			}());
+			if (shared && IsThrowEvent(npcTag, npcPayload)) {
 				std::scoped_lock l{ actionLock };
 				// Only an NPC we run: one mirrored from a friend's game threw in theirs, and their game reports what
 				// went off. Watched here too, the same explosion could be reported from both games.
@@ -198,7 +204,7 @@ namespace WeaponFire
 					}
 					ArmExplosionWatch();
 				}
-			} else if (Protocol::IsShareableRef(id) && IsAttackEvent(npcTag)) {
+			} else if (shared && IsAttackEvent(npcTag)) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back(id);
@@ -206,7 +212,7 @@ namespace WeaponFire
 			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
 				++throwAttaches;
 			}
-			if (const auto action = Protocol::IsShareableRef(id) && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
+			if (const auto action = shared && a_event.tag.c_str() ? ActionOf(a_event.tag.c_str()) : std::nullopt) {
 				std::scoped_lock l{ actionLock };
 				if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
 					npcActions.push_back({ id, *action });
@@ -315,6 +321,7 @@ namespace WeaponFire
 
 		ShotLoops<RE::BSSoundHandle> loopingShots;
 		std::uint32_t                loopsEnded = 0;
+		std::uint32_t                longCut = 0;  // shot sounds still sounding ShotLoops::LONGEST_SHOT after they started, ended then
 
 		// Plays a sound at the actor and follows them while it lasts. If the actor's previous shot is
 		// still sounding (a looping automatic-weapon sound), that one runs on instead: one burst.
@@ -341,6 +348,8 @@ namespace WeaponFire
 			lastLooped = handle.IsEnvelopeLoop();
 			if (lastLooped) {
 				loopingShots.Add(a_actor->GetFormID(), handle, now);
+			} else {
+				loopingShots.Watch(a_actor->GetFormID(), handle, now);
 			}
 			return true;
 		}
@@ -364,6 +373,12 @@ namespace WeaponFire
 		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndDue(std::chrono::steady_clock::now(), [](RE::BSSoundHandle& a_handle) {
 			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
 		}));
+		loopingShots.EndLong(std::chrono::steady_clock::now(), [](RE::BSSoundHandle& a_handle) {
+			if (a_handle.IsPlaying()) {
+				a_handle.FadeOutAndRelease(LOOP_FADE_MS);
+				++longCut;
+			}
+		});
 		ScanExplosions();
 		RemoveGhostGrenades();
 		EndDueShields();
@@ -373,7 +388,8 @@ namespace WeaponFire
 	{
 		static_assert(std::to_underlying(RE::WEAPON_TYPE::kGun) == AttackKind::GUN_TYPE);
 
-		// Whether the actor's equipped weapon is a gun (fists, nothing equipped, count as melee).
+		// Whether one of the actor's equipped weapons is a gun (fists, nothing equipped, count as melee; a grenade beside
+		// the gun does not hide it: AttackKind::HoldsGun).
 		bool HoldsGun(RE::Actor* a_actor)
 		{
 			const auto process = a_actor->currentProcess;
@@ -381,14 +397,14 @@ namespace WeaponFire
 			if (!middle) {
 				return false;
 			}
-			RE::BSAutoLock l{ middle->equippedItemsLock };
+			std::vector<std::int32_t> types;
+			RE::BSAutoLock            l{ middle->equippedItemsLock };
 			for (const auto& equipped : middle->equippedItems) {
-				const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr;
-				if (weapon) {
-					return AttackKind::ReplaysAsGun(std::to_underlying(weapon->weaponData.type.get()), true);
+				if (const auto weapon = equipped.item.object ? equipped.item.object->As<RE::TESObjectWEAP>() : nullptr) {
+					types.push_back(std::to_underlying(weapon->weaponData.type.get()));
 				}
 			}
-			return false;
+			return AttackKind::HoldsGun(types);
 		}
 
 		std::uint32_t swung = 0;
@@ -529,7 +545,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -585,6 +601,11 @@ namespace WeaponFire
 		loopsEnded += static_cast<std::uint32_t>(loopingShots.EndFor(a_actorFormId, [](RE::BSSoundHandle& a_handle) {
 			a_handle.FadeOutAndRelease(LOOP_FADE_MS);
 		}));
+		loopingShots.EndWatchedFor(a_actorFormId, [](RE::BSSoundHandle& a_handle) {
+			if (a_handle.IsPlaying()) {
+				a_handle.FadeOutAndRelease(LOOP_FADE_MS);
+			}
+		});
 	}
 
 	void ArmExplosionWatch()

@@ -3,15 +3,19 @@
 #include "game/AimPoint.h"
 #include "game/CommandMeter.h"
 #include "game/CreatureGait.h"
+#include "game/Dialogue.h"
 #include "game/Equipment.h"
 #include "game/Gait.h"
 #include "game/NpcClaims.h"
+#include "game/NpcHold.h"
 #include "game/NpcPlace.h"
+#include "game/OpenMenus.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -67,6 +71,7 @@ namespace NpcSync
 			std::deque<Snapshot> snapshots;
 			Prediction::ArrivalClock arrivals{ .gap = 0.05f };  // even stamps for states read in bursts
 			RE::Actor*           registered = nullptr;  // as registered with Puppets
+			std::uint32_t        registeredId = 0;      // its form ID then (a copy of a friend's spawn has its own, not the spawn's)
 			float                delayMs = std::chrono::duration<float, std::milli>(SLOW_DELAY).count();
 		};
 
@@ -81,8 +86,10 @@ namespace NpcSync
 
 		std::unordered_map<std::uint32_t, std::uint32_t>     owners;     // NPC -> player (absent = nobody)
 		NpcClaims::Book                                      claimBook;  // claims awaiting an answer, and companion claims refused
+		NpcHold::Book                                        hold;       // NPCs our player fights, and ours that are dying
 		std::unordered_map<std::uint32_t, Clock::time_point> lastTakeover;
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
+		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
@@ -146,12 +153,23 @@ namespace NpcSync
 		Clock::time_point     nextStates{};
 
 
+		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
+		// spawn id (Spawns) is our own NPC shared so, or our copy of a friend's. 0: none.
+		std::uint32_t LocalId(std::uint32_t a_id)
+		{
+			if (Protocol::IsSpawnRef(a_id)) {
+				return Spawns::LocalOf(a_id);
+			}
+			return Protocol::IsShareableRef(a_id) ? a_id : 0;  // the player or a stand-in: never something to mirror
+		}
+
 		RE::Actor* LoadedActor(std::uint32_t a_id)
 		{
-			if (!Protocol::IsShareableRef(a_id)) {
-				return nullptr;  // the player, a stand-in or a runtime actor: never something to mirror
+			const auto local = LocalId(a_id);
+			if (local == 0) {
+				return nullptr;
 			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(local);
 			return actor && !actor->IsDeleted() && !actor->IsDisabled() && actor->Get3D() && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor) ? actor : nullptr;
 		}
 
@@ -181,14 +199,15 @@ namespace NpcSync
 			if (!a_mirror.registered) {
 				return;
 			}
-			WeaponFire::ReleaseSoundsOf(a_id);  // a replayed burst may still follow the actor's 3D
-			if (RE::TESForm::GetFormByID<RE::Actor>(a_id) == a_mirror.registered) {
+			WeaponFire::ReleaseSoundsOf(a_mirror.registeredId);  // a replayed burst may still follow the actor's 3D
+			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp
 			} else {
-				Puppets::Unregister(a_mirror.registered, a_id);  // the actor is gone; just forget it
+				Puppets::Unregister(a_mirror.registered, a_mirror.registeredId);  // the actor is gone; just forget it
 			}
 			a_mirror.registered = nullptr;
+			a_mirror.registeredId = 0;
 		}
 
 		void StopMirroring(std::uint32_t a_id)
@@ -214,14 +233,16 @@ namespace NpcSync
 			}
 		}
 
-		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one fighting us.
+		// See HANDOFF_FROM. Not our companion, the NPC we're talking to or one holding us (NpcPlace::StaysWithUs), one
+		// fighting us, nor one our player hit lately (NpcHold): a long shot's target stays ours, so our killing blow lands
+		// where it runs.
 		bool ShouldHandOff(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			if (const auto last = handedOffAt.find(a_id); last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY) {
 				return false;
 			}
-			if (a_id == talkingTo || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player) {
+			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
 				return false;
 			}
 			const auto& at = a_actor->data.location;
@@ -247,18 +268,31 @@ namespace NpcSync
 			std::vector<std::uint32_t> handOff;
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
+			holding.clear();
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			if (lists) {
 				for (const auto& handle : lists->highActorHandles) {
 					const auto ptr = handle.get();
 					const auto actor = ptr.get();
+					// One our game made at runtime is shared under a spawn id (Spawns) and run by our game for good: never
+					// claimed, nor handed off. Loaded while dead too, so it isn't let go before the server has its death.
+					if (actor && Protocol::IsSpawnRef(actor->GetFormID())) {
+						if (const auto spawn = Spawns::Share(actor)) {
+							WeaponFire::InstallForNpcs(actor);
+							loaded.insert(spawn);
+						}
+						continue;
+					}
 					if (!IsCandidate(actor)) {
 						continue;
 					}
 					WeaponFire::InstallForNpcs(actor);  // no-op once hooked
 					const auto id = actor->GetFormID();
 					loaded.insert(id);
+					if (Dialogue::Holds(actor)) {
+						holding.push_back(id);
+					}
 
 					const auto owner = OwnerOf(id);
 					if (owner == localId) {
@@ -274,24 +308,31 @@ namespace NpcSync
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
 					// and nothing at all until its dead list is in after a load: the server would take a copy alive only in
 					// an older save for one that came back (WorldSync::MayClaim). Not again while a claim awaits its answer, nor for a
-					// while after another player who has it as a companion too kept it (NpcClaims::Book::Offer).
-					if (const auto reason = claimBook.Offer(id, owner, localId, IsOurCompanion(actor), WorldSync::MayClaim(id), a_now)) {
-						claims.push_back({ id, *reason });
+					// while after another player who has it as a companion too kept it (NpcClaims::Book::Offer). One our game
+					// keeps essential is offered marked so, even with the session having it dead: its death waits here, and from
+					// the host's game the claim undoes one an older build saved by mistake (Dogmeat, taken for dead as he went down).
+					const bool essential = WorldSync::IsEssential(actor);
+					if (const auto reason = claimBook.Offer(id, owner, localId, IsOurCompanion(actor), WorldSync::MayClaim(id, essential), a_now)) {
+						claims.push_back({ id, *reason, essential });
 					}
 				}
 			}
 			claimBook.Expire(a_now);
+			hold.Expire(a_now);
 			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
 			std::erase_if(handedOffAt, [&](const auto& a_entry) { return a_now - a_entry.second >= HANDOFF_RETRY; });
 
-			// NPCs we run that are no longer loaded (or died) go back to the pool, and so do the
-			// ones a friend is much nearer to (their game claims them). What we said they wear is
-			// forgotten with them, as the server forgets it: when we run one again we report it afresh.
+			// NPCs we run that are no longer loaded go back to the pool, and so do the ones a friend is
+			// much nearer to (their game claims them). One that died here is kept until our report of its
+			// death ends it (NpcHold): released as it fell, a friend's game where it still lived took it
+			// over, and our kill was not believed. What we said they wear is forgotten with them, as the
+			// server forgets it: when we run one again we report it afresh.
 			std::vector<std::uint32_t> released;
 			for (const auto id : handOff) {
 				owners.erase(id);
 				owned.erase(id);
 				sentGear.erase(id);
+				hold.Forget(id);
 				handedOffAt[id] = a_now;
 				released.push_back(id);
 				++handOffs;
@@ -299,6 +340,12 @@ namespace NpcSync
 			}
 			for (auto it = owned.begin(); it != owned.end();) {
 				if (!loaded.contains(it->first)) {
+					const auto actor = LoadedActor(it->first);
+					if (hold.Keep(it->first, actor && actor->IsDead(false), a_now)) {
+						++it;
+						continue;
+					}
+					hold.Forget(it->first);
 					released.push_back(it->first);
 					owners.erase(it->first);
 					sentGear.erase(it->first);
@@ -346,6 +393,7 @@ namespace NpcSync
 			}
 			owned.clear();
 			claimBook.Clear();
+			hold.Clear();
 			switchOns.Clear();
 			bringIns.Clear();
 			for (auto& [id, mirror] : mirrors) {
@@ -353,6 +401,7 @@ namespace NpcSync
 			}
 			mirrors.clear();
 			talkingTo = 0;
+			holding.clear();
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
 		}
 
@@ -498,11 +547,13 @@ namespace NpcSync
 			if (a_mirror.snapshots.empty()) {
 				return std::nullopt;
 			}
-			const auto renderTime = a_now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(a_mirror.delayMs));
+			const auto behind = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(a_mirror.delayMs));
+			const auto renderTime = a_now - behind;
 			const auto& snaps = a_mirror.snapshots;
 
 			Protocol::ActorState state = snaps.back().state;
 			float                motionAngle = state.heading;
+			std::size_t          next = snaps.size();  // the first state the path goes on through (MotionPath.h)
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
 				const auto& a = snaps[i - 1];
 				const auto& b = snaps[i];
@@ -521,6 +572,7 @@ namespace NpcSync
 				if (dx * dx + dy * dy > 1.0f) {
 					motionAngle = std::atan2(dx, dy);
 				}
+				next = i - 1;
 				break;
 			}
 			if (a_now - snaps.back().received > STALE_AFTER) {
@@ -536,6 +588,7 @@ namespace NpcSync
 				.gait = state.gait,
 				.gaitRate = state.gaitRate,
 				.ownerAim = Protocol::UnpackAimPitch(state.aimPitch),
+				.path = MotionPath::Ahead({ a_now, state.x, state.y, state.z, state.heading }, state.cell, state.worldspace, snaps, next, behind, &Snapshot::received),
 			};
 		}
 
@@ -570,6 +623,7 @@ namespace NpcSync
 				.inScene = a_actor->GetCurrentScene() != nullptr,
 				.fightingUs = player && a_actor->currentCombatTarget.get().get() == player,
 				.talkingToUs = a_id == talkingTo,
+				.holdsUs = Dialogue::Holds(a_actor),
 			};
 		}
 
@@ -665,16 +719,10 @@ namespace NpcSync
 					it = mirrors.erase(it);
 					continue;
 				}
-				// We're talking to it: our own copy talks to us (dialogue is each game's own), so it
-				// runs its own AI here until the conversation ends.
-				if (id == talkingTo) {
-					StopMirroring(id, mirror);
-					++it;
-					continue;
-				}
-				// Our own companion follows us here, whoever runs it elsewhere (two players can
-				// have the same companion).
-				if (IsOurCompanion(actor)) {
+				// We're talking to it, or it is in the scene we're in: our own copy talks to us (dialogue and scenes are
+				// each game's own), so it runs its own AI here until they end. Our own companion follows us here (two
+				// players can have the same companion). Whoever runs it elsewhere (NpcPlace::StaysWithUs).
+				if (NpcPlace::StaysWithUs({ .companion = IsOurCompanion(actor), .talkingToUs = id == talkingTo, .holdsUs = Dialogue::Holds(actor) })) {
 					StopMirroring(id, mirror);
 					++it;
 					continue;
@@ -717,6 +765,7 @@ namespace NpcSync
 					StopMirroring(id, mirror);
 					Puppets::Register(actor, Puppets::Kind::kNpc);
 					mirror.registered = actor;
+					mirror.registeredId = actor->GetFormID();
 					if (const auto gear = knownGear.find(id); gear != knownGear.end()) {
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
@@ -746,6 +795,9 @@ namespace NpcSync
 		const auto now = Clock::now();
 		for (const auto& entry : a_owners) {
 			claimBook.Answered(entry.refId, entry.playerId, localId, now);
+			if (entry.playerId != localId) {
+				hold.Forget(entry.refId);  // no longer ours to keep while it dies
+			}
 			if (entry.playerId == 0) {
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
@@ -775,10 +827,15 @@ namespace NpcSync
 			if (owner == 0 || owner == localId) {
 				continue;
 			}
+			// A friend's spawn: our copy is placed where their game has it (Spawns), never switched on or brought in.
+			const bool spawn = Protocol::IsSpawnRef(state.refId);
+			if (spawn) {
+				Spawns::OnState(state);
+			}
 			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
 			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
 			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
-			const auto fixes = RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
+			const auto fixes = spawn ? RetryBudget::Fixes{} : RetryBudget::Plan(switchOns, bringIns, state.refId, CopyFor(state, owner), now);
 			if (RetryBudget::Go(fixes.switchOn)) {
 				SwitchOn(state, fixes.switchOn);
 			}
@@ -838,6 +895,7 @@ namespace NpcSync
 
 	void OnLocalInteraction(std::uint32_t a_refId)
 	{
+		hold.Fought(a_refId, Clock::now());  // ours or not: one we run is not handed away mid-fight
 		const auto owner = OwnerOf(a_refId);
 		if (localId == 0 || owner == 0 || owner == localId || Story::InOpening()) {
 			return;
@@ -850,6 +908,11 @@ namespace NpcSync
 		lastTakeover[a_refId] = now;
 		claimBook.Claimed(a_refId, Protocol::ClaimReason::kInteract, now);
 		outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { a_refId, Protocol::ClaimReason::kInteract } }), true });
+	}
+
+	bool FoughtLately(std::uint32_t a_refId)
+	{
+		return hold.FoughtLately(a_refId, Clock::now());
 	}
 
 	void OnActivated(std::uint32_t a_refId)
@@ -899,13 +962,14 @@ namespace NpcSync
 			SendOwnedGear();
 			std::vector<std::uint32_t> ids;
 			for (const auto& [id, track] : owned) {
-				ids.push_back(id);
+				if (const auto local = LocalId(id)) {
+					ids.push_back(local);  // WeaponFire's animation events name our game's NPC
+				}
 			}
 			WeaponFire::SetOwnedNpcs(std::move(ids));
 		}
 		// The partner is found when the conversation starts and kept until it ends.
-		const auto ui = RE::UI::GetSingleton();
-		const bool inConversation = ui && ui->GetMenuOpen("DialogueMenu"sv);
+		const bool inConversation = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 		if (!inConversation) {
 			talkingTo = 0;
 		} else if (talkingTo == 0) {
@@ -916,13 +980,23 @@ namespace NpcSync
 				REX::INFO("NpcSync: talking to {:08X} (owner {})", talkingTo, OwnerOf(talkingTo));
 			}
 		}
-		if (talkingTo && now >= nextTalkClaim) {
+		// The NPC we talk to, and those holding us (the conversation's speaker, the others in our scene), are claimed
+		// again while that lasts when we run them, so nobody takes them over mid-scene; else they're taken over.
+		if ((talkingTo || !holding.empty()) && now >= nextTalkClaim) {
 			nextTalkClaim = now + TALK_CLAIM_INTERVAL;
-			if (OwnerOf(talkingTo) == localId) {
-				outgoing.push_back({ Protocol::Encode(std::vector<Protocol::ActorClaim>{ { talkingTo, Protocol::ClaimReason::kInteract } }), true });
-			} else {
-				OnLocalInteraction(talkingTo);
+			auto keep = holding;
+			if (talkingTo && !std::ranges::contains(keep, talkingTo)) {
+				keep.push_back(talkingTo);
 			}
+			std::vector<Protocol::ActorClaim> claims;
+			for (const auto id : keep) {
+				if (OwnerOf(id) == localId) {
+					claims.push_back({ id, Protocol::ClaimReason::kInteract });
+				} else {
+					OnLocalInteraction(id);
+				}
+			}
+			SendList(claims, [](const std::vector<Protocol::ActorClaim>& a) { return Protocol::Encode(a); }, true);
 		}
 		UpdateMirrors(now);
 	}
@@ -935,6 +1009,11 @@ namespace NpcSync
 	std::vector<Outgoing> TakeOutgoing()
 	{
 		return std::exchange(outgoing, {});
+	}
+
+	void DropMirror(std::uint32_t a_refId)
+	{
+		StopMirroring(a_refId);
 	}
 
 	void ReleaseMirrors()
@@ -971,9 +1050,11 @@ namespace NpcSync
 		knownGear.clear();
 		owners.clear();
 		claimBook.Clear();
+		hold.Clear();
 		lastTakeover.clear();
 		handedOffAt.clear();
 		talkingTo = 0;
+		holding.clear();
 		owned.clear();
 		switchOns.Clear();
 		bringIns.Clear();

@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -18,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 29;
+	inline constexpr std::uint16_t VERSION = 30;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -49,6 +50,24 @@ namespace Protocol
 	{
 		return a_id != 0 && a_id != PLAYER_REF_ID && (a_id >> 24) != 0xFF;
 	}
+
+	// An NPC a game made at runtime (a random encounter's raider, an ambush) is shared under a spawn id that game picks
+	// and the server grants it (kReportSpawn): every other game places a copy of it (kSpawned), and the game that made it
+	// runs it for good. A spawn id is in the runtime range too, so no game ever takes one for a reference of its own: each
+	// game looks it up in its own book of spawns (src/game/SpawnBook.h), and the server in its own.
+	[[nodiscard]] constexpr bool IsSpawnRef(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF && a_id != 0xFF000000;
+	}
+
+	// An NPC the session can name: one from a plugin file, or a spawn.
+	[[nodiscard]] constexpr bool IsActorRef(std::uint32_t a_id)
+	{
+		return IsShareableRef(a_id) || IsSpawnRef(a_id);
+	}
+
+	// Spawns one game may share at once (a settlement's attackers are a dozen or two).
+	inline constexpr std::size_t MAX_SPAWNS_PER_PLAYER = 32;
 
 	// Largest item count a single container change may move.
 	inline constexpr std::int32_t MAX_ITEM_COUNT = 1'000'000;
@@ -91,6 +110,7 @@ namespace Protocol
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
+		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -121,6 +141,7 @@ namespace Protocol
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
 		kExplosion = 132,         // an explosion from another player's throw
 		kActivation = 133,        // another player pressed one
+		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -358,6 +379,13 @@ namespace Protocol
 	inline constexpr std::size_t MAX_FACE_SLIDERS = 256;
 	inline constexpr std::size_t MAX_FACE_BONES = 256;
 	inline constexpr std::size_t MAX_FACE_TINTS = 96;
+	// LooksMenu's body sliders (F4EE body morphs), for players who have it: a morph's name as BodySlide
+	// built it into the body's meshes, and its strength. Only that many, with names that long, travel; a
+	// value is brought into the range below (LooksMenu's own sliders stay well inside it), so a modified
+	// game cannot stretch a friend's stand-in out of shape in every game.
+	inline constexpr std::size_t MAX_BODY_MORPHS = 128;
+	inline constexpr std::size_t MAX_BODY_MORPH_NAME = 64;
+	inline constexpr float       MAX_BODY_MORPH_VALUE = 2.0f;
 
 	// A workshop object (a wall, a turret, a crop...) placed, moved or scrapped by a player. refId is
 	// the object's reference ID in the sender's game (runtime IDs differ per game, so receivers map
@@ -428,6 +456,14 @@ namespace Protocol
 		bool operator==(const FaceTint&) const = default;
 	};
 
+	struct BodyMorph
+	{
+		std::string name;  // the morph (a BodySlide slider), at most MAX_BODY_MORPH_NAME long
+		float       value = 0.0f;
+
+		bool operator==(const BodyMorph&) const = default;
+	};
+
 	struct Face
 	{
 		std::uint32_t              playerId = 0;  // ignored client -> server
@@ -441,6 +477,9 @@ namespace Protocol
 		std::vector<FaceBone>      bones;
 		std::vector<FaceTint>      tints;
 		std::uint8_t               bodyTint[4] = {};  // RGBA
+		// LooksMenu's body sliders, sorted by name; empty when the sender has no LooksMenu (or never moved one).
+		// A receiver without LooksMenu leaves them be.
+		std::vector<BodyMorph>     bodyMorphs;
 
 		bool operator==(const Face&) const = default;
 	};
@@ -471,12 +510,31 @@ namespace Protocol
 	{
 		std::uint32_t refId = 0;
 		ClaimReason   reason = ClaimReason::kUnowned;
+		// The sender's game won't let it die (essential: at the end of its health it goes down and gets up), so a
+		// death the session has for it was never applied there. From the host's game, this claim undoes a death an
+		// older build saved by mistake (Dogmeat went down and was taken for dead): Server's handleClaims.
+		bool          essential = false;
 	};
 
 	struct ActorOwner
 	{
 		std::uint32_t refId = 0;
 		std::uint32_t playerId = 0;  // 0 = nobody
+	};
+
+	// An NPC the sender's game made at runtime (see IsSpawnRef), as it was when shared: what to place a copy from, and
+	// where. playerId is its owner (ignored client -> server; the server sets it). Its owner's states move the copies on.
+	struct Spawn
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;       // the spawn id
+		std::uint32_t base = 0;        // the NPC to place: one from a plugin file, never a runtime one
+		std::uint32_t cell = 0;        // interior cell form ID, or 0 when outside
+		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;
+
+		bool operator==(const Spawn&) const = default;
 	};
 
 	// ActorState::aimPitch while the owner's copy aims at nothing: a value PackPitch never gives.
@@ -559,6 +617,26 @@ namespace Protocol
 		std::uint32_t sound = 0;
 	};
 
+	// The power armor frame a player got out of last (their game's last used one), while they are out of it: where it
+	// stands in their world, so friends show a copy of it there, parked at a station or wherever they left it.
+	struct ParkedFrame
+	{
+		std::uint32_t base = 0;        // its base form (furniture that is a frame)
+		std::uint32_t ref = 0;         // the frame itself when every game has it (a pre-placed one), 0 for one made in their game
+		std::uint32_t cell = 0;        // interior cell form ID, or 0 when outside
+		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;  // radians
+
+		bool operator==(const ParkedFrame&) const = default;
+
+		[[nodiscard]] bool Valid() const
+		{
+			return base != 0 && (ref == 0 || IsShareableRef(ref)) && ((cell != 0) != (worldspace != 0)) && InWorld(x) && InWorld(y) && InWorld(z) &&
+			       std::isfinite(heading);
+		}
+	};
+
 	// playerId is ignored client -> server in all of these.
 	struct PlayerStatus
 	{
@@ -575,6 +653,8 @@ namespace Protocol
 		// The frame reference itself when every game has it (placed in the world by a plugin, such as the museum's suit
 		// in Concord), 0 for one made in their game: the hearer hides its own copy of that frame while they wear theirs.
 		std::uint32_t powerArmorFrameRef = 0;
+		// Out of power armor: the frame they got out of last, where it stands now (none while they are in one).
+		std::optional<ParkedFrame> parked;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -957,8 +1037,75 @@ namespace Protocol
 		return msg;
 	}
 
-	// Whether two load orders are the same once the ignored plugins (the host's list) are left out of
-	// both: same names, same order. False when either list is unknown.
+	// In a hello's load order, between the full plugins and the light ones (.esl files, and plugins flagged light).
+	// The two kinds are numbered apart: a full plugin's form IDs start with its place among the full ones (09000004),
+	// a light one's with FE and its place among the light ones.
+	inline constexpr std::string_view LIGHT_PLUGINS = "--light--";
+
+	// The free high resolution texture pack's plugin. It holds no records, so a player without it can play with one
+	// who has it; but it takes a place in the load order like any other plugin.
+	inline constexpr std::string_view TEXTURE_PACK = "DLCUltraHighResolution.esm";
+
+	[[nodiscard]] inline bool SamePluginName(std::string_view a_a, std::string_view a_b)
+	{
+		return std::ranges::equal(a_a, a_b, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
+	}
+
+	// The full plugins, in load order, as players' load orders are compared: the texture pack is left out only when no
+	// other full plugin loads after it. With mods after it, it moves them all up a place: a story mod's NPC is 09000004
+	// with the pack and 08000004 without, and shared by form ID it would be some other mod's form, or nothing, in a
+	// friend's game.
+	[[nodiscard]] inline std::vector<std::string> ComparedFullPlugins(std::vector<std::string> a_full)
+	{
+		if (!a_full.empty() && SamePluginName(a_full.back(), TEXTURE_PACK)) {
+			a_full.pop_back();
+		}
+		return a_full;
+	}
+
+	// A game's load order as its hello carries it: the full plugins (ComparedFullPlugins), LIGHT_PLUGINS, the light ones.
+	[[nodiscard]] inline std::vector<std::string> ComparedLoadOrder(std::vector<std::string> a_full, const std::vector<std::string>& a_light)
+	{
+		auto out = ComparedFullPlugins(std::move(a_full));
+		out.emplace_back(LIGHT_PLUGINS);
+		out.insert(out.end(), a_light.begin(), a_light.end());
+		return out;
+	}
+
+	// FNV-1a over a load order (ComparedLoadOrder), names in any case: the hello's content hash. Players whose hashes
+	// match play together without the lists being compared.
+	[[nodiscard]] inline std::uint32_t LoadOrderHash(const std::vector<std::string>& a_plugins)
+	{
+		std::uint32_t hash = 2166136261u;
+		for (const auto& name : a_plugins) {
+			for (const char c : name) {
+				hash ^= static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c)));
+				hash *= 16777619u;
+			}
+			hash ^= '|';
+			hash *= 16777619u;
+		}
+		return hash;
+	}
+
+	// The hash older versions sent for a hello's load order: the texture pack left out wherever it loads. A session
+	// saved with it is this load order's when it matches, so a host whose pack now counts keeps their shared world.
+	// None for a list that is missing or cut short (MAX_PLUGINS).
+	[[nodiscard]] inline std::optional<std::uint32_t> LoadOrderHashBeforeTexturePack(const std::vector<std::string>& a_plugins)
+	{
+		if (a_plugins.empty() || a_plugins.size() >= MAX_PLUGINS) {
+			return std::nullopt;
+		}
+		auto plugins = a_plugins;
+		std::erase_if(plugins, [](const std::string& a_name) { return SamePluginName(a_name, TEXTURE_PACK); });
+		return LoadOrderHash(plugins);
+	}
+
+	// Whether two load orders give every plugin the same form IDs once the ignored plugins (the host's list) are left
+	// out of both: the same plugins, in the same order, and each at the same place among its kind (full or light, split
+	// by LIGHT_PLUGINS; a list without it is taken as all full). An ignored plugin that only one player has moves every
+	// plugin of its kind after it, so it may differ only after the rest: the ones after it would be other forms in each
+	// game. False when either list is unknown.
 	inline bool SameLoadOrderIgnoring(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored)
 	{
 		if (a_theirs.empty() || a_sessions.empty()) {
@@ -970,13 +1117,21 @@ namespace Protocol
 			}
 			return a_s;
 		};
+		// Each kept plugin: its name, whether it is light, and its place among its kind.
 		const auto kept = [&](const std::vector<std::string>& a_names) {
-			std::vector<std::string> out;
+			std::vector<std::tuple<std::string, bool, std::size_t>> out;
+			bool                                                    light = false;
+			std::size_t                                             place = 0;
 			for (const auto& name : a_names) {
-				const auto l = lower(name);
-				if (std::ranges::none_of(a_ignored, [&](const std::string& a_ignore) { return lower(a_ignore) == l; })) {
-					out.push_back(l);
+				if (name == LIGHT_PLUGINS) {
+					light = true;
+					place = 0;
+					continue;
 				}
+				if (std::ranges::none_of(a_ignored, [&](const std::string& a_ignore) { return SamePluginName(a_ignore, name); })) {
+					out.emplace_back(lower(name), light, place);
+				}
+				++place;
 			}
 			return out;
 		};
@@ -986,7 +1141,7 @@ namespace Protocol
 	// What a refused player needs to hear: the plugins only they have, and the ones only the session
 	// has (in load-order terms: names and order; a different order shows as both sides "having"
 	// nothing extra, so the order is named then). Fits a Reject.
-	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions)
+	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored = {})
 	{
 		const auto lower = [](std::string a_s) {
 			for (char& c : a_s) {
@@ -998,7 +1153,7 @@ namespace Protocol
 			std::vector<std::string> out;
 			for (const auto& name : a_in) {
 				const auto l = lower(name);
-				if (std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
+				if (name != LIGHT_PLUGINS && std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
 					out.push_back(name);
 				}
 			}
@@ -1028,6 +1183,13 @@ namespace Protocol
 		}
 		if (mine.empty() && missing.empty()) {
 			out += " Same mods, different order: sort yours like theirs.";
+		}
+		// A plugin that may differ (the texture pack, or one the host lets differ) is named because others load after it.
+		const auto mayDiffer = [&](const std::string& a_name) {
+			return SamePluginName(a_name, TEXTURE_PACK) || std::ranges::any_of(a_ignored, [&](const std::string& a_ignore) { return SamePluginName(a_ignore, a_name); });
+		};
+		if (std::ranges::any_of(mine, mayDiffer) || std::ranges::any_of(missing, mayDiffer)) {
+			out += " Texture plugins may differ only when they load last.";
 		}
 		return out;
 	}
@@ -1209,6 +1371,43 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Spawn& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.base);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		w.F32(a_msg.x);
+		w.F32(a_msg.y);
+		w.F32(a_msg.z);
+		w.F32(a_msg.heading);
+		return w.Data();
+	}
+
+	// A spawn id, a base every game has, a place in the world, and in one space: an interior or a worldspace.
+	inline std::optional<Spawn> DecodeSpawn(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Spawn msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.base = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		msg.x = r.F32();
+		msg.y = r.F32();
+		msg.z = r.F32();
+		msg.heading = r.F32();
+		if (!r.Ok() || !r.AtEnd() || !IsSpawnRef(msg.refId) || !IsShareableRef(msg.base) || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) ||
+			!std::isfinite(msg.heading) || (msg.cell == 0) == (msg.worldspace == 0)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1551,6 +1750,18 @@ namespace Protocol
 		for (const auto v : a_msg.bodyTint) {
 			w.U8(v);
 		}
+		// A name too long to travel whole is left out rather than cut to another morph's name.
+		std::vector<const BodyMorph*> morphs;
+		for (const auto& m : a_msg.bodyMorphs) {
+			if (morphs.size() < MAX_BODY_MORPHS && !m.name.empty() && m.name.size() <= MAX_BODY_MORPH_NAME) {
+				morphs.push_back(&m);
+			}
+		}
+		w.U8(static_cast<std::uint8_t>(morphs.size()));
+		for (const auto m : morphs) {
+			w.Str(m->name, MAX_BODY_MORPH_NAME);
+			w.F32(m->value);
+		}
 		return w.Data();
 	}
 
@@ -1618,6 +1829,20 @@ namespace Protocol
 		for (auto& v : msg.bodyTint) {
 			v = r.U8();
 		}
+		const auto morphs = r.U8();
+		if (morphs > MAX_BODY_MORPHS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < morphs && r.Ok(); ++i) {
+			BodyMorph m;
+			m.name = r.Str(MAX_BODY_MORPH_NAME);
+			m.value = r.F32();
+			if (r.Ok() && (m.name.empty() || !std::isfinite(m.value))) {
+				return std::nullopt;
+			}
+			m.value = std::clamp(m.value, -MAX_BODY_MORPH_VALUE, MAX_BODY_MORPH_VALUE);
+			msg.bodyMorphs.push_back(std::move(m));
+		}
 		if (!r.Ok() || !r.AtEnd() || msg.race == 0) {
 			return std::nullopt;
 		}
@@ -1661,7 +1886,7 @@ namespace Protocol
 		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
 			msg.items.push_back(r.U32());
 		}
-		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1702,13 +1927,22 @@ namespace Protocol
 
 	inline std::vector<std::uint8_t> Encode(const std::vector<ActorClaim>& a_msg)
 	{
-		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(std::to_underlying(a.reason)); });
+		return EncodeList(MessageType::kClaimActors, a_msg, [](Writer& w, const ActorClaim& a) { w.U32(a.refId); w.U8(std::to_underlying(a.reason)); w.U8(a.essential ? 1 : 0); });
 	}
 
 	inline auto DecodeClaims(std::span<const std::uint8_t> a_data)
 	{
-		auto claims = DecodeList<ActorClaim>(a_data, [](Reader& r) { ActorClaim a; a.refId = r.U32(); a.reason = static_cast<ClaimReason>(r.U8()); return a; });
-		if (claims && !std::ranges::all_of(*claims, [](const ActorClaim& a) { return a.reason <= ClaimReason::kCompanion; })) {
+		bool flagsKnown = true;  // the essential byte is 0 or 1
+		auto claims = DecodeList<ActorClaim>(a_data, [&](Reader& r) {
+			ActorClaim a;
+			a.refId = r.U32();
+			a.reason = static_cast<ClaimReason>(r.U8());
+			const auto essential = r.U8();
+			flagsKnown = flagsKnown && essential <= 1;
+			a.essential = essential != 0;
+			return a;
+		});
+		if (claims && (!flagsKnown || !std::ranges::all_of(*claims, [](const ActorClaim& a) { return a.reason <= ClaimReason::kCompanion; }))) {
 			return decltype(claims){};
 		}
 		return claims;
@@ -1802,7 +2036,7 @@ namespace Protocol
 		msg.byPlayer = r.U8() != 0;
 		msg.attacker = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.damage) || msg.damage < 0.0f ||
-			(msg.byPlayer ? msg.attacker != 0 : !IsShareableRef(msg.attacker))) {
+			(msg.byPlayer ? msg.attacker != 0 : !IsActorRef(msg.attacker))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1827,7 +2061,7 @@ namespace Protocol
 		msg.refId = r.U32();
 		msg.action = r.U8();
 		msg.sound = r.U32();
-		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsShareableRef(msg.refId)) || msg.action > ShotAction::kMax) {
+		if (!r.Ok() || !r.AtEnd() || (msg.refId != 0 && !IsActorRef(msg.refId)) || msg.action > ShotAction::kMax) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1841,9 +2075,20 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0)));
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0) | (a_msg.parked ? 16 : 0)));
 		w.U32(a_msg.powerArmorFrame);
 		w.U32(a_msg.powerArmorFrameRef);
+		if (a_msg.parked) {
+			const auto& parked = *a_msg.parked;
+			w.U32(parked.base);
+			w.U32(parked.ref);
+			w.U32(parked.cell);
+			w.U32(parked.worldspace);
+			w.F32(parked.x);
+			w.F32(parked.y);
+			w.F32(parked.z);
+			w.F32(parked.heading);
+		}
 		return w.Data();
 	}
 
@@ -1864,7 +2109,21 @@ namespace Protocol
 		msg.powerArmor = (flags & 8) != 0;
 		msg.powerArmorFrame = r.U32();
 		msg.powerArmorFrameRef = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef))) {
+		if ((flags & 16) != 0) {
+			ParkedFrame parked;
+			parked.base = r.U32();
+			parked.ref = r.U32();
+			parked.cell = r.U32();
+			parked.worldspace = r.U32();
+			parked.x = r.F32();
+			parked.y = r.F32();
+			parked.z = r.F32();
+			parked.heading = r.F32();
+			msg.parked = parked;
+		}
+		// A frame is parked only while they are out of power armor.
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
+			(msg.parked && (msg.powerArmor || !msg.parked->Valid()))) {
 			return std::nullopt;
 		}
 		return msg;

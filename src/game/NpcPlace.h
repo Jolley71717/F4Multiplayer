@@ -33,6 +33,7 @@ namespace NpcPlace
 		bool inScene = false;      // in a scene here (our own story is using it)
 		bool fightingUs = false;   // its combat target is our player
 		bool talkingToUs = false;  // the NPC in our player's conversation
+		bool holdsUs = false;      // the engine's speaker in our player's conversation, or in the scene our player is in
 	};
 
 	enum class Why
@@ -41,7 +42,7 @@ namespace NpcPlace
 		kOwnerIndoors,  // the owner's copy is in an interior (or nowhere): only one outdoors near us is brought in
 		kNotNearUs,     // our player is indoors, in another world, or farther than BRING_IN_RANGE from the owner's copy
 		kCannot,        // ours is not in our game, is off, dead or deleted, or is the player
-		kBusy,          // ours is our companion, in a scene here, fighting us or talking to us: it stays with us
+		kBusy,          // ours is our companion, in a scene here, fighting us, talking to us or holding us: it stays with us
 		kOwnerAway,     // the owner's stand-in is not beside where their game has it: only their word for it
 		kMove,          // moved to where the owner's copy stands, and mirrored from there
 	};
@@ -71,7 +72,7 @@ namespace NpcPlace
 		if (!a_ours.exists || a_ours.off || a_ours.unusable) {
 			return Why::kCannot;
 		}
-		if (a_ours.companion || a_ours.inScene || a_ours.fightingUs || a_ours.talkingToUs) {
+		if (a_ours.companion || a_ours.inScene || a_ours.fightingUs || a_ours.talkingToUs || a_ours.holdsUs) {
 			return Why::kBusy;
 		}
 		return a_ownerBeside ? Why::kMove : Why::kOwnerAway;
@@ -88,6 +89,16 @@ namespace NpcPlace
 			.here = a_why == Why::kHere,
 			.movable = a_why == Why::kMove,
 		};
+	}
+
+	// Whether ours runs its own AI here whoever runs it elsewhere: our companion follows us, and an NPC our player is
+	// talking to, or one in the scene our player is in, has its lines and the scene to finish here. Mirrored, its AI is
+	// off: the scene never ends, and the engine holds our player in it (no weapons, Pip-Boy or workshop) for as long as
+	// another game runs it. A friend joining, or talking to the same NPC in their own game, takes it over (a story mod's
+	// opening scene, both players at it).
+	constexpr bool StaysWithUs(const Ours& a_ours)
+	{
+		return a_ours.companion || a_ours.talkingToUs || a_ours.holdsUs;
 	}
 
 	// Whether ours, loaded at a_ours, is mirrored from the owner's latest state (at a_owners, a_age old): in the same

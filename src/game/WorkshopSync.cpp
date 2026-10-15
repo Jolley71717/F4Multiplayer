@@ -1079,6 +1079,11 @@ namespace WorkshopSync
 		}
 	}
 
+	bool WorkshopModeScraps(RE::TESObjectREFR& a_ref)
+	{
+		return CanScrap(a_ref);
+	}
+
 	bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref || a_ref->As<RE::Actor>()) {

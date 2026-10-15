@@ -1,5 +1,7 @@
 #include "game/Dialogue.h"
 #include "game/StrandedDialogue.h"
+#include "game/Hud.h"
+#include "game/OpenMenus.h"
 
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -140,15 +142,14 @@ namespace Dialogue
 			return;
 		}
 		// A loading screen is no part of the wait (it can last longer): it starts over once the screen is gone.
-		const auto ui = RE::UI::GetSingleton();
-		if (!ui || ui->GetMenuOpen("LoadingMenu"sv)) {
+		if (Hud::LoadingScreenUp()) {
 			stranded.Reset();
 			heldSince = {};
 			return;
 		}
 		const auto now = Clock::now();
 		const auto speaker = topics->speaker.get();
-		const bool menu = ui->GetMenuOpen("DialogueMenu"sv);
+		const bool menu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 		const bool ours = speakerOurs.Ours(speaker ? speaker->GetFormID() : 0, speaker && Ours(speaker.get()));
 		ReportHeld(topics, speaker.get(), menu, ours, now);
 
