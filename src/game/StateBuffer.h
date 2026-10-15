@@ -46,6 +46,11 @@ namespace StateBuffer
 		Protocol::PlayerState state;
 		float                 motionAngle = 0.0f;  // world heading of travel, radians
 		bool                  held = false;        // past the newest state: it stands where that one put it
+		float                 heldSpeed = 0.0f;    // when held: the speed the newest state said (state.speed is stopped once states dry up)
+
+		// The friend's own speed in the state it was put by: moving still while their next state is late, though it is
+		// held, and drawn, standing.
+		[[nodiscard]] float OwnSpeed() const { return held ? heldSpeed : state.speed; }
 	};
 
 	inline float LerpAngle(float a_from, float a_to, float a_t)
@@ -162,7 +167,7 @@ namespace StateBuffer
 			if (a_now - snaps.back().stamp > MIN_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
-			return Sampled{ held, held.heading, true };
+			return Sampled{ held, held.heading, true, snaps.back().state.speed };
 		}
 	};
 }

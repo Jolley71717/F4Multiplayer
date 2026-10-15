@@ -124,3 +124,53 @@ TEST("shot loops: one shooter's loops can be ended at once, leaving the others r
 	CHECK(loops.EndFor(7, [](int) {}) == 0);
 	CHECK(loops.EndDue(now + Loops::SHOT_LENGTH, [](int) {}) == 1);
 }
+
+TEST("shot loops: a shot sound that runs on far longer than a gunshot is ended, one that ends by itself is let be")
+{
+	// A sound mapping the shooter's game named can be another sound here (a plugin elsewhere in the load order), and a
+	// sound can loop as a whole file, which the engine does not call a loop: neither would ever stop.
+	Loops            loops;
+	std::vector<int> ended;
+	loops.Watch(7, 1, t0);
+	loops.Watch(7, 2, t0 + 1s);
+	CHECK(loops.Watched() == 2);
+	CHECK(loops.Active() == 0);  // not a loop: a next shot starts a sound of its own
+	CHECK(!loops.Extend(7, t0 + 1s));
+	CHECK(loops.EndLong(t0 + Loops::LONGEST_SHOT - 1ms, [&](int a_h) { ended.push_back(a_h); }) == 0);
+	CHECK(loops.EndLong(t0 + Loops::LONGEST_SHOT, [&](int a_h) { ended.push_back(a_h); }) == 1);
+	CHECK((ended == std::vector<int>{ 1 }));
+	CHECK(loops.EndLong(t0 + 1s + Loops::LONGEST_SHOT, [&](int a_h) { ended.push_back(a_h); }) == 1);
+	CHECK((ended == std::vector<int>{ 1, 2 }));
+	CHECK(loops.Watched() == 0);
+}
+
+TEST("shot loops: a semi-automatic volley never keeps more than a few seconds of shots watched")
+{
+	// 5 shots a second for a minute, ended (or let be) as each comes of age.
+	Loops       loops;
+	std::size_t ended = 0;
+	auto        now = t0;
+	for (int i = 0; i < 300; ++i) {
+		loops.Watch(7, i, now);
+		ended += loops.EndLong(now, [](int) {});
+		now += 200ms;
+	}
+	CHECK(loops.Watched() <= 31);
+	ended += loops.EndLong(now + Loops::LONGEST_SHOT, [](int) {});
+	CHECK(ended == 300);
+}
+
+TEST("shot loops: a shooter's watched shots are ended with their loops when their actor goes")
+{
+	Loops      loops;
+	const auto now = Loops::Clock::now();
+	loops.Watch(7, 1, now);
+	loops.Watch(9, 2, now);
+	loops.Add(7, 3, now);
+	std::vector<int> ended;
+	CHECK(loops.EndFor(7, [&](int a_h) { ended.push_back(a_h); }) == 1);
+	CHECK(loops.EndWatchedFor(7, [&](int a_h) { ended.push_back(a_h); }) == 1);
+	CHECK((ended == std::vector<int>{ 3, 1 }));
+	CHECK(loops.Watched() == 1);
+	CHECK(loops.EndWatchedFor(7, [](int) {}) == 0);
+}

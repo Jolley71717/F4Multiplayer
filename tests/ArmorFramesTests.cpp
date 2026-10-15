@@ -535,3 +535,75 @@ TEST("armor frames: our copy of a pre-placed frame is hidden only while it stand
 	facts.created = true;
 	CHECK(ChooseOriginal(museum, base, facts) == Original::kMissing);
 }
+
+TEST("armor frames: back in within moments of getting out, the copy left there is used only when it is the frame they are in")
+{
+	// Out of one suit and straight into another at a station: the copy of the first, left where they got out, is placed
+	// again as the frame they are in now, not dressed on the stand-in as the first.
+	CopyFacts back = held;
+	back.sinceOut = 1s;
+	CHECK(ChooseCopy(back) == Copy::kHold);
+	back.sameBase = false;
+	CHECK(ChooseCopy(back) == Copy::kReplace);
+	CHECK(ChooseCopy({ .worn = true }) == Copy::kPlace);  // the next update, once it is gone
+	// Out of their armor, the copy left there is theirs whatever frame they tell next.
+	CopyFacts left{ .worn = false, .exists = true, .loaded = true, .samePlace = true, .sinceOut = 1s, .sameBase = false };
+	CHECK(ChooseCopy(left) == Copy::kShow);
+	// The engine's while the stand-in is in it, whatever its base.
+	back.engaged = true;
+	CHECK(ChooseCopy(back) == Copy::kNone);
+}
+
+TEST("armor frames: the limits go by the time the game ran, not the time a menu had it stopped")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Played;
+	using ArmorFrames::Switch;
+	using Steady = std::chrono::steady_clock;
+	// A frame at 60 fps.
+	constexpr auto frame = std::chrono::duration_cast<Steady::duration>(std::chrono::duration<double>(1.0 / 60.0));
+	Played     played;
+	auto       clock = Steady::time_point{} + 2h;
+	const auto run = [&](Steady::duration a_for, bool a_paused) {
+		for (const auto end = clock + a_for; clock < end;) {
+			clock += frame;
+			played.Advance(clock, a_paused);
+		}
+		return played.Now();
+	};
+	// The stand-in is switched in just as we open the Pip-Boy, and the rebuild the switch-in queued has not run when we
+	// close it half a minute later: its time on its own skeleton has only begun.
+	const auto switchedAt = run(1s, false);
+	run(30s, true);
+	auto facts = ArmorFrames::SwitchFacts{ .worn = true, .in = true, .rebuilt = false, .sinceIn = run(100ms, false) - switchedAt };
+	CHECK(facts.sinceIn < 200ms);
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	// The game runs on and it never comes: placed again, by the game's own time.
+	facts.sinceIn = run(ArmorFrames::SKELETON_LIMIT, false) - switchedAt;
+	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+	// By the clock the menu counted, and it was placed again the moment the menu closed.
+	CHECK(ChooseSwitch({ .worn = true, .in = true, .rebuilt = false, .sinceIn = 30s }) == Switch::kStuck);
+
+	// A copy's 3D, and the frame item pick, wait out a load the same way.
+	const auto placedAt = played.Now();
+	run(20s, true);
+	const CopyFacts loading{ .worn = true, .exists = true, .loaded = false, .samePlace = true, .sincePlaced = run(1s, false) - placedAt };
+	CHECK(ChooseCopy(loading) == Copy::kNone);
+	const auto pickSince = played.Now();
+	run(5s, true);
+	CHECK(ArmorFrames::ChoosePick({ .named = false, .dressed = false, .waited = run(100ms, false) - pickSince }) == ArmorFrames::Pick::kWait);
+}
+
+TEST("armor frames: a frame the game took far too long over counts for a quarter of a second")
+{
+	using ArmorFrames::Played;
+	using Steady = std::chrono::steady_clock;
+	// Its window in the background stops its frames: the next one comes a minute later.
+	Played     played;
+	const auto start = Steady::time_point{} + 2h;
+	const auto first = played.Advance(start, false);
+	CHECK(played.Advance(start + 16ms, false) - first == 16ms);
+	CHECK(played.Advance(start + 16ms + 1min, false) - first == 16ms + ArmorFrames::LONGEST_FRAME);
+	// A time never set is long ago.
+	CHECK(played.Now() - ArmorFrames::PlayTime{} > ArmorFrames::SWITCH_RETRY);
+}

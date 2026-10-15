@@ -28,6 +28,44 @@ namespace ArmorFrames
 {
 	using Duration = std::chrono::steady_clock::duration;
 
+	// The limits below go by the time the game ran, not by the clock: a menu that stops the game (the Pip-Boy, the pause
+	// menu, a container), a load, or a frame the game took far too long over (one in the background, its window left)
+	// is not counted. Counted by the clock, a friend who got into their armor as we opened the Pip-Boy was found still
+	// on its own skeleton as we closed it, placed again as a switch-in that never took, and after a few such shown out of
+	// their armor for the rest of the wear. A time of the game's run, not of the clock: the two cannot be mixed up.
+	struct PlayClock
+	{
+		using duration = Duration;
+		using rep = duration::rep;
+		using period = duration::period;
+		using time_point = std::chrono::time_point<PlayClock>;
+		static constexpr bool is_steady = true;
+	};
+	using PlayTime = PlayClock::time_point;
+	// The most one frame counts for.
+	constexpr auto LONGEST_FRAME = std::chrono::milliseconds(250);
+
+	class Played
+	{
+	public:
+		// Once a frame. a_paused: a menu has the game stopped, or a load is on. Returns the time the game ran until a_now.
+		PlayTime Advance(std::chrono::steady_clock::time_point a_now, bool a_paused)
+		{
+			if (last && !a_paused) {
+				played += (std::min)(Duration{ a_now - *last }, Duration{ LONGEST_FRAME });
+			}
+			last = a_now;
+			return played;
+		}
+
+		[[nodiscard]] PlayTime Now() const { return played; }
+
+	private:
+		std::optional<std::chrono::steady_clock::time_point> last;
+		// It starts an hour in: a time never set ({}) is long ago.
+		PlayTime played{ std::chrono::hours(1) };
+	};
+
 	// The copy, once they are out: drawn where they got out for this long, then deleted.
 	constexpr auto KEEP_AFTER_OUT = std::chrono::seconds(4);
 	// A copy whose 3D has not come in this long after it was placed is placed again.
@@ -47,6 +85,7 @@ namespace ArmorFrames
 		float               distance = 0.0f;   // from the stand-in
 		Duration            sincePlaced{};
 		Duration            sinceOut{};        // since they got out (when not worn)
+		bool                sameBase = true;   // it is a copy of the frame they wear (when worn)
 	};
 
 	enum class Copy
@@ -54,7 +93,7 @@ namespace ArmorFrames
 		kNone,     // nothing to do: no copy wanted, its 3D is still coming, or the stand-in is in it
 		kPlace,    // worn and no copy: one is placed at the stand-in
 		kHold,     // worn, the stand-in not in it yet: hidden, without collision, under the stand-in
-		kReplace,  // worn, but it is in another place, too far off, or never got its 3D: deleted, placed again next update
+		kReplace,  // worn, but it is another frame, in another place, too far off, or never got its 3D: deleted, placed again next update
 		kShow,     // they are out: drawn where they got out (solid once nobody stands in it)
 		kDelete,   // out long enough: deleted
 		kAbandon,  // somebody here is in it: theirs now, neither moved nor deleted
@@ -77,7 +116,9 @@ namespace ArmorFrames
 		if (!a_facts.worn) {
 			return a_facts.sinceOut >= KEEP_AFTER_OUT ? Copy::kDelete : Copy::kShow;
 		}
-		if ((a_facts.samePlace && !*a_facts.samePlace) || a_facts.distance > MOVE_LIMIT) {
+		// The copy left where they got out is the one they get back into, when it is theirs: another frame got into
+		// within KEEP_AFTER_OUT of leaving one (a station with a few suits) is not dressed in the frame they left.
+		if (!a_facts.sameBase || (a_facts.samePlace && !*a_facts.samePlace) || a_facts.distance > MOVE_LIMIT) {
 			return Copy::kReplace;
 		}
 		if (!a_facts.loaded) {
