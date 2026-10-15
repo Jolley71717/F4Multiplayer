@@ -73,6 +73,8 @@ describes each one.
 | Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` |
 | Add other players | `F4MPBot.exe`: a fake player that joins the session and can stand somewhere, shoot, loot, talk, hit you, report quest stages or take over an NPC |
 | Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front) |
+| Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh` (see below) |
+| Catch a freeze with every thread's stack | `tools/hangcatch.ps1` |
 | See the screen | `tools/screenshot.ps1` |
 | Hear the game | a read-only check of the game's audio session peak level, through Windows' audio meter API |
 | Find out what happened | `Documents\My Games\Fallout4\F4SE\F4Multiplayer.log` and the crash logger's `crash-*.log` |
@@ -91,6 +93,46 @@ devctl "count 000AE12F 0000000F"                # 40: the friend's 10 are gone, 
 Each feature in the roadmap was checked like this before it was committed. Fixes found this way
 include a game crash in the first try at gunshot sounds, and another when loading a save while a
 friend's compass marker was showing.
+
+## Menus under stress, and hangs caught in the act
+
+Races in menus (a workshop that deadlocked the game as it closed, a dialogue that stopped taking input, a
+HUD that crashed) were found only by players: the soak walks, follows and fights. `tools/menustress.sh`
+goes through the menus players race in, over and over, on one game or both at once:
+
+```
+tools/menustress.sh -m 60 -g both -n 0001CA7D    # an hour on both games, talking to Codsworth
+```
+
+Each cycle enters workshop mode (`workshop enter`), highlights and scraps the nearest junk, leaves with
+Tab; opens the Pip-Boy, turns a page and closes it; puts the NPC in front of the player, talks with E,
+picks options with W and leaves with Tab. Anything that doesn't open or close in time, any menu open
+over two minutes, an option that takes no input and a channel that stops answering are logged as STUCK
+with the game's state, put right where the channel can, and listed in `stuck.txt`. The script's header
+lists the settings (each key can be swapped for another key or for `input`).
+
+The commands it uses:
+
+- `menus`: the menus open and for how long, and how often each opened and closed, kept from the menus'
+  own open and close events. Asking the UI instead (`paused`, `GetMenuOpen`) takes a reference to the
+  menu, which can change which thread destroys a closing one; the workshop menu destroyed mid-draw is
+  how the game once deadlocked.
+- `workshop`: workshop mode's state and the nearest workbench; `workshop enter`, `workshop exit`,
+  `workshop junk` (the nearest pieces workshop mode would scrap), `workshop select <ref>` and
+  `workshop scrap <ref>` (the game's own scrap function).
+- `input <userEvent> [hold=<ms>]`: a button press handed straight to the game's input receivers (the
+  menus' and the player's controls) and released after the hold. `key` goes through Windows,
+  DirectInput and the control map first. When a key does nothing, `input` with the same user event
+  tells a menu that ignores input from input that never got to it. `controls [context]` lists the
+  control map's input contexts and their user events and keys.
+- `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
+  its option buttons shown, the input context it put up.
+
+`tools/hangcatch.ps1` runs beside it on each PC (the VM needs WinDbg too). When the game's window hasn't
+answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),
+writes a minidump with every thread and every thread's stack, and detaches; one catch per freeze. The
+plugin's own hang watch (`iHangSeconds`) reports the main thread from inside the game; this sees every
+thread from outside, even when the plugin's are stuck with the rest.
 
 ## Limits
 
