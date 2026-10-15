@@ -77,6 +77,7 @@ namespace RemotePlayers
 			int                  pickLogged = -1;        // the last ArmorFrames::Pick logged for this stand-in
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
+			StandInSpace::Away   away;                   // the heading they came onto our very spot with (see StandInSpace::Place)
 			Clock::time_point    holdLoggedAt{};
 			RE::ObjectRefHandle  original;               // our copy of their pre-placed frame, hidden while they wear theirs
 			const RE::NiAVObject* originalHidden = nullptr;  // its 3D we stopped drawing; only compared
@@ -1089,7 +1090,7 @@ namespace RemotePlayers
 
 		// Where a friend's stand-in is put this frame: their spot, or a body's room out from us when that is ours
 		// (StandInSpace), wider when either of us is in power armor. Counted for net status while it is moved.
-		RE::NiPoint3 SpotOf(const RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us)
+		RE::NiPoint3 SpotOf(RemotePlayer& a_player, const Protocol::PlayerState& a_state, const RE::Actor* a_us)
 		{
 			const RE::NiPoint3 at{ a_state.x, a_state.y, a_state.z };
 			if (!a_us) {
@@ -1097,7 +1098,7 @@ namespace RemotePlayers
 			}
 			const auto& us = a_us->data.location;
 			const float clear = a_player.inPowerArmor || Equipment::InPowerArmor(a_us) ? StandInSpace::CLEAR_ARMOR : StandInSpace::CLEAR;
-			const auto  spot = StandInSpace::Clear({ at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, clear);
+			const auto  spot = StandInSpace::Place(a_player.away, { at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, clear);
 			if (spot.x == at.x && spot.y == at.y) {
 				return at;
 			}

@@ -4,6 +4,7 @@
 #include "game/StandInSpace.h"
 #include "game/StateBuffer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <numbers>
@@ -11,7 +12,7 @@
 
 // Where a friend's stand-in is drawn while they stand where we do. Their game samples them on Session's schedule, the
 // server relays each state in a PlayerStates batch (encoded and decoded as on the wire), our game reads what has come
-// once a frame, samples it from StateBuffer and puts the stand-in where StandInSpace says, as RemotePlayers does.
+// once a frame, samples it from StateBuffer and puts the stand-in where StandInSpace::Place says, as RemotePlayers does.
 namespace
 {
 	using namespace std::chrono_literals;
@@ -65,6 +66,7 @@ namespace
 
 		std::vector<Drawn>  drawn;
 		StateBuffer::Buffer buffer;
+		StandInSpace::Away  away;
 		std::size_t         next = 0;
 		for (auto now = start; now < start + a_length; now += 16ms) {
 			while (next < packets.size() && packets[next].arrives <= now) {
@@ -77,7 +79,7 @@ namespace
 			buffer.Frame(now);
 			if (const auto sampled = buffer.Sample(now)) {
 				const StandInSpace::Point at{ sampled->state.x, sampled->state.y, sampled->state.z };
-				drawn.push_back({ std::chrono::duration<float>(now - start).count(), at, StandInSpace::Clear(at, sampled->state.heading, a_us, a_clear) });
+				drawn.push_back({ std::chrono::duration<float>(now - start).count(), at, StandInSpace::Place(away, at, sampled->state.heading, a_us, a_clear) });
 			}
 		}
 		return drawn;
@@ -122,6 +124,46 @@ TEST("stand-in space: a friend who moves to our very spot is drawn a body's room
 	for (std::size_t i = drawn.size() - 60; i < drawn.size(); ++i) {
 		CHECK(Same(drawn[i].standIn, last.standIn));
 	}
+}
+
+TEST("stand-in space: a friend on our very spot who looks about does not take their stand-in round us")
+{
+	// A moveto onto our spot facing east, then they turn a full circle where they stand, and walk off north.
+	const StandInSpace::Point us{ -400.0f, 250.0f, 10.0f };
+	const auto drawn = Play([&](float a_seconds) {
+		if (a_seconds < 1.0f) {
+			return Pose{ us.x - 500.0f, us.y, us.z, pi / 2.0f };
+		}
+		if (a_seconds < 4.5f) {
+			return Pose{ us.x, us.y, us.z, pi / 2.0f + (std::max)(a_seconds - 1.5f, 0.0f) * 2.0f * pi / 3.0f };
+		}
+		return Pose{ us.x, us.y + 200.0f * (a_seconds - 4.5f), us.z, 0.0f, 200.0f };
+	},
+		us, 6s);
+	REQUIRE(drawn.size() > 300);
+
+	// While they turn on our spot it stays a step east of us, where they first faced.
+	int turning = 0;
+	for (const auto& frame : drawn) {
+		CHECK(Ground(us, frame.standIn) >= StandInSpace::CLEAR - 0.01f);
+		if (frame.seconds > 1.2f && frame.seconds < 4.5f) {
+			++turning;
+			CHECK(std::abs(frame.standIn.x - (us.x + StandInSpace::CLEAR)) < 0.01f);
+			CHECK(std::abs(frame.standIn.y - us.y) < 0.01f);
+		}
+	}
+	CHECK(turning > 150);
+	// Walked off, they are drawn on their own path again.
+	CHECK(Same(drawn.back().friendAt, drawn.back().standIn));
+
+	// Back on our spot facing north, the step is north: what is kept is the heading of this arrival, not the last one.
+	StandInSpace::Away away;
+	const auto east = StandInSpace::Place(away, us, pi / 2.0f, us);
+	CHECK(east.x > us.x);
+	CHECK(Same(StandInSpace::Place(away, { us.x, us.y + 300.0f, us.z }, 0.0f, us), { us.x, us.y + 300.0f, us.z }));
+	const auto north = StandInSpace::Place(away, us, 0.0f, us);
+	CHECK(std::abs(north.x - us.x) < 0.01f);
+	CHECK(north.y > us.y);
 }
 
 TEST("stand-in space: a friend who runs right through us is drawn round us on their side, and on their own path elsewhere")

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <optional>
 
 // Where a friend's stand-in is put when they stand where we do. Kept free of the game so it can be tested.
 //
@@ -50,5 +51,25 @@ namespace StandInSpace
 			outY = std::cos(a_heading);
 		}
 		return { a_us.x + outX * a_clear, a_us.y + outY * a_clear, a_at.z };
+	}
+
+	// The heading a friend had as they came onto our very spot, kept while they stay on it. Most look about once there
+	// (after a moveto), and a stand-in put a step along the heading they have now would go round and round us.
+	struct Away
+	{
+		std::optional<float> heading;
+	};
+
+	// Clear, for a friend seen each frame: on our very spot, the stand-in stays a step along the heading they came onto
+	// it with (Away), whichever way they turn after.
+	inline Point Place(Away& a_away, const Point& a_at, float a_heading, const Point& a_us, float a_clear = CLEAR)
+	{
+		const bool same = std::hypot(a_at.x - a_us.x, a_at.y - a_us.y) < SAME && std::abs(a_at.z - a_us.z) < TALL;
+		if (!same) {
+			a_away.heading.reset();
+		} else if (!a_away.heading && std::isfinite(a_heading)) {
+			a_away.heading = a_heading;
+		}
+		return Clear(a_at, same ? a_away.heading.value_or(a_heading) : a_heading, a_us, a_clear);
 	}
 }
