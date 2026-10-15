@@ -357,7 +357,17 @@ else skips this: the player is never in those places.
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
   10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
   nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
-  to them. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
+  to them. Out of power armor, the status also carries the frame they got out of last
+  (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
+  its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
+  The receiver keeps a copy of it there for as long as they are out and the spot is in the area its
+  engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
+  stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is
+  moved when the frame is, placed again when far off or never loaded, and none is placed where the
+  receiver's own copy of that very pre-placed frame stands within 200 units (that one stands for it).
+  The receiver's own copy of a pre-placed frame they left parked elsewhere is hidden by the same
+  guards as a worn one (`ChooseParkedOriginal`), and stays hidden when they get into it again there.
+  Its pieces are not shown: a copy stands empty. The stand-in is never sent into the copy: activating a frame starts nothing for an NPC
   (`TESFurniture::Activate` begins power armor use only for the player; an NPC gets in only through
   its AI package), so the stand-in sent in never got in, and pieces that waited for it left the
   friend shown without armor. The receiver's own copy of a shared frame reference is hidden (not
@@ -443,7 +453,7 @@ else skips this: the player is never in those places.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 29 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, and to NPC states their owner's graph's direction and a dog's gait). The sections below record each review as it was written.
+Protocol VERSION 30 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, and to NPC states their owner's graph's direction and a dog's gait, 30 the frame a player left parked to their status). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

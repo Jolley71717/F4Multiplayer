@@ -18,7 +18,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 29;
+	inline constexpr std::uint16_t VERSION = 30;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -559,6 +559,26 @@ namespace Protocol
 		std::uint32_t sound = 0;
 	};
 
+	// The power armor frame a player got out of last (their game's last used one), while they are out of it: where it
+	// stands in their world, so friends show a copy of it there, parked at a station or wherever they left it.
+	struct ParkedFrame
+	{
+		std::uint32_t base = 0;        // its base form (furniture that is a frame)
+		std::uint32_t ref = 0;         // the frame itself when every game has it (a pre-placed one), 0 for one made in their game
+		std::uint32_t cell = 0;        // interior cell form ID, or 0 when outside
+		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
+		float         x = 0, y = 0, z = 0;
+		float         heading = 0;  // radians
+
+		bool operator==(const ParkedFrame&) const = default;
+
+		[[nodiscard]] bool Valid() const
+		{
+			return base != 0 && (ref == 0 || IsShareableRef(ref)) && ((cell != 0) != (worldspace != 0)) && InWorld(x) && InWorld(y) && InWorld(z) &&
+			       std::isfinite(heading);
+		}
+	};
+
 	// playerId is ignored client -> server in all of these.
 	struct PlayerStatus
 	{
@@ -575,6 +595,8 @@ namespace Protocol
 		// The frame reference itself when every game has it (placed in the world by a plugin, such as the museum's suit
 		// in Concord), 0 for one made in their game: the hearer hides its own copy of that frame while they wear theirs.
 		std::uint32_t powerArmorFrameRef = 0;
+		// Out of power armor: the frame they got out of last, where it stands now (none while they are in one).
+		std::optional<ParkedFrame> parked;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -1841,9 +1863,20 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0)));
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0) | (a_msg.parked ? 16 : 0)));
 		w.U32(a_msg.powerArmorFrame);
 		w.U32(a_msg.powerArmorFrameRef);
+		if (a_msg.parked) {
+			const auto& parked = *a_msg.parked;
+			w.U32(parked.base);
+			w.U32(parked.ref);
+			w.U32(parked.cell);
+			w.U32(parked.worldspace);
+			w.F32(parked.x);
+			w.F32(parked.y);
+			w.F32(parked.z);
+			w.F32(parked.heading);
+		}
 		return w.Data();
 	}
 
@@ -1864,7 +1897,21 @@ namespace Protocol
 		msg.powerArmor = (flags & 8) != 0;
 		msg.powerArmorFrame = r.U32();
 		msg.powerArmorFrameRef = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef))) {
+		if ((flags & 16) != 0) {
+			ParkedFrame parked;
+			parked.base = r.U32();
+			parked.ref = r.U32();
+			parked.cell = r.U32();
+			parked.worldspace = r.U32();
+			parked.x = r.F32();
+			parked.y = r.F32();
+			parked.z = r.F32();
+			parked.heading = r.F32();
+			msg.parked = parked;
+		}
+		// A frame is parked only while they are out of power armor.
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
+			(msg.parked && (msg.powerArmor || !msg.parked->Valid()))) {
 			return std::nullopt;
 		}
 		return msg;

@@ -33,6 +33,12 @@ namespace RemotePlayers
 			RE::NiPoint3  at;
 		};
 
+		// Where a friend left their frame parked.
+		Spot SpotOf(const Protocol::ParkedFrame& a_parked)
+		{
+			return { a_parked.cell, a_parked.worldspace, { a_parked.x, a_parked.y, a_parked.z } };
+		}
+
 		struct RemotePlayer
 		{
 			std::uint32_t        id = 0;  // their player ID: what the log calls them (never by name)
@@ -87,6 +93,13 @@ namespace RemotePlayers
 			std::optional<Spot>  wornAt;                 // where they were as they got into the pre-placed frame they wear
 			bool                 wornAtWanted = false;   // that spot is taken from their next state
 			bool                 originalMoved = false;  // ours was not where they got in (or moved, or was used) in this wear: left alone
+			bool                 originalAway = false;   // in this wear, they got into theirs where it stood parked away from ours, hidden then (see ArmorFrames::OriginalFacts::away)
+			bool                 originalParked = false; // ours was last looked at for the frame they left parked, not one they wear
+			std::optional<Protocol::ParkedFrame> parked; // out of power armor: the frame they got out of last, where it stands in their world
+			RE::ObjectRefHandle  parkedCopy;             // our copy of it there (see ArmorFrames::ChoosePark)
+			Clock::time_point    parkedPlacedAt{};
+			const RE::NiAVObject* parkedCollisionOff = nullptr;  // its 3D whose collision we turned off; only compared
+			std::optional<Protocol::ParkedFrame> parkedTaken;    // the parked frame whose copy somebody here got into: none placed for it again
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -667,7 +680,8 @@ namespace RemotePlayers
 			return a_ref->data.location.GetDistance(start);
 		}
 
-		ArmorFrames::OriginalFacts OriginalFactsOf(const RemotePlayer& a_player, RE::TESObjectREFR* a_ref)
+		// a_parked: looked at for the frame they left parked (how far ours stands from it), not for one they wear.
+		ArmorFrames::OriginalFacts OriginalFactsOf(const RemotePlayer& a_player, RE::TESObjectREFR* a_ref, bool a_parked)
 		{
 			ArmorFrames::OriginalFacts facts;
 			facts.found = a_ref && !a_ref->IsDeleted() && !a_ref->IsDisabled();
@@ -684,8 +698,13 @@ namespace RemotePlayers
 			facts.loaded = a_ref->Get3D() != nullptr;
 			facts.ours = OurFrame(a_ref);
 			facts.inUse = !facts.ours && FrameInUse(a_ref);
-			facts.moved = a_player.originalMoved;
 			facts.fromStart = FromStart(a_ref);
+			if (a_parked) {
+				facts.fromSpot = DistanceFrom(a_ref, SpotOf(*a_player.parked));
+				return facts;
+			}
+			facts.moved = a_player.originalMoved;
+			facts.away = a_player.originalAway;
 			if (a_player.wornAt) {
 				facts.fromSpot = DistanceFrom(a_ref, *a_player.wornAt);
 			}
@@ -723,40 +742,49 @@ namespace RemotePlayers
 		void UpdateOriginal(RemotePlayer& a_player, Clock::time_point a_now)
 		{
 			const bool worn = a_player.powerArmorOn && a_player.powerArmorFrameRef != 0;
+			// Out of it, the frame they left parked can be ours too (ArmorFrames::ChooseParkedOriginal): theirs taken
+			// somewhere else, ours still standing where the world placed it.
+			const bool parked = !a_player.powerArmorOn && a_player.parked && a_player.parked->ref != 0;
+			const auto named = worn ? a_player.powerArmorFrameRef : parked ? a_player.parked->ref : 0;
 			auto       original = a_player.original.get();
 			if (original && (original->IsDeleted() || original->IsDisabled())) {
 				ShowOriginal(a_player);  // gone from our world meanwhile: nothing left to show
 				original = nullptr;
 			}
-			if (original && (!worn || original->GetFormID() != a_player.powerArmorFrameRef)) {
-				// They are out of it. Ours is shown again once the frame copy their stand-in leaves is gone or clear of it
-				// (it stands where they got out, often right on ours, for a few seconds: two suits in one spot), and is
-				// solid again once nobody stands in it. Not while another friend still has it hidden.
+			if (original && original->GetFormID() != named) {
+				// They are out of it, and it is not the frame they left parked either. Ours is shown again once the frame
+				// copy their stand-in leaves is gone or clear of it (it stands where they got out, often right on ours, for a
+				// few seconds: two suits in one spot), and is solid again once nobody stands in it. Not while another friend
+				// still has it hidden.
 				if (!HiddenByAnother(a_player, original.get()) && !Clear(original.get(), a_player.frame.get().get())) {
 					return;
 				}
 				ShowOriginal(a_player);
 				original = nullptr;
 			}
-			if (!worn) {
+			if (named == 0) {
 				a_player.originalChoice = -1;
 				return;
 			}
-			if (a_player.wornAtWanted) {
+			if (worn && a_player.wornAtWanted) {
 				return;  // where they got in comes with their next state
+			}
+			if (parked != a_player.originalParked) {
+				a_player.originalParked = parked;
+				a_player.originalChoice = -1;  // logged afresh
 			}
 			// Looked at now and then, hidden or not: a hidden one that has since moved, or that someone here got into, is
 			// no longer the suit they wear where they got into it.
 			if (a_now >= a_player.originalCheckAt) {
 				a_player.originalCheckAt = a_now + ORIGINAL_CHECK_INTERVAL;
-				const auto ref = original ? original.get() : RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_player.powerArmorFrameRef);
-				const auto facts = OriginalFactsOf(a_player, ref);
-				const auto choice = ArmorFrames::ChooseOriginal(a_player.powerArmorFrameRef, a_player.powerArmorFrame, facts);
+				const auto ref = original ? original.get() : RE::TESForm::GetFormByID<RE::TESObjectREFR>(named);
+				const auto facts = OriginalFactsOf(a_player, ref, !worn);
+				const auto choice = worn ? ArmorFrames::ChooseOriginal(named, a_player.powerArmorFrame, facts) : ArmorFrames::ChooseParkedOriginal(named, a_player.parked->base, facts);
 				if (static_cast<int>(choice) != a_player.originalChoice) {
 					a_player.originalChoice = static_cast<int>(choice);
-					REX::INFO("RemotePlayers: player {} wears frame {:08X} (base {:08X}); ours, {:.0f} units from where they got in and {:.0f} from where it first stood: {}", a_player.id, a_player.powerArmorFrameRef, a_player.powerArmorFrame,
-						facts.fromSpot.value_or(-1.0f), facts.fromStart,
-						choice == ArmorFrames::Original::kHide      ? "hidden while they wear theirs" :
+					REX::INFO("RemotePlayers: player {} {} frame {:08X} (base {:08X}); ours, {:.0f} units from where they {} and {:.0f} from where it first stood: {}", a_player.id, worn ? "wears" : "left", named,
+						worn ? a_player.powerArmorFrame : a_player.parked->base, facts.fromSpot.value_or(-1.0f), worn ? "got in" : "left theirs", facts.fromStart,
+						choice == ArmorFrames::Original::kHide      ? (worn ? "hidden while they wear theirs" : "hidden while theirs stands parked elsewhere") :
 						choice == ArmorFrames::Original::kMissing   ? "none here" :
 						choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
 						choice == ArmorFrames::Original::kOurs      ? "our player's own, left alone" :
@@ -765,13 +793,16 @@ namespace RemotePlayers
 						choice == ArmorFrames::Original::kQuest     ? "a quest of ours holds it, left alone" :
 						choice == ArmorFrames::Original::kElsewhere ? "not where they got in, left alone while they wear theirs" :
 						choice == ArmorFrames::Original::kUsed      ? "moved in our world since it was placed (our player's own now), left alone" :
+						choice == ArmorFrames::Original::kThere     ? "it stands where they left theirs, and stands for it" :
 						                                              "-");
 				}
-				if (choice == ArmorFrames::Original::kElsewhere) {
+				if (worn && choice == ArmorFrames::Original::kElsewhere) {
 					a_player.originalMoved = true;  // not hidden later in this wear, even should it come back to the spot
 				}
 				if (original && choice != ArmorFrames::Original::kHide && choice != ArmorFrames::Original::kNotLoaded) {
-					a_player.originalMoved = true;
+					if (worn) {
+						a_player.originalMoved = true;
+					}
 					ShowOriginal(a_player);
 					return;
 				}
@@ -849,23 +880,24 @@ namespace RemotePlayers
 			return Equipment::IsPowerArmorFrame(base) ? base : nullptr;
 		}
 
-		// Places a copy of a frame: for the stand-in to get into, or where they got out.
-		bool PlaceFrame(RemotePlayer& a_player, RE::TESBoundObject* a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
+		// Places a copy of a frame in an interior (a_interior) or outside (a_world): for the stand-in to get into, where they
+		// got out, or where they left theirs parked.
+		RE::ObjectRefHandle PlaceCopy(RE::TESBoundObject* a_base, RE::TESObjectCELL* a_interior, RE::TESWorldSpace* a_world, const RE::NiPoint3& a_at, float a_heading)
 		{
-			if (!a_base || !a_cell) {
-				return false;
+			if (!a_base || (!a_interior && !a_world)) {
+				return {};
 			}
 			RE::NEW_REFR_DATA data;
 			data.location = a_at;
 			data.direction = { 0.0f, 0.0f, a_heading };
 			data.object = a_base;
-			data.interior = a_cell->IsInterior() ? a_cell : nullptr;
-			data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
+			data.interior = a_interior;
+			data.world = a_interior ? nullptr : a_world;
 			data.clearStillLoadingFlag = true;
 			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 			const auto frame = handle.get();
 			if (!frame) {
-				return false;
+				return {};
 			}
 			// Empty. A frame never looked into is filled from its base's container the first time its inventory is read
 			// (TESObjectREFR::RemoveAllItems does so itself, then clears it; the engine's switch-in does so too as it moves
@@ -874,11 +906,24 @@ namespace RemotePlayers
 			// a suit nobody in the session ever had, and the copy the stand-in gets into would have had those pieces moved
 			// onto it. The friend's own pieces cannot go into a copy; it stands empty.
 			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", frame->GetFormID()).c_str());
+			++framesPlaced;
+			SaveGuard::Track(frame.get());
+			return handle;
+		}
+
+		// Places a copy of a frame at the stand-in, or where it stood as they got out, in our player's cell (a_cell).
+		bool PlaceFrame(RemotePlayer& a_player, RE::TESBoundObject* a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now)
+		{
+			if (!a_cell) {
+				return false;
+			}
+			const auto handle = PlaceCopy(a_base, a_cell->IsInterior() ? a_cell : nullptr, a_cell->IsInterior() ? nullptr : a_cell->worldSpace, a_at, a_heading);
+			if (!handle) {
+				return false;
+			}
 			a_player.frame = handle;
 			a_player.framePlacedAt = a_now;
 			a_player.frameCollisionOff = nullptr;  // a new copy has its own collision
-			++framesPlaced;
-			SaveGuard::Track(frame.get());
 			return true;
 		}
 
@@ -1155,6 +1200,12 @@ namespace RemotePlayers
 			REX::INFO("RemotePlayers: player {} got out of their power armor; stand-in {:08X} goes with its frame {:08X}, a copy is left where it stood", a_player.id, a_actor->GetFormID(), frame ? frame->GetFormID() : 0);
 			DeleteActor(a_player);
 			++switchesOut;
+			// Their status told where their frame stands already, and a copy stands there (see UpdateParked): none goes
+			// where the stand-in stood, some way off the frame.
+			if (const auto parked = a_player.parkedCopy.get(); parked && parked->GetObjectReference() == base) {
+				REX::INFO("RemotePlayers: player {}'s frame copy {:08X} stands where their frame is, {:.0f} units from where their stand-in stood", a_player.id, parked->GetFormID(), parked->data.location.GetDistance(at));
+				return;
+			}
 			if (Equipment::IsPowerArmorFrame(base) && PlaceFrame(a_player, base, a_cell, at, heading, a_now)) {
 				a_player.frameActionAt = a_now;
 			}
@@ -1182,6 +1233,149 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, read ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
 			}
 			return *grids;
+		}
+
+		// A friend's parked frame (see ArmorFrames::ChoosePark): a copy stands where their game has the frame they got out of
+		// last, for as long as they are out of it and it is in our sight, whether or not their stand-in is.
+		std::uint32_t parkedPlaced = 0;  // parked copies placed, or taken over from the copy left where they got out
+
+		// Where it stands is in the area the engine draws around our player: our interior, or outside within the cells
+		// it attaches around ours (as for a stand-in, StandInRange::Visible).
+		bool InView(const Protocol::ParkedFrame& a_parked, const RE::TESObjectCELL* a_localCell, const RE::PlayerCharacter* a_us, bool a_loading)
+		{
+			if (a_loading || !a_localCell || !a_us) {
+				return false;
+			}
+			if (a_localCell->IsInterior()) {
+				return a_parked.cell == a_localCell->GetFormID();
+			}
+			return a_parked.cell == 0 && a_localCell->worldSpace && a_parked.worldspace == a_localCell->worldSpace->GetFormID() &&
+			       StandInRange::Visible(a_parked.x, a_parked.y, a_us->data.location.x, a_us->data.location.y, GridsToLoad());
+		}
+
+		// Our own reference of the frame they parked (a pre-placed one, by its ID) stands where they parked theirs: it
+		// stands for theirs. Not one the engine has disabled (worn by our player: it stands where it was got into).
+		bool OursThere(const Protocol::ParkedFrame& a_parked)
+		{
+			const auto ours = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
+			if (!ours || ours->IsDeleted() || ours->IsDisabled() || ours->IsCreated()) {
+				return false;
+			}
+			const auto base = ours->GetObjectReference();
+			const auto from = base && base->GetFormID() == a_parked.base ? DistanceFrom(ours, SpotOf(a_parked)) : std::nullopt;
+			return from && *from <= ArmorFrames::ORIGINAL_RADIUS;
+		}
+
+		// The parked copy goes, unless someone here is in it (as DeleteFrame).
+		void DeleteParked(RemotePlayer& a_player)
+		{
+			if (const auto copy = a_player.parkedCopy.get()) {
+				if (OurFrame(copy.get()) || FrameInUse(copy.get())) {
+					REX::INFO("RemotePlayers: someone here is in player {}'s parked frame copy {:08X}; leaving it", a_player.id, copy->GetFormID());
+				} else {
+					BuryFrame(copy.get(), a_player.parkedPlacedAt);
+				}
+			}
+			a_player.parkedCopy = {};
+			a_player.parkedCollisionOff = nullptr;
+		}
+
+		void UpdateParked(RemotePlayer& a_player, RE::Actor* a_standIn, const RE::TESObjectCELL* a_localCell, const RE::PlayerCharacter* a_us, bool a_loading, Clock::time_point a_now)
+		{
+			const auto& parked = a_player.parked;
+			const auto  base = parked && !a_player.powerArmorOn ? RE::TESForm::GetFormByID<RE::TESFurniture>(parked->base) : nullptr;
+			ArmorFrames::ParkFacts facts;
+			facts.told = Equipment::IsPowerArmorFrame(base);
+			if (facts.told) {
+				facts.inView = InView(*parked, a_localCell, a_us, a_loading);
+				facts.oursThere = OursThere(*parked);
+				facts.taken = a_player.parkedTaken == parked;
+			}
+			const RE::NiPoint3 at = parked ? RE::NiPoint3{ parked->x, parked->y, parked->z } : RE::NiPoint3{};
+			const float        heading = parked ? parked->heading : 0.0f;
+			const auto         copy = a_player.parkedCopy.get();
+			facts.exists = copy != nullptr;
+			if (copy) {
+				facts.sameBase = facts.told && copy->GetObjectReference() == base;
+				facts.occupied = OurFrame(copy.get()) || FrameInUse(copy.get());
+				facts.loaded = copy->Get3D() != nullptr;
+				if (const auto cell = copy->GetParentCell(); cell && parked) {
+					facts.samePlace = cell->IsInterior() ? parked->cell == cell->GetFormID() :
+					                                       parked->cell == 0 && cell->worldSpace && parked->worldspace == cell->worldSpace->GetFormID();
+				}
+				facts.distance = parked ? copy->data.location.GetDistance(at) : 0.0f;
+				facts.turn = parked ? StandInHold::AngleBetween(copy->data.angle.z, heading) : 0.0f;
+				facts.sincePlaced = a_now - a_player.parkedPlacedAt;
+			}
+			// The copy their stand-in left as they got out (LeaveArmor), when their status told where the frame stands
+			// only after that: it is moved there rather than another placed.
+			if (const auto left = a_player.frame.get(); facts.told && left && !WornFrame(a_player)) {
+				const bool engaged = a_standIn && Equipment::PowerArmorFrameOf(a_standIn).get() == left.get();
+				facts.leftCopy = !engaged && left->GetObjectReference() == base && !OurFrame(left.get()) && !FrameInUse(left.get());
+			}
+
+			switch (ArmorFrames::ChoosePark(facts)) {
+			case ArmorFrames::Park::kNone:
+				break;
+			case ArmorFrames::Park::kPlace:
+				{
+					const auto interior = parked->cell ? RE::TESForm::GetFormByID<RE::TESObjectCELL>(parked->cell) : nullptr;
+					const auto world = parked->cell ? nullptr : RE::TESForm::GetFormByID<RE::TESWorldSpace>(parked->worldspace);
+					const auto handle = PlaceCopy(base, interior, world, at, heading);
+					if (!handle) {
+						break;
+					}
+					a_player.parkedCopy = handle;
+					a_player.parkedPlacedAt = a_now;
+					a_player.parkedCollisionOff = nullptr;
+					++parkedPlaced;
+					REX::INFO("RemotePlayers: player {} left their frame (base {:08X}, ref {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X}; a copy stands there", a_player.id, parked->base, parked->ref, at.x, at.y, at.z,
+						parked->cell ? parked->cell : parked->worldspace);
+				}
+				break;
+			case ArmorFrames::Park::kAdopt:
+				{
+					const auto left = a_player.frame.get();
+					REX::INFO("RemotePlayers: player {}'s frame copy {:08X}, left where their stand-in stood, is moved {:.0f} units to where their frame stands", a_player.id, left->GetFormID(), left->data.location.GetDistance(at));
+					a_player.parkedCopy = a_player.frame;
+					a_player.parkedPlacedAt = a_player.framePlacedAt;
+					a_player.parkedCollisionOff = a_player.frameCollisionOff;
+					a_player.frame = {};
+					a_player.frameCollisionOff = nullptr;
+					++parkedPlaced;
+				}
+				break;
+			case ArmorFrames::Park::kMove:
+				if (facts.distance > 10.0f) {
+					REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} is moved {:.0f} units to where their frame stands", a_player.id, copy->GetFormID(), facts.distance);
+				}
+				copy->data.location.x = at.x;
+				copy->data.location.y = at.y;
+				copy->data.location.z = at.z;
+				copy->data.angle = { 0.0f, 0.0f, heading };
+				copy->Update3DPosition(true);
+				break;
+			case ArmorFrames::Park::kShow:
+				SetShown(copy.get(), true);
+				SetCollision(a_player.parkedCollisionOff, copy.get(), NobodyIn(copy.get()));
+				break;
+			case ArmorFrames::Park::kReplace:
+				REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} (3d={}) is {:.0f} units from where their frame stands{}; placing it again", a_player.id, copy->GetFormID(), facts.loaded, facts.distance,
+					!facts.sameBase ? ", of another frame" : facts.samePlace && !*facts.samePlace ? ", in another place" : "");
+				DeleteParked(a_player);
+				break;
+			case ArmorFrames::Park::kDelete:
+				REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} goes: {}", a_player.id, copy->GetFormID(),
+					!facts.told ? "they are in their armor, or left no frame" : facts.oursThere ? "our own copy of that frame stands there" : "it is out of our sight");
+				DeleteParked(a_player);
+				break;
+			case ArmorFrames::Park::kAbandon:
+				REX::INFO("RemotePlayers: someone here got into player {}'s parked frame copy {:08X}; it is theirs now", a_player.id, copy->GetFormID());
+				a_player.parkedTaken = parked;
+				a_player.parkedCopy = {};
+				a_player.parkedCollisionOff = nullptr;
+				break;
+			}
 		}
 
 		static_assert(std::to_underlying(RE::TESObjectCELL::CELL_STATE::kNotLoaded) == std::to_underlying(StandInRange::CellState::kNotLoaded));
@@ -1305,6 +1499,7 @@ namespace RemotePlayers
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
 			DeleteActor(it->second);
+			DeleteParked(it->second);
 			ShowOriginal(it->second);
 			players.erase(it);
 		}
@@ -1314,6 +1509,7 @@ namespace RemotePlayers
 	{
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
+			DeleteParked(player);
 			ShowOriginal(player);
 		}
 		players.clear();
@@ -1448,6 +1644,7 @@ namespace RemotePlayers
 		// Shown here, it stood in the world again until the next check put it away, and counted as hidden anew.
 		for (auto& [id, player] : players) {
 			DeleteActor(player);
+			DeleteParked(player);  // placed again after the save, where their frame still stands
 		}
 		// Marked for deletion earlier and still there: kept out of the save too. (Before the graveyard is
 		// flushed, so the ones it adds now are not excluded twice.)
@@ -1540,6 +1737,9 @@ namespace RemotePlayers
 			// else now, or nothing.
 			player.frame = {};
 			player.frameCollisionOff = nullptr;
+			player.parkedCopy = {};  // went before the load too (DespawnAll); placed again where their frame stands
+			player.parkedCollisionOff = nullptr;
+			player.parkedTaken.reset();
 			player.switchTries = 0;
 			player.switchGaveUp = false;
 			player.pickSince.reset();
@@ -1561,24 +1761,32 @@ namespace RemotePlayers
 		return actor ? actor->GetFormID() : 0;
 	}
 
-	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef)
+	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef, const std::optional<Protocol::ParkedFrame>& a_parked)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
 			auto& player = it->second;
 			// A pre-placed frame they have just got into: where they are now is where they got in (their status names the
 			// frame as they climb in), and ours is looked at afresh for this wear (see ArmorFrames::ChooseOriginal). Where
-			// they are is their newest state if it came just now, else the next one.
+			// they are is their newest state if it came just now, else the next one. Ours hidden while theirs stood parked
+			// elsewhere, and they got into that one, stays hidden wherever they got in (ArmorFrames::OriginalFacts::away).
 			if (a_on && a_frameBase && a_frameRef != 0 && (!player.powerArmorOn || a_frameRef != player.powerArmorFrameRef)) {
+				const auto hidden = player.original.get();
+				player.originalAway = player.parked && player.parked->ref == a_frameRef && hidden && hidden->GetFormID() == a_frameRef;
 				player.wornAt.reset();
 				player.wornAtWanted = true;
 				player.originalMoved = false;
 				player.originalChoice = -1;
-				player.originalCounted = false;
+				player.originalCounted = player.originalAway;  // still the hide counted as theirs was parked
 				if (!player.states.snapshots.empty() && ArmorFrames::FreshEnough(Clock::now() - player.states.arrived)) {
 					TakeWornAt(player, player.states.snapshots.back().state);
 				}
 			} else if (!a_on) {
 				player.wornAtWanted = false;
+			}
+			// Where the frame they got out of last stands (see UpdateParked). A new wear lets any frame be shown parked again.
+			player.parked = a_on ? std::nullopt : a_parked;
+			if (a_on) {
+				player.parkedTaken.reset();
 			}
 			if (a_on != player.powerArmorOn) {
 				StandInGear::Redress(player.gear);  // dressed again (see Outfit)
@@ -1694,8 +1902,15 @@ namespace RemotePlayers
 					remote.powerArmorFrame ? "no frame in this game" : "none");
 			}
 
-			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame.
+			if (const auto parked = remote.parkedCopy.get(); Adrift(parked.get(), remote.parkedPlacedAt, now)) {
+				++adrift;
+				DeleteParked(remote);
+			}
+
+			// Before the stand-in is looked at: a friend out of sight can still be wearing our copy of a frame, or have left
+			// their frame parked where we are.
 			UpdateOriginal(remote, now);
+			UpdateParked(remote, GetActor(remote), localCell, player, loading, now);
 
 			auto actor = GetActor(remote);
 			if (!actor && remote.registered) {
@@ -1893,6 +2108,9 @@ namespace RemotePlayers
 		}
 		if (originalsHidden) {
 			out += std::format(" originalsHidden={}", originalsHidden);
+		}
+		if (parkedPlaced) {
+			out += std::format(" parkedFrames={}", parkedPlaced);
 		}
 		if (switchesIn || switchesOut || switchFails) {
 			out += std::format(" armorIn={} armorOut={} armorFails={}", switchesIn, switchesOut, switchFails);
