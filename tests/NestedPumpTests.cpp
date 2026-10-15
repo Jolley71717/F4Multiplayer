@@ -41,9 +41,11 @@ namespace
 		int                               deferred = 0;
 		int                               checks = 0;      // stack walks
 		std::function<void()>             duringFrame;     // what the frame's game work does (an engine call may pump messages)
+		bool                              quitting = false;  // the game is quitting (main.cpp's Quitting)
 
 		// Calls (see NestedPump::Dispatch).
 		void             Taken() { posted = false; }
+		bool             Quitting() const { return quitting; }
 		NestedPump::Seen Where()
 		{
 			++checks;
@@ -185,12 +187,62 @@ TEST("nested pump: a frame whose game work throws leaves the window running the 
 	CHECK(window.framesRun == 2);
 }
 
+TEST("nested pump: once the game quits, no frame message or load's wake does game work or walks the stack, and a load's thread takes its work back")
+{
+	SaveLoadHold::Hold hold{ 60s };
+	Window             window{ hold };
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kRunFrame);
+	CHECK(window.framesRun == 1);
+	CHECK(window.checks == 1);
+
+	// Work a load handed over is waiting when the player quits (the menu's Quit, qqq). From then on the engine tears the
+	// world down: whatever dispatches our messages (its loop's last turn, Main::Shutdown), nothing runs.
+	bool tookOut = false;
+	hold.Post([&] { tookOut = true; });
+	window.quitting = true;
+	CHECK(window.DrawnFrame());
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kQuit);
+	CHECK(window.Dispatch(false, IN_PUMP) == Action::kQuit);
+	CHECK(window.Dispatch(true, ORDINARY) == Action::kQuit);
+	CHECK(window.framesRun == 1);
+	CHECK(window.checks == 1);  // no stack walked either
+	CHECK(window.deferred == 0);
+	CHECK(!window.inFrame);
+	CHECK(!tookOut);
+	// The load's thread, after its wait, takes back what the main thread never ran and finds no frame working.
+	const auto left = hold.TakeBack();
+	CHECK(left.size() == 1u);
+	CHECK(hold.WaitForFrames(0s));
+}
+
+TEST("nested pump: a quit that comes inside a frame of ours lets that frame finish, and what an engine call pumps after it runs nothing")
+{
+	SaveLoadHold::Hold hold{ 60s };
+	Window             window{ hold };
+	std::vector<Action> inside;
+	window.duringFrame = [&] {
+		window.quitting = true;  // e.g. a script's QuitGame, or the window closed
+		inside.push_back(window.Dispatch(false, ORDINARY));
+		inside.push_back(window.Dispatch(true, IN_PUMP));
+	};
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kRunFrame);
+	const std::vector<Action> quit{ Action::kQuit, Action::kQuit };
+	CHECK(inside == quit);
+	CHECK(window.framesRun == 1);
+	CHECK(!window.inFrame);
+	window.duringFrame = nullptr;
+	CHECK(window.Dispatch(false, ORDINARY) == Action::kQuit);
+	CHECK(window.framesRun == 1);
+	CHECK(NestedPump::Choose(true, false, false, Seen::kOuter) == Action::kQuit);
+	CHECK(NestedPump::Choose(true, true, true, Seen::kNested) == Action::kQuit);
+}
+
 TEST("nested pump: inside a frame of ours nothing more runs, a wake included; outside it a wake never waits for the stack check")
 {
-	CHECK(NestedPump::Choose(true, true, Seen::kOuter) == Action::kSkip);
-	CHECK(NestedPump::Choose(false, true, Seen::kNested) == Action::kSkip);
-	CHECK(NestedPump::Choose(true, false, Seen::kNested) == Action::kRunPosted);
-	CHECK(NestedPump::Choose(false, false, Seen::kNeither) == Action::kRunFrame);  // a walk that cannot tell changes nothing
+	CHECK(NestedPump::Choose(false, true, true, Seen::kOuter) == Action::kSkip);
+	CHECK(NestedPump::Choose(false, false, true, Seen::kNested) == Action::kSkip);
+	CHECK(NestedPump::Choose(false, true, false, Seen::kNested) == Action::kRunPosted);
+	CHECK(NestedPump::Choose(false, false, false, Seen::kNeither) == Action::kRunFrame);  // a walk that cannot tell changes nothing
 }
 
 TEST("nested pump: the first frame message decides whether the check works, once")
