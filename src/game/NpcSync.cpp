@@ -735,6 +735,11 @@ namespace NpcSync
 		localId = a_id;
 	}
 
+	std::uint32_t LocalPlayer()
+	{
+		return localId;
+	}
+
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners)
 	{
 		const auto now = Clock::now();

@@ -360,6 +360,8 @@ namespace Sim
 		[[nodiscard]] const std::vector<std::string>& Rejections() const { return rejections; }
 		[[nodiscard]] const std::vector<Protocol::PlayerHit>& Damage() const { return damage; }
 		[[nodiscard]] const std::vector<std::uint32_t>& RevivedBy() const { return revivedBy; }
+		// Friends' explosions the server passed on, in order (a test sets them off in its own model of this game).
+		[[nodiscard]] const std::vector<Protocol::Explosion>& Explosions() const { return explosions; }
 		[[nodiscard]] const std::optional<Protocol::WorldTime>& Time() const { return time; }
 		// How many packets of a kind arrived since joining (any connection), and how many didn't decode.
 		[[nodiscard]] std::size_t        Heard(MT a_type) const
@@ -431,6 +433,7 @@ namespace Sim
 		std::vector<std::string>                      rejections;
 		std::vector<Protocol::PlayerHit>              damage;
 		std::vector<std::uint32_t>                    revivedBy;
+		std::vector<Protocol::Explosion>              explosions;
 		std::map<MT, std::size_t>                     heard;
 		std::size_t                                   undecodable = 0;
 
@@ -1481,7 +1484,11 @@ namespace Sim
 			unless(Protocol::DecodeActivation(a_data).has_value());
 			break;
 		case MT::kExplosion:
-			unless(Protocol::DecodeExplosion(a_data).has_value());
+			if (const auto msg = Protocol::DecodeExplosion(a_data)) {
+				explosions.push_back(*msg);
+			} else {
+				unless(false);
+			}
 			break;
 		case MT::kPlayerFace:
 			unless(Protocol::DecodeFace(a_data).has_value());

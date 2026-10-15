@@ -14,6 +14,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
+#include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
 
 namespace WorldSync
@@ -49,6 +50,7 @@ namespace WorldSync
 		std::vector<std::uint32_t> refLoadInbox;
 		std::atomic<std::uint32_t>        playerKills{ 0 };  // anything the player killed, shared or not
 		std::vector<std::uint32_t> hitInbox;
+		std::vector<std::pair<std::uint32_t, float>> blowInbox;  // the same hits, with the health each took (WeaponFire::OurBlows)
 		// Items the player moved between their inventory and a container or an NPC. Whether one is the
 		// session's is decided in Frame(), on the main thread, where the references can be read.
 		using Move = LootSync::Move;
@@ -450,6 +452,9 @@ namespace WorldSync
 			if (actor->IsDead(false)) {
 				return true;
 			}
+			// Our copy may be kept from a friend's explosion: what that took comes back first, and the report is measured
+			// without the health lent against it.
+			WeaponFire::EndLending(a_refId);
 			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 			const float maximum = values.GetPermanentActorValue(*info);
 			const float target = std::clamp(a_fraction, 0.0f, 1.0f) * maximum;
@@ -497,6 +502,8 @@ namespace WorldSync
 				if (actor && IsShareableRef(target->GetFormID()) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
 					hitInbox.push_back(target->GetFormID());
+					const float taken = !a_event.usesHitData ? 0.0f : a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
+					blowInbox.push_back({ target->GetFormID(), taken });
 				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -1271,6 +1278,7 @@ namespace WorldSync
 		std::vector<std::uint32_t>                  newRefLoads;
 		std::unordered_set<std::uint32_t> killedByUs;
 		std::vector<std::uint32_t> newHits;
+		std::vector<std::pair<std::uint32_t, float>> newBlows;
 		std::vector<std::uint32_t> newPickups;
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
@@ -1283,12 +1291,16 @@ namespace WorldSync
 			killedByUs.swap(killInbox);
 			killInbox.clear();
 			newHits.swap(hitInbox);
+			newBlows.swap(blowInbox);
 			newPickups.swap(pickupInbox);
 			newStandInHits.swap(standInHits);
 			newActivations.swap(activateInbox);
 			newMoves.swap(lootInbox);
 		}
 
+		// A copy kept from a friend's explosion that our player hit is ours to hurt again, before its health goes out
+		// next frame (measured without the health lent against the explosion).
+		WeaponFire::OurBlows(newBlows);
 		ReportDeaths(newDeaths, killedByUs);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
@@ -1421,6 +1433,7 @@ namespace WorldSync
 		deathInbox.clear();
 		killInbox.clear();
 		hitInbox.clear();
+		blowInbox.clear();
 		lootInbox.clear();
 		std::scoped_lock o{ outgoingLock };
 		outgoing.clear();

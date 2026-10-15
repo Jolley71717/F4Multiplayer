@@ -1,9 +1,12 @@
 #include "game/WeaponFire.h"
 
+#include "game/BlastShield.h"
 #include "game/DeferredDelete.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/AttackKind.h"
+#include "game/NpcSync.h"
+#include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 
 #include "game/ShotLoops.h"
@@ -87,6 +90,9 @@ namespace WeaponFire
 		std::uint32_t            explosionsReported = 0;  // explosions seen after our throws and sent
 		std::uint32_t            explosionsSetOff = 0;    // explosions from other players set off here
 		std::uint32_t            explosionRefusedRadius = 0;  // ... not set off: no throw makes one that big (or it has no radius)
+		std::uint32_t            copiesLent = 0;     // our copies of NPCs other games run, kept from a friend's explosion (BlastShield)
+		std::uint32_t            blastsUndone = 0;   // ... given back what it took from them
+		std::uint32_t            lentKilled = 0;     // ... killed by our player's blows meanwhile
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -299,6 +305,7 @@ namespace WeaponFire
 
 	void ScanExplosions();
 	void RemoveGhostGrenades();
+	void EndDueLending();
 
 	void Frame()
 	{
@@ -307,6 +314,7 @@ namespace WeaponFire
 		}));
 		ScanExplosions();
 		RemoveGhostGrenades();
+		EndDueLending();
 	}
 
 	namespace
@@ -466,7 +474,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius);
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} lent={}/{}/{}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesLent, blastsUndone, lentKilled);
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -614,6 +622,129 @@ namespace WeaponFire
 		}
 	}
 
+	// --- Copies kept from a friend's explosion (BlastShield) -----------------------------------
+	namespace
+	{
+		BlastShield::Book lending;
+		std::uint32_t     lendingLogged = 0;
+
+		const RE::ActorValueInfo* HealthValue()
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			return values ? values->health : nullptr;
+		}
+
+		// Lends health to our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
+		// set off: their owner's game deals its damage to them, and a death of one here would not be believed.
+		void LendNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
+		{
+			const auto health = HealthValue();
+			const auto tes = RE::TES::GetSingleton();
+			const auto local = NpcSync::LocalPlayer();
+			if (!health || !tes || local == 0) {
+				return;
+			}
+			// Nothing is changed while the engine walks its lists: the copies are collected first.
+			std::vector<std::uint32_t> copies;
+			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
+				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
+				if (actor && !actor->IsPlayerRef() && Protocol::IsShareableRef(actor->GetFormID()) && !actor->IsDead(false) && !Puppets::IsPuppet(actor) &&
+					BlastShield::Shields(NpcSync::Owner(actor->GetFormID()), local)) {
+					copies.push_back(actor->GetFormID());
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			const auto  now = BlastShield::Clock::now();
+			std::string lent;
+			for (const auto id : copies) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (!actor) {
+					continue;
+				}
+				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+				const float amount = lending.Begin(id, values.GetActorValue(*health), now);
+				if (amount > 0.0f) {
+					values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *health, amount);
+					++copiesLent;
+					lent += std::format(" {:08X}(player {}'s)", id, NpcSync::Owner(id));
+				}
+			}
+			if (!lent.empty() && lendingLogged < 20) {
+				++lendingLogged;
+				REX::INFO("WeaponFire: player {}'s explosion kept from hurting our copies of NPCs other games run:{}", a_from, lent);
+			}
+		}
+
+		// Ends the copy's lending: what the explosion took comes back, and the lent health goes again.
+		void EndLendingOf(std::uint32_t a_id)
+		{
+			if (!lending.Lent(a_id)) {
+				return;
+			}
+			const auto health = HealthValue();
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
+			if (!health || !actor || actor->IsDeleted()) {
+				lending.Forget(a_id);
+				return;
+			}
+			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+			const auto  release = lending.End(a_id, values.GetActorValue(*health), actor->IsDead(false));
+			if (!release) {
+				return;
+			}
+			if (release->restore > 0.0f) {
+				values.RestoreActorValue(*health, release->restore);
+				++blastsUndone;
+				if (blastsUndone <= 20) {
+					REX::INFO("WeaponFire: gave {:08X} back the {:.0f} health a friend's explosion took (player {}'s game runs it)", a_id, release->restore, NpcSync::Owner(a_id));
+				}
+			}
+			if (release->kill) {
+				// Our player's blows alone took it to nothing while it had the lent health: it dies of them now.
+				++lentKilled;
+				REX::INFO("WeaponFire: {:08X} dies of our player's blows, held off while it was kept from a friend's explosion", a_id);
+				RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_id).c_str());
+			}
+			values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, *health, -release->lent);
+		}
+	}
+
+	void EndDueLending()
+	{
+		if (lending.Size() == 0) {
+			return;
+		}
+		for (const auto id : lending.Due(BlastShield::Clock::now())) {
+			EndLendingOf(id);
+		}
+	}
+
+	void OurBlows(const std::vector<std::pair<std::uint32_t, float>>& a_blows)
+	{
+		if (lending.Size() == 0) {
+			return;
+		}
+		// All of a frame's blows counted first (a shotgun's pellets), then each copy's lending ends once.
+		for (const auto& [id, damage] : a_blows) {
+			lending.OurBlow(id, damage);
+		}
+		for (const auto& [id, damage] : a_blows) {
+			EndLendingOf(id);
+		}
+	}
+
+	void EndLending(std::uint32_t a_refId)
+	{
+		EndLendingOf(a_refId);
+	}
+
+	void EndAllLending()
+	{
+		for (const auto id : lending.Due(BlastShield::Clock::time_point::max())) {
+			EndLendingOf(id);
+		}
+	}
+
 	std::vector<Protocol::Explosion> TakeExplosions()
 	{
 		std::scoped_lock l{ explosionLock };
@@ -652,6 +783,7 @@ namespace WeaponFire
 			return;
 		}
 		const RE::NiPoint3 at{ a_explosion.x, a_explosion.y, a_explosion.z };
+		LendNear(at, radius, a_explosion.playerId);
 		RE::NEW_REFR_DATA data;
 		data.location = at;
 		data.object = base;

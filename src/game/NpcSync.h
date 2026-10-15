@@ -14,6 +14,7 @@ namespace NpcSync
 
 	// Our player ID once welcomed, 0 otherwise.
 	void SetLocalPlayer(std::uint32_t a_id);
+	[[nodiscard]] std::uint32_t LocalPlayer();
 
 	void ApplyOwners(const std::vector<Protocol::ActorOwner>& a_owners);
 	void ApplyStates(const std::vector<Protocol::ActorState>& a_states);

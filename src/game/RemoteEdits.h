@@ -151,6 +151,8 @@ namespace RemoteEdits
 	// and with friendly fire off too: the enemies next to us or our companion die here as they did for the
 	// thrower, and a grenade at our feet hurts us as the thrower's own would have. (A copy that only looks
 	// like the explosion, hurting nobody but the enemies, is not done yet.)
+	// Our copies of NPCs another game runs are the exception: kept from it (BlastShield), as their owner's game deals
+	// its damage to them.
 	//
 	// Only what a throw makes is set off. A grenade is about 500 units across, a Fat Man's shell 850; nothing
 	// bigger is thrown (a nuke or an artillery strike reaches thousands), and a radius of 0 or one that isn't

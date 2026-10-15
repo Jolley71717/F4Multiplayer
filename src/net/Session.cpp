@@ -994,6 +994,7 @@ namespace Session
 		SendWorldEvents();
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
+		WeaponFire::EndAllLending();  // health lent against a friend's explosion is never saved; what it took is given back
 		Downed::OnBeforeSave();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {

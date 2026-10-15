@@ -52,8 +52,20 @@ namespace WeaponFire
 	// the sound follows its 3D root.
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId);
 	[[nodiscard]] std::vector<Protocol::Explosion> TakeExplosions();
-	// Sets off an explosion another player reported, if it is in our space and near enough to matter.
+	// Sets off an explosion another player reported, if it is in our space and near enough to matter. Our copies
+	// of NPCs another game runs are kept from its damage (BlastShield): their owner's game deals it.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
+
+	// Our player's blows this frame (NPC, health it took): a copy kept from a friend's explosion that our player hits
+	// is ours to hurt again at once, keeping what the blows took (BlastShield).
+	void OurBlows(const std::vector<std::pair<std::uint32_t, float>>& a_blows);
+
+	// Gives back what a friend's explosion took from our copy of this NPC, before another game's report of its
+	// health is applied (measured without the health lent against the explosion).
+	void EndLending(std::uint32_t a_refId);
+
+	// The same for every copy, before a save (the lent health is never saved, the damage would be).
+	void EndAllLending();
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
