@@ -5,8 +5,10 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/FriendLight.h"
+#include "game/MoveSync.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
+#include "game/StandInCalm.h"
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
@@ -77,6 +79,7 @@ namespace RemotePlayers
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
 			Clock::time_point    holdLoggedAt{};
+			StandInCalm::Track   calm;                   // fights with us or another stand-in ended on it (see KeepCalm)
 			RE::ObjectRefHandle  original;               // our copy of their pre-placed frame, hidden while they wear theirs
 			const RE::NiAVObject* originalHidden = nullptr;  // its 3D we stopped drawing; only compared
 			const RE::NiAVObject* originalCollisionOff = nullptr;  // its 3D whose collision we turned off; only compared
@@ -248,6 +251,8 @@ namespace RemotePlayers
 		std::uint32_t                         equipmentFixesTotal = 0;
 		std::uint32_t                         gearChanges = 0;  // reported changes put on over what a stand-in wore
 		std::uint32_t                         redraws = 0;      // stand-ins that put their gun away and drew it again for their gear
+		std::uint32_t                         calmed = 0;       // stand-ins' fights with us or another stand-in ended (see KeepCalm)
+		StandInCalm::Ours                     ours;             // and the combat they left us in (see KeepUsCalm)
 		// Frames drawn while a friend was moving, and how many of those ran out of states to blend
 		// (the next one was late) and held them still: the interpolation delay is too short if
 		// this is more than a few percent.
@@ -1216,6 +1221,80 @@ namespace RemotePlayers
 			return standIn;
 		}
 
+		// What a stand-in's combat is against.
+		StandInCalm::Foe FoeOf(const RE::Actor* a_actor, const RE::PlayerCharacter* a_us)
+		{
+			const auto target = a_actor->currentCombatTarget.get();
+			if (!target) {
+				return StandInCalm::Foe::kNobody;
+			}
+			if (target.get() == a_us) {
+				return StandInCalm::Foe::kUs;
+			}
+			return Puppets::IsPuppet(target.get()) ? StandInCalm::Foe::kStandIn : StandInCalm::Foe::kOther;
+		}
+
+		// A stand-in never fights us or another stand-in (StandInCalm): it runs no AI, so a fight the engine starts on
+		// it (our punch, our stray shot) never ends, and kept us in combat for good. Its anger with us is cleared, and
+		// such a fight is ended on it and on everyone in it with it (the console's stopcombatalarm on it).
+		void KeepCalm(RemotePlayer& a_player, RE::Actor* a_actor, const RE::PlayerCharacter* a_us, Clock::time_point a_now)
+		{
+			using enum RE::Actor::BOOL_FLAGS;
+			const bool               inCombat = a_actor->IsInCombat();
+			const StandInCalm::Facts facts{
+				.inCombat = inCombat,
+				.target = inCombat ? FoeOf(a_actor, a_us) : StandInCalm::Foe::kNobody,
+				.angry = a_actor->boolFlags.any(kAngryWithPlayer, kAttackOnSight),
+			};
+			const auto calm = StandInCalm::Frame(a_player.calm, ours, facts, a_now);
+			if (calm.forgive) {
+				a_actor->boolFlags.reset(kAngryWithPlayer, kAttackOnSight);
+			}
+			if (!calm.stop) {
+				return;
+			}
+			a_actor->StopCombat();
+			RE::Console::ExecuteCommand(std::format("{:08X}.stopcombatalarm", a_actor->GetFormID()).c_str());
+			++calmed;
+			if (MoveSync::Loggable(a_player.calm.stops)) {
+				REX::INFO("RemotePlayers: player {} stand-in {:08X} was in combat with {}; ended it ({} on this stand-in)", a_player.id, a_actor->GetFormID(),
+					facts.target == StandInCalm::Foe::kUs ? "us" : "another stand-in", a_player.calm.stops);
+			}
+		}
+
+		// Someone besides a stand-in is in combat with us: a real fight, which is left alone.
+		bool RealFoe(const RE::PlayerCharacter* a_us)
+		{
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
+				return true;
+			}
+			for (const auto& handle : lists->highActorHandles) {
+				const auto actor = handle.get();
+				if (!actor || actor.get() == a_us || actor->IsDead(false) || Puppets::IsPuppet(actor.get()) || !actor->IsInCombat()) {
+					continue;
+				}
+				if (actor->currentCombatTarget.get().get() == a_us) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// We are still in combat a moment after a stand-in's fight with us was ended, and nothing real fights us: the
+		// combat it left us in is ended too (the console's stopcombatalarm on us), once (StandInCalm::OursDue).
+		void KeepUsCalm(RE::PlayerCharacter* a_us, Clock::time_point a_now)
+		{
+			if (!a_us || !ours.stoppedAt) {
+				return;
+			}
+			const bool inCombat = a_us->IsInCombat();
+			if (StandInCalm::OursDue(ours, inCombat, inCombat && RealFoe(a_us), a_now)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.stopcombatalarm", a_us->GetFormID()).c_str());
+				REX::INFO("RemotePlayers: we were still in combat after a stand-in's fight with us was ended, with nobody else fighting us; ended ours ({} so far)", ours.clears);
+			}
+		}
+
 		// The default stand-in bases: settlers with a fixed look and no factions, one per sex.
 		using RemoteEdits::FEMALE_SETTLER;
 		using RemoteEdits::MALE_SETTLER;
@@ -1275,10 +1354,20 @@ namespace RemotePlayers
 
 			Puppets::Register(actor);
 			SaveGuard::Track(actor);
-			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack),
-			// and hitting it isn't a crime. That faction and rank also tell SaveGuard a stand-in an
-			// earlier version saved, so they stay as every version since 0.4.0 set them.
-			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", actor->GetFormID(), SaveStrays::STAND_IN_FACTION, SaveStrays::STAND_IN_RANK).c_str());
+			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack), hitting it isn't a
+			// crime, and it neither turns on us when we hit it nor starts or joins a fight (StandInCalm).
+			for (const auto& command : StandInCalm::SetupCommands(actor->GetFormID())) {
+				RE::Console::ExecuteCommand(command.c_str());
+			}
+			if (const auto values = RE::ActorValue::GetSingleton()) {
+				const auto owner = static_cast<RE::ActorValueOwner*>(actor);
+				if (values->aggression) {
+					owner->SetActorValue(*values->aggression, StandInCalm::AGGRESSION);
+				}
+				if (values->assistance) {
+					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
+				}
+			}
 
 			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);
 			return actor;
@@ -1784,6 +1873,7 @@ namespace RemotePlayers
 				StandInGear::Placed(remote.gear);
 				remote.shownName.clear();
 				remote.lastTarget.reset();
+				remote.calm = {};
 				// Still in their armor (it was replaced through a door, after a load, with a new look, or for a skeleton that
 				// never came): this one goes into a copy as soon as both are loaded, at once. The tries that did not take in
 				// this wear are kept: placed again and again for a rebuild that never comes, it would never give up.
@@ -1844,6 +1934,8 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 
+			KeepCalm(remote, actor, player, now);
+
 			Puppets::SetTarget(actor, Puppets::Motion{
 				.position = { state->x, state->y, state->z },
 				.heading = state->heading,
@@ -1854,6 +1946,7 @@ namespace RemotePlayers
 				.flags = state->flags,
 			});
 		}
+		KeepUsCalm(player, now);
 	}
 
 
@@ -1907,6 +2000,9 @@ namespace RemotePlayers
 		}
 		if (gearChanges || redraws) {
 			out += std::format(" gearChanges={} redraws={}", gearChanges, redraws);
+		}
+		if (calmed || ours.clears) {
+			out += std::format(" calmed={} oursCalmed={}", calmed, ours.clears);
 		}
 		if (const auto puppets = Puppets::Describe(); !puppets.empty()) {
 			out += " " + puppets;
