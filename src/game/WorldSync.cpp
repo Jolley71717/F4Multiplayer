@@ -8,6 +8,7 @@
 #include "game/LootScope.h"
 #include "game/LootSync.h"
 #include "game/SessionDeaths.h"
+#include "game/NpcHold.h"
 #include "game/NpcSync.h"
 #include "game/PendingContainers.h"
 #include "game/QuestSync.h"
@@ -162,6 +163,8 @@ namespace WorldSync
 		bool                                   checkAllLoaded = true;
 		std::uint32_t                          foundDead = 0;
 		std::uint32_t                          ownStoryDead = 0;  // found dead but left alone: a story character, with everyone on their own story
+		NpcHold::Book                          falling;           // dead here as we checked, but falling or just hit by us: left to the death event
+		std::uint32_t                          leftToEvent = 0;   // such checks put off
 
 		void Queue(std::vector<std::uint8_t> a_packet)
 		{
@@ -401,6 +404,7 @@ namespace WorldSync
 			if (!a_hosting) {
 				// Not ours to say. Once we host (again), everything loaded is checked: a new session knows nothing.
 				toCheck.clear();
+				falling.Clear();
 				checkAllLoaded = true;
 				return;
 			}
@@ -411,9 +415,22 @@ namespace WorldSync
 				checkAllLoaded = false;
 				toCheck.insert(loadedActors.begin(), loadedActors.end());
 			}
+			const auto                 now = Clock::now();
+			std::vector<std::uint32_t> later;
 			for (const auto id : toCheck) {
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
 				if (!actor || actor->IsDeleted() || !actor->IsDead(false) || actor->IsPlayerRef() || Puppets::IsPuppet(actor) || dead.Contains(id)) {
+					continue;
+				}
+				// Falling as we look, or our player hit it lately: not found dead but dying here, and its death event
+				// reports it as a death seen happen, our kill. Our hit on a copy a friend's game runs asks to take it over,
+				// and the server's answer (it stays theirs) brings it here the frame the killing blow lands: reported
+				// found dead, the kill was not believed (only the host's game, and only of what it never had alive), and
+				// the death event that followed was taken for the same death. Every host's kill of a friend's NPC was
+				// lost so. Checked again each frame, for at most NpcHold::DYING, then found dead after all.
+				const bool fallingNow = static_cast<RE::ActorState&>(*actor).lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying);
+				if (NpcHold::LeaveToEvent(falling, id, fallingNow, NpcSync::FoughtLately(id), now)) {
+					later.push_back(id);
 					continue;
 				}
 				if (!FoundDead::Shared(Story::Shared(), DescribeDead(actor))) {
@@ -431,7 +448,14 @@ namespace WorldSync
 				reports.Forget(id);
 				pendingHealth.erase(id);
 			}
+			for (const auto id : toCheck) {
+				if (!std::ranges::contains(later, id)) {
+					falling.Forget(id);
+				}
+			}
+			leftToEvent += static_cast<std::uint32_t>(later.size());
 			toCheck.clear();
+			toCheck.insert(later.begin(), later.end());
 		}
 
 		const RE::ActorValueInfo* HealthInfo()
@@ -793,6 +817,12 @@ namespace WorldSync
 		{
 			for (const auto id : a_deaths) {
 				if (dead.Add(id, Clock::now())) {
+					// Our kill, of a friend's NPC too: a grenade's, a mine's or a fire's blows name no attacker, so no hit
+					// of ours told the server we fight it. The takeover claim leaves this frame, the death next frame
+					// (Session::Frame), so the server believes it (Server.cpp, handleDeath).
+					if (a_killedByUs.contains(id)) {
+						NpcSync::OnLocalInteraction(id);
+					}
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 					ReportDead({ .refId = id, .killed = a_killedByUs.contains(id), .x = at.x, .y = at.y, .z = at.z });
@@ -1422,6 +1452,7 @@ namespace WorldSync
 		unmatchedPickups.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
+		falling.Clear();
 		checkAllLoaded = true;
 		CopyWatch::Reset();
 		std::scoped_lock l{ inboxLock };
@@ -1502,10 +1533,10 @@ namespace WorldSync
 		// personal= means what it did in 0.8.5: other players' personal items left alone (pickups and loot).
 		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
 		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} loadedActors={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={}",
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
-			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, loadedActors.size()) +
+			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size()) +
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax, dead.Revived(), dead.Settled(Clock::now()));
 	}
 }

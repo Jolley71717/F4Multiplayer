@@ -199,8 +199,9 @@ namespace
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
-		// NPCs this player hurt or tried to take over, and when last: a kill of one another player's game runs is
-		// believed for a while after (Options::deathGrace). At most MAX_FIGHTING.
+		// NPCs this player hurt, tried to take over, or ran until another took it over or they let it go, and when
+		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
+		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 		// Its last request for the world isn't answered yet (owed while its budget refills, or dropped for flooding):
@@ -929,6 +930,15 @@ void Server::Run()
 		const auto it = a_player.fighting.find(a_refId);
 		return it != a_player.fighting.end() && a_now - it->second <= options.deathGrace;
 	};
+	// The NPC no longer runs in this player's game: another player took it over, or theirs let it go. It ran there
+	// until now, so a death their game saw happen is believed for a while yet (see handleDeath).
+	const auto noteRan = [&](std::uint32_t a_playerId, std::uint32_t a_refId, Clock::time_point a_now) {
+		for (auto& [key, other] : players) {
+			if (other.id == a_playerId && other.welcomed) {
+				noteFighting(other, a_refId, a_now);
+			}
+		}
+	};
 	Clock::time_point droppedDeathLogged{};
 	std::size_t       droppedDeaths = 0;  // since the last line about them
 
@@ -957,7 +967,9 @@ void Server::Run()
 		// Options::deathGrace. The takeover is refused for 5 s after the NPC changed hands, so two players
 		// fighting one raider used to lose the second one's kill (it lived on in the runner's game). Their
 		// game sends the takeover claim the frame it hits and the death a frame later (Session::Frame), on the
-		// one reliable channel, so even a one-shot kill finds the claim here first.
+		// one reliable channel, so even a one-shot kill finds the claim here first. So is a kill by the player
+		// whose game ran it until moments ago (noteRan): the death event comes seconds after the killing blow,
+		// and the NPC can change hands in between, while the friend's game, where it still lived, took it over.
 		if (const auto owner = actorOwners.find(death->refId); owner != actorOwners.end() && owner->second.playerId != a_player.id) {
 			const auto now = Clock::now();
 			const bool foundDead = a_player.local && death->foundDead && !hostHadAlive.contains(death->refId);
@@ -1201,6 +1213,7 @@ void Server::Run()
 			if (grant) {
 				if (it != actorOwners.end()) {
 					npcEquipment.erase(claim.refId);  // the old runner's gear report; the new one reports its own
+					noteRan(it->second.playerId, claim.refId, now);
 				}
 				actorOwners[claim.refId] = { a_player.id, claim.reason, now };
 				changed.push_back({ claim.refId, a_player.id });
@@ -1295,10 +1308,12 @@ void Server::Run()
 			return;
 		}
 		std::vector<Protocol::ActorOwner> released;
+		const auto                        now = Clock::now();
 		for (const auto ref : *refs) {
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				noteFighting(a_player, ref, now);  // it ran in their game until now (see noteRan)
 				released.push_back({ ref, 0 });
 			}
 		}

@@ -41,6 +41,9 @@ namespace NpcSync
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 
+	// Whether the local player hit or talked to this NPC lately (NpcHold::FOUGHT).
+	[[nodiscard]] bool FoughtLately(std::uint32_t a_refId);
+
 	// The local player activated this reference (talking to an NPC starts this way).
 	void OnActivated(std::uint32_t a_refId);
 

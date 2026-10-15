@@ -162,7 +162,9 @@
   owner's game is paused, loading or gone; owners send nothing while a menu pauses them), and for
   our own current companion (two players can both have Dogmeat).
 - When the owner unloads the NPC (or leaves), it is released and the next player who has it loaded
-  claims it. Mirrored NPCs are handed back to their own AI before saving. New players get the current
+  claims it. One that dies is kept until its death is reported (up to 15 s, `NpcHold`), and one our player hit
+  in the last 10 s is not handed to a nearer friend. Mirrored NPCs are handed back to their own AI before saving.
+  New players get the current
   owner list on join.
 - Gear: each game rolls NPC gear on its own, so the owner reports what its NPCs wear when it changes
   (`ReportNpcEquipment`, owner only) and the server keeps the last report for newcomers. A copy is dressed
@@ -267,7 +269,7 @@ menu) and to loaded references; everything else waits and is retried.
 
 | Feature | How |
 |---|---|
-| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health or asked to take it over within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Others are dropped, with a log line at most every 10 s |
+| Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
 | Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref |
