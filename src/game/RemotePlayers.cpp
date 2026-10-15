@@ -1354,6 +1354,7 @@ namespace RemotePlayers
 
 			Puppets::Register(actor);
 			SaveGuard::Track(actor);
+			SaveGuard::KeepUnpromoted(actor);
 			// Enemies treat the stand-in like the player (it's what NPCs in this world can attack), hitting it isn't a
 			// crime, and it neither turns on us when we hit it nor starts or joins a fight (StandInCalm).
 			for (const auto& command : StandInCalm::SetupCommands(actor->GetFormID())) {
