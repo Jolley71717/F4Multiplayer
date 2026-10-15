@@ -223,13 +223,15 @@ namespace HangWatch
 			return times;
 		}
 
-		// Where another busy thread was, looked at the way the main thread is (Capture).
+		// Where another busy thread was, looked at the way the main thread is (Capture). Its id is checked to be still
+		// one of the game's: a thread that ended since the snapshot can have its id taken by another program's, which
+		// mustn't be stopped.
 		Report::Busy LookAt(const BusyThread& a_thread, Modules& a_modules)
 		{
 			Report::Busy busy{ .id = a_thread.id, .percent = a_thread.percent };
-			if (const auto thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, a_thread.id)) {
+			if (const auto thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE, a_thread.id)) {
 				Snapshot snapshot;
-				if (Capture(thread, snapshot)) {
+				if (GetProcessIdOfThread(thread) == GetCurrentProcessId() && Capture(thread, snapshot)) {
 					busy.where = a_modules.Describe(snapshot.ip);
 					busy.callers = Callers(snapshot, a_modules);
 				}
