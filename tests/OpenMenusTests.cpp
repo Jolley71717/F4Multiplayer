@@ -189,8 +189,9 @@ TEST("open menus: the plugin looks no menu up through the UI, but for the HUD on
 	const auto root = SourceTree::Root();
 	REQUIRE(root);  // run the tests from the repository or its build folder
 	// Compass's lookup is on the main thread, between frames, of the HUD (which the UI keeps for the whole game),
-	// and only until its update is hooked. The gfx commands (dev channel) look up what a developer names.
-	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 2 } };
+	// and only until its update is hooked. The gfx commands (dev channel) look up what a developer names, and
+	// "dialogue menu" the dialogue menu and the menu stack, on the main thread, when a developer asks.
+	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 } };
 	for (const auto& entry : std::filesystem::recursive_directory_iterator{ *root / "src" }) {
 		const auto ext = entry.path().extension();
 		if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
