@@ -38,11 +38,16 @@ namespace ContainerLedger
 	{
 	public:
 		// Changes that wait for an earlier one, at most. Past it the newest is let go: the server is asked
-		// for it again once the gap before it has filled. The first missing number never moves on its own.
+		// for it again once the gap before it has filled. The first missing number moves on its own only
+		// when the gap is skipped (SKIP_AFTER).
 		static constexpr std::size_t MAX_AHEAD = 8192;
 		// How long a gap may stay open with nothing arriving before the server is asked again (a request it
 		// refused, its budget being spent, is what this covers): 15 s, 30 s, then every 60 s.
 		static constexpr std::array<Clock::duration, 3> ASK_AGAIN{ std::chrono::seconds{ 15 }, std::chrono::seconds{ 30 }, std::chrono::seconds{ 60 } };
+		// Asked this many times for the same first missing change and it never came (the server never
+		// answered, or answered without it), the gap is skipped when the next ask is due instead: its
+		// numbers are given up, and what waited behind it goes in. About four minutes (15+30+60+60+60 s).
+		static constexpr std::uint32_t SKIP_AFTER = 5;
 
 		struct Counts
 		{
@@ -52,6 +57,9 @@ namespace ContainerLedger
 			std::uint32_t asked = 0;         // times the server was asked again for a gap
 			std::uint32_t rewinds = 0;       // times the server's log turned out shorter than our world's
 			std::uint32_t lost = 0;          // changes those rewinds counted again from
+			std::uint32_t strays = 0;        // waiting changes numbered past the end of the server's log, let go
+			std::uint32_t skips = 0;         // gaps skipped after SKIP_AFTER asks
+			std::uint32_t skipped = 0;       // the numbers those skips gave up
 		};
 
 		// The first change our world lacks.
@@ -67,6 +75,7 @@ namespace ContainerLedger
 			ahead.clear();
 			requested.reset();
 			tries = 0;
+			stuck = 0;
 		}
 
 		// A numbered change reached us. Returns what can go into the world now, in order (it, and those that
@@ -98,14 +107,7 @@ namespace ContainerLedger
 			}
 			ready.push_back({ a_change, a_catchUp });
 			++next;
-			for (auto it = ahead.begin(); it != ahead.end() && it->first == next; it = ahead.erase(it)) {
-				ready.push_back(std::move(it->second));
-				++next;
-			}
-			quietSince = a_now;
-			if (ahead.empty()) {
-				tries = 0;
-			}
+			Release(ready, a_now);
 			return ready;
 		}
 
@@ -122,18 +124,39 @@ namespace ContainerLedger
 		// writing its last changes to the session file; it writes every 15 s). Its next change takes the
 		// first number it lacks, so ours counts from there; what our world got of the lost ones stays in it.
 		// Only a request we sent can do that: a WorldState nobody asked for never moves the count back.
+		// When it starts where we asked with less than a full chunk, the server's log ends after its last
+		// change (it numbers a change as it logs it, and sends what it numbered after this behind it): changes
+		// waiting with numbers from there on were never numbered by this server (they came from somewhere
+		// else, like the fuzz command, or from a log it no longer has), and nothing would ever fill the gap
+		// before them. They are let go (strays).
 		// Returns how many numbers were counted again (0: none).
 		std::uint32_t OnChunk(std::uint32_t a_firstIndex, std::size_t a_count, Clock::time_point a_now)
 		{
 			quietSince = a_now;
 			const auto asked = std::exchange(requested, std::nullopt);
-			if (!asked || a_firstIndex >= *asked || a_count != 0) {
+			if (!asked || a_firstIndex > *asked) {
+				return 0;
+			}
+			if (a_firstIndex == *asked) {
+				if (a_count < Protocol::WORLD_STATE_CHUNK) {
+					const auto stray = ahead.lower_bound(a_firstIndex + static_cast<std::uint32_t>(a_count));
+					counts.strays += static_cast<std::uint32_t>(std::distance(stray, ahead.end()));
+					ahead.erase(stray, ahead.end());
+					if (ahead.empty()) {
+						tries = 0;
+						stuck = 0;
+					}
+				}
+				return 0;
+			}
+			if (a_count != 0) {
 				return 0;
 			}
 			const auto lost = *asked - a_firstIndex;
 			next = a_firstIndex;
 			ahead.clear();
 			tries = 0;
+			stuck = 0;
 			++counts.rewinds;
 			counts.lost += lost;
 			return lost;
@@ -142,22 +165,62 @@ namespace ContainerLedger
 		// Whether to ask the server again now: a gap has stayed open with nothing arriving.
 		bool Due(Clock::time_point a_now)
 		{
-			const auto wait = ASK_AGAIN[(std::min)(static_cast<std::size_t>(tries), ASK_AGAIN.size() - 1)];
-			if (ahead.empty() || a_now - quietSince < wait) {
+			if (!Quiet(a_now)) {
 				return false;
 			}
 			++tries;
+			++stuck;
 			++counts.asked;
 			quietSince = a_now;
 			return true;
 		}
 
+		// A gap asked for SKIP_AFTER times, due to be asked for again: it is given up instead. Our count moves
+		// to the first waiting change, which goes in with the ones right behind it (returned, in order). The
+		// changes the gap stood for never reach our world; were they the server's, a later catch-up (a load,
+		// a rejoin) brings them no more either, as our world counts them in. Nothing otherwise.
+		std::vector<Ready> Skip(Clock::time_point a_now)
+		{
+			std::vector<Ready> ready;
+			if (stuck < SKIP_AFTER || !Quiet(a_now)) {
+				return ready;
+			}
+			const auto first = ahead.begin()->first;
+			++counts.skips;
+			counts.skipped += first - next;
+			next = first;
+			Release(ready, a_now);
+			return ready;
+		}
+
 	private:
+		// A gap stayed open with nothing arriving for as long as it may before the next ask.
+		[[nodiscard]] bool Quiet(Clock::time_point a_now) const
+		{
+			const auto wait = ASK_AGAIN[(std::min)(static_cast<std::size_t>(tries), ASK_AGAIN.size() - 1)];
+			return !ahead.empty() && a_now - quietSince >= wait;
+		}
+
+		// Our count has moved to next: the waiting changes from there on, as far as they run unbroken, go in.
+		void Release(std::vector<Ready>& a_ready, Clock::time_point a_now)
+		{
+			for (auto it = ahead.begin(); it != ahead.end() && it->first == next; it = ahead.erase(it)) {
+				a_ready.push_back(std::move(it->second));
+				++next;
+			}
+			quietSince = a_now;
+			stuck = 0;
+			if (ahead.empty()) {
+				tries = 0;
+			}
+		}
+
 		std::uint32_t                   next = 0;
 		std::map<std::uint32_t, Ready>  ahead;
 		std::optional<std::uint32_t>    requested;
 		Clock::time_point               quietSince{};  // the last change that went in, chunk or request, or when the gap opened
 		std::uint32_t                   tries = 0;     // times asked again for this gap
+		std::uint32_t                   stuck = 0;     // times asked again since our count last moved
 		Counts                          counts;
 	};
 
@@ -291,8 +354,15 @@ namespace ContainerLedger
 			return lost;
 		}
 
-		// Whether to ask the server again now (see Ledger::Due); then send Request.
-		bool Due(Clock::time_point a_now) { return ledger.Due(a_now); }
+		// Whether to ask the server again now (see Ledger::Due); then send Request. A gap asked for
+		// Ledger::SKIP_AFTER times is skipped instead (Ledger::Skip): what waited behind it goes to a_apply.
+		bool Due(Clock::time_point a_now, const Apply& a_apply)
+		{
+			for (const auto& ready : ledger.Skip(a_now)) {
+				Deliver(ready, a_apply);
+			}
+			return ledger.Due(a_now);
+		}
 
 		[[nodiscard]] std::uint64_t  SessionId() const { return session; }
 		[[nodiscard]] bool           Ours(std::uint32_t a_playerId) const { return ownIds.contains(a_playerId); }

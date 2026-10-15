@@ -153,7 +153,7 @@ namespace LootTest
 		{
 			Send(a_f, loot.Report(moves, *this));
 			moves.clear();
-			if (const auto request = loot.Due(now)) {
+			if (const auto request = loot.Due(now, *this)) {
 				a_f.fake->Deliver(peer, Protocol::Encode(*request));
 				++requests;
 			}
