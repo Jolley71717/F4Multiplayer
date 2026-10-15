@@ -1,13 +1,13 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
-#include "game/Compass.h"
 #include "game/ExitMusic.h"
 #include "game/FastLoad.h"
 #include "game/Hud.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Menu.h"
+#include "game/OpenMenus.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -237,7 +237,7 @@ namespace
 		switch (a_msg->type) {
 		case F4SE::MessagingInterface::kGameDataReady:
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
-			Compass::Install();
+			OpenMenus::Install();  // which menus are open, for everything that asks: the UI itself is never asked
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).

@@ -5,6 +5,7 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/FriendLight.h"
+#include "game/Hud.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/StandInGear.h"
@@ -1617,8 +1618,7 @@ namespace RemotePlayers
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto localCell = player ? player->GetParentCell() : nullptr;
-		const auto ui = RE::UI::GetSingleton();
-		const bool loading = ui && ui->GetMenuOpen("LoadingMenu"sv);
+		const bool loading = Hud::LoadingScreenUp();
 
 		const auto now = Clock::now();
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped

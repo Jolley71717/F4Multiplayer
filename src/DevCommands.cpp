@@ -15,6 +15,7 @@
 #include "game/FrameStats.h"
 #include "game/Hotkeys.h"
 #include "game/NpcSync.h"
+#include "game/OpenMenus.h"
 #include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
@@ -1928,7 +1929,7 @@ namespace DevCommands
 			const auto ui = RE::UI::GetSingleton();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
-				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, ui && ui->GetMenuOpen("PauseMenu"sv), ui && ui->GetMenuOpen("PipboyMenu"sv), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
 				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
 		}
 
@@ -1942,8 +1943,7 @@ namespace DevCommands
 			const auto speaker = topics->speaker.get();
 			const auto actor = speaker ? speaker->As<RE::Actor>() : nullptr;
 			const auto last = topics->lastSpeaker.get();
-			const auto ui = RE::UI::GetSingleton();
-			const bool dialogueMenu = ui && ui->GetMenuOpen("DialogueMenu"sv);
+			const bool dialogueMenu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			const auto scene = player ? player->GetCurrentScene() : nullptr;
 			return std::format("last={:08X} dialogueMenu={} menuOpen={} inDialogue={} allowInput={} speaker={:08X} talking={} voiceTimer={:.2f} overSceneActor={} playerScene={:08X} {}",
