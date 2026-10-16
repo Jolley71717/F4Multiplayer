@@ -738,8 +738,9 @@ namespace Puppets
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
 		const bool inArmor = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
-		// Never a power armor frame (letting go would take the armor's state off it) nor a seat on another actor.
-		const bool stood = furniture && !furniture->As<RE::Actor>() && !inArmor;
+		// Never a power armor frame (letting go would take the armor's state off it) nor a seat on another actor, and
+		// not one with no AI process left (its cell went): the engine works on that process to let go.
+		const bool stood = furniture && !furniture->As<RE::Actor>() && !inArmor && a_actor->currentProcess;
 		if (stood) {
 			a_actor->StopInteractingQuick(true, false, true);
 		}

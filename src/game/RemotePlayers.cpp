@@ -1388,6 +1388,12 @@ namespace RemotePlayers
 		{
 			DeleteLight(a_player);
 			const auto actor = GetActor(a_player);
+			// One in furniture gets up before it goes. Left snapped into a terminal as the player went to another cell, it
+			// crashed the game: the engine still ran its furniture package once it had no AI process.
+			if (actor && Puppets::FurnitureOf(actor)) {
+				Puppets::StandUp(actor);
+				a_player.seatHeld = false;
+			}
 			// A stand-in kept for the player's conversation (see HeldForConversation) keeps the frame it is in: the frame
 			// waits for it instead of being disabled from under it (it then went on held in a frame that was gone).
 			const auto heldIn = actor && Dialogue::Holds(actor) ? Equipment::PowerArmorFrameOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
@@ -2247,6 +2253,12 @@ namespace RemotePlayers
 			UpdateParked(remote, GetActor(remote), localCell, player, loading, now);
 
 			auto actor = GetActor(remote);
+			// A loading screen (a door, a coc, a fast travel): a stand-in in furniture gets up while its cell is still there
+			// (see DeleteActor). Its friend still in it, it sits down again once it is placed.
+			if (actor && loading && remote.seatHeld) {
+				Puppets::StandUp(actor);
+				remote.seatHeld = false;
+			}
 			if (!actor && remote.registered) {
 				// The game removed our puppet (e.g. cell unload); forget the stale registration. Its form may still be
 				// there: it is kept out of saves while it is.
