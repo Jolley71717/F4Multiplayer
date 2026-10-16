@@ -2383,14 +2383,18 @@ namespace DevCommands
 
 		// dialogue [menu]: the conversation the player is in, and whether the speaker is saying something; the
 		// input the game lets through now (the enable manager's user event flags) and the stacked input
-		// contexts. With menu, the dialogue menu itself (DialogueMenuState).
+		// contexts. With menu, the dialogue menu itself (DialogueMenuState). dialogue reset [scene]: the reset a
+		// conversation ends with, and with scene overSceneActor cleared too (Dialogue::ResetForTest).
 		std::string Dialogue(std::string_view a_args)
 		{
 			if (a_args == "menu") {
 				return DialogueMenuState();
 			}
+			if (a_args == "reset" || a_args == "reset scene") {
+				return ::Dialogue::ResetForTest(a_args == "reset scene");
+			}
 			if (!a_args.empty()) {
-				return "error: usage: dialogue [menu]";
+				return "error: usage: dialogue [menu|reset|reset scene]";
 			}
 			const auto topics = ::Dialogue::TopicManager();  // not RE::MenuTopicManager::GetSingleton(): see game/Dialogue.cpp
 			if (!topics) {
