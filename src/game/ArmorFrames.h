@@ -140,12 +140,20 @@ namespace ArmorFrames
 	// the skeleton and frame come from disk; and it queues nothing when the model loader already holds a load for the
 	// actor. One still on its own body this long after is placed again (Switch::kStuck), as a switch that never took.
 	constexpr auto SKELETON_LIMIT = std::chrono::seconds(5);
+	// How long a stand-in on the power armor skeleton may keep its legs still while its friend walks on theirs, in our
+	// sight, before it is placed again (Switch::kStill), counted as a try. Live (2026-10-15) a stand-in switched in a
+	// moment after it was dressed got the skeleton and all six pieces and then glided after its friend in a standing
+	// pose for the rest of the wear: nothing in its graph played (the dev command could read none of its variables, not
+	// even Speed and Direction), while a fresh stand-in switched into the next wear walked and ran. What leaves the graph
+	// dead is not known (the dev command anim shows what is there); a fresh stand-in is the cure that was seen to work.
+	constexpr auto STILL_LIMIT = std::chrono::seconds(2);
 
 	struct SwitchFacts
 	{
 		bool     worn = false;     // they are in power armor, and the frame they sent is a frame here
 		bool     in = false;       // the engine has the stand-in in power armor (ExtraPowerArmor)
 		bool     rebuilt = false;  // its 3D is built on the power armor skeleton
+		Duration still{};          // its legs have not moved for this long while they walked in our sight (see Stride)
 		Duration sinceIn{};        // since the switch-in took (when in)
 		bool     ready = false;    // the stand-in can be switched now: its 3D in, its process high (the engine queues its 3D rebuild only then)
 		bool     held = false;     // its copy is held under it this update (Copy::kHold): loaded, in its place, nobody here in it
@@ -159,6 +167,7 @@ namespace ArmorFrames
 		kIn,      // switched into its copy now
 		kOut,     // they are out and it is still in: replaced, a copy of the frame left where it stood
 		kStuck,   // in, but still on its own skeleton too long (see SKELETON_LIMIT): replaced, counted as a try
+		kStill,   // in and on the power armor skeleton, but its legs stay still while they walk (see STILL_LIMIT): replaced, counted as a try
 		kGaveUp,  // the switch-in never took: shown out of its armor (see MAX_SWITCH_TRIES)
 	};
 
@@ -168,7 +177,10 @@ namespace ArmorFrames
 			if (!a_facts.worn) {
 				return Switch::kOut;
 			}
-			return !a_facts.rebuilt && a_facts.sinceIn > SKELETON_LIMIT ? Switch::kStuck : Switch::kNone;
+			if (!a_facts.rebuilt) {
+				return a_facts.sinceIn > SKELETON_LIMIT ? Switch::kStuck : Switch::kNone;
+			}
+			return a_facts.still >= STILL_LIMIT ? Switch::kStill : Switch::kNone;
 		}
 		if (!a_facts.worn) {
 			return Switch::kNone;
@@ -181,6 +193,96 @@ namespace ArmorFrames
 		}
 		return Switch::kIn;
 	}
+
+	// Whether a stand-in's legs move, for Switch::kStill: a leg bone's rotation (its local transform, which the graph
+	// writes every frame it plays something), and whether it changed by more than STRIDE_MOVED in any entry since it was
+	// last seen to move. A walk swings the thigh by tens of degrees; a dead graph leaves it exactly where it was.
+	struct LegPose
+	{
+		float m[9]{};
+	};
+	constexpr float STRIDE_MOVED = 0.05f;  // about 3 degrees
+
+	constexpr bool Moved(const LegPose& a_from, const LegPose& a_to)
+	{
+		for (int i = 0; i < 9; ++i) {
+			const float d = a_to.m[i] - a_from.m[i];
+			if (d > STRIDE_MOVED || d < -STRIDE_MOVED) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Their game's own moveMode bits (Gait.h's MOVE_WALKING, MOVE_RUNNING, MOVE_SPRINTING): set only while their own
+	// legs carry them. Not while carried by a lift or a vehicle (none set, whatever the speed), nor off the ground.
+	constexpr std::uint16_t OWN_LEGS = 0x40 | 0x80 | 0x100;
+	constexpr float         WALK_SPEED = 25.0f;  // MoveSync::START: the stand-in's graph is told to move above it
+
+	constexpr bool Walks(std::uint16_t a_moveMode, std::uint8_t a_flags, float a_speed)
+	{
+		return (a_moveMode & OWN_LEGS) != 0 && (a_flags & Protocol::kInAir) == 0 && a_speed > WALK_SPEED;
+	}
+
+	// In our sight, as far as the stillness goes: near enough, and ahead of our player. Off screen the engine may not
+	// play an actor's graph, and legs still there are no fault of it.
+	constexpr float SIGHT_DISTANCE = 3000.0f;
+	constexpr float SIGHT_CLOSE = 150.0f;    // this near it counts whichever way we face
+	constexpr float SIGHT_COS = 0.34f;       // cos 70 degrees, either side of our heading
+
+	// a_dx, a_dy: from our player to the stand-in; a_heading: our player's (0 along +y, clockwise).
+	inline bool InSight(float a_dx, float a_dy, float a_heading)
+	{
+		const float distance = std::sqrt(a_dx * a_dx + a_dy * a_dy);
+		if (distance > SIGHT_DISTANCE) {
+			return false;
+		}
+		if (distance < SIGHT_CLOSE) {
+			return true;
+		}
+		return (a_dx * std::sin(a_heading) + a_dy * std::cos(a_heading)) / distance >= SIGHT_COS;
+	}
+
+	// How long a stand-in's legs have stayed still while its friend walked in our sight (play time). Once a frame:
+	// a_root, its 3D (only compared: a new one starts over); a_pose, its leg bone's rotation (none: no such bone, or it
+	// is not in its frame on the power armor skeleton, and nothing is counted); a_walks, they walk in our sight now.
+	class Stride
+	{
+	public:
+		Duration Update(const void* a_root, const std::optional<LegPose>& a_pose, bool a_walks, PlayTime a_now)
+		{
+			if (a_root != root) {
+				root = a_root;
+				anchor.reset();
+				still = {};
+				last.reset();
+			}
+			const Duration elapsed = last ? (std::min)(Duration{ a_now - *last }, Duration{ LONGEST_FRAME }) : Duration{};
+			last = a_now;
+			if (!a_pose) {
+				anchor.reset();
+				still = {};
+				return still;
+			}
+			if (!anchor || Moved(*anchor, *a_pose)) {
+				anchor = a_pose;  // moving (or first seen): still since now
+				still = {};
+				return still;
+			}
+			if (a_walks) {
+				still += elapsed;
+			}
+			return still;
+		}
+
+		[[nodiscard]] Duration Still() const { return still; }
+
+	private:
+		const void*             root = nullptr;
+		std::optional<LegPose>  anchor;  // the pose last seen moving to
+		Duration                still{};
+		std::optional<PlayTime> last;
+	};
 
 	// What the stand-in wears goes by what the engine says of it, never by their status alone: until the engine has it in
 	// its frame it is a body of the stand-in's own race, and it keeps that body until the rebuild the switch-in queued

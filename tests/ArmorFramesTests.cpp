@@ -607,3 +607,153 @@ TEST("armor frames: a frame the game took far too long over counts for a quarter
 	// A time never set is long ago.
 	CHECK(played.Now() - ArmorFrames::PlayTime{} > ArmorFrames::SWITCH_RETRY);
 }
+
+namespace
+{
+	// A thigh at a swing of a_angle radians about the x axis: what a walking graph writes into the leg bone.
+	ArmorFrames::LegPose Thigh(float a_angle)
+	{
+		const float          c = std::cos(a_angle);
+		const float          s = std::sin(a_angle);
+		ArmorFrames::LegPose pose{ { 1.0f, 0.0f, 0.0f, 0.0f, c, -s, 0.0f, s, c } };
+		return pose;
+	}
+
+	int roots[2];  // stand-ins' 3D, only compared: the first one, and the one placed after it
+}
+
+TEST("armor frames: a stand-in in its frame that glides after a friend who walks is placed again, and that counts as a try")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	// Live 2026-10-15: in its frame, on the power armor skeleton, all six pieces on, and it glided along standing while the
+	// friend walked: its graph played nothing. A fresh stand-in in the next wear walked. Still legs for STILL_LIMIT while
+	// they walk: placed again, as a stand-in whose skeleton never came is.
+	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s };
+	CHECK(ChooseSwitch(facts) == Switch::kStill);
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;  // in it already: replaced, and the fresh one is given up on
+	CHECK(ChooseSwitch(facts) == Switch::kStill);
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = ArmorFrames::MAX_SWITCH_TRIES, .sinceTried = 1h }) == Switch::kGaveUp);
+	// Not yet that long: left as it is.
+	facts = { .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT - 1ms, .sinceIn = 10s };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	// Out of their armor: out, however still.
+	facts.still = 1h;
+	facts.worn = false;
+	CHECK(ChooseSwitch(facts) == Switch::kOut);
+	// Still on its own skeleton: that is the skeleton's wait, whatever its legs do (they are not looked at then).
+	facts = { .worn = true, .in = true, .rebuilt = false, .still = 1h, .sinceIn = 1s };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceIn = ArmorFrames::SKELETON_LIMIT + 1ms;
+	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+}
+
+TEST("armor frames: a stand-in's legs count as still only while its friend walks and nothing in its graph moves them")
+{
+	ArmorFrames::Stride   stride;
+	ArmorFrames::PlayTime now{ 1h };
+	const void*           root = &roots[0];
+	const auto            frame = [&](std::optional<ArmorFrames::LegPose> a_pose, bool a_walks) {
+		now += 16ms;
+		return stride.Update(root, a_pose, a_walks, now);
+	};
+	// A dead graph: the thigh never moves. While the friend stands, nothing is counted.
+	for (int i = 0; i < 300; ++i) {
+		frame(Thigh(0.0f), false);
+	}
+	CHECK(stride.Still() == ArmorFrames::Duration{});
+	// They walk: the time adds up, frame by frame.
+	for (int i = 0; i < 100; ++i) {
+		frame(Thigh(0.0f), true);
+	}
+	CHECK(stride.Still() == 100 * 16ms);
+	// A stop in between keeps what was counted; walking on adds to it.
+	frame(Thigh(0.0f), false);
+	frame(Thigh(0.0f), true);
+	CHECK(stride.Still() == 101 * 16ms);
+	// A swing of a few degrees is a step: still from there afresh.
+	frame(Thigh(0.1f), true);
+	CHECK(stride.Still() == ArmorFrames::Duration{});
+	// A frame that took the game long counts for no more than LONGEST_FRAME.
+	now += 10s;
+	frame(Thigh(0.1f), true);
+	CHECK(stride.Still() == ArmorFrames::LONGEST_FRAME);
+	// No leg to look at (not in its frame, or no such bone): nothing counted, and it starts over.
+	frame(std::nullopt, true);
+	CHECK(stride.Still() == ArmorFrames::Duration{});
+	// A new 3D starts over too.
+	for (int i = 0; i < 50; ++i) {
+		frame(Thigh(0.0f), true);
+	}
+	CHECK(stride.Still() > 0ms);
+	root = &roots[1];
+	CHECK(frame(Thigh(0.0f), true) == ArmorFrames::Duration{});
+}
+
+TEST("armor frames: a stand-in that walks in its frame is never placed again for still legs, however long the walk")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Switch;
+	// A walk cycle swings the thigh some 25 degrees each way about once a second, the friend walking all the while,
+	// sampled every frame of a fast game and of slow ones (three frames to a step). Never STILL_LIMIT.
+	for (const auto step : { 16ms, 100ms, 333ms }) {
+		ArmorFrames::Stride   stride;
+		ArmorFrames::PlayTime now{ 1h };
+		bool                  replaced = false;
+		for (auto t = 0ms; t < 60s; t += step) {
+			now += step;
+			const float swing = 0.44f * std::sin(6.2832f * static_cast<float>(t.count()) / 1000.0f);
+			const auto  still = stride.Update(&roots[0], Thigh(swing), true, now);
+			replaced |= ChooseSwitch({ .worn = true, .in = true, .rebuilt = true, .still = still, .sinceIn = 10s }) != Switch::kNone;
+		}
+		CHECK(!replaced);
+	}
+	// A dead one, sampled the same ways, is placed again a little after STILL_LIMIT of walking (a frame counting for
+	// no more than LONGEST_FRAME, as the play clock has it).
+	for (const auto step : { 16ms, 100ms, 250ms }) {
+		ArmorFrames::Stride   stride;
+		ArmorFrames::PlayTime now{ 1h };
+		auto                  walked = 0ms;
+		for (;;) {
+			now += step;
+			const auto still = stride.Update(&roots[0], Thigh(0.2f), true, now);
+			if (ChooseSwitch({ .worn = true, .in = true, .rebuilt = true, .still = still, .sinceIn = 10s }) != Switch::kNone) {
+				break;
+			}
+			walked += step;
+			REQUIRE(walked < 10s);
+		}
+		CHECK(walked >= ArmorFrames::STILL_LIMIT - step);
+		CHECK(walked <= ArmorFrames::STILL_LIMIT + step);
+	}
+}
+
+TEST("armor frames: still legs count only while the friend walks on their own legs, and only when we can see the stand-in")
+{
+	using ArmorFrames::InSight;
+	using ArmorFrames::Walks;
+	// Their own moveMode: walking 0x66, running 0xA6, sprinting 0x1A6, standing 0.
+	CHECK(Walks(0x66, Protocol::kNone, 92.0f));
+	CHECK(Walks(0xA6, Protocol::kRunning, 373.0f));
+	CHECK(Walks(0x1A6, Protocol::kRunning, 500.0f));
+	CHECK(!Walks(0x00, Protocol::kNone, 0.0f));
+	// Carried by a lift or a vehicle: covering ground, legs still, none of the bits.
+	CHECK(!Walks(0x00, Protocol::kNone, 300.0f));
+	// Off the ground: no stride either.
+	CHECK(!Walks(0x66, Protocol::kInAir, 300.0f));
+	CHECK(!Walks(0xA6, static_cast<std::uint8_t>(Protocol::kInAir | Protocol::kJumping), 373.0f));
+	// Turning on the spot, or all but standing: the graph is not told to move.
+	CHECK(!Walks(0x66, Protocol::kNone, 10.0f));
+
+	// Our heading 0 looks along +y.
+	CHECK(InSight(0.0f, 1000.0f, 0.0f));
+	CHECK(InSight(500.0f, 1000.0f, 0.0f));   // some 27 degrees off
+	CHECK(!InSight(1000.0f, 100.0f, 0.0f));  // off to the side
+	CHECK(!InSight(0.0f, -1000.0f, 0.0f));   // behind us
+	CHECK(InSight(0.0f, -100.0f, 0.0f));     // right behind us, but this near
+	CHECK(!InSight(0.0f, 3500.0f, 0.0f));    // too far
+	// Facing east (a quarter turn clockwise), one to the east is ahead.
+	CHECK(InSight(1000.0f, 0.0f, 1.5708f));
+	CHECK(!InSight(-1000.0f, 0.0f, 1.5708f));
+}

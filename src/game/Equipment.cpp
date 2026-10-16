@@ -36,6 +36,8 @@ namespace Equipment
 		// bones, Pelvis_Armor, Helmet_Armor, Tank_Armor and the rest, are the power armor skeleton's alone; the human one
 		// only has P-Armor connect points, which are no nodes).
 		constexpr const char* POWER_ARMOR_BONE = "Pelvis_Armor";
+		// A leg bone both skeletons have (Fallout 4's own bone names; the power armor one adds its armor bones to them).
+		constexpr const char* LEG_BONE = "LLeg_Thigh";
 
 		RE::BGSKeyword* FrameKeyword()
 		{
@@ -529,6 +531,23 @@ namespace Equipment
 		}
 		static const RE::BSFixedString bone{ POWER_ARMOR_BONE };
 		return root->GetObjectByName(bone) != nullptr;
+	}
+
+	bool LegRotation(RE::Actor* a_actor, float (&a_out)[9])
+	{
+		const auto root = a_actor ? a_actor->Get3D() : nullptr;
+		static const RE::BSFixedString bone{ LEG_BONE };
+		const auto leg = root ? root->GetObjectByName(bone) : nullptr;
+		if (!leg) {
+			return false;
+		}
+		const auto& rotate = leg->local.rotate;
+		for (int row = 0; row < 3; ++row) {
+			a_out[row * 3] = rotate.entry[row].x;
+			a_out[row * 3 + 1] = rotate.entry[row].y;
+			a_out[row * 3 + 2] = rotate.entry[row].z;
+		}
+		return true;
 	}
 
 	void ReleasePowerArmorFrame(RE::TESObjectREFR* a_frame)
