@@ -24,6 +24,7 @@ namespace
 	constexpr std::uint32_t MQ206 = 0x000B1752;  // Molecular Level: 500 takes the controls, 1000 is the teleporter, 1200 gives them back
 	constexpr std::uint32_t LONG = 0x0001ED88;   // a side quest given hundreds of stages, none of which does anything to the player
 	constexpr std::uint32_t V81 = 0x000B8464;    // Vault 81 (V81_00_Intro): the intercom talk's stages show no objective; 55 opens the vault door
+	constexpr std::uint32_t DC_GATE = 0x000190BC;  // DialogueDiamondCityEntrance: type 0, no objectives; 32, 40 and 100 open Diamond City's gate
 
 	constexpr const char* SIDE_ACHIEVEMENT = "the side quest's achievement";
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
@@ -142,6 +143,19 @@ namespace
 		quest.quiet = { 10, 15, 20, 30, 40, 50, 51 };
 		quest.showsLater = { 55 };
 		quest.awards = { { 55, VAULT_DOOR_OPENS } };
+		return quest;
+	}
+
+	// Diamond City's entrance scene, before anyone has come to the gate: Piper argues with Danny Sullivan
+	// over the intercom, then the gate opens. One of the story's scenes, with no objectives: none of its
+	// stages ever shows one.
+	Quest DiamondCityGate()
+	{
+		Quest quest;
+		quest.stages = { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 };
+		quest.quiet = quest.stages;
+		quest.story = true;
+		quest.scene = true;
 		return quest;
 	}
 
@@ -594,6 +608,62 @@ TEST("sim quests: the host's talk at Vault 81's intercom and the vault door it o
 	CHECK(carol.Quests().Achievements().contains(VAULT_DOOR_OPENS));
 	CHECK((carol.Quests().started == std::vector<std::uint32_t>{ V81 }));
 	CHECK(carol.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: with a shared story, the host's talk at Diamond City's gate opens the gate in the friends' games too, though the scene has no objective to start it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	GiveQuests({ &host, &bob, &carol });
+	host.GiveQuest(DC_GATE, DiamondCityGate());
+	auto atGate = DiamondCityGate();  // Bob stands at the gate too: his game played the argument up to its 30
+	atGate.running = true;
+	atGate.done = { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30 };
+	atGate.current = 30;
+	bob.GiveQuest(DC_GATE, atGate);
+	carol.GiveQuest(DC_GATE, DiamondCityGate());  // Carol is nowhere near
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	REQUIRE(carol.Join());
+	Settled(s);
+
+	Reach(host, DC_GATE, { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30 });
+	s.PlayFor(3s);
+	Reach(host, DC_GATE, { 32, 40, 50, 52, 55, 90, 95, 100, 400 });  // the gate opens
+	s.PlayFor(15s);
+
+	CHECK(host.Quests().reported == 19);
+	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	CHECK(bob.Quests().started.empty());  // his game was running the scene already
+	CHECK(bob.Quests().WaitingCount() == 0);
+	CHECK((Order(carol, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	CHECK((carol.Quests().started == std::vector<std::uint32_t>{ DC_GATE }));
+	CHECK(carol.Quests().WaitingCount() == 0);
+	CHECK(bob.Quests().reported == 0);  // nothing set from the host's game goes back to it
+	CHECK(carol.Quests().reported == 0);
+}
+
+TEST("sim quests: with a shared story, a friend who joins after the host opened Diamond City's gate is caught up and their gate opens")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	auto opened = DiamondCityGate();  // the host went through the gate before hosting; the scene stopped
+	opened.done = opened.stages;
+	opened.current = 400;
+	host.GiveQuest(DC_GATE, opened);
+	bob.GiveQuest(DC_GATE, DiamondCityGate());
+
+	REQUIRE(host.Join());
+	s.PlayFor(8s);
+	CHECK(host.Quests().baselined == 19);
+	REQUIRE(bob.Join());
+	s.PlayFor(20s);
+	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	CHECK(bob.Quests().WaitingCount() == 0);
 }
 
 TEST("sim quests: what your game did in a quest just before you started it reaches your friends, and what it did in the background long before doesn't")

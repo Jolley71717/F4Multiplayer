@@ -50,6 +50,9 @@ namespace Sim
 		std::set<std::uint16_t> stages;           // the stages it has
 		bool                    running = false;
 		bool                    started = false;  // an objective has been shown (QuestSync::PlayerStarted)
+		// One of the story's scenes (QuestSync's STORY_SCENES): it has no objectives, so it counts as
+		// started once it is running or has stages done (QuestSync's SessionStarted).
+		bool                    scene = false;
 		// Stages whose scripts show none of its objectives (a stage set starts the quest, but shows the
 		// first objective only if its script does), and those whose scripts show it a moment after the
 		// stage reads done (the game runs a stage's script a moment after setting it).
@@ -221,7 +224,7 @@ namespace Sim
 			if (a_hosting && a_inSession && report && !opening && !baselineQueued) {
 				baselineQueued = true;
 				for (const auto& [id, quest] : quests) {
-					if (Shared(quest) && (quest.started || quest.completed)) {
+					if (Shared(quest) && (Started(quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
 							baseline.push_back({ id, stage, quest.story });
 						}
@@ -248,7 +251,7 @@ namespace Sim
 				if ((fresh.empty() && !unstarted.Has(id)) || !report || reaction || (quest.story && a_inSession && !story) || opening) {
 					continue;
 				}
-				if (!quest.started && !startedHere.contains(id)) {
+				if (!Started(quest) && !startedHere.contains(id)) {
 					unstarted.Add(id, fresh, now);
 					continue;
 				}
@@ -391,6 +394,9 @@ namespace Sim
 
 		bool Shared(const Quest& a_quest) const { return !a_quest.story || story; }
 
+		// QuestSync's SessionStarted: an objective shown, or a story scene running or with stages done.
+		static bool Started(const Quest& a_quest) { return a_quest.started || (a_quest.scene && (a_quest.running || !a_quest.done.empty())); }
+
 		bool Unlocking(std::uint32_t a_quest) const { return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest); }
 
 		StageLog::Quest StateOf(std::uint32_t a_id)
@@ -404,7 +410,7 @@ namespace Sim
 			here.inWorld = !loading;
 			here.opening = opening;
 			here.running = quest.running;
-			here.started = quest.started;
+			here.started = Started(quest);
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
 			here.ranBefore = !quest.running && (quest.completed || quest.current > 0 || !quest.done.empty());
@@ -464,7 +470,7 @@ namespace Sim
 		{
 			const auto  local = a_id & 0x00FFFFFF;
 			const auto& quest = quests.at(a_id);
-			const bool  starting = !quest.running || (!quest.started && !startedHere.contains(a_id));
+			const bool  starting = !quest.running || (!Started(quest) && !startedHere.contains(a_id));
 			const auto  startRule = quest.running ? nullptr : StageRules::Find(StageRules::File::kFallout4, local, 0);
 			const auto  judged = StageRules::Starting(startRule, StageRules::Find(StageRules::File::kFallout4, local, a_stage));
 			const auto  rule = judged ? &*judged : nullptr;

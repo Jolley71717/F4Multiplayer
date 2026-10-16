@@ -47,10 +47,34 @@ namespace QuestSync
 			return a_quest->data.questType == 0 && std::ranges::find(STORY_FINALES, a_quest->GetFormID()) != STORY_FINALES.end();
 		}
 
-		// Quests whose progress is watched here: the shared types and the factions' finales.
+		// Scenes on the story's way that the game files under no type (0) and that have no objectives, whose
+		// stages open the way on: without them a friend's door stays shut where the host's opened. Shared with
+		// the rest of the story when the host shares it. With no objective ever shown, such a quest counts as
+		// started once it is running or has stages done (SessionStarted), not once an objective is shown.
+		// Fallout4.esm: DialogueDiamondCityEntrance "Outside Entrance and Inside Entrance Dialogue" (Piper and
+		// Danny Sullivan at the intercom; its 32, 40 and 100 open Diamond City's gate and end the scene).
+		constexpr std::array<std::uint32_t, 1> STORY_SCENES{ 0x000190BC };
+
+		bool IsStoryScene(const RE::TESQuest* a_quest)
+		{
+			return a_quest->data.questType == 0 && std::ranges::find(STORY_SCENES, a_quest->GetFormID()) != STORY_SCENES.end();
+		}
+
+		// Quests whose progress is watched here: the shared types, the factions' finales and the story's scenes.
 		bool Watched(const RE::TESQuest* a_quest)
 		{
-			return IsSharedType(a_quest->data.questType) || IsFinale(a_quest);
+			return IsSharedType(a_quest->data.questType) || IsFinale(a_quest) || IsStoryScene(a_quest);
+		}
+
+		// Whether the player has started the quest here, as reporting, setting friends' stages and the
+		// host's baseline read it: an objective shown (PlayerStarted), or for a story scene, which has none,
+		// running or with stages done.
+		bool SessionStarted(const RE::TESQuest* a_quest)
+		{
+			if (PlayerStarted(a_quest)) {
+				return true;
+			}
+			return IsStoryScene(a_quest) && ((a_quest->data.flags & QUEST_RUNNING) || !QuestStageLayout::Done(a_quest).empty());
 		}
 
 		// A quest that completes this soon after a stage from another player was completed by them.
@@ -224,13 +248,13 @@ namespace QuestSync
 			return dx * dx + dy * dy + dz * dz <= NEAR_FRIEND * NEAR_FRIEND;
 		}
 
-		// The main story and faction quests, their finales too.
+		// The main story and faction quests, their finales and the story's scenes too.
 		bool IsStory(const RE::TESQuest* a_quest)
 		{
-			return IsFinale(a_quest) || Story::IsStoryType(a_quest->data.questType);
+			return IsFinale(a_quest) || IsStoryScene(a_quest) || Story::IsStoryType(a_quest->data.questType);
 		}
 
-		// Quests a session can share: the shared types and the factions' finales of the game's own files.
+		// Quests a session can share: the shared types, the factions' finales and the story's scenes of the game's own files.
 		// Quests from other mods are never shared (see Official.h).
 		bool Shareable(const RE::TESQuest* a_quest)
 		{
@@ -307,7 +331,7 @@ namespace QuestSync
 			here.inWorld = WorldSync::InWorld();
 			here.opening = Story::InOpening();
 			here.running = (quest->data.flags & QUEST_RUNNING) != 0;
-			here.started = PlayerStarted(quest);
+			here.started = SessionStarted(quest);
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
 			here.ranBefore = !here.running && RanBefore(quest);
@@ -411,7 +435,7 @@ namespace QuestSync
 			const auto  local = a_quest & 0x00FFFFFF;
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
-			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!PlayerStarted(quest) && !startedHere.contains(a_quest));
+			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest));
 			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
 			const auto  judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			const auto  rule = judged ? &*judged : nullptr;
@@ -472,7 +496,7 @@ namespace QuestSync
 			}
 			if (waited.erase(a_quest) > 0) {
 				++caughtUp;
-				NoteCaughtUp(name, a_now);
+				NoteCaughtUp(IsStoryScene(quest) ? nullptr : name, a_now);  // a scene's name is the editor's, not one the player knows
 			}
 			Achievements::AfterStageSet(a_quest, a_stage);
 			return StageLog::Set::kSet;
@@ -603,7 +627,7 @@ namespace QuestSync
 				if (!quest || !Shareable(quest) || (quest->GetFormID() >> 24) == 0xFF || (IsStory(quest) && !Story::Shared())) {
 					continue;
 				}
-				if (!PlayerStarted(quest) && !(quest->data.flags & QUEST_COMPLETED)) {
+				if (!SessionStarted(quest) && !(quest->data.flags & QUEST_COMPLETED)) {
 					continue;  // run in the background, not the player's progress
 				}
 				const auto done = QuestStageLayout::Done(quest);
@@ -783,7 +807,7 @@ namespace QuestSync
 				const auto remote = remoteStageAt.find(id);
 				const bool byOther = remote != remoteStageAt.end() && now - remote->second < REMOTE_COMPLETION_WINDOW;
 				const char* name = quest->GetFullName();
-				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF) {
+				if (done && report && !byOther && name && *name && (id >> 24) != 0xFF && !IsStoryScene(quest)) {
 					outgoing.Add(Protocol::Encode(Protocol::QuestDone{ 0, id }, Protocol::MessageType::kReportQuestDone));
 					++completed;
 				}
@@ -823,7 +847,7 @@ namespace QuestSync
 			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || Story::InOpening()) {
 				continue;
 			}
-			if (!PlayerStarted(quest) && !startedHere.contains(id)) {
+			if (!SessionStarted(quest) && !startedHere.contains(id)) {
 				unstarted.Add(id, fresh, now);
 				continue;
 			}

@@ -6,3 +6,4 @@ Coming from 0.8.6:
 - Enemies that appear mid-game (random encounters, ambushes) can no longer be worn down in one game by something the other game never saw, which could leave one dead for you while it kept fighting your friend.
 - A friend's thrown grenade no longer leaves a grenade warning stuck on your screen.
 - A grenade goes off once in your friends' games: throwing grenades a few seconds apart could set an earlier one off a second time for them, and a grenade could go missing for them after one of theirs went off near you.
+- Diamond City's gate no longer stays shut for friends: with a shared story, when one player hears Piper argue with Danny Sullivan over the intercom and the gate opens, it opens in everyone's game, and a friend who joins later finds it open.
