@@ -175,6 +175,26 @@ namespace Dialogue
 		}
 	}
 
+	std::string ResetForTest(bool a_overScene)
+	{
+		const auto topics = TopicManager();
+		if (!topics) {
+			return "none";
+		}
+		const auto state = [&] {
+			const auto speaker = topics->speaker.get();
+			return std::format("menuOpen={} overSceneActor={} speaker={:08X} inDialogue={}", topics->menuOpen, topics->overSceneActor,
+				speaker ? speaker->GetFormID() : 0, InDialogue());
+		};
+		const auto before = state();
+		ResetMenu(topics);
+		if (a_overScene) {
+			topics->overSceneActor = false;
+		}
+		REX::INFO("Dialogue: reset for a test{}: before {}, after {}", a_overScene ? " (overSceneActor cleared too)" : "", before, state());
+		return "before " + before + "; after " + state();
+	}
+
 	std::string Describe()
 	{
 		const auto topics = TopicManager();

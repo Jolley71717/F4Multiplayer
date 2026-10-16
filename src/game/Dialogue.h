@@ -17,5 +17,10 @@ namespace Dialogue
 	// shares. Call every frame; out of dialogue it only checks that.
 	void Frame();
 
+	// Test: runs the reset every conversation ends with (lets go of its input layer, clears menuOpen), and with
+	// a_overScene also clears overSceneActor, which a conversation ended out of turn can leave set. Returns
+	// the fields before and after.
+	std::string ResetForTest(bool a_overScene);
+
 	[[nodiscard]] std::string Describe();
 }
