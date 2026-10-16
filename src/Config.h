@@ -28,9 +28,9 @@ namespace Config
 		// When hosting: players can hurt each other.
 		bool friendlyFire = false;
 
-		// When hosting: the main story and faction quests are shared too ("shared"), or each
-		// player plays their own ("own", the default; side quests are shared either way).
-		bool sharedStory = false;
+		// When hosting: the main story and faction quests are shared too ("shared", the default), or each
+		// player plays their own ("own"; side quests are shared either way).
+		bool sharedStory = true;
 
 		// When hosting: plugins that may differ between players (comma-separated file names).
 		std::vector<std::string> ignoredPlugins;

@@ -121,24 +121,25 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   with the friend who did it, and you never pay a friend's bribe or payment (caps, a Stimpak) out of
   your own pockets. Catching up waits while you're in a fight. Turn this off with
   `bSyncQuests = false` if a quest misbehaves.
-- **The story:** everyone plays the main story and the faction quests in their own game, and gets
-  a notice when a friend finishes a story quest. Play it side by side: kills count for everyone, and
-  each of you talks to the characters yourself. A story character that a friend's game says died
-  where they were nowhere near, or that a friend's game switches on, stays as your own story has it.
-  So does one you both saw die, once you load a save from before it died: your save decides. The
-  host can set `sStory = shared` to move everyone's story along together instead: any player's
-  progress moves the others forward, one stage after another, so each stage runs in every game as it
-  did in the first, achievements included (the game only awards them without mods), and goes into
-  each player's save when they save. Scenes can play out where you aren't, and a friend's faction
-  choices become yours. A story step that has to move you to go on (the Institute's teleporter)
-  comes after a 10-second warning, and not during a fight; once it has begun it finishes even if the
-  connection drops, so you are never left without your controls. Nothing else of a session's story
-  reaches your game once you have left it. With the default `own` story, a side quest never moves
-  your story on (Sanctuary doesn't make you a Minuteman because a friend joined them).
-- **Locked story areas:** doors that a main-story stage opens (Fort Hagen's elevator, the Institute
-  relay, Mass Fusion's reactor) open for each player at their own stage with the default `own`
-  story. A friend who is further along walks through; you are refused until you get there yourself,
-  or the host sets `sStory = shared`. Side-quest doors (the Museum of Freedom, Vault 81, Cabot House)
+- **The story:** the main story and the faction quests move along together. When any player moves
+  the story forward, everyone else is fast-forwarded to the same point, one stage after another, so
+  each stage runs in every game as it did in the first, achievements included (the game only awards
+  them without mods), and goes into each player's save when they save. Scenes can play out where you
+  aren't, and a friend's faction choices become yours. A story step that has to move you to go on
+  (the Institute's teleporter) comes after a 10-second warning, and not during a fight; once it has
+  begun it finishes even if the connection drops, so you are never left without your controls.
+  Nothing else of a session's story reaches your game once you have left it.
+- **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
+  the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
+  it side by side: kills count for everyone, and each of you talks to the characters yourself. A
+  story character that a friend's game says died where they were nowhere near, or that a friend's
+  game switches on, stays as your own story has it. So does one you both saw die, once you load a
+  save from before it died: your save decides. A side quest then never moves your story on
+  (Sanctuary doesn't make you a Minuteman because a friend joined them).
+- **Locked story areas:** with `sStory = own`, doors that a main-story stage opens (Fort Hagen's
+  elevator, the Institute relay, Mass Fusion's reactor) open for each player at their own stage. A
+  friend who is further along walks through; you are refused until you get there yourself. With the
+  default shared story you all reach those stages together. Side-quest doors (the Museum of Freedom, Vault 81, Cabot House)
   open for everyone once each has the quest, since side quests are shared. Doors you unlock with a
   key, a bobby pin or a terminal open for your friends too.
 - **Factions with separate stories:** your NPCs are shared, so if one of you is at war with a
@@ -152,7 +153,7 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 For the closest shared world, start from similar saves (for example, everyone at the same point in
 the story). Things that were already different between your saves before the session stay different.
 
-With `sStory = shared`, make big story choices together. Quest progress only moves forward, so if
+With the shared story (the default), make big story choices together. Quest progress only moves forward, so if
 one player sides with one faction and another player with a rival one, both games get both results.
 If an earlier version left your main story stuck after Unlikely Valentine (Getting a Clue never
 started), join a shared-story session once: it starts Getting a Clue for you. On your own, open the
@@ -180,7 +181,7 @@ version's session afresh.
 
 ## Dedicated server (optional)
 
-`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire]` runs a server
+`F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
 

@@ -1,4 +1,4 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH]
 //                                              [--max-world-entries N] [--max-share N] [--loopback-only]
 // --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
 // --max-share: how much one player other than the host may add to each table this run (kills, pickups,
@@ -44,6 +44,7 @@ namespace
 int main(int argc, char* argv[])
 {
 	Server::Options options;
+	options.sharedStory = true;  // as the game's own hosting (sStory = shared); --own-story for each player's own
 	options.port = Protocol::DEFAULT_PORT;
 
 	for (int i = 1; i < argc; ++i) {
@@ -57,7 +58,9 @@ int main(int argc, char* argv[])
 			options.password = argv[++i];
 		} else if (arg == "--friendly-fire") {
 			options.friendlyFire = true;
-		} else if (arg == "--shared-story") {
+		} else if (arg == "--own-story") {
+			options.sharedStory = false;
+		} else if (arg == "--shared-story") {  // the default since 0.8.7, still accepted
 			options.sharedStory = true;
 		} else if (arg == "--session-file" && hasValue) {
 			options.sessionFile = argv[++i];
@@ -70,7 +73,7 @@ int main(int argc, char* argv[])
 			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
 			++i;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--shared-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
 			return 2;
 		}
 	}
