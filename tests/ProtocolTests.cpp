@@ -585,10 +585,20 @@ TEST("protocol: Line round trips for the player and for an NPC")
 	for (const auto type : { MT::kReportLine, MT::kLineSpoken }) {
 		const auto npc = DecodeLine(Encode(Line{ 2, REF_A, "Hey, you got a minute?" }, type));
 		REQUIRE(npc);
-		CHECK(npc->topic == 0);
-		const auto voiced = DecodeLine(Encode(Line{ 2, REF_A, "Hey, you got a minute?", 0x0005E686 }, type));
+		CHECK(npc->info == 0);
+		CHECK(npc->response == 0);
+		CHECK(npc->voiceType == 0);
+		const auto voiced = DecodeLine(Encode(Line{ 2, REF_A, "Hey, you got a minute?", 0x0005E686, 2, 0x0002F7A1 }, type));
 		REQUIRE(voiced);
-		CHECK(voiced->topic == 0x0005E686);
+		CHECK(voiced->info == 0x0005E686);
+		CHECK(voiced->response == 2);
+		CHECK(voiced->voiceType == 0x0002F7A1);
+		CHECK(voiced->text == "Hey, you got a minute?");
+		const auto own = DecodeLine(Encode(Line{ 2, 0, "Hi", 0x000A1B2C, 255 }, type));  // a player's own line, its voice type left to the hearer
+		REQUIRE(own);
+		CHECK(own->info == 0x000A1B2C);
+		CHECK(own->response == 255);
+		CHECK(own->voiceType == 0);
 		CHECK(npc->playerId == 2);
 		CHECK(npc->speaker == REF_A);
 		CHECK(npc->text == "Hey, you got a minute?");
@@ -790,6 +800,25 @@ TEST("protocol: Line rejects empty text and speakers that aren't shared")
 	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "" }, MT::kLineSpoken)));
 	CHECK(!DecodeLine(Encode(Line{ 1, PLAYER_REF_ID, "hi" }, MT::kReportLine)));
 	CHECK(!DecodeLine(Encode(Line{ 1, RUNTIME_REF, "hi" }, MT::kReportLine)));
+}
+
+TEST("protocol: Line names its recording whole or not at all")
+{
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", 0x0002A2B3, 0 }, MT::kReportLine)));                 // an info with no response
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", 0, 1 }, MT::kReportLine)));                          // a response with no info
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", 0, 0, 0x0002F7A1 }, MT::kLineSpoken)));             // a voice with no line
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", RUNTIME_REF, 1 }, MT::kReportLine)));                // a line made at runtime
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", 0x0002A2B3, 1, RUNTIME_REF }, MT::kLineSpoken)));    // a voice made at runtime
+	CHECK(!DecodeLine(Encode(Line{ 1, REF_A, "hi", PLAYER_REF_ID, 1 }, MT::kReportLine)));
+	CHECK(DecodeLine(Encode(Line{ 1, REF_A, "hi", 0x0002A2B3, 1, 0x0002F7A1 }, MT::kLineSpoken)));
+
+	Writer old{ MT::kLineSpoken };  // a line as protocol 30 sent it (the topic and nothing more) is refused
+	old.U32(1);
+	old.U32(REF_A);
+	old.U8(2);
+	old.U8('h'), old.U8('i');
+	old.U32(0x0005E686);
+	CHECK(!DecodeLine(old.Data()));
 }
 
 TEST("protocol: PlayerStatus health over 100 is rejected")

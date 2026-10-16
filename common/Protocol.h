@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 30;
+	inline constexpr std::uint16_t VERSION = 31;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -678,13 +678,17 @@ namespace Protocol
 	};
 
 	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
-	// playerId is ignored client -> server.
+	// playerId is ignored client -> server. info and response name the recorded line (its voice file)
+	// and voiceType the voice it is said in: the hearer plays that file at its copy of the speaker. All
+	// three are 0 when the speaker's game couldn't place the line; it is then shown as text only.
 	struct Line
 	{
 		std::uint32_t playerId = 0;
 		std::uint32_t speaker = 0;
 		std::string   text;
-		std::uint32_t topic = 0;  // the dialogue topic the line came from (0 = unknown): the hearer's copy can say it aloud
+		std::uint32_t info = 0;       // the TOPIC_INFO the line is from
+		std::uint8_t  response = 0;   // its response number, 1 and up (the "_1" of the voice file)
+		std::uint32_t voiceType = 0;  // the speaker's voice type (for a player, the male or female player voice)
 	};
 
 	struct Heartbeat
@@ -2192,7 +2196,9 @@ namespace Protocol
 		w.U32(a_msg.playerId);
 		w.U32(a_msg.speaker);
 		w.Str(a_msg.text, MAX_LINE_LENGTH);
-		w.U32(a_msg.topic);
+		w.U32(a_msg.info);
+		w.U8(a_msg.response);
+		w.U32(a_msg.voiceType);
 		return w.Data();
 	}
 
@@ -2204,8 +2210,15 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.speaker = r.U32();
 		msg.text = r.Str(MAX_LINE_LENGTH);
-		msg.topic = r.U32();
+		msg.info = r.U32();
+		msg.response = r.U8();
+		msg.voiceType = r.U32();
 		if (!r.Ok() || !r.AtEnd() || msg.text.empty() || (msg.speaker != 0 && !IsShareableRef(msg.speaker))) {
+			return std::nullopt;
+		}
+		// A voiced line names its info and its response together, and a voice type only with them.
+		if ((msg.info == 0) != (msg.response == 0) || (msg.info != 0 && !IsShareableRef(msg.info)) ||
+			(msg.voiceType != 0 && (msg.info == 0 || !IsShareableRef(msg.voiceType)))) {
 			return std::nullopt;
 		}
 		return msg;

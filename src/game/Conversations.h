@@ -19,4 +19,11 @@ namespace Conversations
 	void Reset();
 
 	[[nodiscard]] std::string Describe();
+
+	// For the dev channel: the recorded line an actor is saying as we would report it (info, response,
+	// voice type, the engine's own voice file for it and the one we resolve), and a recording played
+	// at an actor the way a friend's line is, with the audio manager's flags and priority to try.
+	[[nodiscard]] std::string DescribeLine(RE::Actor* a_actor);
+	[[nodiscard]] std::string PlayLine(RE::Actor* a_actor, std::uint32_t a_info, std::uint8_t a_response, std::uint32_t a_voiceType, std::uint32_t a_flags,
+		std::uint8_t a_priority);
 }

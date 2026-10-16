@@ -7,6 +7,7 @@
 
 #include <random>
 
+#include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/EnemyList.h"
 #include "game/Equipment.h"
@@ -2011,6 +2012,35 @@ namespace DevCommands
 				high->lastGreeting ? high->lastGreeting->GetFormID() : 0, high->lastGreeting && high->lastGreeting->parentTopic ? high->lastGreeting->parentTopic->GetFormID() : 0, high->soundHandle[0].soundID);
 		}
 
+		// voiceline <actorHex> [infoHex response voiceTypeHex [flagsHex [priority]]]: the recorded line the
+		// actor is saying as Conversations reports it, or that recording played at the actor the way a
+		// friend's line is (a plain 3D sound; flags and priority for GetSoundHandleByFile, default 10 and 128).
+		std::string VoiceLine(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto id = args.empty() ? std::nullopt : ParseHex(args[0]);
+			const auto actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			if (!actor || (args.size() != 1 && args.size() < 4)) {
+				return "error: usage: voiceline <actorHex> [infoHex response voiceTypeHex [flagsHex [priority]]]";
+			}
+			if (args.size() == 1) {
+				return ::Conversations::DescribeLine(actor);
+			}
+			const auto info = ParseHex(args[1]);
+			int        response = 0;
+			std::from_chars(args[2].data(), args[2].data() + args[2].size(), response);
+			const auto voiceType = ParseHex(args[3]);
+			const auto flags = args.size() > 4 ? ParseHex(args[4]).value_or(0x10) : 0x10;
+			int        priority = 128;
+			if (args.size() > 5) {
+				std::from_chars(args[5].data(), args[5].data() + args[5].size(), priority);
+			}
+			if (!info || !voiceType || response < 1 || response > 255 || priority < 0 || priority > 255) {
+				return "error: usage: voiceline <actorHex> [infoHex response voiceTypeHex [flagsHex [priority]]]";
+			}
+			return ::Conversations::PlayLine(actor, *info, static_cast<std::uint8_t>(response), *voiceType, flags, static_cast<std::uint8_t>(priority));
+		}
+
 		// god on|off: sets god mode (the console's tgm only toggles, so a script that ran it twice left
 		// the player mortal and a test grenade killed them).
 		std::string God(std::string_view a_args)
@@ -2583,6 +2613,7 @@ namespace DevCommands
 			Entry{ "topics", Topics },
 			Entry{ "say", Say },
 			Entry{ "npcvoice", NpcVoice },
+			Entry{ "voiceline", VoiceLine },
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
 			Entry{ "god", God },

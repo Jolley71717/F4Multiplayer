@@ -61,12 +61,11 @@ namespace Config
 		// When hosting: the shared world is saved to disk and carried on next time (same load order).
 		bool saveSession = true;
 
-		// Experimental (bExperimentalVoiceLines): a friend's NPC lines are said aloud by your copy of the
-		// NPC (through the dialogue topic). Off: you see the line as text. It has crashed a mirrored NPC's
-		// game, and a line said as you start talking to that NPC can leave you held in the conversation
-		// (no weapons, Pip-Boy or workshop) with nothing to end it, so it is off by default. The old
-		// bVoiceLines key, on in the ini from 0.6.3 to 0.8.6-rc2, is ignored: an update leaves it off.
-		bool voiceLines = false;
+		// bSpokenLines: the lines a friend's NPCs and a friend's own character say are heard, in the
+		// speaker's recorded voice, from your copy of the speaker (a plain sound there, never the
+		// dialogue system). Off: you see them as text only. The old keys for the console's Say
+		// (bVoiceLines, bExperimentalVoiceLines, both off by now in most ini files) are not read.
+		bool spokenLines = true;
 
 		// Share of a friend's kill XP you get (0 = off, 1 = all of it).
 		float xpShare = 0.5f;
