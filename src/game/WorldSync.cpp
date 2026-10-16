@@ -375,6 +375,7 @@ namespace WorldSync
 				}
 				if (!IsShareableRef(id)) {
 					if (actor && Protocol::IsSpawnRef(id)) {
+						CopyWatch::NoteDeath(id, killer ? killer->GetFormID() : 0);  // our copy of a friend's spawn, maybe
 						std::scoped_lock l{ inboxLock };
 						if (runtimeDeathInbox.size() < MAX_RUNTIME_DEATHS) {
 							runtimeDeathInbox.emplace_back(id, byPlayer);

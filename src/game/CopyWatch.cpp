@@ -3,6 +3,7 @@
 #include "game/CopyHealth.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/Spawns.h"
 
 #include "Protocol.h"
 
@@ -40,7 +41,9 @@ namespace CopyWatch
 
 		constexpr std::size_t MAX_INBOX = 512;
 		constexpr auto        LAST_HIT_KEPT = 30s;
-		constexpr auto        COPY_SEEN_KEPT = 2s;
+		// The death event comes when the dying is done, 3 s after the killing blow in the 2026-10-15 test (a copy is last seen
+		// alive at the blow): 2 s took every copy's death for a takeover's.
+		constexpr auto        COPY_SEEN_KEPT = 5s;
 
 		std::mutex         inboxLock;
 		std::vector<Hit>   hitInbox;
@@ -76,7 +79,22 @@ namespace CopyWatch
 			return info ? static_cast<RE::ActorValueOwner*>(a_actor)->GetActorValue(*info) : -1.0f;
 		}
 
-		// The player whose game runs the NPC, when it is not ours (0 otherwise, or out of a session).
+		// The id the session knows one of our game's NPCs by (0: none): a plugin's reference is the same in every game, and
+		// one made at runtime goes by its spawn id (Spawns: our own shared one, or our copy of a friend's). Our copy of a
+		// friend's spawn is a copy like any other: a FF000F8B of the host's, its copy of the VM's raider, lay dead in the
+		// host's game while the raider fought on in the VM's, and nothing here had watched it.
+		std::uint32_t WireOf(std::uint32_t a_local)
+		{
+			return Protocol::IsShareableRef(a_local) ? a_local : Protocol::IsSpawnRef(a_local) ? Spawns::IdOf(a_local) : 0;
+		}
+
+		// " (spawn X)" when our NPC goes by a spawn id, for the logs.
+		std::string SpawnNote(std::uint32_t a_local, std::uint32_t a_wire)
+		{
+			return a_wire != 0 && a_wire != a_local ? std::format(" (spawn {:08X})", a_wire) : std::string{};
+		}
+
+		// The player whose game runs the NPC (by its session id: WireOf), when it is not ours (0 otherwise, or out of a session).
 		std::uint32_t OtherOwner(std::uint32_t a_id)
 		{
 			const auto local = NpcSync::LocalPlayer();
@@ -107,10 +125,11 @@ namespace CopyWatch
 				return "a friend's stand-in";
 			}
 			const auto companion = NpcSync::IsOurCompanion(actor) ? ", our companion" : "";
-			if (!Protocol::IsShareableRef(a_id)) {
+			const auto wire = WireOf(a_id);
+			if (wire == 0) {
 				return std::format("an NPC of our game's own{}", companion);
 			}
-			const auto owner = NpcSync::Owner(a_id);
+			const auto owner = NpcSync::Owner(wire);
 			if (owner == 0) {
 				return std::format("an NPC nobody runs{}", companion);
 			}
@@ -187,7 +206,8 @@ namespace CopyWatch
 	{
 		const auto target = a_event.target.get();
 		const auto actor = target ? target->As<RE::Actor>() : nullptr;
-		if (!actor || actor->IsPlayerRef() || !Protocol::IsShareableRef(actor->GetFormID())) {
+		// A spawn's id is looked up on the main thread (Frame).
+		if (!actor || actor->IsPlayerRef() || !Protocol::IsActorRef(actor->GetFormID())) {
 			return;
 		}
 		const auto cause = a_event.cause.get();
@@ -242,14 +262,19 @@ namespace CopyWatch
 		const auto now = Clock::now();
 		const auto local = NpcSync::LocalPlayer();
 
+		// The book, the last hits and the copies seen go by the session's id (WireOf); the logs name our game's own too.
 		for (const auto& hit : hits) {
-			const auto owner = OtherOwner(hit.target);
+			const auto wire = WireOf(hit.target);
+			if (wire == 0) {
+				continue;  // one of our game's own, never shared: no copy of anyone's
+			}
+			const auto owner = OtherOwner(wire);
 			// Our player's hit on anything, as it may become a copy of ours; another actor's matters only on a copy.
 			const auto hitter = hit.byPlayer ? CopyHealth::Hitter::kOurPlayer :
 			                    owner != 0   ? CopyHealth::Judge(CauseOf(hit.cause), local) :
 			                                   CopyHealth::Hitter::kNotOurs;
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
-				book.OurHit(hit.target, hit.at);
+				book.OurHit(wire, hit.at);
 			}
 			if (owner == 0) {
 				continue;
@@ -259,12 +284,12 @@ namespace CopyWatch
 				++allyHits;
 			}
 			const auto what = Describe(hit, hitter != CopyHealth::Hitter::kNotOurs);
-			lastHits[hit.target] = { what, hit.at };
+			lastHits[wire] = { what, hit.at };
 			if (hitsLogged < 100) {
 				++hitsLogged;
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(hit.target);
-				REX::INFO("CopyWatch: hit on our copy {:08X} (player {}'s) {}; health now {:.1f}, ghost {}", hit.target, owner, what, actor ? HealthOf(actor) : -1.0f,
-					GhostState(actor));
+				REX::INFO("CopyWatch: hit on our copy {:08X}{} (player {}'s) {}; health now {:.1f}, ghost {}", hit.target, SpawnNote(hit.target, wire), owner, what,
+					actor ? HealthOf(actor) : -1.0f, GhostState(actor));
 			}
 		}
 
@@ -273,18 +298,19 @@ namespace CopyWatch
 		const auto                        info = HealthInfo();
 		const auto                        lists = RE::ProcessLists::GetSingleton();
 		if (info && lists) {
-			std::vector<RE::Actor*> copies;
+			std::vector<std::pair<RE::Actor*, std::uint32_t>> copies;
 			for (const auto& handle : lists->highActorHandles) {
 				const auto ptr = handle.get();
 				const auto actor = ptr.get();
-				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || !Protocol::IsShareableRef(actor->GetFormID()) || Puppets::IsPuppet(actor) ||
-					actor->IsDead(false) || !actor->Get3D() || OtherOwner(actor->GetFormID()) == 0) {
+				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || !Protocol::IsActorRef(actor->GetFormID()) || Puppets::IsPuppet(actor) || actor->IsDead(false) ||
+					!actor->Get3D()) {
 					continue;
 				}
-				copies.push_back(actor);
+				if (const auto wire = WireOf(actor->GetFormID()); wire != 0 && OtherOwner(wire) != 0) {
+					copies.emplace_back(actor, wire);
+				}
 			}
-			for (const auto actor : copies) {
-				const auto id = actor->GetFormID();
+			for (const auto& [actor, id] : copies) {
 				seen.insert(id);
 				copiesSeen[id] = now;
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
@@ -300,8 +326,8 @@ namespace CopyWatch
 				healthRestored += give;
 				if (restoresLogged < 60) {
 					++restoresLogged;
-					REX::INFO("CopyWatch: our copy {:08X} (player {}'s) lost {:.1f} health with no hit of ours on it ({:.1f} -> {:.1f}); given back, {:.1f} now. Last hit on it: {}; hazards near:{}",
-						id, NpcSync::Owner(id), give, health + give, health, after, LastHitOn(id, now), HazardsNear(actor));
+					REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) lost {:.1f} health with no hit of ours on it ({:.1f} -> {:.1f}); given back, {:.1f} now. Last hit on it: {}; hazards near:{}",
+						actor->GetFormID(), SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), give, health + give, health, after, LastHitOn(id, now), HazardsNear(actor));
 				}
 			}
 		}
@@ -309,27 +335,29 @@ namespace CopyWatch
 		std::erase_if(lastHits, [&](const auto& a_entry) { return now - a_entry.second.at > LAST_HIT_KEPT; });
 
 		for (const auto& death : deaths) {
-			const auto owner = OtherOwner(death.id);
+			const auto wire = WireOf(death.id);
+			const auto owner = wire != 0 ? OtherOwner(wire) : 0;
 			if (owner == 0) {
 				continue;
 			}
 			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(death.id);
 			const auto killer = RE::TESForm::GetFormByID(death.killer);
 			const auto killedBy = KindOf(death.killer, killer && killer->As<RE::Actor>() && killer->As<RE::Actor>()->IsPlayerRef());
-			if (!copiesSeen.contains(death.id)) {
+			if (!copiesSeen.contains(wire)) {
 				// Not a copy of ours a moment ago: player N's game took it over as it died (ours ran it, or nobody).
 				if (deathsLogged < 40) {
 					++deathsLogged;
-					REX::INFO("CopyWatch: {:08X} died here just as it became player {}'s (no copy of ours a moment before): killer {:08X} ({}); not a copy's death", death.id, owner,
-						death.killer, killedBy);
+					REX::INFO("CopyWatch: {:08X}{} died here just as it became player {}'s (no copy of ours a moment before): killer {:08X} ({}); not a copy's death", death.id,
+						SpawnNote(death.id, wire), owner, death.killer, killedBy);
 				}
 				continue;
 			}
 			++copiesDied;
 			if (deathsLogged < 40) {
 				++deathsLogged;
-				REX::INFO("CopyWatch: our copy {:08X} (player {}'s) died here: killer {:08X} ({}), health {:.1f}, ghost {}. Last hit on it: {}; hazards near:{}", death.id, owner,
-					death.killer, killedBy, actor ? HealthOf(actor) : -1.0f, GhostState(actor), LastHitOn(death.id, now), actor ? HazardsNear(actor) : std::string{ " ?" });
+				REX::INFO("CopyWatch: our copy {:08X}{} (player {}'s) died here: killer {:08X} ({}), health {:.1f}, ghost {}. Last hit on it: {}; hazards near:{}", death.id,
+					SpawnNote(death.id, wire), owner, death.killer, killedBy, actor ? HealthOf(actor) : -1.0f, GhostState(actor), LastHitOn(wire, now),
+					actor ? HazardsNear(actor) : std::string{ " ?" });
 			}
 		}
 		std::erase_if(copiesSeen, [&](const auto& a_entry) { return now - a_entry.second > COPY_SEEN_KEPT; });
