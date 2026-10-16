@@ -8,7 +8,9 @@
 
 #include "Protocol.h"
 
-// A friend in furniture: a chair, a couch, a bench, a stool, a bed or a sleeping bag, a workbench or a station, a terminal.
+// A friend in furniture: a chair, a couch, a bench, a stool, a bed or a sleeping bag. Not a terminal, a workbench or a
+// station: a stand-in snapped into a terminal that our own player then used crashed the game after our next cell change
+// (the engine ran the stand-in's furniture package once it had no AI process), so a friend there is followed, standing.
 // Their status names the furniture (Protocol::Seat), and their stand-in is put in the same one here (RemotePlayers'
 // UpdateSeat, Puppets::Enter). Without it the stand-in followed their position into the furniture and stood on the couch
 // they sat on. Power armor frames are furniture too, but never this: their own path (ArmorFrames.h) switches the stand-in
@@ -59,6 +61,7 @@ namespace StandInSeat
 		bool          furniture = false;   // its base is furniture (FURN; a terminal, TERM, is furniture too)
 		bool          frame = false;       // a power armor frame
 		bool          station = false;     // a power armor station (its workbench type): used in power armor, the frames' business
+		bool          workplace = false;   // a terminal, or a workbench or crafting station (any workbench type): not a seat
 		std::uint32_t ref = 0;
 		std::uint32_t base = 0;
 		float         x = 0, y = 0, z = 0;  // where the furniture stands
@@ -67,7 +70,7 @@ namespace StandInSeat
 	// The seat our status tells, or none.
 	inline std::optional<Protocol::Seat> Tell(const Own& a_own)
 	{
-		if (!InFurniture(a_own.sitState) || a_own.powerArmor || !a_own.found || a_own.actor || !a_own.furniture || a_own.frame || a_own.station) {
+		if (!InFurniture(a_own.sitState) || a_own.powerArmor || !a_own.found || a_own.actor || !a_own.furniture || a_own.frame || a_own.station || a_own.workplace) {
 			return std::nullopt;
 		}
 		// Furniture made in our game (built in a settlement) is another reference, or none, elsewhere: it goes by base and place.
