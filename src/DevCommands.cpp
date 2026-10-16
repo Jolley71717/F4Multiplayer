@@ -2333,6 +2333,20 @@ namespace DevCommands
 			}
 			auto out = std::format("stack={}", ContextStack());
 			if (a_args.empty()) {
+				// The input enable layers (scripts' DisablePlayerControls, a conversation's, the game's own)
+				// in use, by debug name, with each one's user event and other event flags.
+				if (const auto enable = RE::BSInputEnableManager::GetSingleton()) {
+					std::string held;
+					for (std::uint32_t i = 0; i < enable->layers.size(); ++i) {
+						const auto& layer = enable->layers[i];
+						const auto name = i < enable->debugNames.size() ? enable->debugNames[i].c_str() : "";
+						if (!name || !*name) {  // a free slot
+							continue;
+						}
+						held += std::format(" {}'{}'={:X}/{:X}", i, name, layer.inputUserEvents.underlying(), layer.otherInputEvents.underlying());
+					}
+					out += std::format(" layers={}{}", enable->layers.size(), held);
+				}
 				return out;
 			}
 			const auto id = ParseHex(a_args);
