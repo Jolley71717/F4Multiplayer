@@ -180,6 +180,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
 			s.push_back({ "PlayerStatus", Encode(PlayerStatus{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42, true, true, false, false, 0 }, type), D(DecodePlayerStatus) });
 			s.push_back({ "PlayerStatus(armor)", Encode(PlayerStatus{ 3, 0x0001D5E0, 0, 87, 42, false, false, false, true, 0x0017F6E4, REF_A }, type), D(DecodePlayerStatus) });
+			PlayerStatus seated{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42 };
+			seated.seat = Seat{ .ref = REF_B, .base = 0x0004A0F5, .x = 1200.0f, .y = -350.0f, .z = 64.0f };
+			s.push_back({ "PlayerStatus(seat)", Encode(seated, type), D(DecodePlayerStatus) });
 		}
 		for (const auto type : { MT::kReportTime, MT::kWorldTime }) {
 			s.push_back({ "WorldTime", Encode(WorldTime{ 1, 13.5f, 21.75f, 0x3C, 0x0001F2A3 }, type), D(DecodeWorldTime) });

@@ -536,7 +536,7 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U32(3);
 	w.U8(50);
 	w.U16(10);
-	w.U8(0xEE);  // opening set, downed clear, unknown bits set (bit 4, a parked frame, would have its fields follow)
+	w.U8(0xCE);  // opening set, downed clear, unknown bits set (bit 4, a parked frame, and bit 5, a seat, would have their fields follow)
 	w.U32(0);  // no frame
 	w.U32(0);  // no frame reference
 	const auto out = DecodePlayerStatus(w.Data());

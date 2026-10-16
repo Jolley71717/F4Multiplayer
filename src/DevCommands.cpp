@@ -1129,6 +1129,35 @@ namespace DevCommands
 				actor->niFlags.flags, actor->boolFlags.underlying(), actor->moreFlags);
 		}
 
+		// seat <actorHex> <furnitureHex> [snap|activate] | seat <actorHex> stand|hold|free: sends a puppet (a stand-in, or an
+		// actor `puppet` made one) into furniture the way a friend's stand-in is sent (Puppets::Enter), stands it up
+		// (Puppets::StandUp), or holds or frees it by hand; then what the puppet's furniture state is. A friend's own stand-in
+		// is also driven by their status each frame, so try it on another puppet.
+		std::string Seat(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor || !Puppets::IsRegistered(actor) || args.size() < 2) {
+				return "error: usage: seat <puppetHex> <furnitureHex> [snap|activate] | seat <puppetHex> stand|hold|free";
+			}
+			if (args[1] == "stand") {
+				Puppets::StandUp(actor);
+			} else if (args[1] == "hold" || args[1] == "free") {
+				Puppets::Hold(actor, args[1] == "hold");
+			} else {
+				const auto furniture = LookupRef(args[1]);
+				if (!furniture) {
+					return "error: no such furniture reference";
+				}
+				const auto way = args.size() > 2 && args[2] == "activate" ? Puppets::Entry::kActivate : Puppets::Entry::kSnap;
+				if (!Puppets::Enter(actor, furniture, way)) {
+					return "error: could not ask (no script object, or activation is only for plain furniture)";
+				}
+			}
+			return Puppets::Describe(actor);
+		}
+
 		// papyrus <refHex> <Script> <Function> [bool...]: calls a Papyrus method with bool args.
 		std::string CallPapyrus(std::string_view a_args)
 		{
@@ -2572,6 +2601,7 @@ namespace DevCommands
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
+			Entry{ "seat", Seat },
 			Entry{ "papyrus", CallPapyrus },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },

@@ -96,6 +96,22 @@ namespace Papyrus
 		return detail::DispatchStaticCall(vm.get(), RE::BSFixedString{ a_script }, RE::BSFixedString{ a_function }, args, a_callback);
 	}
 
+	// Calls a method on a script object (from BoundObject) with the arguments a_args fills in: script objects among them,
+	// which the VM's own packing of a form would make through the wrong slot (see above). False if it could not be queued.
+	inline bool CallOn(const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, std::string_view a_function, const std::function<void(RE::BSScrapArray<RE::BSScript::Variable>&)>& a_args)
+	{
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		if (!vm || !a_self) {
+			return false;
+		}
+		const detail::ArgsFn args{ [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+			a_args(a_out);
+			return true;
+		} };
+		return detail::DispatchMethodCall(vm.get(), a_self, RE::BSFixedString{ a_function }, args);
+	}
+
 	// T must be the object's script type (e.g. RE::Actor for actors). a_create: see BoundObject.
 	template <class T, class... Args>
 	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)

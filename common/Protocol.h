@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 30;
+	inline constexpr std::uint16_t VERSION = 31;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -637,6 +637,22 @@ namespace Protocol
 		}
 	};
 
+	// The furniture a player sits, lies or works in (a chair, a bed, a workbench, a terminal; never a power armor frame nor
+	// a seat on an actor such as a vertibird), so friends put their stand-in in the same one.
+	struct Seat
+	{
+		std::uint32_t ref = 0;   // the furniture itself when every game has it (a pre-placed one), 0 for one made in their game
+		std::uint32_t base = 0;  // its base form: one made in their game (a settlement's chair) is found by base and place
+		float         x = 0, y = 0, z = 0;  // where it stands in their world
+
+		bool operator==(const Seat&) const = default;
+
+		[[nodiscard]] bool Valid() const
+		{
+			return base != 0 && (ref == 0 || IsShareableRef(ref)) && InWorld(x) && InWorld(y) && InWorld(z);
+		}
+	};
+
 	// playerId is ignored client -> server in all of these.
 	struct PlayerStatus
 	{
@@ -655,6 +671,8 @@ namespace Protocol
 		std::uint32_t powerArmorFrameRef = 0;
 		// Out of power armor: the frame they got out of last, where it stands now (none while they are in one).
 		std::optional<ParkedFrame> parked;
+		// The furniture they are in or getting into (protocol 31); none while they stand, and in power armor.
+		std::optional<Seat> seat;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -2075,7 +2093,8 @@ namespace Protocol
 		w.U32(a_msg.cell);
 		w.U8(a_msg.health);
 		w.U16(a_msg.level);
-		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0) | (a_msg.parked ? 16 : 0)));
+		w.U8(static_cast<std::uint8_t>((a_msg.downed ? 1 : 0) | (a_msg.opening ? 2 : 0) | (a_msg.light ? 4 : 0) | (a_msg.powerArmor ? 8 : 0) | (a_msg.parked ? 16 : 0) |
+		                                   (a_msg.seat ? 32 : 0)));
 		w.U32(a_msg.powerArmorFrame);
 		w.U32(a_msg.powerArmorFrameRef);
 		if (a_msg.parked) {
@@ -2088,6 +2107,14 @@ namespace Protocol
 			w.F32(parked.y);
 			w.F32(parked.z);
 			w.F32(parked.heading);
+		}
+		if (a_msg.seat) {
+			const auto& seat = *a_msg.seat;
+			w.U32(seat.ref);
+			w.U32(seat.base);
+			w.F32(seat.x);
+			w.F32(seat.y);
+			w.F32(seat.z);
 		}
 		return w.Data();
 	}
@@ -2121,9 +2148,19 @@ namespace Protocol
 			parked.heading = r.F32();
 			msg.parked = parked;
 		}
-		// A frame is parked only while they are out of power armor.
+		if ((flags & 32) != 0) {
+			Seat seat;
+			seat.ref = r.U32();
+			seat.base = r.U32();
+			seat.x = r.F32();
+			seat.y = r.F32();
+			seat.z = r.F32();
+			msg.seat = seat;
+		}
+		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
+		// a frame's own path handles that).
 		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
-			(msg.parked && (msg.powerArmor || !msg.parked->Valid()))) {
+			(msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
 			return std::nullopt;
 		}
 		return msg;

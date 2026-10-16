@@ -15,6 +15,7 @@
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
+#include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
 
@@ -200,6 +201,32 @@ namespace Party
 			return last;
 		}
 
+		// The furniture our player uses, as StandInSeat::Tell takes it.
+		StandInSeat::Own OwnSeatOf(RE::PlayerCharacter* a_player, bool a_powerArmor)
+		{
+			StandInSeat::Own own{ .sitState = static_cast<std::int32_t>(a_player->DoGetSitSleepState()), .powerArmor = a_powerArmor };
+			const auto       middle = a_player->currentProcess ? a_player->currentProcess->middleHigh : nullptr;
+			const auto       seat = middle ? middle->occupiedFurniture.get() : nullptr;
+			if (!seat || seat->IsDeleted()) {
+				return own;
+			}
+			const auto base = seat->GetObjectReference();
+			const auto type = base ? base->GetFormType() : RE::ENUM_FORM_ID::kNONE;
+			// A terminal (BGSTerminal) is furniture too.
+			const auto furniture = type == RE::ENUM_FORM_ID::kFURN || type == RE::ENUM_FORM_ID::kTERM ? static_cast<const RE::TESFurniture*>(base) : nullptr;
+			own.found = true;
+			own.actor = seat->As<RE::Actor>() != nullptr;
+			own.furniture = furniture != nullptr;
+			own.frame = Equipment::IsPowerArmorFrame(base);
+			own.station = furniture && furniture->wbData.type == RE::WorkbenchData::Type::kPowerArmor;
+			own.ref = seat->GetFormID();
+			own.base = base ? base->GetFormID() : 0;
+			own.x = seat->data.location.x;
+			own.y = seat->data.location.y;
+			own.z = seat->data.location.z;
+			return own;
+		}
+
 		std::optional<Protocol::PlayerStatus> SampleStatus()
 		{
 			const auto player = Player();
@@ -237,6 +264,8 @@ namespace Party
 			// Out of it: the frame we got out of last, where it stands (see ArmorFrames::TellParked). Friends show a copy
 			// there, in the station we parked it in or wherever we left it.
 			status.parked = ArmorFrames::TellParked(status.powerArmor, LastFrameOf(player));
+			// The chair, bed, workbench or terminal we use: friends put our stand-in in the same one (not a frame: above).
+			status.seat = StandInSeat::Tell(OwnSeatOf(player, status.powerArmor));
 			if (wear.unknown) {
 				REX::WARN("Party: in power armor for a second and what we sit in ({:08X}) is no frame; friends are told we are in power armor with no frame, and see our pieces with no frame copy", wear.seat);
 			}
@@ -515,6 +544,7 @@ namespace Party
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
 		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame, a_status.powerArmorFrameRef, a_status.parked);
+		RemotePlayers::SetSeat(a_status.playerId, a_status.seat);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}

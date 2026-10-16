@@ -29,6 +29,9 @@ namespace RemotePlayers
 	// pre-placed one), its reference (else 0); out of it, the frame they got out of last, where it stands in their world
 	// (a copy is shown there).
 	void SetPowerArmor(std::uint32_t a_id, bool a_on, std::uint32_t a_frameBase, std::uint32_t a_frameRef, const std::optional<Protocol::ParkedFrame>& a_parked = std::nullopt);
+	// The furniture they sit, lie or work in (a chair, a bed, a workbench, a terminal; not a power armor frame), or none:
+	// their stand-in is put in our copy of it, and stood up as they get up (StandInSeat.h).
+	void SetSeat(std::uint32_t a_id, const std::optional<Protocol::Seat>& a_seat);
 	// The form ID of a player's stand-in, or 0 when they have none right now.
 	std::uint32_t ActorIdOf(std::uint32_t a_id);
 
