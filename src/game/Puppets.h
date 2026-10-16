@@ -57,7 +57,7 @@ namespace Puppets
 
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
 	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how
-	// often it was stood up out of furniture), the gait a dog's owner's game says it plays
+	// often it was stood up out of furniture, whether it is held for furniture), the gait a dog's owner's game says it plays
 	// (ownerGait=state@rate, CreatureGait.h), and its locomotion variables.
 	[[nodiscard]] std::string Describe(const RE::Actor* a_actor);
 
@@ -79,6 +79,28 @@ namespace Puppets
 	// such as getting into power armor; the stand-in is not warped meanwhile, nor given its idle package
 	// again. Each call sets the time left (zero ends it now).
 	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for);
+
+	// Furniture (StandInSeat.h). A held puppet is neither placed nor animated by its target: furniture it is in places and
+	// animates it, and one waiting to get in, or left beside it, stands where it is. Nor is its do-nothing package renewed
+	// meanwhile (a new package can make the engine walk an actor out of its furniture). Its target is still kept.
+	void Hold(RE::Actor* a_actor, bool a_hold);
+
+	// The ways a puppet is sent into furniture, tried in this order (StandInSeat::MAX_TRIES).
+	enum class Entry
+	{
+		kSnap,      // Papyrus Actor.SnapIntoInteraction: straight into it, as scenes put NPCs in their seats
+		kActivate,  // the furniture activated by it (the console's activate, no OnActivate script), as an NPC uses one
+	};
+	// Asks the engine to put the puppet in the furniture, and holds it (Hold). It takes a frame or more: see FurnitureOf.
+	// False if it could not be asked.
+	bool Enter(RE::Actor* a_actor, RE::TESObjectREFR* a_furniture, Entry a_way);
+
+	// Takes the puppet out of the furniture it is in at once, standing where it is (as a mirror is stood up when its owner's
+	// copy walks off), and lets go of it (Hold). False if it was in none.
+	bool StandUp(RE::Actor* a_actor);
+
+	// The furniture an actor uses (sits or lies on, works at, or still holds getting off it), or null.
+	[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> FurnitureOf(const RE::Actor* a_actor);
 
 	// Periodic maintenance; call once per frame from the main thread.
 	void Tick();

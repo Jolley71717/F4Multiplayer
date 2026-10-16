@@ -437,6 +437,20 @@ else skips this: the player is never in those places.
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
+- Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,
+  stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
+  it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has
+  it, its base and where it stands (to the unit). Never a power armor frame or station, nor in power armor (the frames'
+  own path above), nor a seat on an actor (a vertibird). Getting up (want-to-stand or want-to-wake) ends it, so the
+  stand-in gets up as they start to. The receiver finds its own copy: the named reference if it is of that base, else the
+  nearest of that base within 32 units of the spot (a settlement's furniture, which WorkshopSync copies to the same
+  spot), enabled, with 3D and in the stand-in's cell or worldspace. When the friend's spot is within 256 units of it, the
+  stand-in is held (`Puppets::Hold`: not placed at its target, no locomotion events, no do-nothing package renewal) and
+  sent in with Papyrus `Actor.SnapIntoInteraction`, then, 2 s later if it is not in it, by the console's `activate`
+  (plain furniture only, never a workbench or a terminal). Once in, the furniture's graph and marker place it. When
+  neither takes, or no such furniture is found, it stays held where it stood as they sat down instead of following them
+  onto the seat. When they get up it is stood up at once (`Actor::StopInteractingQuick`, as a mirror is) and follows
+  their states again. Dev: `seat <puppet> <furniture> [snap|activate]`, `seat <puppet> stand|hold|free`.
 - Heartbeat once a second, answered by the server: round-trip time and "unstable" after 4 s without
   an answer (the transports only give up after 20 s). Main-thread stalls (loading) don't count.
 - Kill feed: deaths now carry who reported them and whether that player killed it

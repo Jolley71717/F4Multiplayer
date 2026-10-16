@@ -5,6 +5,7 @@
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
+#include "game/Papyrus.h"
 
 #include "Protocol.h"
 
@@ -42,6 +43,7 @@ namespace Puppets
 			std::chrono::steady_clock::time_point nextResync{};      // DriveAnimation tells the graph again then whether it moves
 			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
+			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
 		};
 
 		std::mutex                                    lock;
@@ -452,6 +454,29 @@ namespace Puppets
 			if (puppet->kind == Kind::kPlayer) {
 				KeepHealthy(a_this);
 			}
+			// Held for furniture (Hold): in it, the furniture's own graph and marker place and animate it; on its way in, or
+			// left beside it, it stands where it is with its legs stopped. Neither its target's spot nor its locomotion events
+			// reach it: the spot is on the seat (followed, it stood on the couch), and "moveStart" and the rest would fight the
+			// furniture's graph. Its desired movement is none, or the engine feeds the graph the walk it had.
+			if (puppet->held) {
+				if (const auto process = a_this->currentProcess) {
+					if (const auto middle = process->middleHigh) {
+						middle->desiredSpeed = 0.0f;
+					}
+					if (const auto high = process->high) {
+						high->pathingDesiredMovementSpeed = {};
+						high->pathingCurrentMovementSpeed = {};
+					}
+				}
+				a_this->UpdateNoAI(a_delta);
+				if (!OccupiedFurniture(a_this)) {
+					auto still = *puppet;
+					still.target.speed = 0.0f;
+					still.target.flags = static_cast<std::uint8_t>(still.target.flags & ~(Protocol::kInAir | Protocol::kJumping));
+					DriveAnimation(a_this, still);
+				}
+				return;
+			}
 			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
 				// Where its path is now (MotionPath.h), not where it was when our frame's work last ran, which comes at
@@ -661,6 +686,72 @@ namespace Puppets
 		}
 	}
 
+	void Hold(RE::Actor* a_actor, bool a_hold)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			if (entry->held && !a_hold) {
+				// Its graph is in its base state again, or still standing where it was held: what DriveAnimation sent before
+				// is sent again (the sneak) and tested (the start) as it follows its target once more.
+				entry->appliedFlags = 0;
+				entry->nextResync = {};
+			}
+			entry->held = a_hold;
+		}
+	}
+
+	bool Enter(RE::Actor* a_actor, RE::TESObjectREFR* a_furniture, Entry a_way)
+	{
+		if (!a_actor || !a_furniture || !IsRegistered(a_actor)) {
+			return false;
+		}
+		bool asked = false;
+		if (a_way == Entry::kSnap) {
+			// Both ends need a script object, and a stand-in or a plain chair is bound to none until one is made for it
+			// (as LooksMenu does for a stand-in). The VM runs the call a frame or more later.
+			const auto self = Papyrus::BoundObject(a_actor, "Actor", true);
+			const auto target = Papyrus::BoundObject(a_furniture, "ObjectReference", true);
+			asked = self && target && Papyrus::CallOn(self, "SnapIntoInteraction", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
+				a_out[0] = target;
+			});
+		} else {
+			// Only plain furniture (a seat, a bed): a workbench or a terminal activated by anyone but the player is left to the
+			// snap, rather than risk the engine opening its menu.
+			const auto base = a_furniture->GetObjectReference();
+			const auto furniture = base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? static_cast<const RE::TESFurniture*>(base) : nullptr;
+			if (furniture && furniture->wbData.type == RE::WorkbenchData::Type::kNone) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.activate {:08X}", a_furniture->GetFormID(), a_actor->GetFormID()).c_str());
+				asked = true;
+			}
+		}
+		if (asked) {
+			Hold(a_actor, true);
+		}
+		return asked;
+	}
+
+	bool StandUp(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return false;
+		}
+		const auto furniture = OccupiedFurniture(a_actor);
+		const bool inArmor = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
+		// Never a power armor frame (letting go would take the armor's state off it) nor a seat on another actor.
+		const bool stood = furniture && !furniture->As<RE::Actor>() && !inArmor;
+		if (stood) {
+			a_actor->StopInteractingQuick(true, false, true);
+		}
+		Hold(a_actor, false);
+		return stood;
+	}
+
+	RE::NiPointer<RE::TESObjectREFR> FurnitureOf(const RE::Actor* a_actor)
+	{
+		return a_actor ? OccupiedFurniture(a_actor) : RE::NiPointer<RE::TESObjectREFR>{};
+	}
+
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion)
 	{
 		std::scoped_lock l{ lock };
@@ -682,8 +773,8 @@ namespace Puppets
 			puppet = *entry;
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} ownerGait={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
-			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits,
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
+			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
 			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" });
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
 		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate its
@@ -787,7 +878,8 @@ namespace Puppets
 			for (auto& [actor, puppet] : puppets) {
 				// Not while its own AI runs (a climb into or out of power armor): a new package mid-climb can
 				// break off the furniture use the AI is in the middle of. It gets one as soon as that is over.
-				if (now >= puppet.nextIdleRefresh && now >= puppet.aiUntil) {
+				// Nor while it is held for furniture (Hold): a new package can make the engine take it out of its seat.
+				if (now >= puppet.nextIdleRefresh && now >= puppet.aiUntil && !puppet.held) {
 					puppet.nextIdleRefresh = now + IDLE_REFRESH;
 					due.emplace_back(actor, puppet.formId);
 				}

@@ -13,6 +13,7 @@
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
+#include "game/StandInSeat.h"
 #include "game/StandInSpace.h"
 #include "game/StateBuffer.h"
 
@@ -108,6 +109,15 @@ namespace RemotePlayers
 			Clock::time_point    parkedPlacedAt{};
 			const RE::NiAVObject* parkedCollisionOff = nullptr;  // its 3D whose collision we turned off; only compared
 			std::optional<Protocol::ParkedFrame> parkedTaken;    // the parked frame whose copy somebody here got into: none placed for it again
+			std::optional<Protocol::Seat> seat;          // the furniture they use, as their status names it (see UpdateSeat)
+			RE::ObjectRefHandle  seatRef;                // ours of it, once found (StandInSeat::Pick)
+			Clock::time_point    seatLookAt{};           // none found yet: looked for again then
+			int                  seatLooks = 0;          // looks that found none, for this seat
+			std::uint32_t        seatActor = 0;          // the stand-in the tries below are for
+			int                  seatTries = 0;          // ways into it tried for this seat on that stand-in (Puppets::Entry)
+			ArmorFrames::PlayTime seatTriedAt{};
+			bool                 seatHeld = false;       // the stand-in is held for it (Puppets::Hold)
+			bool                 seatLogged = false;     // whether it got in, or did not, was logged for this seat
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -1185,6 +1195,159 @@ namespace RemotePlayers
 				a_player.inPowerArmor, frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
 		}
 
+		// Furniture a friend uses (StandInSeat.h): their stand-in in the same chair, bed, workbench or terminal.
+		std::uint32_t seatsEntered = 0;  // stand-ins the engine put in their friend's furniture
+		std::uint32_t seatsMissed = 0;   // ... and left beside it: the ways in did not take, or no such furniture here
+		std::uint32_t seatsLeft = 0;     // stood up out of it as their friend got up
+		constexpr auto SEAT_LOOK_INTERVAL = 1s;  // none found: looked for again this often (its 3D may still be coming)
+
+		void ForgetSeat(RemotePlayer& a_player)
+		{
+			a_player.seatRef = {};
+			a_player.seatLookAt = {};
+			a_player.seatLooks = 0;
+			a_player.seatTries = 0;
+			a_player.seatLogged = false;
+		}
+
+		bool IsSeatBase(const RE::TESBoundObject* a_base)
+		{
+			const auto type = a_base ? a_base->GetFormType() : RE::ENUM_FORM_ID::kNONE;
+			return type == RE::ENUM_FORM_ID::kFURN || type == RE::ENUM_FORM_ID::kTERM;  // a terminal is furniture too
+		}
+
+		// Furniture the stand-in can be put in: enabled, its 3D in, and where the stand-in is.
+		bool UsableSeat(RE::TESObjectREFR* a_ref, const RE::Actor* a_actor)
+		{
+			if (!a_ref || a_ref->IsDisabled() || a_ref->IsDeleted() || !a_ref->Get3D() || !IsSeatBase(a_ref->GetObjectReference())) {
+				return false;
+			}
+			const auto cell = a_ref->GetParentCell();
+			const auto ours = a_actor->GetParentCell();
+			if (!cell || !ours) {
+				return false;
+			}
+			return ours->IsInterior() ? cell == ours : !cell->IsInterior() && cell->worldSpace == ours->worldSpace;
+		}
+
+		// Our copy of the furniture their status names (StandInSeat::Pick), kept once found.
+		RE::NiPointer<RE::TESObjectREFR> FindSeat(RemotePlayer& a_player, const RE::Actor* a_actor, Clock::time_point a_now)
+		{
+			const auto& seat = *a_player.seat;
+			if (const auto kept = a_player.seatRef.get()) {
+				const auto base = kept->GetObjectReference();
+				if (base && base->GetFormID() == seat.base && UsableSeat(kept.get(), a_actor)) {
+					return kept;
+				}
+			}
+			a_player.seatRef = {};
+			if (a_now < a_player.seatLookAt) {
+				return {};
+			}
+			a_player.seatLookAt = a_now + SEAT_LOOK_INTERVAL;
+			std::vector<StandInSeat::Candidate> candidates;
+			const auto add = [&](RE::TESObjectREFR* a_ref) {
+				const auto base = a_ref->GetObjectReference();
+				const auto& at = a_ref->data.location;
+				candidates.push_back({ .id = a_ref->GetFormID(), .base = base ? base->GetFormID() : 0, .x = at.x, .y = at.y, .z = at.z, .usable = UsableSeat(a_ref, a_actor) });
+			};
+			if (seat.ref != 0) {
+				if (const auto named = RE::TESForm::GetFormByID<RE::TESObjectREFR>(seat.ref)) {
+					add(named);
+				}
+			}
+			if (const auto tes = RE::TES::GetSingleton()) {
+				tes->ForEachReferenceInRange(RE::NiPoint3{ seat.x, seat.y, seat.z }, StandInSeat::MATCH_RADIUS, [&](RE::TESObjectREFR* a_ref) {
+					const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+					if (base && base->GetFormID() == seat.base && a_ref->GetFormID() != seat.ref) {
+						add(a_ref);
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				});
+			}
+			const auto picked = StandInSeat::Pick(seat, candidates);
+			const auto ref = picked ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(*picked) : nullptr;
+			if (!ref) {
+				++a_player.seatLooks;
+				return {};
+			}
+			a_player.seatRef = ref->GetHandle();
+			return RE::NiPointer<RE::TESObjectREFR>{ ref };
+		}
+
+		// Puts the stand-in in the furniture their status names, holds it there, and stands it up as they get up
+		// (StandInSeat::Choose). True while it is held: in it, on its way in, or left beside it. a_spot: where their states
+		// put it.
+		bool UpdateSeat(RemotePlayer& a_player, RE::Actor* a_actor, const RE::NiPoint3& a_spot, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
+		{
+			// A new stand-in is tried afresh.
+			if (a_player.seatActor != a_actor->GetFormID()) {
+				a_player.seatActor = a_actor->GetFormID();
+				a_player.seatTries = 0;
+				a_player.seatHeld = false;
+				a_player.seatLogged = false;
+			}
+			const auto in = Puppets::FurnitureOf(a_actor);
+			const auto target = a_player.seat ? FindSeat(a_player, a_actor, a_now) : RE::NiPointer<RE::TESObjectREFR>{};
+			StandInSeat::Facts facts;
+			facts.wanted = a_player.seat.has_value();
+			facts.found = static_cast<bool>(target);
+			if (a_player.seat) {
+				const auto at = target ? target->data.location : RE::NiPoint3{ a_player.seat->x, a_player.seat->y, a_player.seat->z };
+				facts.near = a_spot.GetDistance(at) <= StandInSeat::NEAR;
+			}
+			facts.inArmor = Equipment::InPowerArmor(a_actor);
+			facts.inTarget = in && target && in.get() == target.get();
+			facts.inOther = in && !facts.inTarget && !in->As<RE::Actor>();
+			facts.tries = a_player.seatTries;
+			facts.sinceTried = a_played - a_player.seatTriedAt;
+
+			switch (StandInSeat::Choose(facts)) {
+			case StandInSeat::Act::kFollow:
+				if (a_player.seatHeld) {
+					Puppets::Hold(a_actor, false);
+					a_player.seatHeld = false;
+				}
+				return false;
+			case StandInSeat::Act::kStand:
+				Puppets::StandUp(a_actor);
+				a_player.seatHeld = false;
+				++seatsLeft;
+				REX::INFO("RemotePlayers: player {} {}; stand-in {:08X} stood up out of furniture {:08X}", a_player.id, facts.wanted ? "uses other furniture" : "got up", a_actor->GetFormID(), in ? in->GetFormID() : 0);
+				return false;
+			case StandInSeat::Act::kEnter:
+				{
+					const auto way = a_player.seatTries == 0 ? Puppets::Entry::kSnap : Puppets::Entry::kActivate;
+					++a_player.seatTries;
+					a_player.seatTriedAt = a_played;
+					const bool asked = Puppets::Enter(a_actor, target.get(), way);
+					Puppets::Hold(a_actor, true);
+					a_player.seatHeld = true;
+					const auto base = target->GetObjectReference();
+					REX::INFO("RemotePlayers: player {} uses furniture {:08X} (base {:08X}, theirs {:08X}); stand-in {:08X} sent in by {} (try {} of {}{})", a_player.id, target->GetFormID(), base ? base->GetFormID() : 0,
+						a_player.seat->ref, a_actor->GetFormID(), way == Puppets::Entry::kSnap ? "SnapIntoInteraction" : "activation", a_player.seatTries, StandInSeat::MAX_TRIES, asked ? "" : ", could not be asked");
+					return true;
+				}
+			case StandInSeat::Act::kHold:
+				if (!a_player.seatHeld) {
+					Puppets::Hold(a_actor, true);
+					a_player.seatHeld = true;
+				}
+				if (!a_player.seatLogged && facts.inTarget) {
+					a_player.seatLogged = true;
+					++seatsEntered;
+					REX::INFO("RemotePlayers: player {} stand-in {:08X} is in furniture {:08X} (sit state {}) after {} way(s) in", a_player.id, a_actor->GetFormID(), in->GetFormID(), static_cast<int>(a_actor->DoGetSitSleepState()), a_player.seatTries);
+				} else if (!a_player.seatLogged && ((facts.found && facts.tries >= StandInSeat::MAX_TRIES && facts.sinceTried >= StandInSeat::ENTRY_WAIT) || (!facts.found && a_player.seatLooks >= 3))) {
+					a_player.seatLogged = true;
+					++seatsMissed;
+					REX::WARN("RemotePlayers: player {} uses furniture {:08X} (base {:08X}); {}: stand-in {:08X} is left standing where it was as they sat down", a_player.id, a_player.seat->ref, a_player.seat->base,
+						facts.found ? "it never got in" : "no such furniture here", a_actor->GetFormID());
+				}
+				return true;
+			}
+			return false;
+		}
+
 		// A stand-in in its frame is about to go (never to get out of it): that frame goes with it, let go of by the engine
 		// first (BuryFrame). It is the copy we hold for it (DeleteFrame buries that, stand-in or no stand-in), unless
 		// something else happened; any other one made in this game is buried here.
@@ -1877,6 +2040,7 @@ namespace RemotePlayers
 			player.switchGaveUp = false;
 			player.pickSince.reset();
 			player.keyPutAt = {};
+			ForgetSeat(player);  // our copy of their furniture is looked for again in the loaded world
 		}
 	}
 
@@ -1937,6 +2101,14 @@ namespace RemotePlayers
 			player.powerArmorOn = heard.on;
 			player.powerArmorFrame = heard.frame;
 			player.powerArmorFrameRef = heard.frameRef;
+		}
+	}
+
+	void SetSeat(std::uint32_t a_id, const std::optional<Protocol::Seat>& a_seat)
+	{
+		if (const auto it = players.find(a_id); it != players.end() && it->second.seat != a_seat) {
+			it->second.seat = a_seat;
+			ForgetSeat(it->second);  // other furniture, or none: looked for and tried afresh (see UpdateSeat)
 		}
 	}
 
@@ -2158,7 +2330,12 @@ namespace RemotePlayers
 
 			UpdateLight(remote, actor, localCell, now);
 			UpdatePowerArmor(remote, actor, localCell, spot, state->heading, now, playedNow);
-			CheckHold(remote, actor, spot, sampled->OwnSpeed(), now);
+			// Held for their furniture, it is not where its target is: no hold to check.
+			if (UpdateSeat(remote, actor, spot, now, playedNow)) {
+				remote.lastTarget.reset();
+			} else {
+				CheckHold(remote, actor, spot, sampled->OwnSpeed(), now);
+			}
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
 			if (auto label = NameTag(remote); label != remote.shownName && actor->extraList) {
@@ -2257,6 +2434,12 @@ namespace RemotePlayers
 				const auto original = remote.original.get();
 				armor += std::format(" frameRef={:08X} oursHidden={}", remote.powerArmorFrameRef, original != nullptr);
 			}
+			// The furniture they use: theirs (reference, base), ours of it, and whether the stand-in is held for it and in it.
+			if (remote.seat) {
+				const auto ours = remote.seatRef.get();
+				const auto in = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
+				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ours ? ours->GetFormID() : 0, remote.seatHeld, in ? in->GetFormID() : 0, remote.seatTries);
+			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
 				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.states.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
@@ -2267,6 +2450,9 @@ namespace RemotePlayers
 		}
 		if (parkedPlaced) {
 			out += std::format(" parkedFrames={}", parkedPlaced);
+		}
+		if (seatsEntered || seatsMissed || seatsLeft) {
+			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);
 		}
 		if (switchesIn || switchesOut || switchFails) {
 			out += std::format(" armorIn={} armorOut={} armorFails={}", switchesIn, switchesOut, switchFails);
