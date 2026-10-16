@@ -30,6 +30,7 @@ namespace
 	constexpr const char* SANCTUARY_ACHIEVEMENT = "Sanctuary's achievement";
 	constexpr const char* INSTITUTE_ACHIEVEMENT = "the Institute's achievement";
 	constexpr const char* VAULT_DOOR_OPENS = "Vault 81's door and walkway open";
+	constexpr const char* DC_GATE_OPENS = "Diamond City's gate opens";  // the gate stage's script ran
 
 	using Stages = std::set<std::uint16_t>;
 	using History = std::vector<std::pair<std::uint32_t, std::uint16_t>>;
@@ -148,7 +149,8 @@ namespace
 
 	// Diamond City's entrance scene, before anyone has come to the gate: Piper argues with Danny Sullivan
 	// over the intercom, then the gate opens. One of the story's scenes, with no objectives: none of its
-	// stages ever shows one.
+	// stages ever shows one. Its stages aren't reached in order: a player's game plays the argument (0 to
+	// 30, 50 to 95 and 400), and 32 opens the gate, 40 goes on and 100 stops the scene, the gate open.
 	Quest DiamondCityGate()
 	{
 		Quest quest;
@@ -156,6 +158,18 @@ namespace
 		quest.quiet = quest.stages;
 		quest.story = true;
 		quest.scene = true;
+		quest.stops = { 100 };
+		quest.awards = { { 32, DC_GATE_OPENS } };
+		return quest;
+	}
+
+	// The scene as the live friend's game had it: the argument played up to its 400, the gate still shut.
+	Quest AtDiamondCityGate()
+	{
+		auto quest = DiamondCityGate();
+		quest.running = true;
+		quest.done = { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 50, 52, 55, 90, 95, 400 };
+		quest.current = 400;
 		return quest;
 	}
 
@@ -629,20 +643,70 @@ TEST("sim quests: with a shared story, the host's talk at Diamond City's gate op
 	REQUIRE(carol.Join());
 	Settled(s);
 
-	Reach(host, DC_GATE, { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30 });
-	s.PlayFor(3s);
-	Reach(host, DC_GATE, { 32, 40, 50, 52, 55, 90, 95, 100, 400 });  // the gate opens
-	s.PlayFor(15s);
+	Reach(host, DC_GATE, { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 50, 52, 55, 90, 95, 400 });  // the argument
+	s.PlayFor(20s);
+	Reach(host, DC_GATE, { 32, 40, 100 });  // the gate opens; the scene stops
+	s.PlayFor(5s);
 
 	CHECK(host.Quests().reported == 19);
-	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	CHECK(!host.Quests().Of(DC_GATE).running);
+	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 50, 52, 55, 90, 95, 400, 32, 40, 100 }));
+	CHECK(bob.Quests().Achievements().contains(DC_GATE_OPENS));
 	CHECK(bob.Quests().started.empty());  // his game was running the scene already
 	CHECK(bob.Quests().WaitingCount() == 0);
-	CHECK((Order(carol, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	CHECK((Order(carol, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 50, 52, 55, 90, 95, 400, 32, 40, 100 }));
+	CHECK(carol.Quests().Achievements().contains(DC_GATE_OPENS));
 	CHECK((carol.Quests().started == std::vector<std::uint32_t>{ DC_GATE }));
 	CHECK(carol.Quests().WaitingCount() == 0);
 	CHECK(bob.Quests().reported == 0);  // nothing set from the host's game goes back to it
 	CHECK(carol.Quests().reported == 0);
+}
+
+TEST("sim quests: with a shared story, a friend whose own scene at Diamond City's gate got to its 400 without opening the gate gets the host's 32, 40 and 100, and the gate opens")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	host.GiveQuest(DC_GATE, AtDiamondCityGate());
+	bob.GiveQuest(DC_GATE, AtDiamondCityGate());  // the live case: running, at 400, without 32, 40 and 100
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	Reach(host, DC_GATE, { 32, 40, 100 });  // Danny opens the gate in the host's game
+	s.PlayFor(5s);
+
+	// Below Bob's 400, but not done in his game: set, in the order they came, and the gate's script runs.
+	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 32, 40, 100 }));
+	CHECK(bob.Quests().Achievements().contains(DC_GATE_OPENS));
+	CHECK(!bob.Quests().Of(DC_GATE).running);  // the scene is over in his game too
+	CHECK(bob.Quests().WaitingCount() == 0);
+	CHECK(bob.Quests().started.empty());
+	CHECK(host.Quests().WaitingCount() == 0);
+}
+
+TEST("sim quests: a stage below where your quest already is, though you never did it, still isn't set from a friend's game unless the quest is one of the story's scenes")
+{
+	Session s;
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	GiveQuests({ &host, &bob });
+	auto ahead = Started({ 5, 10, 20, 50 });
+	ahead.done = { 5, 50 };  // Bob's quest went from 5 straight to 50
+	ahead.current = 50;
+	bob.GiveQuest(SIDE2, ahead);
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+
+	host.Stage(SIDE2, 5);
+	host.Stage(SIDE2, 20);
+	s.PlayFor(5s);
+	CHECK(host.Quests().reported == 2);
+	CHECK(Order(bob, SIDE2).empty());
+	CHECK(!bob.Quests().Has(SIDE2, 20));
+	CHECK(bob.Quests().WaitingCount() == 0);
 }
 
 TEST("sim quests: with a shared story, a friend who joins after the host opened Diamond City's gate is caught up and their gate opens")
@@ -662,7 +726,11 @@ TEST("sim quests: with a shared story, a friend who joins after the host opened 
 	CHECK(host.Quests().baselined == 19);
 	REQUIRE(bob.Join());
 	s.PlayFor(20s);
-	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 }));
+	// The baseline comes lowest first, so 100 stops Bob's scene before 400: the scene is over in his game,
+	// and 400 is dropped rather than left waiting for good.
+	CHECK((Order(bob, DC_GATE) == std::vector<std::uint16_t>{ 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100 }));
+	CHECK(bob.Quests().Achievements().contains(DC_GATE_OPENS));
+	CHECK(!bob.Quests().Of(DC_GATE).running);
 	CHECK(bob.Quests().WaitingCount() == 0);
 }
 

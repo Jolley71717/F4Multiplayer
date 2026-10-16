@@ -62,9 +62,10 @@ namespace Sim
 		std::uint16_t           current = 0;
 		std::set<std::uint16_t> done;
 		// What its stages' scripts do: start another quest at one of its stages, complete and stop this
-		// one, award an achievement.
+		// one, stop it without completing it, award an achievement.
 		std::map<std::uint16_t, std::pair<std::uint32_t, std::uint16_t>> starts;
 		std::set<std::uint16_t>                                          finishes;
+		std::set<std::uint16_t>                                          stops;
 		std::map<std::uint16_t, std::string>                             awards;
 	};
 
@@ -140,6 +141,9 @@ namespace Sim
 			}
 			if (quest.finishes.contains(a_stage)) {
 				quest.completed = true;
+				quest.running = false;
+			}
+			if (quest.stops.contains(a_stage)) {
 				quest.running = false;
 			}
 			if (const auto start = quest.starts.find(a_stage); start != quest.starts.end()) {
@@ -406,6 +410,10 @@ namespace Sim
 				return StageLog::Quest::kGone;
 			}
 			const auto&         quest = it->second;
+			const bool          ranBefore = !quest.running && (quest.completed || quest.current > 0 || !quest.done.empty());
+			if (quest.scene && ranBefore) {
+				return StageLog::Quest::kGone;  // the scene ran here and is over: the rest of it is dropped
+			}
 			StageLog::QuestHere here;
 			here.inWorld = !loading;
 			here.opening = opening;
@@ -413,7 +421,7 @@ namespace Sim
 			here.started = Started(quest);
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
-			here.ranBefore = !quest.running && (quest.completed || quest.current > 0 || !quest.done.empty());
+			here.ranBefore = ranBefore;
 			here.startedHere = startedHere.contains(a_id);
 			const auto wait = StageLog::WaitsFor(here);
 			if (wait == StageLog::Wait::kNone) {
@@ -428,6 +436,9 @@ namespace Sim
 		bool Settled(std::uint32_t a_id, std::uint16_t a_stage) const
 		{
 			const auto it = quests.find(a_id);
+			if (it != quests.end() && it->second.scene) {
+				return it->second.done.contains(a_stage);  // a story scene's: only a stage done here
+			}
 			return it == quests.end() || a_stage <= it->second.current || it->second.done.contains(a_stage);
 		}
 

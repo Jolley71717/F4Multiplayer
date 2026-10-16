@@ -326,6 +326,14 @@ namespace QuestSync
 			if (!quest || !StageLog::Settable(Shared(quest), Unlocking(a_quest)) || StageLog::Finished(quest->data.flags)) {
 				return StageLog::Quest::kGone;
 			}
+			// A story scene that ran here and stopped is over (its 100 stops Diamond City's, the gate open):
+			// starting it again would play it over, so what is left of it is dropped, not kept waiting.
+			if (IsStoryScene(quest) && !(quest->data.flags & QUEST_RUNNING) && RanBefore(quest)) {
+				if (const auto stages = waiting.Waiting(a_quest); !stages.empty()) {
+					REX::INFO("QuestSync: {} stage(s) of {:08X} from friends dropped (the first {}): the scene ran here and is over", stages.size(), a_quest, stages.front());
+				}
+				return StageLog::Quest::kGone;
+			}
 			StageLog::QuestHere here;
 			// Quest scripts must not run at the main menu or during a loading screen.
 			here.inWorld = WorldSync::InWorld();
@@ -356,10 +364,19 @@ namespace QuestSync
 
 		// Stages only move forward: never undo progress a player already has. A stage this quest is
 		// already past here is left alone, done or not (it may be a branch this player didn't take).
+		// Except a story scene's: its stages aren't steps in order (a player at Diamond City's gate can have
+		// the entrance scene's 400 without the 32, 40 and 100 that open the gate and end it), so only a
+		// stage done here is.
 		bool IsSettled(std::uint32_t a_quest, std::uint16_t a_stage)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
-			return !quest || a_stage <= quest->currentStage || QuestStageLayout::IsStageDone(quest, a_stage);
+			if (!quest) {
+				return true;
+			}
+			if (IsStoryScene(quest)) {
+				return QuestStageLayout::IsStageDone(quest, a_stage);
+			}
+			return a_stage <= quest->currentStage || QuestStageLayout::IsStageDone(quest, a_stage);
 		}
 
 		void NoteCaughtUp(const char* a_name, Clock::time_point a_now)
