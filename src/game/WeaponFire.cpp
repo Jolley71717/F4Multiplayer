@@ -2,7 +2,6 @@
 
 #include "game/BlastShield.h"
 #include "game/CopyWatch.h"
-#include "game/DeferredDelete.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/AttackKind.h"
@@ -569,8 +568,39 @@ namespace WeaponFire
 		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		Clock::time_point                      nextScan{};
-		std::unordered_set<std::uint32_t>      seenExplosions;
-		std::unordered_set<std::uint32_t>      setOffExplosions;  // the ones we placed for a friend's throw: never reported back as ours
+		// Explosion references we know of, each by its id and a handle: the same one only while the handle still names it,
+		// as the engine gives a freed reference's id to the next new one, often the next explosion. Kept by id alone (and
+		// the reported ones forgotten when a watch ended, while an explosion lingers longer), our own grenades went
+		// unreported when their ids had named friends' explosions we placed, and the next throw's watch reported the last
+		// explosion again (2026-10-15: 1 report for 3 throws one way, 9 for 7 the other).
+		class ExplosionBook
+		{
+		public:
+			[[nodiscard]] bool Has(RE::TESObjectREFR* a_ref) const
+			{
+				const auto it = refs.find(a_ref->GetFormID());
+				return it != refs.end() && it->second.get().get() == a_ref;
+			}
+
+			void Add(RE::TESObjectREFR* a_ref)
+			{
+				if (refs.size() >= MAX) {
+					std::erase_if(refs, [](const auto& a_entry) { return a_entry.second.get().get() == nullptr; });
+					if (refs.size() >= MAX) {
+						refs.clear();
+					}
+				}
+				refs[a_ref->GetFormID()] = a_ref->GetHandle();
+			}
+
+		private:
+			static constexpr std::size_t MAX = 256;
+
+			std::unordered_map<std::uint32_t, RE::ObjectRefHandle> refs;
+		};
+		ExplosionBook                          seenExplosions;    // reported as ours
+		ExplosionBook                          setOffExplosions;  // the ones we placed for a friend's throw: never reported back as ours
+		std::uint32_t                          reportsLogged = 0;
 		std::vector<Protocol::Explosion>       explosions;
 		std::mutex                             explosionLock;
 
@@ -617,7 +647,6 @@ namespace WeaponFire
 	{
 		const auto now = Clock::now();
 		if (now > watchUntil.load()) {
-			seenExplosions.clear();
 			return;
 		}
 		if (now < nextScan) {
@@ -635,8 +664,16 @@ namespace WeaponFire
 		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 		RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, EXPLOSION_RANGE, [&](RE::TESObjectREFR* a_ref) {
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || setOffExplosions.contains(a_ref->GetFormID()) || !seenExplosions.insert(a_ref->GetFormID()).second) {
+			// One going away has lost its id first: the last throw's, a 00000000 where it went off 6.5 s before, was
+			// reported again by the next throw's watch.
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || a_ref->GetFormID() == 0 || a_ref->IsDeleted() || setOffExplosions.Has(a_ref) || seenExplosions.Has(a_ref)) {
 				return RE::BSContainer::ForEachResult::kContinue;
+			}
+			seenExplosions.Add(a_ref);
+			if (reportsLogged < 20) {
+				++reportsLogged;
+				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) reported", a_ref->GetFormID(), base->GetFormID(), a_ref->data.location.x,
+					a_ref->data.location.y, a_ref->data.location.z);
 			}
 			std::scoped_lock e{ explosionLock };
 			explosions.push_back({ 0, base->GetFormID(), a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z, space.first, space.second });
@@ -693,26 +730,25 @@ namespace WeaponFire
 				REX::INFO("WeaponFire: {:08X} mid-throw holds{} (attach events so far {})", actorId, Equipment::DescribeHeld(actor), throwAttaches.load());
 			}
 			// Nothing is changed while the engine walks its lists: the ghosts are collected as handles and
-			// dealt with afterwards, and only once their 3D is in (deleting a reference still loading is
-			// the loader-thread crash DeferredDelete describes); one not ready yet is caught next frame.
+			// dealt with afterwards (PROJECTILE_ENDED), each once.
 			std::vector<RE::ObjectRefHandle> ghosts;
 			tes->ForEachReferenceInRange(actor->data.location, 1000.0f, [&](RE::TESObjectREFR* a_ref) {
 				const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
-				if (projectile && !projectile->IsDisabled() && projectile->shooter.get().get() == actor) {
+				if (projectile && !projectile->IsDisabled() && (projectile->flags & PROJECTILE_ENDED) == 0 && projectile->shooter.get().get() == actor) {
 					ghosts.push_back(projectile->GetHandle());
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			for (const auto& handle : ghosts) {
-				const auto ghost = handle.get();
-				if (ghost && !ghost->IsDeleted() && DeferredDelete::Safe(ghost->Get3D() != nullptr, 0s)) {
-					ghost->Disable();
-					ghost->SetDelete(true);
+				const auto ref = handle.get();
+				const auto ghost = ref ? ref->As<RE::Projectile>() : nullptr;
+				if (ghost && !ghost->IsDeleted()) {
+					ghost->flags |= PROJECTILE_ENDED;
 					++ghostsRemoved;
 					++watch.removed;
 					if (ghostsLogged < 40) {
 						++ghostsLogged;
-						REX::INFO("WeaponFire: removed {:08X}'s own projectile {:08X} {} ms after its replayed throw", actorId, ghost->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(now - watch.started).count());
+						REX::INFO("WeaponFire: ended {:08X}'s own projectile {:08X} {} ms after its replayed throw", actorId, ghost->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(now - watch.started).count());
 					}
 				}
 			}
@@ -1004,10 +1040,7 @@ namespace WeaponFire
 		if (const auto ref = handle.get()) {
 			// A friend's explosion we just placed is in range of our own scan after our next throw: it
 			// was reported back as ours, and went off a second time for everyone.
-			if (setOffExplosions.size() > 256) {
-				setOffExplosions.clear();
-			}
-			setOffExplosions.insert(ref->GetFormID());
+			setOffExplosions.Add(ref.get());
 		}
 		++explosionsSetOff;
 	}

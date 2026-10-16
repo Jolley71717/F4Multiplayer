@@ -1444,6 +1444,43 @@ namespace DevCommands
 			return actor->PerformAction(action, nullptr) ? "thrown" : "refused";
 		}
 
+		// projoff <end|delete> [shooterHex]: the live projectiles within 3000 of the player that the shooter (our player by
+		// default) fired, ended as WeaponFire ends a stand-in's own grenade (end: nothing goes off, the HUD's grenade marker
+		// clears) or disabled and deleted as it once was (delete: the marker stays, the bug of 2026-10-15).
+		std::string ProjOff(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (args.empty() || (args[0] != "end" && args[0] != "delete") || !player) {
+				return "error: usage: projoff <end|delete> [shooterHex]";
+			}
+			const auto shooter = args.size() > 1 ? LookupRef(args[1]) : player;
+			std::vector<RE::ObjectRefHandle> found;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, 3000.0f, [&](RE::TESObjectREFR* a_ref) {
+				const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
+				if (projectile && !projectile->IsDisabled() && (projectile->flags & WeaponFire::PROJECTILE_ENDED) == 0 && projectile->shooter.get().get() == shooter) {
+					found.push_back(projectile->GetHandle());
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			std::string out;
+			for (const auto& handle : found) {
+				const auto ref = handle.get();
+				const auto projectile = ref ? ref->As<RE::Projectile>() : nullptr;
+				if (!projectile) {
+					continue;
+				}
+				if (args[0] == "end") {
+					projectile->flags |= WeaponFire::PROJECTILE_ENDED;
+				} else {
+					projectile->Disable();
+					projectile->SetDelete(true);
+				}
+				out += std::format("{}{:08X} timer={:.2f} flags={:X}", out.empty() ? "" : "; ", projectile->GetFormID(), projectile->explosionTimer, projectile->flags);
+			}
+			return out.empty() ? "none" : out;
+		}
+
 		// animlog on|off [actorHex]: records the player's (and that actor's) animation events; returns what was recorded so far.
 		std::string AnimLog(std::string_view a_args)
 		{
@@ -2571,6 +2608,7 @@ namespace DevCommands
 			Entry{ "aim", AimCommand },
 			Entry{ "event", AnimEvent },
 			Entry{ "throw", Throw },
+			Entry{ "projoff", ProjOff },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
 			Entry{ "friendlight", FriendLight },

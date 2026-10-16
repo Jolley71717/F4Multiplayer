@@ -7,6 +7,12 @@
 // damage already reaches everyone through health sync.
 namespace WeaponFire
 {
+	// A grenade a stand-in throws of its own (a replayed throw's: WeaponFire.cpp) is ended by setting this bit in
+	// Projectile::flags: it never goes off, and the engine frees it and drops it from the HUD's grenade marker. Disabled
+	// and deleted instead, three of a stand-in's kept a marker on the friend's screen for good (2026-10-15). In the test a
+	// live grenade's 0x18104 became 0x2018104, and it was gone with no explosion within 5 s, three tries out of three.
+	inline constexpr std::uint64_t PROJECTILE_ENDED = 1ull << 25;
+
 	// Hooks the player's animation events. Call every frame; does nothing once hooked.
 	void Install();
 
