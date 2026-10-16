@@ -1237,8 +1237,10 @@ namespace RemotePlayers
 
 		bool IsSeatBase(const RE::TESBoundObject* a_base)
 		{
+			// A plain seat or bed only, whatever a friend's game names: never a terminal, a workbench or a station (see
+			// StandInSeat.h).
 			const auto type = a_base ? a_base->GetFormType() : RE::ENUM_FORM_ID::kNONE;
-			return type == RE::ENUM_FORM_ID::kFURN || type == RE::ENUM_FORM_ID::kTERM;  // a terminal is furniture too
+			return type == RE::ENUM_FORM_ID::kFURN && static_cast<const RE::TESFurniture*>(a_base)->wbData.type == RE::WorkbenchData::Type::kNone;
 		}
 
 		// Furniture the stand-in can be put in: enabled, its 3D in, and where the stand-in is.

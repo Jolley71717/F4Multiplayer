@@ -1,4 +1,4 @@
-// A friend in furniture: what their game tells of the chair, bed, workbench or terminal they use (StandInSeat::Tell, as
+// A friend in furniture: what their game tells of the chair or bed they use (StandInSeat::Tell, as
 // Party sends it), through the real server, to what each friend's game makes of it (StandInSeat::Pick for its own copy
 // of the furniture, StandInSeat::Choose each frame for the stand-in, as RemotePlayers::UpdateSeat runs them).
 
@@ -150,7 +150,7 @@ TEST("seats: in furniture is sitting, lying down or on the way into either; gett
 	CHECK(!StandInSeat::InFurniture(-1));
 }
 
-TEST("seats: the furniture told is the one used, never a power armor frame, a power armor station or a seat on an actor")
+TEST("seats: the furniture told is the one used, never a power armor frame, a power armor station, a terminal, a workbench or a seat on an actor")
 {
 	const auto told = StandInSeat::Tell(OnTheCouch());
 	REQUIRE(told);
@@ -161,7 +161,7 @@ TEST("seats: the furniture told is the one used, never a power armor frame, a po
 	CHECK(told->y == -351.0f);
 	CHECK(told->z == 64.0f);
 
-	// Lying in a bed, at a workbench or a terminal, the same.
+	// Lying in a bed, the same.
 	auto own = OnTheCouch();
 	own.sitState = State(SitState::kIsSleeping);
 	CHECK(StandInSeat::Tell(own) == told);
@@ -179,6 +179,7 @@ TEST("seats: the furniture told is the one used, never a power armor frame, a po
 	CHECK(none([](auto& a_o) { a_o.powerArmor = true; }));                        // the frames' own
 	CHECK(none([](auto& a_o) { a_o.frame = true; a_o.base = FRAME_BASE; }));      // climbing into a frame
 	CHECK(none([](auto& a_o) { a_o.station = true; }));                           // a power armor station
+	CHECK(none([](auto& a_o) { a_o.workplace = true; }));                         // a terminal, a workbench
 	CHECK(none([](auto& a_o) { a_o.actor = true; a_o.furniture = false; }));      // a vertibird's seat
 	CHECK(none([](auto& a_o) { a_o.furniture = false; }));
 	CHECK(none([](auto& a_o) { a_o.found = false; }));                            // the engine names none yet

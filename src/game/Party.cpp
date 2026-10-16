@@ -219,6 +219,7 @@ namespace Party
 			own.furniture = furniture != nullptr;
 			own.frame = Equipment::IsPowerArmorFrame(base);
 			own.station = furniture && furniture->wbData.type == RE::WorkbenchData::Type::kPowerArmor;
+			own.workplace = type == RE::ENUM_FORM_ID::kTERM || (furniture && furniture->wbData.type != RE::WorkbenchData::Type::kNone);
 			own.ref = seat->GetFormID();
 			own.base = base ? base->GetFormID() : 0;
 			own.x = seat->data.location.x;
