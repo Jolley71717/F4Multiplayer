@@ -303,13 +303,11 @@ namespace Menu
 			const char* onValue;
 			const char* offValue;
 		};
-		// Saying friends' NPC lines aloud (bExperimentalVoiceLines) is left out on purpose: it can leave
-		// the player held in dialogue with nothing to end it, so it is set only by hand in the ini, next
-		// to its warning.
-		constexpr std::array<Toggle, 5> TOGGLES{ {
+		constexpr std::array<Toggle, 6> TOGGLES{ {
 			{ "Friendly fire", "players can hurt each other (host's setting, from the next session hosted)", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
 			{ "Shared story", "anyone's main story and faction progress moves everyone along, achievements included, and goes into each save (host's setting, from the next session hosted)", &Config::Settings::sharedStory, "sStory", "shared", "own" },
 			{ "Voice chat", "hold the voice key to talk to friends", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
+			{ "Spoken lines", "hear what's said near you in a friend's conversations, in the speaker's voice", &Config::Settings::spokenLines, "bSpokenLines", "true", "false" },
 			{ "Compass markers", "friends on the compass", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
 			{ "Fast loading", "vsync off during loading screens", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },
 		} };

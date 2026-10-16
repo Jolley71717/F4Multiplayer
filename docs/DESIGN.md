@@ -520,16 +520,31 @@ else skips this: the player is never in those places.
   NPCs we run or talk to, are reported unless the speaker is in combat. Receivers show
   "Name: line" when their copy of the speaker (or the friend's stand-in) is within 20 m, isn't saying
   it already, and the same line wasn't shown in the last 5 s (at most 3 lines per 3 s).
+- Spoken lines (0.8.7, `bSpokenLines`, on): a line goes with the recording it is (`Line.info`, the
+  INFO; `Line.response`, the response number its voice file is named with; `Line.voiceType`, the
+  NPC's voice type, or the default object `kPlayerVoiceMale`/`kPlayerVoiceFemale` for a player). The
+  reporter takes them from the dialogue item on the speaker's process (`HighProcessData::greetTopic`)
+  while its current response's text is the subtitle, or else from the last greeting's response with
+  that text; a line it can't place goes as text only. The hearer builds
+  `Sound\Voice\<plugin>\<voice type editor ID>\<INFO id>_<response>.fuz` (src/game/VoicePath.h; the
+  info's own plugin, its id with the load-order byte 00; a shared info's (`dataInfo`) file when the
+  info has none), checks the game has it (`BSResource::GetOrCreateStream`) and plays it with
+  `BSAudioManager::GetSoundHandleByFile` as a 3D sound (flag 0x10, the `kDialogueOutputModel3D`
+  output model) that follows the speaker's 3D: the same range and same-space test as the text, in a
+  conversation or a scene or not. Nothing goes through the dialogue system (no Say, topic, scene,
+  conversation or lip sync), so nobody can be held in one. Until 0.8.6 an NPC's line was the console's
+  `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
+  dialogue); the player's own lines were never voiced.
 
 ## Status (2026-10-09)
 
-Protocol VERSION 30 (0.8.6; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status). The sections below record each review as it was written.
+Protocol VERSION 31 (0.8.7; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
 What a peer can now send that it could not before, and what checks it on the way in:
 
-- `Line.topic` (a form id with an NPC line). Server: one line per 250 ms per player on top of the event budget, decoded with the bounds-checked Reader (`AtEnd` required). Hearer: the id must resolve to a `TESTopic`, the speaker must be our own copy within 1400 units, repeats within 5 s are dropped and at most 3 lines show per 3 s; the console command is built from two integers only (`{:08X}.say {:08X}`), so no text from the wire reaches the console. Residual: a friend can make an NPC near you say any topic in the game, and topic infos may carry script fragments; that is the same trust a co-op friend already has by talking to NPCs and shooting in your world. Off unless `bExperimentalVoiceLines = true` (a line said as the hearer starts talking to that NPC can leave them held in dialogue). The old `bVoiceLines` key is ignored: the ini shipped it on from 0.6.3 to 0.8.6-rc2 and players keep their ini across updates, so reading it would have turned voicing back on for them.
+- `Line.topic` (a form id with an NPC line). Server: one line per 250 ms per player on top of the event budget, decoded with the bounds-checked Reader (`AtEnd` required). Hearer: the id must resolve to a `TESTopic`, the speaker must be our own copy within 1400 units, repeats within 5 s are dropped and at most 3 lines show per 3 s; the console command is built from two integers only (`{:08X}.say {:08X}`), so no text from the wire reaches the console. Residual: a friend can make an NPC near you say any topic in the game, and topic infos may carry script fragments; that is the same trust a co-op friend already has by talking to NPCs and shooting in your world. Off unless `bExperimentalVoiceLines = true` (a line said as the hearer starts talking to that NPC can leave them held in dialogue). The old `bVoiceLines` key is ignored: the ini shipped it on from 0.6.3 to 0.8.6-rc2 and players keep their ini across updates, so reading it would have turned voicing back on for them. Since protocol 31 (0.8.7) the topic is gone and so is the Say: a line names its recording (`Line.info`, `Line.response`, `Line.voiceType`; the decoder takes info and response only together, a voice type only with them, and none from the runtime range). The hearer plays it only for the game's own infos and voice types (Official.h), from a path it builds itself (the plugin's file name and the voice type's editor ID must each be one plain folder name, src/game/VoicePath.h) and only if the game has that file; no text from the wire reaches a path, the console or a script. Residual: a friend can make you hear any of the game's own recorded lines in any of its voices near their speaker, which is no more than talking to NPCs does.
 - Hotkeys: the Alt/Ctrl/Win chord check reads the local keyboard only.
 - Dev commands (`turnto`, `frames`, `say`): dev channel only, which is off by default and token-protected (docs/DEV-CHANNEL.md).
 - Frame-time stats: local counters, nothing on the wire.
@@ -584,7 +599,7 @@ that changes the world cannot ship without a row here.
 - Dev commands for the party: `party [list|pick|go|ping]`, `forms <type> [text]`, `edid <form>`,
   `voice [talk|loop on|off]` (record without the key; hear yourself), `markers [name]` (map
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
-  `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line),
+  `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line), `voiceline <actor> [info response voiceType [flags [priority]]]` (the recording an actor is saying as we report it, with the engine's own voice file for it; or a recording played at an actor as a friend's line is),
   `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
   [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
   <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds

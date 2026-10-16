@@ -192,6 +192,7 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kReportLine, MT::kLineSpoken }) {
 			s.push_back({ "Line", Encode(Line{ 1, REF_A, "Welcome to Diamond City!" }, type), D(DecodeLine) });
+			s.push_back({ "Line", Encode(Line{ 1, REF_A, "Welcome to Diamond City!", 0x0002A2B3, 1, 0x0002F7A1 }, type), D(DecodeLine) });
 		}
 		for (const auto type : { MT::kHeartbeat, MT::kHeartbeatAck }) {
 			s.push_back({ "Heartbeat", Encode(Heartbeat{ 0xDEADBEEF }, type), D(DecodeHeartbeat) });

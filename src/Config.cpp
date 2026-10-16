@@ -116,15 +116,14 @@ namespace Config
 				settings.syncTime = ParseBool(value);
 			} else if (key == "bSaveSession") {
 				settings.saveSession = ParseBool(value);
-			} else if (key == "bExperimentalVoiceLines") {
-				settings.voiceLines = ParseBool(value);
-			} else if (key == "bVoiceLines") {
-				// Not read any more: the ini from 0.6.3 to 0.8.6-rc2 had it on, and a player's ini is kept
-				// across updates (the in-game menu writes to it), so it would stay on. Voicing NPC lines can
-				// leave the player held in dialogue: it takes bExperimentalVoiceLines, which no shipped ini sets.
-				if (ParseBool(value)) {
-					REX::INFO("Config: bVoiceLines is no longer read; NPC lines are said aloud only with bExperimentalVoiceLines = true");
-				}
+			} else if (key == "bSpokenLines") {
+				settings.spokenLines = ParseBool(value);
+			} else if (key == "bVoiceLines" || key == "bExperimentalVoiceLines") {
+				// Not read any more: they asked for the console's Say on our copy of the NPC, which could leave
+				// the player held in dialogue. A player's ini is kept across updates (the in-game menu writes to
+				// it), and the one from 0.8.6 says bExperimentalVoiceLines = false: read, it would keep the new
+				// way of hearing lines off for everyone who updated.
+				REX::INFO("Config: {} is no longer read; friends' lines are heard unless bSpokenLines = false", key);
 			} else if (key == "fXpShare") {
 				float share = settings.xpShare;
 				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), share);
