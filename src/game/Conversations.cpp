@@ -120,10 +120,20 @@ namespace Conversations
 			return 0;
 		}
 
+		// The game's default objects, the form 00000800. Not RE::BGSDefaultObjectManager::GetSingleton():
+		// the function it calls (ID 2192850) is no plain getter in this game version: it read the default
+		// object array at an index it was never given and crashed the game the first time a friend's NPC
+		// line was played.
+		RE::BGSDefaultObjectManager* DefaultObjects()
+		{
+			const auto form = RE::TESForm::GetFormByID(0x800);
+			return form && form->GetFormType() == RE::ENUM_FORM_ID::kDOBJ ? static_cast<RE::BGSDefaultObjectManager*>(form) : nullptr;
+		}
+
 		RE::BGSVoiceType* VoiceTypeOf(RE::Actor* a_actor, bool a_isPlayer)
 		{
 			if (a_isPlayer) {  // the player character's lines are recorded in the male and the female player voice
-				const auto defaults = RE::BGSDefaultObjectManager::GetSingleton();
+				const auto defaults = DefaultObjects();
 				const auto which = a_actor->GetSex() == RE::SEX::kFemale ? RE::DEFAULT_OBJECT::kPlayerVoiceFemale : RE::DEFAULT_OBJECT::kPlayerVoiceMale;
 				return defaults ? defaults->GetDefaultObject<RE::BGSVoiceType>(which) : nullptr;
 			}
@@ -339,7 +349,7 @@ namespace Conversations
 			if (!handle.IsValid()) {
 				return false;
 			}
-			const auto defaults = RE::BGSDefaultObjectManager::GetSingleton();
+			const auto defaults = DefaultObjects();
 			if (const auto model = defaults ? defaults->GetDefaultObject<RE::BGSSoundOutput>(RE::DEFAULT_OBJECT::kDialogueOutputModel3D) : nullptr) {
 				handle.SetOutputModel(model);  // how far an NPC's own lines carry, and how they fade
 			}
