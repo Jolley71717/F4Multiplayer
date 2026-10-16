@@ -87,6 +87,11 @@ namespace Equipment
 	// in a frame, which has bones its own skeleton has not. Power armor pieces are modelled for those bones.
 	[[nodiscard]] bool HasPowerArmorSkeleton(RE::Actor* a_actor);
 
+	// The rotation of the actor's left thigh (LEG_BONE, which both skeletons have) relative to its parent, row by row:
+	// what its animation graph writes each frame it plays something (see ArmorFrames::Stride). False when its 3D or the
+	// bone is not there.
+	bool LegRotation(RE::Actor* a_actor, float (&a_out)[9]);
+
 	// The engine keeps a frame persistent while an actor is in it (BGSDynamicPersistenceManager::PromoteReference, owner
 	// the power armor race) and lets it go as the actor's exit finishes; an actor deleted in its frame never gets out, so
 	// the frame is let go here, as that exit does, before both are deleted. Nothing is done to a frame no actor was

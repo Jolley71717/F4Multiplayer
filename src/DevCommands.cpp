@@ -16,6 +16,7 @@
 #include "game/Menu.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
+#include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
 #include "game/InjectInput.h"
 #include "game/NpcSync.h"
@@ -1408,6 +1409,11 @@ namespace DevCommands
 						out += std::format("{}=? ", args[i]);
 					}
 				}
+				// "?" for everything has two causes, told apart here: no graph to read, or no variable by that name in it.
+				RE::BSTSmartPointer<RE::BSAnimationGraphManager> manager;
+				if (!holder->GetAnimationGraphManagerImpl(manager) || !manager) {
+					out += "(no animation graph manager: see anim)";
+				}
 				return out;
 			}
 
@@ -1424,6 +1430,20 @@ namespace DevCommands
 				ok = holder->SetGraphVariableInt(name, static_cast<int>(ParseFloat(args[3]).value_or(0.0f)));
 			}
 			return ok ? "ok" : "error: set failed";
+		}
+
+		// anim <refHex> [<var>...]: what the reference's animation graph is (GraphInfo): its race's behaviour project, whether
+		// it has a graph manager and graphs in it, the locomotion variables a stand-in is driven by (and any named) as the graph
+		// reads them, its leg bone's rotation (run it twice: a graph that plays moves it) and the puppet's state.
+		std::string Anim(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			if (!ref) {
+				return "error: usage: anim <refHex> [<var>...]";
+			}
+			const std::vector<std::string_view> more(args.begin() + 1, args.end());
+			return GraphInfo::Describe(ref, more);
 		}
 
 		// aim <refHex> [pitchDeg|clear]: where an actor aims (Puppets::DescribeAim): its angles, the point the engine
@@ -2670,6 +2690,7 @@ namespace DevCommands
 			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
+			Entry{ "anim", Anim },
 			Entry{ "aim", AimCommand },
 			Entry{ "event", AnimEvent },
 			Entry{ "throw", Throw },

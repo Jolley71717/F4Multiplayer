@@ -5,6 +5,7 @@
 #include "game/Dialogue.h"
 #include "game/EngineRefs.h"
 #include "game/FriendLight.h"
+#include "game/GraphInfo.h"
 #include "game/Hud.h"
 #include "game/MoveSync.h"
 #include "game/SaveGuard.h"
@@ -83,6 +84,7 @@ namespace RemotePlayers
 			ArmorFrames::PlayTime switchTriedAt{};
 			ArmorFrames::PlayTime switchedAt{};           // when the switch-in took for this stand-in
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
+			ArmorFrames::Stride  stride;                  // how long the stand-in's legs stayed still in its frame while they walked (see ArmorFrames::STILL_LIMIT)
 			bool                 switchGaveUp = false;   // logged
 			std::optional<ArmorFrames::PlayTime> pickSince;  // when the switch-in was first due for this stand-in in this wear (see ArmorFrames::ChoosePick)
 			std::optional<ArmorFrames::PlayTime> keyPutAt;   // when the item that makes the engine pick their frame item was put on it
@@ -868,6 +870,7 @@ namespace RemotePlayers
 		std::uint32_t   switchesIn = 0;    // stand-ins the engine took into their frame copy
 		std::uint32_t   switchesOut = 0;   // stand-ins replaced as their friend got out
 		std::uint32_t   switchFails = 0;   // switch-ins that did not take
+		std::uint32_t   stillStandIns = 0; // of those, stand-ins in their frame placed again for legs that stayed still (ArmorFrames::Switch::kStill)
 		ArmorFrames::Played played;        // the time the game ran, which the power armor limits go by
 
 		// The frame copy until the stand-in is in it: not drawn (a drawn one trailed it as a second, empty suit), without
@@ -1055,10 +1058,28 @@ namespace RemotePlayers
 				.worn = WornFrame(a_player) != nullptr,
 				.in = in,
 				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_now),
+				.still = a_player.stride.Still(),
 				.sinceIn = a_now - a_player.switchedAt,
 				.tries = a_player.switchTries,
 				.sinceTried = a_now - a_player.switchTriedAt,
 			};
+		}
+
+		// Whether the stand-in's legs move in its frame while they walk in our sight (ArmorFrames::Stride): looked at only
+		// while the engine has it in its frame on the power armor skeleton.
+		void UpdateStride(RemotePlayer& a_player, RE::Actor* a_actor, const Protocol::PlayerState& a_state, const RE::Actor* a_us, ArmorFrames::PlayTime a_now)
+		{
+			std::optional<ArmorFrames::LegPose> pose;
+			if (Equipment::InPowerArmor(a_actor) && OnArmorSkeleton(a_player, a_actor, a_now)) {
+				ArmorFrames::LegPose leg;
+				if (Equipment::LegRotation(a_actor, leg.m)) {
+					pose = leg;
+				}
+			}
+			const auto& at = a_actor->data.location;
+			const bool  seen = a_us && ArmorFrames::InSight(at.x - a_us->data.location.x, at.y - a_us->data.location.y, a_us->data.angle.z);
+			const bool  walks = seen && ArmorFrames::Walks(a_state.moveMode, a_state.flags, a_state.speed) && !Dialogue::Holds(a_actor);
+			a_player.stride.Update(a_actor->Get3D(), pose, walks, a_now);
 		}
 
 		void UpdatePowerArmor(RemotePlayer& a_player, RE::Actor* a_actor, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
@@ -1150,6 +1171,7 @@ namespace RemotePlayers
 			case ArmorFrames::Switch::kNone:
 			case ArmorFrames::Switch::kOut:    // replaced before this (see LeaveArmor)
 			case ArmorFrames::Switch::kStuck:  // replaced before this too (see Update)
+			case ArmorFrames::Switch::kStill:  // and so is this one
 				break;
 			}
 		}
@@ -1191,8 +1213,11 @@ namespace RemotePlayers
 			}
 			a_player.holdLoggedAt = a_now;
 			const auto frame = a_player.frame.get();
-			REX::INFO("RemotePlayers: player {} stand-in stood {:.1f} units from where it was put ({:.0f},{:.0f}), at ({:.0f},{:.0f}); in power armor={}, frame copy {:.1f} units away; {} of {} still frames so", a_player.id, off, last->x, last->y, at.x, at.y,
-				a_player.inPowerArmor, frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
+			// The copy it wears stays (disabled) where it got in, while the stand-in walks off in it: that distance says
+			// nothing of what holds it.
+			const bool worn = frame && Equipment::PowerArmorFrameOf(a_actor).get() == frame.get();
+			REX::INFO("RemotePlayers: player {} stand-in stood {:.1f} units from where it was put ({:.0f},{:.0f}), at ({:.0f},{:.0f}); in power armor={}, frame copy{} {:.1f} units away; {} of {} still frames so", a_player.id, off, last->x, last->y, at.x, at.y,
+				a_player.inPowerArmor, worn ? " (worn, left where it got in)" : "", frame ? frame->data.location.GetDistance(at) : -1.0f, a_player.hold.off, a_player.hold.frames);
 		}
 
 		// Furniture a friend uses (StandInSeat.h): their stand-in in the same chair, bed, workbench or terminal.
@@ -2273,7 +2298,10 @@ namespace RemotePlayers
 			// Out of their armor while the stand-in is still in its frame: it goes, and a fresh one is placed just below. So
 			// does one the engine has in its frame but never gave the power armor skeleton (the rebuild the switch-in queued
 			// did not come): the fresh one is tried afresh, and the tries of this wear add up (ArmorFrames::MAX_SWITCH_TRIES).
+			// So does one in its frame on the power armor skeleton whose legs stay still while they walk in our sight: its
+			// graph plays nothing (ArmorFrames::STILL_LIMIT).
 			if (actor) {
+				UpdateStride(remote, actor, *state, player, playedNow);
 				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, playedNow))) {
 				case ArmorFrames::Switch::kOut:
 					LeaveArmor(remote, actor, localCell, now, playedNow);
@@ -2284,6 +2312,15 @@ namespace RemotePlayers
 					++switchFails;
 					REX::WARN("RemotePlayers: player {} stand-in {:08X} is still on its own skeleton {} ms after it was switched into its frame copy; placed again (try {} of {})", remote.id, actor->GetFormID(),
 						std::chrono::duration_cast<std::chrono::milliseconds>(playedNow - remote.switchedAt).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES);
+					DeleteActor(remote);
+					actor = nullptr;
+					break;
+				case ArmorFrames::Switch::kStill:
+					++remote.switchTries;
+					++switchFails;
+					++stillStandIns;
+					REX::WARN("RemotePlayers: player {} stand-in {:08X} in its frame plays no walk: its legs stayed still {} ms while they walked; placed again (try {} of {}; {})", remote.id, actor->GetFormID(),
+						std::chrono::duration_cast<std::chrono::milliseconds>(remote.stride.Still()).count(), remote.switchTries, ArmorFrames::MAX_SWITCH_TRIES, GraphInfo::Describe(actor));
 					DeleteActor(remote);
 					actor = nullptr;
 					break;
@@ -2322,6 +2359,7 @@ namespace RemotePlayers
 				remote.switchTriedAt = {};
 				remote.switchedAt = {};
 				remote.armorSkeleton = nullptr;
+				remote.stride = {};
 				remote.switchGaveUp = false;
 				remote.pickSince.reset();
 				remote.keyPutAt = {};
@@ -2426,8 +2464,9 @@ namespace RemotePlayers
 				const auto frame = remote.frame.get();
 				const bool engaged = in && frame && Equipment::PowerArmorFrameOf(actor).get() == frame.get();
 				const auto root = frame ? frame->Get3D() : nullptr;
-				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.gear.items),
-					!frame ? "none" : engaged ? "worn" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown");
+				armor = std::format(" in={} skel={} tries={} pieces={}/{} copy={} stillMs={}", in, Equipment::HasPowerArmorSkeleton(actor), remote.switchTries, pieces(Equipment::Read(actor)), pieces(remote.gear.items),
+					!frame ? "none" : engaged ? "worn" : !root ? "loading" : root->GetAppCulled() ? "hidden" : "shown",
+					std::chrono::duration_cast<std::chrono::milliseconds>(remote.stride.Still()).count());
 			}
 			// Their frame when every game has it, and whether ours is hidden while they wear theirs.
 			if (remote.powerArmorFrameRef || remote.original) {
@@ -2455,7 +2494,7 @@ namespace RemotePlayers
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);
 		}
 		if (switchesIn || switchesOut || switchFails) {
-			out += std::format(" armorIn={} armorOut={} armorFails={}", switchesIn, switchesOut, switchFails);
+			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={}", switchesIn, switchesOut, switchFails, stillStandIns);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{}", heldFrames, movingFrames);
