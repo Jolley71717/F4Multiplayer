@@ -103,6 +103,64 @@ TEST("text: a key the language file lacks shows the English")
 	CHECK(Text::Format("party.teleported", { { "player", "Sam" } }) == "Teleportiert zu {spieler}");
 }
 
+TEST("text: a file saved with a UTF-8 byte order mark still has its first key")
+{
+	// Notepad's "UTF-8" is with a mark; without the mark removed the first key would be "\xEF\xBB\xBFparty.called".
+	const auto table = Text::Parse("\xEF\xBB\xBFparty.called = Du hast deine Gruppe gerufen\nmenu.close = Schlie\xC3\x9F" "en\n");
+	CHECK(table.size() == 2u);
+	CHECK(table.at("party.called") == "Du hast deine Gruppe gerufen");
+	CHECK(table.at("menu.close") == "Schlie\xC3\x9F" "en");
+	// Only a mark at the very start is one; the rest of the bytes are text.
+	CHECK(Text::Parse("\xEF\xBB\xBF").empty());
+	CHECK(Text::Parse("a = 1\n\xEF\xBB\xBF" "b = 2\n").size() == 2u);
+	CHECK(!Text::Parse("a = 1\n\xEF\xBB\xBF" "b = 2\n").contains("b"));
+}
+
+TEST("text: a file with Windows line endings reads the same as one with Unix ones")
+{
+	const std::string unix = "# c\nparty.called = Hello\nmenu.none_hosting = one\\ntwo\nparty.xp = +{xp} XP\n";
+	std::string       windows;
+	for (const char c : unix) {
+		if (c == '\n') {
+			windows += '\r';
+		}
+		windows += c;
+	}
+	CHECK(Text::Parse(windows) == Text::Parse(unix));
+	CHECK(Text::Parse(windows).at("party.called") == "Hello");  // no CR left on the end of a text
+	CHECK(Text::Parse(windows).at("party.xp") == "+{xp} XP");
+	// The last line needs no line end, and blank CRLF lines between texts are skipped.
+	CHECK(Text::Parse("a = 1\r\nb = 2").at("b") == "2");
+	CHECK(Text::Parse("a = 1\r\n\r\n\r\nb = 2\r\n").size() == 2u);
+}
+
+TEST("text: spaces and tabs around the equals sign are optional")
+{
+	const auto table = Text::Parse("a=one\nb = two\n  c   =   three  \n\td\t=\tfour\t\ne= five six \n");
+	CHECK(table.at("a") == "one");
+	CHECK(table.at("b") == "two");
+	CHECK(table.at("c") == "three");
+	CHECK(table.at("d") == "four");
+	CHECK(table.at("e") == "five six");  // spaces inside a text stay
+	// A key with spaces inside is the key as written, not two.
+	CHECK(Text::Parse("menu.close = x\n").contains("menu.close"));
+	// Nothing after the sign is an empty text (a text left to translate), not a missing line.
+	CHECK(Text::Parse("a =\nb=\n").at("a").empty());
+	CHECK(Text::Parse("a =\nb=\n").size() == 2u);
+}
+
+TEST("text: a text may hold equals signs, the first one splits the line")
+{
+	const auto table = Text::Parse("a = x = y\nb = =\nc== d\nd = bHost = false\ne = 100%=full\n");
+	CHECK(table.at("a") == "x = y");
+	CHECK(table.at("b") == "=");
+	CHECK(table.at("c") == "= d");
+	CHECK(table.at("d") == "bHost = false");  // as in the "Pon bHost = false" of the Spanish texts
+	CHECK(table.at("e") == "100%=full");
+	// A '=' in a key's place splits nothing: a line starting with it has no key.
+	CHECK(Text::Parse("= x\n").empty());
+}
+
 TEST("text: the game's language names map to the language files")
 {
 	CHECK(Text::CodeFor("en") == "en");
@@ -111,7 +169,10 @@ TEST("text: the game's language names map to the language files")
 	CHECK(Text::CodeFor("de") == "de");
 	CHECK(Text::CodeFor("it") == "it");
 	CHECK(Text::CodeFor("es") == "es");
-	CHECK(Text::CodeFor("esmx") == "es");
+	CHECK(Text::CodeFor("esmx") == "es-mx");  // Latin American Spanish has its own file
+	CHECK(Text::CodeFor("ESMX") == "es-mx");
+	CHECK(Text::CodeFor("es_MX") == "es-mx");
+	CHECK(Text::CodeFor("es-ES") == "es");
 	CHECK(Text::CodeFor("pl") == "pl");
 	CHECK(Text::CodeFor("ru") == "ru");
 	CHECK(Text::CodeFor("ptbr") == "pt-br");
@@ -360,7 +421,7 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 
 	// The languages the mod ships, each with a file.
 	const auto codes = CodesOf(files);
-	for (const std::string_view wanted : { "en", "en-gb", "ru", "es", "ar", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
+	for (const std::string_view wanted : { "en", "en-gb", "ru", "es", "es-mx", "ar", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
 		CHECK(std::ranges::find(codes, wanted) != codes.end());
 	}
 	// What the game calls its languages finds one of those files.
@@ -397,6 +458,31 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 		}
 	}
 	CHECK(FileOf(files.front().parent_path() / "ar.txt").find("font") != std::string::npos);
+}
+
+TEST("text: Latin American Spanish is its own file, not Spain's with another name")
+{
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	const auto spain = Text::Parse(FileOf(*root / "dist" / "lang" / "es.txt"));
+	const auto latam = Text::Parse(FileOf(*root / "dist" / "lang" / "es-mx.txt"));
+	CHECK(latam.size() == spain.size());
+	std::size_t different = 0;
+	for (const auto& [key, text] : latam) {
+		const auto it = spain.find(key);
+		CHECK(it != spain.end());
+		if (it != spain.end() && it->second != text) {
+			++different;
+		}
+		// No vosotros forms ("os", "vuestro", "-ais/-eis" with accents) and none of Spain's "pulsa", "Mayus".
+		for (const std::string_view form : { "vuestr", "hab\xC3\xA9" "is", "pod\xC3\xA9" "is", "ten\xC3\xA9" "is", "vosotros", " os ", "Pulsa", "May\xC3\xBA" "s" }) {
+			CHECK(text.find(form) == std::string::npos);
+		}
+	}
+	CHECK(different > 50u);  // vocabulary and the past tense differ throughout, not in a few keys
+	CHECK(latam.at("session.player_joined") == "{player} se uni\xC3\xB3");
+	CHECK(latam.at("menu.stop_hosting") == "Dejar de hospedar");
+	CHECK(latam.at("menu.hosting_steam").find("Steam") != std::string::npos);
 }
 
 TEST("text: dist/lang/en.txt is the built-in English")

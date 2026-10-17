@@ -200,10 +200,10 @@ namespace Text
 		return names;
 	}
 
-	// A language as the game or the ini names it, as the code of a language file ("en", "en-gb", "ru", "es", "ar", "de",
+	// A language as the game or the ini names it, as the code of a language file ("en", "en-gb", "ru", "es", "es-mx", "ar", "de",
 	// "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw"). The game's own sLanguage is "en", "fr", "de", "it", "es", "pl",
-	// "ru", "ptbr", "ja", "cn" (Simplified Chinese) or "zhhant"/"tchinese" (Traditional); "esmx" (Latin American Spanish) is
-	// Spanish too. Case, '-' and '_' do not matter, and a language's English name works too. What this does not know
+	// "ru", "ptbr", "ja", "cn" (Simplified Chinese) or "zhhant"/"tchinese" (Traditional); "esmx" is Latin American Spanish
+	// ("es-mx"). Case, '-' and '_' do not matter, and a language's English name works too. What this does not know
 	// comes back lower-cased with '_' as '-', so a file the player adds (lang/ko.txt) is found by its own name.
 	[[nodiscard]] inline std::string CodeFor(std::string_view a_name)
 	{
@@ -220,7 +220,8 @@ namespace Text
 			{ "en", "en" }, { "english", "en" }, { "enus", "en" }, { "americanenglish", "en" },
 			{ "engb", "en-gb" }, { "enuk", "en-gb" }, { "britishenglish", "en-gb" },
 			{ "ru", "ru" }, { "russian", "ru" },
-			{ "es", "es" }, { "spanish", "es" }, { "esmx", "es" }, { "latam", "es" }, { "eses", "es" },
+			{ "es", "es" }, { "spanish", "es" }, { "eses", "es" },
+			{ "esmx", "es-mx" }, { "latam", "es-mx" }, { "latinamericanspanish", "es-mx" }, { "mexicanspanish", "es-mx" },
 			{ "ar", "ar" }, { "arabic", "ar" },
 			{ "de", "de" }, { "german", "de" },
 			{ "fr", "fr" }, { "french", "fr" },

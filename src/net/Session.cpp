@@ -35,6 +35,7 @@
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "net/Identity.h"
+#include "net/NameChoice.h"
 #include "net/NetClient.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
@@ -127,14 +128,22 @@ namespace Session
 			return Protocol::LoadOrderHash(plugins);
 		}
 
+		// The name we say hello with (NameChoice::Choose). The character's name is read when the hello is sent: a joining
+		// game says hello once, as it connects, and again only after it has left or lost the session (the next connect
+		// reads the name anew).
 		std::string PlayerName()
 		{
-			const auto& name = Config::Get().playerName;
-			if (!name.empty()) {
-				return name;
+			const auto& ini = Config::Get().playerName;
+			std::string character;
+			if (NameChoice::WantsCharacter(ini)) {
+				// The player's name in the game: it is empty (or absent) until a new character has confirmed one in the opening.
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					if (const char* name = player->GetDisplayFullName()) {
+						character = name;
+					}
+				}
 			}
-			auto steamName = Steam::PersonaName();
-			return steamName.empty() ? "Vault Dweller" : steamName;
+			return NameChoice::Choose(ini, character, Steam::PersonaName());
 		}
 
 		bool InGame()
