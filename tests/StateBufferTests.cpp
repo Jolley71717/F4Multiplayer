@@ -383,3 +383,40 @@ TEST("state buffer: put where our work last sampled it, the same stand-in ran un
 		CHECK(counts.uneven > counts.frames / 5);
 	}
 }
+
+TEST("state buffer: a friend raising their gun has their stand-in's pitch swept between their states, not stepped")
+{
+	// Their states come 50 ms apart as they look up from level to 40 degrees in four steps, then hold there; their
+	// game says nothing of when they were sampled, so they are placed as they arrive.
+	StateBuffer::Buffer buffer;
+	auto                now = start;
+	std::uint32_t       sequence = 0;
+	for (const int pitch : { 0, 10, 20, 30, 40, 40, 40, 40, 40, 40 }) {
+		Protocol::PlayerState state;
+		state.sequence = ++sequence;
+		state.pitch = static_cast<std::int8_t>(pitch);
+		CHECK(buffer.Push(state, now));
+		now += 50ms;
+	}
+
+	// Drawn every 5 ms from the first state until well past the last, the stand-in's pitch only ever rises, from
+	// level to 40, and passes through pitches no state said: the gun sweeps up, it does not jump 10 degrees at a time.
+	std::vector<float> pitches;
+	for (auto at = start; at < now + 200ms; at += 5ms) {
+		buffer.Frame(at);
+		const auto sampled = buffer.Sample(at);
+		REQUIRE(sampled);
+		pitches.push_back(sampled->pitch);
+	}
+	REQUIRE(pitches.size() > 100);
+	CHECK(pitches.front() == 0.0f);
+	CHECK(pitches.back() == 40.0f);
+	CHECK(std::ranges::is_sorted(pitches));
+	const auto between = std::ranges::count_if(pitches, [](float a_pitch) { return std::abs(std::fmod(a_pitch, 10.0f)) > 0.5f && std::abs(std::fmod(a_pitch, 10.0f)) < 9.5f; });
+	CHECK(between > 10);
+	// Held past the newest state, it keeps that state's pitch.
+	buffer.Frame(now + 1s);
+	const auto held = buffer.Sample(now + 1s);
+	REQUIRE(held && held->held);
+	CHECK(held->pitch == 40.0f);
+}
