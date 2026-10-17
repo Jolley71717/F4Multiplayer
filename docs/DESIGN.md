@@ -84,12 +84,25 @@
   ID and accounts by alias, and HUD messages (which name players) are not logged at all. `sLogLevel`
   (info or debug) sets the level; flushing is CommonLib's (every INFO line).
 - **Faces:** `src/game/Face.cpp`. Each player sends their character's look once per session
-  (kReportFace: head parts, hair colours, body-shape triangle, morph region sliders, facial bone
-  transforms, tint layers, body tint); the server keeps the latest per player and tells newcomers.
-  The receiver duplicates the stand-in's base NPC (a settler of the right sex), writes the look
-  onto the copy (tint layers are rebuilt by vtable, pointing at the race's template entries by
-  uniqueID) and spawns the stand-in from it. A changed face deletes the stand-in; it respawns with
+  (kReportFace: head parts, hair colours, the complexion texture set, body-shape triangle, morph
+  region sliders, morph sliders by ID, facial bone transforms, tint layers, body tint; the
+  complexion and the keyed morph sliders since protocol 32); the server keeps the latest per player
+  and tells newcomers. The receiver duplicates the stand-in's base NPC (a settler of the right sex),
+  writes the look onto the copy (tint layers are rebuilt by vtable, pointing at the race's template
+  entries by uniqueID), takes the settler's face template off it (faceNPC and the "use traits"
+  flag: with those the engine loads the settler's baked FaceGen files as the head and looks at
+  nothing else) and spawns the stand-in from it. The copy is a runtime form with no FaceGen files,
+  so the engine builds its head from the head parts, sculpting and tints as the stand-in loads, the
+  way it builds the player's. `bFriendFaces = false` (or the dev's `facemask 4`) writes only the sex
+  and body shape, as 0.8.7 did for everyone. A changed face deletes the stand-in; it respawns with
   a fresh copy. Copies are never freed (forms can't be).
+  `src/game/FaceWatch.h` (game-free, tested) watches each stand-in placed with its own head: once
+  its 3D is loaded with no face node on it for 3 s, the engine is asked to build its 3D again
+  (`Actor::Reset3D`, what LooksMenu does after editing an NPC's face), once; with still no head 3 s
+  later, or with our own player's face node gone 2 s while the stand-in is loaded (seen once live:
+  the copy and the player seemed to share one runtime face), that friend's own head is given up
+  for the session and their stand-in is placed again with the settler's face. Our own head still
+  gone 2 s after that stand-in went is asked back once (`Reset3D` with the head and face flags).
   With LooksMenu (f4ee.dll) installed, the face also carries its body sliders (protocol 29; at most
   128, names up to 64 characters, values within +-2): `src/game/LooksMenu.cpp` reads the player's
   through LooksMenu's Papyrus script BodyGen (GetMorphs, then GetMorph under no keyword, both answered
