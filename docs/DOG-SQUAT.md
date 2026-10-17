@@ -71,7 +71,9 @@ Each finding below gives what the capture shows, then the fix it points to. They
    from the speed (a walk-back at 458 units/s cannot be right). Add a CreatureGait test for it.
 5. **The speed is in other units for a dog.** `speed=` on the joiner is under 25 while the host's dog runs, and
    the host's `motion` shows an `animationSpeed` near 1 rather than hundreds. The copy is never started, so it
-   stands, then sits. Fix: in `Gait::Reported`, use the ground covered for a creature.
+   stands, then sits. Fix: in `Gait::Reported`, use the ground covered for a creature. (Less likely than it
+   looks: the dog walking in the VM test reported an `animationSpeed` of 91 to 107, the walk's own pace, so the
+   units are the same as a person's. It stays here only for the run, which was never staged.)
 6. **Only with weapons drawn.** The squat comes only once the host draws, and the dog's alert stance takes over
    the locomotion: animlog shows "ToRunForward" refused or never sent. The combat locomotion has its own events,
    which CreatureGait does not know. Fix: read those events from the host's dog with animlog while it runs drawn,
