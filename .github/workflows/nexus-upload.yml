@@ -9,6 +9,10 @@ on:
       tag:
         description: Release tag to upload (vX.Y.Z; release candidates never go to Nexus)
         required: true
+      check_only:
+        description: Only check the zip and the API key; upload nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,7 +54,23 @@ jobs:
             echo "CHANGELOG_END"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check the API key
+        env:
+          NEXUSMODS_API_KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+        run: |
+          if [ -z "$NEXUSMODS_API_KEY" ]; then
+            echo "::error::The repository secret NEXUSMODS_API_KEY is not set"
+            exit 1
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' -H "apikey: $NEXUSMODS_API_KEY" https://api.nexusmods.com/v1/users/validate.json)
+          if [ "$status" != 200 ]; then
+            echo "::error::Nexus refused the API key (HTTP $status)"
+            exit 1
+          fi
+          echo "Nexus accepts the API key"
+
       - name: Upload to Nexus Mods
+        if: ${{ !inputs.check_only }}
         uses: Nexus-Mods/upload-action@98532f7670c27cbecc78fae03fa3e278147827e2  # v1.0.0-beta.11
         with:
           api_key: ${{ secrets.NEXUSMODS_API_KEY }}
