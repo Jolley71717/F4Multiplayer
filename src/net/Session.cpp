@@ -959,7 +959,7 @@ namespace Session
 
 		PERF_NEXT(perf, "NpcSync");
 		if (welcomed) {
-			NpcSync::Frame();
+			NpcSync::Frame(hostedServer && hostedServer->Running());
 			Spawns::Frame();
 		}
 		PERF_NEXT(perf, "QuestSync");
