@@ -435,6 +435,26 @@ TEST("protocol: actor claim, release and owner lists round trip")
 	CHECK(empty->empty());
 }
 
+TEST("protocol: an NPC state carries its owner's graph's gait and clip rate, a person's jog and a creature's range alike")
+{
+	// What NpcSync sends for a jogging person (no rate known for the jog), a running one, and a creature's range.
+	for (const auto [gait, rate] : { std::pair<std::uint8_t, std::uint8_t>{ 1, 0 }, { 2, 69 }, { 10, 0 }, { 255, 255 } }) {
+		ActorState in = MakeActorState(3);
+		in.flags = kOwnGait | kWeaponDrawn;
+		in.speed = 0.0f;  // its graph stands while it is carried
+		in.gait = gait;
+		in.gaitRate = rate;
+		const auto out = DecodeActorStates(Encode(std::vector<ActorState>{ in }, MT::kActorStatesRelay));
+		REQUIRE(out);
+		REQUIRE(out->size() == 1);
+		CHECK(SameActorState(out->front(), in));
+	}
+	// The layout is unchanged by what the gait means: one state is still 39 bytes after the type and count.
+	const auto one = Encode(std::vector<ActorState>{ MakeActorState(0) }, MT::kActorStates);
+	const auto two = Encode(std::vector<ActorState>{ MakeActorState(0), MakeActorState(1) }, MT::kActorStates);
+	CHECK(two.size() - one.size() == 39);
+}
+
 TEST("protocol: ActorStates round trip with both message types")
 {
 	for (const auto type : { MT::kActorStates, MT::kActorStatesRelay }) {

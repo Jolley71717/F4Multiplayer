@@ -14,10 +14,12 @@
 // the graph's jog is left out. Kept free of the game so it can be tested.
 namespace Gait
 {
-	// The values are the weapon-away graph's states (its sync variable, iSyncLocomotionSpeed): 1 is its jog.
+	// The values are the weapon-away graph's states (its sync variable, iSyncLocomotionSpeed). A stand-in never
+	// jogs (Pick leaves it out); a mirrored person jogs when its owner's graph does (MirrorGait.h).
 	enum class Kind : std::uint8_t
 	{
 		kWalk = 0,
+		kJog = 1,
 		kRun = 2,
 	};
 
@@ -78,30 +80,32 @@ namespace Gait
 
 	// A clip's playback rate for a speed: the engine's own (speed over the clip's pace), held to a range
 	// that still looks like the gait (a sprint plays the run at most 1.6 times as fast).
+	inline constexpr float MIN_PLAYBACK = 0.5f;
+	inline constexpr float MAX_PLAYBACK = 1.6f;
 	constexpr float Playback(float a_speed, float a_clip)
 	{
-		return std::clamp(a_speed / a_clip, 0.5f, 1.6f);
+		return std::clamp(a_speed / a_clip, MIN_PLAYBACK, MAX_PLAYBACK);
 	}
 
 	// The weapon-away graph's event, and the value of its sync variable, which picks the state a moveStart
 	// enters.
 	constexpr const char* Event(Kind a_gait)
 	{
-		return a_gait == Kind::kRun ? "Run" : "Walk";
+		return a_gait == Kind::kRun ? "Run" : a_gait == Kind::kJog ? "Jog" : "Walk";
 	}
 	constexpr std::int32_t SyncValue(Kind a_gait)
 	{
 		return static_cast<std::int32_t>(a_gait);
 	}
 
-	// The weapon-drawn graph's (iLocomotionSpeedState 0 and 1).
+	// The weapon-drawn graph's (iLocomotionSpeedState 0 and 1). It has no jog; a jog is nearer its run.
 	constexpr const char* WeaponEvent(Kind a_gait)
 	{
-		return a_gait == Kind::kRun ? "runStart" : "walkStart";
+		return a_gait == Kind::kWalk ? "walkStart" : "runStart";
 	}
 	constexpr std::int32_t WeaponState(Kind a_gait)
 	{
-		return a_gait == Kind::kRun ? 1 : 0;
+		return a_gait == Kind::kWalk ? 0 : 1;
 	}
 
 	// Whether the gait's events go this frame: while moving, when the gait changed, when the graph has just
