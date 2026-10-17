@@ -65,6 +65,8 @@ namespace Config
 
 			if (key == "sPlayerName") {
 				settings.playerName = value;
+			} else if (key == "sLanguage") {
+				settings.language = value;
 			} else if (key == "bHost") {
 				settings.host = ParseBool(value);
 			} else if (key == "sTransport") {

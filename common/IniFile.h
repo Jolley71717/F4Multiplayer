@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -31,6 +34,30 @@ namespace IniFile
 			const auto eq = view.find('=');
 			return eq == std::string_view::npos ? std::string_view{} : Trim(view.substr(0, eq));
 		}
+	}
+
+	// The value of the first "a_key = ..." line, or nothing. a_ignoreCase is for the game's own ini files (Fallout4.ini and
+	// the others read keys without regard to case); the plugin's own keys match exactly. A leading UTF-8 byte order mark is ignored.
+	[[nodiscard]] inline std::optional<std::string> GetValue(std::string_view a_text, std::string_view a_key, bool a_ignoreCase = false)
+	{
+		if (a_text.starts_with("\xEF\xBB\xBF")) {
+			a_text.remove_prefix(3);
+		}
+		const auto same = [&](std::string_view a_a, std::string_view a_b) {
+			return a_a.size() == a_b.size() && std::ranges::equal(a_a, a_b, [&](char a_x, char a_y) {
+				return a_ignoreCase ? std::tolower(static_cast<unsigned char>(a_x)) == std::tolower(static_cast<unsigned char>(a_y)) : a_x == a_y;
+			});
+		};
+		for (std::size_t start = 0; start < a_text.size();) {
+			const auto newline = a_text.find('\n', start);
+			const auto end = newline == std::string_view::npos ? a_text.size() : newline + 1;
+			const auto line = detail::Trim(a_text.substr(start, (newline == std::string_view::npos ? end : newline) - start));
+			start = end;
+			if (same(detail::KeyOf(line), a_key)) {
+				return std::string{ detail::Trim(line.substr(line.find('=') + 1)) };
+			}
+		}
+		return std::nullopt;
 	}
 
 	// Returns a_text with the first "a_key = ..." line replaced by "a_key = a_value" (keys match
