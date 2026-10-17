@@ -1,5 +1,6 @@
 #include "game/Face.h"
 
+#include "Config.h"
 #include "game/EngineRefs.h"
 
 namespace Face
@@ -10,10 +11,12 @@ namespace Face
 
 		std::uint32_t made = 0;
 		std::uint32_t rejected = 0;
-		// Which pieces to apply (dev: facemask). Only the body shape by default: the game builds a
-		// head at runtime for the player only, so a copy with its own head parts has no head until
-		// the engine's head generation can be called (see docs/ROADMAP.md).
-		std::uint32_t parts = 4;
+		std::uint32_t rebuilds = 0;
+		std::uint32_t gaveUpNoHead = 0;
+		std::uint32_t gaveUpOurs = 0;
+		std::uint32_t repairs = 0;
+		// Which pieces to apply, when the dev set them (facemask); else the ini decides (Parts).
+		std::optional<std::uint32_t> parts;
 
 		std::uint32_t IdOf(const RE::TESForm* a_form)
 		{
@@ -83,6 +86,7 @@ namespace Face
 		if (const auto head = a_npc->headRelatedData) {
 			face.hairColor = IdOf(head->hairColor);
 			face.facialHairColor = IdOf(head->facialHairColor);
+			face.faceDetails = IdOf(head->faceDetails);
 		}
 		face.weight[0] = a_npc->morphWeight.x;
 		face.weight[1] = a_npc->morphWeight.y;
@@ -93,6 +97,16 @@ namespace Face
 					face.sliders.push_back(v);
 				}
 			}
+		}
+		if (const auto morphs = a_npc->morphSliderValues) {
+			for (const auto& [id, v] : *morphs) {
+				if (face.morphs.size() >= Protocol::MAX_FACE_MORPHS) {
+					break;
+				}
+				face.morphs.push_back({ id, v });
+			}
+			// In one order whatever the map's: the face is compared each check, and a differing one goes out again.
+			std::ranges::sort(face.morphs, {}, &Protocol::FaceMorph::id);
 		}
 		if (const auto bones = a_npc->facialBoneRegionSliderValues) {
 			for (const auto& [region, t] : *bones) {
@@ -106,6 +120,7 @@ namespace Face
 				b.scale[0] = t.scale.x, b.scale[1] = t.scale.y, b.scale[2] = t.scale.z;
 				face.bones.push_back(b);
 			}
+			std::ranges::sort(face.bones, {}, &Protocol::FaceBone::region);
 		}
 		if (const auto tints = a_npc->tintingData) {
 			for (const auto entry : tints->entriesA) {
@@ -133,7 +148,17 @@ namespace Face
 		return face;
 	}
 
-	RE::TESNPC* MakeBase(RE::TESNPC* a_base, const Protocol::Face& a_face)
+	std::uint32_t Parts()
+	{
+		return parts.value_or(Config::Get().friendFaces ? ALL : BODY_ONLY);
+	}
+
+	void SetParts(std::uint32_t a_mask)
+	{
+		parts = a_mask;
+	}
+
+	RE::TESNPC* MakeBase(RE::TESNPC* a_base, const Protocol::Face& a_face, std::uint32_t a_parts)
 	{
 		const auto race = a_base ? a_base->GetFormRace() : nullptr;
 		if (!race || race->GetFormID() != a_face.race) {
@@ -158,36 +183,48 @@ namespace Face
 				headParts.push_back(part);
 			}
 		}
-		if (!headParts.empty() && (Face::parts & 1)) {
+		if (!headParts.empty() && (a_parts & kHeadParts)) {
 			const auto array = RE::calloc<RE::BGSHeadPart*>(headParts.size());
 			std::ranges::copy(headParts, array);
 			npc->headParts = array;
 			npc->numHeadParts = static_cast<std::int8_t>(headParts.size());
 		}
 
-		const auto head = (Face::parts & 2) ? RE::calloc<RE::TESNPC::HeadRelatedData>(1) : nullptr;
+		// Hair and beard colours, and the complexion (the skin detail texture set the engine lays the tints over).
+		const auto head = (a_parts & kHairColors) ? RE::calloc<RE::TESNPC::HeadRelatedData>(1) : nullptr;
 		if (head) {
 			if (a_base->headRelatedData) {
 				*head = *a_base->headRelatedData;
 			}
 			head->hairColor = RE::TESForm::GetFormByID<RE::BGSColorForm>(a_face.hairColor);
 			head->facialHairColor = RE::TESForm::GetFormByID<RE::BGSColorForm>(a_face.facialHairColor);
+			if (const auto details = RE::TESForm::GetFormByID<RE::BGSTextureSet>(a_face.faceDetails)) {
+				head->faceDetails = details;
+			}
 			npc->headRelatedData = head;
 		}
 
-		if (Face::parts & 4) {
+		if (a_parts & kBody) {
 			npc->morphWeight = { a_face.weight[0], a_face.weight[1], a_face.weight[2] };
 		}
 
-		if (Face::parts & 8) {
+		if (a_parts & kSliders) {
 			const auto sliders = new RE::BSTArray<float>();
 			for (const float v : a_face.sliders) {
 				sliders->push_back(v);
 			}
 			npc->morphRegionSliderValues = sliders;
+			const auto morphs = EngineRefs::New<RE::BSTHashMap<std::uint32_t, float>>();
+			if (!morphs) {
+				return nullptr;
+			}
+			for (const auto& m : a_face.morphs) {
+				morphs->insert({ m.id, m.value });
+			}
+			npc->morphSliderValues = morphs;
 		}
 
-		if (Face::parts & 16) {
+		if (a_parts & kBones) {
 			const auto bones = EngineRefs::New<RE::BSTHashMap<std::uint32_t, RE::BGSCharacterMorph::Transform>>();
 			if (!bones) {
 				return nullptr;
@@ -203,7 +240,7 @@ namespace Face
 		}
 
 		std::size_t tintCount = 0;
-		if (Face::parts & 32) {
+		if (a_parts & kTints) {
 			const auto tints = EngineRefs::New<Tint::Entries>();
 			if (!tints) {
 				return nullptr;
@@ -221,30 +258,68 @@ namespace Face
 			npc->tintingData = tints;
 		}
 
-		if (Face::parts & 64) {
-		npc->bodyTintColorR = static_cast<std::int8_t>(a_face.bodyTint[0]);
-		npc->bodyTintColorG = static_cast<std::int8_t>(a_face.bodyTint[1]);
-		npc->bodyTintColorB = static_cast<std::int8_t>(a_face.bodyTint[2]);
-		npc->bodyTintColorA = static_cast<std::int8_t>(a_face.bodyTint[3]);
+		if (a_parts & kBodyTint) {
+			npc->bodyTintColorR = static_cast<std::int8_t>(a_face.bodyTint[0]);
+			npc->bodyTintColorG = static_cast<std::int8_t>(a_face.bodyTint[1]);
+			npc->bodyTintColorB = static_cast<std::int8_t>(a_face.bodyTint[2]);
+			npc->bodyTintColorA = static_cast<std::int8_t>(a_face.bodyTint[3]);
 		}
-		// Its own face, not the base's: a settler's look comes from a template (faceNPC and the
-		// "use traits" template flag); with those left in place the copy's own head parts are ignored.
-		if (Face::parts & 1) {
+		// Its own face, not the base's: a settler's look comes from a template (faceNPC and the "use traits" template
+		// flag), whose FaceGen files the engine loads as the head; with those left in place the copy's own head parts,
+		// sculpting and tints are never looked at. Without them the copy is a runtime form with no files of its own, so
+		// the engine builds its head from these at load (or does not: FaceWatch.h watches for that).
+		if (a_parts & kHeadParts) {
 			npc->faceNPC = nullptr;
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
 		}
 		++made;
-		REX::INFO("Face: made base {:08X} from {:08X}: {} head parts, {} sliders, {} bones, {} tints", npc->GetFormID(), a_base->GetFormID(), headParts.size(), a_face.sliders.size(), a_face.bones.size(), tintCount);
+		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
+			(a_parts & kHeadParts) ? headParts.size() : 0, (a_parts & kSliders) ? a_face.sliders.size() : 0, (a_parts & kSliders) ? a_face.morphs.size() : 0,
+			(a_parts & kBones) ? a_face.bones.size() : 0, tintCount, OwnHead(a_parts) ? " (its own head)" : " (the settler's head)");
 		return npc;
 	}
 
-	void SetParts(std::uint32_t a_mask)
+	bool HasHead(RE::TESObjectREFR* a_actor)
 	{
-		parts = a_mask;
+		return a_actor && a_actor->Get3D() && a_actor->GetFaceNodeSkinned() != nullptr;
+	}
+
+	void Rebuild(RE::Actor* a_actor)
+	{
+		if (!a_actor) {
+			return;
+		}
+		++rebuilds;
+		// Everything built again on the engine's next update of it (queued, not from inside our frame), head included:
+		// LooksMenu asks the same after editing an NPC's face.
+		a_actor->Reset3D(true, 0, true, 0);
+	}
+
+	void GaveUp(std::uint32_t a_playerId, bool a_ours)
+	{
+		if (a_ours) {
+			++gaveUpOurs;
+			REX::WARN("Face: player {}'s stand-in took our own player's head while loaded; placed again with the settler's face, and their own head not shown again this session", a_playerId);
+		} else {
+			++gaveUpNoHead;
+			REX::WARN("Face: the engine built no head for player {}'s stand-in with their own head parts (not after a rebuild either); placed again with the settler's face, and their own head not shown again this session", a_playerId);
+		}
+	}
+
+	void RepairOurs()
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+		++repairs;
+		REX::WARN("Face: our own player's head is still gone after the stand-in that took it went; asked the engine for it back");
+		constexpr auto head = static_cast<std::uint32_t>(std::to_underlying(RE::RESET_3D_FLAGS::kHead) | std::to_underlying(RE::RESET_3D_FLAGS::kFace));
+		player->Reset3D(false, head, true, 0);
 	}
 
 	std::string Describe()
 	{
-		return std::format("faces: made={} rejected={}", made, rejected);
+		return std::format("faces: parts={:02X} made={} rejected={} rebuilds={} gaveup={}/{} repairs={}", Parts(), made, rejected, rebuilds, gaveUpNoHead, gaveUpOurs, repairs);
 	}
 }

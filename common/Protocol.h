@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 31;
+	inline constexpr std::uint16_t VERSION = 32;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -373,10 +373,12 @@ namespace Protocol
 	};
 
 	// A player's face and body shape, as the game stores it on their character's base NPC: head
-	// parts (hair, eyes, beard, scars, ...), sculpting sliders, bone sculpting, make-up and skin
-	// tints, and the body shape triangle. The others build their stand-in's look from it.
+	// parts (hair, eyes, beard, scars, ...), the complexion, sculpting sliders (by region and by
+	// morph), bone sculpting, make-up and skin tints, and the body shape triangle. The others build
+	// their stand-in's look from it.
 	inline constexpr std::size_t MAX_FACE_HEAD_PARTS = 24;
 	inline constexpr std::size_t MAX_FACE_SLIDERS = 256;
+	inline constexpr std::size_t MAX_FACE_MORPHS = 256;
 	inline constexpr std::size_t MAX_FACE_BONES = 256;
 	inline constexpr std::size_t MAX_FACE_TINTS = 96;
 	// LooksMenu's body sliders (F4EE body morphs), for players who have it: a morph's name as BodySlide
@@ -456,6 +458,16 @@ namespace Protocol
 		bool operator==(const FaceTint&) const = default;
 	};
 
+	// One of the character menu's sculpting sliders (a race morph slider, by its unique ID) and where it
+	// was left, as the base NPC keeps them (morphSliderValues; the region sliders are a list apart).
+	struct FaceMorph
+	{
+		std::uint32_t id = 0;
+		float         value = 0.0f;
+
+		bool operator==(const FaceMorph&) const = default;
+	};
+
 	struct BodyMorph
 	{
 		std::string name;  // the morph (a BodySlide slider), at most MAX_BODY_MORPH_NAME long
@@ -472,8 +484,10 @@ namespace Protocol
 		std::vector<std::uint32_t> headParts;  // BGSHeadPart form IDs
 		std::uint32_t              hairColor = 0;        // BGSColorForm, 0 = none
 		std::uint32_t              facialHairColor = 0;  // BGSColorForm, 0 = none
+		std::uint32_t              faceDetails = 0;      // BGSTextureSet: the complexion (skin detail), 0 = the race's default
 		float                      weight[3] = {};       // thin, muscular, fat
 		std::vector<float>         sliders;  // morph region slider values, by index
+		std::vector<FaceMorph>     morphs;   // morph slider values, by slider ID
 		std::vector<FaceBone>      bones;
 		std::vector<FaceTint>      tints;
 		std::uint8_t               bodyTint[4] = {};  // RGBA
@@ -1736,6 +1750,7 @@ namespace Protocol
 		}
 		w.U32(a_msg.hairColor);
 		w.U32(a_msg.facialHairColor);
+		w.U32(a_msg.faceDetails);
 		for (const float v : a_msg.weight) {
 			w.F32(v);
 		}
@@ -1743,6 +1758,12 @@ namespace Protocol
 		w.U16(static_cast<std::uint16_t>(sliders));
 		for (std::size_t i = 0; i < sliders; ++i) {
 			w.F32(a_msg.sliders[i]);
+		}
+		const auto faceMorphs = (std::min)(a_msg.morphs.size(), MAX_FACE_MORPHS);
+		w.U16(static_cast<std::uint16_t>(faceMorphs));
+		for (std::size_t i = 0; i < faceMorphs; ++i) {
+			w.U32(a_msg.morphs[i].id);
+			w.F32(a_msg.morphs[i].value);
 		}
 		const auto bones = (std::min)(a_msg.bones.size(), MAX_FACE_BONES);
 		w.U16(static_cast<std::uint16_t>(bones));
@@ -1804,6 +1825,7 @@ namespace Protocol
 		}
 		msg.hairColor = r.U32();
 		msg.facialHairColor = r.U32();
+		msg.faceDetails = r.U32();
 		for (float& v : msg.weight) {
 			v = r.F32();
 		}
@@ -1813,6 +1835,16 @@ namespace Protocol
 		}
 		for (std::uint16_t i = 0; i < sliders && r.Ok(); ++i) {
 			msg.sliders.push_back(r.F32());
+		}
+		const auto faceMorphs = r.U16();
+		if (faceMorphs > MAX_FACE_MORPHS) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < faceMorphs && r.Ok(); ++i) {
+			FaceMorph m;
+			m.id = r.U32();
+			m.value = r.F32();
+			msg.morphs.push_back(m);
 		}
 		const auto bones = r.U16();
 		if (bones > MAX_FACE_BONES) {
@@ -1870,6 +1902,7 @@ namespace Protocol
 		}
 		const auto finite = [](float a_v) { return std::isfinite(a_v); };
 		if (!std::ranges::all_of(msg.weight, finite) || !std::ranges::all_of(msg.sliders, finite) ||
+			!std::ranges::all_of(msg.morphs, [&](const FaceMorph& m) { return finite(m.value); }) ||
 			!std::ranges::all_of(msg.bones, [&](const FaceBone& b) { return std::ranges::all_of(b.position, finite) && std::ranges::all_of(b.rotation, finite) && std::ranges::all_of(b.scale, finite); })) {
 			return std::nullopt;
 		}
