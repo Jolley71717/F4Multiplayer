@@ -554,6 +554,9 @@ namespace NpcSync
 			Protocol::ActorState state = snaps.back().state;
 			float                motionAngle = state.heading;
 			std::size_t          next = snaps.size();  // the first state the path goes on through (MotionPath.h)
+			// The pitch its owner's copy aims at: blended between the two states it is drawn between, as its place and
+			// heading are, so its gun sweeps up a target rather than stepping (AimPoint::BlendAim).
+			auto ownerAim = Protocol::UnpackAimPitch(state.aimPitch);
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
 				const auto& a = snaps[i - 1];
 				const auto& b = snaps[i];
@@ -567,6 +570,7 @@ namespace NpcSync
 				state.y = std::lerp(a.state.y, b.state.y, t);
 				state.z = std::lerp(a.state.z, b.state.z, t);
 				state.heading = LerpAngle(a.state.heading, b.state.heading, t);
+				ownerAim = AimPoint::BlendAim(Protocol::UnpackAimPitch(a.state.aimPitch), Protocol::UnpackAimPitch(b.state.aimPitch), t);
 				const float dx = b.state.x - a.state.x;
 				const float dy = b.state.y - a.state.y;
 				if (dx * dx + dy * dy > 1.0f) {
@@ -587,7 +591,7 @@ namespace NpcSync
 				.flags = state.flags,
 				.gait = state.gait,
 				.gaitRate = state.gaitRate,
-				.ownerAim = Protocol::UnpackAimPitch(state.aimPitch),
+				.ownerAim = ownerAim,
 				.path = MotionPath::Ahead({ a_now, state.x, state.y, state.z, state.heading }, state.cell, state.worldspace, snaps, next, behind, &Snapshot::received),
 			};
 		}

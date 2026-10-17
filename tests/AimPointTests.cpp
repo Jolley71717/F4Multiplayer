@@ -308,3 +308,47 @@ TEST("aim point: a mirrored NPC's aim when something is missing or nonsense")
 	CHECK(order.act == AimPoint::MirrorOrder::Act::kSet);
 	CHECK(std::abs(AimPoint::PitchTo(Shoulders(feet), order.point) + 30.0f) < 0.01f);
 }
+
+TEST("aim point: between two states a gun sweeps from the one pitch to the other, and holds at either end")
+{
+	// A friend's states come ten or twenty times a second: drawn a quarter of the way from one to the next, their
+	// stand-in aims a quarter of the way up.
+	CHECK(std::abs(AimPoint::BlendPitch(10.0f, 30.0f, 0.25f) - 15.0f) < 0.001f);
+	CHECK(std::abs(AimPoint::BlendPitch(10.0f, 30.0f, 0.5f) - 20.0f) < 0.001f);
+	CHECK(std::abs(AimPoint::BlendPitch(30.0f, -30.0f, 0.5f)) < 0.001f);
+	CHECK(AimPoint::BlendPitch(10.0f, 30.0f, 0.0f) == 10.0f);
+	CHECK(AimPoint::BlendPitch(10.0f, 30.0f, 1.0f) == 30.0f);
+	// Before the first or past the second it is held there; a nonsense way along is the later state.
+	CHECK(AimPoint::BlendPitch(10.0f, 30.0f, -0.5f) == 10.0f);
+	CHECK(AimPoint::BlendPitch(10.0f, 30.0f, 1.5f) == 30.0f);
+	CHECK(AimPoint::BlendPitch(10.0f, 30.0f, NaN) == 30.0f);
+	// A nonsense pitch counts as level.
+	CHECK(std::abs(AimPoint::BlendPitch(NaN, 30.0f, 0.5f) - 15.0f) < 0.001f);
+	CHECK(std::isfinite(AimPoint::BlendPitch(10.0f, std::numeric_limits<float>::infinity(), 0.5f)));
+}
+
+TEST("aim point: a mirrored NPC's aim sweeps between two aims, and comes up or goes down with the later state")
+{
+	CHECK(AimPoint::BlendAim(10.0f, 50.0f, 0.25f) == 20.0f);
+	CHECK(AimPoint::BlendAim(-20.0f, 20.0f, 0.5f) == 0.0f);
+	// The owner's copy started aiming: its copy is given the aim whole, the aim modifier eases the arms up itself.
+	CHECK(AimPoint::BlendAim(std::nullopt, 40.0f, 0.1f) == 40.0f);
+	// It stopped: the copy's aim is forgotten at once (ForMirror clears), not blended toward nothing.
+	CHECK(!AimPoint::BlendAim(40.0f, std::nullopt, 0.9f));
+	CHECK(!AimPoint::BlendAim(std::nullopt, std::nullopt, 0.5f));
+
+	// Through the server: the host's raider tracks a bloatfly climbing from level to 40 degrees up in two states;
+	// the joiner's copy, drawn halfway between them, is given a point 20 degrees up from its shoulders.
+	const AimPoint::Point feet{ 100.0f, 200.0f, 50.0f };
+	const auto            got = RelayRaider({
+        OwnedRaider(feet, 1.0f, AimPoint::Point{ feet.x, feet.y + 1000.0f, feet.z + AimPoint::MIRROR_HEIGHT }),
+        OwnedRaider(feet, 1.0f, AimPoint::Point{ feet.x, feet.y + 1000.0f, feet.z + AimPoint::MIRROR_HEIGHT + 1000.0f * std::tan(40.0f / AimPoint::TO_DEGREES) }),
+    });
+	REQUIRE(got.size() == 2);
+	const auto between = AimPoint::BlendAim(Protocol::UnpackAimPitch(got[0].aimPitch), Protocol::UnpackAimPitch(got[1].aimPitch), 0.5f);
+	REQUIRE(between);
+	CHECK(std::abs(*between - 20.0f) < 0.6f);
+	const auto order = AimPoint::ForMirror(between, false, feet, 1.0f);
+	CHECK(order.act == AimPoint::MirrorOrder::Act::kSet);
+	CHECK(std::abs(AimPoint::PitchTo(Shoulders(feet), order.point) - 20.0f) < 0.6f);
+}
