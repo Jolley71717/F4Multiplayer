@@ -27,6 +27,13 @@ game's own code can:
   here, so ask that game). An enemy made at runtime (`made=true`: a random encounter, a spawned enemy)
   has another form ID in each game: `enemies like <base|any> <x> <y> [within]` finds this game's actor
   of that base at that spot. Made for a test script playing a co-op follower.
+- **Start a fight:** `spawnenemies <base> <n> <radius>` sets n NPCs of an NPC base form (`findnpc`
+  finds one) evenly round the player at that radius (256 to 4000 units), the first straight ahead, all
+  facing the player and a little above its feet so they drop onto the ground. At most 16 are placed (more
+  asked are capped); a unique character or a friend's stand-in is refused. The answer is `placed=<n>
+  asked=<n> base=<base> '<name>' radius=<r> ids=<ref>,<ref>...`, and `remove <ref>` deletes one again.
+  They are made at runtime like a random encounter's raiders, so in a session the hostile ones are shared
+  as one is (`made=true` in `enemies`). Indoors a wide ring can put them inside a wall: use a small radius.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
   characters say; HUD messages name players and are never logged) until the game restarts, `log
