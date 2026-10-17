@@ -6,7 +6,8 @@ namespace Config
 {
 	struct Settings
 	{
-		// Name shown to other players. Empty = your Steam name.
+		// Name shown to other players: a name, "character" (the name of the character you play; your Steam name until it
+		// has one) or empty (your Steam name, as older ini files have it). See net/NameChoice.h.
 		std::string playerName;
 
 		// Language of the mod's own texts (HUD notices, the F1 menu): a game language code ("de", "ru", "ptbr", "ja", "cn"...) or the

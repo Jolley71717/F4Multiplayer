@@ -29,8 +29,9 @@ The host's game starts hosting once it is in the world (not at the main menu, an
 character not until it is out of Vault 111). Friends who try to join earlier are told the host isn't
 in the game yet, and their game tries again by itself.
 
-Everyone else keeps the defaults. Players are named after their Steam names (set `sPlayerName` to
-use another name).
+Everyone else keeps the defaults. Players are named after the character they play (`sPlayerName = character`;
+your Steam name stands in until a new character has a name). Set `sPlayerName` to a name of your own, or leave it
+empty to use your Steam name. The name is sent when your game connects.
 
 The mod's messages and its F1 menu follow the language the game is set to (English, Russian, Spanish, Arabic,
 German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and Traditional Chinese). Set `sLanguage` in
