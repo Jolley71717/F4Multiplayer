@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <string>
 #include <thread>
@@ -123,12 +124,12 @@ namespace
 {
 	using SourceTree::CodeOnly;  // the source without its comments and strings (shared with the UI hold's guard)
 
-	// How often a_code looks a menu up through the UI (GetMenu, GetMenuOpen, or the UI's menu stack and map).
-	int MenuLookups(std::string_view a_code)
+	// How often a_code uses any of a_names as a whole name.
+	int Uses(std::string_view a_code, std::initializer_list<std::string_view> a_names)
 	{
 		const auto ident = [](char a_c) { return std::isalnum(static_cast<unsigned char>(a_c)) || a_c == '_'; };
 		int        found = 0;
-		for (const std::string_view name : { "GetMenu", "GetMenuOpen", "menuStack", "menuMap" }) {
+		for (const auto name : a_names) {
 			for (auto at = a_code.find(name); at != std::string_view::npos; at = a_code.find(name, at + 1)) {
 				const auto end = at + name.size();
 				if ((at > 0 && ident(a_code[at - 1])) || (end < a_code.size() && ident(a_code[end]))) {
@@ -139,6 +140,19 @@ namespace
 		}
 		return found;
 	}
+
+	// How often a_code looks a menu up through the UI (GetMenu, GetMenuOpen, or the UI's menu stack and map).
+	int MenuLookups(std::string_view a_code)
+	{
+		return Uses(a_code, { "GetMenu", "GetMenuOpen", "menuStack", "menuMap" });
+	}
+
+	// How often a_code hands work to an F4SE UI task.
+	int UiTasks(std::string_view a_code)
+	{
+		return Uses(a_code, { "AddUITask" });
+	}
+
 }
 
 TEST("open menus: the guard finds a menu looked up through the UI, and not one named in a comment or a string")
@@ -153,25 +167,38 @@ TEST("open menus: the guard finds a menu looked up through the UI, and not one n
 	CHECK(CodeOnly("a // b\nc /* d\ne */ f \"g\\\"h\" i") == "a \nc \n f   i");
 }
 
-TEST("open menus: the plugin looks no menu up through the UI, but for the HUD once, to hook it, and the developer's gfx commands")
+TEST("open menus: the plugin looks no menu up through the UI, but for the HUD once, to hook it, and the developer's menu commands")
 {
 	const auto root = SourceTree::Root();
 	REQUIRE(root);  // run the tests from the repository or its build folder
 	// Compass's lookup is on the main thread, between frames, of the HUD (which the UI keeps for the whole game),
 	// and only until its update is hooked. The gfx commands (dev channel) look up what a developer names, and
-	// "dialogue menu" the dialogue menu and the menu stack, on the main thread, when a developer asks.
+	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
+	// asks, and the reference is let go before the command returns.
 	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 } };
-	for (const auto& entry : std::filesystem::recursive_directory_iterator{ *root / "src" }) {
-		const auto ext = entry.path().extension();
-		if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
-			continue;
-		}
-		const auto file = std::filesystem::relative(entry.path(), *root).generic_string();
-		const auto lookups = MenuLookups(CodeOnly(SourceTree::Read(entry.path())));
+	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+		const auto lookups = MenuLookups(code);
 		const auto it = allowed.find(file);
 		const int  expected = it == allowed.end() ? 0 : it->second;
 		if (lookups != expected) {
 			Test::Fail(__FILE__, __LINE__, std::format("{} looks a menu up through the UI {} time(s), not {}: ask OpenMenus", file, lookups, expected));
 		}
 	}
+}
+
+// An F4SE UI task runs on a job thread beside the main thread's drawing: a menu looked up there (the gfx commands
+// did, by any name a developer gives, the workshop menu's included) held a reference to it at the one moment that
+// can hand the engine's deadlock its chance. The plugin's work with the menus runs on the main thread between
+// frames (DevCommands, Compass's hook) or inside the HUD's own update (Compass, Hud), never in a UI task.
+TEST("open menus: the plugin hands no work to an F4SE UI task")
+{
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+		if (const auto tasks = UiTasks(code)) {
+			Test::Fail(__FILE__, __LINE__, std::format("{} hands work to an F4SE UI task {} time(s): run it on the main thread between frames", file, tasks));
+		}
+	}
+	CHECK(UiTasks(CodeOnly(R"x(F4SE::GetTaskInterface()->AddUITask([] {});)x")) == 1);
+	CHECK(UiTasks(CodeOnly(R"x(// AddUITask is not used; MyAddUITask(); AddUITasks();)x")) == 0);
 }
