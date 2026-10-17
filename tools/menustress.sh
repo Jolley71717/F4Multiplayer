@@ -390,7 +390,8 @@ run_game() {
 				while [ $hung_since != 0 ] && [ "$(date +%s)" -lt $end ] && [ ! -e "$OUTDIR/stop" ]; do
 					call status || sleep 2
 				done
-				[ $hung_since = 0 ] && recover
+				[ $hung_since = 0 ] || break 2  # still hung when the time ran out, or a stop was asked for
+				recover
 			fi
 			step=${STEPS:i:1}
 			case $step in
