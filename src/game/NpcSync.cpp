@@ -1091,6 +1091,19 @@ namespace NpcSync
 		return OwnerOf(a_refId);
 	}
 
+	std::uint32_t SessionId(std::uint32_t a_formId)
+	{
+		if (Protocol::IsSpawnRef(a_formId)) {
+			return Spawns::IdOf(a_formId);
+		}
+		return Protocol::IsShareableRef(a_formId) ? a_formId : 0;
+	}
+
+	std::uint32_t LocalRef(std::uint32_t a_sessionId)
+	{
+		return LocalId(a_sessionId);
+	}
+
 	std::string Describe()
 	{
 		const auto puppeted = std::ranges::count_if(mirrors, [](const auto& a_entry) { return a_entry.second.registered != nullptr; });

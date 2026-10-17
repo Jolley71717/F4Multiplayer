@@ -45,6 +45,26 @@ namespace BlastShield
 		return a_owner != 0 && a_local != 0 && a_owner != a_local;
 	}
 
+	// An actor a friend's explosion reaches, as our game knows it. Every copy goes by the id the session knows it by
+	// (NpcSync::SessionId): a plugin's reference is the same in every game, and our copy of an NPC a friend's game made
+	// at runtime (a random encounter's raider, an ambush: Spawns) goes by its spawn id, which is what NpcSync says the
+	// owner of and ends the ghost of (StopMirroring). By its own form id such a copy had no owner, so it was never a
+	// ghost, and a friend's grenade killed the friend's spawned enemies in our game while they fought on in theirs.
+	struct Reached
+	{
+		std::uint32_t id = 0;     // the session's id for it (0: never shared, so nobody's: one our game made, a stand-in)
+		std::uint32_t owner = 0;  // the player whose game runs it (NpcSync::Owner of that id; 0 nobody)
+		bool          dead = false;
+	};
+
+	// Whether the actor is to be a ghost while the explosion goes off: one the session knows, alive, that another
+	// game runs (Shields above). The player and the friends' stand-ins are never reached this way (the caller leaves
+	// them out: the engine never counts them as NPCs here).
+	constexpr bool Shields(const Reached& a_actor, std::uint32_t a_local)
+	{
+		return a_actor.id != 0 && !a_actor.dead && Shields(a_actor.owner, a_local);
+	}
+
 	class Book
 	{
 	public:
