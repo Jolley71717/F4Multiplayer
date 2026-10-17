@@ -122,38 +122,7 @@ TEST("open menus: menus opening and closing on the UI's thread while other threa
 // while the menus were being drawn froze the game. The guard is on the source, as the game can't run in a test.
 namespace
 {
-	// a_text without its comments and its string and character literals, line breaks kept.
-	std::string CodeOnly(std::string_view a_text)
-	{
-		std::string out;
-		out.reserve(a_text.size());
-		for (std::size_t i = 0; i < a_text.size(); ++i) {
-			const char c = a_text[i];
-			if (c == '/' && i + 1 < a_text.size() && a_text[i + 1] == '/') {
-				while (i < a_text.size() && a_text[i] != '\n') {
-					++i;
-				}
-				out += '\n';
-				continue;
-			}
-			if (c == '/' && i + 1 < a_text.size() && a_text[i + 1] == '*') {
-				for (i += 2; i + 1 < a_text.size() && !(a_text[i] == '*' && a_text[i + 1] == '/'); ++i) {
-					out += a_text[i] == '\n' ? "\n" : "";
-				}
-				++i;
-				continue;
-			}
-			if (c == '"' || c == '\'') {
-				for (++i; i < a_text.size() && a_text[i] != c; ++i) {
-					i += a_text[i] == '\\';  // what a backslash escapes is skipped
-				}
-				out += ' ';
-				continue;
-			}
-			out += c;
-		}
-		return out;
-	}
+	using SourceTree::CodeOnly;  // the source without its comments and strings (shared with the UI hold's guard)
 
 	// How often a_code uses any of a_names as a whole name.
 	int Uses(std::string_view a_code, std::initializer_list<std::string_view> a_names)
@@ -184,18 +153,6 @@ namespace
 		return Uses(a_code, { "AddUITask" });
 	}
 
-	// a_fn(file, code) for every source file under src, the file relative to the repository.
-	template <class Fn>
-	void ForEachSource(const std::filesystem::path& a_root, Fn a_fn)
-	{
-		for (const auto& entry : std::filesystem::recursive_directory_iterator{ a_root / "src" }) {
-			const auto ext = entry.path().extension();
-			if (!entry.is_regular_file() || (ext != ".cpp" && ext != ".h")) {
-				continue;
-			}
-			a_fn(std::filesystem::relative(entry.path(), a_root).generic_string(), CodeOnly(SourceTree::Read(entry.path())));
-		}
-	}
 }
 
 TEST("open menus: the guard finds a menu looked up through the UI, and not one named in a comment or a string")
@@ -219,14 +176,14 @@ TEST("open menus: the plugin looks no menu up through the UI, but for the HUD on
 	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
 	// asks, and the reference is let go before the command returns.
 	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 } };
-	ForEachSource(*root, [&](const std::string& a_file, const std::string& a_code) {
-		const auto lookups = MenuLookups(a_code);
-		const auto it = allowed.find(a_file);
+	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+		const auto lookups = MenuLookups(code);
+		const auto it = allowed.find(file);
 		const int  expected = it == allowed.end() ? 0 : it->second;
 		if (lookups != expected) {
-			Test::Fail(__FILE__, __LINE__, std::format("{} looks a menu up through the UI {} time(s), not {}: ask OpenMenus", a_file, lookups, expected));
+			Test::Fail(__FILE__, __LINE__, std::format("{} looks a menu up through the UI {} time(s), not {}: ask OpenMenus", file, lookups, expected));
 		}
-	});
+	}
 }
 
 // An F4SE UI task runs on a job thread beside the main thread's drawing: a menu looked up there (the gfx commands
@@ -237,11 +194,11 @@ TEST("open menus: the plugin hands no work to an F4SE UI task")
 {
 	const auto root = SourceTree::Root();
 	REQUIRE(root);
-	ForEachSource(*root, [&](const std::string& a_file, const std::string& a_code) {
-		if (const auto tasks = UiTasks(a_code)) {
-			Test::Fail(__FILE__, __LINE__, std::format("{} hands work to an F4SE UI task {} time(s): run it on the main thread between frames", a_file, tasks));
+	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
+		if (const auto tasks = UiTasks(code)) {
+			Test::Fail(__FILE__, __LINE__, std::format("{} hands work to an F4SE UI task {} time(s): run it on the main thread between frames", file, tasks));
 		}
-	});
+	}
 	CHECK(UiTasks(CodeOnly(R"x(F4SE::GetTaskInterface()->AddUITask([] {});)x")) == 1);
 	CHECK(UiTasks(CodeOnly(R"x(// AddUITask is not used; MyAddUITask(); AddUITasks();)x")) == 0);
 }

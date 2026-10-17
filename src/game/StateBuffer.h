@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/AimPoint.h"
 #include "game/MotionPath.h"
 #include "game/Prediction.h"
 #include "game/StandInHold.h"
@@ -49,6 +50,9 @@ namespace StateBuffer
 		float                 motionAngle = 0.0f;  // world heading of travel, radians
 		bool                  held = false;        // past the newest state: it stands where that one put it
 		float                 heldSpeed = 0.0f;    // when held: the speed the newest state said (state.speed is stopped once states dry up)
+		// The pitch it aims at, degrees up (+) or down (-): state.pitch blended between the two states it is drawn
+		// between, as its place and heading are (AimPoint::BlendPitch), so its gun sweeps rather than steps.
+		float                 pitch = 0.0f;
 
 		// The friend's own speed in the state it was put by: moving still while their next state is late, though it is
 		// held, and drawn, standing.
@@ -149,14 +153,15 @@ namespace StateBuffer
 
 			const auto behind = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(delay));
 			const auto renderTime = a_now - behind;
-			// What it is drawn as now, and the path on from there through the states from a_next.
-			const auto sampled = [&](const Protocol::PlayerState& a_state, float a_motionAngle, std::size_t a_next) {
+			// What it is drawn as now (aimed at a_pitch), and the path on from there through the states from a_next.
+			const auto sampled = [&](const Protocol::PlayerState& a_state, float a_motionAngle, std::size_t a_next, float a_pitch) {
 				Sampled out{ a_state, a_motionAngle };
+				out.pitch = a_pitch;
 				out.path = MotionPath::Ahead({ a_now, a_state.x, a_state.y, a_state.z, a_state.heading }, a_state.cell, a_state.worldspace, snaps, a_next, behind, &Snapshot::stamp);
 				return out;
 			};
 			if (renderTime <= snaps.front().stamp) {
-				return sampled(snaps.front().state, snaps.front().state.heading, 0);
+				return sampled(snaps.front().state, snaps.front().state.heading, 0, static_cast<float>(snaps.front().state.pitch));
 			}
 
 			for (std::size_t i = 1; i < snaps.size(); ++i) {
@@ -168,7 +173,7 @@ namespace StateBuffer
 
 				// Don't blend across a cell or worldspace change (doors, fast travel).
 				if (a.state.cell != b.state.cell || a.state.worldspace != b.state.worldspace) {
-					return sampled(b.state, b.state.heading, i);
+					return sampled(b.state, b.state.heading, i, static_cast<float>(b.state.pitch));
 				}
 
 				const float span = std::chrono::duration<float>(b.stamp - a.stamp).count();
@@ -183,7 +188,7 @@ namespace StateBuffer
 				const float dx = b.state.x - a.state.x;
 				const float dy = b.state.y - a.state.y;
 				const float motionAngle = dx * dx + dy * dy > 1.0f ? std::atan2(dx, dy) : out.heading;
-				return sampled(out, motionAngle, i);
+				return sampled(out, motionAngle, i, AimPoint::BlendPitch(static_cast<float>(a.state.pitch), static_cast<float>(b.state.pitch), t));
 			}
 
 			// Past the newest snapshot: hold position rather than guessing ahead, and stop
@@ -192,7 +197,7 @@ namespace StateBuffer
 			if (a_now - snaps.back().stamp > MIN_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
-			auto out = sampled(held, held.heading, snaps.size());
+			auto out = sampled(held, held.heading, snaps.size(), static_cast<float>(held.pitch));
 			out.held = true;
 			out.heldSpeed = snaps.back().state.speed;
 			return out;

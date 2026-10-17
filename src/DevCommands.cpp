@@ -17,8 +17,10 @@
 #include "game/MenuMessages.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
+#include "game/Perf.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
+#include "game/Hud.h"
 #include "game/InjectInput.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
@@ -166,6 +168,21 @@ namespace DevCommands
 			auto                 result = std::format("{} drawn={} {}", FrameStats::Global().Take().Describe(), drawn - lastDrawn, FrameStats::TakeThreads());
 			lastDrawn = drawn;
 			return result;
+		}
+
+		// perf [reset]: what our own work cost per frame over the last minute or so of frames, part by part (Perf.h): the
+		// median, 99th percentile and worst in ms, and the game's hitches with how many our work took half of. `reset` starts
+		// the counts over.
+		std::string PerfStats(std::string_view a_args)
+		{
+			if (a_args == "reset") {
+				Perf::Global().Reset();
+				return "reset";
+			}
+			if (!a_args.empty()) {
+				return "usage: perf [reset]";
+			}
+			return Perf::Global().Describe();
 		}
 
 		// stall <seconds>: holds the game's main thread that long (up to 120 s), to see the hang watch
@@ -886,8 +903,9 @@ namespace DevCommands
 
 		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
 		// whose name contains text); every quest whose editor ID contains text (internal ones too, with
-		// the editor ID shown); running quests of type N; quests the player has started (an objective
-		// shown in the Pip-Boy). started=yes/no says which ones count.
+		// the editor ID shown and whether a session shares it: QuestSync::Kind); running quests of type N;
+		// quests the player has started (an objective shown in the Pip-Boy). started=yes/no says which
+		// ones count.
 		std::string Quests(std::string_view a_args)
 		{
 			std::string out;
@@ -914,8 +932,8 @@ namespace DevCommands
 					if (id.find(edid) == std::string_view::npos) {
 						continue;
 					}
-					out += std::format("{}{:08X} {} '{}' type={} stage={} running={}", count++ ? "; " : "", quest->GetFormID(), id, name, quest->data.questType,
-						quest->currentStage, (quest->data.flags & 1) != 0);
+					out += std::format("{}{:08X} {} '{}' type={} stage={} running={} shared={}", count++ ? "; " : "", quest->GetFormID(), id, name, quest->data.questType,
+						quest->currentStage, (quest->data.flags & 1) != 0, QuestSync::Kind(quest));
 					continue;
 				}
 				if (runningType) {
@@ -953,8 +971,8 @@ namespace DevCommands
 			return out;
 		}
 
-		// stages <questHex>: the quest's stages done in this game, and the ones from friends still
-		// waiting to be set here (read only).
+		// stages <questHex>: the quest's stages done in this game, whether a session shares it, and the
+		// ones from friends still waiting to be set here (read only).
 		std::string Stages(std::string_view a_args)
 		{
 			const auto id = ParseHex(a_args);
@@ -970,8 +988,8 @@ namespace DevCommands
 				return out.empty() ? std::string("none") : out;
 			};
 			const auto done = QuestStageLayout::Done(quest);
-			return std::format("stage={} flags={:04X} type={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
-				QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
+				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -1724,6 +1742,10 @@ namespace DevCommands
 			if (args.size() > 2) {
 				std::from_chars(args[2].data(), args[2].data() + args[2].size(), depth);
 			}
+			// The one guard on the UI (UiHold): a movie being torn down is not read either.
+			if (!Hud::IsSettled()) {
+				return std::format("error: the UI is held ({})", UiHold::Name(Hud::Holding()));
+			}
 			const std::string menuName{ args[0] };
 			const std::string path{ args[1] };
 			const auto        ui = RE::UI::GetSingleton();
@@ -1748,6 +1770,9 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			if (args.size() < 4) {
 				return "error: usage: gfxset <menu> <path> <member> <value>";
+			}
+			if (!Hud::IsSettled()) {
+				return std::format("error: the UI is held ({})", UiHold::Name(Hud::Holding()));
 			}
 			const std::string menuName{ args[0] };
 			const std::string path{ args[1] };
@@ -2650,6 +2675,7 @@ namespace DevCommands
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
 			Entry{ "frames", Frames },
+			Entry{ "perf", PerfStats },
 			Entry{ "stall", Stall },
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },
