@@ -54,4 +54,4 @@ Known issues:
 
 - Two players opening or closing the same door at the same instant can end up seeing it differently; using the door again puts them back in step.
 - Getting into power armor was refused in testing ("You cannot use this at this time") in and just outside Diamond City, for a reason not found yet. If it happens to you, say where you were and what you did just before.
-- A friend's face can look a little different in your game than in theirs: skin tone and face paint aren't carried over yet.
+- A friend's face and hair aren't copied yet: their stand-in is a settler of their sex with their body shape (and their LooksMenu body sliders) and their gear.
