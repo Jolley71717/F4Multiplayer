@@ -1071,3 +1071,58 @@ TEST("stage queue: a quest not started here isn't started while the player is bu
 	CHECK((game.set == std::vector<Stage>{ { MQ207, 10 } }));
 	CHECK(game.Running(MQ207));
 }
+
+TEST("stage log: a stage kept for an unstarted quest is reported until exactly WINDOW after it, not at it")
+{
+	StageLog::Unstarted unstarted;
+	const auto          start = Clock::time_point{} + 1h;
+	const auto          window = StageLog::Unstarted::WINDOW;
+
+	// A nanosecond short of WINDOW it is still reported with the quest.
+	unstarted.Add(SIDE, { 10 }, start);
+	CHECK((unstarted.Take(SIDE, {}, start + window - 1ns) == StageLog::Stages{ 10 }));
+	CHECK(!unstarted.Has(SIDE));
+
+	// At WINDOW it is too old, as Expire counts it, and only the stage that came with the start is reported.
+	unstarted.Add(SIDE, { 10 }, start);
+	unstarted.Add(SIDE, { 20 }, start + 1s);
+	CHECK((unstarted.Take(SIDE, { 30 }, start + window) == StageLog::Stages{ 20, 30 }));
+	CHECK(!unstarted.Has(SIDE));
+
+	// Expire and Take agree on the edge: what Expire drops at WINDOW, Take does not report at WINDOW.
+	unstarted.Add(MQ105, { 5 }, start);
+	unstarted.Expire(start + window - 1ns);
+	CHECK(unstarted.Has(MQ105));
+	unstarted.Expire(start + window);
+	CHECK(!unstarted.Has(MQ105));
+}
+
+TEST("stage queue: a quest is contained while it has a stage waiting, not once its stages were all taken or when it is unknown")
+{
+	FakeGame game;
+	game.quests[SIDE].current = 5;
+	// Its script runs on for a while after the stage reads done: the queue keeps the quest's place for the hold.
+	game.holds[{ SIDE, 10 }] = 5s;
+	StageLog::Queue queue;
+
+	CHECK(!queue.Contains(SIDE));  // unknown
+	CHECK(!queue.Contains(MQ105));
+	CHECK(queue.Add(SIDE, 10));
+	CHECK(queue.Contains(SIDE));  // a stage waiting
+	CHECK(!queue.Contains(MQ105));
+	CHECK(queue.Contains(SIDE, 10));
+
+	auto now = Start();
+	game.Poll(queue, now);
+	game.Tick();
+	game.Poll(queue, now + 500ms);  // the stage is done: taken off, the hold runs
+	CHECK(queue.Size() == 0);
+	CHECK(queue.Waiting(SIDE).empty());
+	CHECK(!queue.Contains(SIDE));  // the quest is still booked, with none of its stages waiting
+	CHECK(!queue.Contains(SIDE, 10));
+	CHECK(!queue.Contains(MQ105));
+
+	// More come while it holds: contained again.
+	CHECK(queue.Add(SIDE, 20));
+	CHECK(queue.Contains(SIDE));
+}

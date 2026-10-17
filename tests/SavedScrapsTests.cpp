@@ -2,6 +2,7 @@
 #include "game/SavedScraps.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -432,4 +433,83 @@ TEST("saved scraps: pieces waiting for a workbench are capped; past the cap they
 	CHECK(ledger.Holds(0x1002));
 	CHECK(!ledger.Holds(0x1003));
 	CHECK(SavedScraps::MAX_WAITING == 4096);
+}
+
+TEST("saved scraps: a frame's budget always ends the frame, to the reference, whatever the cells hold")
+{
+	// Three cells of 100, 250 and 7 references, the middle one a mix of what a walk can meet. Every call is made a
+	// bounded number of times: a walk that overran its budget, or never ended a frame, fails here rather than hanging.
+	FakeGame game;
+	for (std::uint32_t i = 0; i < 100; ++i) {
+		game.Add(0x1000 + i, SANCTUARY, Seen::kStanding);
+	}
+	for (std::uint32_t i = 0; i < 250; ++i) {
+		game.Add(0x2000 + i, RED_ROCKET, i % 3 == 0 ? Seen::kOff : (i % 3 == 1 ? Seen::kDeleted : Seen::kStanding));
+	}
+	for (std::uint32_t i = 0; i < 7; ++i) {
+		game.Add(0x3000 + i, HOME_PLATE, Seen::kStanding);
+	}
+	SavedScraps::Ledger ledger;
+	Walk                walk{ ledger };
+	walk.QueueCell(SANCTUARY);
+	walk.QueueCell(RED_ROCKET);
+	walk.QueueCell(HOME_PLATE);
+
+	// A budget of nothing looks at nothing, and the call returns.
+	CHECK(!walk.WalkSome(game, 0).has_value());
+	CHECK(game.examined == 0);
+	CHECK(walk.Queued() == 3);
+
+	// Each frame of 64 looks at exactly 64, across the end of one cell into the next, until the last has none to
+	// give: 357 references, so five full frames and a short one that ends the round.
+	int  frames = 0;
+	int  before = 0;
+	bool ended = false;
+	while (!ended && frames < 20) {
+		before = game.examined;
+		const auto round = walk.WalkSome(game, 64);
+		++frames;
+		ended = round.has_value();
+		if (!ended) {
+			CHECK(game.examined - before == 64);
+		} else {
+			CHECK(game.examined - before == 357 - 5 * 64);
+			CHECK(round->counts.refs == 357);
+		}
+	}
+	CHECK(ended);
+	CHECK(frames == 6);
+	CHECK(game.examined == 357);
+	CHECK(walk.Queued() == 0);
+
+	// Once the queue is dry a call returns having looked at nothing, however large the budget.
+	CHECK(!walk.WalkSome(game, SavedScraps::WALK_PER_FRAME).has_value());
+	CHECK(!walk.WalkSome(game, (std::numeric_limits<std::size_t>::max)()).has_value());
+	CHECK(game.examined == 357);
+}
+
+TEST("saved scraps: a budget that lands exactly on the end of a cell ends that cell's walk in the same frame")
+{
+	FakeGame game;
+	for (std::uint32_t i = 0; i < 128; ++i) {
+		game.Add(0x1000 + i, SANCTUARY, Seen::kStanding);
+	}
+	game.Add(0x2000, RED_ROCKET, Seen::kStanding);
+	SavedScraps::Ledger ledger;
+	Walk                walk{ ledger };
+	walk.QueueCell(SANCTUARY);
+	walk.QueueCell(RED_ROCKET);
+
+	CHECK(!walk.WalkSome(game, 64).has_value());
+	CHECK(game.examined == 64);
+	// The second 64 are the last of Sanctuary's: its walk is done this frame, not the next, and Red Rocket's waits.
+	CHECK(!walk.WalkSome(game, 64).has_value());
+	CHECK(game.examined == 128);
+	CHECK(walk.Queued() == 1);
+	// Red Rocket's one reference ends the round with room to spare.
+	const auto round = walk.WalkSome(game, 64);
+	REQUIRE(round.has_value());
+	CHECK(game.examined == 129);
+	CHECK(round->counts.refs == 129);
+	CHECK(walk.Queued() == 0);
 }
