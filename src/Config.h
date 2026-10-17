@@ -42,6 +42,11 @@ namespace Config
 		// NPC base form other players should see for *you*. 0 = let them use their default.
 		std::uint32_t myAppearance = 0;
 
+		// Friends' stand-ins wear their own face (head parts, hair, complexion, sculpting, skin tone and face paint)
+		// on a copy of the settler, built by the engine as the stand-in loads. Off: the settler's face with their sex
+		// and body shape, as 0.8.7 showed everyone (and what a stand-in falls back to when the engine builds no head).
+		bool friendFaces = true;
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
