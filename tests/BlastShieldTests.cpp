@@ -27,20 +27,26 @@ namespace
 	constexpr std::uint32_t RAIDER_2 = 0x0002A002;
 	constexpr std::uint32_t RAIDER_3 = 0x0002A003;
 	constexpr std::uint32_t RAIDER_4 = 0x0002A004;
-	constexpr std::uint32_t FRAG = 0x0001D2EE;  // a frag grenade's explosion
+	constexpr std::uint32_t RAIDER_BASE = 0x0001D4D2;  // a plugin's raider, the NPC a game makes at runtime
+	constexpr std::uint32_t SPAWN = 0xFF001234;        // the spawn id the host's game shares its runtime raider under
+	constexpr std::uint32_t HOST_SPAWN = 0xFF000A10;   // that raider's form id in the host's game
+	constexpr std::uint32_t BOB_COPY = 0xFF000F8B;     // the friend's copy's form id, its game's own
+	constexpr std::uint32_t FRAG = 0x0001D2EE;         // a frag grenade's explosion
 	constexpr float         FRAG_RADIUS = 500.0f;
 	constexpr float         GRENADE_DAMAGE = 100.0f;                  // a grenade of a copy's own, at its feet
 	constexpr auto          FUSE = std::chrono::milliseconds{ 1000 };  // from leaving the hand to going off
 
 	// An NPC as one game has it: its health, where it stands, whether it died there, and whether it is a ghost (one of
-	// ours against a friend's explosion, or one of its own story's). Nothing hurts a ghost.
+	// ours against a friend's explosion, or one of its own story's). Nothing hurts a ghost. It is keyed by its form id
+	// in that game; one made at runtime (a plugin's NPC has the same id in every game) goes by its spawn id on the wire.
 	struct Npc
 	{
-		float x = 0.0f, y = 0.0f;
-		float health = 100.0f;
-		bool  dead = false;
-		bool  ghost = false;     // made one by BlastShield
-		bool  ownGhost = false;  // one before we came near it
+		float         x = 0.0f, y = 0.0f;
+		float         health = 100.0f;
+		bool          dead = false;
+		bool          ghost = false;     // made one by BlastShield
+		bool          ownGhost = false;  // one before we came near it
+		std::uint32_t sessionId = 0;     // the id the session knows it by, when not its own (NpcSync::SessionId)
 
 		void Hurt(float a_amount)
 		{
@@ -76,6 +82,24 @@ namespace
 		};
 		std::vector<Grenade> grenades;  // real ones in this game, thrown by our copies themselves
 
+		// The id the session knows the NPC under a_key by (NpcSync::SessionId), and back (NpcSync::LocalRef). The
+		// shields, the copies and the wire go by the session's id; the NPCs here by their own.
+		std::uint32_t SessionIdOf(std::uint32_t a_key) const
+		{
+			const auto& npc = npcs.at(a_key);
+			return npc.sessionId != 0 ? npc.sessionId : a_key;
+		}
+
+		std::uint32_t KeyOf(std::uint32_t a_id) const
+		{
+			for (const auto& [key, npc] : npcs) {
+				if (npc.sessionId == a_id) {
+					return key;
+				}
+			}
+			return a_id;
+		}
+
 		// WeaponFire::ApplyExplosion: our copies of NPCs another game runs are made ghosts first (not one that is a
 		// ghost already), then the explosion hurts everyone in reach (a_damage, the same to each here).
 		void SetOff(const Protocol::Explosion& a_explosion, float a_damage)
@@ -83,8 +107,9 @@ namespace
 			const auto reach = [&](const Npc& a_npc, float a_range) {
 				return RemoteEdits::Within(std::hypot(a_npc.x - a_explosion.x, a_npc.y - a_explosion.y), a_range);
 			};
-			for (auto& [id, npc] : npcs) {
-				if (!npc.dead && reach(npc, FRAG_RADIUS + BlastShield::MARGIN) && BlastShield::Shields(client.OwnerOf(id), client.Id()) &&
+			for (auto& [key, npc] : npcs) {
+				const auto id = SessionIdOf(key);
+				if (reach(npc, FRAG_RADIUS + BlastShield::MARGIN) && BlastShield::Shields({ .id = id, .owner = client.OwnerOf(id), .dead = npc.dead }, client.Id()) &&
 					(shields.Shielded(id) || !npc.ownGhost) && shields.Begin(id, now, frame)) {
 					npc.ghost = true;
 				}
@@ -108,18 +133,18 @@ namespace
 			}
 		}
 
-		// WorldSync::ReportDeaths.
-		void Died(std::uint32_t a_id)
+		// WorldSync::ReportDeaths (a runtime NPC's under its spawn id).
+		void Died(std::uint32_t a_key)
 		{
-			if (npcs.at(a_id).dead && reported.insert(a_id).second) {
-				client.Kill(a_id);
+			if (npcs.at(a_key).dead && reported.insert(a_key).second) {
+				client.Kill(SessionIdOf(a_key));
 			}
 		}
 
-		// WeaponFire's ghost comes off.
-		void Unshield(std::uint32_t a_id) { npcs.at(a_id).ghost = false; }
+		// WeaponFire's ghost comes off (the session's id).
+		void Unshield(std::uint32_t a_id) { npcs.at(KeyOf(a_id)).ghost = false; }
 
-		// NpcSync stops mirroring the copy (WeaponFire::EndShield).
+		// NpcSync stops mirroring the copy (WeaponFire::EndShield, the session's id).
 		void StopMirroring(std::uint32_t a_id)
 		{
 			if (shields.End(a_id)) {
@@ -174,7 +199,8 @@ namespace
 			if (!watchCopies) {
 				return;
 			}
-			for (auto& [id, npc] : npcs) {
+			for (auto& [key, npc] : npcs) {
+				const auto id = SessionIdOf(key);
 				const auto owner = client.OwnerOf(id);
 				if (npc.dead || owner == 0 || owner == client.Id()) {
 					continue;
@@ -366,6 +392,72 @@ TEST("blast shield: only copies of NPCs another game runs are kept from a friend
 	CHECK(!BlastShield::Shields(1, 1));  // ours: the explosion is what hurts it here
 	CHECK(!BlastShield::Shields(0, 1));  // nobody runs it: hurt here like ours
 	CHECK(!BlastShield::Shields(2, 0));  // not in a session (not welcomed yet, or it ended)
+
+	// An actor the explosion reaches, by the id the session knows it by: a plugin's NPC and our copy of a friend's
+	// spawn (its spawn id) alike, alive and another game's. Not one never shared (a runtime NPC of our game's own, a
+	// stand-in: no id), nor one dead already, nor ours or nobody's.
+	using BlastShield::Reached;
+	CHECK(BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 2 }, 1));
+	CHECK(BlastShield::Shields(Reached{ .id = SPAWN, .owner = 2 }, 1));
+	CHECK(!BlastShield::Shields(Reached{ .id = 0, .owner = 2 }, 1));
+	CHECK(!BlastShield::Shields(Reached{ .id = RAIDER_1, .owner = 2, .dead = true }, 1));
+	CHECK(!BlastShield::Shields(Reached{ .id = SPAWN, .owner = 1 }, 1));
+	CHECK(!BlastShield::Shields(Reached{ .id = SPAWN, .owner = 0 }, 1));
+	CHECK(!BlastShield::Shields(Reached{ .id = SPAWN, .owner = 2 }, 0));
+}
+
+TEST("blast shield: a host raider's grenade passes by the friend's copy of an enemy the host's game spawned, which the session knows by its spawn id")
+{
+	// The host's game made a raider at runtime (an ambush) and shares it: the server grants it to the host's game, and
+	// the friend's game places a copy under a form id of its own, which the session knows by the spawn id (Spawns). Its
+	// own form id is nobody's, so by that it was never a ghost, and the friend's copies of the host's spawned enemies
+	// died of every grenade the host's raiders threw.
+	Corvega c;
+	auto&   host = c.host;
+	auto&   bob = c.bob;
+	host.Raw(Protocol::Encode(Protocol::Spawn{ 0, SPAWN, RAIDER_BASE, 0, COMMONWEALTH, 1230.0f, 2100.0f, 0.0f, 0.0f }, MT::kReportSpawn));
+	c.s.Settle();
+	REQUIRE(bob.OwnerOf(SPAWN) == host.Id());
+	REQUIRE(host.OwnerOf(SPAWN) == host.Id());
+	c.hostGame.npcs[HOST_SPAWN] = Npc{ .x = 1230.0f, .y = 2100.0f, .health = 30.0f, .sessionId = SPAWN };
+	c.bobGame.npcs[BOB_COPY] = Npc{ .x = 1230.0f, .y = 2100.0f, .health = 30.0f, .sessionId = SPAWN };
+
+	// The host's raider (RAIDER_1) throws beside it; the host's game sets the grenade off for real, and the spawned
+	// raider survives it there with 10 health.
+	c.HostRaiderThrows();
+	c.hostGame.Hurt(HOST_SPAWN, 20.0f);
+	CHECK(!c.hostGame.npcs[HOST_SPAWN].dead);
+	c.HostExplosionReachesBob(150.0f);
+	CHECK(c.bobGame.npcs[BOB_COPY].ghost);
+	CHECK(c.bobGame.shields.Shielded(SPAWN));
+	CHECK(!c.bobGame.npcs[BOB_COPY].dead);
+	CHECK(c.bobGame.npcs[BOB_COPY].health == 30.0f);  // the host's to hurt; its report of 10 comes as any copy's
+	CHECK(c.bobGame.npcs[RAIDER_1].ghost);           // the plugin's raider, as before
+	CHECK(c.bobGame.npcs[RAIDER_2].dead);            // the friend's own raider dies of it
+
+	// The ghost comes off once the explosion is over, and the copy's death was never reported: the spawned raider is
+	// alive in both games, still the host's.
+	c.bobGame.Wait(BlastShield::HOLD);
+	CHECK(!c.bobGame.npcs[BOB_COPY].ghost);
+	CHECK(c.bobGame.shields.Size() == 0);
+	c.s.Settle();
+	for (const auto player : { &host, &bob }) {
+		CHECK(!player->WorldNow().dead.contains(SPAWN));
+	}
+	CHECK(bob.OwnerOf(SPAWN) == host.Id());
+	CHECK(!c.s.Logged("death of FF001234"));
+
+	// By its own form id, nobody's in the session, the copy would not have been a ghost: that was the bug.
+	CHECK(bob.OwnerOf(BOB_COPY) == 0);
+	CHECK(!BlastShield::Shields(BlastShield::Reached{ .id = BOB_COPY, .owner = bob.OwnerOf(BOB_COPY) }, bob.Id()));
+
+	// The copy stops being mirrored under its spawn id (NpcSync::StopMirroring): a ghost of ours comes off at once.
+	c.HostRaiderThrows();
+	c.HostExplosionReachesBob(50.0f);
+	REQUIRE(c.bobGame.npcs[BOB_COPY].ghost);
+	c.bobGame.StopMirroring(SPAWN);
+	CHECK(!c.bobGame.npcs[BOB_COPY].ghost);
+	CHECK(!c.bobGame.shields.Shielded(SPAWN));
 }
 
 TEST("blast shield: a host raider's grenade set off in a friend's game passes by the friend's copy of it, alive as it is in the host's")
