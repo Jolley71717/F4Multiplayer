@@ -1,7 +1,8 @@
 # Releasing
 
-Builds go to GitHub freely and to Nexus rarely (every Nexus upload is quarantined and needs a support
-email, so Nexus gets settled versions in batches, when the maintainer decides).
+Builds go to GitHub freely and to Nexus rarely, as settled versions in batches, when the maintainer
+decides. Until 0.7.1 every Nexus upload was quarantined and needed a support email; 0.8.7, the first
+without the dedicated server's `F4MPServer.exe` (that stays on GitHub), passed the scan on its own.
 
 ## Release candidates
 
@@ -66,7 +67,16 @@ verdict=PASS
    publishing by hand, as a deliberate and visible choice.
 2. Run the commands it prints: tag the rc's commit `vX.Y.Z`, push the tag, and create the GitHub
    release with `dist/RELEASE-X.Y.Z.md` as the notes (say there that the build is identical to rcN:
-   its log still names `rcN`). Commit those notes to the branch afterwards, and fast-forward `main`.
+   its log still names `rcN`). Both zips go on the release. Commit those notes to the branch afterwards,
+   and fast-forward `main`.
+3. Nexus, only when the maintainer decides: write the changelog in `dist/NEXUS-X.Y.Z.txt` (one line per
+   entry) and commit it before tagging, or leave it out for no changelog. Then
+   `gh workflow run nexus-upload.yml -f tag=vX.Y.Z` (or Actions > Upload to Nexus > Run workflow).
+   The workflow takes `F4Multiplayer-X.Y.Z-nexus.zip` from the GitHub release, refuses one holding
+   `F4MPServer.exe`, and uploads it as the new version of the main file through Nexus's own
+   `Nexus-Mods/upload-action`: the old version archived, the mod's version set to match. It needs the
+   repository secret `NEXUSMODS_API_KEY`, the maintainer's personal API key from
+   https://www.nexusmods.com/settings/api-keys. Nexus still scans the upload before it can be downloaded.
 
 ## Notes for testers (put in every rc's notes)
 

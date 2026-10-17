@@ -1,0 +1,71 @@
+# Uploads a release's Nexus zip (the one without the dedicated server) to the mod's main file on Nexus Mods, as its new
+# version. Run by hand only (Actions > Upload to Nexus > Run workflow): Nexus gets settled versions rarely, when the
+# maintainer decides (docs/RELEASING.md). The GitHub release must already carry F4Multiplayer-X.Y.Z-nexus.zip.
+name: Upload to Nexus
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload (vX.Y.Z; release candidates never go to Nexus)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Take the release's Nexus zip
+        id: zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$TAG is not a release tag (vX.Y.Z)"
+            exit 1
+          fi
+          version="${TAG#v}"
+          zip="F4Multiplayer-$version-nexus.zip"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$zip"
+          # The dedicated server stays on GitHub: an upload holding it was held for a manual virus review every time.
+          if unzip -Z1 "$zip" | grep -qi 'F4MPServer\.exe'; then
+            echo "::error::$zip holds F4MPServer.exe"
+            exit 1
+          fi
+          unzip -Z1 "$zip" | grep -qx 'F4SE/Plugins/F4Multiplayer.dll' || { echo "::error::$zip has no F4SE/Plugins/F4Multiplayer.dll"; exit 1; }
+          # The changelog, one line per entry, is dist/NEXUS-X.Y.Z.txt at the tag, when there is one.
+          if content=$(gh api "repos/$GITHUB_REPOSITORY/contents/dist/NEXUS-$version.txt?ref=$TAG" --jq .content 2>/dev/null); then
+            printf '%s' "$content" | base64 -d | tr -d '\r' > changelog.txt
+          else
+            : > changelog.txt
+          fi
+          {
+            echo "version=$version"
+            echo "zip=$zip"
+            echo "changelog<<CHANGELOG_END"
+            sed -e '$a\' changelog.txt
+            echo "CHANGELOG_END"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Nexus Mods
+        uses: Nexus-Mods/upload-action@98532f7670c27cbecc78fae03fa3e278147827e2  # v1.0.0-beta.11
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: 8101689  # the main file's API file ID (Files tab > Advanced)
+          mod_id: 4943507467508  # the mod's unique API ID, for the changelog
+          filename: ${{ steps.zip.outputs.zip }}
+          version: ${{ steps.zip.outputs.version }}
+          display_name: F4Multiplayer ${{ steps.zip.outputs.version }}
+          description: >-
+            The mod (F4SE plugin, settings file, install guide). Everyone in a session needs this same version. Install
+            with Vortex/MO2 or extract into Fallout 4\Data; the host sets bHost = true in
+            Data\F4SE\Plugins\F4Multiplayer.ini. Dedicated server: GitHub.
+          category: main
+          archive_existing_version: true
+          primary_mod_manager_download: true
+          allow_mod_manager_download: true
+          update_mod_version: true
+          changelog: ${{ steps.zip.outputs.changelog }}

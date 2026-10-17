@@ -1,0 +1,11 @@
+Replaces 0.8.6 (test builds only). Protocol 31: everyone needs 0.8.7
+The story is shared by default (sStory = shared); Diamond City's gate opens for everyone
+Shared quests move on for everyone, stage by stage; a friend joining mid-quest is caught up
+Each character has its own session file; join with the character you will play
+Weapons, armor, notes, keys, vendors and NPC inventories stay each player's own; shared loot is no longer lost or repeated
+Friends are shown running, strafing, aiming, sitting and lying down as they do; power armor no longer glides
+You hear what NPCs and friends say near a friend, in the speaker's voice
+Grenades: a friend's grenade kills enemies beside you, goes off once, and leaves no stuck warning
+A downed player waits to be helped up by a friend
+Fixes for crashes on saves, loads, quitting, the HUD after a load and workshop scrapping
+Full notes on GitHub
