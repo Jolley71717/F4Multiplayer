@@ -3,7 +3,7 @@
 A friend throws a grenade, mine or Molotov. Their stand-in plays the throw in your game, but its hand
 is empty during the wind-up. This is cosmetic (S3). The explosion comes as its own report and goes
 off where it did in the thrower's game. This note sets out what main already does, what the rig
-showed across three rounds, why the third round was probably reverted, and what to try next. Each
+showed across three rounds, why the third round was reverted, and what to try next. Each
 step below needs the game. A Linux build can't tell which one works.
 
 ## What main does today
@@ -37,14 +37,15 @@ nothing unequips it. **The engine lists the grenade but never shows its model.**
 |---|---|---|
 | 1 (83fd2e9) | Equip through the equip manager instead of the console | The engine lists the grenade at equip index 2. The throw's `weaponAttach(2)` event arrives (`attaches=` in `net status`). The hand is still empty. |
 | 2 (25341ad) | Ask `TESObjectREFR::AttachWeapon(instance, index 2)` for the 3D | The biped's grenade slot (`3d[42]` in `equipped`) stays empty, and so does the hand. |
-| 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge. No reason is recorded. |
+| 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge: the game crashed in `BSGeometry::ProcessClone` (bead notes). |
 
 Round 3 also noted that the local player's biped grenade slot is empty, yet the player is shown the
 grenade. So the engine hangs a throwable's model at attach time somewhere other than the biped slot.
 
-## Why round 3 was probably reverted
+## Why round 3 was reverted
 
-The way round 3 cloned the model would likely crash at the first replayed throw:
+The bead notes record a crash in `BSGeometry::ProcessClone` with a demanded model cloned by a default
+`NiCloningProcess`. The way round 3 cloned the model explains it:
 
 ```cpp
 RE::NiCloningProcess cloning{};               // zero-filled, not the engine's constructor
@@ -79,8 +80,8 @@ Each step uses the dev channel (see DEV-CHANNEL.md) on two games over Steam, wit
    - The `player mid-throw ... hands[...]` log line from one of your own throws. It names the node
      the engine hangs a grenade under, and its name, on an actor it does show one for.
 2. **Check that the engine shows it only on an NPC it dressed itself.** Find a raider near you
-   (`enemies`) and give it a grenade the way a stand-in gets one: `console <raider>.additem 0E56C2 1`
-   (a frag grenade), then let gear arrive or call `HoldThrowable`. Then `throw <raider>`, and watch
+   (`enemies`) and give it a grenade the way a stand-in gets one: `console <raider>.additem <id> 1`
+   (<id> is a frag grenade's form ID, read off `equipped` while you hold one), then let gear arrive or call `HoldThrowable`. Then `throw <raider>`, and watch
    the raider's hand. Do the same with a raider that rolled its own grenade (`equipped <raider>`
    lists one). Only the second showing it would confirm the hypothesis.
 3. **Then the fix, depending on what steps 1 and 2 show:**
@@ -98,6 +99,8 @@ Each step uses the dev channel (see DEV-CHANNEL.md) on two games over Steam, wit
      `WeaponFire(2)` or `weaponDetach(2)` (the NPC animation hook already sees both), when the ghost
      watch ends, and before the stand-in is deleted or its 3D rebuilt. Test it first with
      `throw <S>` on a stand-in standing still, then in a fight, then in power armor.
+     The bead's own suggestion is simpler: no clone at all. Hang the demanded node itself under the hand
+     at the throw and take it off at the release (one stand-in at a time, as a node has one parent).
 
 ## What proves it
 
