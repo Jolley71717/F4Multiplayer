@@ -65,6 +65,28 @@ namespace AimPoint
 		return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z);
 	}
 
+	// The pitch a puppet is aimed at between two of its owner's states, a_t of the way from the first to the
+	// second. States come ten or twenty times a second, and a gun that jumped to each new pitch as it came stepped
+	// up and down a target its owner tracked smoothly; its place and heading are blended between states the same
+	// way. Past either end it is held at that end; nonsense counts as level.
+	inline float BlendPitch(float a_from, float a_to, float a_t)
+	{
+		const float from = std::isfinite(a_from) ? a_from : 0.0f;
+		const float to = std::isfinite(a_to) ? a_to : 0.0f;
+		return std::lerp(from, to, std::isfinite(a_t) ? std::clamp(a_t, 0.0f, 1.0f) : 1.0f);
+	}
+
+	// The pitch a mirrored NPC's owner's copy is taken to aim at between two of its states (ActorState::aimPitch as
+	// UnpackAimPitch reads it). Between two aims it sweeps as BlendPitch; otherwise it is the later state's, aim or
+	// none: a gun coming up or going down is not blended with nothing, the aim modifier eases itself in and out.
+	inline std::optional<float> BlendAim(std::optional<float> a_from, std::optional<float> a_to, float a_t)
+	{
+		if (!a_from || !a_to) {
+			return a_to;
+		}
+		return BlendPitch(*a_from, *a_to, a_t);
+	}
+
 	// The aim point a puppet is given each frame, or none. A friend's stand-in aims where its owner aims, from
 	// where it stands. A mirrored NPC is not (ForMirror gives it its owner's copy's aim), nor is a puppet whose
 	// place is not known.

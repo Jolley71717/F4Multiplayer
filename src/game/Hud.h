@@ -1,10 +1,15 @@
 #pragma once
 
-// Messages for the player (the HUD's top-left notifications).
+#include "game/UiHold.h"
+
+// The game's UI, as far as the plugin writes to it: the one guard on every write (UiHold), the loading screen
+// watcher behind it, and the HUD's top-left messages. Everything that writes to the UI (the compass markers, our
+// menu, map markers, the developer's gfx commands) asks IsSettled first and waits while the answer is no; a test
+// on the source sees to it.
 namespace Hud
 {
-	// Watches for loading screens: nothing is written to the HUD while one is up or just closed. The
-	// game's one loading screen watcher: the frame, the compass and the hang watch go by it too.
+	// Watches for loading screens. The game's one loading screen watcher: the frame, the compass and the hang
+	// watch go by it too.
 	void Install();
 
 	// Whether a loading screen is up, as far as the plugin heard: from its menu's open event to its close
@@ -12,19 +17,22 @@ namespace Hud
 	// of the run). Any thread.
 	[[nodiscard]] bool LoadingScreenUp();
 
-	// A save was loaded: the HUD is rebuilt over the next seconds; nothing is written to it meanwhile.
-	// (While the load itself is under way the save/load hold keeps the HUD alone; see SaveLoadHold.)
+	// A save was loaded (or a new game begun): its own work ran, on the frame's thread, before its hold ends.
+	// The engine rebuilds every menu over the next seconds; nothing is written to the UI meanwhile.
 	void OnGameLoaded();
 
-	// Whether the HUD may be written to right now (no loading screen, save or load, and not just after
-	// a loading screen or a load).
+	// Whether the UI may be written to right now: no loading screen, save or load under way, and not just after
+	// a loading screen or a load (see UiHold). Any thread.
 	[[nodiscard]] bool IsSettled();
+
+	// Why it may not be, or UiHold::Hold::kNone. Any thread.
+	[[nodiscard]] UiHold::Hold Holding();
 
 	// Shows the next waiting message. Called only from inside the HUD's own update (Compass hooks it),
 	// the one place the HUD is written without racing the engine.
 	void OnHudAdvance();
 
-	// Queues a notification for the HUD and logs it. Any thread.
+	// Queues a notification for the HUD. Any thread. Not logged: many of these name players.
 	void Notify(const std::string& a_message);
 
 	[[nodiscard]] std::string Describe();

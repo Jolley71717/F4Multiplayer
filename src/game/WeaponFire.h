@@ -60,15 +60,18 @@ namespace WeaponFire
 	[[nodiscard]] std::vector<Protocol::Explosion> TakeExplosions();
 	// Sets off an explosion another player reported, if it is in our space and near enough to matter. Our copies
 	// of NPCs another game runs are made ghosts while it goes off (BlastShield): their owner's game deals its damage.
+	// The copies go by the session's ids (NpcSync::SessionId): our copy of a friend's spawn by its spawn id.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
 
-	// Our copy of this NPC stops being mirrored: a ghost of ours against a friend's explosion comes off now.
+	// Our copy of this NPC (the session's id) stops being mirrored: a ghost of ours against a friend's explosion
+	// comes off now.
 	void EndShield(std::uint32_t a_refId);
 
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
 
-	// An NPC died in our world: a copy that was a ghost of ours then is counted and logged (the explosion reached it).
+	// An NPC died in our world (its form id: a plugin's, or a runtime NPC's that may be our copy of a friend's
+	// spawn): a copy that was a ghost of ours then is counted and logged (the explosion reached it).
 	void NoteDeath(std::uint32_t a_refId);
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).

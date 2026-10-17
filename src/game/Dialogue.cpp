@@ -3,7 +3,6 @@
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 
-#include "game/NpcSync.h"
 #include "game/Puppets.h"
 
 namespace Dialogue
@@ -31,8 +30,7 @@ namespace Dialogue
 		// Being in dialogue without the dialogue menu this long is logged, with what holds the player.
 		constexpr auto HELD_REPORT = std::chrono::seconds(10);
 
-		StrandedDialogue::Timer   stranded;
-		StrandedDialogue::Speaker speakerOurs;
+		StrandedDialogue::Watch   watch;
 		std::uint32_t             ended = 0;
 		Clock::time_point         heldSince{};
 		bool                      heldReported = false;
@@ -58,20 +56,10 @@ namespace Dialogue
 			return RE::PlayerCamera::GetSingleton() && RE::IsPlayerInDialogue();
 		}
 
-		// One of ours: a friend's stand-in (also one kept for this conversation after its friend left: see
-		// RemotePlayers), an NPC mirrored from another player's game, or one the session shares (it has an
-		// owner, which may be another player's game). Only a session makes them.
-		bool Ours(RE::TESObjectREFR* a_ref)
-		{
-			const auto actor = a_ref->As<RE::Actor>();
-			return actor && (Puppets::IsRegistered(actor) || NpcSync::Owner(actor->GetFormID()) != 0);
-		}
-
-		// Out of dialogue: nothing known, nothing waited for.
+		// Out of dialogue: nothing known of a conversation, nothing waited for.
 		void Forget()
 		{
-			stranded.Reset();
-			speakerOurs.Reset();
+			watch.Reset();
 			heldSince = {};
 			heldReported = false;
 		}
@@ -133,6 +121,12 @@ namespace Dialogue
 		return scene && a_ref->GetCurrentScene() == scene;
 	}
 
+	void Removed(std::uint32_t a_id, RE::TESObjectREFR* a_ref)
+	{
+		const auto scene = a_ref ? a_ref->GetCurrentScene() : nullptr;
+		watch.Removed(a_id, scene ? scene->GetFormID() : 0, Clock::now());
+	}
+
 	void Frame()
 	{
 		// Out of dialogue, as the player nearly always is, nothing more is looked at.
@@ -141,24 +135,32 @@ namespace Dialogue
 			Forget();
 			return;
 		}
+		const auto now = Clock::now();
+		const auto speaker = topics->speaker.get();
+		const auto scene = PlayerScene();
+		const bool menu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
+		const bool loading = Hud::LoadingScreenUp();
+		// Only a conversation the plugin itself left without its speaker is ended (StrandedDialogue): one
+		// the game left open is the game's, and so is a scene of its own the player is in.
+		const bool due = watch.Due({
+										.open = topics->menuOpen,
+										.speaker = speaker ? speaker->GetFormID() : 0,
+										.speakerGone = !speaker || speaker->IsDeleted() || speaker->IsDisabled(),
+										.talking = menu,
+										.scene = scene ? scene->GetFormID() : 0,
+										.loading = loading,
+									},
+			now);
 		// A loading screen is no part of the wait (it can last longer): it starts over once the screen is gone.
-		if (Hud::LoadingScreenUp()) {
-			stranded.Reset();
+		if (loading) {
 			heldSince = {};
 			return;
 		}
-		const auto now = Clock::now();
-		const auto speaker = topics->speaker.get();
-		const bool menu = OpenMenus::Open(OpenMenus::Menu::kDialogue);
-		const bool ours = speakerOurs.Ours(speaker ? speaker->GetFormID() : 0, speaker && Ours(speaker.get()));
-		ReportHeld(topics, speaker.get(), menu, ours, now);
-
-		// Only a conversation with one of ours is ended: one the game itself left open is the game's.
-		const bool gone = !speaker || speaker->IsDeleted() || speaker->IsDisabled();
-		if (!stranded.Due(topics->menuOpen && gone && ours && !menu, now)) {
+		ReportHeld(topics, speaker.get(), menu, watch.Ours(), now);
+		if (!due) {
 			return;
 		}
-		const auto id = speaker ? speaker->GetFormID() : 0;
+		const auto id = watch.Speaker();
 		// The speaker's side first, as in the engine's own ending: it no longer talks with the player
 		// (SpeakerShutMenu does this before its reset). A deleted one is left alone.
 		if (speaker && !speaker->IsDeleted()) {
@@ -166,10 +168,10 @@ namespace Dialogue
 		}
 		ResetMenu(topics);
 		++ended;
-		if (stranded.Ends() == 1) {
+		if (watch.Ends() == 1) {
 			REX::INFO("Dialogue: ended a conversation left open without its speaker ({:08X}{}); the player had no weapons, Pip-Boy or workshop", id,
 				speaker ? (speaker->IsDeleted() ? ", deleted" : ", disabled") : ", gone");
-		} else if (stranded.Ends() == 2) {
+		} else if (watch.Ends() == 2) {
 			REX::WARN("Dialogue: the conversation without a speaker is still open after ending it (menuOpen={} inDialogue={}); trying again every {} s",
 				topics->menuOpen, RE::IsPlayerInDialogue(), std::chrono::duration_cast<std::chrono::seconds>(StrandedDialogue::GRACE).count());
 		}
