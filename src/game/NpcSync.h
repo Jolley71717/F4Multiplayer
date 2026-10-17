@@ -4,6 +4,8 @@
 
 // Shared NPC AI. Each NPC is run by one player's game (its owner, assigned by the server); the
 // other players' games turn its AI off and copy its movement. Main thread only.
+// Power armor frames standing in the world are shared the same way (FrameShare.h): their owner (whoever last used one,
+// else the host) tells where it stands, and the other games move their own reference of it there.
 namespace NpcSync
 {
 	struct Outgoing
@@ -47,8 +49,10 @@ namespace NpcSync
 	// The local player activated this reference (talking to an NPC starts this way).
 	void OnActivated(std::uint32_t a_refId);
 
-	// Claims, releases, sends owned NPCs' states and moves mirrored ones. Call every frame.
-	void Frame();
+	// Claims, releases, sends owned NPCs' states and moves mirrored ones. Call every frame. a_hosting: our game's
+	// server is the session's (its world is the session's: it offers to run every power armor frame standing in its
+	// loaded cells, FrameShare::Offers).
+	void Frame(bool a_hosting);
 
 	// Console commands run for NPCs outside NpcSync this frame (WorldSync's kills), for `net status`.
 	void CountCommands(std::uint32_t a_commands);
@@ -79,6 +83,7 @@ namespace NpcSync
 
 	std::string Describe();
 
-	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted).
+	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power
+	// armor frame, who runs it and where ours stands.
 	std::string DescribeMirror(std::uint32_t a_refId);
 }

@@ -240,6 +240,24 @@
   `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
   effects, limb damage, radiation and stagger.
 - Shots are shared too (see Weapon fire).
+- Power armor frames standing in the world are shared the same way (`FrameShare.h`, game-free and tested), so a
+  friend's suit stands on their rack in your game too, parked before the session or not. A frame is furniture
+  (`TESFurniture` with the engine's power armor keyword), not an actor: the owner's game finds the ones standing in
+  its loaded cells by a walk of their references every 2 s, claims them through the same claims (a plugin's frame
+  reference is the same in every game; one made at runtime is not shared yet, see Party), keeps one it runs while
+  its reference is still there (worn by its player, or in a cell since unloaded), and sends its cell/worldspace,
+  position and heading as an `ActorState` once a second and at once when it moved a unit or turned a hundredth
+  of a turn. Who runs one: the last player to get into or out of it in this session (a use takes it over as a hit
+  takes over an NPC; the frame a player had left last as the session began counts as used), else the host's game,
+  whose world is the session's, for any standing in its loaded cells; a joiner's game never offers one it has not
+  used. The others move their own reference of the frame to where the owner's game has it, when that spot is in
+  the area their engine draws: in place when it is loaded within 256 units, else through the console (`moveto`
+  and `setpos`, three tries 10 s apart, `RetryBudget`); never one that is disabled there (their player wears it),
+  fills a quest alias of theirs (the museum's suit before Concord is done), or has an actor of theirs in it.
+  Nothing is mirrored (a frame has no AI) and its pieces are its own game's (loot keeps frames per player). A
+  synced frame is not written off as the receiver's own suit for having been moved, or for their player's earlier
+  use of it (`ArmorFrames::OriginalFacts::synced`). `net status`: `frames=` run/standing, `frameStates=`,
+  `framesMoved=` in place/through the console, `frameGaveUp=`; the `mirror <ref>` dev command describes one.
 
 ## Spawns (src/game/Spawns.cpp, src/game/SpawnBook.h)
 
@@ -445,6 +463,9 @@ else skips this: the player is never in those places.
   to them. Out of power armor, the status also carries the frame they got out of last
   (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
+  A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference
+  of it is moved to where the wearer's game has it, so it stands there within a second or two of the
+  status, and the parked copy below is for a frame made in the wearer's game, or one not reported yet.
   The receiver keeps a copy of it there for as long as they are out and the spot is in the area its
   engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
   stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is

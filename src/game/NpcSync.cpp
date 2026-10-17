@@ -5,6 +5,9 @@
 #include "game/CreatureGait.h"
 #include "game/Dialogue.h"
 #include "game/Equipment.h"
+#include "game/FrameShare.h"
+#include "game/Gait.h"
+#include "game/Hud.h"
 #include "game/MirrorGait.h"
 #include "game/NpcClaims.h"
 #include "game/NpcHold.h"
@@ -16,6 +19,7 @@
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
 #include "game/Spawns.h"
+#include "game/StandInRange.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
@@ -122,6 +126,11 @@ namespace NpcSync
 		constexpr float                                      TALK_RANGE = 400.0f;  // game units
 
 		RE::Actor* LoadedActor(std::uint32_t a_id);
+		// Power armor frames (defined with the rest of their kind, after OursOf).
+		RE::TESObjectREFR*                   FrameRef(std::uint32_t a_id);
+		void                                 ScanFrames(Clock::time_point a_now, std::unordered_set<std::uint32_t>& a_loaded, std::vector<Protocol::ActorClaim>& a_claims);
+		std::optional<Protocol::ActorState> FrameState(std::uint32_t a_id, Clock::time_point a_now);
+		void                                 ApplyFrameState(RE::TESObjectREFR* a_frame, const Protocol::ActorState& a_state, std::uint32_t a_owner, Clock::time_point a_now);
 
 		// Who the player is talking to: the NPC they activated, else the nearest NPC (one who
 		// started the conversation). (MenuTopicManager::speaker isn't reliable in this version.)
@@ -152,6 +161,29 @@ namespace NpcSync
 		Clock::time_point     nextScan{};
 		Clock::time_point     nextStates{};
 
+		// Power armor frames standing in the world, shared as NPCs are (FrameShare.h): furniture references, found by a
+		// walk of the loaded cells now and then rather than among the actors, claimed and released through the same
+		// book, their states sent among the NPCs' (once a second, and at once when one moved), and never mirrored:
+		// ours is moved to where its owner's game has it, and left there.
+		constexpr auto                               FRAME_WALK_INTERVAL = 2s;
+		Clock::time_point                            nextFrameWalk{};
+		bool                                         hosting = false;  // our server is the session's (Frame)
+		std::unordered_set<std::uint32_t>            standingFrames;   // frames found standing, loaded, by the last walk
+		std::unordered_set<std::uint32_t>            usedFrames;       // frames our player got into or out of, or had left last: ours to run
+		std::uint32_t                                wornFrame = 0;    // the frame our player was in at the last scan (0: none)
+		struct SentFrame
+		{
+			RemoteEdits::Spot at;
+			float             heading = 0.0f;
+			Clock::time_point sentAt{};
+		};
+		std::unordered_map<std::uint32_t, SentFrame> sentFrames;  // owned frames: where each was last reported
+		RetryBudget::Budget                          frameBrings{ 10s };  // a frame moved through the console: three tries
+		std::unordered_map<std::uint32_t, int>       frameChoices;       // the last FrameShare::Move logged for each
+		std::uint32_t                                framesNudged = 0;   // moved in place to where their owner's game has them
+		std::uint32_t                                framesBrought = 0;  // moved there through the console (from an unloaded cell, or far)
+		std::uint32_t                                frameStates = 0;    // states sent for frames we run
+
 
 		// Our game's NPC under an id NpcSync and the wire use: a plugin's reference is the same in every game; under a
 		// spawn id (Spawns) is our own NPC shared so, or our copy of a friend's. 0: none.
@@ -180,8 +212,8 @@ namespace NpcSync
 			       !a_actor->IsDead(false) && !a_actor->IsDisabled() && a_actor->Get3D();
 		}
 
-		// Where an actor is, as sent in states: (interior cell, 0) or (0, worldspace).
-		std::pair<std::uint32_t, std::uint32_t> SpaceOf(const RE::Actor* a_actor)
+		// Where a reference is, as sent in states: (interior cell, 0) or (0, worldspace).
+		std::pair<std::uint32_t, std::uint32_t> SpaceOf(const RE::TESObjectREFR* a_actor)
 		{
 			const auto cell = a_actor->GetParentCell();
 			if (!cell) {
@@ -317,6 +349,7 @@ namespace NpcSync
 					}
 				}
 			}
+			ScanFrames(a_now, loaded, claims);
 			claimBook.Expire(a_now);
 			hold.Expire(a_now);
 			std::erase_if(lastTakeover, [&](const auto& a_entry) { return a_now - a_entry.second >= TAKEOVER_COOLDOWN; });
@@ -402,6 +435,8 @@ namespace NpcSync
 			mirrors.clear();
 			talkingTo = 0;
 			holding.clear();
+			sentFrames.clear();
+			frameBrings.Clear();
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
 		}
 
@@ -474,7 +509,14 @@ namespace NpcSync
 			std::vector<Protocol::ActorState> states;
 			for (auto& [id, track] : owned) {
 				const auto actor = LoadedActor(id);
-				if (!actor || actor->IsDead(false)) {
+				if (!actor) {
+					// A power armor frame we run: its state goes among the NPCs' when it is due (FrameShare::Due).
+					if (auto state = FrameState(id, a_now)) {
+						states.push_back(*state);
+					}
+					continue;
+				}
+				if (actor->IsDead(false)) {
 					continue;
 				}
 				const auto& pos = actor->data.location;
@@ -650,7 +692,7 @@ namespace NpcSync
 		}
 
 		// Where a reference is: its space (SpaceOf) and position.
-		NpcPlace::Spot SpotOf(const RE::Actor* a_ref)
+		NpcPlace::Spot SpotOf(const RE::TESObjectREFR* a_ref)
 		{
 			const auto [cell, worldspace] = SpaceOf(a_ref);
 			return { cell, worldspace, a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z };
@@ -675,6 +717,250 @@ namespace NpcSync
 				.talkingToUs = a_id == talkingTo,
 				.holdsUs = Dialogue::Holds(a_actor),
 			};
+		}
+
+		// ---- Power armor frames (FrameShare.h) ------------------------------------------------------------------
+
+		// Our reference of a shared frame: a plugin's power armor frame by that ID, whatever its state (disabled while
+		// our player wears it, or in a cell no longer loaded). Never one made here, nor an NPC.
+		RE::TESObjectREFR* FrameRef(std::uint32_t a_id)
+		{
+			if (!Protocol::IsShareableRef(a_id)) {
+				return nullptr;
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			return ref && !ref->IsDeleted() && Equipment::IsPowerArmorFrame(ref->GetObjectReference()) ? ref : nullptr;
+		}
+
+		// An actor of ours is in this frame (a stand-in gets into a copy of its own, never a reference of our world).
+		bool FrameInUse(const RE::TESObjectREFR* a_frame)
+		{
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
+				return false;
+			}
+			for (const auto& handle : lists->highActorHandles) {
+				const auto actor = handle.get();
+				const auto middle = actor && actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				if (occupied && occupied.get() == a_frame) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		FrameShare::Ours FrameOursOf(RE::TESObjectREFR* a_frame)
+		{
+			FrameShare::Ours ours;
+			if (!a_frame) {
+				return ours;
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			ours.found = true;
+			ours.created = a_frame->IsCreated();
+			ours.frame = true;  // FrameRef looked
+			ours.off = a_frame->IsDisabled();
+			ours.loaded = a_frame->Get3D() != nullptr;
+			ours.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+			ours.inUse = FrameInUse(a_frame);
+			ours.wornHere = player && Equipment::PowerArmorFrameOf(player).get() == a_frame;
+			ours.at = SpotOf(a_frame);
+			ours.heading = a_frame->data.angle.z;
+			return ours;
+		}
+
+		// The frames standing in the loaded cells, found by a walk of their references now and then: furniture is in no
+		// process list. Loaded and enabled only; the one our player wears, and ours in cells since unloaded, are known
+		// by other means (ScanFrames).
+		void WalkFrames(Clock::time_point a_now)
+		{
+			if (a_now < nextFrameWalk) {
+				return;
+			}
+			nextFrameWalk = a_now + FRAME_WALK_INTERVAL;
+			standingFrames.clear();
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return;
+			}
+			tes->ForEachReference([](RE::TESObjectREFR* a_ref) {
+				if (a_ref && Protocol::IsShareableRef(a_ref->GetFormID()) && Equipment::IsPowerArmorFrame(a_ref->GetObjectReference()) && !a_ref->IsDeleted() && !a_ref->IsDisabled() && a_ref->Get3D()) {
+					standingFrames.insert(a_ref->GetFormID());
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+		}
+
+		// Scan's part for frames: which count as loaded (kept while we run them), and which to offer to run. Our player
+		// getting into or out of one takes it over from whoever runs it (FrameShare::Used), as a hit or a press takes
+		// over an NPC.
+		void ScanFrames(Clock::time_point a_now, std::unordered_set<std::uint32_t>& a_loaded, std::vector<Protocol::ActorClaim>& a_claims)
+		{
+			WalkFrames(a_now);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto worn = player ? Equipment::PowerArmorFrameOf(player) : RE::NiPointer<RE::TESObjectREFR>{};
+			const auto last = player ? player->lastUsedPowerArmor.get() : RE::NiPointer<RE::TESObjectREFR>{};
+			const auto wornId = worn && !worn->IsDeleted() ? worn->GetFormID() : 0;
+			const auto lastId = last && !last->IsDeleted() ? last->GetFormID() : 0;
+			if (const auto used = FrameShare::Used(wornFrame, wornId, lastId); FrameRef(used)) {
+				const bool fresh = usedFrames.insert(used).second;
+				if (fresh || wornId != wornFrame) {
+					REX::INFO("NpcSync: our player {} frame {:08X}; it is ours to run (owner {})", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used, OwnerOf(used));
+					OnLocalInteraction(used);  // taken over when another game runs it; offered below when nobody does
+				}
+			}
+			wornFrame = wornId;
+
+			std::unordered_set<std::uint32_t> candidates = standingFrames;
+			candidates.insert(usedFrames.begin(), usedFrames.end());
+			for (const auto& [id, track] : owned) {
+				if (FrameRef(id)) {
+					candidates.insert(id);  // kept while it is still here, loaded or not
+				}
+			}
+			for (const auto id : candidates) {
+				const auto share = FrameShare::ChooseShare(FrameOursOf(FrameRef(id)));
+				if (!FrameShare::Keeps(share)) {
+					continue;
+				}
+				a_loaded.insert(id);
+				const auto owner = OwnerOf(id);
+				if (owner == localId || !FrameShare::Offers(share, hosting, usedFrames.contains(id))) {
+					continue;
+				}
+				if (const auto reason = claimBook.Offer(id, owner, localId, false, WorldSync::MayClaim(id), a_now)) {
+					a_claims.push_back({ id, *reason, false });
+				}
+			}
+		}
+
+		// The state of a frame we run, when one is due (FrameShare::Due): where it stands, nothing of movement.
+		std::optional<Protocol::ActorState> FrameState(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto frame = FrameRef(a_id);
+			if (!frame) {
+				return std::nullopt;
+			}
+			const auto ours = FrameOursOf(frame);
+			if (!FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+				return std::nullopt;
+			}
+			const auto sent = sentFrames.find(a_id);
+			const bool moved = FrameShare::Moved(sent != sentFrames.end(), sent != sentFrames.end() ? sent->second.at : RemoteEdits::Spot{}, sent != sentFrames.end() ? sent->second.heading : 0.0f, ours.at, ours.heading);
+			if (!FrameShare::Due(moved, sent != sentFrames.end() ? a_now - sent->second.sentAt : Clock::duration{})) {
+				return std::nullopt;
+			}
+			Protocol::ActorState state;
+			state.refId = a_id;
+			state.cell = ours.at.cell;
+			state.worldspace = ours.at.worldspace;
+			state.x = ours.at.x;
+			state.y = ours.at.y;
+			state.z = ours.at.z;
+			state.heading = ours.heading;
+			sentFrames[a_id] = { ours.at, ours.heading, a_now };
+			++frameStates;
+			return state;
+		}
+
+		// Whether a spot is in the area our engine draws around our player: our interior, or outside within the cells
+		// it attaches around ours (StandInRange::Visible). Not during a loading screen, when nothing is.
+		bool InView(const RemoteEdits::Spot& a_spot, const RE::PlayerCharacter* a_player)
+		{
+			const auto cell = a_player ? a_player->GetParentCell() : nullptr;
+			if (!cell || Hud::LoadingScreenUp()) {
+				return false;
+			}
+			if (cell->IsInterior()) {
+				return a_spot.cell == cell->GetFormID();
+			}
+			return a_spot.cell == 0 && cell->worldSpace && a_spot.worldspace == cell->worldSpace->GetFormID() &&
+			       StandInRange::Visible(a_spot.x, a_spot.y, a_player->data.location.x, a_player->data.location.y, RemotePlayers::GridsToLoad());
+		}
+
+		const char* MoveText(FrameShare::Move a_move)
+		{
+			switch (a_move) {
+			case FrameShare::Move::kThere:
+				return "it stands there";
+			case FrameShare::Move::kMissing:
+				return "no such frame here";
+			case FrameShare::Move::kNotFrame:
+				return "not a power armor frame here";
+			case FrameShare::Move::kOff:
+				return "ours is disabled (worn here), left alone";
+			case FrameShare::Move::kQuest:
+				return "a quest of ours holds it, left alone";
+			case FrameShare::Move::kInUse:
+				return "someone here is in it, left alone";
+			case FrameShare::Move::kOutOfView:
+				return "where theirs stands is out of our sight; ours stays where it is";
+			case FrameShare::Move::kNudge:
+				return "moved there";
+			case FrameShare::Move::kBring:
+				return "brought there";
+			}
+			return "-";
+		}
+
+		// A frame another game runs stands somewhere in their world: ours is moved there, in place when it is loaded
+		// near, else through the console as an NPC's copy is brought in (BringIn), a few tries at most (RetryBudget).
+		void ApplyFrameState(RE::TESObjectREFR* a_frame, const Protocol::ActorState& a_state, std::uint32_t a_owner, Clock::time_point a_now)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto ours = FrameOursOf(a_frame);
+			const auto theirs = RemoteEdits::SpotOf(a_state);
+			const auto move = FrameShare::Decide(ours, theirs, a_state.heading, InView(theirs, player));
+			const auto id = a_state.refId;
+			// Each choice but the quiet ones once, as it changes: the states come every second.
+			if (auto& logged = frameChoices[id]; logged != static_cast<int>(move) && move != FrameShare::Move::kNudge && move != FrameShare::Move::kBring) {
+				logged = static_cast<int>(move);
+				REX::INFO("NpcSync: player {}'s game has frame {:08X} at ({:.0f},{:.0f},{:.0f}) in {:08X}; ours is {} (cell {:08X} ws {:08X}): {}", a_owner, id, theirs.x, theirs.y, theirs.z, theirs.cell ? theirs.cell : theirs.worldspace,
+					ours.loaded ? "loaded" : "not loaded", ours.at.cell, ours.at.worldspace, MoveText(move));
+			}
+			switch (move) {
+			case FrameShare::Move::kThere:
+				frameBrings.Forget(id);
+				break;
+			case FrameShare::Move::kNudge:
+				{
+					const float distance = RemoteEdits::Distance(ours.at, theirs);
+					if (distance > 10.0f) {
+						REX::INFO("NpcSync: frame {:08X} is moved {:.0f} units to ({:.0f},{:.0f},{:.0f}), where player {}'s game has it", id, distance, theirs.x, theirs.y, theirs.z, a_owner);
+					}
+					a_frame->data.location = { theirs.x, theirs.y, theirs.z };
+					a_frame->data.angle = { 0.0f, 0.0f, a_state.heading };
+					a_frame->Update3DPosition(true);
+					++framesNudged;
+					frameChoices[id] = static_cast<int>(move);
+				}
+				break;
+			case FrameShare::Move::kBring:
+				{
+					const auto verdict = frameBrings.Ask(id, a_now);
+					if (!RetryBudget::Go(verdict)) {
+						break;
+					}
+					if (verdict == RetryBudget::Verdict::kFirst) {
+						REX::INFO("NpcSync: frame {:08X} is brought to ({:.0f},{:.0f},{:.0f}) in {:08X}, where player {}'s game has it; ours was {} (cell {:08X} ws {:08X})", id, theirs.x, theirs.y, theirs.z, theirs.cell ? theirs.cell : theirs.worldspace, a_owner,
+							ours.loaded ? "loaded elsewhere" : "in an unloaded cell", ours.at.cell, ours.at.worldspace);
+					} else if (verdict == RetryBudget::Verdict::kLast) {
+						REX::INFO("NpcSync: bringing frame {:08X} for the last time; after {} tries it stays where it is here", id, RetryBudget::TRIES);
+					}
+					RE::Console::ExecuteCommand(std::format("{:08X}.moveto player", id).c_str());
+					RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, theirs.x).c_str());
+					RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, theirs.y).c_str());
+					RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, theirs.z).c_str());
+					RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_state.heading * 180.0f / std::numbers::pi_v<float>).c_str());
+					meter.Count(5);
+					++framesBrought;
+					frameChoices[id] = static_cast<int>(move);
+				}
+				break;
+			default:
+				break;
+			}
 		}
 
 		// Our copy of the NPC as one of its owner's states finds it: what RetryBudget::Plan decides the fix-ups on.
@@ -882,6 +1168,11 @@ namespace NpcSync
 			if (spawn) {
 				Spawns::OnState(state);
 			}
+			// A power armor frame their game runs: ours is moved to where theirs stands (FrameShare), nothing mirrored.
+			if (const auto frame = spawn ? nullptr : FrameRef(state.refId)) {
+				ApplyFrameState(frame, state, owner, now);
+				continue;
+			}
 			// Off here: switched on. Not loaded (a friend's companion that came from somewhere we have not loaded), or
 			// loaded but not where the owner's copy is (ours waits in an interior its own quest left it in): brought
 			// over, and mirrored once it is here; the snapshot is kept meanwhile. A few tries each (RetryBudget).
@@ -971,8 +1262,9 @@ namespace NpcSync
 		lastActivatedAt = Clock::now();
 	}
 
-	void Frame()
+	void Frame(bool a_hosting)
 	{
+		hosting = a_hosting;
 		// The last frame's console commands, wherever they ran (WorldSync's kills count here too).
 		if (meter.EndFrame(Clock::now())) {
 			REX::INFO("NpcSync: {} console commands for NPCs in one frame (the most so far {}, busy frames {})", meter.Last(), meter.Most(), meter.BusyFrames());
@@ -1109,10 +1401,25 @@ namespace NpcSync
 		switchOns.Clear();
 		bringIns.Clear();
 		outgoing.clear();
+		standingFrames.clear();
+		usedFrames.clear();
+		wornFrame = 0;
+		sentFrames.clear();
+		frameBrings.Clear();
+		frameChoices.clear();
+		nextFrameWalk = {};
 	}
 
 	std::string DescribeMirror(std::uint32_t a_refId)
 	{
+		if (const auto frame = FrameRef(a_refId)) {
+			const auto space = SpaceOf(frame);
+			const auto sent = sentFrames.find(a_refId);
+			const auto choice = frameChoices.find(a_refId);
+			return std::format("frame owner={} owned={} standing={} used={} loaded={} off={} created={} ours=({:.0f},{:.0f},{:.0f}) heading={:.2f} cell={:08X} ws={:08X} sent={} lastMove={}", OwnerOf(a_refId), owned.contains(a_refId),
+				standingFrames.contains(a_refId), usedFrames.contains(a_refId), frame->Get3D() != nullptr, frame->IsDisabled(), frame->IsCreated(), frame->data.location.x, frame->data.location.y, frame->data.location.z, frame->data.angle.z,
+				space.first, space.second, sent != sentFrames.end(), choice != frameChoices.end() ? choice->second : -1);
+		}
 		const auto it = mirrors.find(a_refId);
 		const auto actor = LoadedActor(a_refId);
 		std::string out = std::format("owner={} owned={} mirror={} loaded={}", OwnerOf(a_refId), owned.contains(a_refId), it != mirrors.end(), actor != nullptr);
@@ -1160,8 +1467,9 @@ namespace NpcSync
 		const auto delays = mirrors | std::views::transform([](const auto& a_entry) { return static_cast<int>(a_entry.second.delayMs); });
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={}", owned.size(),
+		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} frameStates={} framesMoved={}/{} frameGaveUp={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar);
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp());
 	}
 }

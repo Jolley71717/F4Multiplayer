@@ -796,3 +796,41 @@ TEST("armor frames: the switch-in waits until what was last put on the stand-in 
 	// Not named yet, in the clothes it was dressed in: the dress settles through the switch facts, not here.
 	CHECK(ChoosePick({ .named = false, .dressed = true }) == Pick::kSwitch);
 }
+
+TEST("armor frames: our copy of a frame another game runs is theirs wherever our player left it, however it got where it stands")
+{
+	using ArmorFrames::ChooseOriginal;
+	using ArmorFrames::ChooseParkedOriginal;
+	using ArmorFrames::Original;
+	using ArmorFrames::OriginalFacts;
+	constexpr std::uint32_t museum = 0x0003F2B4;
+	constexpr std::uint32_t base = 0x0019DED9;
+	// Synced (NpcSync moved ours to where their game has it): the move is no use of it by our player, and our player's
+	// last use of it before they took it is none either. Hidden while they wear it where they got in.
+	OriginalFacts facts{ .found = true, .base = base, .frame = true, .loaded = true, .ours = true, .fromStart = 5000.0f, .fromSpot = 12.0f, .synced = true };
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	facts.synced = false;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kOurs);
+	facts.ours = false;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kUsed);
+	// Not where they got in yet (their state has not moved ours there): looked at again, not written off for the wear.
+	facts = { .found = true, .base = base, .frame = true, .loaded = true, .moved = true, .fromStart = 5000.0f, .fromSpot = 3000.0f, .synced = true };
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kElsewhere);
+	facts.fromSpot = 12.0f;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kHide);
+	// Someone here in it, or a quest of ours holding it, keeps it shown as ever.
+	facts.inUse = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kInUse);
+	facts.inUse = false;
+	facts.quest = true;
+	CHECK(ChooseOriginal(museum, base, facts) == Original::kQuest);
+	// Parked: ours stands for theirs once it is there, is hidden while theirs stands elsewhere.
+	facts = { .found = true, .base = base, .frame = true, .loaded = true, .ours = true, .fromStart = 5000.0f, .fromSpot = 12.0f, .synced = true };
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kThere);
+	facts.fromSpot = 3000.0f;
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kHide);
+	facts.synced = false;
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kOurs);
+	facts.ours = false;
+	CHECK(ChooseParkedOriginal(museum, base, facts) == Original::kUsed);
+}
