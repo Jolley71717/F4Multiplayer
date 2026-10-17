@@ -473,8 +473,9 @@ else skips this: the player is never in those places.
   furniture (sit/sleep state) and Survival (`GetDifficultyLevel`), where it could strand a quest.
 - Compass (src/game/Compass.cpp): each friend in our cell or worldspace gets a shape in their color
   (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
-  drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` on the UI thread (F4SE
-  `AddUITask`, one queued at a time). The bar is 304 px for about 100 degrees (3.02 px/degree);
+  drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` from inside the HUD's
+  own update (its `AdvanceMovie`, hooked; one update queued at a time, and none while a loading
+  screen or another menu is up). The bar is 304 px for about 100 degrees (3.02 px/degree);
   friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
   HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
@@ -601,8 +602,9 @@ that changes the world cannot ship without a row here.
   markers and their flags), `idles <text>` (idle animations by editor ID, event or file),
   `dialogue` (the conversation the player is in), `npcvoice <actor>` (an actor's current line), `voiceline <actor> [info response voiceType [flags [priority]]]` (the recording an actor is saying as we report it, with the engine's own voice file for it; or a recording played at an actor as a friend's line is),
   `topics <npc>` / `say <ref> <topic>` (an NPC's dialogue lines; make it say one), `named <type> <text>` (forms by name, with keywords), `menu <name>
-  [hide|force]` (open or close a menu), `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
-  <member> <value>` (look at and change a menu's Flash objects), `weapsound <actor>` (the sounds
+  [hide|force]` (open or close a menu, not the dialogue or the workshop menu: `workshop enter|exit`),
+  `paused`, `gfx <menu> <path> [depth]` / `gfxset <menu> <path>
+  <member> <value>` (look at and change a menu's Flash objects, on the main thread between frames), `weapsound <actor>` (the sounds
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
   objectives with their state), `stages <quest>` (the stages done here and those from friends still

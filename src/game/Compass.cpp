@@ -239,10 +239,11 @@ namespace Compass
 		}
 
 		// The markers are written from inside the HUD menu's own AdvanceMovie, after the engine's update of
-		// it: our frame task and F4SE's UI tasks run on the game's job threads while the engine advances
-		// menus in a job of its own and the main thread draws them, and marker writes from there were
-		// behind the crashes in Scaleform's render tree (loads, a conversation opening). In the HUD's own
-		// update nothing else touches the HUD movie.
+		// it: F4SE's UI tasks (and our frame task, before the game work moved to the main thread) run on the
+		// game's job threads while the engine advances menus in a job of its own and the main thread draws
+		// them, and marker writes from there were behind the crashes in Scaleform's render tree (loads, a
+		// conversation opening). In the HUD's own update nothing else touches the HUD movie. The plugin posts
+		// no UI task at all any more (a test reads the source).
 		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;  // IMenu::AdvanceMovie
 		using AdvanceFn = void (*)(RE::IMenu*, float, std::uint64_t);
 		std::atomic<std::uintptr_t> hookedHudVtable{ 0 };

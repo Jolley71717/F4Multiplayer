@@ -33,6 +33,22 @@ namespace OpenMenus
 	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "LooksMenu", "PauseMenu", "PipboyMenu",
 		"PowerArmorModMenu", "VATSMenu", "WorkshopMenu" };
 
+	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):
+	// its string pool keeps a name in the case it was first made in, which need not be the menu's own.
+	constexpr bool SameName(std::string_view a_lhs, std::string_view a_rhs)
+	{
+		constexpr auto lower = [](char a_c) { return a_c >= 'A' && a_c <= 'Z' ? static_cast<char>(a_c - 'A' + 'a') : a_c; };
+		if (a_lhs.size() != a_rhs.size()) {
+			return false;
+		}
+		for (std::size_t i = 0; i < a_lhs.size(); ++i) {
+			if (lower(a_lhs[i]) != lower(a_rhs[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// The open menus, one bit each. Events come on the UI's thread while any thread asks.
 	class Book
 	{
@@ -68,22 +84,6 @@ namespace OpenMenus
 		}
 
 	private:
-		// The game's strings are case-blind (BSFixedString, and the UI's own lookup): its string pool keeps a name in the
-		// case it was first made in, which need not be the menu's own.
-		static constexpr bool SameName(std::string_view a_lhs, std::string_view a_rhs)
-		{
-			constexpr auto lower = [](char a_c) { return a_c >= 'A' && a_c <= 'Z' ? static_cast<char>(a_c - 'A' + 'a') : a_c; };
-			if (a_lhs.size() != a_rhs.size()) {
-				return false;
-			}
-			for (std::size_t i = 0; i < a_lhs.size(); ++i) {
-				if (lower(a_lhs[i]) != lower(a_rhs[i])) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		static constexpr std::uint32_t Bit(Menu a_menu) { return 1u << static_cast<std::uint32_t>(a_menu); }
 
 		std::atomic<std::uint32_t> bits{ 0 };

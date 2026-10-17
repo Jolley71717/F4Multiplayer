@@ -14,6 +14,7 @@
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
+#include "game/MenuMessages.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
 #include "game/GraphInfo.h"
@@ -1705,6 +1706,13 @@ namespace DevCommands
 			}
 		}
 
+		// The gfx commands look a menu up through the UI, which takes a reference to it (the plugin's other lookup is
+		// the HUD's, to hook it: see OpenMenus). Here, on the main thread between frames, the reference is let go
+		// before the command returns, with the UI's own map still holding the menu: never the last one, and so
+		// never the one that destroys a closing menu. As F4SE UI tasks these ran on a job thread beside the main
+		// thread's drawing, where a reference taken to a closing workshop menu could hand the engine's deadlock
+		// (the menu destroyed mid-draw) its moment.
+
 		// gfx <menu> <path> [depth]: logs a menu's display objects under path (e.g. HUDMenu root 2).
 		std::string Gfx(std::string_view a_args)
 		{
@@ -1716,23 +1724,22 @@ namespace DevCommands
 			if (args.size() > 2) {
 				std::from_chars(args[2].data(), args[2].data() + args[2].size(), depth);
 			}
-			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), depth]() {
-				const auto ui = RE::UI::GetSingleton();
-				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
-				const auto movie = menu ? menu->uiMovie.get() : nullptr;
-				if (!movie) {
-					REX::INFO("gfx: no movie for {}", menuName);
-					return;
-				}
-				Scaleform::GFx::Value object;
-				if (!movie->GetVariable(&object, path.c_str())) {
-					REX::INFO("gfx: no {}", path);
-					return;
-				}
-				REX::INFO("gfx: {} type={}", path, static_cast<int>(object.GetType()));
-				DumpGfx(object, path, depth);
-			});
-			return "queued (see the log)";
+			const std::string menuName{ args[0] };
+			const std::string path{ args[1] };
+			const auto        ui = RE::UI::GetSingleton();
+			const auto        menu = ui ? ui->GetMenu(menuName) : nullptr;
+			const auto        movie = menu ? menu->uiMovie.get() : nullptr;
+			if (!movie) {
+				return std::format("error: no movie for {}", menuName);
+			}
+			Scaleform::GFx::Value object;
+			if (!movie->GetVariable(&object, path.c_str())) {
+				return std::format("error: no {}", path);
+			}
+			const auto type = static_cast<int>(object.GetType());
+			REX::INFO("gfx: {} type={}", path, type);
+			DumpGfx(object, path, depth);
+			return std::format("{} type={} (its objects are in the log)", path, type);
 		}
 
 		// gfxset <menu> <path> <member> <value>: sets a property (a number, true/false, or text).
@@ -1742,27 +1749,29 @@ namespace DevCommands
 			if (args.size() < 4) {
 				return "error: usage: gfxset <menu> <path> <member> <value>";
 			}
-			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), member = std::string(args[2]), text = std::string(args[3])]() {
-				const auto ui = RE::UI::GetSingleton();
-				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
-				const auto movie = menu ? menu->uiMovie.get() : nullptr;
-				Scaleform::GFx::Value object;
-				if (!movie || !movie->GetVariable(&object, path.c_str())) {
-					REX::INFO("gfxset: no {}", path);
-					return;
-				}
-				Scaleform::GFx::Value value;
-				double number = 0.0;
-				if (text == "true" || text == "false") {
-					value = Scaleform::GFx::Value(text == "true");
-				} else if (std::from_chars(text.data(), text.data() + text.size(), number).ec == std::errc{}) {
-					value = Scaleform::GFx::Value(number);
-				} else {
-					value = Scaleform::GFx::Value(text.c_str());
-				}
-				REX::INFO("gfxset: {}.{} = {} -> {}", path, member, text, object.SetMember(member, value));
-			});
-			return "queued (see the log)";
+			const std::string menuName{ args[0] };
+			const std::string path{ args[1] };
+			const std::string member{ args[2] };
+			const std::string text{ args[3] };
+			const auto        ui = RE::UI::GetSingleton();
+			const auto        menu = ui ? ui->GetMenu(menuName) : nullptr;
+			const auto        movie = menu ? menu->uiMovie.get() : nullptr;
+			Scaleform::GFx::Value object;
+			if (!movie || !movie->GetVariable(&object, path.c_str())) {
+				return std::format("error: no {}", path);
+			}
+			Scaleform::GFx::Value value;
+			double                number = 0.0;
+			if (text == "true" || text == "false") {
+				value = Scaleform::GFx::Value(text == "true");
+			} else if (std::from_chars(text.data(), text.data() + text.size(), number).ec == std::errc{}) {
+				value = Scaleform::GFx::Value(number);
+			} else {
+				value = Scaleform::GFx::Value(text.c_str());
+			}
+			const bool set = object.SetMember(member, value);
+			REX::INFO("gfxset: {}.{} = {} -> {}", path, member, text, set);
+			return std::format("{}.{} = {} -> {}", path, member, text, set);
 		}
 
 		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
@@ -2105,7 +2114,9 @@ namespace DevCommands
 			return std::format("god={}", player && player->IsGodMode());
 		}
 
-		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy).
+		// menu <name> [hide|force]: opens (or closes) a menu, e.g. PauseMenu, PipboyMenu (force: for the Pip-Boy). Not
+		// the dialogue or the workshop menu (MenuMessages): the conversation and workshop mode are left through the
+		// game's own ways (`workshop enter` and `workshop exit` for the workshop).
 		std::string Menu(std::string_view a_args)
 		{
 			const auto space = a_args.find(' ');
@@ -2115,8 +2126,8 @@ namespace DevCommands
 			if (name.empty() || !queue) {
 				return "error: usage: menu <name> [hide|force]";
 			}
-			if (name == "DialogueMenu" && !how.empty()) {
-				return "error: a dialogue is closed by the conversation ending, not by hiding its menu (that crashed the game in the menu's destructor)";
+			if (const auto reason = MenuMessages::Refusal(name, !how.empty())) {
+				return std::format("error: {}", reason);
 			}
 			queue->AddMessage(name, how == "force" ? RE::UI_MESSAGE_TYPE::kForceHide : how == "hide" ? RE::UI_MESSAGE_TYPE::kHide : RE::UI_MESSAGE_TYPE::kShow);
 			return "queued";

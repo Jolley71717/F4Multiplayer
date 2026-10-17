@@ -32,8 +32,10 @@ game's own code can:
   characters say; HUD messages name players and are never logged) until the game restarts, `log
   level info` takes them out again, and `log flush` writes out what is buffered.
 - **Look inside the HUD:** `gfx` reads its Flash objects, and `gfxset` changes them. The compass
-  markers were found this way. Both reach into a menu's movie from an F4SE UI task (`gfxset`
-  writes to it), outside the plugin's own HUD timing: not for use during a crash soak.
+  markers were found this way. Both reach into a menu's movie on the main thread between frames, like
+  every other command (`gfxset` writes to it), outside the plugin's own HUD timing: not for use during
+  a crash soak. `menu` opens and closes menus by message, but not the dialogue or the workshop menu: a
+  conversation ends on its own, and workshop mode is `workshop enter` and `workshop exit`.
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.
@@ -55,8 +57,9 @@ describes each one.
    that long). A command it stops waiting for is marked abandoned and skipped when its turn comes, so
    it never goes off late. Queued work runs on the game's main thread, from a window message the plugin
    hooks; before the window exists, or if hooking it failed (logged as an error), `RunFrame(false)`
-   runs it from F4SE's frame task instead, which is a task thread, not the main thread. A few HUD
-   commands go one step further, to the UI thread (`AddUITask`).
+   runs it from F4SE's frame task instead, which is a task thread, not the main thread. No command
+   goes to an F4SE UI task: those run on a job thread beside the main thread's drawing, and a menu
+   looked up there (as `gfx` once did) could decide which thread destroys a closing menu.
 4. **Commands are plain functions** (`src/DevCommands.cpp`). Each takes the rest of the line and
    returns a string. Console commands go through the game's own console (`RE::Console::ExecuteCommand`).
    Everything else calls the game's code directly through CommonLibF4: forms, actors, menus, the
