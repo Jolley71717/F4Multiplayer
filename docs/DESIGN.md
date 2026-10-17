@@ -704,8 +704,10 @@ that changes the world cannot ship without a row here.
   Windows and DirectInput), `controls [context]` (the control map's input contexts and their user events),
   `workshop [enter|exit|junk|select <ref>|scrap <ref>]`, and `dialogue menu` (the dialogue menu's own state).
 - `tools/menustress.sh`: workshop mode, the Pip-Boy and a conversation over and over on one game or both,
-  logging whatever gets stuck. `tools/hangcatch.ps1`: when the game stops answering for 10 s, a debugger
-  writes every thread's stack and a minidump.
+  logging whatever gets stuck (`tools/stress.ps1` runs it from PowerShell). A game thread that runs none of
+  its commands for 12 s is a HANG: the loop copies the plugin's hang and frame watch lines from the log and,
+  on this PC, catches the game with `tools/hangcatch.ps1 -Now`. `tools/hangcatch.ps1`: when the game stops
+  answering for 10 s, a debugger writes every thread's stack and a minidump.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session
