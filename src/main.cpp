@@ -612,6 +612,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	Config::Load();
+	Perf::StartTracy();  // a developer build with Tracy only (Perf.h)
 
 	if (!F4SE::GetMessagingInterface()->RegisterListener(OnF4SEMessage)) {
 		REX::ERROR("Failed to register F4SE message listener");

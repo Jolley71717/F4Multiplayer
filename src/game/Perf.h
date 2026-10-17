@@ -11,6 +11,10 @@
 #include <string_view>
 #include <vector>
 
+#ifdef F4MP_TRACY
+#	include <tracy/TracyC.h>
+#endif
+
 // What our own work costs per frame, part by part: the dev channel's `perf` reads the median, the 99th percentile and
 // the worst of the last minute or so of frames, and how often a hitch in the game's frames came with a frame of ours
 // that took half of it. The parts are marked with PERF_SCOPE("name") on the main thread, inside RunFrame's frame
@@ -156,22 +160,49 @@ namespace Perf
 
 	Recorder& Global();
 
-	// Whether this thread is inside a frame of ours (Perf::Frame): only then does a Scope record.
+	// Whether this thread is inside a frame of ours (Perf::Frame): only then does a part record.
 	inline thread_local bool inFrame = false;
+
+	// A part as a PERF_SCOPE or PERF_NEXT names it: its place in Global(), and in a developer build with Tracy
+	// (xmake f --tracy=<its source>), where Tracy shows it.
+	struct Part
+	{
+		std::size_t zone;
+#ifdef F4MP_TRACY
+		___tracy_source_location_data where;
+#endif
+	};
+
+#ifdef F4MP_TRACY
+	// Called once, at load: Tracy's client starts listening on this machine only (port 8086), and sends only while a
+	// capture is connected.
+	inline void StartTracy() { ___tracy_startup_profiler(); }
+#else
+	inline void StartTracy() {}
+#endif
 
 	// One part's time, added to this frame's.
 	class Scope
 	{
 	public:
-		explicit Scope(std::size_t a_zone) :
-			zone(a_zone),
+		explicit Scope(const Part& a_part) :
+			zone(a_part.zone),
 			start(inFrame ? Clock::now() : Clock::time_point{})
-		{}
+		{
+#ifdef F4MP_TRACY
+			if (inFrame) {
+				tracy = ___tracy_emit_zone_begin(&a_part.where, 1);
+			}
+#endif
+		}
 
 		~Scope()
 		{
 			if (start != Clock::time_point{}) {
 				Global().Add(zone, Clock::now() - start);
+#ifdef F4MP_TRACY
+				___tracy_emit_zone_end(tracy);
+#endif
 			}
 		}
 
@@ -181,6 +212,9 @@ namespace Perf
 	private:
 		std::size_t       zone;
 		Clock::time_point start;
+#ifdef F4MP_TRACY
+		TracyCZoneCtx tracy{};
+#endif
 	};
 
 	// Consecutive stretches of one function, each a part: Next ends the stretch before (if any) and starts the one
@@ -191,12 +225,15 @@ namespace Perf
 		Stretches() = default;
 		~Stretches() { End(); }
 
-		void Next(std::size_t a_zone)
+		void Next(const Part& a_part)
 		{
 			End();
 			if (inFrame) {
-				zone = a_zone;
+				zone = a_part.zone;
 				start = Clock::now();
+#ifdef F4MP_TRACY
+				tracy = ___tracy_emit_zone_begin(&a_part.where, 1);
+#endif
 			}
 		}
 
@@ -210,11 +247,17 @@ namespace Perf
 				const auto now = Clock::now();
 				Global().Add(zone, now - start);
 				start = {};
+#ifdef F4MP_TRACY
+				___tracy_emit_zone_end(tracy);
+#endif
 			}
 		}
 
 		std::size_t       zone = 0;
 		Clock::time_point start{};
+#ifdef F4MP_TRACY
+		TracyCZoneCtx tracy{};
+#endif
 	};
 
 	// The whole of one frame of ours, on the main thread (RunFrame): ends it in Global() when it goes.
@@ -227,6 +270,12 @@ namespace Perf
 			start(Clock::now())
 		{
 			inFrame = true;
+#ifdef F4MP_TRACY
+			if (!nested) {
+				static constexpr ___tracy_source_location_data where{ "frame", "Perf::Frame", __FILE__, __LINE__, 0 };
+				tracy = ___tracy_emit_zone_begin(&where, 1);
+			}
+#endif
 		}
 
 		~Frame()
@@ -238,6 +287,10 @@ namespace Perf
 			const auto end = Clock::now();
 			Global().EndFrame(end - start, last != Clock::time_point{} ? start - last : Clock::duration{});
 			last = start;
+#ifdef F4MP_TRACY
+			___tracy_emit_zone_end(tracy);
+			___tracy_emit_frame_mark(nullptr);  // the game's frames, as Tracy's frame bar
+#endif
 		}
 
 		Frame(const Frame&) = delete;
@@ -247,16 +300,25 @@ namespace Perf
 		static inline Clock::time_point last{};  // main thread only
 		bool                            nested;
 		Clock::time_point               start;
+#ifdef F4MP_TRACY
+		TracyCZoneCtx tracy{};
+#endif
 	};
 }
 
 #define PERF_CONCAT_INNER(a, b) a##b
 #define PERF_CONCAT(a, b) PERF_CONCAT_INNER(a, b)
+#ifdef F4MP_TRACY
+#	define PERF_PART(a_name) \
+		static const ::Perf::Part PERF_CONCAT(perfPart_, __LINE__){ ::Perf::Global().Zone(a_name), { a_name, __FUNCTION__, __FILE__, __LINE__, 0 } }
+#else
+#	define PERF_PART(a_name) static const ::Perf::Part PERF_CONCAT(perfPart_, __LINE__){ ::Perf::Global().Zone(a_name) }
+#endif
 // Times the rest of the enclosing block as the part a_name (a string literal).
-#define PERF_SCOPE(a_name)                                                                    \
-	static const std::size_t PERF_CONCAT(perfZone_, __LINE__) = ::Perf::Global().Zone(a_name); \
-	const ::Perf::Scope      PERF_CONCAT(perfScope_, __LINE__) { PERF_CONCAT(perfZone_, __LINE__) }
+#define PERF_SCOPE(a_name) \
+	PERF_PART(a_name);     \
+	const ::Perf::Scope PERF_CONCAT(perfScope_, __LINE__) { PERF_CONCAT(perfPart_, __LINE__) }
 // Ends a_stretches' stretch before and starts the part a_name (a string literal).
-#define PERF_NEXT(a_stretches, a_name)                                                         \
-	static const std::size_t PERF_CONCAT(perfZone_, __LINE__) = ::Perf::Global().Zone(a_name); \
-	a_stretches.Next(PERF_CONCAT(perfZone_, __LINE__))
+#define PERF_NEXT(a_stretches, a_name) \
+	PERF_PART(a_name);                 \
+	a_stretches.Next(PERF_CONCAT(perfPart_, __LINE__))
