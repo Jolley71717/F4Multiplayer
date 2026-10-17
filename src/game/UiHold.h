@@ -35,6 +35,10 @@ namespace UiHold
 	constexpr auto SETTLE = 1500ms;
 	// After a game load: a host crashed in the text layout, Movie::Release on the stack, 3 s after a save was loaded.
 	constexpr auto SETTLE_AFTER_LOAD = 6s;
+	// The longest a loading screen counts as up. Its close event never heard of would keep the frame's game work,
+	// the compass and the HUD's messages off for the rest of the run (the one hold with no end of its own: the
+	// save/load hold has a limit). Well past any real loading screen, even on a slow disk with every mod there is.
+	constexpr auto LOADING_SCREEN_LIMIT = 5min;
 
 	// Why the UI is held, or that it isn't.
 	enum class Hold
@@ -66,10 +70,12 @@ namespace UiHold
 	{
 	public:
 		// a_hold: the game's save/load hold (its start and end are F4SE's messages, see SaveLoadHold).
-		explicit Guard(const SaveLoadHold::Hold& a_hold, Clock::duration a_settle = SETTLE, Clock::duration a_settleAfterLoad = SETTLE_AFTER_LOAD) :
+		explicit Guard(const SaveLoadHold::Hold& a_hold, Clock::duration a_settle = SETTLE, Clock::duration a_settleAfterLoad = SETTLE_AFTER_LOAD,
+			Clock::duration a_loadingLimit = LOADING_SCREEN_LIMIT) :
 			hold(a_hold),
 			settle(a_settle),
-			settleAfterLoad(a_settleAfterLoad)
+			settleAfterLoad(a_settleAfterLoad),
+			loadingLimit(a_loadingLimit)
 		{}
 
 		// The loading screen's open or close event (the UI's thread).
@@ -79,6 +85,7 @@ namespace UiHold
 			if (a_up) {
 				// A load waits only for the loading screen that was up when it ended, never a later one.
 				awaitingLoadClose = false;
+				loadingSince = a_now;
 				loading = true;
 				return;
 			}
@@ -101,17 +108,18 @@ namespace UiHold
 			awaitingLoadClose = loading;
 		}
 
-		[[nodiscard]] bool LoadingScreenUp() const
+		// Whether a loading screen is up: one heard open, and not yet the limit ago.
+		[[nodiscard]] bool LoadingScreenUp(Clock::time_point a_now) const
 		{
 			std::scoped_lock l{ lock };
-			return loading;
+			return LoadingNow(a_now);
 		}
 
 		[[nodiscard]] Hold Why(Clock::time_point a_now) const
 		{
 			{
 				std::scoped_lock l{ lock };
-				if (loading) {
+				if (LoadingNow(a_now)) {
 					return Hold::kLoadingScreen;
 				}
 				// The save/load hold is asked after this lock is let go: it has a lock of its own.
@@ -120,7 +128,7 @@ namespace UiHold
 				return Hold::kSaveOrLoad;
 			}
 			std::scoped_lock l{ lock };
-			if (loading) {
+			if (LoadingNow(a_now)) {
 				return Hold::kLoadingScreen;  // opened meanwhile
 			}
 			if (gameLoaded && a_now - gameLoadedAt < settleAfterLoad) {
@@ -139,11 +147,16 @@ namespace UiHold
 		}
 
 	private:
+		// Under the lock.
+		[[nodiscard]] bool LoadingNow(Clock::time_point a_now) const { return loading && a_now - loadingSince < loadingLimit; }
+
 		const SaveLoadHold::Hold& hold;
 		Clock::duration           settle;
 		Clock::duration           settleAfterLoad;
+		Clock::duration           loadingLimit;
 		mutable std::mutex        lock;
-		bool                      loading = false;            // a loading screen is up
+		bool                      loading = false;            // a loading screen is up (its event; counts for loadingLimit at most)
+		Clock::time_point         loadingSince{};             // when it opened
 		bool                      everLoaded = false;
 		Clock::time_point         loadedAt{};                 // the last loading screen closed
 		bool                      gameLoaded = false;

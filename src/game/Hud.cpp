@@ -41,7 +41,7 @@ namespace Hud
 
 	bool LoadingScreenUp()
 	{
-		return guard.LoadingScreenUp();
+		return guard.LoadingScreenUp(Clock::now());
 	}
 
 	void OnGameLoaded()

@@ -73,6 +73,22 @@
   maintainer privately, never for a public issue. The one game value the watch reads is `Main`'s
   quit flag: once the game is quitting (its shutdown reads no messages for a while) the watch stops.
   The judgement is `src/HangDetector.h`, unit tested.
+- **Frame watch:** `src/main.cpp` (`RunFrameWatch`), one thread, the hang watch's complement: the
+  main thread answers its window, yet no frame of ours runs. The frame chain (the F4SE task posts a
+  frame message once a drawn frame, the window procedure takes it on the main thread, a frame's game
+  work runs unless a gate stops it: a frame of ours already under way, the engine's own message pump,
+  a loading screen, a save or load) stamps when each link last ran and how the last frame message
+  ended. Once a second the watch reads the stamps: when the game is alive (it draws, or the task
+  runs) and no game work has run for 15 s (120 s on a loading screen or during a save or load, which
+  hold frames by design), it logs which link stopped and why, with where the main thread is (the hang
+  report's look at it), again every 60 s while it lasts, and once more when game work runs again. A
+  host's game once ran a quarter of an hour that way after a `coc`, its main thread spinning in the
+  engine's own message pump (`PositionPlayerJob::Run`, where every frame message is put off), with
+  nothing in the log. Two stops it re-arms itself, once a second: the F4SE task not running (it posts
+  the frame message in its place) and the window procedure never getting the message (it hooks the
+  game's window again should the engine have made a new one). The judgement is
+  `src/game/FrameWatch.h`, unit tested. The loading-screen gate, the one gate with no end of its own,
+  counts a loading screen as up for at most five minutes (`UiHold::Guard`, `src/game/UiHold.h`).
 - **Log:** `src/Log.cpp`. CommonLib's `F4SE::Init` opens `F4Multiplayer.log` and empties it; just
   before, `LogRotation::Rotate` (`src/LogRotation.h`, unit tested on real files) moves the last three
   launches' logs to `.1.log`..`.3.log` with `std::filesystem::rename` and error codes, so nothing can

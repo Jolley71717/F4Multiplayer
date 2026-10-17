@@ -33,9 +33,30 @@ TEST("ui hold: nothing holds the UI before any loading screen, save or load")
 {
 	Hold  hold{ LIMIT };
 	Guard guard{ hold };
-	CHECK(!guard.LoadingScreenUp());
+	CHECK(!guard.LoadingScreenUp(START));
 	CHECK(guard.Why(START) == kNone);
 	CHECK(guard.Settled(START));
+}
+
+// The frame's game work, the compass and the HUD's messages all go by the loading screen: a close event never
+// heard of must not keep them off for the rest of the run.
+TEST("ui hold: a loading screen whose close never came holds the UI only for its limit, and a later one counts anew")
+{
+	Hold  hold{ LIMIT };
+	Guard guard{ hold };
+	guard.LoadingScreen(true, START);
+	CHECK(guard.LoadingScreenUp(START + UiHold::LOADING_SCREEN_LIMIT - 1s));
+	CHECK(guard.Why(START + UiHold::LOADING_SCREEN_LIMIT - 1s) == kLoadingScreen);
+	CHECK(!guard.LoadingScreenUp(START + UiHold::LOADING_SCREEN_LIMIT));
+	CHECK(guard.Settled(START + UiHold::LOADING_SCREEN_LIMIT));
+	// Its close, coming late, still holds for the moment after a loading screen.
+	guard.LoadingScreen(false, START + 6min);
+	CHECK(guard.Why(START + 6min) == kAfterLoadingScreen);
+	CHECK(guard.Settled(START + 6min + UiHold::SETTLE));
+	// A later loading screen counts from its own opening.
+	guard.LoadingScreen(true, START + 7min);
+	CHECK(guard.LoadingScreenUp(START + 7min + UiHold::LOADING_SCREEN_LIMIT - 1s));
+	CHECK(!guard.LoadingScreenUp(START + 7min + UiHold::LOADING_SCREEN_LIMIT));
 }
 
 TEST("ui hold: a loading screen (a door, fast travel) holds the UI while it is up and for a moment after")
@@ -43,10 +64,10 @@ TEST("ui hold: a loading screen (a door, fast travel) holds the UI while it is u
 	Hold  hold{ LIMIT };
 	Guard guard{ hold };
 	guard.LoadingScreen(true, START);
-	CHECK(guard.LoadingScreenUp());
+	CHECK(guard.LoadingScreenUp(START));
 	CHECK(guard.Why(START + 10s) == kLoadingScreen);
 	guard.LoadingScreen(false, START + 10s);
-	CHECK(!guard.LoadingScreenUp());
+	CHECK(!guard.LoadingScreenUp(START + 10s));
 	CHECK(guard.Why(START + 10s) == kAfterLoadingScreen);
 	CHECK(guard.Why(START + 10s + UiHold::SETTLE - 1ms) == kAfterLoadingScreen);
 	CHECK(guard.Settled(START + 10s + UiHold::SETTLE));

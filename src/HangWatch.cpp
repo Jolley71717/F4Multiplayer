@@ -470,4 +470,21 @@ namespace HangWatch
 		}
 		saveOrLoad = a_what;
 	}
+
+	std::string DescribeMainThread(void* a_window)
+	{
+		const auto id = a_window ? GetWindowThreadProcessId(static_cast<HWND>(a_window), nullptr) : 0;
+		const auto thread = id ? OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, id) : nullptr;
+		if (!thread) {
+			return "somewhere unknown (the main thread couldn't be looked at)";
+		}
+		Snapshot   snapshot;
+		const bool captured = Capture(thread, snapshot);
+		CloseHandle(thread);
+		if (!captured) {
+			return "somewhere unknown (the main thread couldn't be looked at)";
+		}
+		Modules modules;
+		return std::format("at {}; return addresses on its stack: {}", modules.Describe(snapshot.ip), Joined(Callers(snapshot, modules)));
+	}
 }

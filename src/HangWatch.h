@@ -25,4 +25,10 @@ namespace HangWatch
 	// A save (a_what = Phase::kSave) or a load (Phase::kLoad) began, or with Phase::kPlay ended: F4SE's
 	// messages before and after it.
 	void SetSaveOrLoad(Phase a_what);
+
+	// Where the main thread (the one that made a_window) is at this moment, as the hang report puts it
+	// ("at Fallout4.exe+0x1A2B3C; return addresses on its stack: ..."), for the frame watch's report of a
+	// main thread that answers its window but runs no frame of ours. The thread is stopped for the look,
+	// as for a hang. Any thread but the main one.
+	[[nodiscard]] std::string DescribeMainThread(void* a_window);
 }
