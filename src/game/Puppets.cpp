@@ -178,38 +178,47 @@ namespace Puppets
 		// does it, and one that will not let go would only have its graph reset again and again.
 		constexpr std::uint32_t SEAT_EXIT_TRIES = 3;
 
-		// A mirrored NPC's graph refused "moveStart": something its own game started holds it. Dogmeat's
-		// graph starts moving only from its plain standing idle, and a dog left standing sits, lies down
-		// or turns on the spot after a few seconds, so the mirror slid after its owner's copy sitting
-		// down. The AI ends the idle before walking off; with the AI off, we do: "IdleStop" ends an idle,
-		// "turnStop" a turn on the spot, and DriveAnimation's "moveStart" is taken once it stands. In
-		// Dogmeat's graph "turnStop" also ends a sit or a lie-down at once (NonCombatStandingBehavior's
-		// TurnStop wildcard leaves SitLayState too), cutting short the get-up "IdleStop" started: wanted, as
-		// its owner's copy already runs and a get-up would slide after it. How often is IdleRelease's. Called
-		// right after DriveAnimation asked it to move, in the engine's update of the actor.
+		// A puppet's graph refused "moveStart": something holds it. Dogmeat's graph starts moving only from its
+		// plain standing idle, and a dog left standing sits, lies down or turns on the spot after a few
+		// seconds, so the mirror slid after its owner's copy sitting down. The AI ends the idle before walking
+		// off; with the AI off, we do: "IdleStop" ends an idle, "turnStop" a turn on the spot, and
+		// DriveAnimation's "moveStart" is taken once it stands. In Dogmeat's graph "turnStop" also ends a sit
+		// or a lie-down at once (NonCombatStandingBehavior's TurnStop wildcard leaves SitLayState too), cutting
+		// short the get-up "IdleStop" started: wanted, as its owner's copy already runs and a get-up would slide
+		// after it. A friend's stand-in in its power armor frame gets the same stops: the graph the engine's
+		// rebuild gives one switched into its frame answered its variables and played an idle, but took neither
+		// "moveStart" nor "moveStop" (0.8.7-rc1 soak), and the stand-in glided after the friend standing; what
+		// the AI would do for an NPC in a frame is end what holds it. Out of a frame a stand-in's graph was never
+		// seen held, and a replayed throw or reload is an idle of ours the stops would cut short: left alone
+		// there. How often is IdleRelease's. Called right after DriveAnimation asked it to move, in the engine's
+		// update of the actor.
 		void ReleaseIdle(RE::Actor* a_actor)
 		{
 			static const RE::BSFixedString idleStop{ "IdleStop" };
 			static const RE::BSFixedString turnStop{ "turnStop" };
 			static const RE::BSFixedString doNotInterrupt{ "bDoNotInterrupt" };
 
+			const bool    inArmor = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
 			bool          due = false;
 			bool          last = false;  // this stuck spell's last stop
 			std::uint32_t seatExits = 0;
+			Kind          kind = Kind::kNpc;
 			{
 				std::scoped_lock l{ lock };
 				const auto entry = Find(a_actor);
-				if (!entry) {
+				if (!entry || (entry->kind == Kind::kPlayer && !inArmor)) {
 					return;
 				}
 				due = entry->idleRelease.Due(!entry->moving, std::chrono::steady_clock::now());
 				last = entry->idleRelease.Spent();
 				seatExits = entry->seatExits;
+				kind = entry->kind;
 			}
 			if (!due) {
 				return;
 			}
-			// Furniture holds it: while an actor uses furniture its race swaps in that furniture's own graph,
+			const char* mover = kind == Kind::kPlayer ? "its friend walks" : "its owner's copy moves";
+			// Furniture holds a mirror: while an actor uses furniture its race swaps in that furniture's own graph,
 			// which takes none of the stops below nor "moveStart" (Dogmeat's for its DogmeatBarJump markers, as
 			// on Red Rocket's counter: up on its hind legs, front paws raised), and only the AI walks it out; the
 			// do-nothing package we give a mirror leaves it there. A friend's Dogmeat slid after its owner's copy
@@ -218,9 +227,10 @@ namespace Puppets
 			// which can be far off (we place it every frame). Not a seat on another actor (a vertibird's) nor a
 			// power armor frame: letting go of that would take the armor's state off it. The engine makes the
 			// same call from the same place, its own update of the actor, when a furniture animation times out.
+			// Never a stand-in: the furniture it is in is its friend's seat (held, it is not driven at all), and
+			// StandInSeat stands it up as they get up.
 			const auto furniture = OccupiedFurniture(a_actor);
-			const bool inArmor = a_actor->extraList && a_actor->extraList->HasType(RE::EXTRA_DATA_TYPE::kPowerArmor);
-			if (furniture && !furniture->As<RE::Actor>() && !inArmor && seatExits < SEAT_EXIT_TRIES) {
+			if (kind == Kind::kNpc && furniture && !furniture->As<RE::Actor>() && !inArmor && seatExits < SEAT_EXIT_TRIES) {
 				const auto sit = static_cast<int>(a_actor->DoGetSitSleepState());
 				const auto base = furniture->GetObjectReference();
 				a_actor->StopInteractingQuick(true, false, true);
@@ -260,9 +270,9 @@ namespace Puppets
 				}
 			}
 			if ((stood || turned) && MoveSync::Loggable(taken)) {
-				REX::INFO("Puppets: {:08X} was held by an idle while its owner's copy moves; stopped it (idle={} turn={}, {} so far)", a_actor->GetFormID(), stood, turned, taken);
+				REX::INFO("Puppets: {:08X} was held by an idle while {}; stopped it (idle={} turn={}, {} so far)", a_actor->GetFormID(), mover, stood, turned, taken);
 			} else if (gaveUp && MoveSync::Loggable(giveUps)) {
-				REX::INFO("Puppets: {:08X} still refuses to move after {} idle stops while its owner's copy moves; left alone until it moves or its owner's copy stops ({} so far)", a_actor->GetFormID(), IdleRelease::TRIES, giveUps);
+				REX::INFO("Puppets: {:08X} still refuses to move after {} idle stops while {}; left alone until it moves or that stops ({} so far)", a_actor->GetFormID(), IdleRelease::TRIES, mover, giveUps);
 			}
 		}
 
@@ -509,8 +519,8 @@ namespace Puppets
 			if (puppet->hasTarget) {
 				DriveAnimation(a_this, *puppet);
 				Aim(a_this, *puppet);
-				// It has just asked a standing NPC's graph to move; a refusal means an idle holds it.
-				if (puppet->kind == Kind::kNpc && !puppet->moving && puppet->target.speed > MoveSync::START) {
+				// It has just asked a standing graph to move; a refusal means an idle holds it.
+				if (!puppet->moving && puppet->target.speed > MoveSync::START) {
 					ReleaseIdle(a_this);
 				}
 			}
@@ -697,6 +707,20 @@ namespace Puppets
 				entry->nextResync = {};
 			}
 			entry->held = a_hold;
+		}
+	}
+
+	void GraphRebuilt(RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			// What the old graph was told is nothing to the new one: it stands, not sneaking, in its base state. A stand-in
+			// switched into its frame mid-walk kept moving=true, and the fresh graph was told "moveStart" only by the resync
+			// half a second on (0.8.7-rc1 soak: moving=true, Speed=312, legs still).
+			entry->moving = false;
+			entry->appliedFlags = 0;
+			entry->nextResync = {};
+			entry->idleRelease = {};
 		}
 	}
 

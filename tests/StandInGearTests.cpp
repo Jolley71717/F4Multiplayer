@@ -173,6 +173,10 @@ namespace
 			if (!pickSince) {
 				pickSince = now;
 			}
+			// ArmorFrames::ChooseSwitch: not within DRESS_SETTLE of the last dress (SwitchFacts::sinceDressed).
+			if (gear.wornAt != Clock::time_point{} && now - gear.wornAt < ArmorFrames::DRESS_SETTLE) {
+				return false;
+			}
 			const auto theirs = std::ranges::find_if(gear.items, [](std::uint32_t a_item) { return KindOf(a_item) == ArmorFrames::Item::kFrame; });
 			const bool named = theirs != gear.items.end();
 			const auto key = named && *theirs == PLAIN_FRAME ? VAULT_SUIT : 0;  // Equipment::FrameKey
@@ -259,6 +263,12 @@ namespace
 			for (int i = 0; i < a_count; ++i) {
 				Frame();
 			}
+		}
+
+		// The frames a dress, or an item put on, takes to settle before the switch-in (ArmorFrames::DRESS_SETTLE).
+		void Settle()
+		{
+			Frames(static_cast<int>(ArmorFrames::DRESS_SETTLE / 16ms) + 1);
 		}
 
 		std::vector<std::uint32_t> Wears() const { return Wearable(standIn.wears); }
@@ -502,8 +512,10 @@ TEST("stand-in gear: a friend in the plain frame gets a stand-in in the plain fr
 		bob.standIn.has3D = true;
 		bob.Frame();  // dressed now; on to the engine next frame
 		REQUIRE(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
-		CHECK(!bob.SwitchIn());  // the switch-in is due at once: it waits for her suit to be on
+		CHECK(!bob.SwitchIn());  // the switch-in is due at once: it waits for her suit to be on, and to settle
 		bob.Frame();
+		CHECK(!bob.SwitchIn());
+		bob.Settle();
 		CHECK(bob.SwitchIn());
 		CHECK(std::ranges::contains(bob.standIn.wears, PLAIN_FRAME));
 		CHECK(!std::ranges::contains(bob.standIn.wears, ATOMCAT_FRAME));
@@ -526,9 +538,12 @@ TEST("stand-in gear: a friend in the plain frame gets a stand-in in the plain fr
 		bob.standIn.has3D = true;
 		bob.Frame();
 		REQUIRE(bob.Wears() == Sorted({ PISTOL }));
+		bob.Settle();  // the dress first
 		CHECK(!bob.SwitchIn());
 		CHECK(bob.keyPuts == 1);
 		bob.Frame();
+		CHECK(!bob.SwitchIn());  // on, and the engine picks by it: the suit settles before the switch-in
+		bob.Settle();
 		CHECK(bob.SwitchIn());
 		CHECK(bob.keyPuts == 1);
 		bob.Frames(30 * 1000 / 16);
@@ -543,6 +558,7 @@ TEST("stand-in gear: a friend in the plain frame gets a stand-in in the plain fr
 		bob.Place();
 		bob.standIn.has3D = true;
 		bob.Frame();
+		bob.Settle();
 		CHECK(bob.SwitchIn());
 		CHECK(bob.keyPuts == 0);
 		CHECK(std::ranges::contains(bob.standIn.wears, ATOMCAT_FRAME));

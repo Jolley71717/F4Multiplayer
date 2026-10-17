@@ -80,6 +80,11 @@ namespace Puppets
 	// again. Each call sets the time left (zero ends it now).
 	void AllowAI(RE::Actor* a_actor, std::chrono::milliseconds a_for);
 
+	// The engine rebuilt the puppet's 3D with a fresh animation graph (a stand-in's power armor skeleton came): that graph
+	// stands in its base state whatever the old one was told, so it is told at once whether it moves, its sneak again,
+	// and a refused start counts as a new spell for the idle stops (ReleaseIdle).
+	void GraphRebuilt(RE::Actor* a_actor);
+
 	// Furniture (StandInSeat.h). A held puppet is neither placed nor animated by its target: furniture it is in places and
 	// animates it, and one waiting to get in, or left beside it, stands where it is. Nor is its do-nothing package renewed
 	// meanwhile (a new package can make the engine walk an actor out of its furniture). Its target is still kept.

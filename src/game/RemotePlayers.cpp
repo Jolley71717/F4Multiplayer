@@ -1056,23 +1056,28 @@ namespace RemotePlayers
 				return false;
 			}
 			a_player.armorSkeleton = root;
+			// The rebuilt 3D carries a fresh animation graph, in its base state whatever the old one was told.
+			Puppets::GraphRebuilt(a_actor);
 			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.id, a_actor->GetFormID(),
 				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
 			return true;
 		}
 
-		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest).
-		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_now)
+		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest). The
+		// dress settles by the clock (StandInGear keeps its times so): a menu between a dress and the switch-in only
+		// lengthens the wait.
+		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const bool in = Equipment::InPowerArmor(a_actor);
 			return {
 				.worn = WornFrame(a_player) != nullptr,
 				.in = in,
-				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_now),
+				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_played),
 				.still = a_player.stride.Still(),
-				.sinceIn = a_now - a_player.switchedAt,
+				.sinceIn = a_played - a_player.switchedAt,
+				.sinceDressed = a_player.gear.wornAt == Clock::time_point{} ? ArmorFrames::Duration::max() : ArmorFrames::Duration{ a_now - a_player.gear.wornAt },
 				.tries = a_player.switchTries,
-				.sinceTried = a_now - a_player.switchTriedAt,
+				.sinceTried = a_played - a_player.switchTriedAt,
 			};
 		}
 
@@ -1164,7 +1169,7 @@ namespace RemotePlayers
 			}
 
 			const auto process = a_actor->currentProcess;
-			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_played);
+			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now, a_played);
 			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false);
 			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
@@ -2351,7 +2356,7 @@ namespace RemotePlayers
 			// graph plays nothing (ArmorFrames::STILL_LIMIT).
 			if (actor) {
 				UpdateStride(remote, actor, *state, player, playedNow);
-				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, playedNow))) {
+				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, now, playedNow))) {
 				case ArmorFrames::Switch::kOut:
 					LeaveArmor(remote, actor, localCell, now, playedNow);
 					actor = nullptr;

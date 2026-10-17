@@ -144,9 +144,19 @@ namespace ArmorFrames
 	// sight, before it is placed again (Switch::kStill), counted as a try. Live (2026-10-15) a stand-in switched in a
 	// moment after it was dressed got the skeleton and all six pieces and then glided after its friend in a standing
 	// pose for the rest of the wear: nothing in its graph played (the dev command could read none of its variables, not
-	// even Speed and Direction), while a fresh stand-in switched into the next wear walked and ran. What leaves the graph
-	// dead is not known (the dev command anim shows what is there); a fresh stand-in is the cure that was seen to work.
+	// even Speed and Direction), while a fresh stand-in switched into the next wear walked and ran. Over the 0.8.7-rc1
+	// soak (2026-10-16, 35 wears) every stand-in that was already there when its friend got in glided, and one in four
+	// of the fresh ones placed for it did too: the graph the rebuild left them answered its variables and played an
+	// idle, but refused "moveStart" and "moveStop" both (see Puppets::ReleaseIdle, which now frees a stand-in's graph as
+	// it frees a mirror's). Every one of them had been dressed, or given an item, 40 to 80 ms before the switch-in: the
+	// biped the engine was still building for that overlapped the rebuild of its skeleton (see DRESS_SETTLE). A fresh
+	// stand-in stays the cure of last resort.
 	constexpr auto STILL_LIMIT = std::chrono::seconds(2);
+	// The switch-in waits this long after anything was last put on the stand-in (its clothes, the item that steers the
+	// engine's pick): what is equipped goes on its body a frame or more later (equipped 30 ms before a switch-in, a vault
+	// suit was not on yet to the engine's pick), and a skeleton rebuilt while that still loads is what the glides above
+	// had in common.
+	constexpr auto DRESS_SETTLE = std::chrono::milliseconds(400);
 
 	struct SwitchFacts
 	{
@@ -157,6 +167,7 @@ namespace ArmorFrames
 		Duration sinceIn{};        // since the switch-in took (when in)
 		bool     ready = false;    // the stand-in can be switched now: its 3D in, its process high (the engine queues its 3D rebuild only then)
 		bool     held = false;     // its copy is held under it this update (Copy::kHold): loaded, in its place, nobody here in it
+		Duration sinceDressed = Duration::max();  // since anything was last put on it (see DRESS_SETTLE)
 		int      tries = 0;        // switch-ins tried for this wear that did not take
 		Duration sinceTried{};     // since the last of them
 	};
@@ -188,7 +199,7 @@ namespace ArmorFrames
 		if (a_facts.tries >= MAX_SWITCH_TRIES) {
 			return Switch::kGaveUp;
 		}
-		if (!a_facts.ready || !a_facts.held || (a_facts.tries > 0 && a_facts.sinceTried < SWITCH_RETRY)) {
+		if (!a_facts.ready || !a_facts.held || a_facts.sinceDressed < DRESS_SETTLE || (a_facts.tries > 0 && a_facts.sinceTried < SWITCH_RETRY)) {
 			return Switch::kNone;
 		}
 		return Switch::kIn;
@@ -348,7 +359,9 @@ namespace ArmorFrames
 	// - it names none yet (it is told a moment after they get in, or later): the switch-in waits until the stand-in has
 	//   on what it was dressed in (their clothes, dressed a moment ago), so the pick is made by what they had on. Equipped
 	//   30 ms before the switch-in, their vault suit was not on yet to the engine, and the stand-in got the AtomCat frame.
-	// Neither waits longer than PICK_WAIT: switched in all the same then, in whatever the engine picks.
+	// Neither waits longer than PICK_WAIT: switched in all the same then, in whatever the engine picks. The item put on
+	// for the pick settles for DRESS_SETTLE like any other before the switch-in (the clothes it was dressed in settle
+	// through SwitchFacts::sinceDressed).
 	constexpr auto PICK_WAIT = std::chrono::milliseconds(1500);
 	// An item put on for the pick that is not on again this long after (a gear check or a change took it off) is put on
 	// again.
@@ -377,7 +390,7 @@ namespace ArmorFrames
 	{
 		if (a_facts.named) {
 			if (a_facts.picksTheirs) {
-				return Pick::kSwitch;
+				return a_facts.sincePut >= DRESS_SETTLE ? Pick::kSwitch : Pick::kWait;
 			}
 			if (!a_facts.key || a_facts.waited >= PICK_WAIT) {
 				return Pick::kGiveUp;
