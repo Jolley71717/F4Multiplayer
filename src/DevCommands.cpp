@@ -16,6 +16,7 @@
 #include "game/Menu.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
+#include "game/Perf.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
 #include "game/InjectInput.h"
@@ -165,6 +166,21 @@ namespace DevCommands
 			auto                 result = std::format("{} drawn={} {}", FrameStats::Global().Take().Describe(), drawn - lastDrawn, FrameStats::TakeThreads());
 			lastDrawn = drawn;
 			return result;
+		}
+
+		// perf [reset]: what our own work cost per frame over the last minute or so of frames, part by part (Perf.h): the
+		// median, 99th percentile and worst in ms, and the game's hitches with how many our work took half of. `reset` starts
+		// the counts over.
+		std::string PerfStats(std::string_view a_args)
+		{
+			if (a_args == "reset") {
+				Perf::Global().Reset();
+				return "reset";
+			}
+			if (!a_args.empty()) {
+				return "usage: perf [reset]";
+			}
+			return Perf::Global().Describe();
 		}
 
 		// stall <seconds>: holds the game's main thread that long (up to 120 s), to see the hang watch
@@ -2639,6 +2655,7 @@ namespace DevCommands
 		constexpr std::array COMMANDS{
 			Entry{ "status", Status },
 			Entry{ "frames", Frames },
+			Entry{ "perf", PerfStats },
 			Entry{ "stall", Stall },
 			Entry{ "pos", Pos },
 			Entry{ "console", Console },

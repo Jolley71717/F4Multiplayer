@@ -34,6 +34,37 @@ local function analyze()
     end
 end
 
+-- profiling, developer builds only: xmake f --tracy=<a Tracy source folder> builds the plugin with Tracy's client
+-- (the folder's version must be the profiler's). It listens on this machine only and sends only while a capture is
+-- connected; tools/package.ps1 always configures without it, and refuses a DLL holding it.
+option("tracy")
+    set_default("")
+    set_showmenu(true)
+    set_description("Tracy source folder, to build the plugin with Tracy's client (profiling; never a release)")
+option_end()
+
+local tracy = get_config("tracy")
+if tracy == "" then
+    tracy = nil
+end
+
+-- Tracy's client: no sampling, system tracing, call stacks or crash handler (the crash logger keeps those), and
+-- started by the plugin's load rather than in DllMain
+if tracy then
+    target("TracyClient")
+        set_kind("static")
+        set_warnings("none")
+        add_files(path.join(tracy, "public", "TracyClient.cpp"))
+        add_includedirs(path.join(tracy, "public"), { public = true })
+        add_defines("TRACY_ENABLE", "TRACY_ON_DEMAND", "TRACY_ONLY_LOCALHOST", "TRACY_NO_BROADCAST", "TRACY_NO_SAMPLING",
+            "TRACY_NO_SYSTEM_TRACING", "TRACY_NO_CONTEXT_SWITCH", "TRACY_NO_CALLSTACK", "TRACY_NO_CRASH_HANDLER",
+            "TRACY_NO_CODE_TRANSFER", "TRACY_NO_FRAME_IMAGE", "TRACY_NO_VSYNC_CAPTURE", "TRACY_DELAYED_INIT",
+            "TRACY_MANUAL_LIFETIME", { public = true })
+        add_cxxflags("/d1trimfile:" .. path.absolute(tracy):gsub("/", "\\") .. "\\", { force = true })
+        add_syslinks("ws2_32", "dbghelp", "advapi32", "user32", { public = true })
+    target_end()
+end
+
 -- protocol, networking helpers and the relay server, shared by every target
 target("F4MPCommon")
     set_kind("static")
@@ -62,6 +93,10 @@ target("F4Multiplayer")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
     add_syslinks("ws2_32", "bcrypt", "shell32", "ole32", "user32")
+    if tracy then
+        add_deps("TracyClient")
+        add_defines("F4MP_TRACY")
+    end
 
 -- standalone dedicated server
 target("F4MPServer")

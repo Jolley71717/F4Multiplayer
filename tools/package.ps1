@@ -67,7 +67,8 @@ if ($problems) { $sha += '-dirty' }
 $env:F4MP_LABEL = "$Label $sha".Trim()
 
 # -P .: in a worktree nested inside another checkout, xmake would otherwise build the outer one.
-xmake config -P . -m $Mode -y | Out-Null
+# --tracy=: never with Tracy's client, whatever the worktree was configured with for profiling.
+xmake config -P . -m $Mode --tracy= -y | Out-Null
 Assert-Native 'xmake config'
 xmake build -P . -y  # every default target, the unit tests included
 Assert-Native 'xmake build'
@@ -98,6 +99,9 @@ New-Item -ItemType Directory -Force (Join-Path $stage 'F4SE\Plugins') | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $stage 'F4Multiplayer') | Out-Null
 
 Copy-Item (Join-Path $build 'F4Multiplayer.dll') (Join-Path $stage 'F4SE\Plugins')
+if ([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $build 'F4Multiplayer.dll'))).Contains('TRACY_')) {
+	throw 'F4Multiplayer.dll was built with Tracy (xmake f --tracy=...): a profiling build is never packaged'
+}
 Copy-Item (Join-Path $root 'dist\F4Multiplayer.ini') (Join-Path $stage 'F4SE\Plugins')
 if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
