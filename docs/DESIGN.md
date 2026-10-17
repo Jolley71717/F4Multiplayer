@@ -578,7 +578,7 @@ after `Config::Load`) picks the language (`sLanguage` in `F4Multiplayer.ini`, el
 from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that order, else English) and reads
 `Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
 `Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
-`esmx` = Spanish) to the file codes. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+`esmx` = Latin American Spanish, its own file `es-mx`) to the file codes. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
 tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
 mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
 `Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
@@ -588,6 +588,18 @@ server sends its refusals in English on the wire (any server version, and a dedi
 refusal, and anything else as it came. Arabic needs a font mod: the game ships no Arabic font and its Scaleform text
 fields do not shape right-to-left text. Every translation but the English is a first machine translation, marked so in
 its header.
+
+### Player names (src/net/NameChoice.h)
+
+The name in the Hello comes from `NameChoice::Choose(sPlayerName, character, steam)`: a name in the ini is used as
+written; `character` (the default in the shipped ini) is the player character's display name
+(`PlayerCharacter::GetDisplayFullName`), else the Steam name, else "Vault Dweller"; an empty value (older ini files)
+is the Steam name. The server keeps only printable ASCII of a name (`SanitizeName`), so a character name with no
+ASCII letter in it counts as no name. The name is read when the Hello is sent, and nothing sends it again: a hosting
+game says hello again after every character change (hosting restarts and the game connects to its own server anew),
+a joining game that loads another character leaves and its next join reads the new name. The one case that can keep a
+stale name is a joining game that connects before a new character is named in the opening (the character is named
+in the opening, after the connect): it stays under the Steam name until it leaves or loses the connection.
 
 ## Status (2026-10-09)
 
