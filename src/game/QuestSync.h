@@ -2,15 +2,16 @@
 
 #include "Protocol.h"
 
-// Quest progress: each stage a side quest (or, with a shared story, a story or faction quest) gets
-// done in one player's game during a session is set in the others' games too, in the order it was done,
-// and not in the middle of a conversation or scene, nor in the opening. Whoever moves a quest on pushes
-// everyone else along: a player who hasn't started it has it started for the session
-// (StageLog::WaitsFor). The session starts from the host's story: the host's game reports its progress so far
-// when its server welcomes it, so a friend joining mid-quest is caught up to where the host is. A stage
-// that would move the player away, take their caps or move their own story on is left out (see
-// StageRules). Misc quests (radiant, ambient) are not shared because their targets differ per game.
-// Main thread only.
+// Quest progress: each stage a side quest (or, with a shared story, a story or faction quest, or one of
+// the game's dialogue quests, whose scenes open the way on: Diamond City's gate) gets done in one
+// player's game during a session is set in the others' games too, in the order it was done, and not in
+// the middle of a conversation or scene, nor in the opening. Whoever moves a quest on pushes everyone
+// else along: a player who hasn't started it has it started for the session (StageLog::WaitsFor). The
+// session starts from the host's story: the host's game reports its progress so far when its server
+// welcomes it, so a friend joining mid-quest is caught up to where the host is. A stage that would move
+// the player away, take their caps or move their own story on is left out (see StageRules). Misc quests
+// (radiant, ambient) are not shared because their targets differ per game. Which quests are shared is
+// QuestFilter's. Main thread only.
 namespace QuestSync
 {
 	// A stage from another player: live (they just did it), or from the session after joining or
@@ -23,6 +24,10 @@ namespace QuestSync
 	// The player has started this quest: one of its objectives has been shown. (A quest can be
 	// running long before that: a new game already runs some side quests in the background.)
 	[[nodiscard]] bool PlayerStarted(const RE::TESQuest* a_quest);
+
+	// Why a session can share this quest: "side", "story", "finale" or "dialogue" (see QuestFilter), or "no"
+	// (misc, internal, or from a mod). For the developer's quest commands.
+	[[nodiscard]] const char* Kind(const RE::TESQuest* a_quest);
 
 	// Another player completed a quest: tell the player who did it.
 	void ApplyDone(const Protocol::QuestDone& a_done);
