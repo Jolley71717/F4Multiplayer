@@ -7,6 +7,7 @@
 # from outside, so it works even when the plugin's thread is stuck with the rest.
 #
 #   tools\hangcatch.ps1 [-OutDir <folder>] [-Seconds 10] [-Minutes 0] [-Cdb <path>] [-Keep 20]
+#   tools\hangcatch.ps1 -Now [-OutDir <folder>]   # one catch, at once (menustress.sh's on a hung game thread)
 #   tools\hangcatch.ps1 -Now -ProcessId <pid>     # try the debugger once on another program's window
 #
 # The debugger is cdbX64 from WinDbg (the Microsoft Store's, on the PATH as cdbX64) or cdb from the Windows

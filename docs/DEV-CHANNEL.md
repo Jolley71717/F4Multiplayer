@@ -76,7 +76,7 @@ describes each one.
 | Send commands | `tools/devctl.ps1 "<command>" ["<command>" ...]` |
 | Add other players | `F4MPBot.exe`: a fake player that joins the session and can stand somewhere, shoot, loot, talk, hit you, report quest stages or take over an NPC |
 | Press a key or fire | `tools/input.ps1 -Click` / `-Key <code>`: real mouse and keyboard input sent to the game window (brings it to the front) |
-| Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh` (see below) |
+| Go through workshop mode, the Pip-Boy and a conversation for an hour | `tools/menustress.sh`, or `tools/stress.ps1` from PowerShell (see below) |
 | Catch a freeze with every thread's stack | `tools/hangcatch.ps1` |
 | See the screen | `tools/screenshot.ps1` |
 | Hear the game | a read-only check of the game's audio session peak level, through Windows' audio meter API |
@@ -105,6 +105,7 @@ goes through the menus players race in, over and over, on one game or both at on
 
 ```
 tools/menustress.sh -m 60 -g both -n 0001CA7D    # an hour on both games, talking to Codsworth
+tools\stress.ps1 -Minutes 60 -Games both         # the same from PowerShell (through Git for Windows' bash)
 ```
 
 Each cycle enters workshop mode (`workshop enter`), highlights and scraps the nearest junk, leaves with
@@ -113,6 +114,13 @@ picks options with W and leaves with Tab. Anything that doesn't open or close in
 over two minutes, an option that takes no input and a channel that stops answering are logged as STUCK
 with the game's state, put right where the channel can, and listed in `stuck.txt`. The script's header
 lists the settings (each key can be swapped for another key or for `input`).
+
+A hung game is caught by the loop itself. The channel answers even then, with `error: timed out waiting
+for game thread` after 12 s: the game thread ran none of its commands, either frozen or drawing on with no
+frame of ours. That is logged as HANG with the plugin's own hang watch and frame watch lines from the
+host's log (where the main thread is), and on the host `tools/hangcatch.ps1 -Now` writes every thread's
+stack and a minidump into `<outDir>/hangs`. The loop then waits for the game to run commands again and
+puts it back in play. `HANGCATCH=none` leaves the debugger out.
 
 The commands it uses:
 
@@ -131,7 +139,7 @@ The commands it uses:
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
 
-`tools/hangcatch.ps1` runs beside it on each PC (the VM needs WinDbg too). When the game's window hasn't
+`tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't
 answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),
 writes a minidump with every thread and every thread's stack, and detaches; one catch per freeze. The
 plugin's own hang watch (`iHangSeconds`) reports the main thread from inside the game; this sees every
