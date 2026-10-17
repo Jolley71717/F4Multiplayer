@@ -20,6 +20,11 @@ namespace Hud
 		// that loading screen closing: counted from the load's own end, a long loading screen used it up.
 		constexpr auto        SETTLE_AFTER_LOAD = 6s;
 		constexpr std::size_t MAX_QUEUED = 8;
+		// A loading screen whose close the plugin never heard of would keep the frame's game work, the
+		// compass and the HUD's messages off for the rest of the run (the frame chain's one gate with
+		// no end of its own; the save/load hold has one). The longest a loading screen counts: well
+		// past any real one, even on a slow disk with every mod there is.
+		constexpr auto        LOADING_SCREEN_LIMIT = 5min;
 
 		// Written by the menu event sink and the load's end (under stateLock, so the two are seen in
 		// one order), read from the HUD's update and any thread that queues a message. The load itself,
@@ -27,6 +32,8 @@ namespace Hud
 		// loading screen's event comes.
 		std::mutex                     stateLock;
 		std::atomic<bool>              loading{ false };  // a loading screen is up
+		std::atomic<Clock::time_point> loadingSince{};    // since when (set before `loading`)
+		std::atomic<bool>              loadingPastLimit{ false };  // ... for longer than counts (logged once)
 		std::atomic<bool>              everLoaded{ false };
 		std::atomic<Clock::time_point> loadedAt{};
 		std::atomic<bool>              gameLoaded{ false };
@@ -52,6 +59,8 @@ namespace Hud
 						if (a_event.opening) {
 							// A load waits only for the loading screen that was up when it ended, never a later one.
 							awaitingLoadClose = false;
+							loadingSince = Clock::now();
+							loadingPastLimit = false;
 							loading = true;
 						} else {
 							// The times first: whoever sees the screen gone must see when it went.
@@ -71,10 +80,26 @@ namespace Hud
 		};
 		MenuWatcher watcher;
 
+		// Whether a loading screen is up: one the plugin heard open, and not yet LOADING_SCREEN_LIMIT ago.
+		bool LoadingNow(Clock::time_point a_now)
+		{
+			if (!loading) {
+				return false;
+			}
+			if (a_now - loadingSince.load() < LOADING_SCREEN_LIMIT) {
+				return true;
+			}
+			if (!loadingPastLimit.exchange(true)) {
+				REX::WARN("Hud: a loading screen has been up for {} s as far as the plugin heard; it is taken for closed from here on",
+					std::chrono::duration_cast<std::chrono::seconds>(LOADING_SCREEN_LIMIT).count());
+			}
+			return false;
+		}
+
 		bool Settled()
 		{
 			const auto now = Clock::now();
-			if (loading || SaveLoadHold::Global().Held(now)) {
+			if (LoadingNow(now) || SaveLoadHold::Global().Held(now)) {
 				return false;
 			}
 			if (gameLoaded && now - gameLoadedAt.load() < SETTLE_AFTER_LOAD) {
@@ -91,7 +116,7 @@ namespace Hud
 
 	bool LoadingScreenUp()
 	{
-		return loading;
+		return LoadingNow(Clock::now());
 	}
 
 	void OnGameLoaded()

@@ -3,6 +3,7 @@
 #include "DevCommands.h"
 #include "game/ExitMusic.h"
 #include "game/FastLoad.h"
+#include "game/FrameWatch.h"
 #include "game/Hud.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -110,8 +111,9 @@ namespace
 		return std::this_thread::get_id() == mainThread;
 	}
 
-	void WakeMainThread();  // with the window, below
-	bool WindowFailed();    // likewise: the window could not be hooked, and nothing serves work handed over
+	void WakeMainThread();   // with the window, below
+	bool WindowFailed();     // likewise: the window could not be hooked, and nothing serves work handed over
+	void StartFrameWatch();  // likewise: the watch on the frame chain (FrameWatch.h)
 
 	// The hang watch gives a save or load the same longer limit as a loading screen.
 	void BeginSaveOrLoad(HangWatch::Phase a_what)
@@ -273,6 +275,7 @@ namespace
 			gameDataReady = true;
 			REX::INFO("Game data ready");
 			HangWatch::Start();
+			StartFrameWatch();
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
@@ -343,8 +346,15 @@ namespace
 	std::mutex                         postedLock;
 	std::vector<std::function<void()>> posted;
 
-	// The game's work for one frame.
-	void RunFrame(bool a_onMain)
+	// The frame watch's view of the chain (FrameWatch.h): when each link last ran, and how the last frame
+	// message ended. Stamped where each runs, read by the watch's thread.
+	std::atomic<std::chrono::steady_clock::time_point> taskAt{};        // the F4SE task (OnFrame)
+	std::atomic<std::chrono::steady_clock::time_point> dispatchedAt{};  // the window procedure got a frame message
+	std::atomic<std::chrono::steady_clock::time_point> workedAt{};      // a frame's game work ran (RunFrame)
+	std::atomic<FrameWatch::Outcome>                   lastOutcome{ FrameWatch::Outcome::kNone };
+
+	// The game's work for one frame. Returns how it ended, for the frame watch.
+	FrameWatch::Outcome RunFrame(bool a_onMain)
 	{
 		// What a save or load handed over (RunBeforeSaveOrLoad, RunAfterLoad) comes first, held or not.
 		auto& hold = SaveLoadHold::Global();
@@ -352,13 +362,14 @@ namespace
 		// A loading screen is up. The engine may pump window messages from inside its load code, and game
 		// work must not run in the middle of that; it waits for the load to finish.
 		if (a_onMain && Hud::LoadingScreenUp()) {
-			return;
+			return FrameWatch::Outcome::kLoadingScreen;
 		}
 		// Entered under the hold's lock: a load that begins from here on waits for this frame to finish.
 		const SaveLoadHold::Frame frame{ hold, std::chrono::steady_clock::now() };
 		if (!frame) {
-			return;  // a save or load is under way (counted, and logged after it)
+			return FrameWatch::Outcome::kHeld;  // a save or load is under way (counted, and logged after it)
 		}
+		workedAt = std::chrono::steady_clock::now();
 		CountFrameThread();
 		std::vector<std::function<void()>> work;
 		{
@@ -376,6 +387,7 @@ namespace
 			RunInBackground();
 			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 		}
+		return FrameWatch::Outcome::kWorked;
 	}
 
 	// The game work runs on the game's main thread, between frames, where the engine runs gameplay
@@ -386,15 +398,15 @@ namespace
 	constexpr int            GWLP_WNDPROC = -4;
 	constexpr auto           REPOST_AFTER = std::chrono::seconds(2);  // a message that got lost (it shouldn't)
 	constexpr std::uintptr_t WAKE = 1;                                // the message's wparam: only a save's or load's work
-	std::atomic<void*>       gameWindow{ nullptr };                   // also read by a load's thread (WakeMainThread)
-	std::intptr_t            originalWndProc = 0;
-	unsigned int             frameMessage = 0;
-	std::atomic<bool>        windowFailed{ false };                 // read by net status (MainThread::HookState)
-	bool                     inFrame = false;  // main thread only: an engine call can pump messages inside ours
-	bool                     quitSeen = false;  // main thread only: a message came after the game began quitting (logged once)
-	NestedPump::Check        pumpCheck = NestedPump::Check::kUnknown;  // main thread only
-	std::atomic<bool>        framePosted{ false };
-	std::chrono::steady_clock::time_point postedAt{};
+	std::atomic<void*>         gameWindow{ nullptr };                   // also read by a load's thread (WakeMainThread)
+	std::atomic<std::intptr_t> originalWndProc{ 0 };                   // the frame watch may hook a new window (CheckWindow)
+	unsigned int               frameMessage = 0;
+	std::atomic<bool>          windowFailed{ false };                 // read by net status (MainThread::HookState)
+	bool                       inFrame = false;  // main thread only: an engine call can pump messages inside ours
+	bool                       quitSeen = false;  // main thread only: a message came after the game began quitting (logged once)
+	NestedPump::Check          pumpCheck = NestedPump::Check::kUnknown;  // main thread only
+	std::atomic<bool>          framePosted{ false };
+	std::atomic<std::chrono::steady_clock::time_point> postedAt{};  // the task's job threads, and the frame watch
 
 	// Has the main thread do what a save or load handed over (and only that) now: the frame task may not
 	// run while the engine loads.
@@ -456,7 +468,7 @@ namespace
 		bool             Quitting() { return ::Quitting(); }
 		NestedPump::Seen Where() { return WhereDispatched(); }
 		void             Posted() { SaveLoadHold::Global().RunPosted(); }
-		void             Frame() { RunFrame(true); }
+		void             Frame() { lastOutcome = RunFrame(true); }
 		void             Deferred()
 		{
 			std::scoped_lock l{ frameThreadsLock };
@@ -467,10 +479,31 @@ namespace
 	std::intptr_t __stdcall WndProc(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam)
 	{
 		if (a_msg == frameMessage && frameMessage != 0) {
+			const bool wake = a_wparam == WAKE;
+			if (!wake) {
+				dispatchedAt = std::chrono::steady_clock::now();
+			}
 			// An exception must never escape into the game's message loop, the stack check's included.
 			try {
 				WindowCalls calls;
-				if (NestedPump::Dispatch(a_wparam == WAKE, inFrame, calls) == NestedPump::Action::kQuit && !std::exchange(quitSeen, true)) {
+				const auto  action = NestedPump::Dispatch(wake, inFrame, calls);
+				if (!wake) {
+					// How a frame message ended, for the frame watch (a frame that ran told RunFrame's own outcome).
+					switch (action) {
+					case NestedPump::Action::kSkip:
+						lastOutcome = FrameWatch::Outcome::kSkipped;
+						break;
+					case NestedPump::Action::kDefer:
+						lastOutcome = FrameWatch::Outcome::kDeferred;
+						break;
+					case NestedPump::Action::kQuit:
+						lastOutcome = FrameWatch::Outcome::kQuit;
+						break;
+					default:
+						break;
+					}
+				}
+				if (action == NestedPump::Action::kQuit && !std::exchange(quitSeen, true)) {
 					REX::INFO("Frame: the game is quitting; no more game work runs");
 				}
 			} catch (const std::exception& e) {
@@ -478,7 +511,7 @@ namespace
 			}
 			return 0;
 		}
-		return CallWindowProcW(originalWndProc, a_window, a_msg, a_wparam, a_lparam);
+		return CallWindowProcW(originalWndProc.load(std::memory_order_relaxed), a_window, a_msg, a_wparam, a_lparam);
 	}
 
 	bool HookWindow()
@@ -516,14 +549,135 @@ namespace
 		return windowFailed;
 	}
 
+	// The frame watch (FrameWatch.h), on a thread of its own from the game's data being ready until the
+	// game quits. Once a second it reads where each link of the chain got to. A stop is reported after
+	// WATCH_LIMITS.stall without game work while the game is alive (a loading screen, a save or a load
+	// after longStall: they hold frames by design), with its cause and where the main thread is, and
+	// again every `again` while it lasts. The F4SE task dead, or the window not getting our message, is
+	// re-armed once a tick from then on: the watch posts the frame message itself, to the game's window
+	// as it is now.
+	constexpr auto               WATCH_TICK = std::chrono::seconds(1);
+	constexpr FrameWatch::Limits WATCH_LIMITS{ .lately = 3s, .stall = 15s, .longStall = 120s, .again = 60s };
+
+	// Posts the frame message in the task's place.
+	void PostFrameFromWatch()
+	{
+		if (const auto window = gameWindow.load()) {
+			postedAt = std::chrono::steady_clock::now();
+			framePosted = true;
+			PostMessageW(window, frameMessage, 0, 0);
+		}
+	}
+
+	// Whether the game's window is still the one hooked, with our procedure on it. Should the engine make
+	// a new window, our message would go to a procedure that is not ours; the new one is hooked here, from
+	// the watch's thread (a window of our own process can be). What was found, for the log.
+	std::string CheckWindow()
+	{
+		const auto main = RE::Main::GetSingleton();
+		const auto window = main ? reinterpret_cast<void*>(main->hwnd) : nullptr;
+		const auto hooked = gameWindow.load();
+		if (window && window != hooked) {
+			const auto previous = SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<std::intptr_t>(&WndProc));
+			if (previous == 0) {
+				return "the game's window is a new one, which couldn't be hooked";
+			}
+			originalWndProc = previous;
+			gameWindow = window;
+			return "the game's window is a new one; it is hooked from here on";
+		}
+		const auto proc = hooked ? GetWindowLongPtrW(hooked, GWLP_WNDPROC) : 0;
+		return proc == reinterpret_cast<std::intptr_t>(&WndProc) ? "the window and its procedure are still ours" : "another procedure has been put on the window since ours";
+	}
+
+	std::uint32_t FramesDeferred()
+	{
+		std::scoped_lock l{ frameThreadsLock };
+		return frameThreads.deferred;
+	}
+
+	// The stop's cause, for the report. a_window: what CheckWindow found, when the message is not dispatched.
+	std::string ExplainStop(FrameWatch::Stop a_stop, std::string_view a_window)
+	{
+		using FrameWatch::Stop;
+		const auto where = [] { return HangWatch::DescribeMainThread(gameWindow.load()); };
+		switch (a_stop) {
+		case Stop::kNoTask:
+			return "the F4SE task has not run, so nothing posts the frame message; the watch posts it once a second instead";
+		case Stop::kNotDispatched:
+			return std::format("frame messages are posted, but the window procedure never gets them ({}); the watch posts one once a second", a_window);
+		case Stop::kInFrame:
+			return std::format("the main thread is still inside a frame of ours (an engine call in it pumps messages); it is {}", where());
+		case Stop::kDeferred:
+			return std::format("every frame message is put off: the main thread is inside the engine's pump, moving the player ({} put off); it is {}", FramesDeferred(), where());
+		case Stop::kLoadingScreen:
+			return "a loading screen is up, as far as the plugin heard";
+		case Stop::kHeld:
+			return "a save or load is under way (the hold ends on its own at its limit)";
+		default:
+			return std::format("the window procedure ran a frame, yet no game work came of it; the main thread is {}", where());
+		}
+	}
+
+	void RunFrameWatch()
+	{
+		FrameWatch::Watch watch{ WATCH_LIMITS };
+		for (;;) {
+			std::this_thread::sleep_for(WATCH_TICK);
+			if (Quitting()) {
+				return;
+			}
+			const auto               state = RE::BSGraphics::State::GetSingleton();
+			const FrameWatch::Sample sample{
+				.now = std::chrono::steady_clock::now(),
+				.drawn = state ? state->frameCount : 0u,
+				.quitting = false,
+				.hooked = gameWindow.load() != nullptr,
+				.task = taskAt.load(),
+				.dispatched = dispatchedAt.load(),
+				.worked = workedAt.load(),
+				.last = lastOutcome.load(),
+			};
+			// An exception must never end this thread (std::terminate would take the game with it).
+			try {
+				const auto result = watch.Tick(sample);
+				const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(result.stalled).count();
+				std::string window;
+				if (result.past && FrameWatch::Rearmable(result.stop)) {
+					if (result.stop == FrameWatch::Stop::kNotDispatched) {
+						window = CheckWindow();
+					}
+					PostFrameFromWatch();
+				}
+				if (result.event == FrameWatch::Watch::Event::kStalled) {
+					REX::WARN("Frame watch: no game work has run for {} s while the game drew {} frame(s): {}", seconds, result.drawn, ExplainStop(result.stop, window));
+				} else if (result.event == FrameWatch::Watch::Event::kResumed) {
+					REX::INFO("Frame watch: game work runs again, after {} s", seconds);
+				}
+			} catch (const std::exception& e) {
+				REX::ERROR("Frame watch: {}", e.what());
+			}
+		}
+	}
+
+	void StartFrameWatch()
+	{
+		try {
+			std::thread{ RunFrameWatch }.detach();
+		} catch (const std::exception& e) {
+			REX::ERROR("Frame watch: couldn't start ({})", e.what());
+		}
+	}
+
 	// The F4SE permanent task (see NewFrame for when it runs).
 	void OnFrame()
 	{
+		const auto now = std::chrono::steady_clock::now();
+		taskAt = now;
 		// The game is on its way out: nothing more is posted (the window may be gone), nor run here.
 		if (gameDataReady && Quitting()) {
 			return;
 		}
-		const auto now = std::chrono::steady_clock::now();
 		if (!NewFrame(now)) {
 			return;
 		}
@@ -537,7 +691,7 @@ namespace
 			RunFrame(false);  // no window yet: startup, which comes before the game's data is ready
 			return;
 		}
-		if (!framePosted.exchange(true) || now - postedAt > REPOST_AFTER) {
+		if (!framePosted.exchange(true) || now - postedAt.load() > REPOST_AFTER) {
 			postedAt = now;
 			if (!PostMessageW(gameWindow.load(), frameMessage, 0, 0)) {
 				framePosted = false;

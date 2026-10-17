@@ -7,7 +7,9 @@ namespace Hud
 	// game's one loading screen watcher: the frame, the compass and the hang watch go by it too.
 	void Install();
 
-	// Whether a loading screen is up. Any thread.
+	// Whether a loading screen is up, as far as the plugin heard: from its menu's open event to its close
+	// event, or at most a few minutes (a close never heard of must not keep everything off for the rest
+	// of the run). Any thread.
 	[[nodiscard]] bool LoadingScreenUp();
 
 	// A save was loaded: the HUD is rebuilt over the next seconds; nothing is written to it meanwhile.
