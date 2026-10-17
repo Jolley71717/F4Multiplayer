@@ -1,6 +1,8 @@
 #include "Test.h"
 
+#include "game/ArmorFrames.h"
 #include "game/Gait.h"
+#include "game/IdleRelease.h"
 #include "game/MoveSync.h"
 #include "Protocol.h"
 
@@ -356,4 +358,152 @@ TEST("gait: a slow friend's own animation speed, sent instead of the ground they
 	CHECK(Gait::Reported(0.0f, 0.0f) == 0.0f);
 	CHECK(Gait::Reported(0.0f, 120.0f) == 120.0f);
 	CHECK(Gait::Reported(92.6f, 300.0f) == 92.6f);
+}
+
+// A friend in power armor (src/game/ArmorFrames.h, Puppets::GraphRebuilt, Puppets::ReleaseIdle). The engine's switch-in
+// rebuilds the stand-in's 3D with a fresh animation graph: whatever the old one was told, the new one stands in its
+// base state, and in the 0.8.7-rc1 soak the one it stood in took neither "moveStart" nor "moveStop" until something
+// ended it; it played an idle while the friend walked off, and the stand-in glided after them. What the AI does for an
+// NPC held so is to end the idle ("IdleStop", "turnStop") before walking it off; the stand-in now gets the same, with
+// IdleRelease's timing, and its bookkeeping starts over with the graph.
+namespace
+{
+	struct ArmorGraph : Graph
+	{
+		bool held = true;  // the state the rebuild left it in: neither standing nor moving, as the graph takes it
+		int  idleStops = 0;
+		int  refused = 0;
+
+		bool Notify(const char* a_event)
+		{
+			if (held) {
+				if (std::strcmp(a_event, "IdleStop") == 0 || std::strcmp(a_event, "turnStop") == 0) {
+					held = false;
+					++idleStops;
+					return true;
+				}
+				++refused;
+				return false;
+			}
+			return Graph::Notify(a_event);
+		}
+	};
+
+	struct ArmorPuppet : Puppet
+	{
+		IdleRelease::Gate release;
+	};
+
+	// One frame of the stand-in's update in its frame: DriveAnimation, then ReleaseIdle when the graph refused the start.
+	// a_stopsTaken: whether the graph takes the stops (false: held by something they do not reach; the stops are counted).
+	void ArmorFrame(ArmorGraph& a_graph, ArmorPuppet& a_puppet, float a_speed, MoveSync::Clock::time_point a_now, bool a_stopsTaken = true)
+	{
+		const bool  wasMoving = a_puppet.moving;
+		const float gaitSpeed = Gait::Smooth(a_puppet.gaitSpeed, a_speed, a_puppet.started ? std::chrono::duration<float>(FRAME).count() : 0.0f);
+		const auto  gait = Gait::Pick(gaitSpeed, a_puppet.gait, RUNNING);
+		a_graph.SetSync(Gait::SyncValue(gait));
+		const auto step = MoveSync::Drive(a_puppet.moving, a_puppet.nextResync, a_speed, a_now, [&](MoveSync::Event a_event) {
+			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
+		});
+		if (Gait::Send(step.moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
+			a_graph.Notify(Gait::Event(gait));
+			a_graph.Notify(Gait::WeaponEvent(gait));
+		}
+		a_puppet.moving = step.moving;
+		a_puppet.nextResync = step.nextResync;
+		a_puppet.gait = gait;
+		a_puppet.gaitSpeed = gaitSpeed;
+		a_puppet.started = true;
+		a_graph.Update();
+		// Puppets::UpdateHook: a standing puppet asked to move whose graph refused gets ReleaseIdle, which stops the idle
+		// as IdleRelease says.
+		if (!wasMoving && a_speed > MoveSync::START && a_puppet.release.Due(!step.moving, a_now)) {
+			if (a_stopsTaken) {
+				a_graph.Notify("IdleStop");
+				a_graph.Notify("turnStop");
+			} else {
+				++a_graph.idleStops;
+			}
+		}
+	}
+
+	// Puppets::GraphRebuilt: what RemotePlayers does as the power armor skeleton is found on the stand-in.
+	void Rebuilt(ArmorPuppet& a_puppet)
+	{
+		a_puppet.moving = false;
+		a_puppet.nextResync = {};
+		a_puppet.release = {};
+	}
+}
+
+TEST("gait: a stand-in whose power armor graph refuses to move is freed as a mirror is, and runs on the next frame")
+{
+	// The friend got in standing (the stand-in's old graph was told to stop) and walks off once the suit closes.
+	ArmorGraph  graph;
+	ArmorPuppet puppet;
+	auto        now = t0;
+	Rebuilt(puppet);
+	ArmorFrame(graph, puppet, 0.0f, now += FRAME);
+	CHECK(graph.idleStops == 0);  // standing: nothing to free
+	ArmorFrame(graph, puppet, 312.0f, now += FRAME);
+	CHECK(graph.idleStops == 1);  // the start refused: the idle stopped the same frame
+	ArmorFrame(graph, puppet, 312.0f, now += FRAME);
+	CHECK(graph.moving);
+	CHECK(graph.gait == RUN);
+	CHECK(graph.idleStops == 1);
+	for (int i = 0; i < 60; ++i) {
+		ArmorFrame(graph, puppet, 312.0f, now += FRAME);
+	}
+	CHECK(graph.moving);
+	CHECK(graph.idleStops == 1);
+	CHECK(graph.stops == 0);
+}
+
+TEST("gait: a stand-in switched in mid-walk starts its fresh graph at once, not half a second on by the resync")
+{
+	// A fresh stand-in placed while the friend walks: told to move before the switch-in, and its bookkeeping kept
+	// moving=true over the rebuild. The soak's anim line: moving=true, Speed=312, iSyncIdleLocomotion=1, legs still.
+	ArmorGraph  stale;
+	ArmorPuppet keptMoving;
+	keptMoving.moving = true;
+	keptMoving.started = true;
+	auto now = t0;
+	keptMoving.nextResync = now + MoveSync::RESYNC;
+	for (int i = 0; i < 48; ++i) {  // 3 s
+		ArmorFrame(stale, keptMoving, 312.0f, now += FRAME);
+	}
+	CHECK(!stale.moving);         // the resync's "moveStart" is refused by the held graph, and nothing frees it
+	CHECK(stale.idleStops == 0);  // a puppet believed moving is never released
+	// With the bookkeeping started over as the skeleton comes: the start goes on the first frame, is refused, the idle
+	// is stopped, and the next frame runs.
+	ArmorGraph  fresh;
+	ArmorPuppet puppet;
+	puppet.moving = true;
+	puppet.started = true;
+	now = t0;
+	puppet.nextResync = now + MoveSync::RESYNC;
+	Rebuilt(puppet);
+	ArmorFrame(fresh, puppet, 312.0f, now += FRAME);
+	ArmorFrame(fresh, puppet, 312.0f, now += FRAME);
+	CHECK(fresh.moving);
+	CHECK(fresh.gait == RUN);
+	CHECK(fresh.idleStops == 1);
+}
+
+TEST("gait: a power armor graph the stops do not reach gets two in the time the still legs take to place the stand-in again")
+{
+	// Held by something else: the stops are refused, come less and less often (IdleRelease), and the stand-in is placed
+	// again for its still legs (ArmorFrames::STILL_LIMIT) with two sent, never every frame.
+	ArmorGraph  graph;
+	ArmorPuppet puppet;
+	auto        now = t0;
+	Rebuilt(puppet);
+	int frames = 0;
+	for (auto t = std::chrono::milliseconds(0); t < ArmorFrames::STILL_LIMIT; t += FRAME, ++frames) {
+		ArmorFrame(graph, puppet, 312.0f, now += FRAME, false);
+	}
+	CHECK(!graph.moving);
+	CHECK(graph.idleStops == 2);
+	CHECK(graph.refused >= frames);  // the start every frame, as before
+	CHECK(frames >= 30);
 }

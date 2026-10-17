@@ -1045,23 +1045,28 @@ namespace RemotePlayers
 				return false;
 			}
 			a_player.armorSkeleton = root;
+			// The rebuilt 3D carries a fresh animation graph, in its base state whatever the old one was told.
+			Puppets::GraphRebuilt(a_actor);
 			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.id, a_actor->GetFormID(),
 				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
 			return true;
 		}
 
-		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest).
-		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, ArmorFrames::PlayTime a_now)
+		// What the switch-in and the dress go by, before the copy is looked at (see UpdatePowerArmor for the rest). The
+		// dress settles by the clock (StandInGear keeps its times so): a menu between a dress and the switch-in only
+		// lengthens the wait.
+		ArmorFrames::SwitchFacts SwitchFactsOf(RemotePlayer& a_player, RE::Actor* a_actor, Clock::time_point a_now, ArmorFrames::PlayTime a_played)
 		{
 			const bool in = Equipment::InPowerArmor(a_actor);
 			return {
 				.worn = WornFrame(a_player) != nullptr,
 				.in = in,
-				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_now),
+				.rebuilt = in && OnArmorSkeleton(a_player, a_actor, a_played),
 				.still = a_player.stride.Still(),
-				.sinceIn = a_now - a_player.switchedAt,
+				.sinceIn = a_played - a_player.switchedAt,
+				.sinceDressed = a_player.gear.wornAt == Clock::time_point{} ? ArmorFrames::Duration::max() : ArmorFrames::Duration{ a_now - a_player.gear.wornAt },
 				.tries = a_player.switchTries,
-				.sinceTried = a_now - a_player.switchTriedAt,
+				.sinceTried = a_played - a_player.switchTriedAt,
 			};
 		}
 
@@ -1153,7 +1158,7 @@ namespace RemotePlayers
 			}
 
 			const auto process = a_actor->currentProcess;
-			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_played);
+			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now, a_played);
 			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false);
 			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
@@ -1250,11 +1255,11 @@ namespace RemotePlayers
 				return false;
 			}
 			const auto cell = a_ref->GetParentCell();
-			const auto ours = a_actor->GetParentCell();
-			if (!cell || !ours) {
+			const auto ourCell = a_actor->GetParentCell();
+			if (!cell || !ourCell) {
 				return false;
 			}
-			return ours->IsInterior() ? cell == ours : !cell->IsInterior() && cell->worldSpace == ours->worldSpace;
+			return ourCell->IsInterior() ? cell == ourCell : !cell->IsInterior() && cell->worldSpace == ourCell->worldSpace;
 		}
 
 		// Our copy of the furniture their status names (StandInSeat::Pick), kept once found.
@@ -1487,12 +1492,12 @@ namespace RemotePlayers
 		// stands for theirs. Not one the engine has disabled (worn by our player: it stands where it was got into).
 		bool OursThere(const Protocol::ParkedFrame& a_parked)
 		{
-			const auto ours = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
-			if (!ours || ours->IsDeleted() || ours->IsDisabled() || ours->IsCreated()) {
+			const auto ourFrame = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
+			if (!ourFrame || ourFrame->IsDeleted() || ourFrame->IsDisabled() || ourFrame->IsCreated()) {
 				return false;
 			}
-			const auto base = ours->GetObjectReference();
-			const auto from = base && base->GetFormID() == a_parked.base ? DistanceFrom(ours, SpotOf(a_parked)) : std::nullopt;
+			const auto base = ourFrame->GetObjectReference();
+			const auto from = base && base->GetFormID() == a_parked.base ? DistanceFrom(ourFrame, SpotOf(a_parked)) : std::nullopt;
 			return from && *from <= ArmorFrames::ORIGINAL_RADIUS;
 		}
 
@@ -2316,7 +2321,7 @@ namespace RemotePlayers
 			// graph plays nothing (ArmorFrames::STILL_LIMIT).
 			if (actor) {
 				UpdateStride(remote, actor, *state, player, playedNow);
-				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, playedNow))) {
+				switch (ArmorFrames::ChooseSwitch(SwitchFactsOf(remote, actor, now, playedNow))) {
 				case ArmorFrames::Switch::kOut:
 					LeaveArmor(remote, actor, localCell, now, playedNow);
 					actor = nullptr;
@@ -2489,9 +2494,9 @@ namespace RemotePlayers
 			}
 			// The furniture they use: theirs (reference, base), ours of it, and whether the stand-in is held for it and in it.
 			if (remote.seat) {
-				const auto ours = remote.seatRef.get();
-				const auto in = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
-				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ours ? ours->GetFormID() : 0, remote.seatHeld, in ? in->GetFormID() : 0, remote.seatTries);
+				const auto ourSeat = remote.seatRef.get();
+				const auto seated = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
+				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seated ? seated->GetFormID() : 0, remote.seatTries);
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,

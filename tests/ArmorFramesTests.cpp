@@ -757,3 +757,42 @@ TEST("armor frames: still legs count only while the friend walks on their own le
 	CHECK(InSight(1000.0f, 0.0f, 1.5708f));
 	CHECK(!InSight(-1000.0f, 0.0f, 1.5708f));
 }
+
+TEST("armor frames: the switch-in waits until what was last put on the stand-in has settled on its body")
+{
+	using ArmorFrames::ChoosePick;
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Pick;
+	using ArmorFrames::PickFacts;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	// 0.8.7-rc1 soak: their status and their gear came together as they got in, the stand-in was dressed in the gear and
+	// switched in 70 ms later, with the biped of that dress still loading, and every such stand-in glided in its frame.
+	SwitchFacts facts{ .worn = true, .ready = true, .held = true, .sinceDressed = 70ms };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceDressed = ArmorFrames::DRESS_SETTLE - 1ms;
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceDressed = ArmorFrames::DRESS_SETTLE;
+	CHECK(ChooseSwitch(facts) == Switch::kIn);
+	// Never dressed at all (their gear not told yet): nothing to settle.
+	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true }) == Switch::kIn);
+	// A retry after one that did not take settles too.
+	facts = { .worn = true, .ready = true, .held = true, .sinceDressed = 10ms, .tries = 1, .sinceTried = ArmorFrames::SWITCH_RETRY };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	facts.sinceDressed = ArmorFrames::DRESS_SETTLE;
+	CHECK(ChooseSwitch(facts) == Switch::kIn);
+	// In it already: the settle is nothing to it.
+	CHECK(ChooseSwitch({ .worn = true, .in = true, .rebuilt = true, .sinceIn = 1s, .sinceDressed = 10ms }) == Switch::kNone);
+	CHECK(ChooseSwitch({ .in = true, .sinceDressed = 10ms }) == Switch::kOut);
+
+	// The item put on so that the engine picks their frame item: the pick is theirs the moment it is on, the switch-in
+	// still waits for it to settle (the fresh stand-ins of the soak went in 40 to 70 ms after it, and one in four glided).
+	PickFacts pick{ .named = true, .picksTheirs = true, .key = true, .keyOn = true, .sincePut = 41ms };
+	CHECK(ChoosePick(pick) == Pick::kWait);
+	pick.sincePut = ArmorFrames::DRESS_SETTLE;
+	CHECK(ChoosePick(pick) == Pick::kSwitch);
+	// Theirs without anything put on (it wears their vault suit): at once.
+	CHECK(ChoosePick({ .named = true, .picksTheirs = true }) == Pick::kSwitch);
+	// Not named yet, in the clothes it was dressed in: the dress settles through the switch facts, not here.
+	CHECK(ChoosePick({ .named = false, .dressed = true }) == Pick::kSwitch);
+}
