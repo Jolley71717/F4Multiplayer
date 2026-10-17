@@ -7,6 +7,7 @@
 #include "game/RemotePlayers.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
+#include "Text.h"
 
 namespace MapShare
 {
@@ -122,7 +123,7 @@ namespace MapShare
 			}
 			for (const auto& name : discovered) {
 				if (!name.empty() && ++feedShown <= 3) {
-					Hud::Notify(std::format("{} discovered {}", who.empty() ? "A friend" : who, name));
+					Hud::Notify(Text::Format("map.discovered", { { "player", who.empty() ? Text::Get("party.a_friend") : who }, { "place", name } }));
 				}
 			}
 		}

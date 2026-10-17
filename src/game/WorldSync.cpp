@@ -20,6 +20,7 @@
 #include "game/Story.h"
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
+#include "Text.h"
 
 namespace WorldSync
 {
@@ -1233,9 +1234,7 @@ namespace WorldSync
 			}
 			historyNoticedIn = loot.Point().sessionId;
 			REX::WARN("WorldSync: the session's shared history is {}% full", percent);
-			Hud::Notify(std::format("Multiplayer: the session's shared history is {}% full; loot and kill sharing stop at 100%. "
-									"The host can start a fresh session by removing the session file (see the docs)",
-				(std::min)(percent, std::size_t{ 100 })));
+			Hud::Notify(Text::Format("world.history_full", { { "percent", (std::min)(percent, std::size_t{ 100 }) } }));
 		}
 
 		constexpr std::uint32_t RESYNC_RECORD = 'CONT';
