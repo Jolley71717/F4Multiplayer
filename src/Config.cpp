@@ -100,6 +100,8 @@ namespace Config
 				ParseInt(value, settings.myAppearance, 16);
 			} else if (key == "iPuppetBaseForm") {
 				ParseInt(value, settings.puppetBaseForm, 16);
+			} else if (key == "bFriendFaces") {
+				settings.friendFaces = ParseBool(value);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
 			} else if (key == "bRevive") {

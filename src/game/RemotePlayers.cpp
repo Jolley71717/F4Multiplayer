@@ -19,6 +19,7 @@
 #include "game/StateBuffer.h"
 
 #include "game/Face.h"
+#include "game/FaceWatch.h"
 #include "game/LooksMenu.h"
 #include "Config.h"
 #include "game/Equipment.h"
@@ -55,6 +56,9 @@ namespace RemotePlayers
 			std::optional<Protocol::Face> face;
 			std::uint32_t        faceBaseId = 0;  // our copy of the base NPC wearing their face (a runtime form; resolved at use, it may not survive a load)
 			bool                 faceTried = false;
+			bool                 faceOwnHead = false;   // that copy has their own head (Face::OwnHead): the engine builds it, or not (FaceWatch)
+			bool                 faceFallback = false;  // their own head was given up here this session: the settler's face with their body shape
+			FaceWatch::StandIn   faceWatch;             // the stand-in's head, while it has their own
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			StateBuffer::Buffer  states;  // what they sent lately, and how far in the past it is drawn
 			RE::ObjectRefHandle  actor;
@@ -126,6 +130,8 @@ namespace RemotePlayers
 		// The looks friends asked for this run (base NPCs; see Spawn), kept after they leave: a stand-in an
 		// earlier version saved may wear one (see IsStandInBase).
 		std::set<std::uint32_t> looks;
+		// Our own player's head, after a stand-in with a friend's own head took it (see FaceWatch).
+		FaceWatch::Ours ourHead;
 
 		// Where a friend is now, as where they got into a pre-placed frame (see SetPowerArmor).
 		void TakeWornAt(RemotePlayer& a_player, const Protocol::PlayerState& a_state)
@@ -147,12 +153,15 @@ namespace RemotePlayers
 			std::optional<Clock::time_point> disabledAt;
 			Clock::time_point                buriedAt{};
 			bool                             held = false;  // has waited for the player's conversation
-			// A stand-in stays one of our puppets until it is disabled: its AI off, kept healthy, and not to be
-			// talked to. One kept for the player's conversation used to be let go first, so its AI ran and the
-			// player could press E on it, start another conversation, and have it deleted in the middle of
-			// that one. Never dereferenced (see RemotePlayer::registered); null for a light or frame.
+			// A stand-in stays one of our puppets until it is disabled: its AI off and its flags kept (the
+			// puppet update sets them again every update), kept healthy, and not to be talked to. One kept
+			// for the player's conversation used to be let go first, so its AI ran and the player could
+			// press E on it, start another conversation, and have it deleted in the middle of that one.
+			// Never dereferenced (see RemotePlayer::registered); null for a light or frame.
 			const RE::Actor*                 puppet = nullptr;
 			std::uint32_t                    puppetId = 0;
+			std::uint32_t                    player = 0;  // whose stand-in it was, for the log
+			StandInCalm::Track               calm;        // fights with us or another stand-in ended on it while it waits (see KeepCalm)
 			std::uint32_t                    id = 0;  // the reference's form ID, for when its handle stops resolving (SaveGuard::Forget)
 			// A frame whose stand-in is kept for the player's conversation while in it: it waits for the stand-in (hidden
 			// with it), instead of being disabled from under the actor held in it.
@@ -170,10 +179,12 @@ namespace RemotePlayers
 		std::vector<Deleting> deleting;
 		std::uint32_t      heldForConversation = 0;
 
-		// The stand-in is out of the world (or gone): no longer one of our puppets.
-		void Release(Grave& a_grave)
+		// The stand-in is being taken out of the world (a_ref; null when it is gone already): no longer one of our
+		// puppets, and a conversation it leaves open as its speaker is ours to end (Dialogue::Removed).
+		void Release(Grave& a_grave, RE::TESObjectREFR* a_ref)
 		{
 			if (a_grave.puppet) {
+				Dialogue::Removed(a_grave.id, a_ref);
 				Puppets::Unregister(a_grave.puppet, a_grave.puppetId);
 				a_grave.puppet = nullptr;
 				a_grave.puppetId = 0;
@@ -182,7 +193,7 @@ namespace RemotePlayers
 
 		void Disable(Grave& a_grave, RE::TESObjectREFR* a_ref, Clock::time_point a_now)
 		{
-			Release(a_grave);
+			Release(a_grave, a_ref);
 			a_ref->Disable();
 			a_grave.disabledAt = a_now;
 		}
@@ -233,7 +244,7 @@ namespace RemotePlayers
 		{
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
-				Release(a_grave);
+				Release(a_grave, nullptr);
 				return;
 			}
 			const auto now = Clock::now();
@@ -1414,13 +1425,14 @@ namespace RemotePlayers
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
 				Puppets::SetTarget(actor, { .position = actor->data.location, .heading = actor->data.angle.z });
-				Bury({ .actor = a_player.actor, .spawnedAt = a_player.range.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId });
+				Bury({ .actor = a_player.actor, .spawnedAt = a_player.range.spawnedAt, .puppet = a_player.registered, .puppetId = a_player.registeredId, .player = a_player.id });
 			} else if (a_player.registered) {
 				Puppets::Unregister(a_player.registered, a_player.registeredId);  // gone already
 			}
 			a_player.registered = nullptr;
 			a_player.registeredId = 0;
 			a_player.actor = {};
+			a_player.faceWatch = {};  // the next one is watched afresh
 		}
 
 		// They are out of their armor and the stand-in is still in its frame (ArmorFrames::Switch::kOut): the stand-in goes
@@ -1664,8 +1676,10 @@ namespace RemotePlayers
 
 		// A stand-in never fights us or another stand-in (StandInCalm): it runs no AI, so a fight the engine starts on
 		// it (our punch, our stray shot) never ends, and kept us in combat for good. Its anger with us is cleared, and
-		// such a fight is ended on it and on everyone in it with it (the console's stopcombatalarm on it).
-		void KeepCalm(RemotePlayer& a_player, RE::Actor* a_actor, const RE::PlayerCharacter* a_us, Clock::time_point a_now)
+		// such a fight is ended on it and on everyone in it with it (the console's stopcombatalarm on it). For a
+		// stand-in in use (a_track its player's) and one kept in the graveyard for the player's conversation alike
+		// (a_track the grave's): that one stands for up to a minute, hidden, with the same AI off.
+		void KeepCalm(StandInCalm::Track& a_track, std::uint32_t a_playerId, RE::Actor* a_actor, const RE::PlayerCharacter* a_us, Clock::time_point a_now)
 		{
 			using enum RE::Actor::BOOL_FLAGS;
 			const bool               inCombat = a_actor->IsInCombat();
@@ -1674,7 +1688,7 @@ namespace RemotePlayers
 				.target = inCombat ? FoeOf(a_actor, a_us) : StandInCalm::Foe::kNobody,
 				.angry = a_actor->boolFlags.any(kAngryWithPlayer, kAttackOnSight),
 			};
-			const auto calm = StandInCalm::Frame(a_player.calm, ours, facts, a_now);
+			const auto calm = StandInCalm::Frame(a_track, ours, facts, a_now);
 			if (calm.forgive) {
 				a_actor->boolFlags.reset(kAngryWithPlayer, kAttackOnSight);
 			}
@@ -1684,9 +1698,9 @@ namespace RemotePlayers
 			a_actor->StopCombat();
 			RE::Console::ExecuteCommand(std::format("{:08X}.stopcombatalarm", a_actor->GetFormID()).c_str());
 			++calmed;
-			if (MoveSync::Loggable(a_player.calm.stops)) {
-				REX::INFO("RemotePlayers: player {} stand-in {:08X} was in combat with {}; ended it ({} on this stand-in)", a_player.id, a_actor->GetFormID(),
-					facts.target == StandInCalm::Foe::kUs ? "us" : "another stand-in", a_player.calm.stops);
+			if (MoveSync::Loggable(a_track.stops)) {
+				REX::INFO("RemotePlayers: player {} stand-in {:08X} was in combat with {}; ended it ({} on this stand-in)", a_playerId, a_actor->GetFormID(),
+					facts.target == StandInCalm::Foe::kUs ? "us" : "another stand-in", a_track.stops);
 			}
 		}
 
@@ -1749,11 +1763,14 @@ namespace RemotePlayers
 					return nullptr;
 				}
 			}
-			// Their own face, hair and body shape on a copy of that base (made once per look).
+			// Their own face, hair and body shape on a copy of that base (made once per look): with their own head, which
+			// the engine builds as the stand-in loads, unless that was given up for them (faceFallback; see FaceWatch).
 			if (a_player.face && !a_player.faceTried) {
 				a_player.faceTried = true;
-				const auto made = Face::MakeBase(npc, *a_player.face);
+				const auto parts = a_player.faceFallback ? Face::BODY_ONLY : Face::Parts();
+				const auto made = Face::MakeBase(npc, *a_player.face, parts);
 				a_player.faceBaseId = made ? made->GetFormID() : 0;
+				a_player.faceOwnHead = made && Face::OwnHead(parts);
 			}
 			if (a_player.faceBaseId) {
 				if (const auto faceBase = RE::TESForm::GetFormByID<RE::TESNPC>(a_player.faceBaseId)) {
@@ -1761,6 +1778,7 @@ namespace RemotePlayers
 				} else {
 					a_player.faceBaseId = 0;  // gone with a load: made again next time
 					a_player.faceTried = false;
+					a_player.faceOwnHead = false;
 				}
 			}
 
@@ -1871,6 +1889,8 @@ namespace RemotePlayers
 		player.face = std::move(a_face);
 		player.faceBaseId = 0;  // the old copy stays in memory (forms can't be freed); a new one is made
 		player.faceTried = false;
+		player.faceOwnHead = false;
+		// (faceFallback stays: a new look is no new engine.)
 		// The stand-in is rebuilt with the new look the next time it's drawn.
 		DeleteActor(player);
 	}
@@ -1996,14 +2016,14 @@ namespace RemotePlayers
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
 				SaveGuard::Forget(a_grave.id);
-				Release(a_grave);
+				Release(a_grave, nullptr);
 				return true;
 			}
 			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_grave.spawnedAt)) {
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}
-			Release(a_grave);
+			Release(a_grave, ref.get());
 			ref->Disable();
 			ref->SetDelete(true);
 			SaveGuard::Exclude(ref.get());
@@ -2051,16 +2071,22 @@ namespace RemotePlayers
 		// Handles and runtime forms from before the load name other things now (or nothing): a graveyard
 		// entry resolved after the load could delete some unrelated object, a stale one in deleting would
 		// keep an unrelated reference out of every save, and a face base made before it may be gone. A
-		// stand-in among the graveyard's is no longer a puppet either (forgotten without reading it).
-		for (auto& grave : graveyard) {
-			Release(grave);
+		// stand-in among the graveyard's is no longer a puppet either (forgotten without reading it). The load
+		// took them, not the plugin: no conversation of theirs is the plugin's to end (see Release).
+		for (const auto& grave : graveyard) {
+			if (grave.puppet) {
+				Puppets::Unregister(grave.puppet, grave.puppetId);
+			}
 		}
 		graveyard.clear();
 		deleting.clear();
 		pendingSolid.clear();
+		ourHead = {};  // the head the loaded save gives our player is its own
 		for (auto& [id, player] : players) {
 			player.faceBaseId = 0;
 			player.faceTried = false;
+			player.faceOwnHead = false;
+			player.faceWatch = {};
 			player.original = {};  // a hidden frame's 3D went with the old world; looked for again at once (not a new hide)
 			player.originalHidden = nullptr;
 			player.originalCollisionOff = nullptr;
@@ -2163,6 +2189,8 @@ namespace RemotePlayers
 		for (auto& [id, player] : players) {
 			player.faceBaseId = 0;
 			player.faceTried = false;
+			player.faceOwnHead = false;
+			player.faceFallback = false;  // the dev asked for these pieces: their own head gets its chances again
 			DeleteActor(player);
 		}
 	}
@@ -2176,6 +2204,8 @@ namespace RemotePlayers
 
 		const auto now = Clock::now();
 		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
+		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
+		const bool oursGone = player && !loading && player->Get3D() && !Face::HasHead(player);
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
 		// each frame: any change the engine makes to it makes a new one, and the engine unloading it would write that
 		// out and crash on the cell it no longer has.
@@ -2183,7 +2213,7 @@ namespace RemotePlayers
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
 				SaveGuard::Forget(a_grave.id);
-				Release(a_grave);
+				Release(a_grave, nullptr);
 				return true;
 			}
 			if (!actor->GetParentCell()) {
@@ -2192,6 +2222,11 @@ namespace RemotePlayers
 			if (!a_grave.disabledAt) {
 				if (!DeferredDelete::Safe(actor->Get3D() != nullptr, now - a_grave.spawnedAt) || HeldForConversation(a_grave, actor.get(), now) ||
 					WaitsForWearer(a_grave, actor.get())) {
+					// A stand-in still standing (kept for the player's conversation, mostly) is kept calm like one in use:
+					// with its AI off, a fight on it would never end, and would keep us in combat while it waits.
+					if (const auto standIn = a_grave.puppet ? actor->As<RE::Actor>() : nullptr) {
+						KeepCalm(a_grave.calm, a_grave.player, standIn, player, now);
+					}
 					return false;
 				}
 				Disable(a_grave, actor.get(), now);
@@ -2383,6 +2418,40 @@ namespace RemotePlayers
 				remote.pickSince.reset();
 				remote.keyPutAt = {};
 				remote.pickLogged = -1;
+				if (remote.faceOwnHead) {
+					FaceWatch::Placed(remote.faceWatch, now);
+				}
+			}
+
+			// Placed with their own head: the engine builds it as the stand-in loads, or is asked once more, or their head
+			// is given up here, for the settler's (FaceWatch.h). Our own head is watched meanwhile: it once went with such a
+			// copy. In power armor its 3D is the frame's (ArmorFrames), not looked at.
+			if (remote.faceOwnHead) {
+				FaceWatch::Facts facts;
+				facts.has3D = actor->Get3D() != nullptr;
+				facts.hasFace = facts.has3D && Face::HasHead(actor);
+				facts.busy = Equipment::InPowerArmor(actor) || remote.inPowerArmor;
+				facts.oursGone = oursGone;
+				const auto outcome = FaceWatch::Frame(remote.faceWatch, facts, now);
+				switch (outcome.then) {
+				case FaceWatch::Then::kRebuild:
+					REX::INFO("RemotePlayers: player {} stand-in {:08X} loaded with no head on it; asked the engine to build its 3D again", remote.id, actor->GetFormID());
+					Face::Rebuild(actor);
+					break;
+				case FaceWatch::Then::kGiveUp:
+					Face::GaveUp(remote.id, outcome.why == FaceWatch::Why::kOurs);
+					if (outcome.why == FaceWatch::Why::kOurs) {
+						FaceWatch::TakenBy(ourHead, now);
+					}
+					remote.faceFallback = true;
+					remote.faceBaseId = 0;  // a copy with the settler's face is made at the next placement
+					remote.faceTried = false;
+					remote.faceOwnHead = false;
+					DeleteActor(remote);
+					continue;
+				case FaceWatch::Then::kNothing:
+					break;
+				}
 			}
 
 			UpdateLight(remote, actor, localCell, now);
@@ -2438,7 +2507,7 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 
-			KeepCalm(remote, actor, player, now);
+			KeepCalm(remote.calm, remote.id, actor, player, now);
 
 			// Pushed off our own spot (StandInSpace): its path, which the engine's update goes by, is moved as far.
 			auto path = sampled->path;
@@ -2452,13 +2521,17 @@ namespace RemotePlayers
 				.heading = state->heading,
 				.speed = state->speed,
 				.direction = Protocol::UnpackDirection(state->direction),
-				.pitch = static_cast<float>(state->pitch),
+				.pitch = sampled->pitch,
 				.moveMode = state->moveMode,
 				.flags = state->flags,
 				.path = path,
 			});
 		}
 		KeepUsCalm(player, now);
+		// Our head still gone a moment after the stand-in that took it went: asked back, once.
+		if (FaceWatch::RepairDue(ourHead, oursGone, now)) {
+			Face::RepairOurs();
+		}
 	}
 
 
@@ -2495,8 +2568,8 @@ namespace RemotePlayers
 			// The furniture they use: theirs (reference, base), ours of it, and whether the stand-in is held for it and in it.
 			if (remote.seat) {
 				const auto ourSeat = remote.seatRef.get();
-				const auto seated = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
-				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seated ? seated->GetFormID() : 0, remote.seatTries);
+				const auto seatIn = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
+				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seatIn ? seatIn->GetFormID() : 0, remote.seatTries);
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,

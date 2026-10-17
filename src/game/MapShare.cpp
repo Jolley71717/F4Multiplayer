@@ -130,7 +130,9 @@ namespace MapShare
 
 	void Frame()
 	{
-		if (!Config::Get().shareMap || !WorldSync::InWorld() || Story::InOpening()) {
+		// Not while the UI is held (a loading screen, a save or load, the moments after; see UiHold): the engine
+		// is rebuilding its menus, the map among them, and a marker's change waits (Apply queues it).
+		if (!Config::Get().shareMap || !WorldSync::InWorld() || !Hud::IsSettled() || Story::InOpening()) {
 			return;
 		}
 		if (!scanned) {
@@ -156,7 +158,7 @@ namespace MapShare
 		if (!Config::Get().shareMap) {
 			return;
 		}
-		if (!WorldSync::InWorld() || Story::InOpening() || !scanned) {
+		if (!WorldSync::InWorld() || !Hud::IsSettled() || Story::InOpening() || !scanned) {
 			if (waiting.size() < 256) {
 				waiting.push_back(a_found);
 			}

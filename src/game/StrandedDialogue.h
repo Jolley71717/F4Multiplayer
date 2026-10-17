@@ -1,20 +1,29 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 // When a conversation left open without its speaker is ended. The engine ends a conversation through
 // its speaker, so once the speaker is gone (a friend's stand-in deleted in the middle of it) nothing
-// ends it, and the player has no weapons, Pip-Boy or workshop until they talk to someone else. It is
-// only ended after a moment of that, since a speaker can briefly fail to resolve while a conversation
-// starts or its NPC reloads; and only when the speaker is one of ours (a friend's stand-in, or an NPC
-// the session shares), since one the game itself left open is the game's.
+// ends it, and the player has no weapons, Pip-Boy or workshop until they talk to someone else. Only a
+// conversation the plugin itself left that way is ended: one whose speaker the plugin took out of the
+// world (a friend's stand-in disabled, then deleted: see RemotePlayers), remembered here as it goes
+// (TakenOut). One the game left open is the game's, whoever the speaker was and however it went; and a
+// scene the player is in (a quest's) is never ended from here unless it is the one that speaker was in
+// with them. It is only ended after a moment of that, since a speaker can briefly fail to resolve while
+// a conversation starts or its NPC reloads.
 namespace StrandedDialogue
 {
 	using Clock = std::chrono::steady_clock;
 
 	constexpr auto GRACE = std::chrono::seconds(2);
+	// A speaker the plugin took out is remembered this long. Its conversation, if it was in one, is ended
+	// within GRACE of that (a few, when the end doesn't take); and a created reference's form ID can be
+	// given out again to something else.
+	constexpr auto REMEMBER = std::chrono::minutes(2);
 
 	class Timer
 	{
@@ -55,26 +64,112 @@ namespace StrandedDialogue
 		std::uint32_t                    ends = 0;
 	};
 
-	// Whether the conversation's speaker is one of ours, remembered while the conversation lasts: a
-	// friend's stand-in deleted in the middle of it no longer resolves, or no longer counts as ours by
-	// what it is (it was let go as it was switched off), and it is still the one that was ours.
-	class Speaker
+	// The references the plugin took out of the world lately, by form ID, each with the scene it was in
+	// as it went (0: none).
+	class TakenOut
 	{
 	public:
-		// a_speaker: the speaker's form ID, 0 when its handle doesn't resolve. a_ours: whether it is one of
-		// ours by what it is now (ignored for 0).
-		bool Ours(std::uint32_t a_speaker, bool a_ours)
+		void Add(std::uint32_t a_id, std::uint32_t a_scene, Clock::time_point a_now)
 		{
-			if (a_speaker != 0 && (a_ours || a_speaker != last)) {
-				last = a_ours ? a_speaker : 0;  // another speaker, not ours, ends what was known
+			if (a_id == 0) {
+				return;
 			}
-			return last != 0;
+			Forget(a_now);
+			for (auto& entry : entries) {
+				if (entry.id == a_id) {
+					entry.scene = a_scene;
+					entry.at = a_now;
+					return;
+				}
+			}
+			entries.push_back({ a_id, a_scene, a_now });
 		}
 
-		// The conversation is over.
-		void Reset() { last = 0; }
+		// The scene a_id was in as the plugin took it out, if the plugin did lately.
+		[[nodiscard]] std::optional<std::uint32_t> Find(std::uint32_t a_id, Clock::time_point a_now)
+		{
+			Forget(a_now);
+			for (const auto& entry : entries) {
+				if (a_id != 0 && entry.id == a_id) {
+					return entry.scene;
+				}
+			}
+			return std::nullopt;
+		}
 
 	private:
-		std::uint32_t last = 0;  // the speaker last seen while it was ours
+		struct Entry
+		{
+			std::uint32_t     id;
+			std::uint32_t     scene;
+			Clock::time_point at;
+		};
+
+		void Forget(Clock::time_point a_now)
+		{
+			std::erase_if(entries, [&](const Entry& a_entry) { return a_now - a_entry.at >= REMEMBER; });
+		}
+
+		std::vector<Entry> entries;
+	};
+
+	// The player's conversation as the game shows it this frame.
+	struct Facts
+	{
+		bool          open = false;         // MenuTopicManager.menuOpen: a conversation is open
+		std::uint32_t speaker = 0;          // its speaker's form ID; 0 when none resolves
+		bool          speakerGone = false;  // the speaker is disabled or deleted, or none resolves
+		bool          talking = false;      // the dialogue menu is up: the player is talking in it
+		std::uint32_t scene = 0;            // the scene the player is in (a quest's), 0 in none
+		bool          loading = false;      // a loading screen is up
+	};
+
+	// The decision for the conversation the player is in: whether the plugin ends it now.
+	class Watch
+	{
+	public:
+		// The plugin took a reference out of the world, which was in scene a_scene (0: none).
+		void Removed(std::uint32_t a_id, std::uint32_t a_scene, Clock::time_point a_now) { takenOut.Add(a_id, a_scene, a_now); }
+
+		// Whether to end the conversation this frame. The speaker last seen stays the conversation's while
+		// none resolves (one deleted no longer does); another speaker takes its place.
+		bool Due(const Facts& a_facts, Clock::time_point a_now)
+		{
+			if (a_facts.speaker != 0) {
+				speaker = a_facts.speaker;
+			}
+			if (a_facts.loading) {  // no part of the wait: it starts over once the screen is gone
+				timer.Reset();
+				return false;
+			}
+			const auto inScene = takenOut.Find(speaker, a_now);  // the scene it was in as it went, if the plugin took it out
+			ours = inScene && (a_facts.scene == 0 || a_facts.scene == *inScene);
+			return timer.Due(a_facts.open && a_facts.speakerGone && !a_facts.talking && ours, a_now);
+		}
+
+		// Out of dialogue: nothing known of a conversation, nothing waited for. What the plugin took out
+		// stays known.
+		void Reset()
+		{
+			timer.Reset();
+			speaker = 0;
+			ours = false;
+		}
+
+		// The conversation's speaker: the one last seen, 0 when none was.
+		[[nodiscard]] std::uint32_t Speaker() const { return speaker; }
+
+		// As of the last Due(): the conversation is the plugin's to end, its speaker one the plugin took out
+		// and the scene, if the player is in one, the one that speaker was in.
+		[[nodiscard]] bool Ours() const { return ours; }
+
+		// How often Due() said so since the conversation was last fine: 1 the first time.
+		[[nodiscard]] std::uint32_t Ends() const { return timer.Ends(); }
+
+	private:
+		Timer         timer;
+		TakenOut      takenOut;
+		std::uint32_t speaker = 0;
+		bool          ours = false;
 	};
 }

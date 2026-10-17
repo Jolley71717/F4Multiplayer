@@ -116,8 +116,10 @@ namespace ProtocolSamples
 		f.race = 0x00013746;
 		f.headParts = { 0x0004DA7A, 0x00047B2B };
 		f.hairColor = 0x0005D7A1;
+		f.faceDetails = 0x000A5B2C;
 		f.weight[0] = 0.2f, f.weight[1] = 0.5f, f.weight[2] = 0.3f;
 		f.sliders = { 0.0f, 0.25f, -0.5f };
+		f.morphs = { { 0x15F, 0.6f }, { 0x1A2, -0.35f } };
 		f.bones = { { 7, { 0.1f, 0.0f, -0.2f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.1f } } };
 		f.tints = { { 1001, 1, 90, 0xFFC08060, 3 }, { 1003, 2, 100, 0, 0 } };
 		f.bodyTint[0] = 200, f.bodyTint[3] = 255;

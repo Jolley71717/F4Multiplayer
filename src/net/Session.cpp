@@ -23,6 +23,7 @@
 #include "game/Party.h"
 #include "game/WorldClock.h"
 #include "game/NpcSync.h"
+#include "game/Perf.h"
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
@@ -757,14 +758,19 @@ namespace Session
 			return;
 		}
 		const auto now = Clock::now();
+		// Each stretch below is a part of the dev channel's `perf`, the packets it sends included.
+		Perf::Stretches perf;
+		PERF_NEXT(perf, "Story");
 		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
 		Story::Frame();  // first: the rest of the session checks it
 
+		PERF_NEXT(perf, "Steam");
 		if (steamMode) {
 			Steam::Frame();
 			HandleSteamJoin();
 		}
 
+		PERF_NEXT(perf, "Packets");
 		// Events first: reconnecting must not happen before a disconnect has been handled.
 		for (auto& event : client->Poll()) {
 			if (leaveAfterPoll) {
@@ -798,6 +804,7 @@ namespace Session
 			Notify("Multiplayer: the host is in another session now (another character, or a fresh start); join again from the menu to play in it");
 		}
 
+		PERF_NEXT(perf, "Hosting");
 		// Once a second, hosting follows the character that is loaded (CharacterBinding::Tracker::Check). Steam's lobby
 		// and rich presence come with the server, so friends can't even try before our own game is in.
 		if (now >= nextCharacterCheck) {
@@ -827,6 +834,7 @@ namespace Session
 			client->Connect(serverAddress, Config::Get().port);
 		}
 
+		PERF_NEXT(perf, "OurState");
 		if ((welcomed || echo) && now >= nextSend) {
 			// On schedule rather than "a full interval after this frame": at 60 fps that would
 			// often wait an extra frame and send at 20 Hz.
@@ -846,6 +854,7 @@ namespace Session
 			}
 		}
 
+		PERF_NEXT(perf, "Weapons");
 		// Shots: ours and those of NPCs we run. Unreliable: a late shot is worse than a lost one. Each
 		// carries the shooter's gun sound, which others' copies of the gun can't pick (no mods).
 		const auto shots = WeaponFire::TakeShots();
@@ -898,6 +907,7 @@ namespace Session
 			}
 		}
 
+		PERF_NEXT(perf, "OurLook");
 		if ((welcomed || echo) && now >= nextEquipmentCheck && InGame()) {
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
@@ -928,6 +938,7 @@ namespace Session
 			}
 		}
 
+		PERF_NEXT(perf, "WorldSync");
 		// Events from our world go to the server only while we're in a session, and not from the
 		// opening (see Story::InOpening). Sent before WorldSync::Frame runs: a death it finds this frame
 		// leaves next frame, after the takeover claim the same hit makes (NpcSync::OnLocalInteraction, sent
@@ -936,17 +947,22 @@ namespace Session
 		SendWorldEvents();
 		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
 
+		PERF_NEXT(perf, "NpcSync");
 		if (welcomed) {
 			NpcSync::Frame();
 			Spawns::Frame();
 		}
+		PERF_NEXT(perf, "QuestSync");
 		QuestSync::Frame(welcomed, hostedServer && hostedServer->Running());
+		PERF_NEXT(perf, "Achievements");
 		Achievements::Frame();
+		PERF_NEXT(perf, "QuestSync");
 		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
 		// server is one), and playing alone they are dropped: a session joined later doesn't get them.
 		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
 			client->Send(std::move(packet), true);
 		}
+		PERF_NEXT(perf, "NpcSync");
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
 		// WorldSync found this frame (see above). Our runtime NPCs' spawns (and their release after a load) go ahead of
 		// NpcSync's states and releases of them.
@@ -961,6 +977,7 @@ namespace Session
 			}
 		}
 
+		PERF_NEXT(perf, "PartyClock");
 		Party::Frame();
 		if (welcomed) {
 			WorldClock::Frame();
@@ -975,6 +992,7 @@ namespace Session
 				client->Send(std::move(packet), false);
 			}
 		}
+		PERF_NEXT(perf, "MapWorkshop");
 		if (welcomed) {
 			MapShare::Frame();
 			WorkshopSync::Frame(hostedServer && hostedServer->Running());
@@ -987,12 +1005,14 @@ namespace Session
 				client->Send(std::move(packet), true);
 			}
 		}
+		PERF_NEXT(perf, "Conversations");
 		Conversations::Frame(welcomed);
 		for (auto& packet : Conversations::TakeOutgoing()) {
 			if (welcomed) {
 				client->Send(std::move(packet), true);
 			}
 		}
+		PERF_NEXT(perf, "Voice");
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
 			if (welcomed) {
@@ -1000,11 +1020,15 @@ namespace Session
 			}
 		}
 
+		PERF_NEXT(perf, "LooksMenu");
 		if (InGame()) {
 			LooksMenu::Frame();
 		}
+		PERF_NEXT(perf, "RemotePlayers");
 		RemotePlayers::Update();
+		PERF_NEXT(perf, "Compass");
 		Compass::Frame();
+		PERF_NEXT(perf, "Puppets");
 		Puppets::Tick();
 	}
 
@@ -1096,7 +1120,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + LooksMenu::Describe(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
