@@ -95,4 +95,6 @@ if (Test-Path -LiteralPath $rcPdb) {
 "Publish it:"
 "  git tag v$version $commit"
 "  git push origin v$version"
-"  gh release create v$version `"$zip`" --title $version --notes-file dist/RELEASE-$version.md"
+"  gh release create v$version `"$zip`" `"$nexusZip`" --title $version --notes-file dist/RELEASE-$version.md"
+"Nexus, when you decide (dist/NEXUS-$version.txt holds its changelog, one line per entry):"
+"  gh workflow run nexus-upload.yml -f tag=v$version"
