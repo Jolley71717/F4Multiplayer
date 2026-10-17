@@ -18,6 +18,7 @@
 #include "game/FrameStats.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
+#include "game/Hud.h"
 #include "game/InjectInput.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
@@ -1717,6 +1718,11 @@ namespace DevCommands
 				std::from_chars(args[2].data(), args[2].data() + args[2].size(), depth);
 			}
 			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), depth]() {
+				// The one guard on the UI (UiHold): a movie being torn down is not read either.
+				if (!Hud::IsSettled()) {
+					REX::INFO("gfx: the UI is held ({}); not read", UiHold::Name(Hud::Holding()));
+					return;
+				}
 				const auto ui = RE::UI::GetSingleton();
 				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
 				const auto movie = menu ? menu->uiMovie.get() : nullptr;
@@ -1743,6 +1749,10 @@ namespace DevCommands
 				return "error: usage: gfxset <menu> <path> <member> <value>";
 			}
 			F4SE::GetTaskInterface()->AddUITask([menuName = std::string(args[0]), path = std::string(args[1]), member = std::string(args[2]), text = std::string(args[3])]() {
+				if (!Hud::IsSettled()) {
+					REX::INFO("gfxset: the UI is held ({}); not written", UiHold::Name(Hud::Holding()));
+					return;
+				}
 				const auto ui = RE::UI::GetSingleton();
 				const auto menu = ui ? ui->GetMenu(menuName) : nullptr;
 				const auto movie = menu ? menu->uiMovie.get() : nullptr;

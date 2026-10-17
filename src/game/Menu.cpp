@@ -57,6 +57,9 @@ namespace Menu
 		std::uint32_t       pressesHandled = 0;
 		std::string         notice;    // shown once at the top of the main page (why hosting failed)
 		std::string         lastBody;  // the page showing, for Describe
+		// The menu key was pressed while the UI was held (a loading screen, a save or load, the moments after; see
+		// UiHold): the box is one of the game's menus, and is shown once the UI has settled, from Frame.
+		bool                openWaiting = false;
 
 		// "Join a friend" first asks Steam for the friends' rich presence (a host's names their lobby,
 		// and Steam hands it out only once asked), then shows the page when the answers are in or
@@ -335,11 +338,24 @@ namespace Menu
 
 	void Open()
 	{
+		if (!Hud::IsSettled()) {
+			openWaiting = true;  // shown from Frame once the UI has settled
+			return;
+		}
 		ShowMain();
 	}
 
 	void Frame()
 	{
+		// No page while the UI is held (the engine is tearing its menus down or building them again): a press
+		// made before waits here, as does a pending join and the menu key.
+		if (!Hud::IsSettled()) {
+			return;
+		}
+		if (std::exchange(openWaiting, false)) {
+			ShowMain();
+			return;  // a press from the page that was up before is stale by now
+		}
 		if (pendingJoin && (Clock::now() >= pendingJoin->deadline || Steam::PresenceUpdates() - pendingJoin->updatesBefore >= pendingJoin->asked)) {
 			const auto page = pendingJoin->page;
 			pendingJoin.reset();
@@ -376,6 +392,6 @@ namespace Menu
 		// The body on one line (the dev channel's reply is one line).
 		std::string body = lastBody;
 		std::ranges::replace(body, '\n', '/');
-		return std::format("menu: pages={} presses={} serial={} pendingJoin={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), labels, body);
+		return std::format("menu: pages={} presses={} serial={} pendingJoin={} openWaiting={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), openWaiting, labels, body);
 	}
 }
