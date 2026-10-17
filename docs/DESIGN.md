@@ -567,6 +567,28 @@ else skips this: the player is never in those places.
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
 
+## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
+
+Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals
+as the joining game shows them) is a key with a text, not a literal in the code: `Text::Get(key)`, or
+`Text::Format(key, { { "player", name }, { "n", 3 } })` for a text with `{named}` placeholders. A placeholder the
+arguments lack stays in the text as written, so a mistake in a translation shows where it is read. The English texts
+are compiled in (`TextEnglish.h`) and are the fallback for every key a language file lacks; `Text::Load` (at startup,
+after `Config::Load`) picks the language (`sLanguage` in `F4Multiplayer.ini`, else the game's own `sLanguage`, read
+from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that order, else English) and reads
+`Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
+`Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
+`esmx` = Spanish) to the file codes. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
+mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
+`Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
+for people debugging, and a notice's log line is written from the English text (`Text::FormatEnglish`). The
+server sends its refusals in English on the wire (any server version, and a dedicated one, sends the same text);
+`Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order
+refusal, and anything else as it came. Arabic needs a font mod: the game ships no Arabic font and its Scaleform text
+fields do not shape right-to-left text. Every translation but the English is a first machine translation, marked so in
+its header.
+
 ## Status (2026-10-09)
 
 Protocol VERSION 31 (0.8.7; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic). The sections below record each review as it was written.
