@@ -45,7 +45,7 @@ namespace Config
 		// Friends' stand-ins wear their own face (head parts, hair, complexion, sculpting, skin tone and face paint)
 		// on a copy of the settler, built by the engine as the stand-in loads. Off: the settler's face with their sex
 		// and body shape, as 0.8.7 showed everyone (and what a stand-in falls back to when the engine builds no head).
-		bool friendFaces = true;
+		bool friendFaces = false;  // off: the engine built no head for a copy with its own head parts in every try (FaceWatch falls back)
 
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;

@@ -108,9 +108,10 @@
   entries by uniqueID), takes the settler's face template off it (faceNPC and the "use traits"
   flag: with those the engine loads the settler's baked FaceGen files as the head and looks at
   nothing else) and spawns the stand-in from it. The copy is a runtime form with no FaceGen files,
-  so the engine builds its head from the head parts, sculpting and tints as the stand-in loads, the
-  way it builds the player's. `bFriendFaces = false` (or the dev's `facemask 4`) writes only the sex
-  and body shape, as 0.8.7 did for everyone. A changed face deletes the stand-in; it respawns with
+  which the engine was meant to build a head from as the stand-in loads, the way it builds the
+  player's; in every try so far it built none (FaceWatch, below, then falls back), so `bFriendFaces`
+  is off by default: only the sex and body shape are written, as 0.8.7 did for everyone, and the
+  dev's `facemask 7F` turns the whole look on for an experiment. A changed face deletes the stand-in; it respawns with
   a fresh copy. Copies are never freed (forms can't be).
   `src/game/FaceWatch.h` (game-free, tested) watches each stand-in placed with its own head: once
   its 3D is loaded with no face node on it for 3 s, the engine is asked to build its 3D again
