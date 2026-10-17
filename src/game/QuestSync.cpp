@@ -12,6 +12,7 @@
 #include "game/StageRules.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
+#include "Text.h"
 
 #include <deque>
 
@@ -400,9 +401,9 @@ namespace QuestSync
 				names += (i > 0 ? ", " : "") + caughtUpNames[i];
 			}
 			if (caughtUpNames.size() > shown) {
-				names += std::format(" and {} more", caughtUpNames.size() - shown);
+				names += " " + Text::Format("quest.and_more", { { "n", caughtUpNames.size() - shown } });
 			}
-			Hud::Notify(std::format("Caught up with your friends: {}", names));
+			Hud::Notify(Text::Format("quest.caught_up", { { "names", names } }));
 			caughtUpNames.clear();
 		}
 
@@ -479,8 +480,8 @@ namespace QuestSync
 				return StageLog::Set::kSkipped;
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
-				Hud::Notify(std::format("Catching up with your friends' story in {} s: {} (it may move you)",
-					std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count(), name ? name : "a quest"));
+				Hud::Notify(Text::Format("quest.catching_up", { { "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count() },
+					{ "quest", name ? std::string{ name } : Text::Get("quest.a_quest") } }));
 				return StageLog::Set::kLater;
 			case StageRules::Verdict::kLater:
 				return StageLog::Set::kLater;
@@ -555,7 +556,7 @@ namespace QuestSync
 				locked->quest, locked->stage, std::chrono::duration_cast<std::chrono::seconds>(StageLog::Queue::LOCK_TIMEOUT).count(), locked->releaseQuest, locked->releaseStage);
 			SetStageHere(release, locked->releaseStage);
 			++released;
-			Hud::Notify("Your friends' story step didn't finish; you have your controls back");
+			Hud::Notify(Text::Get("quest.controls_back"));
 			Unlock(a_inSession);
 		}
 
@@ -600,7 +601,7 @@ namespace QuestSync
 				return;
 			}
 			const char* name = mq105->GetFullName();
-			const auto  shown = name && *name ? name : "the next quest";
+			const auto  shown = name && *name ? std::string{ name } : Text::Get("quest.next");
 			StageRules::Situation now;
 			now.sharedStory = true;
 			now.held = combatHold;
@@ -610,8 +611,7 @@ namespace QuestSync
 			switch (StageRules::Judge(RuleFor(MQ105, 0), now)) {
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
-				Hud::Notify(std::format("Your main story was stuck; it goes on with {} in {} s (it may move you)", shown,
-					std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count()));
+				Hud::Notify(Text::Format("quest.stuck_in", { { "quest", shown }, { "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count() } }));
 				return;
 			case StageRules::Verdict::kLater:
 				return;
@@ -621,7 +621,7 @@ namespace QuestSync
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
 			++repaired;
-			Hud::Notify(std::format("Your main story was stuck; it goes on with {}", shown));
+			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
 
 		// The session's story starts where the host's is: every stage done in the host's game of the shared
@@ -723,7 +723,7 @@ namespace QuestSync
 			return;
 		}
 		REX::INFO("QuestSync: player {} completed {:08X} '{}'", a_done.playerId, a_done.quest, name);
-		Hud::Notify(std::format("{} completed {}", RemotePlayers::NameOf(a_done.playerId), name));
+		Hud::Notify(Text::Format("quest.completed", { { "player", RemotePlayers::NameOf(a_done.playerId) }, { "quest", name } }));
 	}
 
 	void Frame(bool a_inSession, bool a_hosting)

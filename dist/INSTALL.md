@@ -32,6 +32,13 @@ in the game yet, and their game tries again by itself.
 Everyone else keeps the defaults. Players are named after their Steam names (set `sPlayerName` to
 use another name).
 
+The mod's messages and its F1 menu follow the language the game is set to (English, Russian, Spanish, Arabic,
+German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and Traditional Chinese). Set `sLanguage` in
+`F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling). The texts are in
+`Data\F4SE\Plugins\F4Multiplayer\lang`, one file per language, and all but English are first machine translations: to
+correct one or add a language, edit the text after each `=` (keep the `{placeholders}`) and send the file to the mod's
+page. Arabic needs a font mod, because the game ships no Arabic font.
+
 Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through Steam's relays,
 so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
 can join. Optionally set the same `sPassword` for everyone.

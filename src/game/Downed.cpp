@@ -6,6 +6,7 @@
 #include "game/Hud.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
+#include "Text.h"
 
 namespace Downed
 {
@@ -137,10 +138,10 @@ namespace Downed
 			}
 			if (a_step.wentDown) {
 				REX::INFO("Downed: down; a friend can help us up");
-				Hud::Notify(std::format("You're down! A friend can help you up. Hold {} to give up", GiveUpKey()));
+				Hud::Notify(Text::Format("down.went_down", { { "key", GiveUpKey() } }));
 			}
 			if (a_step.secondsLeft >= 0) {
-				Hud::Notify(std::format("{} seconds left to be helped up", a_step.secondsLeft));
+				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
 			}
 			if (a_step.kill) {
 				// The character can carry its own copy of the essential flag, which a kill may read instead of the base
@@ -177,12 +178,12 @@ namespace Downed
 				return it != friends.end() ? it->name : std::string{};
 			};
 			if (step.started) {
-				Hud::Notify(std::format("Helping {} up...", nameOf(step.started)));
+				Hud::Notify(Text::Format("down.helping", { { "player", nameOf(step.started) } }));
 			}
 			if (step.helped) {
 				outgoing.push_back(Protocol::Encode(Protocol::Revive{ step.helped }, Protocol::MessageType::kRevive));
 				REX::INFO("Downed: helped player {} up", step.helped);
-				Hud::Notify(std::format("You helped {} up", nameOf(step.helped)));
+				Hud::Notify(Text::Format("down.helped", { { "player", nameOf(step.helped) } }));
 			}
 		}
 	}
@@ -238,7 +239,7 @@ namespace Downed
 		GetUp(player);
 		const auto name = RemotePlayers::NameOf(a_revive.playerId);
 		REX::INFO("Downed: helped up by player {}", a_revive.playerId);
-		Hud::Notify(std::format("{} helped you up", name.empty() ? "A friend" : name));
+		Hud::Notify(Text::Format("down.helped_you", { { "player", name.empty() ? Text::Get("party.a_friend") : name } }));
 	}
 
 	void SetFriendDown(std::uint32_t a_id, bool a_down)

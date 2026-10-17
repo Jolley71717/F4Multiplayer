@@ -18,6 +18,7 @@
 #include "game/StandInSeat.h"
 #include "game/Story.h"
 #include "game/WorldSync.h"
+#include "Text.h"
 
 namespace Party
 {
@@ -130,12 +131,12 @@ namespace Party
 
 		std::string Bearing(float a_dx, float a_dy)
 		{
-			static constexpr std::array names{ "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+			static constexpr std::array names{ "compass.n", "compass.ne", "compass.e", "compass.se", "compass.s", "compass.sw", "compass.w", "compass.nw" };
 			float degrees = std::atan2(a_dx, a_dy) * 180.0f / std::numbers::pi_v<float>;
 			if (degrees < 0.0f) {
 				degrees += 360.0f;
 			}
-			return names[static_cast<std::size_t>(std::lround(degrees / 45.0f)) % names.size()];
+			return Text::Get(names[static_cast<std::size_t>(std::lround(degrees / 45.0f)) % names.size()]);
 		}
 
 		// "230 m NE", or "" when they're somewhere else.
@@ -149,9 +150,9 @@ namespace Party
 			const float dy = a_y - player->data.location.y;
 			const float meters = std::sqrt(dx * dx + dy * dy) * UNITS_TO_METERS;
 			if (meters < 5.0f) {
-				return "right here";
+				return Text::Get("player.right_here");
 			}
-			return std::format("{:.0f} m {}", meters, Bearing(dx, dy));
+			return Text::Format("player.distance", { { "m", std::format("{:.0f}", meters) }, { "dir", Bearing(dx, dy) } });
 		}
 
 		std::string Describe(const RemotePlayers::Info& a_player)
@@ -160,7 +161,8 @@ namespace Party
 			const auto  it = known.find(a_player.id);
 			if (it != known.end() && it->second.hasStatus) {
 				const auto& status = it->second.status;
-				out += status.downed ? " (down)" : status.health == 0 ? " (dead)" : std::format(" ({}% HP, level {})", status.health, status.level);
+				out += " (" + (status.downed ? Text::Get("player.down") : status.health == 0 ? Text::Get("player.dead") :
+				                                                                                  Text::Format("player.status", { { "hp", status.health }, { "level", status.level } })) + ")";
 				if (auto place = PlaceName(status.location, status.cell); !place.empty()) {
 					out += " - " + place;
 				}
@@ -170,7 +172,7 @@ namespace Party
 					out += ", " + distance;
 				}
 			} else {
-				out += ", loading";
+				out += ", " + Text::Get("player.loading");
 			}
 			return out;
 		}
@@ -312,7 +314,7 @@ namespace Party
 			if (!unstable && a_now - lastAck > UNSTABLE_AFTER) {
 				unstable = true;
 				REX::INFO("Party: connection to the host is unstable");
-				Hud::Notify("Multiplayer: connection to the host is unstable");
+				Hud::Notify(Text::Get("party.unstable"));
 			}
 		}
 
@@ -378,7 +380,7 @@ namespace Party
 			}
 
 			if (xpNotice >= 1.0f && a_now >= xpNoticeAt) {
-				Hud::Notify(std::format("+{:.0f} XP from your party's kills", xpNotice));
+				Hud::Notify(Text::Format("party.xp", { { "xp", std::format("{:.0f}", xpNotice) } }));
 				xpNotice = 0.0f;
 			}
 		}
@@ -399,25 +401,25 @@ namespace Party
 			}
 		}
 
-		// Why the player can't teleport right now ("" = they can). Teleporting out of a
+		// Why the player can't teleport right now (the key of the text saying so; "" = they can). Teleporting out of a
 		// conversation, a scene or furniture (a workbench, a vertibird seat) can leave a quest
 		// stuck, and Survival has no fast travel.
 		std::string TeleportBlocked(RE::PlayerCharacter* a_player)
 		{
 			if (Story::InOpening()) {
-				return "until you've left Vault 111";
+				return "party.cant_teleport_opening";
 			}
 			if (OpenMenus::Open(OpenMenus::Menu::kDialogue)) {
-				return "while talking";
+				return "party.cant_teleport_talking";
 			}
 			if (a_player->GetCurrentScene()) {
-				return "during a scene";
+				return "party.cant_teleport_scene";
 			}
 			if (static_cast<int>(a_player->DoGetSitSleepState()) != 0) {
-				return "while sitting or using something";
+				return "party.cant_teleport_busy";
 			}
 			if (a_player->GetDifficultyLevel() >= RE::DifficultyLevel::kSurvival) {
-				return "in Survival (no fast travel)";
+				return "party.cant_teleport_survival";
 			}
 			return {};
 		}
@@ -431,7 +433,7 @@ namespace Party
 					continue;
 				}
 				if (localId == 0) {
-					Hud::Notify("Multiplayer: not in a session");
+					Hud::Notify(Text::Get("party.not_in_session"));
 					continue;
 				}
 				// While down, holding the teleport key gives up instead.
@@ -530,15 +532,14 @@ namespace Party
 				const auto target = FindPlayer(a_status.playerId);
 				const auto where = target && target->state ? DistanceTo(target->state->cell, target->state->worldspace, target->state->x, target->state->y) : std::string{};
 				REX::INFO("Party: player {} is down", a_status.playerId);
-				Hud::Notify(where.empty() ?
-								std::format("{} is down! Hold {} to teleport to them and help them up", name, KeyName(Config::Get().keyTeleport)) :
-								std::format("{} is down! Get to them to help them up ({})", name, where));
+				Hud::Notify(where.empty() ? Text::Format("party.friend_down_far", { { "player", name }, { "key", KeyName(Config::Get().keyTeleport) } }) :
+				                            Text::Format("party.friend_down_near", { { "player", name }, { "where", where } }));
 			} else if (news == DownRules::FriendNews::kDied) {
 				REX::INFO("Party: player {} died", a_status.playerId);
-				Hud::Notify(name + " died");
+				Hud::Notify(Text::Format("party.friend_died", { { "player", name } }));
 			} else if (news == DownRules::FriendNews::kBackUp) {
 				REX::INFO("Party: player {} is back up", a_status.playerId);
-				Hud::Notify(name + " is back up");
+				Hud::Notify(Text::Format("party.friend_back_up", { { "player", name } }));
 			}
 		}
 		entry.status = a_status;
@@ -557,9 +558,9 @@ namespace Party
 		if (where.empty()) {
 			const auto it = known.find(a_ping.playerId);
 			const auto place = it != known.end() ? PlaceName(it->second.status.location, a_ping.cell) : NameOfForm(a_ping.cell);
-			where = place.empty() ? "somewhere else" : "at " + place;
+			where = place.empty() ? Text::Get("party.somewhere_else") : Text::Format("party.at_place", { { "place", place } });
 		}
-		Hud::Notify(std::format("{}: over here! ({})", name.empty() ? "A friend" : name, where));
+		Hud::Notify(Text::Format("party.ping", { { "player", name.empty() ? Text::Get("party.a_friend") : name }, { "where", where } }));
 	}
 
 	void ApplyXp(const Protocol::XpGain& a_gain)
@@ -591,13 +592,13 @@ namespace Party
 		if (unstable) {
 			unstable = false;
 			REX::INFO("Party: connection to the host restored");
-			Hud::Notify("Multiplayer: connection restored");
+			Hud::Notify(Text::Get("party.restored"));
 		}
 		slowAnswers = roundTripMs > HIGH_PING_MS ? slowAnswers + 1 : 0;
 		if (slowAnswers >= 5 && now >= nextPingWarning) {
 			nextPingWarning = now + 60s;
 			REX::INFO("Party: high ping to the host ({} ms)", roundTripMs);
-			Hud::Notify(std::format("Multiplayer: high ping to the host ({} ms)", roundTripMs));
+			Hud::Notify(Text::Format("party.high_ping", { { "ms", roundTripMs } }));
 		}
 	}
 
@@ -621,7 +622,7 @@ namespace Party
 		}
 		if (++killFeedShown <= 3) {
 			REX::INFO("Party: player {} killed {:08X}", a_death.playerId, a_death.refId);
-			Hud::Notify(std::format("{} killed {}", killer, victim));
+			Hud::Notify(Text::Format("party.killed", { { "killer", killer }, { "victim", victim } }));
 		}
 	}
 
@@ -646,9 +647,10 @@ namespace Party
 	void ShowPlayerList()
 	{
 		const auto players = RemotePlayers::List();
-		Hud::Notify(players.empty() ? "Multiplayer: nobody else is here yet" :
-		                              std::format("Party: {} other player{}{}", players.size(), players.size() == 1 ? "" : "s",
-											  roundTripMs ? std::format(" (ping {} ms)", roundTripMs) : ""));
+		const auto ping = roundTripMs ? " (" + Text::Format("party.ping_info", { { "ms", roundTripMs } }) + ")" : std::string{};
+		Hud::Notify(players.empty()        ? Text::Get("party.alone") :
+		            players.size() == 1    ? Text::Format("party.count_one", { { "ping", ping } }) :
+		                                     Text::Format("party.count_many", { { "n", players.size() }, { "ping", ping } }));
 		for (const auto& player : players) {
 			Hud::Notify(Describe(player));
 		}
@@ -658,7 +660,7 @@ namespace Party
 	{
 		const auto players = RemotePlayers::List();
 		if (players.empty()) {
-			Hud::Notify("Multiplayer: nobody to teleport to");
+			Hud::Notify(Text::Get("party.no_teleport_target"));
 			return;
 		}
 		// The next player after the current pick (players are sorted by ID).
@@ -667,7 +669,7 @@ namespace Party
 			next = players.begin();
 		}
 		teleportTarget = next->id;
-		Hud::Notify(std::format("Teleport to {}? Hold {} to go", Describe(*next), KeyName(Config::Get().keyTeleport)));
+		Hud::Notify(Text::Format("party.teleport_prompt", { { "player", Describe(*next) }, { "key", KeyName(Config::Get().keyTeleport) } }));
 	}
 
 	void TeleportToTarget()
@@ -676,8 +678,8 @@ namespace Party
 		if (!target) {
 			const auto players = RemotePlayers::List();
 			if (players.size() != 1) {
-				Hud::Notify(players.empty() ? "Multiplayer: nobody to teleport to" :
-				                              std::format("Tap {} to choose who to teleport to", KeyName(Config::Get().keyTeleport)));
+				Hud::Notify(players.empty() ? Text::Get("party.no_teleport_target") :
+				                              Text::Format("party.teleport_choose", { { "key", KeyName(Config::Get().keyTeleport) } }));
 				return;
 			}
 			target = players.front();
@@ -687,19 +689,19 @@ namespace Party
 			return;
 		}
 		if (const auto reason = TeleportBlocked(player); !reason.empty()) {
-			REX::INFO("Party: can't teleport to player {} {}", target->id, reason);
-			Hud::Notify(std::format("Can't teleport {}", reason));
+			REX::INFO("Party: can't teleport to player {}: {}", target->id, Text::GetEnglish(reason));
+			Hud::Notify(Text::Get(reason));
 			return;
 		}
 		if (!target->state) {
 			REX::INFO("Party: can't teleport to player {}: no position from them yet", target->id);
-			Hud::Notify(std::format("Can't find {} right now", target->name));
+			Hud::Notify(Text::Format("party.cant_find", { { "player", target->name } }));
 			return;
 		}
 		// Their opening is a place (and a time) that doesn't exist in our game.
 		if (const auto it = known.find(target->id); it != known.end() && it->second.hasStatus && it->second.status.opening) {
 			REX::INFO("Party: can't teleport to player {}: they are still in the opening", target->id);
-			Hud::Notify(std::format("{} hasn't left Vault 111 yet", target->name));
+			Hud::Notify(Text::Format("party.still_in_vault", { { "player", target->name } }));
 			return;
 		}
 		const auto& state = *target->state;
@@ -712,14 +714,14 @@ namespace Party
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			player->SetPosition(position, true);
 			REX::INFO("Party: teleported to player {}", target->id);
-			Hud::Notify(std::format("Teleported to {}", target->name));
+			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
 			return;
 		}
 		if (const auto cell = state.cell ? RE::TESForm::GetFormByID<RE::TESObjectCELL>(state.cell) : nullptr) {
 			const std::string editorId = cell->GetFormEditorID();
 			if (editorId.empty()) {
 				REX::INFO("Party: can't teleport to player {}: cell {:08X} has no editor ID", target->id, state.cell);
-				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
+				Hud::Notify(Text::Format("party.cant_teleport_into", { { "player", target->name } }));
 				return;
 			}
 			RemotePlayers::DespawnAll();
@@ -728,7 +730,7 @@ namespace Party
 			const std::string editorId = world->GetFormEditorID();
 			if (editorId.empty()) {
 				REX::INFO("Party: can't teleport to player {}: worldspace {:08X} has no editor ID", target->id, state.worldspace);
-				Hud::Notify(std::format("Can't teleport into {}'s location", target->name));
+				Hud::Notify(Text::Format("party.cant_teleport_into", { { "player", target->name } }));
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
@@ -736,12 +738,12 @@ namespace Party
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);
-			Hud::Notify(std::format("Can't teleport to {}", target->name));
+			Hud::Notify(Text::Format("party.cant_teleport_to", { { "player", target->name } }));
 			return;
 		}
 		pendingTeleport = PendingTeleport{ state.cell, state.worldspace, position, Clock::now() + TELEPORT_TIMEOUT };
 		REX::INFO("Party: teleporting to player {}", target->id);
-		Hud::Notify(std::format("Teleporting to {}", target->name));
+		Hud::Notify(Text::Format("party.teleporting", { { "player", target->name } }));
 	}
 
 	void SendPing()
@@ -753,7 +755,7 @@ namespace Party
 		const auto [cell, worldspace] = SpaceOf(player);
 		const auto& pos = player->data.location;
 		outgoing.push_back(Protocol::Encode(Protocol::Ping{ 0, cell, worldspace, pos.x, pos.y, pos.z }, Protocol::MessageType::kPing));
-		Hud::Notify("You called your party over");
+		Hud::Notify(Text::Get("party.called"));
 	}
 
 	std::uint32_t RoundTripMs()

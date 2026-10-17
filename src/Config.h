@@ -9,6 +9,11 @@ namespace Config
 		// Name shown to other players. Empty = your Steam name.
 		std::string playerName;
 
+		// Language of the mod's own texts (HUD notices, the F1 menu): a game language code ("de", "ru", "ptbr", "ja", "cn"...) or the
+		// code of a file in the lang folder ("en-gb"). Empty = the game's own sLanguage (Fallout4.ini); English when there is
+		// no file for it (see Text.h).
+		std::string language;
+
 		// Host a session on this machine. The host also plays; friends join through Steam
 		// (invite, or "Join Game" in the friends list) or connect to the host's IP.
 		bool host = false;

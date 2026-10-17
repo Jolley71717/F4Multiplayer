@@ -103,6 +103,12 @@ if ([Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $build '
 	throw 'F4Multiplayer.dll was built with Tracy (xmake f --tracy=...): a profiling build is never packaged'
 }
 Copy-Item (Join-Path $root 'dist\F4Multiplayer.ini') (Join-Path $stage 'F4SE\Plugins')
+# The mod's texts in every language (Text.cpp reads Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt).
+$lang = Join-Path $stage 'F4SE\Plugins\F4Multiplayer\lang'
+New-Item -ItemType Directory -Force $lang | Out-Null
+$langFiles = @(Get-ChildItem (Join-Path $root 'dist\lang') -Filter '*.txt' -File)
+if (-not ($langFiles | Where-Object { $_.Name -eq 'en.txt' })) { throw 'dist\lang has no en.txt' }
+Copy-Item $langFiles.FullName $lang
 if (-not $Nexus) { Copy-Item (Join-Path $build 'F4MPServer.exe') (Join-Path $stage 'F4Multiplayer') }
 Copy-Item (Join-Path $root 'dist\INSTALL.md') (Join-Path $stage 'F4Multiplayer')
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $stage 'F4Multiplayer')

@@ -12,6 +12,7 @@
 
 #include "game/DeferredDelete.h"
 #include "game/Hud.h"
+#include "Text.h"
 
 namespace WorkshopSync
 {
@@ -325,7 +326,7 @@ namespace WorkshopSync
 			if (WorkshopApply::Rescues(KindOf(a_ref), HoldsItems(a_ref))) {
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems 00000014", a_ref->GetFormID()).c_str());
 				REX::INFO("WorkshopSync: copy {:08X} goes; what it held went to the player", a_ref->GetFormID());
-				Hud::Notify("What you kept in a friend's container is in your inventory");
+				Hud::Notify(Text::Get("workshop.rescued"));
 				++itemsRescued;
 			}
 			a_ref->Disable();

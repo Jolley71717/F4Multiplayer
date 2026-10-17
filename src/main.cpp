@@ -19,6 +19,7 @@
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
 #include "net/Session.h"
+#include "Text.h"
 
 // user32 (windows.h clashes with CommonLibF4's names).
 extern "C" {
@@ -766,6 +767,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	Config::Load();
+	Text::Load();
 	Perf::StartTracy();  // a developer build with Tracy only (Perf.h)
 
 	if (!F4SE::GetMessagingInterface()->RegisterListener(OnF4SEMessage)) {

@@ -19,4 +19,9 @@ if (-not (Test-Path $ini)) {
 	Copy-Item (Join-Path $root 'dist\F4Multiplayer.ini') $ini
 }
 
+# The texts in every language (always replaced: they belong to the build, unlike the ini).
+$lang = Join-Path $plugins 'F4Multiplayer\lang'
+New-Item -ItemType Directory -Force $lang | Out-Null
+Copy-Item (Join-Path $root 'dist\lang\*.txt') $lang -Force
+
 "Deployed to $plugins"
