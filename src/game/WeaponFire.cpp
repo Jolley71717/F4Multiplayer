@@ -756,6 +756,8 @@ namespace WeaponFire
 	}
 
 	// --- Copies kept from a friend's explosion (BlastShield) -----------------------------------
+	// Every copy goes by the id the session knows it by (NpcSync::SessionId): a plugin's reference, or the spawn id of our
+	// copy of a friend's runtime NPC, as NpcSync names the owner and the end of the mirror.
 	namespace
 	{
 		BlastShield::Book shields;
@@ -767,6 +769,21 @@ namespace WeaponFire
 		// still hurt shows there).
 		std::unordered_map<std::uint32_t, float> healthWhenShielded;
 		std::unordered_set<std::uint32_t>        unghostLater;  // ghosts of ours not loaded when they were to come off
+
+		// Our copy under the session's id (nullptr: none here, or gone).
+		RE::Actor* CopyOf(std::uint32_t a_id)
+		{
+			const auto local = NpcSync::LocalRef(a_id);
+			const auto actor = local != 0 ? RE::TESForm::GetFormByID<RE::Actor>(local) : nullptr;
+			return actor && !actor->IsDeleted() ? actor : nullptr;
+		}
+
+		// The copy for the log: its form id here, and the spawn id it goes by when that differs.
+		std::string Name(std::uint32_t a_id)
+		{
+			const auto local = NpcSync::LocalRef(a_id);
+			return local != 0 && local != a_id ? std::format("{:08X} (spawn {:08X})", local, a_id) : std::format("{:08X}", a_id);
+		}
 
 		float HealthOf(RE::Actor* a_actor)
 		{
@@ -804,13 +821,18 @@ namespace WeaponFire
 		std::vector<GhostReadback> ghostReadbacks;
 		std::uint32_t              readbacksLogged = 0;
 
+		// The console's command on our copy under the session's id a_id (a loaded one: the caller found it).
 		void SetGhost(std::uint32_t a_id, bool a_on)
 		{
-			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", a_id, a_on ? 1 : 0).c_str());
+			const auto actor = CopyOf(a_id);
+			if (!actor) {
+				return;
+			}
+			RE::Console::ExecuteCommand(std::format("{:08X}.setghost {}", actor->GetFormID(), a_on ? 1 : 0).c_str());
 			NpcSync::CountCommands(1);
-			if (const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id); actor && readbacksLogged < 120) {
+			if (readbacksLogged < 120) {
 				++readbacksLogged;
-				REX::INFO("WeaponFire: {:08X}.setghost {} sent, the ghost reads {} at once", a_id, a_on ? 1 : 0, CopyWatch::GhostState(actor));
+				REX::INFO("WeaponFire: {}.setghost {} sent, the ghost reads {} at once", Name(a_id), a_on ? 1 : 0, CopyWatch::GhostState(actor));
 			}
 			if (ghostReadbacks.size() < BlastShield::MAX_SHIELDED) {
 				ghostReadbacks.push_back({ a_id, a_on, frames });
@@ -824,14 +846,14 @@ namespace WeaponFire
 				if (after != 1 && after != READBACK_LAST) {
 					return after > READBACK_LAST;
 				}
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_readback.id);
+				const auto actor = CopyOf(a_readback.id);
 				const bool still = actor && a_readback.on != actor->GetGhost();
 				if (after == READBACK_LAST && still && !a_readback.on) {
 					++ghostsStuck;
 				}
 				if (readbacksLogged < 120 || (after == READBACK_LAST && still)) {
 					++readbacksLogged;
-					REX::INFO("WeaponFire: {:08X}, {} frame{} after setghost {}: the ghost reads {}{}", a_readback.id, after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
+					REX::INFO("WeaponFire: {}, {} frame{} after setghost {}: the ghost reads {}{}", Name(a_readback.id), after, after == 1 ? "" : "s", a_readback.on ? 1 : 0,
 						CopyWatch::GhostState(actor), still ? ", not yet as set" : "");
 				}
 				return after == READBACK_LAST;
@@ -847,14 +869,17 @@ namespace WeaponFire
 			if (!tes || local == 0) {
 				return;
 			}
-			// Nothing is changed while the engine walks its lists: the copies are collected first. Never the player, a
-			// stand-in (a puppet), an NPC our game runs or one nobody does (BlastShield::Shields).
+			// Nothing is changed while the engine walks its lists: the copies are collected first, by the session's id.
+			// Never the player, a stand-in (a puppet), an NPC our game runs, one nobody does, or one never shared
+			// (BlastShield::Shields).
 			std::vector<std::uint32_t> copies;
 			tes->ForEachReferenceInRange(a_at, a_radius + BlastShield::MARGIN, [&](RE::TESObjectREFR* a_ref) {
 				const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr;
-				if (actor && !actor->IsPlayerRef() && Protocol::IsShareableRef(actor->GetFormID()) && !actor->IsDead(false) && !Puppets::IsPuppet(actor) &&
-					BlastShield::Shields(NpcSync::Owner(actor->GetFormID()), local)) {
-					copies.push_back(actor->GetFormID());
+				if (actor && !actor->IsPlayerRef() && !Puppets::IsPuppet(actor)) {
+					const auto id = NpcSync::SessionId(actor->GetFormID());
+					if (BlastShield::Shields({ .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false) }, local)) {
+						copies.push_back(id);
+					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
@@ -862,7 +887,7 @@ namespace WeaponFire
 			std::string made;
 			std::string held;
 			for (const auto id : copies) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				const auto actor = CopyOf(id);
 				if (!actor) {
 					continue;
 				}
@@ -872,14 +897,14 @@ namespace WeaponFire
 				}
 				if (!shields.Begin(id, now, frames)) {
 					if (shields.Shielded(id)) {
-						held += std::format(" {:08X}", id);
+						held += std::format(" {}", Name(id));
 					}
 					continue;
 				}
 				SetGhost(id, true);
 				++copiesShielded;
 				healthWhenShielded[id] = HealthOf(actor);
-				made += std::format(" {:08X}(player {}'s, health {:.0f}, ghost {})", id, NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
+				made += std::format(" {}(player {}'s, health {:.0f}, ghost {})", Name(id), NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
 			}
 			if ((!made.empty() || !held.empty()) && shieldsLogged < 40) {
 				++shieldsLogged;
@@ -897,10 +922,11 @@ namespace WeaponFire
 			if (before != healthWhenShielded.end()) {
 				healthWhenShielded.erase(before);
 			}
-			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-			if (!actor || actor->IsDeleted()) {
-				// Not loaded now: its ghost comes off when it is again.
-				if (unghostLater.size() < BlastShield::MAX_SHIELDED) {
+			const auto actor = CopyOf(a_id);
+			if (!actor) {
+				// Not loaded now: its ghost comes off when it is again. Our copy of a friend's spawn that is gone for good
+				// (Spawns deleted it) is placed afresh, no ghost, should the spawn come back.
+				if (NpcSync::LocalRef(a_id) != 0 && unghostLater.size() < BlastShield::MAX_SHIELDED) {
 					unghostLater.insert(a_id);
 				}
 				return;
@@ -913,11 +939,12 @@ namespace WeaponFire
 			}
 			if (shieldEndsLogged < 40 || now < was - 0.5f) {
 				++shieldEndsLogged;
-				REX::INFO("WeaponFire: {:08X} is no ghost again ({}): health {:.0f} then, {:.0f} now{}", a_id, a_why, was, now, actor->IsDead(false) ? ", dead" : "");
+				REX::INFO("WeaponFire: {} is no ghost again ({}): health {:.0f} then, {:.0f} now{}", Name(a_id), a_why, was, now, actor->IsDead(false) ? ", dead" : "");
 			}
 		}
 
-		// Deaths in our world (WorldSync's death watch, on whatever thread the engine sends them), looked at in Frame.
+		// Deaths in our world (WorldSync's death watch, on whatever thread the engine sends them), by form id, looked at
+		// in Frame (a spawn's id is looked up on the main thread).
 		std::mutex                 deathLock;
 		std::vector<std::uint32_t> deathsSeen;
 
@@ -929,11 +956,12 @@ namespace WeaponFire
 				std::scoped_lock l{ deathLock };
 				deaths.swap(deathsSeen);
 			}
-			for (const auto id : deaths) {
-				if (shields.Shielded(id)) {
+			for (const auto formId : deaths) {
+				const auto id = NpcSync::SessionId(formId);
+				if (id != 0 && shields.Shielded(id)) {
 					++shieldedDied;
-					const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-					REX::WARN("WeaponFire: our copy {:08X} died while a ghost against a friend's explosion (health {:.0f}, ghost {})", id, actor ? HealthOf(actor) : -1.0f,
+					const auto actor = CopyOf(id);
+					REX::WARN("WeaponFire: our copy {} died while a ghost against a friend's explosion (health {:.0f}, ghost {})", Name(id), actor ? HealthOf(actor) : -1.0f,
 						CopyWatch::GhostState(actor));
 				}
 			}
@@ -945,12 +973,15 @@ namespace WeaponFire
 			ReadBackGhosts();
 			ReportShieldedDeaths();
 			std::erase_if(unghostLater, [](std::uint32_t a_id) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_id);
-				if (!actor || actor->IsDeleted() || !actor->Get3D()) {
+				if (NpcSync::LocalRef(a_id) == 0) {
+					return true;  // our copy of a friend's spawn, gone for good
+				}
+				const auto actor = CopyOf(a_id);
+				if (!actor || !actor->Get3D()) {
 					return false;
 				}
 				SetGhost(a_id, false);
-				REX::INFO("WeaponFire: {:08X} is no ghost again, loaded once more", a_id);
+				REX::INFO("WeaponFire: {} is no ghost again, loaded once more", Name(a_id));
 				return true;
 			});
 			if (shields.Size() == 0) {

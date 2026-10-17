@@ -68,6 +68,15 @@ namespace NpcSync
 	// Which player runs the NPC (0: nobody yet).
 	std::uint32_t Owner(std::uint32_t a_refId);
 
+	// The id the session (and every call above) knows one of our game's NPCs by: a plugin's reference is the same in
+	// every game; one made at runtime goes by its spawn id (Spawns: our own shared one, or our copy of a friend's).
+	// 0: never shared (the player, a stand-in, a runtime NPC of our game's own).
+	[[nodiscard]] std::uint32_t SessionId(std::uint32_t a_formId);
+
+	// Our game's NPC under an id the session uses: the reference's own form id, or our runtime NPC's for a spawn id
+	// (0: none here).
+	[[nodiscard]] std::uint32_t LocalRef(std::uint32_t a_sessionId);
+
 	std::string Describe();
 
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted).

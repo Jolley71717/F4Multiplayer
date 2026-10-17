@@ -3,7 +3,6 @@
 #include "game/CopyHealth.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
-#include "game/Spawns.h"
 
 #include "Protocol.h"
 
@@ -79,13 +78,12 @@ namespace CopyWatch
 			return info ? static_cast<RE::ActorValueOwner*>(a_actor)->GetActorValue(*info) : -1.0f;
 		}
 
-		// The id the session knows one of our game's NPCs by (0: none): a plugin's reference is the same in every game, and
-		// one made at runtime goes by its spawn id (Spawns: our own shared one, or our copy of a friend's). Our copy of a
-		// friend's spawn is a copy like any other: a FF000F8B of the host's, its copy of the VM's raider, lay dead in the
-		// host's game while the raider fought on in the VM's, and nothing here had watched it.
+		// The id the session knows one of our game's NPCs by (NpcSync::SessionId; 0: none). Our copy of a friend's spawn
+		// is a copy like any other: a FF000F8B of the host's, its copy of the VM's raider, lay dead in the host's game
+		// while the raider fought on in the VM's, and nothing here had watched it.
 		std::uint32_t WireOf(std::uint32_t a_local)
 		{
-			return Protocol::IsShareableRef(a_local) ? a_local : Protocol::IsSpawnRef(a_local) ? Spawns::IdOf(a_local) : 0;
+			return NpcSync::SessionId(a_local);
 		}
 
 		// " (spawn X)" when our NPC goes by a spawn id, for the logs.
