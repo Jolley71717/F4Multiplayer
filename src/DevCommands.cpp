@@ -901,8 +901,9 @@ namespace DevCommands
 
 		// quests [text | edid:text | running:N | started]: story/faction/side quests with a stage set (or
 		// whose name contains text); every quest whose editor ID contains text (internal ones too, with
-		// the editor ID shown); running quests of type N; quests the player has started (an objective
-		// shown in the Pip-Boy). started=yes/no says which ones count.
+		// the editor ID shown and whether a session shares it: QuestSync::Kind); running quests of type N;
+		// quests the player has started (an objective shown in the Pip-Boy). started=yes/no says which
+		// ones count.
 		std::string Quests(std::string_view a_args)
 		{
 			std::string out;
@@ -929,8 +930,8 @@ namespace DevCommands
 					if (id.find(edid) == std::string_view::npos) {
 						continue;
 					}
-					out += std::format("{}{:08X} {} '{}' type={} stage={} running={}", count++ ? "; " : "", quest->GetFormID(), id, name, quest->data.questType,
-						quest->currentStage, (quest->data.flags & 1) != 0);
+					out += std::format("{}{:08X} {} '{}' type={} stage={} running={} shared={}", count++ ? "; " : "", quest->GetFormID(), id, name, quest->data.questType,
+						quest->currentStage, (quest->data.flags & 1) != 0, QuestSync::Kind(quest));
 					continue;
 				}
 				if (runningType) {
@@ -968,8 +969,8 @@ namespace DevCommands
 			return out;
 		}
 
-		// stages <questHex>: the quest's stages done in this game, and the ones from friends still
-		// waiting to be set here (read only).
+		// stages <questHex>: the quest's stages done in this game, whether a session shares it, and the
+		// ones from friends still waiting to be set here (read only).
 		std::string Stages(std::string_view a_args)
 		{
 			const auto id = ParseHex(a_args);
@@ -985,8 +986,8 @@ namespace DevCommands
 				return out.empty() ? std::string("none") : out;
 			};
 			const auto done = QuestStageLayout::Done(quest);
-			return std::format("stage={} flags={:04X} type={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
-				QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
+				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
