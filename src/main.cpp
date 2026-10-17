@@ -6,6 +6,7 @@
 #include "game/Hud.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
+#include "game/Perf.h"
 #include "game/Menu.h"
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
@@ -360,20 +361,34 @@ namespace
 			return;  // a save or load is under way (counted, and logged after it)
 		}
 		CountFrameThread();
+		// Our work's cost per frame, part by part (the dev channel's `perf`): on the main thread only, as a frame there is one
+		// of the game's.
+		std::optional<Perf::Frame> perfFrame;
+		if (a_onMain) {
+			perfFrame.emplace();
+		}
 		std::vector<std::function<void()>> work;
 		{
 			std::scoped_lock l{ postedLock };
 			work.swap(posted);
 		}
 		for (auto& fn : work) {
+			PERF_SCOPE("Posted");
 			fn();
 		}
 		const auto now = std::chrono::steady_clock::now();
 		FrameStats::Global().Frame(now);
 		if (gameDataReady) {
-			DevCommands::Frame();
-			Session::Frame();
-			RunInBackground();
+			{
+				PERF_SCOPE("DevCommands");
+				DevCommands::Frame();
+			}
+			Session::Frame();  // its parts are timed inside it
+			{
+				PERF_SCOPE("Background");
+				RunInBackground();
+			}
+			PERF_SCOPE("Menu");
 			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 		}
 	}
@@ -625,6 +640,15 @@ namespace SaveLoadHold
 	{
 		static Hold hold{ SAVE_OR_LOAD_LIMIT };
 		return hold;
+	}
+}
+
+namespace Perf
+{
+	Recorder& Global()
+	{
+		static Recorder recorder;
+		return recorder;
 	}
 }
 
