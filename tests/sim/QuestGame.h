@@ -50,9 +50,10 @@ namespace Sim
 		std::set<std::uint16_t> stages;           // the stages it has
 		bool                    running = false;
 		bool                    started = false;  // an objective has been shown (QuestSync::PlayerStarted)
-		// One of the story's scenes (QuestSync's STORY_SCENES): it has no objectives, so it counts as
-		// started once it is running or has stages done (QuestSync's SessionStarted).
-		bool                    scene = false;
+		// One of the game's dialogue quests (QuestFilter::IsDialogue, shared with the story): it has no
+		// objectives, so it counts as started once it is running or has stages done (QuestSync's
+		// SessionStarted); only a stage done here is past it, and once it ran and stopped it is over.
+		bool                    dialogue = false;
 		// Stages whose scripts show none of its objectives (a stage set starts the quest, but shows the
 		// first objective only if its script does), and those whose scripts show it a moment after the
 		// stage reads done (the game runs a stage's script a moment after setting it).
@@ -398,8 +399,8 @@ namespace Sim
 
 		bool Shared(const Quest& a_quest) const { return !a_quest.story || story; }
 
-		// QuestSync's SessionStarted: an objective shown, or a story scene running or with stages done.
-		static bool Started(const Quest& a_quest) { return a_quest.started || (a_quest.scene && (a_quest.running || !a_quest.done.empty())); }
+		// QuestSync's SessionStarted: an objective shown, or a dialogue quest running or with stages done.
+		static bool Started(const Quest& a_quest) { return a_quest.started || (a_quest.dialogue && (a_quest.running || !a_quest.done.empty())); }
 
 		bool Unlocking(std::uint32_t a_quest) const { return locked && (a_quest == locked->quest || a_quest == locked->releaseQuest); }
 
@@ -411,8 +412,8 @@ namespace Sim
 			}
 			const auto&         quest = it->second;
 			const bool          ranBefore = !quest.running && (quest.completed || quest.current > 0 || !quest.done.empty());
-			if (quest.scene && ranBefore) {
-				return StageLog::Quest::kGone;  // the scene ran here and is over: the rest of it is dropped
+			if (quest.dialogue && ranBefore) {
+				return StageLog::Quest::kGone;  // the dialogue quest ran here and is over: the rest of it is dropped
 			}
 			StageLog::QuestHere here;
 			here.inWorld = !loading;
@@ -436,8 +437,8 @@ namespace Sim
 		bool Settled(std::uint32_t a_id, std::uint16_t a_stage) const
 		{
 			const auto it = quests.find(a_id);
-			if (it != quests.end() && it->second.scene) {
-				return it->second.done.contains(a_stage);  // a story scene's: only a stage done here
+			if (it != quests.end() && it->second.dialogue) {
+				return it->second.done.contains(a_stage);  // a dialogue quest's: only a stage done here
 			}
 			return it == quests.end() || a_stage <= it->second.current || it->second.done.contains(a_stage);
 		}

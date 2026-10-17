@@ -121,38 +121,7 @@ TEST("open menus: menus opening and closing on the UI's thread while other threa
 // while the menus were being drawn froze the game. The guard is on the source, as the game can't run in a test.
 namespace
 {
-	// a_text without its comments and its string and character literals, line breaks kept.
-	std::string CodeOnly(std::string_view a_text)
-	{
-		std::string out;
-		out.reserve(a_text.size());
-		for (std::size_t i = 0; i < a_text.size(); ++i) {
-			const char c = a_text[i];
-			if (c == '/' && i + 1 < a_text.size() && a_text[i + 1] == '/') {
-				while (i < a_text.size() && a_text[i] != '\n') {
-					++i;
-				}
-				out += '\n';
-				continue;
-			}
-			if (c == '/' && i + 1 < a_text.size() && a_text[i + 1] == '*') {
-				for (i += 2; i + 1 < a_text.size() && !(a_text[i] == '*' && a_text[i + 1] == '/'); ++i) {
-					out += a_text[i] == '\n' ? "\n" : "";
-				}
-				++i;
-				continue;
-			}
-			if (c == '"' || c == '\'') {
-				for (++i; i < a_text.size() && a_text[i] != c; ++i) {
-					i += a_text[i] == '\\';  // what a backslash escapes is skipped
-				}
-				out += ' ';
-				continue;
-			}
-			out += c;
-		}
-		return out;
-	}
+	using SourceTree::CodeOnly;  // the source without its comments and strings (shared with the UI hold's guard)
 
 	// How often a_code looks a menu up through the UI (GetMenu, GetMenuOpen, or the UI's menu stack and map).
 	int MenuLookups(std::string_view a_code)

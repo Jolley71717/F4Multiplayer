@@ -148,16 +148,17 @@ namespace
 	}
 
 	// Diamond City's entrance scene, before anyone has come to the gate: Piper argues with Danny Sullivan
-	// over the intercom, then the gate opens. One of the story's scenes, with no objectives: none of its
-	// stages ever shows one. Its stages aren't reached in order: a player's game plays the argument (0 to
-	// 30, 50 to 95 and 400), and 32 opens the gate, 40 goes on and 100 stops the scene, the gate open.
+	// over the intercom, then the gate opens. One of the game's dialogue quests (DialogueDiamondCityEntrance,
+	// shared with the story), with no objectives: none of its stages ever shows one. Its stages aren't
+	// reached in order: a player's game plays the argument (0 to 30, 50 to 95 and 400), and 32 opens the
+	// gate, 40 goes on and 100 stops the scene, the gate open.
 	Quest DiamondCityGate()
 	{
 		Quest quest;
 		quest.stages = { 0, 1, 2, 3, 5, 7, 10, 20, 25, 30, 32, 40, 50, 52, 55, 90, 95, 100, 400 };
 		quest.quiet = quest.stages;
 		quest.story = true;
-		quest.scene = true;
+		quest.dialogue = true;
 		quest.stops = { 100 };
 		quest.awards = { { 32, DC_GATE_OPENS } };
 		return quest;
@@ -686,7 +687,7 @@ TEST("sim quests: with a shared story, a friend whose own scene at Diamond City'
 	CHECK(host.Quests().WaitingCount() == 0);
 }
 
-TEST("sim quests: a stage below where your quest already is, though you never did it, still isn't set from a friend's game unless the quest is one of the story's scenes")
+TEST("sim quests: a stage below where your quest already is, though you never did it, still isn't set from a friend's game unless the quest is a dialogue quest")
 {
 	Session s;
 	auto&   host = s.Host();

@@ -1494,12 +1494,12 @@ namespace RemotePlayers
 		// stands for theirs. Not one the engine has disabled (worn by our player: it stands where it was got into).
 		bool OursThere(const Protocol::ParkedFrame& a_parked)
 		{
-			const auto placed = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
-			if (!placed || placed->IsDeleted() || placed->IsDisabled() || placed->IsCreated()) {
+			const auto ourFrame = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
+			if (!ourFrame || ourFrame->IsDeleted() || ourFrame->IsDisabled() || ourFrame->IsCreated()) {
 				return false;
 			}
-			const auto base = placed->GetObjectReference();
-			const auto from = base && base->GetFormID() == a_parked.base ? DistanceFrom(placed, SpotOf(a_parked)) : std::nullopt;
+			const auto base = ourFrame->GetObjectReference();
+			const auto from = base && base->GetFormID() == a_parked.base ? DistanceFrom(ourFrame, SpotOf(a_parked)) : std::nullopt;
 			return from && *from <= ArmorFrames::ORIGINAL_RADIUS;
 		}
 
@@ -2501,7 +2501,7 @@ namespace RemotePlayers
 				.heading = state->heading,
 				.speed = state->speed,
 				.direction = Protocol::UnpackDirection(state->direction),
-				.pitch = static_cast<float>(state->pitch),
+				.pitch = sampled->pitch,
 				.moveMode = state->moveMode,
 				.flags = state->flags,
 				.path = path,
@@ -2547,9 +2547,9 @@ namespace RemotePlayers
 			}
 			// The furniture they use: theirs (reference, base), ours of it, and whether the stand-in is held for it and in it.
 			if (remote.seat) {
-				const auto seatRef = remote.seatRef.get();
+				const auto ourSeat = remote.seatRef.get();
 				const auto seatIn = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
-				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, seatRef ? seatRef->GetFormID() : 0, remote.seatHeld, seatIn ? seatIn->GetFormID() : 0, remote.seatTries);
+				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seatIn ? seatIn->GetFormID() : 0, remote.seatTries);
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
