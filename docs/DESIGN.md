@@ -695,7 +695,8 @@ that changes the world cannot ship without a row here.
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
   waiting), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
   line of sight, what they fight as a session player and who runs them; this game's actor for a spawned one
-  another game listed), `status` (cell, worldspace and location), `log level info|debug`
+  another game listed), `spawnenemies <base> <n> <radius>` (n NPCs of a base round the player, at most 16, facing it;
+  made at runtime, so a session shares the hostile ones as it does an ambush), `status` (cell, worldspace and location), `log level info|debug`
   (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
 - Dev commands for the menu stress loop: `menus` (the menus open and for how long, and how often each
   opened and closed, kept from their own events: no reference to a menu is taken), `input <userEvent>
