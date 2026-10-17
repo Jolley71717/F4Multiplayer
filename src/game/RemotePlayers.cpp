@@ -23,6 +23,7 @@
 #include "game/LooksMenu.h"
 #include "Config.h"
 #include "game/Equipment.h"
+#include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/WeaponFire.h"
@@ -734,6 +735,9 @@ namespace RemotePlayers
 			facts.ours = OurFrame(a_ref);
 			facts.inUse = !facts.ours && FrameInUse(a_ref);
 			facts.fromStart = FromStart(a_ref);
+			// Another player's game runs it (FrameShare.h): it stands here where their game has it.
+			const auto owner = NpcSync::Owner(a_ref->GetFormID());
+			facts.synced = owner != 0 && owner != NpcSync::LocalPlayer();
 			if (a_parked) {
 				facts.fromSpot = DistanceFrom(a_ref, SpotOf(*a_player.parked));
 				return facts;
@@ -817,8 +821,8 @@ namespace RemotePlayers
 				const auto choice = worn ? ArmorFrames::ChooseOriginal(named, a_player.powerArmorFrame, facts) : ArmorFrames::ChooseParkedOriginal(named, a_player.parked->base, facts);
 				if (static_cast<int>(choice) != a_player.originalChoice) {
 					a_player.originalChoice = static_cast<int>(choice);
-					REX::INFO("RemotePlayers: player {} {} frame {:08X} (base {:08X}); ours, {:.0f} units from where they {} and {:.0f} from where it first stood: {}", a_player.id, worn ? "wears" : "left", named,
-						worn ? a_player.powerArmorFrame : a_player.parked->base, facts.fromSpot.value_or(-1.0f), worn ? "got in" : "left theirs", facts.fromStart,
+					REX::INFO("RemotePlayers: player {} {} frame {:08X} (base {:08X}); ours{}, {:.0f} units from where they {} and {:.0f} from where it first stood: {}", a_player.id, worn ? "wears" : "left", named,
+						worn ? a_player.powerArmorFrame : a_player.parked->base, facts.synced ? " (player " + std::to_string(NpcSync::Owner(named)) + "'s game runs it)" : "", facts.fromSpot.value_or(-1.0f), worn ? "got in" : "left theirs", facts.fromStart,
 						choice == ArmorFrames::Original::kHide      ? (worn ? "hidden while they wear theirs" : "hidden while theirs stands parked elsewhere") :
 						choice == ArmorFrames::Original::kMissing   ? "none here" :
 						choice == ArmorFrames::Original::kNotLoaded ? "not loaded" :
@@ -831,11 +835,12 @@ namespace RemotePlayers
 						choice == ArmorFrames::Original::kThere     ? "it stands where they left theirs, and stands for it" :
 						                                              "-");
 				}
-				if (worn && choice == ArmorFrames::Original::kElsewhere) {
+				// A synced one (another game runs it) is moved to where their game has it: looked at again once it is there.
+				if (worn && choice == ArmorFrames::Original::kElsewhere && !facts.synced) {
 					a_player.originalMoved = true;  // not hidden later in this wear, even should it come back to the spot
 				}
 				if (original && choice != ArmorFrames::Original::kHide && choice != ArmorFrames::Original::kNotLoaded) {
-					if (worn) {
+					if (worn && !facts.synced) {
 						a_player.originalMoved = true;
 					}
 					ShowOriginal(a_player);
@@ -1464,22 +1469,6 @@ namespace RemotePlayers
 				return a_state.cell == a_localCell->GetFormID();
 			}
 			return a_state.cell == 0 && a_localCell->worldSpace && a_state.worldspace == a_localCell->worldSpace->GetFormID();
-		}
-
-		// The game's uGridsToLoad (see StandInRange), read once the game has read its ini.
-		int GridsToLoad()
-		{
-			static std::optional<int> grids;
-			if (!grids) {
-				const auto setting = RE::GetINISetting("uGridsToLoad:General");
-				const auto type = setting ? setting->GetType() : RE::Setting::SETTING_TYPE::kNone;
-				grids = type == RE::Setting::SETTING_TYPE::kUInt ? static_cast<int>(setting->GetUInt()) :
-				        type == RE::Setting::SETTING_TYPE::kInt  ? setting->GetInt() :
-				                                                   StandInRange::DEFAULT_GRIDS;
-				const bool read = type == RE::Setting::SETTING_TYPE::kUInt || type == RE::Setting::SETTING_TYPE::kInt;
-				REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, read ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
-			}
-			return *grids;
 		}
 
 		// A friend's parked frame (see ArmorFrames::ChoosePark): a copy stands where their game has the frame they got out of
@@ -2182,6 +2171,21 @@ namespace RemotePlayers
 		for (auto& [id, player] : players) {
 			DeleteLight(player);  // placed again with the new form
 		}
+	}
+
+	int GridsToLoad()
+	{
+		static std::optional<int> grids;
+		if (!grids) {
+			const auto setting = RE::GetINISetting("uGridsToLoad:General");
+			const auto type = setting ? setting->GetType() : RE::Setting::SETTING_TYPE::kNone;
+			grids = type == RE::Setting::SETTING_TYPE::kUInt ? static_cast<int>(setting->GetUInt()) :
+			        type == RE::Setting::SETTING_TYPE::kInt  ? setting->GetInt() :
+			                                                   StandInRange::DEFAULT_GRIDS;
+			const bool read = type == RE::Setting::SETTING_TYPE::kUInt || type == RE::Setting::SETTING_TYPE::kInt;
+			REX::INFO("RemotePlayers: uGridsToLoad {} ({}): friends outside are drawn up to {} cells from ours", *grids, read ? "from the ini" : "default", StandInRange::LoadedRadius(*grids));
+		}
+		return *grids;
 	}
 
 	void RebuildFaces()
