@@ -139,7 +139,7 @@ TEST("gait: a friend who starts running is shown running within half a second, a
 
 TEST("gait: walking stays a walk, at its own pace, and a sprint plays the run no faster than 1.6 times")
 {
-	for (const auto [speed, expected] : { std::pair{ 95.0f, WALK }, std::pair{ 130.0f, WALK }, std::pair{ 373.0f, RUN }, std::pair{ 700.0f, RUN } }) {
+	for (const auto& [speed, expected] : { std::pair{ 95.0f, WALK }, std::pair{ 130.0f, WALK }, std::pair{ 373.0f, RUN }, std::pair{ 700.0f, RUN } }) {
 		Graph  graph;
 		Puppet puppet;
 		auto   now = t0;

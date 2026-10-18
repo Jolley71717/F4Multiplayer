@@ -385,9 +385,15 @@ TEST("session file: a damaged file that another program holds open is read past,
 		held << "FMPS and then nothing";
 		held.flush();
 		CHECK(SittingIn(SessionFile::Recover(files.path, say)) == 1);
-		CHECK(!std::filesystem::exists(files.aside));
 		REQUIRE(!log.empty());
+#ifdef _WIN32
+		CHECK(!std::filesystem::exists(files.aside));
 		CHECK(log[0].find("nor renamed") != std::string::npos);
+#else
+		// Linux lets a file another program holds open be renamed: it is set aside like any damaged file.
+		CHECK(std::filesystem::exists(files.aside));
+		CHECK(log[0].find("kept as") != std::string::npos);
+#endif
 	}
 	REQUIRE(SessionFile::Save(files.path, Sitting(3)));
 	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);

@@ -19,9 +19,16 @@ namespace SourceTree
 	inline std::optional<std::filesystem::path> Root()
 	{
 		std::vector<std::filesystem::path> starts;
+#ifdef _WIN32
 		if (char* exe = nullptr; _get_pgmptr(&exe) == 0 && exe && *exe) {
 			starts.emplace_back(std::filesystem::path{ exe }.parent_path());
 		}
+#else
+		std::error_code error;
+		if (const auto exe = std::filesystem::read_symlink("/proc/self/exe", error); !error) {
+			starts.emplace_back(exe.parent_path());
+		}
+#endif
 		starts.emplace_back(std::filesystem::current_path());
 		for (auto at : starts) {
 			for (;; at = at.parent_path()) {

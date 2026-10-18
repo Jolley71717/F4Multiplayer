@@ -1,5 +1,8 @@
-﻿-- include subprojects
-includes("lib/commonlibf4")
+﻿-- include subprojects. Only the plugin needs CommonLibF4 (and MSVC); on Linux (.oss-scanner/Dockerfile)
+-- the game-free targets below are built with gcc and the plugin is skipped.
+if is_plat("windows") then
+    includes("lib/commonlibf4")
+end
 
 -- set project constants
 set_project("F4Multiplayer")
@@ -7,6 +10,11 @@ set_version("0.8.8")
 set_license("GPL-3.0")
 set_languages("c++23")
 set_warnings("allextra")
+if not is_plat("windows") then
+    -- gcc's -Wextra warns on every aggregate init that leaves fields to their defaults, which the code
+    -- does on purpose everywhere (MSVC, the plugin's compiler, says nothing)
+    add_cxxflags("-Wno-missing-field-initializers")
+end
 
 -- add common rules
 add_rules("mode.debug", "mode.releasedbg")
@@ -16,9 +24,11 @@ add_requires("enet v1.3.18")  -- pinned: a new enet release must not slip into a
 
 -- keep the build machine's paths (and so the user name) out of the binaries: __FILE__ loses the
 -- project directory, and the .pdb is referred to by name only
-add_cxxflags("/d1trimfile:" .. os.projectdir():gsub("/", "\\") .. "\\", { force = true })
-add_ldflags("/PDBALTPATH:%_PDB%", { force = true })
-add_shflags("/PDBALTPATH:%_PDB%", { force = true })
+if is_plat("windows") then
+    add_cxxflags("/d1trimfile:" .. os.projectdir():gsub("/", "\\") .. "\\", { force = true })
+    add_ldflags("/PDBALTPATH:%_PDB%", { force = true })
+    add_shflags("/PDBALTPATH:%_PDB%", { force = true })
+end
 
 -- static analysis: xmake f --analyze=y runs the MSVC analyser on our targets
 option("analyze")
@@ -29,7 +39,7 @@ option_end()
 
 -- only our own sources are analysed and reported; <...> headers (lib/, enet, the SDK) are external
 local function analyze()
-    if has_config("analyze") then
+    if has_config("analyze") and is_plat("windows") then
         add_cxxflags("/analyze", "/analyze:external-", "/external:anglebrackets", "/external:W0", { force = true })
     end
 end
@@ -50,7 +60,7 @@ end
 
 -- Tracy's client: no sampling, system tracing, call stacks or crash handler (the crash logger keeps those), and
 -- started by the plugin's load rather than in DllMain
-if tracy then
+if tracy and is_plat("windows") then
     target("TracyClient")
         set_kind("static")
         set_warnings("none")
@@ -73,9 +83,12 @@ target("F4MPCommon")
     add_includedirs("common", { public = true })
     analyze()
     add_packages("enet", { public = true })
-    add_syslinks("ws2_32", "winmm", { public = true })
+    if is_plat("windows") then
+        add_syslinks("ws2_32", "winmm", { public = true })
+    end
 
--- client plugin, loaded into the game by F4SE
+-- client plugin, loaded into the game by F4SE (Windows and MSVC only: it needs CommonLibF4 and the game)
+if is_plat("windows") then
 target("F4Multiplayer")
 	add_defines('F4MP_BUILD_LABEL="' .. (os.getenv("F4MP_LABEL") or "") .. '"')  -- tools/package.ps1 sets it to the label and commit ("rc3 1a2b3c4"), shown in the log
     add_rules("commonlibf4.plugin", {
@@ -97,6 +110,7 @@ target("F4Multiplayer")
         add_deps("TracyClient")
         add_defines("F4MP_TRACY")
     end
+end
 
 -- standalone dedicated server
 target("F4MPServer")

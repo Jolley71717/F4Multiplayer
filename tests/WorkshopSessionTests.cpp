@@ -279,7 +279,8 @@ TEST("workshop session: a friend who loads a save gets the others' building back
 	// His own piece is his game's own, not sent back to him as a copy.
 	for (const auto& packet : answer) {
 		if (!packet.empty() && packet[0] == Type(MT::kWorkshopItems)) {
-			for (const auto& item : *Protocol::DecodeWorkshopItems(packet)) {
+			const auto items = Protocol::DecodeWorkshopItems(packet);  // named: the loop's range must outlive the loop
+			for (const auto& item : *items) {
 				CHECK(item.playerId == alice);
 			}
 		}

@@ -514,7 +514,8 @@ TEST("spawns: two games share an ambush through the server, and the joiner's kil
 			if (packet[0] == Type(MT::kSpawned)) {
 				a_theirs.Add(*Protocol::DecodeSpawn(packet), a_us);
 			} else if (packet[0] == Type(MT::kActorOwners)) {
-				for (const auto& owner : *Protocol::DecodeOwners(packet)) {
+				const auto owners = Protocol::DecodeOwners(packet);  // named: the loop's range must outlive the loop
+				for (const auto& owner : *owners) {
 					if (!a_ours.Answered(owner.refId, owner.playerId, a_us, T0) && owner.playerId == 0) {
 						a_theirs.Gone(owner.refId);
 					}

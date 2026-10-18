@@ -99,10 +99,18 @@ TEST("log rotation: a log another program holds open is reported, not thrown, an
 			threw = true;
 		}
 		CHECK(!threw);
+#ifdef _WIN32
 		CHECK(ec);
+#else
+		CHECK(!ec);  // Linux lets a file another program holds open be renamed: the rotation goes through
+#endif
 	}
+#ifdef _WIN32
 	// The held log is still there to be overwritten; the older one moved on and is kept.
 	CHECK(Read(log) == "held");
+#else
+	CHECK(Read(LogRotation::Kept(log, 1)) == "held");
+#endif
 	CHECK(Read(LogRotation::Kept(log, 2)) == "older");
 	// The next launch, with nothing holding it, is back to normal.
 	CHECK(!Launch(log, "next"));

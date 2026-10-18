@@ -17,7 +17,7 @@ namespace
 	using SavedScraps::Seen;
 	struct FakeGame;
 	using Walk = SavedScraps::Walk<FakeGame>;
-	using Report = std::pair<std::uint32_t, std::uint32_t>;  // (reference, its workbench)
+	using Sent = std::pair<std::uint32_t, std::uint32_t>;  // one Report call: (reference, its workbench)
 
 	constexpr std::uint32_t COMMONWEALTH = 0x0000003C;  // the worldspace: its persistent cell is walked under its ID
 	constexpr std::uint32_t SANCTUARY = 0x0000E0C2;     // an exterior cell of it
@@ -40,7 +40,7 @@ namespace
 
 		std::map<std::uint32_t, Piece> pieces;
 		std::set<std::uint32_t>        attached{ COMMONWEALTH, SANCTUARY, RED_ROCKET, HOME_PLATE };
-		std::vector<Report>            reports;
+		std::vector<Sent>              reports;
 		bool                           sending = true;
 		int                            examined = 0;
 
@@ -110,7 +110,7 @@ namespace
 
 	bool Reported(const FakeGame& a_game, std::uint32_t a_ref, std::uint32_t a_bench)
 	{
-		return std::ranges::find(a_game.reports, Report{ a_ref, a_bench }) != a_game.reports.end();
+		return std::ranges::find(a_game.reports, Sent{ a_ref, a_bench }) != a_game.reports.end();
 	}
 }
 
@@ -303,7 +303,7 @@ TEST("saved scraps: the walk looks at no more than its budget a frame, and carri
 	CHECK(round->counts.refs == 1000);
 	CHECK(walk.SeenCounts().refs == 1000);
 	CHECK(walk.Queued() == 0);
-	CHECK(SavedScraps::WALK_PER_FRAME == 512);
+	static_assert(SavedScraps::WALK_PER_FRAME == 512);
 }
 
 TEST("saved scraps: a cell gone since the look is skipped, and one that goes mid-walk is given up")
@@ -432,7 +432,7 @@ TEST("saved scraps: pieces waiting for a workbench are capped; past the cap they
 	CHECK(ledger.Holds(0x1001));
 	CHECK(ledger.Holds(0x1002));
 	CHECK(!ledger.Holds(0x1003));
-	CHECK(SavedScraps::MAX_WAITING == 4096);
+	static_assert(SavedScraps::MAX_WAITING == 4096);
 }
 
 TEST("saved scraps: a frame's budget always ends the frame, to the reference, whatever the cells hold")

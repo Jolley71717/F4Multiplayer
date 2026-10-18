@@ -242,9 +242,15 @@ namespace ProtocolSamples
 
 	// Whether a byte is a message type. The compiler keeps this list whole: a type added to the enum
 	// and not here stops the tests building (C4062, turned into an error just for this switch), and the
-	// protocol tests fail for a type here that has no entry in Samples().
-#pragma warning(push)
-#pragma warning(error : 4062)
+	// protocol tests fail for a type here that has no entry in Samples(). gcc's -Wswitch (on, in -Wall)
+	// is the same check.
+#ifdef _MSC_VER
+#	pragma warning(push)
+#	pragma warning(error : 4062)
+#else
+#	pragma GCC diagnostic push
+#	pragma GCC diagnostic error "-Wswitch"
+#endif
 	constexpr bool IsMessageType(std::uint8_t a_byte)
 	{
 		switch (static_cast<MT>(a_byte)) {
@@ -317,5 +323,9 @@ namespace ProtocolSamples
 		}
 		return false;
 	}
-#pragma warning(pop)
+#ifdef _MSC_VER
+#	pragma warning(pop)
+#else
+#	pragma GCC diagnostic pop
+#endif
 }

@@ -1429,7 +1429,7 @@ TEST("server workshop: a friend who loads a save from another session, or from b
 
 	// The building went with the world his game had before the load, whatever session that save was
 	// made in: the copies it holds are only found again when the building is sent.
-	for (const auto session : { welcome->sessionId ^ 0x5A5A5A5Aull, std::uint64_t{ 0 } }) {
+	for (const auto session : { welcome->sessionId ^ std::uint64_t{ 0x5A5A5A5A }, std::uint64_t{ 0 } }) {
 		f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ session, 0 }));
 		const auto batches = Decoded(Received(f, 2), MT::kWorkshopItems, Protocol::DecodeWorkshopItems);
 		REQUIRE(batches.size() == 1);
