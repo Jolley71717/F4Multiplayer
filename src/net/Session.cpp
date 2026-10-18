@@ -273,6 +273,7 @@ namespace Session
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
+					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
 					refusals.Clear();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :

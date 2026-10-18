@@ -144,6 +144,8 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> vendorChests;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
+		// Pending pickups whose item was found in no cell, and since when (see TryApplyPickup).
+		std::unordered_map<std::uint32_t, Clock::time_point> pickupUnplacedSince;
 		// Every pickup we were told of this session (for how full its history is; see NoticeHistory).
 		std::unordered_set<std::uint32_t> pickedUpKnown;
 		std::uint64_t                     historyNoticedIn = 0;  // the session the player was told of (once a session)
@@ -1176,8 +1178,17 @@ namespace WorldSync
 				return true;
 			}
 			// Taken out of this world, never out of an inventory: a persistent item's reference stays itself in the
-			// inventory that took it, ours too (OwnGear).
-			if (!Equipment::MayChange(ref, OwnGear::Change::kTakeLoose)) {
+			// inventory that took it, ours too (OwnGear). One in no cell and no inventory the engine names may be
+			// between cells for a moment: it waits and is tried again, for OwnGear::PICKUP_WAIT.
+			const auto verdict = Equipment::Judge(ref, OwnGear::Change::kTakeLoose);
+			if (verdict == OwnGear::Verdict::kNotPlaced) {
+				const auto now = Clock::now();
+				if (OwnGear::TryAgain(verdict, now - pickupUnplacedSince.try_emplace(a_refId, now).first->second)) {
+					return false;
+				}
+			}
+			pickupUnplacedSince.erase(a_refId);
+			if (!Equipment::Count(ref, OwnGear::Change::kTakeLoose, verdict)) {
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
@@ -1691,6 +1702,7 @@ namespace WorldSync
 		switchOnTried.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
+		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
 		hitLastFrame.clear();
 		recentActivations.clear();

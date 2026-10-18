@@ -92,7 +92,71 @@ TEST("own gear: a friend's pickup takes the loose item out of this world, not ou
 	// container's.
 	Target held;
 	held.inWorld = false;
+	held.heldHere = true;
 	CHECK(OwnGear::Judge(Change::kTakeLoose, held) == Verdict::kInInventory);
+	Target ours;
+	ours.inWorld = false;
+	ours.heldByPlayer = true;
+	CHECK(OwnGear::Judge(Change::kTakeLoose, ours) == Verdict::kInOurInventory);
+	// In no cell and no inventory the engine names: being loaded or moved, for now.
+	Target between;
+	between.inWorld = false;
+	CHECK(OwnGear::Judge(Change::kTakeLoose, between) == Verdict::kNotPlaced);
+	// A cell wins over a holder the engine still names.
+	Target back = ours;
+	back.inWorld = true;
+	CHECK(OwnGear::Judge(Change::kTakeLoose, back) == Verdict::kGo);
+}
+
+TEST("own gear: a pickup of an item in no cell waits and is tried again, for a while; one an inventory holds is dropped at once")
+{
+	using namespace std::chrono_literals;
+	CHECK(OwnGear::TryAgain(Verdict::kNotPlaced, 0s));
+	CHECK(OwnGear::TryAgain(Verdict::kNotPlaced, 29s));
+	CHECK(!OwnGear::TryAgain(Verdict::kNotPlaced, OwnGear::PICKUP_WAIT));
+	CHECK(!OwnGear::TryAgain(Verdict::kNotPlaced, 5min));
+	// Held by our player, a container or an NPC, or gone: final, whatever the wait.
+	CHECK(!OwnGear::TryAgain(Verdict::kInOurInventory, 0s));
+	CHECK(!OwnGear::TryAgain(Verdict::kInInventory, 0s));
+	CHECK(!OwnGear::TryAgain(Verdict::kOurPlayer, 0s));
+	CHECK(!OwnGear::TryAgain(Verdict::kGone, 0s));
+	CHECK(!OwnGear::TryAgain(Verdict::kGo, 0s));
+}
+
+TEST("own gear: benign refusals have a log budget of their own and can't hide the alarming ones")
+{
+	CHECK(OwnGear::Alarming(Verdict::kOurPlayer));
+	CHECK(OwnGear::Alarming(Verdict::kWrongActor));
+	CHECK(OwnGear::Alarming(Verdict::kNotCopy));
+	CHECK(OwnGear::Alarming(Verdict::kOurFrame));
+	CHECK(OwnGear::Alarming(Verdict::kInOurInventory));
+	CHECK(!OwnGear::Alarming(Verdict::kGone));
+	CHECK(!OwnGear::Alarming(Verdict::kInInventory));
+	CHECK(!OwnGear::Alarming(Verdict::kNotPlaced));
+
+	using Log = OwnGear::LogBudget::Log;
+	OwnGear::LogBudget budget;
+	CHECK(budget.Take(Verdict::kGo) == Log::kSkip);
+	// A join's catch-up: far more gone items than the benign budget.
+	std::uint32_t logged = 0;
+	for (int i = 0; i < 500; ++i) {
+		if (budget.Take(Verdict::kGone) != Log::kSkip) {
+			++logged;
+		}
+	}
+	CHECK(logged == OwnGear::LogBudget::BENIGN_LIMIT);
+	// The alarming ones are still logged after it, up to their own cap, the last one saying so.
+	CHECK(budget.Take(Verdict::kWrongActor) == Log::kLog);
+	CHECK(budget.Take(Verdict::kOurPlayer) == Log::kLog);
+	for (std::uint32_t i = 2; i + 1 < OwnGear::LogBudget::ALARMING_LIMIT; ++i) {
+		CHECK(budget.Take(Verdict::kNotCopy) == Log::kLog);
+	}
+	CHECK(budget.Take(Verdict::kOurPlayer) == Log::kLogLast);
+	CHECK(budget.Take(Verdict::kOurPlayer) == Log::kSkip);
+	// A new session starts the budgets again.
+	budget = {};
+	CHECK(budget.Take(Verdict::kOurPlayer) == Log::kLog);
+	CHECK(budget.Take(Verdict::kGone) == Log::kLog);
 }
 
 TEST("own gear: a friend's loot goes to containers and corpses, never to a stand-in")

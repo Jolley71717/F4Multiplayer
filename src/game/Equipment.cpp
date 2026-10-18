@@ -64,15 +64,15 @@ namespace Equipment
 			return a_actor->GetObjectReference();
 		}
 
-		OwnGear::Tally ownGear;
-		std::uint32_t  ownGearLogged = 0;
-		constexpr std::uint32_t OWN_GEAR_LOG_LIMIT = 50;  // the local player's refusals are always logged
+		// Both start afresh with each session (OnSessionStart).
+		OwnGear::Tally     ownGear;
+		OwnGear::LogBudget ownGearLog;
 
 		constexpr std::uint32_t PIP_BOY = 0x00021B3B;  // Fallout4.esm: the Pip-Boy (armor)
 		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
 	}
 
-	bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
 	{
 		OwnGear::Target target;
 		target.exists = a_ref && !a_ref->IsDeleted();
@@ -86,23 +86,57 @@ namespace Equipment
 			const auto ours = player ? PowerArmorFrameOf(player) : RE::NiPointer<RE::TESObjectREFR>{};
 			target.playersFrame = ours && ours.get() == a_ref;
 			target.inWorld = a_ref->GetParentCell() != nullptr;
+			// A persistent reference an inventory took keeps the engine's handle of that inventory (ExtraReferenceHandles'
+			// containerRef). Read only for one in no cell: whose inventory it is decides whether a pickup waits.
+			if (!target.inWorld && a_ref->extraList) {
+				if (const auto handles = a_ref->extraList->GetByType<RE::ExtraReferenceHandles>()) {
+					if (const auto holder = handles->containerRef.get(); holder && holder.get() != a_ref) {
+						target.heldByPlayer = holder->IsPlayerRef() || holder.get() == player;
+						target.heldHere = !target.heldByPlayer;
+					}
+				}
+			}
 		}
-		const auto verdict = OwnGear::Judge(a_change, target);
-		if (ownGear.Count(verdict)) {
+		return OwnGear::Judge(a_change, target);
+	}
+
+	bool Count(RE::TESObjectREFR* a_ref, OwnGear::Change a_change, OwnGear::Verdict a_verdict)
+	{
+		if (ownGear.Count(a_verdict)) {
 			return true;
 		}
-		if (verdict == OwnGear::Verdict::kOurPlayer || ownGearLogged++ < OWN_GEAR_LOG_LIMIT) {
-			REX::WARN("Equipment: {} for {:08X} refused: {}", OwnGear::Name(a_change), a_ref ? a_ref->GetFormID() : 0, OwnGear::Name(verdict));
+		switch (ownGearLog.Take(a_verdict)) {
+		case OwnGear::LogBudget::Log::kSkip:
+			break;
+		case OwnGear::LogBudget::Log::kLog:
+			REX::WARN("Equipment: {} for {:08X} refused: {}", OwnGear::Name(a_change), a_ref ? a_ref->GetFormID() : 0, OwnGear::Name(a_verdict));
+			break;
+		case OwnGear::LogBudget::Log::kLogLast:
+			REX::WARN("Equipment: {} for {:08X} refused: {} (the last {} refusal logged this session; net status counts them)", OwnGear::Name(a_change),
+				a_ref ? a_ref->GetFormID() : 0, OwnGear::Name(a_verdict), OwnGear::Alarming(a_verdict) ? "alarming" : "benign");
+			break;
 		}
 		return false;
+	}
+
+	bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	{
+		return Count(a_ref, a_change, Judge(a_ref, a_change));
+	}
+
+	void OnSessionStart()
+	{
+		ownGear = {};
+		ownGearLog = {};
 	}
 
 	std::string DescribeOwnGear()
 	{
 		using OwnGear::Verdict;
 		const auto of = [](Verdict a_verdict) { return ownGear.refused[static_cast<std::size_t>(a_verdict)]; };
-		return std::format("ownGear: refused={} ourPlayer={} wrongActor={} notCopy={} ourFrame={} inInventory={} gone={}", ownGear.Refused(), ownGear.ourPlayer, of(Verdict::kWrongActor),
-			of(Verdict::kNotCopy), of(Verdict::kOurFrame), of(Verdict::kInInventory), of(Verdict::kGone));
+		return std::format("ownGear: refused={} ourPlayer={} wrongActor={} notCopy={} ourFrame={} inOurInventory={} inInventory={} notPlaced={} gone={}", ownGear.Refused(),
+			ownGear.ourPlayer, of(Verdict::kWrongActor), of(Verdict::kNotCopy), of(Verdict::kOurFrame), of(Verdict::kInOurInventory), of(Verdict::kInInventory),
+			of(Verdict::kNotPlaced), of(Verdict::kGone));
 	}
 
 	std::string DescribeInventory(RE::Actor* a_actor)

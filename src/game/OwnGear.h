@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -35,6 +36,8 @@ namespace OwnGear
 		bool madeHere = false;       // made by this game at runtime (FF......): a copy placed for a stand-in
 		bool playersFrame = false;   // the power armor frame the local player is in
 		bool inWorld = true;         // in a cell: a reference an inventory holds (a persistent one, picked up) has none
+		bool heldByPlayer = false;   // in no cell, and the engine names the local player as the inventory that holds it
+		bool heldHere = false;       // in no cell, and the engine names another inventory here as its holder (a container's, an NPC's)
 	};
 
 	enum class Verdict : std::uint8_t
@@ -45,7 +48,9 @@ namespace OwnGear
 		kWrongActor,   // not the kind of actor the change is for (a stand-in's gear on an NPC, an NPC's on a stand-in)
 		kNotCopy,      // a frame this game didn't place for the stand-in: someone's own, or the world's
 		kOurFrame,     // the frame the local player is in
-		kInInventory,  // a picked-up item that is in an inventory here (ours, or a container's), not loose in the world
+		kInInventory,     // a picked-up item that a container or an NPC here holds, not loose in the world
+		kInOurInventory,  // a picked-up item that the local player holds: theirs alone
+		kNotPlaced,       // a picked-up item in no cell and in no inventory the engine names: being loaded or moved, for now
 		kCount,
 	};
 
@@ -68,7 +73,13 @@ namespace OwnGear
 			}
 			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kTakeLoose:
-			return a_target.inWorld ? Verdict::kGo : Verdict::kInInventory;
+			if (a_target.inWorld) {
+				return Verdict::kGo;
+			}
+			if (a_target.heldByPlayer) {
+				return Verdict::kInOurInventory;
+			}
+			return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
 		case Change::kContainer:
 			return a_target.standIn ? Verdict::kWrongActor : Verdict::kGo;
 		case Change::kCount:
@@ -113,11 +124,76 @@ namespace OwnGear
 			return "our player's frame";
 		case Verdict::kInInventory:
 			return "in an inventory, not loose";
+		case Verdict::kInOurInventory:
+			return "in our player's inventory";
+		case Verdict::kNotPlaced:
+			return "in no cell";
 		case Verdict::kCount:
 			break;
 		}
 		return "?";
 	}
+
+	// A friend's pickup refused only because the item is in no cell and in no inventory the engine names (a loose item
+	// can report none for a moment: being loaded, moved, its cell detaching) is kept and tried again, for this long since
+	// that was first seen; past it, it is dropped. Every other refusal is final: an item an inventory holds (the local
+	// player's, a container's, an NPC's) is never taken out of it for a friend.
+	inline constexpr std::chrono::seconds PICKUP_WAIT{ 30 };
+
+	constexpr bool TryAgain(Verdict a_verdict, std::chrono::steady_clock::duration a_waited)
+	{
+		return a_verdict == Verdict::kNotPlaced && a_waited < PICKUP_WAIT;
+	}
+
+	// Whether a refusal shows the session about to change what it must never change (the local player and what they
+	// hold, a stand-in's gear on an NPC or an NPC's on a stand-in, a frame nobody placed for a stand-in), rather than a
+	// change that found nothing to do (gone, already in an inventory, in no cell), which a join's catch-up can bring by
+	// the hundred.
+	constexpr bool Alarming(Verdict a_verdict)
+	{
+		switch (a_verdict) {
+		case Verdict::kOurPlayer:
+		case Verdict::kWrongActor:
+		case Verdict::kNotCopy:
+		case Verdict::kOurFrame:
+		case Verdict::kInOurInventory:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	// How many refusals are logged in a session: the alarming ones on a budget of their own, so the benign ones can't
+	// use it up and hide them.
+	struct LogBudget
+	{
+		static constexpr std::uint32_t ALARMING_LIMIT = 100;
+		static constexpr std::uint32_t BENIGN_LIMIT = 50;
+
+		enum class Log : std::uint8_t
+		{
+			kSkip,
+			kLog,
+			kLogLast,  // logged, and the last of its kind this session
+		};
+
+		std::uint32_t alarming = 0;
+		std::uint32_t benign = 0;
+
+		Log Take(Verdict a_verdict)
+		{
+			if (a_verdict == Verdict::kGo) {
+				return Log::kSkip;
+			}
+			const bool alarm = Alarming(a_verdict);
+			auto&      used = alarm ? alarming : benign;
+			const auto limit = alarm ? ALARMING_LIMIT : BENIGN_LIMIT;
+			if (used >= limit) {
+				return Log::kSkip;
+			}
+			return ++used == limit ? Log::kLogLast : Log::kLog;
+		}
+	};
 
 	// What the session's inventory and equipment changes came to, for `net status`: refused ones by verdict.
 	struct Tally

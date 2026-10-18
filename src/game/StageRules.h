@@ -44,9 +44,16 @@ namespace StageRules
 	// came from the quest). Story is only flagged in Fallout4.esm: Far Harbor files its own story as
 	// side quests and main quests both. Sorted by file, quest and stage.
 	// The dialogue quests (shared with the story since, see QuestFilter::IsDialogue) were scanned again for what their
-	// stages take from the player (tools/questscan.ps1): five pay or sell, and none of them, nor any other shared
-	// quest's stage, takes the player's weapons, armor or Pip-Boy, unequips them, or empties their inventory (only
-	// MQ101, the opening, and DN019JoinCult do, both misc quests, never shared).
+	// stages take from the player (tools/questscan.ps1): five pay or sell. What that scan sees: a quest's own
+	// Fragment_Stage_ functions calling RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem,
+	// UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property. In those it found no shared
+	// quest's stage taking weapons, armor or the Pip-Boy, unequipping them, or emptying the inventory (RemoveAllItems is
+	// only in MQ101, the opening, and DN019JoinCult, both misc quests, never shared). What it does not see: a call made
+	// through the quest's own script (kmyQuest) or another script a fragment calls, through an alias that holds the
+	// player (Alias_Player.GetRef()) or a variable it does not follow; a scene's, a dialogue line's or any other script's
+	// that a stage starts; nor that a shared stage sets a stage of another quest, whose own taking is listed under that
+	// quest (a misc one reads as never shared). So it is no proof that no shared stage does; OwnGear guards the local
+	// player's gear from what the session itself does, not from what a stage's own scripts do once it is set.
 	inline constexpr Rule RULES[] = {
 		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
 		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
