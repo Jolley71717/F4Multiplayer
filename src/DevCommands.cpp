@@ -795,9 +795,9 @@ namespace DevCommands
 			return out + " held:" + Equipment::DescribeHeld(actor) + " hands:" + Equipment::DescribeHands(actor);
 		}
 
-		// handthrowable on|off: hangs the grenade's model (the model database's own node, never a copy) in the hand of a
-		// stand-in replaying a friend's throw, from its wind-up to its release (HandThrowable.h, docs/GRENADE-IN-HAND.md
-		// round 4). Off at every start; off takes every model out of every hand at once.
+		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
+		// its release: the engine's own culled WeaponLeft is drawn, or failing one the model database's own node is hung
+		// there (HandThrowable.h, docs/GRENADE-IN-HAND.md round 4). Off at every start; off takes every one out at once.
 		std::string HandThrowableCommand(std::string_view a_args)
 		{
 			if (a_args != "on" && a_args != "off") {

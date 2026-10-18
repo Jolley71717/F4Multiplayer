@@ -70,7 +70,7 @@ namespace WeaponFire
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
 
-	// Dev (handthrowable on|off, off at every start): the grenade's model is hung in the hand of a stand-in replaying a
+	// Dev (handthrowable on|off, off at every start): the grenade is shown in the hand of a stand-in replaying a
 	// friend's throw, from its wind-up to its release (HandThrowable.h). Main thread, but for HandThrowables(), which
 	// the animation hook reads.
 	void               SetHandThrowables(bool a_on);

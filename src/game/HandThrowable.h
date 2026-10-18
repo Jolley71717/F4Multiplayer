@@ -8,14 +8,14 @@
 #include <vector>
 
 // A friend's stand-in plays their throw with an empty hand (bead 2r3, docs/GRENADE-IN-HAND.md). The engine lists the
-// grenade as equipped and the throw's weaponAttach(2) comes, but on an actor whose throw it did not start itself it
-// hangs nothing: on its own throws it hangs the grenade under LArm_Hand as a child named WeaponLeft. Round 3 hung a
-// clone of the grenade's model there and crashed in BSGeometry::ProcessClone, so this round clones nothing. The model
-// the engine's model database keeps for the grenade is hung under the stand-in's LArm_Hand itself, from its graph's
-// weaponAttach(2) to its release, and taken off again on every way out (WeaponFire.cpp does the scene graph work).
-// A node has one parent, so one model hangs on one stand-in at a time. It is a dev-channel experiment, off until
-// `handthrowable on`: hanging the database's own copy in a live skeleton is not something the engine is known to do.
-// This is the bookkeeping, pure so it can be tested without the game.
+// grenade as equipped and hangs its model under the stand-in's LArm_Hand in a child named WeaponLeft, as on its own
+// throws, but keeps that node (and the model in it) culled: on a throw it did not start itself it never draws them
+// (seen on the rig, 2026-10-18). So at the replayed throw's weaponAttach(2) that culled WeaponLeft is drawn, and culled
+// again at the release and on every other way out (WeaponFire.cpp does the scene graph work). A hand with no WeaponLeft
+// gets the model the engine's model database keeps for the grenade, hung there itself (never a clone: round 3 cloned
+// it and crashed in BSGeometry::ProcessClone); a node has one parent, so that model hangs on one stand-in at a time.
+// A dev-channel experiment, off until `handthrowable on`. This is the bookkeeping, pure so it can be tested without
+// the game.
 namespace HandThrowable
 {
 	using Clock = std::chrono::steady_clock;
@@ -137,7 +137,8 @@ namespace HandThrowable
 		bool          replayed = false;     // a friend's throw replayed on it, not let go of yet (ThrowReplays)
 		bool          loaded = false;       // the actor exists, lives and has its 3D
 		bool          handFound = false;    // ... with an LArm_Hand node
-		bool          engineShows = false;  // ... which has a child named WeaponLeft
+		bool          engineShows = false;  // ... which has a child named WeaponLeft that is drawn
+		bool          engineHides = false;  // ... or one holding the grenade's model, culled (a stand-in's: seen on the rig)
 		std::uint32_t throwable = 0;        // the grenade or mine the engine lists as equipped on it (0: none)
 	};
 
@@ -147,7 +148,7 @@ namespace HandThrowable
 		bool          enabled = false;
 		bool          loaded = false;         // the actor exists, lives, and its 3D is the one the model was hung in
 		bool          underHand = false;      // the model's parent is the LArm_Hand it was hung under, still in that 3D
-		bool          engineShows = false;    // that hand has a child named WeaponLeft
+		bool          engineShows = false;    // that hand has a child named WeaponLeft that is drawn (not one we drew)
 		std::uint32_t throwable = 0;          // the grenade or mine the engine lists as equipped on it (0: none)
 	};
 
@@ -156,6 +157,7 @@ namespace HandThrowable
 		std::uint32_t     throwable = 0;  // the weapon whose model hangs (its model's one node in the database)
 		Clock::time_point since{};
 		bool              released = false;
+		bool              shared = true;  // the database's own node hangs (false: the stand-in's own WeaponLeft is drawn)
 	};
 
 	class Book
@@ -185,7 +187,8 @@ namespace HandThrowable
 			if (holds.contains(a_actor)) {
 				return Skip::kHolding;
 			}
-			if (ModelBusy(a_seen.throwable)) {
+			// Drawing a stand-in's own WeaponLeft shares nothing: only the database's node is one for every stand-in.
+			if (!a_seen.engineHides && ModelBusy(a_seen.throwable)) {
 				return Skip::kModelBusy;
 			}
 			if (holds.size() >= MAX_HOLDS) {
@@ -194,8 +197,9 @@ namespace HandThrowable
 			return Skip::kNone;
 		}
 
-		// The model of this throwable hangs on the actor from now.
-		void Hung(std::uint32_t a_actor, std::uint32_t a_throwable, Clock::time_point a_now) { holds[a_actor] = { a_throwable, a_now, false }; }
+		// The model of this throwable is in the actor's hand from now: the database's own node hung there (a_shared), or
+		// the engine's own WeaponLeft, culled until now, drawn.
+		void Hung(std::uint32_t a_actor, std::uint32_t a_throwable, Clock::time_point a_now, bool a_shared = true) { holds[a_actor] = { a_throwable, a_now, false, a_shared }; }
 
 		// The actor's graph let go of the grenade: its model comes off at the next check.
 		void Released(std::uint32_t a_actor)
@@ -209,7 +213,7 @@ namespace HandThrowable
 		[[nodiscard]] bool ModelBusy(std::uint32_t a_throwable) const
 		{
 			for (const auto& [actor, hold] : holds) {
-				if (hold.throwable == a_throwable) {
+				if (hold.shared && hold.throwable == a_throwable) {
 					return true;
 				}
 			}

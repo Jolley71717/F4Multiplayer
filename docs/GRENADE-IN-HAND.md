@@ -39,7 +39,7 @@ nothing unequips it. **The engine lists the grenade but never shows its model.**
 | 1 (83fd2e9) | Equip through the equip manager instead of the console | The engine lists the grenade at equip index 2. The throw's `weaponAttach(2)` event arrives (`attaches=` in `net status`). The hand is still empty. |
 | 2 (25341ad) | Ask `TESObjectREFR::AttachWeapon(instance, index 2)` for the 3D | The biped's grenade slot (`3d[42]` in `equipped`) stays empty, and so does the hand. |
 | 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge: the game crashed in `BSGeometry::ProcessClone` (bead notes). |
-| 4 (this branch) | Read-only readouts of the preload and the hands. The database's own node, no clone, hung under `LArm_Hand` behind `handthrowable on` (off at every start) | Not run yet: checks A to D below. |
+| 4 (this branch) | Read-only readouts of the preload and the hands. The database's own node, no clone, hung under `LArm_Hand` behind `handthrowable on` (off at every start) | The readout showed the engine *does* hang the grenade on the stand-in, in a `WeaponLeft` it keeps culled, so the hang never ran (`the engine shows its own`). Reworked to draw that node instead: the grenade shows. See "Round 4 on the rig" below. |
 
 Round 3 also noted that the local player's biped grenade slot is empty, yet the player is shown the
 grenade. So the engine hangs a throwable's model at attach time somewhere other than the biped slot.
@@ -190,6 +190,37 @@ show a grenade now. It is drafted in `src/game/HandThrowable.h` (the decisions, 
 the `pre=` preload readout, what hangs under the hands, and the player's own throw 400 ms in.
 Those settle option 1. If check A finds the preload missing, option 1 is the real fix, and option 4
 stays a dev tool or goes.
+
+## Round 4 on the rig (2026-10-18)
+
+Two games over Steam, a frag (000EEBED) equipped on both, ten throws each way (the host's through the
+console's `player.PerformAction 4E32`, the VM's with its own key). No crash in either game.
+
+- **Check A.** The stand-in's grenade entry reads `000EEBED@2(pre=m-)`, the same as the player's: the
+  model preload is there. A missing preload is not the cause, so option 1 is off the table.
+- **Check B, and the cause.** On the stand-in, before and 400 ms into a replayed throw, the hand reads
+  `LArm_Hand['WeaponLeft'(culled)@(8.0,-2.6,-0.8)x1.00{'Weapon  (000EEBED)' }]`. The engine hangs the
+  grenade on the stand-in as it does on its own throws, under `WeaponLeft`, but both `WeaponLeft` and
+  the `Weapon (000EEBED)` node in it stay culled: on a throw the engine did not start itself it never
+  un-culls them. After the throw the engine empties `WeaponLeft` itself (`{}`).
+- **So option 4 as drafted did nothing.** A `WeaponLeft` under the hand counted as "the engine shows its
+  own", and every throw logged `no throwable hung on ...: the engine shows its own`.
+- **Option 5, the fix now behind the toggle.** At the replayed throw's `weaponAttach(2)`, a culled
+  `WeaponLeft` holding something is un-culled, with any culled child in it. At the release (or any other
+  way out in the table above) the same nodes are culled again. These are the stand-in's own nodes,
+  made for it by the engine: nothing is hung, cloned or shared, and the database's node is not touched.
+  A drawn `WeaponLeft` (one the engine shows itself) still keeps ours out. The database-node hang stays
+  as the fallback for a hand with no `WeaponLeft`, which the rig never showed.
+- **Seen.** `drew the engine's own WeaponLeft under LArm_Hand of <S> (throwable 000EEBED, holding
+  'Weapon  (000EEBED)'(culled))`, then `<S>'s throwable at (-80526,89455,7911), its hand at
+  (-80528,89453,7903)` and `took throwable off <S>: released` about 450 ms later. `inhand=` counted up
+  `n/n` on both sides, `ghosts=0`, explosions one per throw each way. A VM screenshot at the top of the
+  wind-up shows a dark frag in the stand-in's raised left fist. (A build that un-culled only
+  `WeaponLeft` was caught on screen only after the release, so whether the child needs it too is not
+  proven; it was culled, so it is un-culled.)
+- **Still open.** The grenade shows only from `weaponAttach(2)` to the release, about half a second.
+  Whether the engine's own throw shows it longer is not measured. Checks D (fast travel, save and load, power armor, a
+  toggle-off mid-throw, two friends at once) were not run. Neither were a Molotov or a mine.
 
 ## Round 4: the checks
 

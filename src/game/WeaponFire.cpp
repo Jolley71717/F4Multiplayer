@@ -784,12 +784,17 @@ namespace WeaponFire
 		// hangs under and the actor's 3D root. With the root held, the whole skeleton the hand is in stays alive when
 		// the engine lets go of the actor's 3D (a cell change, a rebuild): the model always comes off a live hand, and
 		// the root and hand compared with the actor's current ones are never addresses a new 3D got.
+		// When the stand-in's 3D already holds the grenade in a culled WeaponLeft of the engine's own (seen on the rig on
+		// every replayed throw: the engine hangs it but draws it only on throws it starts itself), that node is drawn
+		// instead (unculled) and culled again on the way out; nothing is hung and nothing shared is touched.
 		struct InHand
 		{
-			RE::NiPointer<RE::NiNode>     model;
+			RE::NiPointer<RE::NiNode>     model;  // the database's node we hung, or the stand-in's own WeaponLeft we drew
 			RE::NiPointer<RE::NiNode>     hand;
 			RE::NiPointer<RE::NiAVObject> root;
-			Clock::time_point             sampleAt;  // when to log where the model is (zero once logged)
+			Clock::time_point             sampleAt;          // when to log where the model is (zero once logged)
+			bool                          unculled = false;  // model is the engine's WeaponLeft, drawn by us
+			std::vector<RE::NiPointer<RE::NiAVObject>> innerUnculled;  // ... and those of its children that were culled too
 		};
 		HandThrowable::Book                                          handBook;
 		std::unordered_map<std::uint32_t, InHand>                    inHand;      // actor -> what hangs in its hand
@@ -853,7 +858,18 @@ namespace WeaponFire
 			seen.loaded = root != nullptr;
 			const auto hand = Equipment::ChildNode(root, HandThrowable::HAND);
 			seen.handFound = hand != nullptr;
-			seen.engineShows = Equipment::DirectChild(hand, HandThrowable::ENGINE_NODE) != nullptr;
+			// The engine's own WeaponLeft: drawn (it shows its own), or culled with the grenade in it (ours to draw).
+			const auto engines = Equipment::DirectChild(hand, HandThrowable::ENGINE_NODE);
+			const auto enginesNode = engines ? engines->IsNode() : nullptr;
+			seen.engineShows = engines && !engines->GetAppCulled();
+			seen.engineHides = enginesNode && engines->GetAppCulled() && [&] {
+				for (const auto& child : enginesNode->children) {
+					if (child.get()) {
+						return true;
+					}
+				}
+				return false;
+			}();
 			const auto weapon = seen.loaded ? Equipment::HeldThrowable(actor) : nullptr;
 			seen.throwable = weapon ? weapon->GetFormID() : 0;
 			const auto skip = handBook.ShouldHang(a_actorId, seen);
@@ -861,6 +877,27 @@ namespace WeaponFire
 				if (skip != HandThrowable::Skip::kNotReplayed) {  // an NPC's own throw is no news
 					LogHand(std::format("no throwable hung on {:08X}: {}", a_actorId, HandThrowable::Name(skip)));
 				}
+				return;
+			}
+			if (seen.engineHides) {
+				enginesNode->SetAppCulled(false);
+				// What it holds (the grenade's model, one level down) may be culled on its own as well.
+				std::vector<RE::NiPointer<RE::NiAVObject>> inner;
+				std::string                                 innerSeen;
+				for (const auto& child : enginesNode->children) {
+					if (const auto object = child.get()) {
+						innerSeen += std::format(" '{}'{}", object->name.c_str() ? object->name.c_str() : "", object->GetAppCulled() ? "(culled)" : "");
+						if (object->GetAppCulled()) {
+							object->SetAppCulled(false);
+							inner.emplace_back(object);
+						}
+					}
+				}
+				const auto now = Clock::now();
+				handBook.Hung(a_actorId, seen.throwable, now, false);
+				inHand[a_actorId] = { RE::NiPointer<RE::NiNode>{ enginesNode }, RE::NiPointer<RE::NiNode>{ hand }, RE::NiPointer<RE::NiAVObject>{ root }, now + MID_THROW, true, std::move(inner) };
+				++handsHung;
+				LogHand(std::format("drew the engine's own {} under {} of {:08X} (throwable {:08X}, holding{})", HandThrowable::ENGINE_NODE, HandThrowable::HAND, a_actorId, seen.throwable, innerSeen));
 				return;
 			}
 			const auto model = HandModel(weapon);
@@ -893,7 +930,13 @@ namespace WeaponFire
 			}
 			const auto& held = it->second;
 			const bool onHand = held.model && held.hand && held.model->parent == held.hand.get();
-			if (onHand) {
+			if (held.unculled) {
+				// The engine's own nodes, culled again as the engine had them.
+				for (const auto& inner : held.innerUnculled) {
+					inner->SetAppCulled(true);
+				}
+				held.model->SetAppCulled(true);
+			} else if (onHand) {
 				held.hand->DetachChild(held.model.get());
 			}
 			inHand.erase(it);
@@ -983,7 +1026,7 @@ namespace WeaponFire
 			const auto hand = seen.loaded ? Equipment::ChildNode(held.root.get(), HandThrowable::HAND) : nullptr;
 			seen.underHand = hand && hand == held.hand.get() && held.model->parent == hand;
 			const auto engines = seen.underHand ? Equipment::DirectChild(hand, HandThrowable::ENGINE_NODE) : nullptr;
-			seen.engineShows = engines && engines != held.model.get();
+			seen.engineShows = engines && engines != held.model.get() && !engines->GetAppCulled();
 			const auto weapon = seen.loaded ? Equipment::HeldThrowable(actor) : nullptr;
 			seen.throwable = weapon ? weapon->GetFormID() : 0;
 			if (const auto drop = handBook.Check(actorId, seen, now); drop != HandThrowable::Drop::kKeep) {

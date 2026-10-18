@@ -112,6 +112,40 @@ TEST("hand throwable: one model hangs on one stand-in at a time, and a second at
 	CHECK(book.ShouldHang(OTHER, Attaching()) == Skip::kNone);
 }
 
+TEST("hand throwable: drawing a stand-in's own culled WeaponLeft shares nothing, so two stand-ins can show the same grenade")
+{
+	Book book;
+	auto hides = Attaching();
+	hides.engineHides = true;
+	CHECK(book.ShouldHang(STAND_IN, hides) == Skip::kNone);
+	book.Hung(STAND_IN, FRAG, START, false);
+	CHECK(book.Holds(STAND_IN));
+	CHECK(!book.ModelBusy(FRAG));
+	// Another friend's frag: their own WeaponLeft is drawn too, or the database's node is free to hang.
+	CHECK(book.ShouldHang(OTHER, hides) == Skip::kNone);
+	CHECK(book.ShouldHang(OTHER, Attaching()) == Skip::kNone);
+	// The database's node hung on one stand-in is still busy for a second that needs it, not for one that hides its own.
+	book.Hung(OTHER, FRAG, START);
+	CHECK(book.ModelBusy(FRAG));
+	CHECK(book.ShouldHang(0xFF000803, Attaching()) == Skip::kModelBusy);
+	CHECK(book.ShouldHang(0xFF000803, hides) == Skip::kNone);
+	// Its own drawn WeaponLeft comes off at the release like a hung model.
+	book.Released(STAND_IN);
+	CHECK(book.Check(STAND_IN, Holding(), START + 400ms) == Drop::kReleased);
+}
+
+TEST("hand throwable: a WeaponLeft the engine draws itself keeps ours out, one it culls does not")
+{
+	Book book;
+	auto drawn = Attaching();
+	drawn.engineShows = true;
+	drawn.engineHides = false;
+	CHECK(book.ShouldHang(STAND_IN, drawn) == Skip::kEngineShows);
+	auto culled = Attaching();
+	culled.engineHides = true;
+	CHECK(book.ShouldHang(STAND_IN, culled) == Skip::kNone);
+}
+
 TEST("hand throwable: no more than MAX_HOLDS stand-ins hold a model at once")
 {
 	Book book;
