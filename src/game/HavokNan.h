@@ -24,11 +24,12 @@
 // - The loop's exit test, at its two copies in that function, goes through a few bytes of ours (the detour) that end
 //   the loop when the angle is NaN (the result is NaN, as the body is; the engine carries on with it) and count it. The
 //   detour goes in only where the game has the very bytes read from 1.11.240 (SiteMatches).
-// - Once a frame, on the main thread: when the count grew, and every few seconds anyway, the loaded references whose
-//   3D (every node of it after a count, the root alone otherwise) or place is not finite are looked for and put right
-//   the way the console's `disable` and `enable` do (the reference's 3D and physics made again from its place, which
-//   stays finite): the player and the session's own stand-ins are left alone (logged), and one that goes bad again
-//   soon after is left disabled (Cleanup).
+// - Once a frame, on the main thread: when the count grew (backing off while that finds nothing to put right: Looks),
+//   and every few seconds anyway, the loaded references whose 3D (every node of it after a count, the root alone
+//   otherwise) or place is not finite are looked for and put right by a disable and an enable (the reference's 3D
+//   and physics made again from its place, which stays finite), when they are references nothing else has a stake
+//   in (Traits); every other one, and one that goes bad again soon after, is left as it is, logged
+//   (Cleanup). Nothing is ever left disabled.
 namespace HavokNan
 {
 	// --- the loop's exit test ---
@@ -143,6 +144,7 @@ namespace HavokNan
 		return code;
 	}
 
+
 	// --- what is put right ---
 
 	// Whether every float of a_values is a number (not NaN, not infinite).
@@ -151,21 +153,74 @@ namespace HavokNan
 		return std::ranges::all_of(a_values, [](float a_value) { return std::isfinite(a_value); });
 	}
 
+	// What a reference found bad is, as far as a reset goes. A reset is the engine's Disable and, RESET_GAP later,
+	// Enable, both done at once (the console's `disable` is queued, and a save could come before it and keep it): the
+	// engine drops the reference's 3D and physics and makes them again from its place. Only a reference a plugin file
+	// placed in the world that nothing else has a stake in is ever reset (the dump's skeleton, a moveable static, is
+	// one); everything else is left as it is, logged: an actor of any kind (the player, the session's
+	// stand-ins and mirrored NPCs, companions, essential and protected NPCs: disabling one runs its scripts' and the
+	// AI's handling of that, and an NPC's disabled state goes to the other games), anything the session places or
+	// shares (a power armor frame's state goes to the other games too), anything made at runtime (dropped items,
+	// workshop builds, spawns), a persistent reference, one in a quest's alias, and one in an enable parent's chain
+	// (disabling a parent disables its children; enabling a child its parent keeps off would undo the quest's work).
+	struct Traits
+	{
+		bool player = false;
+		bool actor = false;
+		bool session = false;     // the session placed it, runs it or mirrors it
+		bool frame = false;       // a power armor frame (FrameShare shares them)
+		bool created = false;     // made at runtime (0xFF......)
+		bool persistent = false;  // the reference's persistent flag
+		bool quest = false;       // fills a quest's alias
+		bool enableLinked = false;  // has an enable parent, or is one
+	};
+
+	// Why a reference is never reset, or null when it may be.
+	constexpr const char* KeptBecause(const Traits& a_traits)
+	{
+		if (a_traits.player) {
+			return "the player";
+		}
+		if (a_traits.actor) {
+			return "an actor";
+		}
+		if (a_traits.session) {
+			return "the session's";
+		}
+		if (a_traits.frame) {
+			return "a power armor frame";
+		}
+		if (a_traits.created) {
+			return "made at runtime";
+		}
+		if (a_traits.persistent) {
+			return "persistent";
+		}
+		if (a_traits.quest) {
+			return "in a quest alias";
+		}
+		if (a_traits.enableLinked) {
+			return "enable-linked";
+		}
+		return nullptr;
+	}
+
 	// A loaded reference found with its 3D (or its place) not finite.
 	struct Found
 	{
 		std::uint32_t refId = 0;
-		bool          player = false;      // the player: never disabled
-		bool          ours = false;        // a stand-in or mirrored NPC of the session's: its own code places it
+		const char*   kept = nullptr;      // KeptBecause: never reset
 		bool          placeFinite = true;  // its place (data.location, data.angle): where enable puts it back
 	};
 
+	// Nothing is ever left disabled: a reference is reset (disabled, then enabled RESET_GAP later) or left as it is.
 	enum class Action : std::uint8_t
 	{
-		kNone,     // being put right already (disabled, to be enabled)
-		kReset,    // disable now, enable after RESET_GAP: its 3D and physics are made again from its place
-		kDisable,  // disable and leave it so: its place is not finite either, or it went bad again right after a reset
-		kLeave,    // the player or one of ours: logged only
+		kNone,      // being reset already, or left alone and logged lately
+		kReset,     // disable now, enable after RESET_GAP: its 3D and physics are made again from its place
+		kKept,      // one never reset (Found::kept): logged only
+		kPlaceBad,  // its place is not finite either (enabling would put it back there): logged only
+		kAgain,     // it went bad again soon after a reset: logged only, and never reset again until a load
 	};
 
 	constexpr const char* Name(Action a_action)
@@ -173,10 +228,12 @@ namespace HavokNan
 		switch (a_action) {
 		case Action::kReset:
 			return "reset (disabled and enabled again)";
-		case Action::kDisable:
-			return "disabled and left so";
-		case Action::kLeave:
-			return "left alone";
+		case Action::kKept:
+			return "left as it is";
+		case Action::kPlaceBad:
+			return "left as it is (its place is not finite either)";
+		case Action::kAgain:
+			return "left as it is (bad again soon after its reset)";
 		default:
 			return "none";
 		}
@@ -188,29 +245,34 @@ namespace HavokNan
 		using Clock = std::chrono::steady_clock;
 
 		static constexpr auto RESET_GAP = std::chrono::milliseconds(500);  // between the disable and the enable
-		static constexpr auto AGAIN = std::chrono::seconds(60);            // bad again this soon after a reset: left disabled
-		static constexpr auto LEAVE_LOG = std::chrono::seconds(60);        // a left-alone one is logged again after this
+		static constexpr auto AGAIN = std::chrono::seconds(60);            // bad again this soon after a reset: given up
+		static constexpr auto LEAVE_LOG = std::chrono::minutes(10);        // a left-alone one is logged again after this
 
-		// What to do with a_found, seen at a_now. A reset is remembered until its enable is due (TakeDue) and for AGAIN after.
+		// What to do with a_found, seen at a_now. A reset is remembered until its enable is due (TakeDue), and for AGAIN
+		// after; one given up on, until Forget.
 		Action Decide(const Found& a_found, Clock::time_point a_now)
 		{
 			if (std::ranges::any_of(pending, [&](const Enable& a_pending) { return a_pending.refId == a_found.refId; })) {
 				return Action::kNone;
 			}
-			if (a_found.player || a_found.ours) {
+			auto leave = Action::kNone;
+			if (a_found.kept) {
+				leave = Action::kKept;
+			} else if (!a_found.placeFinite) {
+				leave = Action::kPlaceBad;
+			} else if (const auto last = resets.find(a_found.refId); last != resets.end() && (last->second.gaveUp || a_now - last->second.at < AGAIN)) {
+				last->second.gaveUp = true;
+				leave = Action::kAgain;
+			}
+			if (leave != Action::kNone) {
 				auto& at = left[a_found.refId];
 				if (at != Clock::time_point{} && a_now - at < LEAVE_LOG) {
 					return Action::kNone;
 				}
 				at = a_now;
-				return Action::kLeave;
+				return leave;
 			}
-			const auto last = resets.find(a_found.refId);
-			if (!a_found.placeFinite || (last != resets.end() && a_now - last->second < AGAIN)) {
-				resets.erase(a_found.refId);
-				return Action::kDisable;
-			}
-			resets[a_found.refId] = a_now;
+			resets[a_found.refId] = { a_now, false };
 			pending.push_back({ a_found.refId, a_now + RESET_GAP });
 			return Action::kReset;
 		}
@@ -229,7 +291,36 @@ namespace HavokNan
 			return due;
 		}
 
-		[[nodiscard]] bool HasPending() const { return !pending.empty(); }
+		// Every reset still waiting for its enable, taken off the list (before a save or a load: enabled at once).
+		std::vector<std::uint32_t> TakeAll()
+		{
+			std::vector<std::uint32_t> all;
+			for (const auto& one : pending) {
+				all.push_back(one.refId);
+			}
+			pending.clear();
+			return all;
+		}
+
+		// What is no longer needed at a_now: resets older than AGAIN (not given up on), left-alone ones logged longer
+		// than LEAVE_LOG ago.
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(resets, [&](const auto& a_entry) { return !a_entry.second.gaveUp && a_now - a_entry.second.at >= AGAIN; });
+			std::erase_if(left, [&](const auto& a_entry) { return a_now - a_entry.second >= LEAVE_LOG; });
+		}
+
+		// After a load or a new game: its ids name other references, or the same ones as its save has them.
+		void Forget()
+		{
+			pending.clear();
+			resets.clear();
+			left.clear();
+		}
+
+		[[nodiscard]] bool        HasPending() const { return !pending.empty(); }
+		[[nodiscard]] std::size_t Pending() const { return pending.size(); }
+		[[nodiscard]] std::size_t Remembered() const { return resets.size() + left.size(); }
 
 	private:
 		struct Enable
@@ -238,18 +329,18 @@ namespace HavokNan
 			Clock::time_point enableAt{};
 		};
 
+		struct Reset
+		{
+			Clock::time_point at{};
+			bool              gaveUp = false;
+		};
+
 		std::vector<Enable>                                   pending;
-		std::unordered_map<std::uint32_t, Clock::time_point> resets;  // when each was last reset
+		std::unordered_map<std::uint32_t, Reset>             resets;  // when each was last reset, and whether it is given up on
 		std::unordered_map<std::uint32_t, Clock::time_point> left;    // when each left-alone one was last logged
 	};
 
-	// How the main thread looks for bad references. Each loaded reference's root node and place, every SCAN_EVERY: cheap,
-	// and finds one blown up as a whole. Every node of each loaded reference's 3D (a ragdoll's bones are its children)
-	// when a NaN angle was counted since the last such look, at most once each DEEP_EVERY (the count grows on every
-	// physics step while a bad one is in the world, until it is put right).
-	inline constexpr auto SCAN_EVERY = std::chrono::seconds(5);
-	inline constexpr auto DEEP_EVERY = std::chrono::seconds(1);
-
+	// How the main thread looks for bad references.
 	enum class Scan : std::uint8_t
 	{
 		kNone,
@@ -257,16 +348,98 @@ namespace HavokNan
 		kDeep,   // every node, and places
 	};
 
-	// This frame's look: a_count is the NaN angles counted so far, a_seen the count at the last deep look; a_sinceRoots
-	// and a_sinceDeep the time since the last look of either kind and since the last deep one.
-	constexpr Scan Plan(std::uint64_t a_count, std::uint64_t a_seen, std::chrono::steady_clock::duration a_sinceRoots, std::chrono::steady_clock::duration a_sinceDeep)
+	// When the main thread looks. Each loaded reference's root node and place, every ROOTS_EVERY: cheap, and finds one
+	// blown up as a whole. Every node of each loaded reference's 3D (a ragdoll's bones are its children) when NaN angles
+	// were counted since the last such look: the count grows on every physics step while a bad body is in the world.
+	// A deep look that resets nothing (the bodies are the player's, a stand-in's, or anything else left alone, or their
+	// nodes are finite) waits twice as long before the next (DEEP_FIRST, 2x, 4x ..., at most DEEP_MOST), and after
+	// DEEP_TRIES of them in a row there are no more deep looks until the player is in another space (an interior, a
+	// worldspace: a loading screen), a game is loaded (Rearm), or the count, still for QUIET, grows again.
+	class Looks
 	{
-		if (a_count != a_seen && a_sinceDeep >= DEEP_EVERY) {
-			return Scan::kDeep;
+	public:
+		using Clock = std::chrono::steady_clock;
+
+		static constexpr auto ROOTS_EVERY = std::chrono::seconds(5);
+		static constexpr auto DEEP_FIRST = std::chrono::seconds(1);
+		static constexpr auto DEEP_MOST = std::chrono::seconds(8);
+		static constexpr int  DEEP_TRIES = 5;
+		static constexpr auto QUIET = std::chrono::seconds(30);
+
+		// This frame's look: a_count is the NaN angles counted so far.
+		Scan Plan(std::uint64_t a_count, Clock::time_point a_now)
+		{
+			if (a_count != lastCount) {
+				if (gaveUp && a_now - lastGrowth >= QUIET) {
+					Arm(a_now);  // a new burst: the count was still a while
+				}
+				lastCount = a_count;
+				lastGrowth = a_now;
+			}
+			if (!gaveUp && a_count != seen && a_now >= nextDeep) {
+				return Scan::kDeep;
+			}
+			return a_now - lastRoots >= ROOTS_EVERY ? Scan::kRoots : Scan::kNone;
 		}
-		return a_sinceRoots >= SCAN_EVERY ? Scan::kRoots : Scan::kNone;
-	}
+
+		// A look was done at a_now; a_count as Plan had it, a_fruitful when it reset something. Whether this deep look
+		// was the last before giving up.
+		bool Looked(Scan a_scan, std::uint64_t a_count, bool a_fruitful, Clock::time_point a_now)
+		{
+			lastRoots = a_now;
+			if (a_scan != Scan::kDeep) {
+				return false;
+			}
+			seen = a_count;
+			if (a_fruitful) {
+				tries = 0;
+				gap = DEEP_FIRST;
+				nextDeep = a_now + DEEP_FIRST;
+				return false;
+			}
+			if (++tries >= DEEP_TRIES) {
+				gaveUp = true;
+				return true;
+			}
+			nextDeep = a_now + gap;
+			gap = (std::min)(gap * 2, std::chrono::duration_cast<Clock::duration>(DEEP_MOST));
+			return false;
+		}
+
+		// The player is somewhere else, or a game was loaded: the cuts counted so far are of the world as it was, and
+		// the looks start over from the first gap.
+		void Rearm(std::uint64_t a_count, Clock::time_point a_now)
+		{
+			Arm(a_now);
+			seen = lastCount = a_count;
+		}
+
+		[[nodiscard]] bool GaveUp() const { return gaveUp; }
+		[[nodiscard]] int  Tries() const { return tries; }
+
+	private:
+		void Arm(Clock::time_point a_now)
+		{
+			gaveUp = false;
+			tries = 0;
+			gap = DEEP_FIRST;
+			nextDeep = a_now;
+		}
+
+		std::uint64_t     seen = 0;       // the count at the last deep look
+		std::uint64_t     lastCount = 0;  // the count Plan saw last
+		Clock::time_point lastGrowth{};   // when Plan saw it grow
+		Clock::time_point lastRoots{};
+		Clock::time_point nextDeep{};
+		Clock::duration   gap = DEEP_FIRST;
+		int               tries = 0;  // deep looks in a row that reset nothing
+		bool              gaveUp = false;
+	};
 
 	// A deep look stops walking a reference's 3D after this many nodes (a reference has hundreds at most).
 	inline constexpr std::size_t NODE_LIMIT = 4096;
+	// A look takes at most this many loaded references (all of the loaded cells', together), and puts right at most
+	// BAD_LIMIT of the ones it finds bad.
+	inline constexpr std::size_t REF_LIMIT = 16384;
+	inline constexpr std::size_t BAD_LIMIT = 64;
 }

@@ -283,7 +283,12 @@ namespace
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
-			RunBeforeSaveOrLoad([] { Session::OnBeforeSaveOrLoad(); }, "load");
+			RunBeforeSaveOrLoad(
+				[] {
+					Session::OnBeforeSaveOrLoad();
+					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
+				},
+				"load");
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 			BeginSaveOrLoad(HangWatch::Phase::kSave);
@@ -293,6 +298,7 @@ namespace
 			RunBeforeSaveOrLoad(
 				[] {
 					Session::OnBeforeSaveOrLoad();
+					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
 				},
 				"save");
@@ -313,6 +319,7 @@ namespace
 						}
 						Session::OnGameLoaded(!loaded);
 						Hud::OnGameLoaded();
+						HavokGuard::OnGameLoaded();
 					}
 				} catch (const std::exception& e) {
 					REX::ERROR("Frame: after the load: {}", e.what());

@@ -1,8 +1,11 @@
 #include "game/HavokGuard.h"
 
+#include "game/Equipment.h"
 #include "game/HavokNan.h"
 #include "game/Hud.h"
-#include "game/Puppets.h"
+#include "game/NpcSync.h"
+#include "game/SaveGuard.h"
+#include "game/Spawns.h"
 
 #include <array>
 #include <atomic>
@@ -10,6 +13,8 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
+#include <vector>
 
 namespace HavokGuard
 {
@@ -32,16 +37,26 @@ namespace HavokGuard
 			return total;
 		}
 
-		// The main thread's state (Frame, scan, poison).
+		// The main thread's state (Frame, scan, poison, and the save's and load's work, which runs while frames are held).
 		HavokNan::Cleanup cleanup;
-		std::uint64_t     seenDeep = 0;
-		Clock::time_point lastRoots{};
-		Clock::time_point lastDeep{};
+		HavokNan::Looks   plan;
+		std::uint32_t     space = 0;     // where the player is: the interior cell, or the worldspace
+		std::uint64_t     seenDeep = 0;  // the count at the last deep look, for the log
+
+		// The handle of each reference reset and not yet enabled again: its enable goes to that very reference, not to
+		// another given its runtime id since.
+		std::unordered_map<std::uint32_t, RE::ObjectRefHandle> held;
+
+		// Kept between looks so a look allocates nothing as it goes (their room stays).
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> candidates;
+		std::vector<const RE::NiAVObject*>            walk;
 
 		// For status, from the channel's thread.
 		std::mutex  lastLock;
 		std::string lastFound = "none";
-		std::atomic<std::uint64_t> looks{ 0 }, deepLooks{ 0 }, put{ 0 };
+		std::atomic<std::uint64_t> looks{ 0 }, deepLooks{ 0 }, put{ 0 }, pendingNow{ 0 };
+		std::atomic<int>           deepTries{ 0 };
+		std::atomic<bool>          gaveUp{ false };
 
 		bool Finite(const RE::NiTransform& a_transform)
 		{
@@ -68,18 +83,19 @@ namespace HavokGuard
 			if (!a_deep) {
 				return nullptr;
 			}
-			std::vector<const RE::NiAVObject*> stack{ a_root };
-			std::size_t                        walked = 0;
-			while (!stack.empty() && walked++ < HavokNan::NODE_LIMIT) {
-				const auto node = stack.back();
-				stack.pop_back();
+			walk.clear();
+			walk.push_back(a_root);
+			std::size_t walked = 0;
+			while (!walk.empty() && walked++ < HavokNan::NODE_LIMIT) {
+				const auto node = walk.back();
+				walk.pop_back();
 				if (!Finite(node->world) || !Finite(node->local)) {
 					return node;
 				}
 				if (const auto parent = const_cast<RE::NiAVObject*>(node)->IsNode()) {
 					for (const auto& child : parent->children) {  // the array runs to its capacity: empty slots are null
 						if (child.get()) {
-							stack.push_back(child.get());
+							walk.push_back(child.get());
 						}
 					}
 				}
@@ -96,72 +112,132 @@ namespace HavokGuard
 				base ? static_cast<int>(base->GetFormType()) : -1, at.x, at.y, at.z, name);
 		}
 
+		// What a reset of a_ref would touch (HavokNan::Traits says which ones are left alone, and why).
+		HavokNan::Traits TraitsOf(RE::TESObjectREFR* a_ref)
+		{
+			constexpr std::uint32_t PERSISTENT = 1u << 10;  // the reference's record flag
+			const auto              id = a_ref->GetFormID();
+			const auto              extra = a_ref->extraList.get();
+			return {
+				.player = a_ref->IsPlayerRef(),
+				.actor = a_ref->As<RE::Actor>() != nullptr,
+				.session = SaveGuard::Placed(a_ref) || Spawns::IdOf(id) != 0 || NpcSync::Owner(id) != 0 || NpcSync::RunsLocally(id),
+				.frame = Equipment::IsPowerArmorFrame(a_ref->GetObjectReference()),
+				.created = a_ref->IsCreated(),
+				.persistent = (a_ref->GetFormFlags() & PERSISTENT) != 0,
+				.quest = extra && extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray),
+				.enableLinked = extra && (extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateParent) || extra->HasType(RE::EXTRA_DATA_TYPE::kEnableStateChildren)),
+			};
+		}
+
 		bool Loading()
 		{
 			return Hud::LoadingScreenUp();
 		}
 
-		// One look at the loaded references; returns how many were found bad.
-		int Look(bool a_deep, Clock::time_point a_now)
+		struct Result
+		{
+			std::size_t refs = 0;   // loaded references looked at
+			std::size_t bad = 0;    // found with a transform or place not finite
+			std::size_t reset = 0;  // of those, reset
+		};
+
+		// One look at the loaded references.
+		Result Look(bool a_deep, Clock::time_point a_now)
 		{
 			const auto tes = RE::TES::GetSingleton();
 			if (!tes) {
-				return 0;
+				return {};
 			}
 			++looks;
 			if (a_deep) {
 				++deepLooks;
 			}
-			struct Bad
-			{
-				HavokNan::Found found;
-				std::string     text;
-			};
-			std::vector<Bad> bad;
-			tes->ForEachReference([&](RE::TESObjectREFR* a_ref) {
-				if (!a_ref || a_ref->IsDeleted() || a_ref->IsDisabled()) {
-					return RE::BSContainer::ForEachResult::kContinue;
+			// Each cell's references are walked under that cell's lock: there they are only taken (held, so none is
+			// freed under us) into room made beforehand, and they are looked at once every lock is let go. REF_LIMIT is
+			// for every cell together: once it is reached, each further cell stops at its first reference.
+			candidates.clear();
+			candidates.reserve(HavokNan::REF_LIMIT);
+			tes->ForEachReference([](RE::TESObjectREFR* a_ref) {
+				if (candidates.size() >= HavokNan::REF_LIMIT) {
+					return RE::BSContainer::ForEachResult::kStop;
 				}
-				const auto root = a_ref->Get3D();
-				const bool placeFinite = PlaceFinite(a_ref);
-				const auto node = root ? BadNode(root, a_deep) : nullptr;
-				if (node || !placeFinite) {
-					const auto actor = a_ref->As<RE::Actor>();
-					bad.push_back({ .found = { .refId = a_ref->GetFormID(),
-										.player = a_ref->IsPlayerRef(),
-										.ours = actor && Puppets::IsRegistered(actor),
-										.placeFinite = placeFinite },
-						.text = Describe(a_ref, node) + (placeFinite ? "" : ", its place not finite") });
+				if (a_ref && !a_ref->IsDeleted() && !a_ref->IsDisabled()) {
+					candidates.emplace_back(a_ref);
 				}
-				return bad.size() < 64 ? RE::BSContainer::ForEachResult::kContinue : RE::BSContainer::ForEachResult::kStop;
+				return RE::BSContainer::ForEachResult::kContinue;
 			});
-			for (const auto& one : bad) {
-				const auto action = cleanup.Decide(one.found, a_now);
+			Result result{ .refs = candidates.size() };
+			for (const auto& ref : candidates) {
+				if (result.bad >= HavokNan::BAD_LIMIT) {
+					break;
+				}
+				const auto root = ref->Get3D();
+				const bool placeFinite = PlaceFinite(ref.get());
+				const auto node = root ? BadNode(root, a_deep) : nullptr;
+				if (!node && placeFinite) {
+					continue;
+				}
+				++result.bad;
+				const HavokNan::Found found{ .refId = ref->GetFormID(), .kept = HavokNan::KeptBecause(TraitsOf(ref.get())), .placeFinite = placeFinite };
+				const auto            action = cleanup.Decide(found, a_now);
 				if (action == HavokNan::Action::kNone) {
 					continue;
 				}
-				REX::WARN("Havok NaN: {} has a transform that is not finite: {}", one.text, HavokNan::Name(action));
-				if (action == HavokNan::Action::kReset || action == HavokNan::Action::kDisable) {
-					RE::Console::ExecuteCommand(std::format("{:08X}.disable", one.found.refId).c_str());
+				const auto text = Describe(ref.get(), node) + (placeFinite ? "" : ", its place not finite") + (found.kept ? std::format(" ({})", found.kept) : "");
+				REX::WARN("Havok NaN: {} has a transform that is not finite: {}", text, HavokNan::Name(action));
+				if (action == HavokNan::Action::kReset) {
+					held[found.refId] = ref->GetHandle();
+					ref->Disable();  // at once (the console's `disable` is queued: a save could come before it, and keep it)
+					++result.reset;
 					++put;
 				}
 				std::scoped_lock l{ lastLock };
-				lastFound = std::format("{}: {}", one.text, HavokNan::Name(action));
+				lastFound = std::format("{}: {}", text, HavokNan::Name(action));
 			}
-			return static_cast<int>(bad.size());
+			candidates.clear();  // every reference let go
+			cleanup.Prune(a_now);
+			pendingNow = cleanup.Pending();
+			return result;
+		}
+
+		// Enables a reset reference again, when its handle still names that very reference and it is still off.
+		void EnableAgain(std::uint32_t a_id)
+		{
+			const auto handle = held.extract(a_id);
+			const auto ref = handle ? handle.mapped().get() : RE::NiPointer<RE::TESObjectREFR>{};
+			if (!ref || ref->GetFormID() != a_id || ref->IsDeleted()) {
+				REX::WARN("Havok NaN: {:08X} is gone (its cell unloaded, or it was deleted); not enabled again", a_id);
+				return;
+			}
+			if (!ref->IsDisabled()) {
+				REX::INFO("Havok NaN: {:08X} was enabled again already, by something else", a_id);
+				return;
+			}
+			ref->Enable(false);
+			REX::INFO("Havok NaN: {:08X} enabled again: its 3D and physics made again from its place", a_id);
 		}
 
 		void EnableDue(Clock::time_point a_now)
 		{
 			for (const auto id : cleanup.TakeDue(a_now)) {
-				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
-				if (!ref || ref->IsDeleted()) {
-					REX::WARN("Havok NaN: {:08X} is gone; not enabled again", id);
-					continue;
-				}
-				RE::Console::ExecuteCommand(std::format("{:08X}.enable", id).c_str());
-				REX::INFO("Havok NaN: {:08X} enabled again: its 3D and physics made again from its place", id);
+				EnableAgain(id);
 			}
+			pendingNow = cleanup.Pending();
+		}
+
+		// The interior cell the player is in, or its worldspace: another one is another loading screen.
+		std::uint32_t PlayerSpace()
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			if (!cell) {
+				return 0;
+			}
+			if (cell->IsInterior()) {
+				return cell->GetFormID();
+			}
+			return cell->worldSpace ? cell->worldSpace->GetFormID() : 0;
 		}
 
 		std::string Status()
@@ -171,8 +247,8 @@ namespace HavokGuard
 				sites += counts[i] ? std::format(" {}", std::atomic_ref<std::uint32_t>{ *counts[i] }.load()) : " -"s;
 			}
 			std::scoped_lock l{ lastLock };
-			return std::format("detours={}/{} cut={} (per copy:{}) looks={} deep={} put-right={} last={}", installed.load(), counts.size(), Counted(), sites, looks.load(),
-				deepLooks.load(), put.load(), lastFound);
+			return std::format("detours={}/{} cut={} (per copy:{}) looks={} deep={} deepTries={}{} put-right={} pending={} last={}", installed.load(), counts.size(),
+				Counted(), sites, looks.load(), deepLooks.load(), deepTries.load(), gaveUp ? " (deep looks given up)" : "", put.load(), pendingNow.load(), lastFound);
 		}
 
 		// scan [deep]: one look now, as Frame does.
@@ -182,8 +258,8 @@ namespace HavokGuard
 				return "error: a loading screen is up";
 			}
 			const bool deep = a_args != "roots";
-			const auto found = Look(deep, Clock::now());
-			return std::format("{} bad reference(s) found in a {} look; {}", found, deep ? "deep" : "root", Status());
+			const auto result = Look(deep, Clock::now());
+			return std::format("{} bad reference(s) found in a {} look of {} ({} reset); {}", result.bad, deep ? "deep" : "root", result.refs, result.reset, Status());
 		}
 
 		// poison <refHex> [dynamic]: what the dump had, made on purpose. Every body under the reference's 3D gets a
@@ -322,21 +398,53 @@ namespace HavokGuard
 			return;
 		}
 		const auto count = Counted();
-		const auto plan = HavokNan::Plan(count, seenDeep, now - lastRoots, now - lastDeep);
-		if (plan == HavokNan::Scan::kNone) {
-			return;
-		}
-		lastRoots = now;
-		const bool deep = plan == HavokNan::Scan::kDeep;
-		if (deep) {
-			REX::WARN("Havok NaN: {} NaN angle(s) cut in the constraint setup since the last look ({} in all); looking for the bodies", count - seenDeep, count);
-			lastDeep = now;
+		if (const auto here = PlayerSpace(); here != space) {
+			space = here;
+			plan.Rearm(count, now);  // another space: the cuts so far were of bodies loaded before it
 			seenDeep = count;
 		}
-		const auto found = Look(deep, now);
-		if (deep && found == 0) {
-			REX::WARN("Havok NaN: no loaded reference with a 3D or place that is not finite");
+		const auto scan = plan.Plan(count, now);
+		if (scan == HavokNan::Scan::kNone) {
+			return;
 		}
+		const bool deep = scan == HavokNan::Scan::kDeep;
+		const auto result = Look(deep, now);
+		const bool last = plan.Looked(scan, count, result.reset > 0, now);
+		deepTries = plan.Tries();
+		gaveUp = plan.GaveUp();
+		if (!deep) {
+			return;
+		}
+		// One line a deep look; the looks back off while they put nothing right, and stop after a few (HavokNan::Looks).
+		REX::WARN("Havok NaN: {} NaN angle(s) cut in the constraint setup since the last look ({} in all); every node of {} loaded reference(s) looked at: {} not finite, {} reset",
+			count - seenDeep, count, result.refs, result.bad, result.reset);
+		seenDeep = count;
+		if (last) {
+			REX::WARN("Havok NaN: {} looks in a row put nothing right; no more looks at every node until another space, a load, or the cuts start again after a pause",
+				HavokNan::Looks::DEEP_TRIES);
+		}
+	}
+
+	void BeforeSaveOrLoad()
+	{
+		// A reference reset a moment ago is enabled now, so the save has it as it was, and a load never finds it off.
+		for (const auto id : cleanup.TakeAll()) {
+			EnableAgain(id);
+		}
+		pendingNow = 0;
+	}
+
+	void OnGameLoaded()
+	{
+		// Every id now names the loaded game's reference, as its save has it: nothing from before is carried over.
+		cleanup.Forget();
+		held.clear();
+		pendingNow = 0;
+		space = PlayerSpace();
+		seenDeep = Counted();
+		plan.Rearm(seenDeep, Clock::now());
+		deepTries = 0;
+		gaveUp = false;
 	}
 
 	bool OnMainThread(std::string_view a_args)

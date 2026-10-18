@@ -168,50 +168,174 @@ TEST("havok nan: a bad reference is disabled and enabled again a moment later, o
 	CHECK(cleanup.TakeDue(now + 2s).empty());
 }
 
-TEST("havok nan: one that goes bad again right after its reset is left disabled; much later it is reset again")
+TEST("havok nan: one that goes bad again right after its reset is left as it is (not disabled) until a load")
 {
 	Cleanup    cleanup;
 	const auto now = Cleanup::Clock::time_point{} + 1h;
 	CHECK(cleanup.Decide({ .refId = 0x1234 }, now) == Action::kReset);
 	CHECK(cleanup.TakeDue(now + 1s).size() == 1);
-	CHECK(cleanup.Decide({ .refId = 0x1234 }, now + 10s) == Action::kDisable);
+	CHECK(cleanup.Decide({ .refId = 0x1234 }, now + 10s) == Action::kAgain);
 	CHECK(!cleanup.HasPending());
+	// Logged once; seen again, nothing, and never reset again however long after.
+	CHECK(cleanup.Decide({ .refId = 0x1234 }, now + 20s) == Action::kNone);
+	cleanup.Prune(now + Cleanup::AGAIN + 1h);
+	CHECK(cleanup.Decide({ .refId = 0x1234 }, now + Cleanup::AGAIN + 1h) == Action::kAgain);
+	CHECK(!cleanup.HasPending());
+	// After a load the id is another game's reference: it may be reset.
+	cleanup.Forget();
+	CHECK(cleanup.Decide({ .refId = 0x1234 }, now + 2h) == Action::kReset);
 	// Another, reset a while ago: reset again.
 	CHECK(cleanup.Decide({ .refId = 0x5678 }, now) == Action::kReset);
 	CHECK(cleanup.TakeDue(now + 1s).size() == 1);
 	CHECK(cleanup.Decide({ .refId = 0x5678 }, now + Cleanup::AGAIN + 1s) == Action::kReset);
 }
 
-TEST("havok nan: one whose place is not finite is disabled and left so (enabling would put it back there)")
+TEST("havok nan: one whose place is not finite is left as it is (enabling would put it back there)")
 {
 	Cleanup    cleanup;
 	const auto now = Cleanup::Clock::time_point{} + 1h;
-	CHECK(cleanup.Decide({ .refId = 0x42, .placeFinite = false }, now) == Action::kDisable);
+	CHECK(cleanup.Decide({ .refId = 0x42, .placeFinite = false }, now) == Action::kPlaceBad);
 	CHECK(!cleanup.HasPending());
+	CHECK(cleanup.Decide({ .refId = 0x42, .placeFinite = false }, now + 5s) == Action::kNone);
 }
 
-TEST("havok nan: the player and the session's own stand-ins are only logged, once a minute")
+TEST("havok nan: a kept one is only logged, at most once each LEAVE_LOG")
 {
 	Cleanup    cleanup;
 	const auto now = Cleanup::Clock::time_point{} + 1h;
-	CHECK(cleanup.Decide({ .refId = 0x14, .player = true }, now) == Action::kLeave);
-	CHECK(cleanup.Decide({ .refId = 0x14, .player = true }, now + 5s) == Action::kNone);
-	CHECK(cleanup.Decide({ .refId = 0x14, .player = true, .placeFinite = false }, now + Cleanup::LEAVE_LOG) == Action::kLeave);
-	CHECK(cleanup.Decide({ .refId = 0xFF000801, .ours = true }, now) == Action::kLeave);
+	CHECK(cleanup.Decide({ .refId = 0x14, .kept = "the player" }, now) == Action::kKept);
+	CHECK(cleanup.Decide({ .refId = 0x14, .kept = "the player" }, now + 5s) == Action::kNone);
+	CHECK(cleanup.Decide({ .refId = 0x14, .kept = "the player", .placeFinite = false }, now + Cleanup::LEAVE_LOG) == Action::kKept);
+	CHECK(cleanup.Decide({ .refId = 0xFF000801, .kept = "an actor" }, now) == Action::kKept);
 	CHECK(!cleanup.HasPending());
+	// Pruned once logged LEAVE_LOG ago; a load forgets everything.
+	CHECK(cleanup.Remembered() == 2);
+	cleanup.Prune(now + 2 * Cleanup::LEAVE_LOG);
+	CHECK(cleanup.Remembered() == 0);
+}
+
+TEST("havok nan: before a save or a load every reset waiting for its enable is taken at once; a load forgets the rest")
+{
+	Cleanup    cleanup;
+	const auto now = Cleanup::Clock::time_point{} + 1h;
+	CHECK(cleanup.Decide({ .refId = 0x100 }, now) == Action::kReset);
+	CHECK(cleanup.Decide({ .refId = 0x200 }, now + 100ms) == Action::kReset);
+	const auto all = cleanup.TakeAll();
+	CHECK(all.size() == 2);
+	CHECK(!cleanup.HasPending());
+	CHECK(cleanup.TakeDue(now + 1s).empty());  // nothing is enabled a second time
+	CHECK(cleanup.Decide({ .refId = 0x300 }, now) == Action::kReset);
+	cleanup.Forget();
+	CHECK(!cleanup.HasPending());
+	CHECK(cleanup.Remembered() == 0);
+	CHECK(cleanup.TakeDue(now + 1h).empty());  // no enable reaches the loaded game
+}
+
+TEST("havok nan: only a plugin's placed reference nothing else has a stake in is ever reset")
+{
+	using HavokNan::KeptBecause;
+	using HavokNan::Traits;
+	// The dump's skeleton: a moveable static placed by Fallout4.esm.
+	CHECK(KeptBecause(Traits{}) == nullptr);
+	CHECK(KeptBecause({ .player = true, .actor = true }) != nullptr);
+	CHECK(KeptBecause({ .actor = true }) != nullptr);  // any NPC: companions, essential ones, stand-ins, mirrored NPCs
+	CHECK(KeptBecause({ .session = true }) != nullptr);
+	CHECK(KeptBecause({ .frame = true }) != nullptr);
+	CHECK(KeptBecause({ .created = true }) != nullptr);
+	CHECK(KeptBecause({ .persistent = true }) != nullptr);
+	CHECK(KeptBecause({ .quest = true }) != nullptr);
+	CHECK(KeptBecause({ .enableLinked = true }) != nullptr);
 }
 
 TEST("havok nan: the main thread looks at every node when a NaN angle was counted, at the roots every few seconds")
 {
-	using HavokNan::DEEP_EVERY;
-	using HavokNan::Plan;
+	using HavokNan::Looks;
 	using HavokNan::Scan;
-	using HavokNan::SCAN_EVERY;
-	CHECK(Plan(3, 2, 0s, DEEP_EVERY) == Scan::kDeep);
-	CHECK(Plan(3, 2, SCAN_EVERY, 1h) == Scan::kDeep);
-	CHECK(Plan(3, 2, 0s, DEEP_EVERY - 1ms) == Scan::kNone);  // counted again within a second of the last deep look: waits
-	CHECK(Plan(3, 2, SCAN_EVERY, DEEP_EVERY - 1ms) == Scan::kRoots);
-	CHECK(Plan(3, 3, 1s, 1h) == Scan::kNone);
-	CHECK(Plan(3, 3, SCAN_EVERY, 1h) == Scan::kRoots);
-	CHECK(Plan(0, 0, SCAN_EVERY - 1ms, 1h) == Scan::kNone);
+	const auto t = Looks::Clock::time_point{} + 1h;
+	Looks      looks;
+	CHECK(looks.Plan(0, t) == Scan::kRoots);  // never looked yet
+	looks.Looked(Scan::kRoots, 0, false, t);
+	CHECK(looks.Plan(0, t + 1s) == Scan::kNone);
+	CHECK(looks.Plan(0, t + Looks::ROOTS_EVERY) == Scan::kRoots);
+	looks.Looked(Scan::kRoots, 0, false, t + Looks::ROOTS_EVERY);
+	// Cuts counted: a deep look at once; one that reset something, the next no sooner than DEEP_FIRST.
+	const auto u = t + Looks::ROOTS_EVERY + 1s;
+	CHECK(looks.Plan(30, u) == Scan::kDeep);
+	CHECK(!looks.Looked(Scan::kDeep, 30, true, u));
+	CHECK(looks.Plan(30, u + 1s) == Scan::kNone);  // nothing new counted
+	CHECK(looks.Plan(31, u + Looks::DEEP_FIRST - 1ms) == Scan::kNone);
+	CHECK(looks.Plan(31, u + Looks::DEEP_FIRST) == Scan::kDeep);
+	CHECK(looks.Tries() == 0);
+}
+
+TEST("havok nan: deep looks that put nothing right back off, then stop until another space, a load or a new burst")
+{
+	using HavokNan::Looks;
+	using HavokNan::Scan;
+	auto       now = Looks::Clock::time_point{} + 1h;
+	Looks      looks;
+	std::uint64_t count = 100;
+	// The bodies are the player's (left alone): the count grows on every step, every look finds nothing to reset.
+	std::vector<Looks::Clock::duration> gaps;
+	auto                                last = now;
+	int                                 deep = 0;
+	bool                                gaveUp = false;
+	for (int frame = 0; frame < 60 * 120; ++frame, now += 16ms, ++count) {  // two minutes
+		if (looks.Plan(count, now) == Scan::kDeep) {
+			if (deep > 0) {
+				gaps.push_back(now - last);
+			}
+			last = now;
+			++deep;
+			gaveUp = looks.Looked(Scan::kDeep, count, false, now) || gaveUp;
+		}
+	}
+	CHECK(deep == Looks::DEEP_TRIES);
+	CHECK(gaveUp);
+	CHECK(looks.GaveUp());
+	REQUIRE(gaps.size() == static_cast<std::size_t>(Looks::DEEP_TRIES - 1));
+	CHECK(gaps[0] >= Looks::DEEP_FIRST && gaps[0] < Looks::DEEP_FIRST + 20ms);
+	for (std::size_t i = 1; i < gaps.size(); ++i) {
+		const auto want = (std::min)(Looks::DEEP_FIRST * (1 << i), std::chrono::duration_cast<std::chrono::seconds>(Looks::DEEP_MOST));
+		CHECK(gaps[i] >= want && gaps[i] < want + 20ms);
+	}
+	// Still counting: no deep look (roots only, every few seconds).
+	CHECK(looks.Plan(++count, now) != Scan::kDeep);
+	// Another space (or a load): looks again, but only for what is counted from now on.
+	looks.Rearm(count, now);
+	CHECK(!looks.GaveUp());
+	CHECK(looks.Plan(count, now) != Scan::kDeep);
+	CHECK(looks.Plan(count + 1, now) == Scan::kDeep);
+	// Given up again, then the count stands still a while and grows again: a new burst.
+	for (int i = 0; i < Looks::DEEP_TRIES; ++i) {
+		now += Looks::DEEP_MOST;
+		REQUIRE(looks.Plan(++count, now) == Scan::kDeep);
+		looks.Looked(Scan::kDeep, count, false, now);
+	}
+	CHECK(looks.GaveUp());
+	CHECK(looks.Plan(++count, now + 1s) != Scan::kDeep);
+	CHECK(looks.Plan(++count, now + 1s + Looks::QUIET - 1ms) != Scan::kDeep);  // not still long enough
+	const auto still = now + 1s + Looks::QUIET - 1ms;
+	CHECK(looks.Plan(count, still + Looks::QUIET) != Scan::kDeep);  // still: nothing new
+	CHECK(looks.Plan(count + 1, still + Looks::QUIET) == Scan::kDeep);
+	CHECK(!looks.GaveUp());
+}
+
+TEST("havok nan: a deep look that resets something starts the back-off over")
+{
+	using HavokNan::Looks;
+	using HavokNan::Scan;
+	auto  now = Looks::Clock::time_point{} + 1h;
+	Looks looks;
+	REQUIRE(looks.Plan(1, now) == Scan::kDeep);
+	looks.Looked(Scan::kDeep, 1, false, now);
+	now += Looks::DEEP_FIRST;
+	REQUIRE(looks.Plan(2, now) == Scan::kDeep);
+	looks.Looked(Scan::kDeep, 2, false, now);
+	CHECK(looks.Tries() == 2);
+	now += 2 * Looks::DEEP_FIRST;
+	REQUIRE(looks.Plan(3, now) == Scan::kDeep);
+	looks.Looked(Scan::kDeep, 3, true, now);
+	CHECK(looks.Tries() == 0);
+	CHECK(looks.Plan(4, now + Looks::DEEP_FIRST) == Scan::kDeep);
 }
