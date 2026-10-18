@@ -303,7 +303,7 @@ TEST("saved scraps: the walk looks at no more than its budget a frame, and carri
 	CHECK(round->counts.refs == 1000);
 	CHECK(walk.SeenCounts().refs == 1000);
 	CHECK(walk.Queued() == 0);
-	CHECK(SavedScraps::WALK_PER_FRAME == 512);
+	static_assert(SavedScraps::WALK_PER_FRAME == 512);
 }
 
 TEST("saved scraps: a cell gone since the look is skipped, and one that goes mid-walk is given up")
@@ -432,7 +432,7 @@ TEST("saved scraps: pieces waiting for a workbench are capped; past the cap they
 	CHECK(ledger.Holds(0x1001));
 	CHECK(ledger.Holds(0x1002));
 	CHECK(!ledger.Holds(0x1003));
-	CHECK(SavedScraps::MAX_WAITING == 4096);
+	static_assert(SavedScraps::MAX_WAITING == 4096);
 }
 
 TEST("saved scraps: a frame's budget always ends the frame, to the reference, whatever the cells hold")
