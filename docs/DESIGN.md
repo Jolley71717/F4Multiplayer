@@ -609,8 +609,8 @@ for people debugging, and a notice's log line is written from the English text (
 server sends its refusals in English on the wire (any server version, and a dedicated one, sends the same text);
 `Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order
 refusal, and anything else as it came. Arabic needs a font mod: the game ships no Arabic font and its Scaleform text
-fields do not shape right-to-left text. Every translation but the English is a first machine translation, marked so in
-its header.
+fields do not shape right-to-left text. A translation's first header line says what it is: a first machine translation
+(most of them), or one reviewed against the game's own terminology in that language, with the date (German).
 
 ### Player names (src/net/NameChoice.h)
 
