@@ -438,7 +438,7 @@ TEST("protocol: actor claim, release and owner lists round trip")
 TEST("protocol: an NPC state carries its owner's graph's gait and clip rate, a person's jog and a creature's range alike")
 {
 	// What NpcSync sends for a jogging person (no rate known for the jog), a running one, and a creature's range.
-	for (const auto [gait, rate] : { std::pair<std::uint8_t, std::uint8_t>{ 1, 0 }, { 2, 69 }, { 10, 0 }, { 255, 255 } }) {
+	for (const auto& [gait, rate] : { std::pair<std::uint8_t, std::uint8_t>{ 1, 0 }, { 2, 69 }, { 10, 0 }, { 255, 255 } }) {
 		ActorState in = MakeActorState(3);
 		in.flags = kOwnGait | kWeaponDrawn;
 		in.speed = 0.0f;  // its graph stands while it is carried
@@ -1455,7 +1455,7 @@ TEST("protocol: a player's own direction and aim pitch, as their graph has them,
 	CHECK(PackPitch(-25.515f) == -26);
 	CHECK(PackPitch(400.0f) == 90);
 	CHECK(PackPitch(std::numeric_limits<float>::infinity()) == 0);
-	for (const auto [turns, degrees] : { std::pair{ 0.25f, 25.515f }, std::pair{ 0.75f, -25.515f }, std::pair{ 0.5f, 0.0f } }) {
+	for (const auto& [turns, degrees] : { std::pair{ 0.25f, 25.515f }, std::pair{ 0.75f, -25.515f }, std::pair{ 0.5f, 0.0f } }) {
 		auto in = MakeState(3);
 		in.direction = PackDirection(turns);
 		in.pitch = PackPitch(degrees);
