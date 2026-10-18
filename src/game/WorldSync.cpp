@@ -4,6 +4,7 @@
 #include "game/CopyWatch.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
+#include "game/Equipment.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
 #include "game/LootScope.h"
@@ -853,6 +854,10 @@ namespace WorldSync
 
 			void Apply(const Protocol::ContainerChange& a_change) override
 			{
+				// LootScope keeps the player and stand-ins out already (Holder::kPlayer); judged once more where it is done.
+				if (!Equipment::MayChange(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container), OwnGear::Change::kContainer)) {
+					return;
+				}
 				const auto command = a_change.count < 0 ?
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
@@ -1168,6 +1173,11 @@ namespace WorldSync
 				++personalSkipped;
 				return true;
 			default:
+				return true;
+			}
+			// Taken out of this world, never out of an inventory: a persistent item's reference stays itself in the
+			// inventory that took it, ours too (OwnGear).
+			if (!Equipment::MayChange(ref, OwnGear::Change::kTakeLoose)) {
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {

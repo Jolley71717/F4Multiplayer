@@ -948,7 +948,9 @@ namespace RemotePlayers
 			// whole set of pieces: the copy left where a friend got out rolled a fresh set for whoever here stepped into it,
 			// a suit nobody in the session ever had, and the copy the stand-in gets into would have had those pieces moved
 			// onto it. The friend's own pieces cannot go into a copy; it stands empty.
-			RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", frame->GetFormID()).c_str());
+			if (Equipment::MayChange(frame.get(), OwnGear::Change::kEmptyFrame)) {
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", frame->GetFormID()).c_str());
+			}
 			++framesPlaced;
 			SaveGuard::Track(frame.get());
 			return handle;

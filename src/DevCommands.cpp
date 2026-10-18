@@ -795,6 +795,22 @@ namespace DevCommands
 			return out + " held:" + Equipment::DescribeHeld(actor) + " hands:" + Equipment::DescribeHands(actor);
 		}
 
+		// inventory [refHex]: what an actor (default: the player) carries and wears, read only: stack and item counts, a
+		// checksum of every stack, the Pip-Boy (and whether it is worn), the caps, and the equipped armor and weapons.
+		// Taken before and after a friend joins, the two must match.
+		std::string Inventory(std::string_view a_args)
+		{
+			RE::Actor* actor = RE::PlayerCharacter::GetSingleton();
+			if (!a_args.empty()) {
+				const auto id = ParseHex(a_args);
+				actor = id ? RE::TESForm::GetFormByID<RE::Actor>(*id) : nullptr;
+			}
+			if (!actor) {
+				return "error: no such actor";
+			}
+			return Equipment::DescribeInventory(actor);
+		}
+
 		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
 		// its release: the engine's own culled WeaponLeft is drawn, or failing one the model database's own node is hung
 		// there (HandThrowable.h, docs/GRENADE-IN-HAND.md round 4). Off at every start; off takes every one out at once.
@@ -2773,6 +2789,7 @@ namespace DevCommands
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
+			Entry{ "inventory", Inventory },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },
