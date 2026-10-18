@@ -670,6 +670,10 @@ namespace
 				} else if (result.event == FrameWatch::Watch::Event::kResumed) {
 					REX::INFO("Frame watch: game work runs again, after {} s", seconds);
 				}
+				// Fast loading's vsync comes back once a loading screen has been up for its limit, or at once when
+				// the game is stuck under one (a stop past its limit while the game draws): from this thread, which
+				// runs whatever holds the main thread (FastLoadCap.h).
+				FastLoad::Tick(result.past);
 			} catch (const std::exception& e) {
 				REX::ERROR("Frame watch: {}", e.what());
 			}
