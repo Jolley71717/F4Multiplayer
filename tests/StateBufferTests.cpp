@@ -36,6 +36,7 @@ namespace
 		Clock::duration lateEvery{};          // or the first batch of every `lateEvery`
 		Micro           lateBy{};
 		bool            queued = false;       // batches come in the order they went: one held up holds up those behind it, which then come together
+		float           dropChance = 0.0f;    // a batch is lost on the way this often, at random: the next brings a state a gap later
 		Clock::duration senderClock{};        // the sender's steady clock is this far ahead of ours
 		Clock::duration length = 20s;
 		unsigned        seed = 1;
@@ -120,6 +121,9 @@ namespace
 				}
 				if (!newest) {
 					continue;
+				}
+				if (a_setup.dropChance > 0.0f && unit(random) < a_setup.dropChance) {
+					continue;  // lost on the way (states go unreliable): the next tick's batch brings a newer one
 				}
 				auto late = Micro{ static_cast<Micro::rep>(unit(random) * static_cast<float>(a_setup.jitter.count())) };
 				if (a_setup.lateChance > 0.0f && unit(random) < a_setup.lateChance) {
@@ -497,5 +501,30 @@ TEST("state buffer: a game at 144 fps remembers a late state for seconds, so the
 		// Over the seven held-up batches after that, a frame or two at most (one a little later than the one before).
 		CHECK(counts.heldFor < 0.02f);
 		CHECK(drawn.back().delay < 0.25f);
+	}
+}
+
+TEST("state buffer: a friend's states lost on the way now and then, at 10 to 30 a second, leave their stand-in going on evenly, drawn no further behind than the longer gap asks")
+{
+	// Player states go unreliable (Session sends them so), and one batch in twenty never comes: the next brings a state a
+	// gap later than usual. Where that outran the delay the stand-in stands a moment and goes on from there, never leaping
+	// or running backwards, and the delay settles to cover the longer gap and no more: about 100 ms at 30 states a second,
+	// 140 at 20, and the 250 ms most at 10 (a 200 ms gap with the jitter on top). Kept by frames, the delay of a game at
+	// 144 fps forgot each lost state within half a second, and the stand-in leapt after the next one at 30 a second too.
+	for (const auto every : { 33ms, 50ms, 100ms }) {
+		for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+			Setup setup;
+			setup.sendEvery = every;
+			setup.fps = fps;
+			setup.frameJitter = 0.2f;
+			setup.dropChance = 0.05f;
+			const auto drawn = Play(setup);
+			const auto counts = Count(drawn, FirstAfter(drawn, 5s));
+			CHECK(counts.frames > 300);
+			CHECK(counts.backwards == 0);
+			CHECK(counts.leaps == 0);
+			CHECK(counts.heldFor < 0.1f);
+			CHECK(drawn.back().delay <= (std::min)(std::chrono::duration<float>(2 * every).count() + 0.07f, 0.25f));
+		}
 	}
 }
