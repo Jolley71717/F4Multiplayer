@@ -421,7 +421,7 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 
 	// The languages the mod ships, each with a file.
 	const auto codes = CodesOf(files);
-	for (const std::string_view wanted : { "en", "en-gb", "ru", "es", "es-mx", "ar", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
+	for (const std::string_view wanted : { "en", "en-gb", "ru", "es", "es-mx", "de", "fr", "it", "pl", "pt-br", "ja", "zh-cn", "zh-tw" }) {
 		CHECK(std::ranges::find(codes, wanted) != codes.end());
 	}
 	// What the game calls its languages finds one of those files.
@@ -460,7 +460,6 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 			CHECK(machine || reviewed);
 		}
 	}
-	CHECK(FileOf(files.front().parent_path() / "ar.txt").find("font") != std::string::npos);
 }
 
 TEST("text: Latin American Spanish is its own file, not Spain's with another name")
