@@ -791,8 +791,20 @@ namespace DevCommands
 					out += std::format("{:08X},", mod.mod);
 				}
 			}
-			// The engine's own list (a throwable shows up here and not above on an NPC), and its 3D.
-			return out + " held:" + Equipment::DescribeHeld(actor);
+			// The engine's own list (a throwable shows up here and not above on an NPC), and its 3D; what hangs in its hands.
+			return out + " held:" + Equipment::DescribeHeld(actor) + " hands:" + Equipment::DescribeHands(actor);
+		}
+
+		// handthrowable on|off: hangs the grenade's model (the model database's own node, never a copy) in the hand of a
+		// stand-in replaying a friend's throw, from its wind-up to its release (HandThrowable.h, docs/GRENADE-IN-HAND.md
+		// round 4). Off at every start; off takes every model out of every hand at once.
+		std::string HandThrowableCommand(std::string_view a_args)
+		{
+			if (a_args != "on" && a_args != "off") {
+				return "error: usage: handthrowable on|off";
+			}
+			WeaponFire::SetHandThrowables(a_args == "on");
+			return std::format("handthrowable={}", WeaponFire::HandThrowables() ? "on" : "off");
 		}
 
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
@@ -2762,6 +2774,7 @@ namespace DevCommands
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "refresh3d", Refresh3D },
+			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "setpos", SetPos },

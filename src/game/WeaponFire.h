@@ -70,6 +70,18 @@ namespace WeaponFire
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
 
+	// Dev (handthrowable on|off, off at every start): the grenade's model is hung in the hand of a stand-in replaying a
+	// friend's throw, from its wind-up to its release (HandThrowable.h). Main thread, but for HandThrowables(), which
+	// the animation hook reads.
+	void               SetHandThrowables(bool a_on);
+	[[nodiscard]] bool HandThrowables();
+
+	// Takes the model out of this actor's hand: called before the actor is deleted.
+	void DropHandThrowable(std::uint32_t a_actorFormId);
+
+	// ... out of every hand: before a save or a load, and when the session ends.
+	void DropHandThrowables();
+
 	// An NPC died in our world (its form id: a plugin's, or a runtime NPC's that may be our copy of a friend's
 	// spawn): a copy that was a ghost of ours then is counted and logged (the explosion reached it).
 	void NoteDeath(std::uint32_t a_refId);

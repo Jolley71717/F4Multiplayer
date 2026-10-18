@@ -233,6 +233,7 @@ namespace NpcSync
 				return;
 			}
 			WeaponFire::ReleaseSoundsOf(a_mirror.registeredId);  // a replayed burst may still follow the actor's 3D
+			WeaponFire::DropHandThrowable(a_mirror.registeredId);
 			if (RE::TESForm::GetFormByID<RE::Actor>(a_mirror.registeredId) == a_mirror.registered) {
 				Puppets::ReleaseNpc(a_mirror.registered);
 				meter.Released();  // and its evp

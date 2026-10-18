@@ -703,9 +703,17 @@ namespace Equipment
 		const auto process = a_actor ? a_actor->currentProcess : nullptr;
 		if (const auto middle = process ? process->middleHigh : nullptr) {
 			RE::BSAutoLock l{ middle->equippedItemsLock };
+			static const auto weaponData = RE::VTABLE::EquippedWeaponData[0].address();
 			for (const auto& equipped : middle->equippedItems) {
 				// An entry with no data (a weapon's holds its sounds, preloads and fire node) was never set up as a weapon.
 				out += std::format(" {:08X}@{}{}", equipped.item.object ? equipped.item.object->GetFormID() : 0, equipped.equipIndex.index, equipped.data ? "" : "(nodata)");
+				// A weapon's preloads, its model (m) and its projectile (p), are queued as the engine sets the weapon up;
+				// what its throw shows in the hand would come from the model one. Read only off data that is a weapon's.
+				const auto data = equipped.data.get();
+				if (data && *reinterpret_cast<const std::uintptr_t*>(data) == weaponData) {
+					const auto weapon = static_cast<const RE::EquippedWeaponData*>(data);
+					out += std::format("(pre={}{})", weapon->weaponPreload ? "m" : "-", weapon->projectilePreload ? "p" : "-");
+				}
 			}
 		}
 		// A throwable's 3D hangs in the biped's grenade or mine slot once loaded; the throw's
@@ -722,5 +730,78 @@ namespace Equipment
 			}
 		}
 		return out.empty() ? " nothing" : out;
+	}
+
+	RE::TESObjectWEAP* HeldThrowable(RE::Actor* a_actor)
+	{
+		const auto process = a_actor ? a_actor->currentProcess : nullptr;
+		const auto middle = process ? process->middleHigh : nullptr;
+		if (!middle) {
+			return nullptr;
+		}
+		RE::BSAutoLock l{ middle->equippedItemsLock };
+		for (const auto& equipped : middle->equippedItems) {
+			if (const auto weapon = equipped.item.object ? ThrowableForm(equipped.item.object->GetFormID()) : nullptr) {
+				return weapon;
+			}
+		}
+		return nullptr;
+	}
+
+	RE::NiNode* ChildNode(RE::NiAVObject* a_root, std::string_view a_name)
+	{
+		const auto found = a_root ? a_root->GetObjectByName(RE::BSFixedString{ a_name }) : nullptr;
+		return found ? found->IsNode() : nullptr;
+	}
+
+	RE::NiAVObject* DirectChild(RE::NiNode* a_node, std::string_view a_name)
+	{
+		if (!a_node) {
+			return nullptr;
+		}
+		for (const auto& child : a_node->children) {  // the array runs to its capacity: empty slots are null
+			const auto object = child.get();
+			if (object && object->name.c_str() && a_name == object->name.c_str()) {
+				return object;
+			}
+		}
+		return nullptr;
+	}
+
+	std::string DescribeHands(RE::Actor* a_actor)
+	{
+		const auto root = a_actor ? a_actor->Get3D() : nullptr;
+		if (!root) {
+			return " no3D";
+		}
+		std::string out;
+		for (const auto name : { "LArm_Hand"sv, "RArm_Hand"sv, "Weapon"sv }) {
+			const auto node = ChildNode(root, name);
+			if (!node) {
+				continue;
+			}
+			out += std::format(" {}[", name);
+			for (const auto& child : node->children) {
+				const auto object = child.get();
+				if (!object) {
+					continue;
+				}
+				out += std::format("'{}'{}", object->name.c_str() ? object->name.c_str() : "", object->GetAppCulled() ? "(culled)" : "");
+				// The engine's own grenade on its own throws: where it sits in the hand and what it holds, for placing ours.
+				if (const auto held = object->IsNode(); held && object->name.c_str() && "WeaponLeft"sv == object->name.c_str()) {
+					const auto& at = object->local.translate;
+					out += std::format("@({:.1f},{:.1f},{:.1f})x{:.2f}{{", at.x, at.y, at.z, object->local.scale);
+					for (const auto& inner : held->children) {
+						if (inner.get()) {
+							out += std::format("'{}' ", inner->name.c_str() ? inner->name.c_str() : "");
+						}
+					}
+					out += "}";
+				}
+				out += " ";
+			}
+			out += "]";
+		}
+		return out.empty() ? " nohands" : out;
 	}
 }

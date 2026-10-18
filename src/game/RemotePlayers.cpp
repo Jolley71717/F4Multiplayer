@@ -1425,6 +1425,7 @@ namespace RemotePlayers
 			DeleteFrame(a_player, actor, heldIn && heldIn.get() == a_player.frame.get().get() ? wearer : RE::ObjectRefHandle{});
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
+				WeaponFire::DropHandThrowable(actor->GetFormID());
 				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
 				// moves it any more.

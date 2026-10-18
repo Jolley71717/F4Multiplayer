@@ -111,7 +111,20 @@ namespace Equipment
 	// an NPC); for the status line.
 	std::uint32_t AttachesAsked();
 
-	// What the engine lists as equipped on the actor (form@equipIndex), and the state of a throwable's
-	// 3D in its biped: for the log and the equipped dev command.
+	// What the engine lists as equipped on the actor (form@equipIndex, a weapon's preloads), and the state
+	// of a throwable's 3D in its biped: for the log and the equipped dev command.
 	std::string DescribeHeld(RE::Actor* a_actor);
+
+	// The grenade or mine the engine lists as equipped on the actor, or null.
+	RE::TESObjectWEAP* HeldThrowable(RE::Actor* a_actor);
+
+	// The node of that name anywhere under a_root, or null (also when the object by that name is no node).
+	RE::NiNode* ChildNode(RE::NiAVObject* a_root, std::string_view a_name);
+
+	// The child of a_node (not deeper) with that name, or null.
+	RE::NiAVObject* DirectChild(RE::NiNode* a_node, std::string_view a_name);
+
+	// What hangs under the actor's hand and weapon nodes (the children's names; the engine's WeaponLeft with
+	// where it sits and what it holds): where a throwable's model is during a throw, for the log.
+	std::string DescribeHands(RE::Actor* a_actor);
 }

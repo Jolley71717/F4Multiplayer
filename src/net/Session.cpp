@@ -569,6 +569,7 @@ namespace Session
 			Spawns::Reset();  // our copies of friends' spawns go (before NpcSync forgets their mirrors)
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
+			WeaponFire::DropHandThrowables();
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
@@ -1062,6 +1063,7 @@ namespace Session
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
+		WeaponFire::DropHandThrowables();
 		Downed::OnBeforeSave();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {
