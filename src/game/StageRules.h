@@ -43,7 +43,20 @@ namespace StageRules
 	// their items by hand (caps, a Stimpak, fusion cores, Jet, whiskey; quest items are left out: they
 	// came from the quest). Story is only flagged in Fallout4.esm: Far Harbor files its own story as
 	// side quests and main quests both. Sorted by file, quest and stage.
+	// The dialogue quests (shared with the story since, see QuestFilter::IsDialogue) were scanned again for what their
+	// stages take from the player (tools/questscan.ps1): five pay or sell. What that scan sees: a quest's own
+	// Fragment_Stage_ functions calling RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem,
+	// UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property. In those it found no shared
+	// quest's stage taking weapons, armor or the Pip-Boy, unequipping them, or emptying the inventory (RemoveAllItems is
+	// only in MQ101, the opening, and DN019JoinCult, both misc quests, never shared). What it does not see: a call made
+	// through the quest's own script (kmyQuest) or another script a fragment calls, through an alias that holds the
+	// player (Alias_Player.GetRef()) or a variable it does not follow; a scene's, a dialogue line's or any other script's
+	// that a stage starts; nor that a shared stage sets a stage of another quest, whose own taking is listed under that
+	// quest (a misc one reads as never shared). So it is no proof that no shared stage does; OwnGear guards the local
+	// player's gear from what the session itself does, not from what a stage's own scripts do once it is set.
 	inline constexpr Rule RULES[] = {
+		{ 0, 0x003648, 70, kPays, 0 },   // DialogueDiamondCity: the World Series bat sold for caps
+		{ 0, 0x019955, 210, kPays, 0 },  // DialogueBunkerHill: 10 caps
 		{ 0, 0x01CB51, 0, kMoves, 40 },  // MS07a
 		{ 0, 0x01CB51, 17, 0, 15 },
 		{ 0, 0x01CB51, 18, 0, 5 },
@@ -147,6 +160,8 @@ namespace StageRules
 		{ 0, 0x033527, 550, kPays, 0 },
 		{ 0, 0x03A457, 0, 0, 10 },  // Min02
 		{ 0, 0x03E0C1, 90, kPays, 0 },  // MinRadiantOwned03ChangeLocOnly
+		{ 0, 0x03F244, 5, kPays, 0 },    // DialogueVault81: 5 caps
+		{ 0, 0x03F244, 645, kPays, 0 },  // DialogueVault81: 25 fertilizer sold
 		{ 0, 0x043275, 1, kMoves | kBridge, 41 },  // RR303
 		{ 0, 0x043275, 2, 0, 31 },
 		{ 0, 0x043275, 110, 0, 10 },
@@ -347,6 +362,7 @@ namespace StageRules
 		{ 1, 0x001B44, 3, 0, 20 },
 		{ 1, 0x001B44, 120, 0, 40 },
 		{ 1, 0x001B44, 190, 0, 80 },
+		{ 1, 0x005BD7, 90, kPays, 0 },   // DLC03DialogueFarHarbor: the charge card sold for caps
 		{ 1, 0x00AFB1, 0, kMoves, 20 },  // DLC03AtomM01
 		{ 1, 0x00AFB1, 70, 0, 5 },
 		{ 1, 0x01055C, 30, 0, 45 },  // DLC03CoA_FFNucleus01

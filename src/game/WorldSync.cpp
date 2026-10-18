@@ -4,6 +4,7 @@
 #include "game/CopyWatch.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
+#include "game/Equipment.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
 #include "game/LootScope.h"
@@ -143,6 +144,8 @@ namespace WorldSync
 		std::unordered_set<std::uint32_t> vendorChests;
 
 		std::unordered_set<std::uint32_t> pendingPickups;
+		// Pending pickups whose item was found in no cell, and since when (see TryApplyPickup).
+		std::unordered_map<std::uint32_t, Clock::time_point> pickupUnplacedSince;
 		// Every pickup we were told of this session (for how full its history is; see NoticeHistory).
 		std::unordered_set<std::uint32_t> pickedUpKnown;
 		std::uint64_t                     historyNoticedIn = 0;  // the session the player was told of (once a session)
@@ -853,6 +856,10 @@ namespace WorldSync
 
 			void Apply(const Protocol::ContainerChange& a_change) override
 			{
+				// LootScope keeps the player and stand-ins out already (Holder::kPlayer); judged once more where it is done.
+				if (!Equipment::MayChange(RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_change.container), OwnGear::Change::kContainer)) {
+					return;
+				}
 				const auto command = a_change.count < 0 ?
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
@@ -1168,6 +1175,20 @@ namespace WorldSync
 				++personalSkipped;
 				return true;
 			default:
+				return true;
+			}
+			// Taken out of this world, never out of an inventory: a persistent item's reference stays itself in the
+			// inventory that took it, ours too (OwnGear). One in no cell and no inventory the engine names may be
+			// between cells for a moment: it waits and is tried again, for OwnGear::PICKUP_WAIT.
+			const auto verdict = Equipment::Judge(ref, OwnGear::Change::kTakeLoose);
+			if (verdict == OwnGear::Verdict::kNotPlaced) {
+				const auto now = Clock::now();
+				if (OwnGear::TryAgain(verdict, now - pickupUnplacedSince.try_emplace(a_refId, now).first->second)) {
+					return false;
+				}
+			}
+			pickupUnplacedSince.erase(a_refId);
+			if (!Equipment::Count(ref, OwnGear::Change::kTakeLoose, verdict)) {
 				return true;
 			}
 			if (!ref->IsDisabled() && !ref->IsDeleted()) {
@@ -1681,6 +1702,7 @@ namespace WorldSync
 		switchOnTried.clear();
 		pendingHealth.clear();
 		pendingPickups.clear();
+		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
 		hitLastFrame.clear();
 		recentActivations.clear();

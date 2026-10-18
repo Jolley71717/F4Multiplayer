@@ -61,6 +61,24 @@ TEST("stage rules: what the fragments do")
 	CHECK(door && Hold(door) == 5s);  // Wait 4, and a second more
 }
 
+TEST("stage rules: a dialogue quest's payment or sale (shared with the story) is never made from a friend's game")
+{
+	using namespace StageRules;
+	// Shared since the dialogue quests are (QuestFilter::IsDialogue), scanned from their fragments (tools/questscan.ps1).
+	CHECK(FlagsOf(0x003648, 70) == kPays);   // DialogueDiamondCity: the World Series bat sold for caps
+	CHECK(FlagsOf(0x019955, 210) == kPays);  // DialogueBunkerHill: 10 caps
+	CHECK(FlagsOf(0x03F244, 5) == kPays);    // DialogueVault81: 5 caps
+	CHECK(FlagsOf(0x03F244, 645) == kPays);  // DialogueVault81: 25 fertilizer sold
+	CHECK(FlagsOf(0x005BD7, 90, File::kCoast) == kPays);  // DLC03DialogueFarHarbor: the charge card sold
+	// A friend's sale or payment there: skipped, live and beside them too.
+	for (const auto& [quest, stage, file] : { std::tuple{ 0x003648u, 70, File::kFallout4 }, std::tuple{ 0x019955u, 210, File::kFallout4 },
+			 std::tuple{ 0x03F244u, 5, File::kFallout4 }, std::tuple{ 0x03F244u, 645, File::kFallout4 }, std::tuple{ 0x005BD7u, 90, File::kCoast } }) {
+		CHECK(Judge(Find(quest, static_cast<std::uint16_t>(stage), file), { .sharedStory = true, .live = true, .nearFriend = true }) == Verdict::kSkip);
+	}
+	// The scenes around them are not held back.
+	CHECK(!Find(0x03F244, 642));  // DialogueVault81: Priscilla hands the player a mutfruit
+}
+
 TEST("stage rules: a friend's stage is set, skipped, or waits")
 {
 	using namespace StageRules;

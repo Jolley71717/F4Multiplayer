@@ -1,10 +1,32 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/OwnGear.h"
 
 // Equipped armor and weapons: read from the local player, copied onto puppets. Main thread only.
 namespace Equipment
 {
+	// Whether a change the session makes to an inventory or to what an actor wears, for a friend's game, may go to this
+	// reference (OwnGear::Judge): never to the local player, whose gear is theirs alone. Every dressing below asks first,
+	// and so do the shared loot and pickups (WorldSync). A refusal is counted and logged.
+	[[nodiscard]] bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change);
+
+	// MayChange in two steps, for a caller that may wait on a refusal rather than take it (a friend's pickup of an item
+	// in no cell, OwnGear::TryAgain): the verdict, read from the engine and neither counted nor logged; then Count, which
+	// counts and logs a refusal and says whether the change goes ahead.
+	[[nodiscard]] OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change);
+	bool                           Count(RE::TESObjectREFR* a_ref, OwnGear::Change a_change, OwnGear::Verdict a_verdict);
+
+	// A session starts (its welcome): the refusals' counts and log budgets start again.
+	void OnSessionStart();
+
+	// The refusals so far this session, for the status line.
+	std::string DescribeOwnGear();
+
+	// What the local player carries and wears, for the read-only `inventory` dev command: the counts, a checksum of every
+	// stack (form and count), the Pip-Boy and the caps, and what is equipped.
+	std::string DescribeInventory(RE::Actor* a_actor);
+
 	// Base forms of the armor and weapons the actor has equipped, sorted, without duplicates.
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor);
 

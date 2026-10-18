@@ -2,6 +2,7 @@
 
 #include "Protocol.h"
 #include "game/GearPlan.h"
+#include "game/Puppets.h"
 #include "game/StandInGear.h"
 
 #include <unordered_map>
@@ -62,6 +63,138 @@ namespace Equipment
 			}
 			return a_actor->GetObjectReference();
 		}
+
+		// Both start afresh with each session (OnSessionStart).
+		OwnGear::Tally     ownGear;
+		OwnGear::LogBudget ownGearLog;
+
+		constexpr std::uint32_t PIP_BOY = 0x00021B3B;  // Fallout4.esm: the Pip-Boy (armor)
+		constexpr std::uint32_t CAPS = 0x0000000F;     // Caps001
+	}
+
+	OwnGear::Verdict Judge(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	{
+		OwnGear::Target target;
+		target.exists = a_ref && !a_ref->IsDeleted();
+		if (a_ref) {
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			target.player = a_ref->IsPlayerRef() || a_ref == player;
+			const auto actor = a_ref->As<RE::Actor>();
+			target.standIn = actor && Puppets::IsPuppet(actor);
+			target.mirrored = actor && !target.standIn && Puppets::IsRegistered(actor);
+			target.madeHere = a_ref->IsCreated();
+			const auto ours = player ? PowerArmorFrameOf(player) : RE::NiPointer<RE::TESObjectREFR>{};
+			target.playersFrame = ours && ours.get() == a_ref;
+			target.inWorld = a_ref->GetParentCell() != nullptr;
+			// A persistent reference an inventory took keeps the engine's handle of that inventory (ExtraReferenceHandles'
+			// containerRef). Read only for one in no cell: whose inventory it is decides whether a pickup waits.
+			if (!target.inWorld && a_ref->extraList) {
+				if (const auto handles = a_ref->extraList->GetByType<RE::ExtraReferenceHandles>()) {
+					if (const auto holder = handles->containerRef.get(); holder && holder.get() != a_ref) {
+						target.heldByPlayer = holder->IsPlayerRef() || holder.get() == player;
+						target.heldHere = !target.heldByPlayer;
+					}
+				}
+			}
+		}
+		return OwnGear::Judge(a_change, target);
+	}
+
+	bool Count(RE::TESObjectREFR* a_ref, OwnGear::Change a_change, OwnGear::Verdict a_verdict)
+	{
+		if (ownGear.Count(a_verdict)) {
+			return true;
+		}
+		switch (ownGearLog.Take(a_verdict)) {
+		case OwnGear::LogBudget::Log::kSkip:
+			break;
+		case OwnGear::LogBudget::Log::kLog:
+			REX::WARN("Equipment: {} for {:08X} refused: {}", OwnGear::Name(a_change), a_ref ? a_ref->GetFormID() : 0, OwnGear::Name(a_verdict));
+			break;
+		case OwnGear::LogBudget::Log::kLogLast:
+			REX::WARN("Equipment: {} for {:08X} refused: {} (the last {} refusal logged this session; net status counts them)", OwnGear::Name(a_change),
+				a_ref ? a_ref->GetFormID() : 0, OwnGear::Name(a_verdict), OwnGear::Alarming(a_verdict) ? "alarming" : "benign");
+			break;
+		}
+		return false;
+	}
+
+	bool MayChange(RE::TESObjectREFR* a_ref, OwnGear::Change a_change)
+	{
+		return Count(a_ref, a_change, Judge(a_ref, a_change));
+	}
+
+	void OnSessionStart()
+	{
+		ownGear = {};
+		ownGearLog = {};
+	}
+
+	std::string DescribeOwnGear()
+	{
+		using OwnGear::Verdict;
+		const auto of = [](Verdict a_verdict) { return ownGear.refused[static_cast<std::size_t>(a_verdict)]; };
+		return std::format("ownGear: refused={} ourPlayer={} wrongActor={} notCopy={} ourFrame={} inOurInventory={} inInventory={} notPlaced={} gone={}", ownGear.Refused(),
+			ownGear.ourPlayer, of(Verdict::kWrongActor), of(Verdict::kNotCopy), of(Verdict::kOurFrame), of(Verdict::kInOurInventory), of(Verdict::kInInventory),
+			of(Verdict::kNotPlaced), of(Verdict::kGone));
+	}
+
+	std::string DescribeInventory(RE::Actor* a_actor)
+	{
+		const auto list = a_actor ? a_actor->inventoryList : nullptr;
+		if (!list) {
+			return "error: no inventory";
+		}
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> stacks;  // form, count
+		std::uint32_t weapons = 0;
+		std::uint32_t armor = 0;
+		std::uint32_t pipBoys = 0;
+		bool          pipBoyWorn = false;
+		std::uint32_t caps = 0;
+		{
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (!entry.object) {
+					continue;
+				}
+				const auto id = entry.object->GetFormID();
+				const auto count = entry.GetCount();
+				stacks.emplace_back(id, count);
+				if (entry.object->Is(RE::ENUM_FORM_ID::kWEAP)) {
+					weapons += count;
+				} else if (entry.object->Is(RE::ENUM_FORM_ID::kARMO)) {
+					armor += count;
+				}
+				if (id == PIP_BOY) {
+					pipBoys += count;
+					for (auto stack = entry.stackData.get(); stack; stack = stack->nextStack.get()) {
+						pipBoyWorn |= stack->IsEquipped();
+					}
+				}
+				if (id == CAPS) {
+					caps += count;
+				}
+			}
+		}
+		std::ranges::sort(stacks);
+		// FNV-1a over every stack, so two looks can be compared at a glance.
+		std::uint64_t hash = 14695981039346656037ull;
+		std::uint64_t items = 0;
+		for (const auto& [id, count] : stacks) {
+			for (const auto value : { id, count }) {
+				for (int shift = 0; shift < 32; shift += 8) {
+					hash = (hash ^ ((value >> shift) & 0xFF)) * 1099511628211ull;
+				}
+			}
+			items += count;
+		}
+		const auto worn = Read(a_actor);
+		std::string out = std::format("stacks={} items={} weapons={} armor={} caps={} pipboy={} pipboyWorn={} hash={:016X} equipped({})=", stacks.size(), items, weapons, armor, caps,
+			pipBoys, pipBoyWorn, hash, worn.size());
+		for (std::size_t i = 0; i < worn.size(); ++i) {
+			out += std::format("{}{:08X}", i ? "," : "", worn[i]);
+		}
+		return out;
 	}
 
 	std::vector<std::uint32_t> Read(RE::Actor* a_actor)
@@ -192,7 +325,7 @@ namespace Equipment
 
 	std::uint32_t Wear(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
 	{
-		if (!a_actor) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressCopy)) {
 			return 0;
 		}
 		const auto id = a_actor->GetFormID();
@@ -330,7 +463,7 @@ namespace Equipment
 
 	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
-		if (!a_actor) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
 			return;
 		}
 		const auto id = a_actor->GetFormID();
@@ -461,14 +594,14 @@ namespace Equipment
 
 	void PutOnForPick(RE::Actor* a_actor, std::uint32_t a_item)
 	{
-		if (a_actor && RE::TESForm::GetFormByID(a_item)) {
+		if (a_actor && RE::TESForm::GetFormByID(a_item) && MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
 			PutOn(a_actor, a_item, {}, std::ranges::binary_search(Read(a_actor), a_item));
 		}
 	}
 
 	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
-		if (!a_actor) {
+		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
 			return;
 		}
 		const auto id = a_actor->GetFormID();
@@ -506,6 +639,11 @@ namespace Equipment
 	bool SwitchIntoPowerArmor(RE::Actor* a_actor, RE::TESObjectREFR* a_frame)
 	{
 		if (!a_actor || !a_frame || InPowerArmor(a_actor) || !IsPowerArmorFrame(a_frame->GetObjectReference())) {
+			return false;
+		}
+		// Only a stand-in, and only into a copy this game placed for it: the switch-in empties the frame and moves its
+		// items onto the actor.
+		if (!MayChange(a_actor, OwnGear::Change::kDressStandIn) || !MayChange(a_frame, OwnGear::Change::kEmptyFrame)) {
 			return false;
 		}
 		// Empty, so that what goes on is only what the actor is told to wear: a frame never looked into is filled from its
@@ -562,7 +700,8 @@ namespace Equipment
 
 	void Apply(RE::Actor* a_puppet, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
-		if (!a_puppet) {
+		// It empties the inventory first: a friend's stand-in only.
+		if (!a_puppet || !MayChange(a_puppet, OwnGear::Change::kDressStandIn)) {
 			return;
 		}
 		// The console commands handle inventory bookkeeping and 3D updates for us.
@@ -658,6 +797,9 @@ namespace Equipment
 	bool HoldThrowable(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items)
 	{
 		if (!a_actor || !a_actor->Get3D()) {
+			return false;
+		}
+		if (!MayChange(a_actor, Puppets::IsPuppet(a_actor) ? OwnGear::Change::kDressStandIn : OwnGear::Change::kDressCopy)) {
 			return false;
 		}
 		for (const auto item : a_items) {

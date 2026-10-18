@@ -41,6 +41,18 @@ TEST("quest filter: the main story, the factions, side quests and the add-ons' q
 	CHECK(!QuestFilter::Watched(Filed(OTHER, 0, false, "Followers")));
 }
 
+TEST("quest filter: the quests whose stages empty the player's inventory are never shared: the opening, the cult")
+{
+	// Fallout4.esm, as the game files them (tools/questscan.ps1): MQ101 "War Never Changes", the opening, empties the
+	// player's inventory (RemoveAllItems at its 0 and 900; MQ102 7 gives the Pip-Boy in Vault 111); DN019JoinCult
+	// (the Children of Atom's initiation) takes everything at its 600. Both are misc quests (type 6): a friend's stage of
+	// either is never set here, so a host's Pip-Boy and weapons never go for a joiner's opening.
+	CHECK(!QuestFilter::Watched(Filed(0x0001ED86, 6, true, "MQ101")));
+	CHECK(!QuestFilter::Watched(Filed(0x000C5093, 6, true, "DN019JoinCult")));
+	// Out of Time, which gives the Pip-Boy, is the story's (set only on a player before its 7, and only beside the friend).
+	CHECK(QuestFilter::Watched(Filed(0x0001CC2A, 1, true, "MQ102")));
+}
+
 TEST("quest filter: the factions' finales are shared though the game files them under no type")
 {
 	for (const auto id : { INST305, BOS302, BOS304 }) {
