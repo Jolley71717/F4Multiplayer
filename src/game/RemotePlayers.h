@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "game/RemoteEdits.h"
+
 #include "Protocol.h"
 
 // Other players in the session, shown in our world as puppet actors.
@@ -84,6 +86,14 @@ namespace RemotePlayers
 	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
 	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
 	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
+	// Places an empty copy of a power armor frame (as the one a stand-in gets into), kept out of saves: Spawns' copy of a
+	// frame a friend's game made. In our player's cell (a_cell: an interior, or outside in its worldspace). Deleted with
+	// Discard.
+	RE::ObjectRefHandle PlaceFrameCopy(std::uint32_t a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading);
+	// The copy we show of the frame a_owner left parked (see ArmorFrames::ChoosePark), handed over when it is of a_base,
+	// stands within ArmorFrames::ORIGINAL_RADIUS of a_spot and nobody is in it: Spawns' copy of the same frame, once
+	// their game shares it, takes it over rather than standing a second suit in the same spot. None otherwise.
+	RE::ObjectRefHandle TakeParkedCopy(std::uint32_t a_owner, std::uint32_t a_base, const RemoteEdits::Spot& a_spot);
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

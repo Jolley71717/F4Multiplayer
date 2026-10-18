@@ -26,6 +26,7 @@
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
+#include "game/Spawns.h"
 #include "game/WeaponFire.h"
 
 namespace RemotePlayers
@@ -1490,10 +1491,14 @@ namespace RemotePlayers
 		}
 
 		// Our own reference of the frame they parked (a pre-placed one, by its ID) stands where they parked theirs: it
-		// stands for theirs. Not one the engine has disabled (worn by our player: it stands where it was got into).
-		bool OursThere(const Protocol::ParkedFrame& a_parked)
+		// stands for theirs. Not one the engine has disabled (worn by our player: it stands where it was got into). One
+		// their game made stands there as our copy of it when their game shares it (Spawns, FrameShare::SharesMade).
+		bool OursThere(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked)
 		{
-			const auto ourFrame = a_parked.ref ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref) : nullptr;
+			if (a_parked.ref == 0) {
+				return Spawns::FrameCopyAt(a_owner, a_parked, ArmorFrames::ORIGINAL_RADIUS);
+			}
+			const auto ourFrame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_parked.ref);
 			if (!ourFrame || ourFrame->IsDeleted() || ourFrame->IsDisabled() || ourFrame->IsCreated()) {
 				return false;
 			}
@@ -1524,7 +1529,7 @@ namespace RemotePlayers
 			facts.told = Equipment::IsPowerArmorFrame(base);
 			if (facts.told) {
 				facts.inView = InView(*parked, a_localCell, a_us, a_loading);
-				facts.oursThere = OursThere(*parked);
+				facts.oursThere = OursThere(a_player.id, *parked);
 				facts.taken = a_player.parkedTaken == parked;
 			}
 			const RE::NiPoint3 at = parked ? RE::NiPoint3{ parked->x, parked->y, parked->z } : RE::NiPoint3{};
@@ -1602,7 +1607,7 @@ namespace RemotePlayers
 				break;
 			case ArmorFrames::Park::kDelete:
 				REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} goes: {}", a_player.id, copy->GetFormID(),
-					!facts.told ? "they are in their armor, or left no frame" : facts.oursThere ? "our own copy of that frame stands there" : "it is out of our sight");
+					!facts.told ? "they are in their armor, or left no frame" : facts.oursThere ? "our own copy of that frame, or the one their game shares, stands there" : "it is out of our sight");
 				DeleteParked(a_player);
 				break;
 			case ArmorFrames::Park::kAbandon:
@@ -2025,6 +2030,41 @@ namespace RemotePlayers
 	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)
 	{
 		Bury({ .actor = a_ref, .spawnedAt = a_placedAt });
+	}
+
+	RE::ObjectRefHandle PlaceFrameCopy(std::uint32_t a_base, RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_at, float a_heading)
+	{
+		const auto base = RE::TESForm::GetFormByID<RE::TESFurniture>(a_base);
+		if (!a_cell || !Equipment::IsPowerArmorFrame(base)) {
+			return {};
+		}
+		return PlaceCopy(base, a_cell->IsInterior() ? a_cell : nullptr, a_cell->IsInterior() ? nullptr : a_cell->worldSpace, a_at, a_heading);
+	}
+
+	RE::ObjectRefHandle TakeParkedCopy(std::uint32_t a_owner, std::uint32_t a_base, const RemoteEdits::Spot& a_spot)
+	{
+		const auto it = players.find(a_owner);
+		if (it == players.end()) {
+			return {};
+		}
+		auto&      player = it->second;
+		const auto copy = player.parkedCopy.get();
+		const auto base = copy && !copy->IsDeleted() ? copy->GetObjectReference() : nullptr;
+		if (!base || base->GetFormID() != a_base || OurFrame(copy.get()) || FrameInUse(copy.get())) {
+			return {};
+		}
+		const auto from = DistanceFrom(copy.get(), { a_spot.cell, a_spot.worldspace, { a_spot.x, a_spot.y, a_spot.z } });
+		if (!from || !(*from <= ArmorFrames::ORIGINAL_RADIUS)) {
+			return {};
+		}
+		// Drawn and solid from now on, as a copy just placed is (solid once nobody stands in it).
+		SetShown(copy.get(), true);
+		RestoreCollision(player.parkedCollisionOff, copy.get());
+		REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} is now our copy of the frame their game shares", a_owner, copy->GetFormID());
+		const auto handle = player.parkedCopy;
+		player.parkedCopy = {};
+		player.parkedCollisionOff = nullptr;
+		return handle;
 	}
 
 	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)

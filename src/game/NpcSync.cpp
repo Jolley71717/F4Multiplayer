@@ -18,6 +18,7 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/SaveGuard.h"
 #include "game/Spawns.h"
 #include "game/StandInRange.h"
 #include "game/Story.h"
@@ -171,6 +172,10 @@ namespace NpcSync
 		bool                                         hosting = false;  // our server is the session's (Frame)
 		std::unordered_set<std::uint32_t>            standingFrames;   // frames found standing, loaded, by the last walk
 		std::unordered_set<std::uint32_t>            usedFrames;       // frames our player got into or out of, or had left last: ours to run
+		// Frames our game made (0xFF......), shared as spawns (FrameShare::SharesMade, Spawns::ShareFrame), by their ids here.
+		constexpr std::size_t                        MAX_MADE_SEEN = 64;  // standing ones looked at, and our player's own kept, at most
+		std::unordered_set<std::uint32_t>            standingMade;        // found standing, loaded, by the last walk
+		std::unordered_set<std::uint32_t>            usedMade;            // our player got into or out of, or had left last
 		std::uint32_t                                wornFrame = 0;    // the frame our player was in at the last scan (0: none)
 		struct SentFrame
 		{
@@ -737,6 +742,17 @@ namespace NpcSync
 			return ref && !ref->IsDeleted() && Equipment::IsPowerArmorFrame(ref->GetObjectReference()) ? ref : nullptr;
 		}
 
+		// A power armor frame our game made at runtime, by its id here (Spawns::LocalOf turns a spawn id of ours into it),
+		// whatever its state.
+		RE::TESObjectREFR* MadeFrameRef(std::uint32_t a_local)
+		{
+			if (!Protocol::IsSpawnRef(a_local)) {
+				return nullptr;
+			}
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_local);
+			return ref && !ref->IsDeleted() && Equipment::IsPowerArmorFrame(ref->GetObjectReference()) ? ref : nullptr;
+		}
+
 		// An actor of ours is in this frame (a stand-in gets into a copy of its own, never a reference of our world).
 		bool FrameInUse(const RE::TESObjectREFR* a_frame)
 		{
@@ -770,6 +786,7 @@ namespace NpcSync
 			ours.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
 			ours.inUse = FrameInUse(a_frame);
 			ours.wornHere = player && Equipment::PowerArmorFrameOf(player).get() == a_frame;
+			ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
 			ours.at = SpotOf(a_frame);
 			ours.heading = a_frame->data.angle.z;
 			return ours;
@@ -777,7 +794,8 @@ namespace NpcSync
 
 		// The frames standing in the loaded cells, found by a walk of their references now and then: furniture is in no
 		// process list. Loaded and enabled only; the one our player wears, and ours in cells since unloaded, are known
-		// by other means (ScanFrames).
+		// by other means (ScanFrames). Pre-placed ones by their own ids, and the ones our game made (shared as spawns)
+		// apart: the session's copies among those are told from our own by FrameOursOf.
 		void WalkFrames(Clock::time_point a_now)
 		{
 			if (a_now < nextFrameWalk) {
@@ -785,16 +803,50 @@ namespace NpcSync
 			}
 			nextFrameWalk = a_now + FRAME_WALK_INTERVAL;
 			standingFrames.clear();
+			standingMade.clear();
 			const auto tes = RE::TES::GetSingleton();
 			if (!tes) {
 				return;
 			}
 			tes->ForEachReference([](RE::TESObjectREFR* a_ref) {
-				if (a_ref && Protocol::IsShareableRef(a_ref->GetFormID()) && Equipment::IsPowerArmorFrame(a_ref->GetObjectReference()) && !a_ref->IsDeleted() && !a_ref->IsDisabled() && a_ref->Get3D()) {
-					standingFrames.insert(a_ref->GetFormID());
+				const auto id = a_ref ? a_ref->GetFormID() : 0;
+				const bool placed = Protocol::IsShareableRef(id);
+				if ((placed || Protocol::IsSpawnRef(id)) && Equipment::IsPowerArmorFrame(a_ref->GetObjectReference()) && !a_ref->IsDeleted() && !a_ref->IsDisabled() && a_ref->Get3D()) {
+					if (placed) {
+						standingFrames.insert(id);
+					} else if (standingMade.size() < MAX_MADE_SEEN) {
+						standingMade.insert(id);
+					}
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
+		}
+
+		// Scan's part for frames our game made: each one ours to share (FrameShare::SharesMade) goes to the server under a
+		// spawn id, and counts as loaded once granted (kept); one that no longer is (worn, gone, or a stranger's left in a
+		// cell since unloaded) is not, and is let go of, which ends the copies in the other games. Our player's own first,
+		// then the ones we share already, then the ones standing about (FrameShare::MAX_MADE).
+		void ShareMade(std::unordered_set<std::uint32_t>& a_loaded)
+		{
+			std::erase_if(usedMade, [](std::uint32_t a_local) { return !MadeFrameRef(a_local); });
+			std::vector<std::uint32_t> order(usedMade.begin(), usedMade.end());
+			for (const auto& [id, track] : owned) {
+				if (const auto local = Protocol::IsSpawnRef(id) ? Spawns::LocalOf(id) : 0; MadeFrameRef(local)) {
+					order.push_back(local);
+				}
+			}
+			order.insert(order.end(), standingMade.begin(), standingMade.end());
+			std::unordered_set<std::uint32_t> seen;
+			for (const auto local : order) {
+				if (!seen.insert(local).second) {
+					continue;
+				}
+				const auto frame = MadeFrameRef(local);
+				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), usedMade.contains(local));
+				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
+					a_loaded.insert(spawn);
+				}
+			}
 		}
 
 		// Scan's part for frames: which count as loaded (kept while we run them), and which to offer to run. Our player
@@ -814,8 +866,14 @@ namespace NpcSync
 					REX::INFO("NpcSync: our player {} frame {:08X}; it is ours to run (owner {})", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used, OwnerOf(used));
 					OnLocalInteraction(used);  // taken over when another game runs it; offered below when nobody does
 				}
+			} else if (const auto made = MadeFrameRef(used); made && !SaveGuard::Placed(made) && usedMade.size() < MAX_MADE_SEEN) {
+				// One our game made: ours, shared as a spawn wherever our world keeps it (ShareMade).
+				if (usedMade.insert(used).second || wornId != wornFrame) {
+					REX::INFO("NpcSync: our player {} frame {:08X}, made in our game; it is shared as a spawn while it stands", wornId != wornFrame ? (wornId ? "got into" : "got out of") : "last used", used);
+				}
 			}
 			wornFrame = wornId;
+			ShareMade(a_loaded);
 
 			std::unordered_set<std::uint32_t> candidates = standingFrames;
 			candidates.insert(usedFrames.begin(), usedFrames.end());
@@ -840,15 +898,18 @@ namespace NpcSync
 			}
 		}
 
-		// The state of a frame we run, when one is due (FrameShare::Due): where it stands, nothing of movement.
+		// The state of a frame we run, when one is due (FrameShare::Due): where it stands, nothing of movement. A pre-placed
+		// one by its own id; one our game made under the spawn id it is shared as.
 		std::optional<Protocol::ActorState> FrameState(std::uint32_t a_id, Clock::time_point a_now)
 		{
-			const auto frame = FrameRef(a_id);
+			const auto placed = FrameRef(a_id);
+			const auto made = placed ? nullptr : MadeFrameRef(Protocol::IsSpawnRef(a_id) ? Spawns::LocalOf(a_id) : 0);
+			const auto frame = placed ? placed : made;
 			if (!frame) {
 				return std::nullopt;
 			}
 			const auto ours = FrameOursOf(frame);
-			if (!FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+			if (made ? !FrameShare::SharesMade(ours, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
 			const auto sent = sentFrames.find(a_id);
@@ -1408,11 +1469,23 @@ namespace NpcSync
 		outgoing.clear();
 		standingFrames.clear();
 		usedFrames.clear();
+		standingMade.clear();
+		usedMade.clear();
 		wornFrame = 0;
 		sentFrames.clear();
 		frameBrings.Clear();
 		frameChoices.clear();
 		nextFrameWalk = {};
+	}
+
+	bool InSight(const RemoteEdits::Spot& a_spot)
+	{
+		return InView(a_spot, RE::PlayerCharacter::GetSingleton());
+	}
+
+	bool InFrame(const RE::TESObjectREFR* a_frame)
+	{
+		return FrameInUse(a_frame);
 	}
 
 	std::string DescribeMirror(std::uint32_t a_refId)
@@ -1473,8 +1546,9 @@ namespace NpcSync
 		const auto minDelay = mirrors.empty() ? 0 : std::ranges::min(delays);
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
 		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} frameStates={} framesMoved={}/{} frameGaveUp={}", owned.size(),
+		const auto sharedMade = std::ranges::count_if(owned, [](const auto& a_entry) { return Protocol::IsSpawnRef(a_entry.first) && MadeFrameRef(Spawns::LocalOf(a_entry.first)) != nullptr; });
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp());
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp());
 	}
 }

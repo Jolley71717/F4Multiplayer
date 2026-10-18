@@ -1,5 +1,6 @@
 // NPCs a game makes at runtime (random encounters, ambushes) shared between games under spawn ids: the wire format, the
-// server's grants and limits, what reaches whom, and two games' books (SpawnBook.h) played against a real server.
+// server's grants and limits, what reaches whom, and two games' books (SpawnBook.h) played against a real server. Power
+// armor frames a game made at runtime go the same way, their copies placed by a frame's rules (Theirs::DecideFrame).
 
 #include "ServerFixture.h"
 
@@ -27,6 +28,8 @@ namespace
 	constexpr std::uint32_t SPAWN = 0xFF001234;    // a spawn id
 	constexpr std::uint32_t SPAWN2 = 0xFF005678;
 	constexpr std::uint32_t NPC = 0x0001F001;      // a plugin's reference
+	constexpr std::uint32_t FRAME = 0x0019DED9;    // a power armor frame's base (furniture)
+	constexpr std::uint32_t OTHER_FRAME = 0x0019DEDA;
 
 	Protocol::Spawn Raider(std::uint32_t a_id, float a_x = 1000.0f)
 	{
@@ -574,4 +577,174 @@ TEST("spawns: two games share an ambush through the server, and the joiner's kil
 	f.fake->Drop(2);
 	deliver(1, aliceOurs, aliceTheirs, alice);
 	CHECK(aliceTheirs.Decide(*bobId, Near(), T0) == Act::kForget);
+}
+
+// ---- power armor frames a game made ------------------------------------------------------------------------------
+
+TEST("spawns: a friend's frame is placed while it is in our sight wherever its owner is, follows their game's word, and is left to whoever gets into it")
+{
+	using SpawnBook::FrameFacts;
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 2, OWNER = 1;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	const Protocol::Spawn   frame{ OWNER, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f };
+	const auto              there = [](float a_x, float a_heading = 0.5f) { return FrameFacts{ .inView = true, .copyThere = true, .copyAt = At(a_x), .copyHeading = a_heading }; };
+	REQUIRE(theirs.Add(frame, US));
+
+	// In our sight: placed, with its owner far off or never heard from (their suit stands at home while they roam).
+	// Out of our sight, or not a frame here: not.
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = false }, T0) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .baseOk = false }, T0) == Act::kNone);
+	// Placing failed: tried again a little later.
+	theirs.Placed(SPAWN, 0, T0);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0 + 1s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0 + SpawnBook::PLACE_RETRY) == Act::kPlace);
+
+	theirs.Placed(SPAWN, COPY, T0);
+	CHECK(theirs.LocalOf(SPAWN) == COPY);
+	CHECK(theirs.DecideFrame(SPAWN, there(1000.0f), T0) == Act::kNone);
+	// Its 3D still coming, as after every placing: waited for, then placed again.
+	auto loading = there(1000.0f);
+	loading.copyLoaded = false;
+	CHECK(theirs.DecideFrame(SPAWN, loading, T0 + 1s) == Act::kNone);
+	CHECK(theirs.DecideFrame(SPAWN, loading, T0 + SpawnBook::LOAD_WAIT) == Act::kDiscard);
+	// Nudged or turned in its owner's game: ours is moved in place. Far off or in another place: placed again.
+	theirs.Moved(SPAWN, At(1010.0f), 0.5f);
+	CHECK(theirs.DecideFrame(SPAWN, there(1000.0f), T0) == Act::kMove);
+	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f, 1.5f), T0) == Act::kMove);
+	CHECK(theirs.DecideFrame(SPAWN, there(1010.5f), T0) == Act::kNone);
+	theirs.Moved(SPAWN, At(1010.0f + FrameShare::NUDGE_LIMIT + 10.0f), 0.5f);
+	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
+	theirs.Moved(SPAWN, At(1010.0f, 0x0000AAAA), 0.5f);
+	CHECK(theirs.DecideFrame(SPAWN, there(1010.0f), T0) == Act::kDiscard);
+	theirs.Moved(SPAWN, At(1010.0f), 0.5f);
+	// Out of our sight: it goes, and is placed again on coming back. No cell, or taken from under us by the engine.
+	auto away = there(1010.0f);
+	away.inView = false;
+	CHECK(theirs.DecideFrame(SPAWN, away, T0) == Act::kDiscard);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true, .copyThere = true }, T0) == Act::kDiscard);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kLost);
+
+	// Somebody here got into it: theirs, neither moved nor deleted, out of our sight or over, and none placed again
+	// while this spawn lasts.
+	auto taken = there(1010.0f);
+	taken.occupied = true;
+	CHECK(theirs.DecideFrame(SPAWN, taken, T0) == Act::kAbandon);
+	taken.inView = false;
+	CHECK(theirs.DecideFrame(SPAWN, taken, T0) == Act::kAbandon);
+	theirs.Taken(SPAWN);
+	CHECK(theirs.LocalOf(SPAWN) == 0);
+	CHECK(theirs.IdOf(COPY) == 0);
+	CHECK(theirs.Knows(SPAWN));
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kNone);
+	// Shared anew (its owner got into it and out again): a copy is placed again.
+	REQUIRE(theirs.Add(frame, US));
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kPlace);
+
+	// Its owner's game let it go (worn, gone, or a stranger's left in a cell since unloaded): the copy goes, and the
+	// record with it. A frame never dies.
+	theirs.Placed(SPAWN, COPY, T0);
+	theirs.Gone(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, there(1000.0f), T0) == Act::kDiscard);
+	theirs.Unplaced(SPAWN);
+	CHECK(!theirs.Knows(SPAWN));
+	REQUIRE(theirs.Add(frame, US));
+	theirs.Gone(SPAWN);
+	CHECK(theirs.DecideFrame(SPAWN, { .inView = true }, T0) == Act::kForget);
+}
+
+TEST("spawns: our copy of a friend's frame stands for the one their status says they left parked there")
+{
+	SpawnBook::Theirs       theirs;
+	constexpr std::uint32_t US = 3, FRIEND = 1, OTHER = 2;
+	constexpr std::uint32_t COPY = 0xFF000777;
+	REQUIRE(theirs.Add({ FRIEND, SPAWN, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }, US));
+
+	CHECK(theirs.FrameAt(FRIEND, FRAME, At(1000.0f), 200.0f) == 0);  // none placed yet
+	theirs.Placed(SPAWN, COPY, T0);
+	CHECK(theirs.FrameAt(FRIEND, FRAME, At(1100.0f), 200.0f) == SPAWN);
+	CHECK(theirs.FrameAt(FRIEND, FRAME, At(1300.0f), 200.0f) == 0);              // their parked one stands farther off
+	CHECK(theirs.FrameAt(FRIEND, FRAME, At(1000.0f, 0x0000AAAA), 200.0f) == 0);  // in another place
+	CHECK(theirs.FrameAt(OTHER, FRAME, At(1000.0f), 200.0f) == 0);               // another player's game made it
+	CHECK(theirs.FrameAt(FRIEND, OTHER_FRAME, At(1000.0f), 200.0f) == 0);        // another frame
+	theirs.Gone(SPAWN);
+	CHECK(theirs.FrameAt(FRIEND, FRAME, At(1000.0f), 200.0f) == 0);  // over: its copy goes
+}
+
+TEST("spawns: a frame one game made goes through the server as a spawn: a joiner places it, its owner's word moves it, and getting into it ends it")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	Clear(f, { 1 });
+
+	SpawnBook::Ours         aliceOurs;
+	SpawnBook::Theirs       aliceTheirs, bobTheirs;
+	constexpr std::uint32_t SUIT_HERE = 0xFF000F96;  // Alice's suit, made in her game
+	constexpr std::uint32_t COPY = 0xFF002002;       // Bob's copy of it
+	const auto              taken = [&](std::uint32_t a_id) { return aliceTheirs.Knows(a_id); };
+	const auto              answers = [&](SpawnBook::Clock::time_point a_now) {
+		for (const auto& owner : Owners(Received(f, 1))) {
+			aliceOurs.Answered(owner.refId, owner.playerId, alice, a_now);
+		}
+	};
+
+	// Alice's game shares her suit, parked at her station, before Bob joins.
+	const auto id = aliceOurs.Offer(SUIT_HERE, T0, taken);
+	REQUIRE(id);
+	CHECK(aliceOurs.Shares(SUIT_HERE));
+	f.fake->Deliver(1, Report({ 0, *id, FRAME, 0, WORLD, 1000.0f, 2000.0f, 100.0f, 0.5f }));
+	answers(T0);
+	CHECK(aliceOurs.IdOf(SUIT_HERE) == *id);
+
+	// Bob joins: he hears of it, run by Alice's game, and places his copy once it is in his sight.
+	const auto bob = JoinAs(f, 2, "Bob");
+	const auto toBob = Received(f, 2);
+	const auto spawned = Spawned(toBob);
+	REQUIRE(spawned.size() == 1);
+	CHECK(spawned[0].refId == *id);
+	CHECK(spawned[0].base == FRAME);
+	CHECK(spawned[0].playerId == alice);
+	CHECK(HasOwner(Owners(toBob), *id, alice));
+	REQUIRE(bobTheirs.Add(spawned[0], bob));
+	CHECK(bobTheirs.DecideFrame(*id, { .inView = true }, T0) == Act::kPlace);
+	bobTheirs.Placed(*id, COPY, T0);
+
+	// It was knocked a little in Alice's game: her state moves Bob's copy. Bob's word on it reaches nobody.
+	Protocol::ActorState state;
+	state.refId = *id;
+	state.worldspace = WORLD;
+	state.x = 1005.0f;
+	state.y = 2000.0f;
+	state.z = 100.0f;
+	state.heading = 0.5f;
+	f.fake->Deliver(1, Protocol::Encode(std::vector<Protocol::ActorState>{ state }, MT::kActorStates));
+	const auto relayed = Decoded(Received(f, 2), MT::kActorStatesRelay, [](auto a_data) { return Protocol::DecodeActorStates(a_data); });
+	REQUIRE(relayed.size() == 1);
+	REQUIRE(relayed[0].size() == 1);
+	bobTheirs.Moved(*id, RemoteEdits::SpotOf(relayed[0][0]), relayed[0][0].heading);
+	CHECK(bobTheirs.DecideFrame(*id, { .inView = true, .copyThere = true, .copyAt = At(1000.0f), .copyHeading = 0.5f }, T0) == Act::kMove);
+	f.fake->Deliver(2, Protocol::Encode(std::vector<Protocol::ActorState>{ state }, MT::kActorStates));
+	CHECK(Count(Received(f, 1), MT::kActorStatesRelay) == 0);
+
+	// Alice gets into it: her game lets it go, and Bob's copy goes with the record.
+	f.fake->Deliver(1, Protocol::EncodeRelease(std::vector<std::uint32_t>{ *id }));
+	CHECK(HasOwner(Owners(Received(f, 2)), *id, 0));
+	bobTheirs.Gone(*id);
+	CHECK(bobTheirs.DecideFrame(*id, { .inView = true, .copyThere = true, .copyAt = At(1005.0f), .copyHeading = 0.5f }, T0) == Act::kDiscard);
+	bobTheirs.Unplaced(*id);
+	CHECK(!bobTheirs.Knows(*id));
+
+	// Out of it, somewhere else: once her book's wait is over it is shared again, under the same id, where it stands now.
+	answers(T0 + 1s);
+	CHECK(!aliceOurs.Holds(*id));
+	CHECK(!aliceOurs.Offer(SUIT_HERE, T0 + 2s, taken));
+	const auto again = aliceOurs.Offer(SUIT_HERE, T0 + 1s + SpawnBook::Ours::REFUSED_WAIT, taken);
+	REQUIRE(again);
+	CHECK(*again == *id);
+	f.fake->Deliver(1, Report({ 0, *again, FRAME, 0, WORLD, 1300.0f, 2000.0f, 100.0f, 1.0f }));
+	const auto anew = Spawned(Received(f, 2));
+	REQUIRE(anew.size() == 1);
+	CHECK(anew[0].x == 1300.0f);
+	CHECK(anew[0].playerId == alice);
 }

@@ -4,6 +4,7 @@
 #include "game/StandInHold.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 
 // A power armor frame standing in the world, shared between games the way an NPC is (NpcSync): one game runs it (its
@@ -13,8 +14,8 @@
 // mirror: it stands where it was left until somebody gets into it and walks off in it. Its pieces are its own game's
 // (the loot rules keep a frame's inventory per player: LootScope), so nothing of them is shared here.
 // Which frames: the ones a plugin placed (the museum's suit in Concord), the same reference in every game. One made at
-// runtime (0xFF......) is another reference, or none, in the other games; a friend's is shown by the copy their status
-// has placed (ArmorFrames::ChoosePark) until a spawn id is given to frames as it is to runtime NPCs.
+// runtime (0xFF......) is another reference, or none, in the other games: it is shared as a runtime NPC is instead,
+// under a spawn id, and the others place a copy of it (SharesMade, below).
 // Who runs one: whoever last got into or out of it in this session (the last to use it has it, wherever it stands
 // now), else the host's game, whose world is the session's: a frame nobody has used stands where the host's world has
 // it, and a joiner's copy, standing where the joiner's own world left it (on the museum roof, while the host's is in
@@ -35,6 +36,8 @@ namespace FrameShare
 		bool  quest = false;     // it fills a quest alias of ours (the museum's suit is the main quest's objective)
 		bool  inUse = false;     // an actor of ours is in it
 		bool  wornHere = false;  // our own player is in it (off, too)
+		bool  copy = false;      // one the session placed here (a friend's stand-in's, the one they left, a copy of a
+		                         // frame their game made): never ours to share
 		Spot  at;                // where it stands here
 		float heading = 0.0f;
 	};
@@ -115,6 +118,39 @@ namespace FrameShare
 		}
 		const float distance = RemoteEdits::Distance(a_sentAt, a_now);
 		return !RemoteEdits::Within(distance, MOVED) || StandInHold::AngleBetween(a_sentHeading, a_heading) > TURNED;
+	}
+
+	// ---- One our game made: shared as a spawn --------------------------------------------------------------------
+
+	// A frame our game made at runtime (0xFF......: placed by a script, a quest or an encounter rather than by a plugin,
+	// such as the frame of a power armor NPC the game made) is another reference, or none, in every other game.
+	// So it is shared as a runtime NPC is (Spawns, SpawnBook.h): under a spawn id the server grants, run by our game for
+	// good, its state sent as a pre-placed one's is (Due), and every other game places a copy of it where ours stands
+	// (SpawnBook::Theirs::DecideFrame). A friend's suit parked before we joined is told to us so, as the server tells a
+	// joiner every spawn shared so far.
+	// Shared while it stands loaded here, and our player's own (got into or out of in this session, or left last as it
+	// began) wherever our world still has it: their suit parked at home while they roam. One that only stood in a cell
+	// since unloaded is let go, and the copies go with it. Never while somebody is in it: the engine disables a worn
+	// frame, and the wearer's stand-in shows it then; the copies go and it is shared afresh where they get out. Never a
+	// copy the session placed here (that would send a friend's own frame back to them).
+	constexpr bool SharesMade(const Ours& a_ours, bool a_usedHere)
+	{
+		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy) {
+			return false;
+		}
+		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
+			return false;
+		}
+		return a_ours.loaded || a_usedHere;
+	}
+
+	// Of the spawns one game may share at once (Protocol::MAX_SPAWNS_PER_PLAYER), frames take this many at most: the
+	// rest are for a fight's NPCs, which come and go. Our player's own are offered first.
+	constexpr std::size_t MAX_MADE = 12;
+
+	constexpr bool RoomForMade(std::size_t a_shared)
+	{
+		return a_shared < MAX_MADE;
 	}
 
 	// ---- A frame another game runs: ours is moved to where theirs stands ---------------------------------------

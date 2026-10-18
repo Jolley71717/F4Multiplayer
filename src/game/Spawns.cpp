@@ -1,6 +1,8 @@
 #include "game/Spawns.h"
 
 #include "game/EngineRefs.h"
+#include "game/Equipment.h"
+#include "game/FrameShare.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -57,8 +59,13 @@ namespace Spawns
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 
+		// Power armor frames our game made that it reports or shares (answered or not), by their ids here: no more than
+		// FrameShare::MAX_MADE at once.
+		std::unordered_set<std::uint32_t> ownFrames;
+
 		std::uint32_t reported = 0, granted = 0, refused = 0, received = 0;
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
+		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
@@ -170,6 +177,105 @@ namespace Spawns
 			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 			return npc && !npc->IsUnique() && !RemotePlayers::IsStandInBase(a_base);
 		}
+
+		// Somebody here is in our copy of a friend's frame (our player, getting in or in it, or anyone else of ours), or it
+		// is the frame our player left last: theirs now (SpawnBook::Act::kAbandon).
+		bool Occupied(RE::TESObjectREFR* a_frame)
+		{
+			if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+				const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				if ((occupied && occupied.get() == a_frame) || player->lastUsedPowerArmor.get().get() == a_frame) {
+					return true;
+				}
+			}
+			return NpcSync::InFrame(a_frame);
+		}
+
+		// Our copy of a frame a friend's game made (SpawnBook::Theirs::DecideFrame): an empty frame of its base, as the
+		// copies a stand-in gets into are (a frame's pieces are each game's own loot), standing where their game has it
+		// while that is in our sight. a_cell: our player's.
+		void UpdateFrameCopy(std::uint32_t a_id, RE::TESObjectCELL* a_cell, Clock::time_point a_now, int& a_placedNow)
+		{
+			const auto copy = theirs.Find(a_id);
+			if (!copy) {
+				return;
+			}
+			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
+			RE::NiPointer<RE::TESObjectREFR> ref;
+			if (copy->local != 0) {
+				const auto it = placed.find(a_id);
+				ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
+				if (facts.copyThere) {
+					facts.occupied = Occupied(ref.get());
+					// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT).
+					if (ref->GetParentCell()) {
+						facts.copyAt = SpotOf(ref.get());
+						facts.copyHeading = ref->data.angle.z;
+						facts.copyLoaded = ref->Get3D() != nullptr;
+					}
+				}
+			}
+			const auto playerId = copy->spawn.playerId;
+			const auto base = copy->spawn.base;
+			const auto at = copy->at;
+			const auto heading = copy->heading;
+			switch (theirs.DecideFrame(a_id, facts, a_now)) {
+			case SpawnBook::Act::kPlace:
+				{
+					if (a_placedNow >= PLACE_PER_FRAME) {
+						break;
+					}
+					++a_placedNow;
+					// The copy their status had us show where they left it parked (ArmorFrames::ChoosePark) is this frame:
+					// taken over and moved onto the spot next, not a second suit placed in it.
+					auto       handle = RemotePlayers::TakeParkedCopy(playerId, base, at);
+					const bool adopted = static_cast<bool>(handle);
+					if (!adopted) {
+						handle = RemotePlayers::PlaceFrameCopy(base, a_cell, { at.x, at.y, at.z }, heading);
+					}
+					const auto placedRef = handle.get();
+					if (!placedRef) {
+						theirs.Placed(a_id, 0, a_now);
+						++placeFailed;
+						REX::WARN("Spawns: could not place a copy of player {}'s frame {:08X} (base {:08X})", playerId, a_id, base);
+						break;
+					}
+					placed[a_id] = { handle, a_now };
+					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
+					++frameCopiesPlaced;
+					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
+						playerId, a_id, base);
+					break;
+				}
+			case SpawnBook::Act::kMove:
+				ref->data.location = { at.x, at.y, at.z };
+				ref->data.angle = { 0.0f, 0.0f, heading };
+				ref->Update3DPosition(true);
+				++frameCopiesMoved;
+				break;
+			case SpawnBook::Act::kDiscard:
+				Discard(a_id);
+				break;
+			case SpawnBook::Act::kLost:
+				placed.erase(a_id);
+				theirs.Unplaced(a_id);
+				++copiesLost;
+				break;
+			case SpawnBook::Act::kAbandon:
+				REX::INFO("Spawns: someone here got into {:08X}, our copy of player {}'s frame {:08X}; it is theirs now", ref->GetFormID(), playerId, a_id);
+				placed.erase(a_id);
+				theirs.Taken(a_id);
+				++frameCopiesTaken;
+				break;
+			case SpawnBook::Act::kForget:
+				theirs.Forget(a_id);
+				break;
+			case SpawnBook::Act::kNone:
+				break;
+			}
+		}
 	}
 
 	std::uint32_t Share(RE::Actor* a_actor)
@@ -205,6 +311,46 @@ namespace Spawns
 			REX::INFO("Spawns: sharing {:08X} (base {:08X}) as {:08X}", local, base, *id);
 		}
 		return 0;  // not until the server grants it
+	}
+
+	std::uint32_t ShareFrame(RE::TESObjectREFR* a_frame, bool a_share)
+	{
+		if (!a_frame || !a_share || LocalPlayer() == 0) {
+			return 0;
+		}
+		const auto local = a_frame->GetFormID();
+		if (!Protocol::IsSpawnRef(local) || theirs.IdOf(local) != 0 || Leaving(local)) {
+			return 0;
+		}
+		if (const auto id = ours.IdOf(local)) {
+			return id;
+		}
+		std::erase_if(ownFrames, [](std::uint32_t a_local) { return !ours.Shares(a_local); });
+		if (!ownFrames.contains(local) && !FrameShare::RoomForMade(ownFrames.size())) {
+			return 0;
+		}
+		const auto base = a_frame->GetObjectReference();
+		const auto at = SpotOf(a_frame);
+		if (!base || !Protocol::IsShareableRef(base->GetFormID()) || (at.cell == 0) == (at.worldspace == 0)) {
+			return 0;
+		}
+		const auto id = ours.Offer(local, Clock::now(), [](std::uint32_t a_id) { return theirs.Knows(a_id); });
+		if (!id) {
+			return 0;
+		}
+		ownFrames.insert(local);
+		outgoing.push_back(Protocol::Encode(Protocol::Spawn{ 0, *id, base->GetFormID(), at.cell, at.worldspace, at.x, at.y, at.z, a_frame->data.angle.z }, Protocol::MessageType::kReportSpawn));
+		++framesReported;
+		REX::INFO("Spawns: sharing our frame {:08X} (base {:08X}) at ({:.0f},{:.0f},{:.0f}) in {:08X} as {:08X}", local, base->GetFormID(), at.x, at.y, at.z, at.cell ? at.cell : at.worldspace, *id);
+		return 0;  // not until the server grants it
+	}
+
+	bool FrameCopyAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius)
+	{
+		const auto id = theirs.FrameAt(a_owner, a_parked.base, { a_parked.cell, a_parked.worldspace, a_parked.x, a_parked.y, a_parked.z }, a_radius);
+		const auto it = id != 0 ? placed.find(id) : placed.end();
+		const auto ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+		return ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->GetParentCell();
 	}
 
 	std::uint32_t LocalOf(std::uint32_t a_id)
@@ -324,6 +470,11 @@ namespace Spawns
 			if (!copy) {
 				continue;
 			}
+			// A frame its owner's game made: placed as a friend's parked frame is, not as an NPC.
+			if (Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(copy->spawn.base))) {
+				UpdateFrameCopy(id, cell, now, placedNow);
+				continue;
+			}
 			SpawnBook::Facts facts{ .player = us };
 			if (const auto state = RemotePlayers::LastStateOf(copy->spawn.playerId)) {
 				facts.owner = RemoteEdits::SpotOf(*state);
@@ -378,6 +529,8 @@ namespace Spawns
 			case SpawnBook::Act::kForget:
 				theirs.Forget(id);
 				break;
+			case SpawnBook::Act::kMove:     // a frame's (UpdateFrameCopy): never an NPC's
+			case SpawnBook::Act::kAbandon:
 			case SpawnBook::Act::kNone:
 				break;
 			}
@@ -411,6 +564,7 @@ namespace Spawns
 		// before anything the loaded game makes is offered under the same id), and what it makes is shared afresh.
 		const auto released = ours.Ids();
 		ours.Clear();
+		ownFrames.clear();
 		if (LocalPlayer() == 0) {
 			return;
 		}
@@ -426,13 +580,15 @@ namespace Spawns
 		placed.clear();
 		theirs.Clear();
 		ours.Clear();
+		ownFrames.clear();
 		killedHere.clear();
 		outgoing.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{}", ours.Size(),
-			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled);
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={}", ours.Size(),
+			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken);
 	}
 }

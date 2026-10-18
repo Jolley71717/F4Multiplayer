@@ -246,7 +246,7 @@
   friend's suit stands on their rack in your game too, parked before the session or not. A frame is furniture
   (`TESFurniture` with the engine's power armor keyword), not an actor: the owner's game finds the ones standing in
   its loaded cells by a walk of their references every 2 s, claims them through the same claims (a plugin's frame
-  reference is the same in every game; one made at runtime is not shared yet, see Party), keeps one it runs while
+  reference is the same in every game; one made at runtime is shared as a spawn instead, see Spawns), keeps one it runs while
   its reference is still there (worn by its player, or in a cell since unloaded), and sends its cell/worldspace,
   position and heading as an `ActorState` once a second and at once when it moved a unit or turned a hundredth
   of a turn. Who runs one: the last player to get into or out of it in this session (a use takes it over as a hit
@@ -294,6 +294,21 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   and from a player fighting their copy of it (health reported, or a takeover claim, within 10 s), never kept
   with the session's dead, and killed in the owner's game too. Its hits on a stand-in count only from its
   owner's game.
+- Power armor frames a game made at runtime (0xFF......, placed by a script, a quest or an encounter rather than a plugin)
+  are shared the same way (`FrameShare::SharesMade`, `SpawnBook::Theirs::DecideFrame`): the owner's frame walk (NpcSync,
+  every 2 s) finds the ones standing loaded, and its player's own (got into or out of in the session, or left last as it
+  began) wherever its world still has them, and reports each as a spawn whose base is the frame's furniture; its state
+  goes as a pre-placed frame's does (once a second, at once when it moved). Never one somebody is in (the engine disables
+  a worn frame; the wearer's stand-in shows it), nor a copy the session placed (a friend's stand-in's, parked or shared
+  frame). One that stops being shared (worn, gone, a stranger's left in a cell since unloaded) is let go, which ends
+  it everywhere; it is reported again, under the same id once the book's 10 s wait is over, where it stands next. At
+  most 12 frames of a game's 32 spawns, its player's own first. The others place an empty copy of the frame (as the copy a
+  stand-in gets into: each game's pieces are its own loot) wherever its owner is, while the spot is in the area their
+  engine draws, as a friend's parked frame is: moved in place when the owner's game has it a unit or a hundredth of a
+  turn off, placed again when it is 256 units off or in another place, gone out of sight, before saves and loads, and
+  when it is over. A copy somebody there gets into is theirs from then on (neither moved nor deleted). A joiner is sent
+  the frames shared before it came, so a friend's suit parked before the session stands there too. `net status`:
+  `framesMade=` shared/standing/our player's own (npcs), `frames: ours= reported= placed= moved= taken=` (spawns).
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
   carries what its own game gives it until the owner's gear report dresses it, and a copy whose owner's game
   only knows the leveled NPC it was placed as can come out as another of that list's NPCs. Each game's corpse of a
@@ -467,7 +482,10 @@ else skips this: the player is never in those places.
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
   A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference
   of it is moved to where the wearer's game has it, so it stands there within a second or two of the
-  status, and the parked copy below is for a frame made in the wearer's game, or one not reported yet.
+  status. A frame made in the wearer's game is shared as a spawn (see Spawns): the receiver's copy of it stands
+  there, and the parked copy below is for the time until it does (one not reported yet, or for up to 10 s after they
+  get out of it, before it is shared again); the spawn's copy takes it over, or it goes once that copy stands within
+  200 units of the spot.
   The receiver keeps a copy of it there for as long as they are out and the spot is in the area its
   engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
   stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is

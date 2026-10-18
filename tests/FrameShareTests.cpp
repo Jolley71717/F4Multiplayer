@@ -174,6 +174,49 @@ TEST("frame share: a frame is ours to share standing loaded, worn by our player,
 	CHECK(!FrameShare::Keeps(Share::kNo));
 }
 
+TEST("frame share: a frame our game made is shared as a spawn while it stands loaded, or wherever it is while it is our player's own")
+{
+	using FrameShare::SharesMade;
+	auto made = Standing();
+	made.created = true;
+	CHECK(SharesMade(made, false));
+	CHECK(SharesMade(made, true));
+	// In a cell since unloaded: only our player's own (their suit parked at home while they roam).
+	made.loaded = false;
+	CHECK(!SharesMade(made, false));
+	CHECK(SharesMade(made, true));
+	// Somebody is in it (the engine disables a worn frame): the copies go, and the wearer's stand-in shows it.
+	made = Standing();
+	made.created = true;
+	made.wornHere = true;
+	made.off = true;
+	CHECK(!SharesMade(made, true));
+	made.wornHere = false;
+	CHECK(!SharesMade(made, true));  // disabled by something else
+	made.off = false;
+	made.inUse = true;
+	CHECK(!SharesMade(made, true));
+	// A copy the session placed here (a friend's own frame, or their stand-in's) is never sent back.
+	made = Standing();
+	made.created = true;
+	made.copy = true;
+	CHECK(!SharesMade(made, true));
+	// A pre-placed one goes by its own id (ChooseShare), and what is gone or no frame is nothing to share.
+	CHECK(!SharesMade(Standing(), true));
+	made = Standing();
+	made.created = true;
+	made.found = false;
+	CHECK(!SharesMade(made, true));
+	made.found = true;
+	made.frame = false;
+	CHECK(!SharesMade(made, true));
+	// So many at once: the rest of a game's spawns are for a fight's NPCs.
+	CHECK(FrameShare::RoomForMade(0));
+	CHECK(FrameShare::RoomForMade(FrameShare::MAX_MADE - 1));
+	CHECK(!FrameShare::RoomForMade(FrameShare::MAX_MADE));
+	CHECK(FrameShare::MAX_MADE < Protocol::MAX_SPAWNS_PER_PLAYER);
+}
+
 TEST("frame share: the host offers every frame standing in its loaded cells, a joiner only one its player used")
 {
 	using FrameShare::Offers;
