@@ -1,52 +1,63 @@
-# machine-translated first pass, corrections welcome
-# F4Multiplayer texts: 日本語 (Japanese). The format and the keys are explained in en.txt; keep the {placeholders} as they are.
+# reviewed against the game's terminology on 2026-10-17, corrections welcome
+# F4Multiplayer texts: 日本語 (Japanese). It follows the game's own Japanese localisation: Vault111 (no space), the
+# game's katakana terms, polite です/ます for prompts and the menu, short noun phrases for HUD notices (the game says
+# クエスト完了, not a sentence), and the player is never addressed as あなた (the game's UI never does). No spaces
+# between Japanese and Latin letters, as the game writes them. "Multiplayer:" is マルチプレイ：
+# The format and the keys are explained in en.txt; keep the {placeholders} as they are.
 
+# --- Joining, hosting and the session ---
 session.connected_shared = マルチプレイ：接続しました（ストーリー共有）
 session.connected_own = マルチプレイ：接続しました（ストーリーは各自）
 session.connected_shared_fire = マルチプレイ：接続しました（ストーリー共有、フレンドリーファイア有効）
 session.connected_own_fire = マルチプレイ：接続しました（ストーリーは各自、フレンドリーファイア有効）
 session.notice = マルチプレイ：{text}
-session.player_joined = {player} が参加しました
-session.player_left = {player} が退出しました
-session.someone_left = プレイヤーが退出しました
+session.player_joined = {player}が参加
+session.player_left = {player}が退出
+session.someone_left = プレイヤーが退出
 session.disconnected = マルチプレイ：切断されました
-session.hosting_cant_join = マルチプレイ：現在ホスト中です。フレンドに参加するには bHost = false にしてください。
-session.host_waits_for_world = マルチプレイ：このゲームはワールドに入るとホストを開始します（bHost）。フレンドに参加するにはメニューでホストを停止してください。
-session.joining_friend = マルチプレイ：フレンドのゲームに参加しています
-session.no_steam = マルチプレイ：Steam を利用できません
-session.host_other_session = マルチプレイ：ホストは別のセッションに移りました（別のキャラクターまたは最初から）。参加するにはメニューからもう一度参加してください
-session.character_changed_host = マルチプレイ：別のキャラクターを読み込みました。そのキャラクターのセッションでホストを再開します
-session.hosting_resumes = マルチプレイ：ヴォルト111を出るとホストを再開します
-session.character_changed_left = マルチプレイ：別のキャラクターを読み込んだためセッションを退出しました。メニューからもう一度参加してください
-host.err_opening = ヴォルト111を出るとホストできます
-host.err_port = ポート {port} でホストできませんでした
-world.history_full = マルチプレイ：セッションの共有履歴が {percent}% 埋まっています。100% になると戦利品と撃破の共有が止まります。ホストはセッションファイルを削除すると新しいセッションを始められます（ドキュメント参照）
-reject.not_client = F4Multiplayer のクライアントではありません
-reject.version = バージョンが一致しません：サーバーはプロトコル {server}、あなたは {you} です。同じバージョンの MOD をインストールしてください。
+session.hosting_cant_join = マルチプレイ：ホスト中です。参加するにはbHost = falseにしてください
+session.host_waits_for_world = マルチプレイ：ワールドに入るとホストを開始します（bHost）。参加するにはメニューでホストを停止してください
+session.joining_friend = マルチプレイ：フレンドのゲームに参加中
+session.no_steam = マルチプレイ：Steamを利用できません
+session.host_other_session = マルチプレイ：ホストは別のセッションに移りました（別のキャラクターかニューゲーム）。メニューから参加し直してください
+session.character_changed_host = マルチプレイ：別のキャラクターをロードしました。そのキャラクターのセッションでホストを再開します
+session.hosting_resumes = マルチプレイ：Vault111を出るとホストを再開します
+session.character_changed_left = マルチプレイ：別のキャラクターをロードしたためセッションを退出しました。メニューから参加し直してください
+host.err_opening = Vault111を出てからホストできます
+host.err_port = ポート{port}でホストできませんでした
+world.history_full = マルチプレイ：セッションの共有履歴が{percent}%に達しました。100%でアイテムとキルの共有が止まります。ホストがセッションファイルを削除すれば新しいセッションを始められます（ドキュメント参照）
+
+# --- What the server says when it refuses a player ---
+reject.not_client = F4Multiplayerのクライアントではありません
+reject.version = バージョン不一致：サーバーはプロトコル{server}、こちらは{you}です。同じバージョンのMODをインストールしてください。
 reject.password = パスワードが違います
 reject.host_not_ready = ホストはまだゲームに入っていません
 reject.full = サーバーが満員です
-reject.order = ロード順が他のプレイヤーと異なります。
-reject.order_all = 全員が同じ MOD を同じ順序で使う必要があります。
-reject.only_you = あなただけが持っている MOD：
-reject.missing = 足りない MOD：
-reject.same_mods = MOD は同じですが順序が違います。自分の順序を相手に合わせてください。
-reject.texture = テクスチャプラグインが異なってよいのは、最後に読み込まれる場合だけです。
+reject.order = ロードオーダーが他のプレイヤーと違います。
+reject.order_all = 全員が同じMODを同じ順序で入れる必要があります。
+reject.only_you = 自分だけが入れているMOD：
+reject.missing = 足りないMOD：
+reject.same_mods = MODは同じですが順序が違います。相手の順序に合わせてください。
+reject.texture = テクスチャのプラグインは最後にロードされる場合だけ違ってもよいです。
+
+# --- The connection ---
 party.unstable = マルチプレイ：ホストとの接続が不安定です
 party.restored = マルチプレイ：接続が回復しました
-party.high_ping = マルチプレイ：ホストへの ping が高くなっています（{ms} ms）
-party.ping_info = ping {ms} ms
-party.not_in_session = マルチプレイ：セッションに参加していません
+party.high_ping = マルチプレイ：ホストへのpingが高くなっています（{ms}ms）
+party.ping_info = ping {ms}ms
+party.not_in_session = マルチプレイ：セッション未参加
+
+# --- Friends: who they are, where, how they are ---
 party.a_friend = フレンド
 party.alone = マルチプレイ：まだ他に誰もいません
 party.count_one = パーティ：他に1人{ping}
 party.count_many = パーティ：他に{n}人{ping}
 player.down = ダウン
 player.dead = 死亡
-player.status = HP {hp}%、レベル {level}
-player.loading = 読み込み中
+player.status = HP {hp}%、レベル{level}
+player.loading = ロード中
 player.right_here = すぐそば
-player.distance = {dir} {m} m
+player.distance = {dir}に{m}m
 compass.n = 北
 compass.ne = 北東
 compass.e = 東
@@ -57,44 +68,52 @@ compass.w = 西
 compass.nw = 北西
 party.somewhere_else = 別の場所
 party.at_place = {place}
-party.friend_down_far = {player} がダウンしました！{key} 長押しでテレポートして助け起こせます
-party.friend_down_near = {player} がダウンしました！近づいて助け起こしましょう（{where}）
-party.friend_died = {player} が死亡しました
-party.friend_back_up = {player} が立ち上がりました
-party.ping = {player}：こっちです！（{where}）
+party.friend_down_far = {player}がダウン！{key}長押しでテレポートして助け起こせます
+party.friend_down_near = {player}がダウン！駆けつけて助け起こしてください（{where}）
+party.friend_died = {player}が死亡
+party.friend_back_up = {player}が復帰
+party.ping = {player}：こっちだ！（{where}）
 party.called = パーティを呼びました
-party.killed = {killer} が {victim} を倒しました
-party.xp = パーティの撃破で XP +{xp}
+party.killed = {killer}が{victim}を倒しました
+party.xp = パーティのキルで+{xp} XP
+
+# --- Teleporting to a friend ---
 party.no_teleport_target = マルチプレイ：テレポート先がいません
-party.teleport_prompt = {player} のところへテレポートしますか？{key} を長押しで移動
-party.teleport_choose = {key} を押してテレポート先を選んでください
-party.cant_teleport_opening = ヴォルト111を出るまでテレポートできません
+party.teleport_prompt = {player}へテレポート？{key}長押しで移動
+party.teleport_choose = {key}を押してテレポート先を選択
+party.cant_teleport_opening = Vault111を出るまでテレポートできません
 party.cant_teleport_talking = 会話中はテレポートできません
-party.cant_teleport_scene = シーン中はテレポートできません
-party.cant_teleport_busy = 座っている間や何かを使っている間はテレポートできません
-party.cant_teleport_survival = サバイバルではテレポートできません（ファストトラベル不可）
-party.cant_find = 今は {player} が見つかりません
-party.still_in_vault = {player} はまだヴォルト111を出ていません
-party.teleported = {player} のところへテレポートしました
-party.cant_teleport_into = {player} のいる場所へはテレポートできません
-party.cant_teleport_to = {player} のところへテレポートできません
-party.teleporting = {player} のところへテレポート中
-down.went_down = ダウンしました！フレンドが助け起こせます。{key} 長押しで諦めます
-down.seconds_left = 助け起こされるまであと {n} 秒
-down.helping = {player} を助け起こしています…
-down.helped = {player} を助け起こしました
-down.helped_you = {player} が助け起こしてくれました
-map.discovered = {player} が {place} を発見しました
-quest.caught_up = フレンドに追いつきました：{names}
+party.cant_teleport_scene = イベント中はテレポートできません
+party.cant_teleport_busy = 座っている間や使用中はテレポートできません
+party.cant_teleport_survival = サバイバルではテレポート不可（ファストトラベル同様）
+party.cant_find = {player}が今は見つかりません
+party.still_in_vault = {player}はまだVault111を出ていません
+party.teleported = {player}へテレポートしました
+party.cant_teleport_into = {player}のいる場所へはテレポートできません
+party.cant_teleport_to = {player}へテレポートできません
+party.teleporting = {player}へテレポート中
+
+# --- Being down and helping up ---
+down.went_down = ダウンしました！フレンドが助け起こせます。{key}長押しでギブアップ
+down.seconds_left = 助けを待てるのはあと{n}秒
+down.helping = {player}を助け起こし中…
+down.helped = {player}を助け起こしました
+down.helped_you = {player}に助け起こされました
+
+# --- The shared map, quests and workshop ---
+map.discovered = {player}が{place}を発見
+quest.caught_up = フレンドの進行に追いつきました：{names}
 quest.and_more = ほか{n}件
-quest.catching_up = {n} 秒後にフレンドのストーリーに追いつきます：{quest}（移動させられることがあります）
+quest.catching_up = {n}秒後にフレンドのストーリーに追いつきます：{quest}（移動する場合があります）
 quest.a_quest = クエスト
-quest.controls_back = フレンドのストーリーの進行が終わらなかったため、操作を戻しました
-quest.stuck_in = メインストーリーが止まっていました。{n} 秒後に {quest} から再開します（移動させられることがあります）
-quest.stuck = メインストーリーが止まっていました。{quest} から再開します
+quest.controls_back = フレンドのストーリー進行が完了しませんでした。操作に戻ります
+quest.stuck_in = メインクエストが止まっていたため、{n}秒後に{quest}から再開します（移動する場合があります）
+quest.stuck = メインクエストが止まっていたため、{quest}から再開します
 quest.next = 次のクエスト
-quest.completed = {player} が {quest} を完了しました
-workshop.rescued = フレンドのコンテナに残していたものがインベントリに戻りました
+quest.completed = {player}が{quest}を完了
+workshop.rescued = フレンドのコンテナに入れていたアイテムはインベントリにあります
+
+# --- The F1 menu ---
 menu.unavailable = マルチプレイ：メニューを利用できません
 menu.more = 次へ（{page}/{pages}）
 menu.on = オン
@@ -109,42 +128,42 @@ menu.join_other = 別のゲームに参加
 menu.host = セッションをホスト
 menu.join = フレンドに参加
 menu.look_again = もう一度探す
-menu.join_address = {address} に参加
-menu.address_steam_named = {player} のゲーム（Steam）
-menu.address_steam_unnamed = Steam ユーザー {id}（Steam）
-menu.hosting_udp = UDP ポート {port} でホスト中（フレンドはアドレスで参加）。
-menu.hosting_udp_nosteam = UDP ポート {port} でホスト中（Steam なし：フレンドはアドレスで参加）。
-menu.hosting_steam = Steam 経由でホスト中。フレンドはフレンドリスト（ゲームに参加）またはあなたの招待から参加します。
-menu.hosting_steam_opening = Steam 経由でホスト中。ロビーを開いています…
-menu.own_game_connecting = あなた自身のゲームはまだ接続中です。
-menu.host_waiting = ワールドに入り、ヴォルト111を出るとホストを開始します。
-menu.not_in_session = セッションに参加していません。ホストするか、ホスト中のフレンドに参加してください。
-menu.connecting = {address} に接続中…
+menu.join_address = {address}に参加
+menu.address_steam_named = {player}のゲーム（Steam）
+menu.address_steam_unnamed = Steamユーザー{id}（Steam）
+menu.hosting_udp = UDPポート{port}でホスト中（フレンドはアドレスで参加）。
+menu.hosting_udp_nosteam = UDPポート{port}でホスト中（Steamなし：フレンドはアドレスで参加）。
+menu.hosting_steam = Steam経由でホスト中。フレンドはフレンドリストの「ゲームに参加」か招待から参加できます。
+menu.hosting_steam_opening = Steam経由でホスト中。ロビーを開いています…
+menu.own_game_connecting = 自分のゲームはまだ接続中です。
+menu.host_waiting = ワールドに入ってVault111を出るとホストを開始します。
+menu.not_in_session = セッション未参加です。ホストするか、ホスト中のフレンドに参加してください。
+menu.connecting = {address}に接続中…
 menu.refused_soon = 拒否されました：{reason}（数秒後に再試行）
 menu.refused_later = 拒否されました：{reason}（1分後に再試行）
-menu.connected = {address} に接続しました。参加中…
-menu.in_session = {address} に参加中
+menu.connected = {address}に接続しました。参加中…
+menu.in_session = {address}に参加中
 menu.nobody_else = まだ他に誰もいません。
 menu.with_you = 一緒にいる人（{n}）：
 menu.host_failed = ホストできません：{error}。
-menu.friends_hosting = 今 Fallout 4 の協力プレイをホスト中の Steam フレンド：
-menu.joining_host = マルチプレイ：{player} のゲームに参加しています
-menu.steam_missing = このゲームでは Steam を利用できないため、フレンドを一覧表示できません。
-menu.none_hosting = 今ホスト中の Steam フレンドはいません（フレンド {friends} 人、オンライン {online} 人、Fallout 4 をプレイ中 {ingame} 人）。\nホストがここに表示されるのは、Steam 上で Fallout 4 をプレイ中と表示されている場合のみです（プロフィールに表示される必要があります）。Steam から F4SE をランチャーにしてゲームを起動し、プロフィールのゲームの詳細を「フレンドのみ」または「公開」にしてください。\nそれ以外の場合は、ホストが Steam オーバーレイ（Shift+Tab）から招待するか、フレンドリストでそのホストの「ゲームに参加」を選んでください。
-menu.ini_address = ini のアドレス：{address}
-menu.connecting_hud = マルチプレイ：{address} に接続しています
+menu.friends_hosting = Fallout 4の協力プレイをホスト中のSteamフレンド：
+menu.joining_host = マルチプレイ：{player}のゲームに参加中
+menu.steam_missing = このゲームではSteamを利用できないため、フレンドを一覧できません。
+menu.none_hosting = ホスト中のSteamフレンドはいません（フレンド{friends}人、オンライン{online}人、Fallout 4をプレイ中{ingame}人）。\nホストが出るのは、SteamでFallout 4をプレイ中と表示されている場合だけです（プロフィールで見えること）。F4SEをランチャーにしてSteamから起動し、プロフィールの「ゲームの詳細」を「フレンドのみ」か「公開」にしてください。\nそれ以外では、ホストがSteamオーバーレイ（Shift+Tab）から招待するか、フレンドリストでホストの「ゲームに参加」を選んでください。
+menu.ini_address = iniのアドレス：{address}
+menu.connecting_hud = マルチプレイ：{address}に接続中
 menu.setting_button = {name}：{state}
 menu.setting_line = {name}：{state}（{what}）
-menu.settings_saved = 変更は F4Multiplayer.ini に保存されます。
+menu.settings_saved = 変更はF4Multiplayer.iniに保存されます。
 menu.friendly_fire = フレンドリーファイア
-menu.friendly_fire_what = プレイヤー同士でダメージを与えられます（ホストの設定。次にホストするセッションから）
+menu.friendly_fire_what = プレイヤー同士がダメージを受けます（ホストの設定、次にホストするセッションから）
 menu.shared_story = ストーリー共有
-menu.shared_story_what = 誰かのメインストーリーと派閥の進行が全員に反映され、実績も含めて各セーブに記録されます（ホストの設定。次にホストするセッションから）
+menu.shared_story_what = 誰かのメインクエストと派閥の進行が全員に反映され、実績も含めて各自のセーブに入ります（ホストの設定、次にホストするセッションから）
 menu.voice_chat = ボイスチャット
 menu.voice_chat_what = ボイスキーを押している間フレンドと話せます
 menu.spoken_lines = セリフ音声
-menu.spoken_lines_what = フレンドの会話で近くで話された内容を、話し手の声で聞きます
+menu.spoken_lines_what = フレンドの会話で近くの発言を話し手の声で聞けます
 menu.compass_markers = コンパスマーカー
 menu.compass_markers_what = コンパスにフレンドを表示
 menu.fast_loading = 高速ロード
-menu.fast_loading_what = ロード画面の間は垂直同期をオフにします
+menu.fast_loading_what = ロード画面中は垂直同期をオフにします
