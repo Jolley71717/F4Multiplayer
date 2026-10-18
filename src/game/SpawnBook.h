@@ -1,6 +1,8 @@
 #pragma once
 
+#include "game/FrameShare.h"
 #include "game/RemoteEdits.h"
+#include "game/StandInHold.h"
 
 #include "Protocol.h"
 
@@ -19,9 +21,12 @@
 // other game places a copy of it, which NpcSync mirrors like any NPC another game runs, by that id. Hits, deaths, health
 // and shots name the spawn id on the wire; each game looks up its own NPC under it here.
 //
-// Two books: Ours (our NPCs and their spawn ids) and Theirs (friends' spawns and the copies we place of them), with
-// when a copy is placed and when it goes. Kept free of the game so it can be tested (tests/SpawnTests.cpp plays two
-// games' books against a real server).
+// Power armor frames a game made at runtime are shared the same way (FrameShare::SharesMade): a spawn whose base is a
+// frame, run by the game that made it, a copy of which every other game places where it stands (Theirs::DecideFrame).
+//
+// Two books: Ours (our NPCs and frames and their spawn ids) and Theirs (friends' spawns and the copies we place of
+// them), with when a copy is placed and when it goes. Kept free of the game so it can be tested (tests/SpawnTests.cpp
+// plays two games' books against a real server).
 namespace SpawnBook
 {
 	using Clock = std::chrono::steady_clock;
@@ -159,6 +164,9 @@ namespace SpawnBook
 		// Reported (answered or not) under this id.
 		[[nodiscard]] bool Holds(std::uint32_t a_id) const { return byId.contains(a_id); }
 
+		// Our NPC or frame is reported (answered or not).
+		[[nodiscard]] bool Shares(std::uint32_t a_local) const { return byLocal.contains(a_local); }
+
 		[[nodiscard]] std::size_t Size() const { return byId.size(); }
 
 		// Every spawn id reported (answered or not).
@@ -232,6 +240,20 @@ namespace SpawnBook
 		kDiscard,  // delete our copy (the record stays, unplaced, unless the spawn is over)
 		kLost,     // our copy is gone from under us (a load, the engine): forget it, unplaced
 		kForget,   // the spawn is over and no copy is left: drop the record
+		kMove,     // a frame's copy: moved in place to where its owner's game has it now (DecideFrame)
+		kAbandon,  // somebody here got into our copy of a frame: theirs now, neither moved nor deleted (DecideFrame)
+	};
+
+	// What the game sees of our copy of a friend's frame (a spawn whose base is a power armor frame), for DecideFrame.
+	struct FrameFacts
+	{
+		bool                inView = false;     // where its owner's game has it is in the area our engine draws around our player
+		bool                copyThere = false;  // our copy is still there (its handle resolves, not deleted)
+		std::optional<Spot> copyAt;             // where it stands, while it is in a cell
+		float               copyHeading = 0.0f;
+		bool                copyLoaded = true;  // its 3D is in
+		bool                occupied = false;   // somebody here is in our copy, or it is the frame our player left last
+		bool                baseOk = true;      // its base is a power armor frame here
 	};
 
 	class Theirs
@@ -250,6 +272,7 @@ namespace SpawnBook
 			int               tries = 0;         // placements that failed in a row
 			Clock::time_point triedAt{};
 			Clock::time_point placedAt{};       // when our copy was placed
+			bool              taken = false;     // a frame: somebody here got into our copy, and it is theirs now
 		};
 
 		// A friend's game shares one. False when it is ours (the server never grants one id twice, but a book can lag),
@@ -332,6 +355,76 @@ namespace SpawnBook
 				return Act::kNone;
 			}
 			return Act::kPlace;
+		}
+
+		// A friend's frame, placed as a friend's parked one is (ArmorFrames::ChoosePark) rather than as an NPC: wherever its
+		// owner is (their suit stands at home while they roam), while where it stands is in our sight. Moved in place when
+		// its owner's game has it a little way off (the physics nudged it), placed again when it is far off or in another
+		// place, gone once out of our sight or over. A frame never dies: one its owner's game let go of (worn, gone, left in
+		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into is theirs
+		// from then on: neither moved nor deleted, and none placed again while this spawn lasts.
+		[[nodiscard]] Act DecideFrame(std::uint32_t a_id, const FrameFacts& a_facts, Clock::time_point a_now) const
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return Act::kNone;
+			}
+			const auto& copy = it->second;
+			if (copy.local != 0) {
+				if (!a_facts.copyThere) {
+					return Act::kLost;
+				}
+				if (a_facts.occupied) {
+					return Act::kAbandon;
+				}
+				if (copy.gone || !a_facts.inView || !a_facts.copyAt) {
+					return Act::kDiscard;
+				}
+				const float distance = RemoteEdits::Distance(*a_facts.copyAt, copy.at);  // NaN in another place
+				if (!RemoteEdits::Within(distance, FrameShare::NUDGE_LIMIT)) {
+					return Act::kDiscard;  // placed again where it stands now
+				}
+				if (!a_facts.copyLoaded) {
+					return a_now - copy.placedAt >= LOAD_WAIT ? Act::kDiscard : Act::kNone;
+				}
+				if (!RemoteEdits::Within(distance, FrameShare::MOVED) || StandInHold::AngleBetween(a_facts.copyHeading, copy.heading) > FrameShare::TURNED) {
+					return Act::kMove;
+				}
+				return Act::kNone;
+			}
+			if (copy.gone || copy.dead) {
+				return Act::kForget;
+			}
+			if (copy.taken || !a_facts.baseOk || copy.tries >= PLACE_TRIES || (copy.tries > 0 && a_now - copy.triedAt < PLACE_RETRY)) {
+				return Act::kNone;
+			}
+			return a_facts.inView ? Act::kPlace : Act::kNone;
+		}
+
+		// Somebody here got into our copy of a frame (DecideFrame's kAbandon): it is theirs, no copy of ours any more, and
+		// none is placed again while this spawn lasts.
+		void Taken(std::uint32_t a_id)
+		{
+			const auto it = copies.find(a_id);
+			if (it == copies.end()) {
+				return;
+			}
+			byLocal.erase(it->second.local);
+			it->second.local = 0;
+			it->second.taken = true;
+		}
+
+		// The spawn whose copy of ours stands for a frame a friend's status says they left parked (Protocol::ParkedFrame):
+		// one of a_owner's, of that base, placed, which their game has within a_radius of that spot. 0 when none.
+		[[nodiscard]] std::uint32_t FrameAt(std::uint32_t a_owner, std::uint32_t a_base, const Spot& a_spot, float a_radius) const
+		{
+			for (const auto& [id, copy] : copies) {
+				if (copy.local != 0 && copy.spawn.playerId == a_owner && copy.spawn.base == a_base && !copy.gone &&
+					RemoteEdits::Within(RemoteEdits::Distance(copy.at, a_spot), a_radius)) {
+					return id;
+				}
+			}
+			return 0;
 		}
 
 		// Our copy was placed (a_local), or placing it failed (0).

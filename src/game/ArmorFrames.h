@@ -636,8 +636,10 @@ namespace ArmorFrames
 	// A frame a friend left standing: the one they got out of last, where their game has it now (Protocol::ParkedFrame).
 	// A pre-placed frame is a reference every game has, and is shared as an NPC is (NpcSync, FrameShare.h): whoever
 	// runs it says where it stands, and ours is moved there, so it stands on their rack in our game too, whether they
-	// parked it before the session or got out of it in front of us. The parked frame is for the rest: one made in their
-	// game (none in ours), or one their game has not reported yet. A copy is shown in its place then: in a power armor
+	// parked it before the session or got out of it in front of us. One made in their game is none in ours, and is
+	// shared as a runtime NPC is (Spawns, FrameShare::SharesMade): our copy of it stands where their game has it. The
+	// parked frame is for the time until either stands there: one their game has not reported yet, or one made there in
+	// the seconds after they got out, before it is shared again. A copy is shown in its place then: in a power armor
 	// station they parked it in, or wherever they got out and walked off. It used to be shown only while they wore it and
 	// for a few seconds after, at the spot their stand-in stood as they got out (the exit steps the wearer out of the
 	// frame, so that spot was some 76 units off the frame); then it was gone, and a friend's suit parked in a station
@@ -691,7 +693,8 @@ namespace ArmorFrames
 	{
 		bool                told = false;       // they are out of power armor and tell a parked frame whose base is a frame here
 		bool                inView = false;     // where it stands is in the area the engine draws around our player
-		bool                oursThere = false;  // our own reference of that ID (a pre-placed frame) of that base stands there (ORIGINAL_RADIUS)
+		bool                oursThere = false;  // our own reference of that ID (a pre-placed frame) of that base stands there (ORIGINAL_RADIUS),
+		                                        // or, for one made in their game, our copy of it that their game shares (Spawns)
 		bool                taken = false;      // somebody here got into the copy we showed of this very frame there
 		bool                exists = false;     // a parked copy of ours stands
 		bool                sameBase = false;   // it is a copy of the base they tell

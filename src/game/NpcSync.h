@@ -1,11 +1,14 @@
 #pragma once
 
+#include "game/RemoteEdits.h"
+
 #include "Protocol.h"
 
 // Shared NPC AI. Each NPC is run by one player's game (its owner, assigned by the server); the
 // other players' games turn its AI off and copy its movement. Main thread only.
 // Power armor frames standing in the world are shared the same way (FrameShare.h): their owner (whoever last used one,
-// else the host) tells where it stands, and the other games move their own reference of it there.
+// else the host) tells where it stands, and the other games move their own reference of it there. One our game made at
+// runtime is shared as a spawn instead (FrameShare::SharesMade, Spawns): the other games place a copy of it.
 namespace NpcSync
 {
 	struct Outgoing
@@ -82,6 +85,13 @@ namespace NpcSync
 	[[nodiscard]] std::uint32_t LocalRef(std::uint32_t a_sessionId);
 
 	std::string Describe();
+
+	// Whether a spot is in the area our engine draws around our player: our interior, or outside within the cells it
+	// attaches around ours. Not during a loading screen. Where a friend's frame is shown (Spawns' copies).
+	[[nodiscard]] bool InSight(const RemoteEdits::Spot& a_spot);
+
+	// Whether an actor of ours (not our player) is in this power armor frame.
+	[[nodiscard]] bool InFrame(const RE::TESObjectREFR* a_frame);
 
 	// Dev: one mirror's owner, snapshots and distance from its owner's copy (why it is or isn't puppeted); for a power
 	// armor frame, who runs it and where ours stands.

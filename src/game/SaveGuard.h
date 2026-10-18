@@ -26,6 +26,10 @@ namespace SaveGuard
 	// BeforeSave).
 	void Track(RE::TESObjectREFR* a_ref);
 
+	// Whether the reference is one of those Track was told of this run (a stand-in, a frame copy, a light, a copy of a
+	// friend's runtime NPC or frame): the session's, not the game's own.
+	[[nodiscard]] bool Placed(const RE::TESObjectREFR* a_ref);
+
 	// A stand-in was placed: the engine is not let make it persistent (or let go of it so) from now on, so it is never kept
 	// in memory past its cell and unloaded later with no cell (see SaveStrays::Unpromoted). Until its form is gone or a load.
 	void KeepUnpromoted(RE::Actor* a_actor);

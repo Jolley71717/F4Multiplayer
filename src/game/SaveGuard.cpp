@@ -298,6 +298,15 @@ namespace SaveGuard
 		}
 	}
 
+	bool Placed(const RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return false;
+		}
+		const auto base = a_ref->GetObjectReference();
+		return book.IsPlaced(a_ref->GetFormID(), base ? base->GetFormID() : 0);
+	}
+
 	void Forget(std::uint32_t a_id)
 	{
 		book.Forget(a_id);

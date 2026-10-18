@@ -8,6 +8,8 @@
 
 // NPCs a game makes at runtime (a random encounter's raiders, an ambush), shared between games (SpawnBook.h): ours go
 // to the server under spawn ids and our game runs them; friends' are placed here as copies, which NpcSync mirrors.
+// Power armor frames a game made at runtime are shared the same way (FrameShare::SharesMade): a friend's is an empty
+// copy of its frame here, standing where their game has it while that is in our sight, and moved by their states.
 // Every id NpcSync and the wire use for one is its spawn id; LocalOf and IdOf turn it into our game's own NPC and back.
 // Main thread only.
 namespace Spawns
@@ -16,6 +18,16 @@ namespace Spawns
 	// game made that is ours to share (fighting, or hostile to our player) and not shared yet is reported (TakeOutgoing).
 	// Our copies of friends' spawns are not ours: 0.
 	std::uint32_t Share(RE::Actor* a_actor);
+
+	// NpcSync's walk found a power armor frame our game made (a_share: FrameShare::SharesMade says it is ours to share
+	// now): the spawn id it goes by once the server granted it, which keeps it ours (0: not shared, or not granted yet).
+	// One not shared yet is reported (TakeOutgoing), while our game shares fewer frames than FrameShare::MAX_MADE. One
+	// that is no longer ours to share gets 0, and NpcSync lets it go.
+	std::uint32_t ShareFrame(RE::TESObjectREFR* a_frame, bool a_share);
+
+	// Whether our copy of a frame a_owner's game made stands where their status says they left their frame parked
+	// (a_parked, within a_radius): it stands for that frame, and RemotePlayers places no parked copy of its own there.
+	[[nodiscard]] bool FrameCopyAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius);
 
 	// Our NPC under a spawn id: our own, or our copy of a friend's (0: none).
 	[[nodiscard]] std::uint32_t LocalOf(std::uint32_t a_id);

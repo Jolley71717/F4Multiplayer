@@ -262,6 +262,9 @@ namespace SaveStrays
 		// A stand-in, frame copy or light was placed.
 		void Track(std::uint32_t a_id, std::uint32_t a_base) { placed.Add(a_id, a_base); }
 
+		// Whether the reference under this id, of this base, is one of those we placed this run.
+		[[nodiscard]] bool IsPlaced(std::uint32_t a_id, std::uint32_t a_base) const { return placed.Ours(a_id, a_base); }
+
 		// One of ours whose handle stopped resolving (see Forgotten).
 		void Forget(std::uint32_t a_id)
 		{
