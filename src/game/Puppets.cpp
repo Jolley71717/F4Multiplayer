@@ -30,6 +30,7 @@ namespace Puppets
 			Gait::Kind                            gait = Gait::Kind::kWalk;  // the gait its graph was last told (Gait.h)
 			float                                 gaitSpeed = 0.0f;           // the smoothed speed it goes by
 			std::int32_t                          range = -1;  // the gait a dog's graph was last told (CreatureGait.h), -1 none
+			std::int32_t                          creatureState = -1;  // the locomotion state another creature's graph was last told (MirrorGait.h), -1 none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
@@ -350,9 +351,12 @@ namespace Puppets
 				graph->SetGraphVariableInt(rangeVar, dogGait.range->id);
 			}
 			// Another creature's: the state its owner's graph moves in, so its start enters that rather than the walk. How
-			// its graph changes gait while moving is not known here: a change shows at the copy's next start.
-			if (kind.family == MirrorGait::Family::kCreature && own) {
-				graph->SetGraphVariableInt(VariableName(kind.stateVariable), motion.gait);
+			// its graph changes gait while moving is not known here: a change shows at the copy's next start. Written when
+			// it changes and as the copy sets off (a graph loaded anew since it last moved starts with the variable
+			// blank), not every frame: a graph variable write is a lookup in the graph's variable table.
+			const std::int32_t creatureState = kind.family == MirrorGait::Family::kCreature && own ? motion.gait : -1;
+			if (creatureState >= 0 && (creatureState != a_puppet.creatureState || (!a_puppet.moving && motion.speed > MoveSync::START))) {
+				graph->SetGraphVariableInt(VariableName(kind.stateVariable), creatureState);
 			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
@@ -421,6 +425,7 @@ namespace Puppets
 						entry->gait = gait;
 						entry->gaitSpeed = gaitSpeed;
 						entry->range = dog && moving ? dogGait.range->id : -1;
+						entry->creatureState = creatureState;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
 					}
