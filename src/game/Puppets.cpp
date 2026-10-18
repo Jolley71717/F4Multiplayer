@@ -31,6 +31,7 @@ namespace Puppets
 			float                                 gaitSpeed = 0.0f;           // the smoothed speed it goes by
 			std::int32_t                          range = -1;  // the gait a dog's graph was last told (CreatureGait.h), -1 none
 			std::int32_t                          creatureState = -1;  // the locomotion state another creature's graph was last told (MirrorGait.h), -1 none
+			GaitGraph                             graph;      // which locomotion graph it has (GaitGraphOf), asked again while it had none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
@@ -329,7 +330,9 @@ namespace Puppets
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
 			const auto  now = std::chrono::steady_clock::now();
-			const auto  kind = GaitGraphOf(a_actor);
+			// Which graph it has, told once (three variable reads) and kept; asked again while it had none, since a
+			// graph loads after its actor.
+			const auto  kind = a_puppet.graph.family != MirrorGait::Family::kNone ? a_puppet.graph : GaitGraphOf(a_actor);
 			// A mirrored NPC's state may carry the gait its owner's graph plays (MirrorGait.h); a stand-in's never does.
 			const bool own = a_puppet.kind == Kind::kNpc && (motion.flags & Protocol::kOwnGait) != 0;
 
@@ -426,6 +429,7 @@ namespace Puppets
 						entry->gaitSpeed = gaitSpeed;
 						entry->range = dog && moving ? dogGait.range->id : -1;
 						entry->creatureState = creatureState;
+						entry->graph = kind;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
 					}

@@ -57,6 +57,8 @@ namespace Puppets
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
 	// Which locomotion graph any actor has (MirrorGait::Identify), and for a creature's the variable its state is in.
+	// Three variable reads: its users keep the answer per actor (a puppet's entry, NpcSync's owned entry), asking again
+	// only while it was kNone, since a graph loads after its actor.
 	struct GaitGraph
 	{
 		MirrorGait::Family family = MirrorGait::Family::kNone;
