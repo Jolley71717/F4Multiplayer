@@ -25,7 +25,8 @@ namespace CopyWatch
 	// A death in our world, and what killed it (0: nothing).
 	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
 
-	// Another player's report set the copy's health (WorldSync::TrySetHealth): where it stands from now on.
+	// Another player's report set the copy's health (WorldSync::TrySetHealth, a_refId our game's form id, a spawn copy's
+	// too): where it stands from now on.
 	void HealthSet(std::uint32_t a_refId, float a_before, float a_health);
 
 	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
