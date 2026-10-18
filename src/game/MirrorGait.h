@@ -2,6 +2,7 @@
 
 #include "game/CreatureGait.h"
 #include "game/Gait.h"
+#include "game/MoveSync.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,8 +12,7 @@
 // the engine's AI movement picks its graph's gait (walk, jog or run for a person, a dog's walk, trot or run, a
 // creature's locomotion range) and the rate each clip plays at; the copies have their AI off, so nothing did that for
 // them. A copy guessed from the speed and moveMode instead: a person whose owner's copy jogged played the run slowed
-// down (Gait.h has no jog), a creature set off in whatever state its graph last had, and an NPC carried with its legs
-// still (a lift, a push: its position moving) walked in every other game. The owner's game now
+// down (Gait.h has no jog), and a creature set off in whatever state its graph last had. The owner's game now
 // reads what its graph plays and sends it with each state (Protocol::ActorState::gait and gaitRate, flagged kOwnGait),
 // and the copy's graph is told the same. Which graph an NPC has is told from the variables it answers, the same way in
 // both games (its race is the same in both). A dog's own gait is CreatureGait.h's. Kept free of the game so it can be
@@ -92,14 +92,17 @@ namespace MirrorGait
 		return static_cast<std::uint8_t>(a_state);
 	}
 
-	// The speed a state carries (Gait::Reported), but none while a person's graph stands and its legs play nothing: the
-	// distance it covered then is a lift, a script or a push carrying it, which the copy follows without walking.
+	// The speed a state carries (Gait::Reported), but none while a person's graph stands, its legs play nothing and it
+	// covered no more ground than a copy walks for (MoveSync::START): the engine's own idle shifts an NPC's position a
+	// little, which the distance read as a creep. One carried further than that with its legs still (a lift, a
+	// vertibird, a script moving it, a push) is sent the distance it covered, as before: its graph's word that it stands
+	// is not taken over the ground it covers, since a graph that was not kept would have its copy slide along standing.
 	// a_graphStands: its graph answered IDLE_VARIABLE with 0, read only while the engine animates it (it has the process
 	// data its animation speed comes from). Only a person's: the engine is known to keep that variable for a humanoid
-	// with AI, and a creature's graph that has it but never had it kept would have its copy slide along standing.
+	// with AI, a creature's is not.
 	constexpr float Reported(float a_animationSpeed, float a_travelled, Family a_family, bool a_graphStands)
 	{
-		if (a_family == Family::kPerson && a_graphStands && !(a_animationSpeed > 0.0f)) {
+		if (a_family == Family::kPerson && a_graphStands && !(a_animationSpeed > 0.0f) && !(a_travelled > MoveSync::START)) {
 			return 0.0f;
 		}
 		return Gait::Reported(a_animationSpeed, a_travelled);

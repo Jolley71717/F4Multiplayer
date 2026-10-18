@@ -9,6 +9,10 @@
 
 #include "Protocol.h"
 
+#include <atomic>
+#include <cstring>
+#include <vector>
+
 namespace Puppets
 {
 	namespace
@@ -30,6 +34,8 @@ namespace Puppets
 			Gait::Kind                            gait = Gait::Kind::kWalk;  // the gait its graph was last told (Gait.h)
 			float                                 gaitSpeed = 0.0f;           // the smoothed speed it goes by
 			std::int32_t                          range = -1;  // the gait a dog's graph was last told (CreatureGait.h), -1 none
+			std::int32_t                          creatureState = -1;  // the locomotion state another creature's graph was last told (MirrorGait.h), -1 none
+			GaitGraph                             graph;      // which locomotion graph it has (GaitGraphOf), asked again while it had none
 			std::chrono::steady_clock::time_point gaitAt{};
 			std::uint8_t                          appliedFlags = 0;  // flags whose animation events were sent
 			std::chrono::steady_clock::time_point aiUntil{};        // the engine's own update (with AI) runs until then: furniture use (power armor) needs it
@@ -328,7 +334,9 @@ namespace Puppets
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
 			const auto  now = std::chrono::steady_clock::now();
-			const auto  kind = GaitGraphOf(a_actor);
+			// Which graph it has, told once (three variable reads) and kept; asked again while it had none, since a
+			// graph loads after its actor.
+			const auto  kind = a_puppet.graph.family != MirrorGait::Family::kNone ? a_puppet.graph : GaitGraphOf(a_actor);
 			// A mirrored NPC's state may carry the gait its owner's graph plays (MirrorGait.h); a stand-in's never does.
 			const bool own = a_puppet.kind == Kind::kNpc && (motion.flags & Protocol::kOwnGait) != 0;
 
@@ -350,9 +358,12 @@ namespace Puppets
 				graph->SetGraphVariableInt(rangeVar, dogGait.range->id);
 			}
 			// Another creature's: the state its owner's graph moves in, so its start enters that rather than the walk. How
-			// its graph changes gait while moving is not known here: a change shows at the copy's next start.
-			if (kind.family == MirrorGait::Family::kCreature && own) {
-				graph->SetGraphVariableInt(VariableName(kind.stateVariable), motion.gait);
+			// its graph changes gait while moving is not known here: a change shows at the copy's next start. Written when
+			// it changes and as the copy sets off (a graph loaded anew since it last moved starts with the variable
+			// blank), not every frame: a graph variable write is a lookup in the graph's variable table.
+			const std::int32_t creatureState = kind.family == MirrorGait::Family::kCreature && own ? motion.gait : -1;
+			if (creatureState >= 0 && (creatureState != a_puppet.creatureState || (!a_puppet.moving && motion.speed > MoveSync::START))) {
+				graph->SetGraphVariableInt(VariableName(kind.stateVariable), creatureState);
 			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
@@ -368,8 +379,11 @@ namespace Puppets
 				graph->SetGraphVariableFloat(weaponWalkMultVar, person.weaponWalkRate);
 				graph->SetGraphVariableFloat(weaponRunMultVar, person.weaponRunRate);
 				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
-					// The graph in use takes its own one and refuses the other.
-					graph->NotifyAnimationGraphImpl(VariableName(Gait::Event(gait)));
+					// The graph in use takes its own one and refuses the other. A jog has no weapon-away event: its
+					// start entered it by the sync variable.
+					if (const auto event = Gait::Event(gait)) {
+						graph->NotifyAnimationGraphImpl(VariableName(event));
+					}
 					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
 				}
 			}
@@ -418,6 +432,8 @@ namespace Puppets
 						entry->gait = gait;
 						entry->gaitSpeed = gaitSpeed;
 						entry->range = dog && moving ? dogGait.range->id : -1;
+						entry->creatureState = creatureState;
+						entry->graph = kind;
 						entry->gaitAt = now;
 						entry->appliedFlags = motion.flags;
 					}
@@ -793,11 +809,57 @@ namespace Puppets
 
 	const RE::BSFixedString& VariableName(const char* a_name)
 	{
-		static std::mutex                                         namesLock;
-		static std::unordered_map<const char*, RE::BSFixedString> names;
-		std::scoped_lock                                          l{ namesLock };
-		const auto                                                it = names.find(a_name);
-		return it != names.end() ? it->second : names.emplace(a_name, RE::BSFixedString{ a_name }).first->second;
+		// Every name a gait sends: made once, the first time any is asked for (the language guards a function-local
+		// static's making, and nothing of ours locks on the way through after that). A name outside the table would be
+		// a programming error: it is logged once and the graph is sent an empty name, which it refuses.
+		struct Entry
+		{
+			const char*       name;
+			RE::BSFixedString fixed;
+		};
+		static const auto names = [] {
+			std::vector<const char*> list{
+				Gait::Event(Gait::Kind::kWalk), Gait::Event(Gait::Kind::kRun),
+				Gait::WeaponEvent(Gait::Kind::kWalk), Gait::WeaponEvent(Gait::Kind::kRun),
+				CreatureGait::RANGE_VARIABLE, CreatureGait::MARKER_VARIABLE,
+				MirrorGait::PERSON_MARKER, MirrorGait::GAIT_VARIABLE, MirrorGait::WEAPON_GAIT_VARIABLE,
+				MirrorGait::WALK_RATE, MirrorGait::RUN_RATE, MirrorGait::WEAPON_WALK_RATE, MirrorGait::WEAPON_RUN_RATE,
+				MirrorGait::IDLE_VARIABLE
+			};
+			for (const auto& range : CreatureGait::RANGES) {
+				list.push_back(range.event);
+				list.push_back(range.rateVariable);
+			}
+			for (const auto variable : MirrorGait::CREATURE_VARIABLES) {
+				list.push_back(variable);
+			}
+			std::vector<Entry> table;
+			for (const auto name : list) {
+				if (name) {
+					table.push_back({ name, RE::BSFixedString{ name } });
+				}
+			}
+			return table;
+		}();
+		static const RE::BSFixedString none;
+
+		// By address first: the names given are the same constants the table was built from. By text for one that is
+		// not (the same literal in another translation unit).
+		for (const auto& entry : names) {
+			if (entry.name == a_name) {
+				return entry.fixed;
+			}
+		}
+		for (const auto& entry : names) {
+			if (a_name && std::strcmp(entry.name, a_name) == 0) {
+				return entry.fixed;
+			}
+		}
+		static std::atomic<bool> warned{ false };
+		if (!warned.exchange(true)) {
+			REX::WARN("Puppets: VariableName asked for a name outside its table: '{}'", a_name ? a_name : "(null)");
+		}
+		return none;
 	}
 
 	GaitGraph GaitGraphOf(const RE::Actor* a_actor)

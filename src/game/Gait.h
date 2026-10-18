@@ -5,8 +5,9 @@
 #include <cstdint>
 
 // Walk or run for a humanoid puppet (a friend's stand-in, a mirrored person). The humanoid graph does not pick
-// its gait by Speed: MTLocomotionBlend_SM (weapon away) leaves Walk for Jog or Run only on the events "Walk",
-// "Jog" and "Run", and the weapon-drawn locomotion on "walkStart"/"runStart". The engine's AI movement sends
+// its gait by Speed: MTLocomotionBlend_SM (weapon away) leaves Walk for Run, and comes back, only on the
+// events "Run" and "Walk" (the jog's, if it has one, is not known: see Event), and the weapon-drawn
+// locomotion on "walkStart"/"runStart". The engine's AI movement sends
 // them from the AnimationSpeedInfo data; with the AI off nothing did, so a stand-in moving at a run's pace
 // played the walk cycle (its animation speed read 88 where the player's own read 373). Each clip then plays at
 // speed over its own pace (WalkSpeedMult, RunSpeedMult and the weapon-drawn ones), as the engine's contour
@@ -88,10 +89,14 @@ namespace Gait
 	}
 
 	// The weapon-away graph's event, and the value of its sync variable, which picks the state a moveStart
-	// enters.
+	// enters. A jog has no event (null): the sync variable, set first, enters it at a start, and a change
+	// into the jog while moving waits for the next start. "Jog" was a guess that nothing names (not the
+	// engine's headers, not a reading of the graph), where "Run" is seen to be taken; and "Walk" in its
+	// place, sent right after the start as every gait's event is, would pull a copy out of the jog its
+	// start entered.
 	constexpr const char* Event(Kind a_gait)
 	{
-		return a_gait == Kind::kRun ? "Run" : a_gait == Kind::kJog ? "Jog" : "Walk";
+		return a_gait == Kind::kRun ? "Run" : a_gait == Kind::kWalk ? "Walk" : nullptr;
 	}
 	constexpr std::int32_t SyncValue(Kind a_gait)
 	{

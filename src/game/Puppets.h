@@ -57,6 +57,8 @@ namespace Puppets
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
 	// Which locomotion graph any actor has (MirrorGait::Identify), and for a creature's the variable its state is in.
+	// Three variable reads: its users keep the answer per actor (a puppet's entry, NpcSync's owned entry), asking again
+	// only while it was kNone, since a graph loads after its actor.
 	struct GaitGraph
 	{
 		MirrorGait::Family family = MirrorGait::Family::kNone;
@@ -65,8 +67,9 @@ namespace Puppets
 	[[nodiscard]] GaitGraph GaitGraphOf(const RE::Actor* a_actor);
 
 	// The graph name for a variable or event, made once: building a BSFixedString looks the text up in the engine's string
-	// table under its lock, which a mirror's every frame must not do. a_name must live as long as the game does (a
-	// literal, MirrorGait's and CreatureGait's names): it is keyed by address.
+	// table under its lock, which a mirror's every frame must not do. A fixed table of the names Gait, CreatureGait and
+	// MirrorGait define (their events, rate variables and state variables), found by address or text with no lock of
+	// ours; a name outside it is a programming error (logged once, an empty name answered).
 	[[nodiscard]] const RE::BSFixedString& VariableName(const char* a_name);
 
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was

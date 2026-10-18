@@ -82,8 +82,9 @@ namespace NpcSync
 		// An NPC we run.
 		struct Owned
 		{
-			RE::NiPoint3      lastPosition;
-			Clock::time_point lastTime{};
+			RE::NiPoint3       lastPosition;
+			Clock::time_point  lastTime{};
+			Puppets::GaitGraph graph;  // which locomotion graph it has (Puppets::GaitGraphOf), asked again while it had none
 		};
 
 		std::uint32_t localId = 0;
@@ -548,7 +549,11 @@ namespace NpcSync
 				state.heading = actor->data.angle.z;
 				const auto process = actor->currentProcess;
 				const auto middle = process ? process->middleHigh : nullptr;
-				const auto kind = Puppets::GaitGraphOf(actor);
+				// Which graph it has, told once and kept with the track; asked again while it had none (a graph loads late).
+				if (track.graph.family == MirrorGait::Family::kNone) {
+					track.graph = Puppets::GaitGraphOf(actor);
+				}
+				const auto& kind = track.graph;
 				state.speed = MirrorGait::Reported(middle ? middle->animationSpeed : 0.0f, speed, kind.family, middle && !(middle->animationSpeed > 0.0f) && GraphStands(actor));
 				state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*actor).moveMode);
 				// The way its own graph has it go, rather than guessed from its path by the copies.
