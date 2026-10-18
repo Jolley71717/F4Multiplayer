@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "DevCommands.h"
 #include "MainThread.h"
+#include "game/TextureWait.h"
 
 #include <WinSock2.h>
 #include <WS2tcpip.h>
@@ -115,6 +116,13 @@ namespace DevChannel
 			}
 			if (cmd == "help") {
 				return DevCommands::Help();
+			}
+			// Mostly off the main thread: it is how a main thread stuck in the texture wait is looked at (TextureWait.h).
+			if (cmd == "texwait") {
+				if (TextureWait::OnMainThread(args)) {
+					return RunOnMainThread([args = std::string{ args }]() { return TextureWait::Command(args); });
+				}
+				return TextureWait::Command(args);
 			}
 			if (const auto handler = DevCommands::Find(cmd)) {
 				return RunOnMainThread([handler, args = std::string{ args }]() { return handler(args); });

@@ -18,6 +18,7 @@
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
+#include "game/TextureWait.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -619,7 +620,9 @@ namespace
 		const auto where = [] { return HangWatch::DescribeMainThread(gameWindow.load()); };
 		switch (a_stop) {
 		case Stop::kNoTask:
-			return "the F4SE task has not run, so nothing posts the frame message; the watch posts it once a second instead";
+			// The task runs from the game's frame loop, so a main thread held anywhere in it (the engine's pump, moving
+			// the player, in the hang of 2026-10-17) stops it first: where it is says why.
+			return std::format("the F4SE task has not run, so nothing posts the frame message; the watch posts it once a second instead; the main thread is {}", where());
 		case Stop::kNotDispatched:
 			return std::format("frame messages are posted, but the window procedure never gets them ({}); the watch posts one once a second", a_window);
 		case Stop::kInFrame:
@@ -666,7 +669,11 @@ namespace
 					PostFrameFromWatch();
 				}
 				if (result.event == FrameWatch::Watch::Event::kStalled) {
-					REX::WARN("Frame watch: no game work has run for {} s while the game drew {} frame(s): {}", seconds, result.drawn, ExplainStop(result.stop, window));
+					// With the main thread in the engine's pump, the texture wait's state too (TextureWait.h): what the job it
+					// waits for is waiting on.
+					const auto pump = TextureWait::DescribePump(gameWindow.load());
+					REX::WARN("Frame watch: no game work has run for {} s while the game drew {} frame(s): {}{}{}", seconds, result.drawn, ExplainStop(result.stop, window),
+						pump.empty() ? "" : "; ", pump);
 				} else if (result.event == FrameWatch::Watch::Event::kResumed) {
 					REX::INFO("Frame watch: game work runs again, after {} s", seconds);
 				}
@@ -758,7 +765,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	F4SE::Init(a_f4se);
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 64 });  // one call patched (TextureWait::Install)
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -780,6 +787,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	}
 
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
+	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);
