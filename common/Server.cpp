@@ -30,6 +30,8 @@ namespace
 	constexpr int  MAX_EVENTS_PER_SECOND = 500;
 	// Shots only animate other players' stand-ins, so excess ones are simply dropped.
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
+	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
+	constexpr auto RENAME_INTERVAL = std::chrono::milliseconds(500);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
@@ -209,6 +211,7 @@ namespace
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
 		Clock::time_point          lastRename{};  // a name changes twice a second at most (a game sends one on a change only, once a second)
+		std::optional<std::string> pendingName;   // cleaned; waits for RENAME_INTERVAL to pass (flushRename)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		// NPCs this player hurt, tried to take over, or ran until another took it over or they let it go, and when
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
@@ -1593,28 +1596,36 @@ void Server::Run()
 		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
 	};
 
+	// The name a player asked for last (pendingName) becomes theirs and is told to the others, two a second at most:
+	// one that comes sooner waits for the tick that may send it, so the last name sent is always the one that stays,
+	// even when the network brings two of a game's once-a-second changes together. A flood costs the others two
+	// renames a second. A name that cleans to the one they have already changes nothing.
+	const auto flushRename = [&](Player& a_player, Clock::time_point a_now) {
+		if (!a_player.welcomed || !a_player.pendingName || a_now - a_player.lastRename < RENAME_INTERVAL) {
+			return;
+		}
+		auto name = *std::exchange(a_player.pendingName, std::nullopt);
+		if (name == a_player.name) {
+			return;
+		}
+		a_player.lastRename = a_now;
+		a_player.name = std::move(name);
+		log(std::format("server: player {} renamed", a_player.id));  // never the name: the log is public
+		broadcast(Protocol::Encode(Protocol::Rename{ a_player.id, a_player.name }, Protocol::MessageType::kRenamed), true, a_player.key);
+	};
+
 	// Their name changed (a joiner named their new character in the opening after connecting): cleaned as a hello's
-	// name is, kept for later joiners' welcomes, and told to the others. A name that cleans to the one they have
-	// already changes nothing.
+	// name is, kept for later joiners' welcomes, and told to the others (flushRename).
 	const auto handleRename = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		const auto now = Clock::now();
-		// A game looks at its name once a second and sends one on a change: a floor of half that never drops a real
-		// change that the network brought a little early, while a flood of them costs the others nothing.
-		if (!allowEvent(a_player) || now - a_player.lastRename < std::chrono::milliseconds(500)) {
+		if (!allowEvent(a_player)) {
 			return;
 		}
 		const auto rename = Protocol::DecodeRename(a_data);
 		if (!rename) {
 			return;
 		}
-		a_player.lastRename = now;
-		auto name = Name::Shown(rename->name, a_player.id);
-		if (name == a_player.name) {
-			return;
-		}
-		a_player.name = std::move(name);
-		log(std::format("server: player {} renamed", a_player.id));  // never the name: the log is public
-		broadcast(Protocol::Encode(Protocol::Rename{ a_player.id, a_player.name }, Protocol::MessageType::kRenamed), true, a_player.key);
+		a_player.pendingName = Name::Shown(rename->name, a_player.id);
+		flushRename(a_player, Clock::now());
 	};
 
 	const auto handleActivation = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -2087,6 +2098,7 @@ void Server::Run()
 				budgetOf(player).lastFace = now;
 				broadcast(Protocol::Encode(*player.face, Protocol::MessageType::kPlayerFace), true, key);
 			}
+			flushRename(player, now);
 		}
 
 		// Relay changed player states to everyone else.

@@ -183,8 +183,17 @@ TEST("name: what is allowed is decided per character")
 	CHECK(!Name::Allowed(0x202A));
 	CHECK(!Name::Allowed(0x202E));
 	CHECK(Name::Allowed(0x202F));  // a narrow no-break space, just past the overrides
+	CHECK(Name::Allowed(0x205F));   // a medium mathematical space, just before the word joiner
+	CHECK(!Name::Allowed(0x2060));  // the word joiner
+	CHECK(!Name::Allowed(0x2064));  // an invisible plus
 	CHECK(!Name::Allowed(0x2066));
 	CHECK(!Name::Allowed(0x2069));
+	CHECK(!Name::Allowed(0x206F));
+	CHECK(Name::Allowed(0x2070));   // a superscript zero
+	CHECK(Name::Allowed(0xFFF8));
+	CHECK(!Name::Allowed(0xFFF9));  // interlinear annotation anchor
+	CHECK(!Name::Allowed(0xFFFB));
+	CHECK(Name::Allowed(0xFFFC));   // the object replacement character draws
 	CHECK(!Name::Allowed(0xFEFF));
 	CHECK(!Name::Allowed(0xFFFE));
 	CHECK(!Name::Allowed(0xFFFF));

@@ -656,7 +656,7 @@ TEST("server session: a player's new name reaches the others, cleaned, and a lat
 	CHECK(toCarol.at(bob->playerId) == "Bob");
 }
 
-TEST("server session: a name changes twice a second at most, and not before the hello")
+TEST("server session: a name changes twice a second at most, the last one sent stays, and not before the hello")
 {
 	Fixture f;
 	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
@@ -665,21 +665,42 @@ TEST("server session: a name changes twice a second at most, and not before the 
 	Clear(f, { 1, 2 });
 
 	f.fake->Deliver(1, RenameTo("One"));
-	f.fake->Deliver(1, RenameTo("Two"));  // right after the first: dropped
+	// Right after the first (the network brought two of her game's changes together): it waits, and the last one
+	// sent is the one that stays, for the others and for later joiners.
+	f.fake->Deliver(1, RenameTo("Two"));
+	f.fake->Deliver(1, RenameTo("Three"));
 	auto toBob = Renames(Received(f, 2));
 	REQUIRE(toBob.size() == 1);
 	CHECK(toBob[0].name == "One");
-	std::this_thread::sleep_for(1100ms);
-	f.fake->Deliver(1, RenameTo("Three"));
+	const auto later = f.fake->WaitFor(2, Type(MT::kRenamed));
+	REQUIRE(later);
+	const auto three = Protocol::DecodeRename(*later);
+	REQUIRE(three);
+	CHECK(three->playerId == alice->playerId);
+	CHECK(three->name == "Three");  // "Two" never went out: a newer name took its place
+	std::this_thread::sleep_for(700ms);
+	CHECK(Renames(Received(f, 2)).empty());
+	const auto carol = f.Join(3, Fixture::MakeHello("Carol"));
+	REQUIRE(carol);
+	CHECK(JoinedNames(Received(f, 3)).at(alice->playerId) == "Three");
+
+	// A flood reaches the others as two renames a second at most.
+	for (int i = 0; i < 50; ++i) {
+		f.fake->Deliver(1, RenameTo(std::format("Flood {}", i)));
+	}
+	std::this_thread::sleep_for(1200ms);
 	toBob = Renames(Received(f, 2));
-	REQUIRE(toBob.size() == 1);
-	CHECK(toBob[0].name == "Three");
+	CHECK(toBob.size() >= 1);
+	CHECK(toBob.size() <= 3);
+	REQUIRE(!toBob.empty());
+	CHECK(toBob.back().name == "Flood 49");
 
 	// A connection that never said hello has no name to change and nobody to tell.
-	f.fake->Connect(3);
-	f.fake->Deliver(3, RenameTo("Nobody"));
+	f.fake->Connect(4);
+	f.fake->Deliver(4, RenameTo("Nobody"));
+	std::this_thread::sleep_for(600ms);  // past the floor: nothing was kept for later either
 	CHECK(Renames(Received(f, 2)).empty());
-	CHECK(!f.fake->Disconnected(3));
+	CHECK(!f.fake->Disconnected(4));
 }
 
 // ---- identities --------------------------------------------------------------------------

@@ -622,15 +622,17 @@ name is validated as UTF-8 byte by byte, what isn't UTF-8 is dropped, so are con
 the bidi overrides and other invisible characters, and `<` and `>` since the HUD's text fields read HTML; at most
 `Name::MAX_CHARACTERS` = 32 characters, counted in code points, so a Cyrillic name keeps as many letters as a Latin
 one; `Protocol::MAX_NAME_LENGTH` is 128 bytes on the wire, four per character; a name nothing is left of is
-"Player N"). The client cleans the names it hears the same way before they reach the HUD. The name is read when the
-Hello is sent, and looked at again once a second while in the session (with the character check): a hosting game
+"Player N"). The client cleans the names it hears the same way before they reach the HUD, and its own the same way
+before it sends it. The name is read when the Hello is sent, and looked at again once a second while in the session
+and in the world (with the character check; not at the main menu, where the character's name may be gone): a hosting game
 says hello again after every character change (hosting restarts and the game connects to its own server anew), a
 joining game that loads another character leaves and its next join reads the new name, and a joining game that
 connected before a new character was named in the opening (the character is named in the opening, after the
 connect) said hello under the Steam name and sends `kRename` once the character's name differs from what it sent
 (protocol 34). The server cleans it as a hello's name, keeps it for later joiners' welcomes, tells the others
-(`kRenamed`, not the sender; two a second per player at most, on top of the event budget, so a game's once-a-second
-sends are never dropped; the same name again goes nowhere) and logs "player N renamed", never the name. The hearers change the stand-in's name tag and the player
+(`kRenamed`, not the sender; two a second per player at most, on top of the event budget: one that comes sooner waits
+on the player as `pendingName` and a newer one takes its place, so the last name a game sent is the one that stays
+even when the network brings two together; the same name again goes nowhere) and logs "player N renamed", never the name. The hearers change the stand-in's name tag and the player
 list's entry and show "{old} is now {new}".
 
 Encoding: a name is UTF-8 all the way. Steam's persona name is UTF-8 (the Steamworks API speaks nothing else), the

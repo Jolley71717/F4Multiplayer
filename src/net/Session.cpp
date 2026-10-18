@@ -133,9 +133,10 @@ namespace Session
 			return Protocol::LoadOrderHash(plugins);
 		}
 
-		// The name we say hello with (NameChoice::Choose). The character's name is read when the hello is sent: a joining
-		// game says hello once, as it connects, and again only after it has left or lost the session (the next connect
-		// reads the name anew).
+		// The name we say hello with (NameChoice::Choose), and the one Frame compares once a second while we are in the
+		// session and in the world (kRename when it changed: a new character named in the opening after connecting).
+		// Cleaned as the server cleans it (common/Name.h), so what the wire's bytes hold is the shown name, not
+		// characters the server would drop anyway.
 		std::string PlayerName()
 		{
 			const auto& ini = Config::Get().playerName;
@@ -148,7 +149,9 @@ namespace Session
 					}
 				}
 			}
-			return NameChoice::Choose(ini, character, Steam::PersonaName());
+			auto chosen = NameChoice::Choose(ini, character, Steam::PersonaName());
+			auto shown = Name::Sanitize(chosen);
+			return shown.empty() ? chosen : shown;  // an ini name nothing is left of: the server makes it "Player N"
 		}
 
 		bool InGame()
@@ -849,8 +852,10 @@ namespace Session
 		if (now >= nextCharacterCheck) {
 			nextCharacterCheck = now + CHARACTER_CHECK_INTERVAL;
 			// Our name, once a second while in the session: a joiner who connected before naming a new character
-			// in the opening said hello under the Steam name, and sends the character's once it is there.
-			if (welcomed) {
+			// in the opening said hello under the Steam name, and sends the character's once it is there. Only in
+			// the world: at the main menu or between saves the character's name may be missing, and the others
+			// would see us renamed to the Steam name and back.
+			if (welcomed && InGame()) {
 				if (auto name = PlayerName(); name != sentName) {
 					sentName = std::move(name);
 					REX::INFO("Session: our name changed; telling the others");

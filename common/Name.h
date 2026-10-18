@@ -114,8 +114,11 @@ namespace Name
 		if (a_point >= 0x202A && a_point <= 0x202E) {
 			return false;  // bidi embedding and override controls: they can show a name's letters in another order
 		}
-		if (a_point >= 0x2066 && a_point <= 0x2069) {
-			return false;  // bidi isolates
+		if (a_point >= 0x2060 && a_point <= 0x206F) {
+			return false;  // the word joiner, the invisible operators, the bidi isolates and the old shaping controls
+		}
+		if (a_point >= 0xFFF9 && a_point <= 0xFFFB) {
+			return false;  // interlinear annotation controls: they hide the text between them
 		}
 		if (a_point == 0xFEFF || a_point == 0xFFFE || a_point == 0xFFFF) {
 			return false;  // the byte order mark and the two noncharacters
