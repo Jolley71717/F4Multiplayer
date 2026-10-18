@@ -169,10 +169,10 @@ namespace HangWatch
 		// Likely return addresses on the copied stack, nearest first: values that point just past a call
 		// instruction in a loaded image's code. A scan rather than an unwind (that needs the loader's
 		// function tables, behind its lock), so a few may be left over from calls that already returned.
-		std::vector<std::string> Callers(const Snapshot& a_snapshot, Modules& a_modules)
+		std::vector<std::uintptr_t> ReturnAddresses(const Snapshot& a_snapshot, Modules& a_modules, std::size_t a_max)
 		{
-			std::vector<std::string> callers;
-			for (std::size_t at = 0; at + sizeof(std::uintptr_t) <= a_snapshot.stack.size() && callers.size() < MAX_CALLERS; at += sizeof(std::uintptr_t)) {
+			std::vector<std::uintptr_t> callers;
+			for (std::size_t at = 0; at + sizeof(std::uintptr_t) <= a_snapshot.stack.size() && callers.size() < a_max; at += sizeof(std::uintptr_t)) {
 				std::uintptr_t value = 0;
 				std::memcpy(&value, a_snapshot.stack.data() + at, sizeof(value));
 				if (!a_modules.IsCode(value)) {
@@ -183,8 +183,17 @@ namespace HangWatch
 				SIZE_T                               read = 0;
 				if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(value - before.size()), before.data(), before.size(), &read) && read == before.size() &&
 					EndsWithCall(before)) {
-					callers.push_back(a_modules.Describe(value));
+					callers.push_back(value);
 				}
+			}
+			return callers;
+		}
+
+		std::vector<std::string> Callers(const Snapshot& a_snapshot, Modules& a_modules)
+		{
+			std::vector<std::string> callers;
+			for (const auto address : ReturnAddresses(a_snapshot, a_modules, MAX_CALLERS)) {
+				callers.push_back(a_modules.Describe(address));
 			}
 			return callers;
 		}
@@ -486,5 +495,36 @@ namespace HangWatch
 		}
 		Modules modules;
 		return std::format("at {}; return addresses on its stack: {}", modules.Describe(snapshot.ip), Joined(Callers(snapshot, modules)));
+	}
+
+	std::uint32_t WindowThread(void* a_window)
+	{
+		return a_window ? GetWindowThreadProcessId(static_cast<HWND>(a_window), nullptr) : 0;
+	}
+
+	ThreadLook LookAtThread(std::uint32_t a_threadId, std::size_t a_maxCallers)
+	{
+		ThreadLook look;
+		if (a_threadId == 0 || a_threadId == GetCurrentThreadId()) {
+			return look;  // stopping itself would never come back
+		}
+		const auto thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE, a_threadId);
+		if (!thread) {
+			return look;
+		}
+		Snapshot snapshot;
+		// An id read from the game's memory may name a thread that has ended, its id taken by another program's.
+		if (GetProcessIdOfThread(thread) == GetCurrentProcessId() && Capture(thread, snapshot)) {
+			Modules modules;
+			look = { .looked = true, .ip = snapshot.ip, .callers = ReturnAddresses(snapshot, modules, a_maxCallers) };
+		}
+		CloseHandle(thread);
+		return look;
+	}
+
+	bool ReadMemory(std::uintptr_t a_address, void* a_out, std::size_t a_size)
+	{
+		SIZE_T read = 0;
+		return a_address != 0 && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(a_address), a_out, a_size, &read) && read == a_size;
 	}
 }

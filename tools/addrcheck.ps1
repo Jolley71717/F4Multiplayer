@@ -201,6 +201,48 @@ if ($null -ne $hudVtable) {
 	Report (IsFunctionStart $slot) ('HUDMenu vtable slot 4 (AdvanceMovie, hooked by Compass) is a function, +{0:X}' -f $slot)
 }
 
+# The texture update the position job waits on (TextureWait.cpp, docs/HANG-20261017.md): its state, the wait's loop on
+# it, and the walk that hands a batch over when the streamer's pool runs out.
+foreach ($pair in @(@(2698346, 0x32FF859), @(2698349, 0x32FF85C), @(2698350, 0x32FF860), @(2698351, 0x32FF868), @(2698352, 0x32FF870), @(2698354, 0x32FF878),
+		@(2698358, 0x32FF8B8), @(2698359, 0x32FF8BC), @(2698368, 0x32FF8E8), @(2703490, 0x34485E0), @(2229488, 0xC54910), @(2275476, 0x17C66D0), @(2275477, 0x17C67C0),
+		@(2228917, 0xC339D0), @(2228998, 0xC3B030), @(2698032, 0x32DD0FB))) {
+	Report ((Resolve $pair[0]) -eq $pair[1]) ('texture update ID {0} is +{1:X}' -f $pair[0], $pair[1])
+}
+# Where a rip-relative operand points: the instruction at $Offset is $Length bytes long, its disp32 at $DispAt.
+function RipTarget([uint64]$Offset, [int]$DispAt, [int]$Length) {
+	return $Offset + $Length + [BitConverter]::ToInt32((BytesAt $Offset $Length), $DispAt)
+}
+$wait = Resolve 2229488
+$submit = Resolve 2275477
+$pendingAt = Resolve 2698346
+$doneAt = Resolve 2698349
+$totalAt = Resolve 2698352
+$currentAt = Resolve 2698351
+if ($null -ne $wait -and $null -ne $submit) {
+	Report (HexMatches (BytesAt $wait 6) '41 56 48 83 EC 30') ('the texture wait +{0:X} begins as read' -f $wait)
+	$call = BytesAt ($wait + 0x24B) 5
+	Report ($call[0] -eq 0xE8 -and ($wait + 0x250 + [BitConverter]::ToInt32($call, 1)) -eq $submit) 'the texture wait hands its batch over (SubmitBatch) at +0x24B'
+	# cmp byte [pending],bpl; je; mov eax,[done]; cmp eax,[total]; jae: the loop, at +0x260.
+	Report ((HexMatches (BytesAt ($wait + 0x260) 3) '40 38 2D') -and (RipTarget ($wait + 0x260) 3 7) -eq $pendingAt -and
+		(RipTarget ($wait + 0x269) 2 6) -eq $doneAt -and (RipTarget ($wait + 0x26F) 2 6) -eq $totalAt) 'the texture wait loops on pending and done < total at +0x260'
+	Report ((BytesAt ($wait + 0x30F) 1)[0] -eq 0xC3) 'the texture wait ends at +0x30F (the length TextureWait.cpp looks for on a stack)'
+	# The walk (+C53940, by offset: the plugin never calls it): no request from the pool, so mov rcx,[current]; call
+	# SubmitBatch; or [pending],al, and it goes on adding to the same batch next frame.
+	$handOver = 0xC53ADD
+	$call = BytesAt ($handOver + 7) 5
+	Report ((RipTarget $handOver 3 7) -eq $currentAt -and $call[0] -eq 0xE8 -and ($handOver + 12 + [BitConverter]::ToInt32($call, 1)) -eq $submit -and
+		(HexMatches (BytesAt ($handOver + 12) 2) '08 05') -and (RipTarget ($handOver + 12) 2 6) -eq $pendingAt) 'the texture walk hands a batch over and sets pending when the pool runs out (+C53ADD)'
+}
+# The call TextureWait::Install patches: Main::OnIdle tests the position flag (cmp byte [flag],sil; je) and calls
+# PositionPlayerJob::Run at +0x37F. The plugin checks the call itself at load; this checks the flag test before it too.
+$onIdle = Resolve 2228917
+$pump = Resolve 2228998
+if ($null -ne $onIdle -and $null -ne $pump) {
+	$call = BytesAt ($onIdle + 0x37F) 5
+	Report ((HexMatches (BytesAt ($onIdle + 0x372) 3) '40 38 35') -and (RipTarget ($onIdle + 0x372) 3 7) -eq (Resolve 2698032) -and
+		(HexMatches (BytesAt ($onIdle + 0x379) 2) '0F 84') -and $call[0] -eq 0xE8 -and ($onIdle + 0x384 + [BitConverter]::ToInt32($call, 1)) -eq $pump) 'Main::OnIdle tests the position flag and calls PositionPlayerJob::Run at +0x37F'
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

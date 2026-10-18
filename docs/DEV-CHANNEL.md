@@ -149,9 +149,40 @@ The commands it uses:
 
 `tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't
 answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),
-writes a minidump with every thread and every thread's stack, and detaches; one catch per freeze. The
+prints the texture wait's counters, writes a full-memory dump (the stacks-only minidump with `-Mini`, or when the drive
+has less than `-MinFreeGB` free; the newest `-KeepDumps` are kept) and every thread's stack, and detaches; one catch per
+freeze. The
 plugin's own hang watch (`iHangSeconds`) reports the main thread from inside the game; this sees every
 thread from outside, even when the plugin's are stuck with the rest.
+
+## The texture wait behind a move
+
+Every move of the player (a `coc`, a door, fast travel) ends in the engine's texture wait, on a job thread, while the
+main thread pumps window messages for it; the host's hang of 2026-10-17 was that wait never ending
+(docs/HANG-20261017.md). Right before the game starts a move (Main::OnIdle's call to PositionPlayerJob::Run, whoever
+asked for the move), the plugin hands the streamer any texture requests the engine's per-frame walk has counted and not
+yet handed over, which is what the wait would otherwise wait on forever (logged as `Texture wait: before the move,
+handed the streamer ...`). `texwait` looks at it, from the channel's own thread, so it answers while the main thread is
+stuck:
+
+- `texwait` (or `texwait status`): the counters the wait loops on (`pending`, `done`, `total`), the update's stage, its
+  lock (owner thread and count), how many requests the main thread's batch holds not handed over, whether the
+  hand-over before a move is on, and how many moves it has handed requests over before.
+- `texwait sample <s>`: reads that once a millisecond for up to 60 s and counts the moments a move would have hung in
+  (pending set with requests owed).
+- `texwait strand [<console command>]` (on the main thread): leaves the state the hang started from on purpose: one
+  real request counted into the main thread's batch and not handed over, with `pending` set, as the walk leaves it after
+  the streamer's pool ran out. A command given after it (`texwait strand coc SanctuaryExt`) runs right after, in the
+  same call. The move hangs unless the hand-over before it runs. For ten seconds after, the log follows what the hang
+  turns on (`Texture wait: watch +N ms: ...`: the counters, the stage, the lock's owner, whether the main thread's batch
+  owes anything and whether the main thread is in the pump).
+- `texwait flush off` / `on`: turns that hand-over off (to show the hang) and on again.
+- `texwait unstick`: when the wait is stuck (its lock's owner in the wait, the counters saying go on), clears `pending`,
+  so the wait ends the way it does after its loop; for getting a game stuck on purpose back.
+
+With the main thread in the pump, the frame watch's report (`Frame watch: no game work has run ...`) adds the same
+counters, which thread holds the lock and whether it is in the wait, and how many requests the main thread's batch,
+set aside by the wait, never handed over. `tools/hangcatch.ps1` prints them too, before it writes a full-memory dump.
 
 ## Limits
 
