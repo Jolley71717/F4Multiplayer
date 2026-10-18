@@ -59,9 +59,15 @@ namespace Session
 	// when ours differs only in plugins the host lets differ, or after AskHostMods. None otherwise (our load order is
 	// the host's, or nothing came yet).
 	[[nodiscard]] std::optional<ModDiff::Difference> HostMods();
-	// Asks the host for its list again (the answer is told on the HUD whatever it says). False when not in a session
-	// we joined.
-	bool AskHostMods();
+	// Asks the host for its list again (the answer is told on the HUD whatever it says): not when not in a session we
+	// joined, nor within a few seconds of the last list or ask (the server would not answer: the HUD says to wait).
+	enum class AskResult
+	{
+		kAsked,
+		kTooSoon,
+		kNotJoined,
+	};
+	AskResult AskHostMods();
 	// Dev: what is known of the host's mods, on one line.
 	[[nodiscard]] std::string DescribeMods();
 

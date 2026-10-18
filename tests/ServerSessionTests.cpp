@@ -3,6 +3,7 @@
 
 #include "ServerFixture.h"
 #include "SessionFile.h"
+#include "net/ModDiff.h"
 
 #include <algorithm>
 #include <chrono>
@@ -53,6 +54,17 @@ namespace
 	}
 
 	bool Contains(std::string_view a_text, std::string_view a_part) { return a_text.find(a_part) != std::string_view::npos; }
+
+	// The plugins that differ as a joiner's game with a_mine names them (src/net/ModDiff.h): from the last list of the
+	// session's that a_peer was sent (kLoadOrder), the host's ignored plugins left out. None when no list came.
+	std::optional<ModDiff::Difference> ModsTold(Fixture& a_f, PeerId a_peer, const std::vector<std::string>& a_mine)
+	{
+		const auto orders = Decoded(a_f.fake->Take(a_peer), MT::kLoadOrder, [](auto a_data) { return Protocol::DecodeLoadOrder(a_data); });
+		if (orders.empty()) {
+			return std::nullopt;
+		}
+		return ModDiff::Compare(a_mine, orders.back().plugins, orders.back().ignored);
+	}
 
 	Protocol::PlayerState State(std::uint32_t a_sequence, float a_x = 0.0f)
 	{
@@ -1395,7 +1407,7 @@ TEST("server session: a player flooding states loses the excess")
 	CHECK(states.back().sequence < 200);
 }
 
-TEST("server session: a load-order refusal names the plugins that differ")
+TEST("server session: a load-order refusal says so, and the list before it names the plugins that differ")
 {
 	Fixture f;
 	auto    alice = Fixture::MakeHello("Alice");
@@ -1408,7 +1420,11 @@ TEST("server session: a load-order refusal names the plugins that differ")
 	bob.plugins = { "Fallout4.esm", "DLCCoast.esm", "Extra.esp" };
 	const auto reject = JoinRejected(f, 2, Protocol::Encode(bob));
 	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "Only you have: Extra.esp"));
+	CHECK(reject->reason == Protocol::REJECT_LOAD_ORDER);
+	const auto told = ModsTold(f, 2, bob.plugins);
+	REQUIRE(told);
+	CHECK(told->extra == std::vector<std::string>{ "Extra.esp" });
+	CHECK(told->Count() == 1u);
 }
 
 TEST("server session: a load order that differs only in the host's ignored plugins is accepted")
@@ -1426,13 +1442,22 @@ TEST("server session: a load order that differs only in the host's ignored plugi
 	bob.plugins = { "Fallout4.esm" };
 	REQUIRE(f.Join(2, bob));
 	CHECK(f.Logged("ignored plugins"));
+	// Their game, told the host's ignored plugins with the list, finds nothing to change.
+	const auto bobTold = ModsTold(f, 2, bob.plugins);
+	REQUIRE(bobTold);
+	CHECK(bobTold->Empty());
 
 	auto carol = Fixture::MakeHello("Carol");
 	carol.contentHash = 0x7777;
 	carol.plugins = { "Fallout4.esm", "Other.esp" };
 	const auto reject = JoinRejected(f, 3, Protocol::Encode(carol));
 	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "Only you have: Other.esp"));
+	CHECK(reject->reason.starts_with(Protocol::REJECT_LOAD_ORDER));
+	const auto told = ModsTold(f, 3, carol.plugins);
+	REQUIRE(told);
+	CHECK(told->extra == std::vector<std::string>{ "Other.esp" });
+	CHECK(told->missing.empty());  // not the host's texture plugin, which loads last
+	CHECK(told->Count() == 1u);
 }
 
 TEST("server session: a joiner whose load order differs is sent the session's, before the refusal, and one whose matches is not")
@@ -1456,6 +1481,7 @@ TEST("server session: a joiner whose load order differs is sent the session's, b
 	const auto orders = Decoded(toBob, MT::kLoadOrder, [](auto a_data) { return Protocol::DecodeLoadOrder(a_data); });
 	REQUIRE(orders.size() == 1u);
 	CHECK(orders[0].plugins == host.plugins);
+	CHECK(orders[0].ignored == options.ignoredPlugins);  // so their game leaves them out as the server does
 	CHECK(f.fake->Disconnected(2));
 
 	// Let in with only the host's ignored plugin different: the list comes with the welcome.
@@ -1573,8 +1599,11 @@ TEST("server session: with a story mod, a friend without the host's HD texture p
 	f.fake->Take(1);
 	const auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Friend", withoutPack)));
 	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "You are missing: DLCUltraHighResolution.esm"));
 	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+	const auto told = ModsTold(f, 2, HelloWith("Friend", withoutPack).plugins);
+	REQUIRE(told);
+	CHECK(told->missing == std::vector<std::string>{ "DLCUltraHighResolution.esm" });
+	CHECK(told->Count() == 1u);
 
 	// A friend with the pack too has the host's load order.
 	CHECK(SameFormIds(host, host));
@@ -1608,21 +1637,32 @@ TEST("server session: a plugin the host lets differ gets a friend in only where 
 	CHECK(!SameFormIds(host, without));
 	auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Bob", without)));
 	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "You are missing: Textures.esp"));
 	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+	auto told = ModsTold(f, 2, HelloWith("Bob", without).plugins);
+	REQUIRE(told);
+	CHECK(told->missing == std::vector<std::string>{ "Textures.esp" });
+	CHECK(told->Count() == 1u);
 
 	// With it, but after the story mod: refused too.
 	const LoadOrder after{ Official({ "Story.esp", "Textures.esp" }), host.light };
 	CHECK(!SameFormIds(host, after));
 	reject = JoinRejected(f, 3, Protocol::Encode(HelloWith("Carol", after)));
 	REQUIRE(reject);
+	told = ModsTold(f, 3, HelloWith("Carol", after).plugins);
+	REQUIRE(told);
+	REQUIRE(told->moved.size() == 1u);
+	CHECK(told->moved[0].name == "Textures.esp");
+	CHECK(told->Count() == 1u);
 
 	// A light texture plugin missing before a light weapons plugin moves that one's form IDs the same way.
 	const LoadOrder withoutLight{ host.full, { "Weapons.esl" } };
 	CHECK(!SameFormIds(host, withoutLight));
 	reject = JoinRejected(f, 4, Protocol::Encode(HelloWith("Dave", withoutLight)));
 	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "You are missing: LightTextures.esl"));
+	told = ModsTold(f, 4, HelloWith("Dave", withoutLight).plugins);
+	REQUIRE(told);
+	CHECK(told->missing == std::vector<std::string>{ "LightTextures.esl" });
+	CHECK(told->Count() == 1u);
 
 	// The same load order gets in.
 	REQUIRE(f.Join(5, HelloWith("Erin", host)));
@@ -1641,11 +1681,18 @@ TEST("server session: texture plugins the host lets differ that load last, full 
 	CHECK(SameFormIds(host, without));
 	REQUIRE(f.Join(2, HelloWith("Bob", without)));
 	CHECK(f.Logged("ignored plugins"));
+	// And their game, with the list that came, has nothing to tell them to change: no "your mods differ".
+	const auto bobTold = ModsTold(f, 2, HelloWith("Bob", without).plugins);
+	REQUIRE(bobTold);
+	CHECK(bobTold->Empty());
 
 	// A full texture plugin last moves no light plugin: they are numbered apart.
 	const LoadOrder fullOnly{ Official({ "Story.esp" }), host.light };
 	CHECK(SameFormIds(host, fullOnly));
 	REQUIRE(f.Join(3, HelloWith("Carol", fullOnly)));
+	const auto carolTold = ModsTold(f, 3, HelloWith("Carol", fullOnly).plugins);
+	REQUIRE(carolTold);
+	CHECK(carolTold->Empty());
 }
 
 TEST("server session file: a host whose HD texture pack now counts keeps the world saved by an older version; another load order still starts fresh")

@@ -30,9 +30,6 @@ reject.host_not_ready = L'host non è ancora in gioco
 reject.full = Il server è pieno
 reject.order = Ordine di caricamento diverso dagli altri giocatori.
 reject.order_all = Tutti devono avere le stesse mod nello stesso ordine.
-reject.only_you = Solo tu hai:
-reject.missing = Ti mancano:
-reject.same_mods = Stesse mod, ordine diverso: ordina le tue come le loro.
 reject.texture = I plugin di texture possono differire solo se caricati per ultimi.
 party.unstable = Multiplayer: connessione con l'host instabile
 party.restored = Multiplayer: connessione ripristinata
@@ -157,6 +154,7 @@ menu.mods_ask = Chiedi di nuovo all'host
 # --- Le tue mod confrontate con quelle dell'host ---
 mods.differ = Multiplayer: le tue mod sono diverse da quelle dell'host ({n}): vedi {key}
 mods.match = Multiplayer: le tue mod sono uguali a quelle dell'host
+mods.ask_wait = Multiplayer: hai appena chiesto all'host; riprova tra qualche secondo
 mods.same = Le tue mod sono uguali a quelle dell'host.
 mods.page_intro = Le tue mod confrontate con quelle dell'host: {n} da cambiare. Il gioco carica le mod solo all'avvio: sistema le tue, poi riavvialo.
 mods.missing = Mancano nel tuo gioco (installale e attivale):

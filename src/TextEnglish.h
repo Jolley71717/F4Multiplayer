@@ -48,9 +48,6 @@ namespace Text
 		{ "reject.full", "Server is full" },
 		{ "reject.order", "Your load order is different from the other players." },
 		{ "reject.order_all", "Everyone needs the same mods in the same order." },
-		{ "reject.only_you", "Only you have:" },
-		{ "reject.missing", "You are missing:" },
-		{ "reject.same_mods", "Same mods, different order: sort yours like theirs." },
 		{ "reject.texture", "Texture plugins may differ only when they load last." },
 
 		// --- The connection ---
@@ -186,6 +183,7 @@ namespace Text
 		// --- A joiner's mods compared with the host's (src/net/ModDiff.h) ---
 		{ "mods.differ", "Multiplayer: your mods differ from the host's ({n}): see {key}" },
 		{ "mods.match", "Multiplayer: your mods match the host's" },
+		{ "mods.ask_wait", "Multiplayer: you just asked the host; try again in a few seconds" },
 		{ "mods.same", "Your mods match the host's." },
 		{ "mods.page_intro", "Your mods compared with the host's: {n} to change. The game loads mods only when it starts: change yours to match, then restart it." },
 		{ "mods.missing", "Missing in your game (install and enable these):" },

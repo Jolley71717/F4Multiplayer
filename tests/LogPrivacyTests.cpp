@@ -8,6 +8,7 @@
 #include "Net.h"
 #include "Redact.h"
 #include "SourceTree.h"
+#include "net/ModDiff.h"
 
 #include <algorithm>
 #include <cctype>
@@ -223,7 +224,7 @@ TEST("log privacy: a host whose plugin names carry a line break or a Steam id re
 	hostHello.plugins = { "Fallout4.esm", "Evil.esp\r\nSession: Multiplayer: connected (shared story)", "76561198012345678.esp" };
 	REQUIRE(f.Join(1, hostHello));
 
-	// A joiner with only the base game is refused, and told what they are missing.
+	// A joiner with only the base game is refused, and sent the session's list to see what they are missing.
 	auto joinerHello = Fixture::MakeHello("Joiner");
 	joinerHello.contentHash = 0x5678;
 	joinerHello.plugins = { "Fallout4.esm" };
@@ -233,15 +234,25 @@ TEST("log privacy: a host whose plugin names carry a line break or a Steam id re
 	REQUIRE(packet);
 	const auto reject = Protocol::DecodeReject(*packet);
 	REQUIRE(reject);
-	CHECK(reject->reason.find("You are missing: Evil.esp") != std::string::npos);
+	CHECK(reject->reason == Protocol::REJECT_LOAD_ORDER);
+	std::optional<Protocol::LoadOrder> order;
+	for (const auto& sent : f.fake->Take(2)) {
+		if (!sent.empty() && sent[0] == Type(MT::kLoadOrder)) {
+			order = Protocol::DecodeLoadOrder(sent);
+		}
+	}
+	REQUIRE(order);
 	// The joiner's game drops control characters as it reads any text off the wire.
-	CHECK(reject->reason.find_first_of("\r\n") == std::string::npos);
+	REQUIRE(order->plugins.size() == 3u);
+	CHECK(order->plugins[1] == "Evil.espSession: Multiplayer: connected (shared story)");
 
-	// The line the joiner's game writes (Session::Notify, then the log sink's Scrub): one line, the
-	// refusal and not a forged "connected", and an alias where the Steam id was.
-	const auto line = Redact::Scrub("Session: " + Redact::OneLine("Multiplayer: " + reject->reason));
+	// The lines the joiner's game writes of the names (Session's "mods:" lines, then the log sink's Scrub): one line
+	// each, and an alias where the Steam id was.
+	const auto lines = ModDiff::LogLines(ModDiff::Compare(joinerHello.plugins, order->plugins, order->ignored));
+	REQUIRE(lines.size() == 2u);
+	const auto line = Redact::Scrub("Session: mods: " + Redact::OneLine(lines[1]));
 	CHECK(line.find_first_of("\r\n") == std::string::npos);
-	CHECK(line.starts_with("Session: Multiplayer: Your load order is different"));
+	CHECK(line.starts_with("Session: mods: missing on our side (2): Evil.esp"));
 	CHECK(line.find("76561198012345678") == std::string::npos);
 	CHECK(line.find(Redact::Alias(STEAM_ID) + ".esp") != std::string::npos);
 

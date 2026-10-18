@@ -32,7 +32,7 @@ namespace
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
 	constexpr auto RENAME_INTERVAL = std::chrono::milliseconds(500);
-	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 130 KB.
+	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
@@ -582,7 +582,7 @@ void Server::Run()
 			return;
 		}
 		a_player.loadOrderSent = a_now;
-		send(a_player.key, Protocol::Encode(Protocol::LoadOrder{ sessionPlugins }), true);
+		send(a_player.key, Protocol::Encode(Protocol::LoadOrder{ sessionPlugins, options.ignoredPlugins }), true);
 	};
 
 	// Counts an event against the player's budget. A flooding player loses the excess (logged once).
@@ -831,8 +831,9 @@ void Server::Run()
 			sessionContentHash = hello->contentHash;
 			sessionPlugins = hello->plugins;
 		} else if (hello->contentHash != sessionContentHash) {
-			// The session's list first, whether they are let in or not: their game names every plugin that differs
-			// (the refusal's text has room for a few). Before the refusal, on the same channel, so it is there by then.
+			// The session's list first, whether they are let in or not: their game names every plugin that differs, the
+			// host's ignored ones left out where they move no other plugin (the refusal names none). Before the refusal, on
+			// the same channel, so it is there by then.
 			sendLoadOrder(a_player, Clock::now());
 			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
 			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {

@@ -216,7 +216,7 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
   accounts by a short alias such as `~3fa2c1`, and mask IP addresses, so they are fine to attach to a
   public bug report. Crash logs, hang `.dmp` files, screenshots and logs from older versions can still
   hold names: check those first. `sLogLevel = debug` adds more detail when you are asked for it.
-- "Your load order is different": the message names the plugins only you have or are missing, or says the order differs; match the host's list exactly. "Your mods differ from the host's: see F1": the multiplayer menu's *Compare mods* page lists every plugin you are missing, every one only you have, and the ones in another place in your load order (the log has them too). Install, disable or sort yours to match, then restart the game: it loads mods only when it starts.
+- "Your mods differ from the host's (N): see F1" (refused for your load order, or joined and told so): the multiplayer menu's *Compare mods* page lists every plugin you are missing, every one only you have, and the ones in another place in your load order (the log has them too). Plugins the host lets differ (`sIgnoredPlugins`) are listed only where they move another plugin. Install, disable or sort yours to match, then restart the game: it loads mods only when it starts. "You just asked the host; try again in a few seconds": *Ask the host again* works once in five seconds.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.

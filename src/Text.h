@@ -324,13 +324,10 @@ namespace Text
 				}
 			}
 		}
-		// The load order refusal is several sentences (Protocol::LoadOrderDifference) around lists of plugin names.
+		// The load order refusal is a sentence or two (Protocol::LoadOrderDifference; older servers put names between).
 		static constexpr std::pair<std::string_view, std::string_view> SENTENCES[] = {
 			{ "Your load order is different from the other players.", "reject.order" },
 			{ "Everyone needs the same mods in the same order.", "reject.order_all" },
-			{ "Only you have:", "reject.only_you" },
-			{ "You are missing:", "reject.missing" },
-			{ "Same mods, different order: sort yours like theirs.", "reject.same_mods" },
 			{ "Texture plugins may differ only when they load last.", "reject.texture" },
 		};
 		std::string out{ a_reason };

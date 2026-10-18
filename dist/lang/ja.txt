@@ -36,9 +36,6 @@ reject.host_not_ready = ホストはまだゲームに入っていません
 reject.full = サーバーが満員です
 reject.order = ロードオーダーが他のプレイヤーと違います。
 reject.order_all = 全員が同じMODを同じ順序で入れる必要があります。
-reject.only_you = 自分だけが入れているMOD：
-reject.missing = 足りないMOD：
-reject.same_mods = MODは同じですが順序が違います。相手の順序に合わせてください。
 reject.texture = テクスチャのプラグインは最後にロードされる場合だけ違ってもよいです。
 
 # --- The connection ---
@@ -175,6 +172,7 @@ menu.mods_ask = ホストにもう一度確認
 # --- ホストのMODとの比較 ---
 mods.differ = マルチプレイ：ホストとMODが違います（{n}件）：{key}を参照
 mods.match = マルチプレイ：MODはホストと同じです
+mods.ask_wait = マルチプレイ：ホストに確認したばかりです。数秒後にもう一度試してください
 mods.same = MODはホストと同じです。
 mods.page_intro = ホストのMODとの比較：変更が必要なのは{n}件です。MODはゲームの起動時にしか読み込まれません。ホストに合わせてから再起動してください。
 mods.missing = 自分のゲームにないMOD（インストールして有効にしてください）：

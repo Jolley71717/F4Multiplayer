@@ -240,7 +240,7 @@ namespace ProtocolSamples
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
 		}
 		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
-		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" } }), D(DecodeLoadOrder) });
+		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}

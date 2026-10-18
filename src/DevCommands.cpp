@@ -2054,7 +2054,15 @@ namespace DevCommands
 		{
 			const auto args = SplitArgs(a_args);
 			if (!args.empty() && args[0] == "ask") {
-				return Session::AskHostMods() ? "asked" : "error: not in a session we joined";
+				switch (Session::AskHostMods()) {
+				case Session::AskResult::kAsked:
+					return "asked";
+				case Session::AskResult::kTooSoon:
+					return "error: asked or told less than 5 s ago (the server would not answer)";
+				case Session::AskResult::kNotJoined:
+					break;
+				}
+				return "error: not in a session we joined";
 			}
 			return Session::DescribeMods();
 		}

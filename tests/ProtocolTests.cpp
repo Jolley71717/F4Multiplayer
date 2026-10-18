@@ -1349,27 +1349,78 @@ TEST("protocol: a hello of another version is read up to its version, so an olde
 	CHECK(!DecodeHello(broken));
 }
 
-TEST("protocol: LoadOrder and its request round trip")
+TEST("protocol: LoadOrder and its request round trip, the host's ignored plugins with the list")
 {
-	const LoadOrder order{ { "Fallout4.esm", "A.esp", std::string{ LIGHT_PLUGINS }, "B.esl" } };
+	const LoadOrder order{ { "Fallout4.esm", "A.esp", std::string{ LIGHT_PLUGINS }, "B.esl" }, { "HDTextures.esm", "Light Textures.esl" } };
 	const auto      back = DecodeLoadOrder(Encode(order));
 	REQUIRE(back);
 	CHECK(*back == order);
+	CHECK(back->ignored == (std::vector<std::string>{ "HDTextures.esm", "Light Textures.esl" }));
 	CHECK(DecodeLoadOrder(Encode(LoadOrder{})));
 	CHECK(DecodeLoadOrder(Encode(LoadOrder{}))->plugins.empty());
+	CHECK(DecodeLoadOrder(Encode(LoadOrder{}))->ignored.empty());
 	CHECK(Encode(LoadOrderRequest{}) == (Bytes{ 33 }));
 	CHECK(DecodeLoadOrderRequest(Encode(LoadOrderRequest{})));
 	CHECK(PeekType(Encode(order)) == MT::kLoadOrder);
+
+	// The list without the ignored plugins' count after it is refused, as is a name cut short or anything after them.
+	auto noIgnored = Encode(LoadOrder{ order.plugins });
+	REQUIRE(noIgnored.size() > 2u);
+	CHECK(noIgnored[noIgnored.size() - 2] == 0 && noIgnored.back() == 0);  // the ignored plugins' count: none
+	noIgnored.resize(noIgnored.size() - 2);
+	CHECK(!DecodeLoadOrder(noIgnored));
+	auto cut = Encode(order);
+	cut.resize(cut.size() - 1);
+	CHECK(!DecodeLoadOrder(cut));
+	auto longer = Encode(order);
+	longer.push_back(0);
+	CHECK(!DecodeLoadOrder(longer));
 }
 
-TEST("protocol: LoadOrderDifference names what only one side has, or the order")
+TEST("protocol: a LoadOrder's ignored plugins are capped when sent and refused past the cap when read")
+{
+	const std::string longest(MAX_PLUGIN_NAME_LENGTH, 'n');
+	const LoadOrder many{ { "Fallout4.esm" }, std::vector<std::string>(MAX_IGNORED_PLUGINS + 10, longest + ".esp") };
+	const auto back = DecodeLoadOrder(Encode(many));
+	REQUIRE(back);
+	CHECK(back->ignored.size() == MAX_IGNORED_PLUGINS);  // the rest left off
+	CHECK(back->ignored[0] == longest);                  // each name cut to the most there is room for
+
+	// More names than the cap on the wire is refused, as is a name longer than a load order's names may be.
+	Writer over{ MT::kLoadOrder };
+	WritePlugins(over, { "Fallout4.esm" });
+	over.U16(static_cast<std::uint16_t>(MAX_IGNORED_PLUGINS + 1));
+	for (std::size_t i = 0; i <= MAX_IGNORED_PLUGINS; ++i) {
+		over.LongStr("x.esp", MAX_PLUGIN_NAME_LENGTH);
+	}
+	CHECK(!DecodeLoadOrder(over.Data()));
+	Writer tooLong{ MT::kLoadOrder };
+	WritePlugins(tooLong, { "Fallout4.esm" });
+	tooLong.U16(1);
+	tooLong.U16(static_cast<std::uint16_t>(MAX_PLUGIN_NAME_LENGTH + 1));
+	for (std::size_t i = 0; i <= MAX_PLUGIN_NAME_LENGTH; ++i) {
+		tooLong.U8('a');
+	}
+	CHECK(!DecodeLoadOrder(tooLong.Data()));
+
+	// A whole load order and the most ignored plugins, all of the longest names, stay well within one Steam message.
+	CHECK(Encode(LoadOrder{ std::vector<std::string>(MAX_PLUGINS, longest), std::vector<std::string>(MAX_IGNORED_PLUGINS, longest) }).size() < 200u * 1024u);
+}
+
+TEST("protocol: LoadOrderDifference says the load order differs and names no plugin (the joiner's game names them)")
 {
 	const std::vector<std::string> session{ "Fallout4.esm", "DLCCoast.esm", "A.esp" };
-	CHECK(LoadOrderDifference({ "Fallout4.esm", "DLCCoast.esm", "A.esp", "B.esp" }, session).find("Only you have: B.esp") != std::string::npos);
-	CHECK(LoadOrderDifference({ "Fallout4.esm", "DLCCoast.esm" }, session).find("You are missing: A.esp") != std::string::npos);
-	CHECK(LoadOrderDifference({ "Fallout4.esm", "a.esp", "DLCCoast.esm" }, session).find("different order") != std::string::npos);
-	CHECK(LoadOrderDifference({}, session).find("same mods in the same order") != std::string::npos);
-	CHECK(LoadOrderDifference({ "Fallout4.esm", "X.esp", "Y.esp" }, session).size() <= MAX_REASON_LENGTH);
+	const std::vector<std::vector<std::string>> differing{
+		{ "Fallout4.esm", "DLCCoast.esm", "A.esp", "B.esp" },  // one more
+		{ "Fallout4.esm", "DLCCoast.esm" },                    // one less
+		{ "Fallout4.esm", "a.esp", "DLCCoast.esm" },           // another order
+	};
+	for (const auto& theirs : differing) {
+		const auto reason = LoadOrderDifference(theirs, session);
+		CHECK(reason == REJECT_LOAD_ORDER);
+		CHECK(reason.size() <= MAX_REASON_LENGTH);
+	}
+	CHECK(LoadOrderDifference({}, session) == std::string{ REJECT_LOAD_ORDER } + " Everyone needs the same mods in the same order.");
 }
 
 TEST("protocol: SameLoadOrderIgnoring leaves the host's ignored plugins out of both lists where they move no other plugin")
@@ -1426,16 +1477,17 @@ TEST("protocol: the HD texture pack is left out of the compared load order only 
 	CHECK(LoadOrderHash(order) == LoadOrderHash(ComparedLoadOrder({ "FALLOUT4.ESM", "dlcnukaworld.esm" }, { "a.esl" })));
 }
 
-TEST("protocol: LoadOrderDifference never names the light plugins' mark, and says texture plugins may differ only last")
+TEST("protocol: LoadOrderDifference says texture plugins may differ only when last, when one is in only one game")
 {
 	const auto session = ComparedLoadOrder({ "Fallout4.esm", "Textures.esp", "Story.esp" }, { "A.esl" });
 	const auto theirs = ComparedLoadOrder({ "Fallout4.esm", "Story.esp" }, { "A.esl" });
 	const auto reason = LoadOrderDifference(theirs, session, { "textures.esp" });
-	CHECK(reason.find("You are missing: Textures.esp.") != std::string::npos);
-	CHECK(reason.find("Texture plugins may differ only when they load last.") != std::string::npos);
+	CHECK(reason == std::string{ REJECT_LOAD_ORDER } + " Texture plugins may differ only when they load last.");
+	CHECK(reason.find("Textures.esp") == std::string::npos);
 	CHECK(reason.find(LIGHT_PLUGINS) == std::string::npos);
-	CHECK(LoadOrderDifference({ "Fallout4.esm", "A.esl" }, session).find(LIGHT_PLUGINS) == std::string::npos);  // a list without the mark
 	CHECK(LoadOrderDifference(theirs, ComparedLoadOrder({ "Fallout4.esm", "Story.esp", "B.esp" }, { "A.esl" })).find("Texture plugins") == std::string::npos);
+	// The HD texture pack, before other mods, without being in the host's list.
+	CHECK(LoadOrderDifference({ "Fallout4.esm", "Story.esp" }, { "Fallout4.esm", "DLCUltraHighResolution.esm", "Story.esp" }).find("Texture plugins") != std::string::npos);
 }
 
 TEST("protocol: Activation round trips and needs a shareable ref")

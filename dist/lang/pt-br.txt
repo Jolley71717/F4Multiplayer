@@ -29,9 +29,6 @@ reject.host_not_ready = O anfitrião ainda não está no jogo
 reject.full = O servidor está cheio
 reject.order = Sua ordem de carregamento é diferente da dos outros jogadores.
 reject.order_all = Todos precisam dos mesmos mods na mesma ordem.
-reject.only_you = Só você tem:
-reject.missing = Você não tem:
-reject.same_mods = Mesmos mods, ordem diferente: ordene os seus como os deles.
 reject.texture = Plugins de textura só podem diferir se carregarem por último.
 party.unstable = Multijogador: conexão instável com o anfitrião
 party.restored = Multijogador: conexão restabelecida
@@ -156,6 +153,7 @@ menu.mods_ask = Perguntar ao anfitrião de novo
 # --- Seus mods comparados com os do anfitrião ---
 mods.differ = Multijogador: seus mods são diferentes dos do anfitrião ({n}): veja {key}
 mods.match = Multijogador: seus mods são iguais aos do anfitrião
+mods.ask_wait = Multijogador: você acabou de perguntar ao anfitrião; tente de novo em alguns segundos
 mods.same = Seus mods são iguais aos do anfitrião.
 mods.page_intro = Seus mods comparados com os do anfitrião: {n} para mudar. O jogo só carrega mods ao iniciar: ajuste os seus e reinicie o jogo.
 mods.missing = Faltando no seu jogo (instale e ative):
