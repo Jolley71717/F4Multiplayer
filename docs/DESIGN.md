@@ -641,12 +641,11 @@ UTF-8 in `GetDisplayFullName`), `Protocol::Reader::Str` drops only bytes below 0
 character is 0x80 or more), `Text::Format` copies bytes, and `ShowHUDMessage` and `ExtraDataList::SetOverrideName`
 take a UTF-8 `const char*` into Scaleform; no step narrows to ASCII or to the Windows code page. What the HUD can
 draw is another matter: the game's text fields use the fonts embedded in `Interface/fonts_<language>.swf` through
-`Interface/fontconfig.txt`, and the English game's `fonts_en.swf` holds Latin glyphs (an English game draws
-accented Latin letters, so José is fine); a Cyrillic name is expected to draw as blanks or boxes in an English game
-and in full in a Russian one (whose `fonts_ru.swf` has Cyrillic), CJK likewise in a Chinese or Japanese game, and
-emoji in none, as no game font has them. A player who wants another script in an English game can map a font with
-its glyphs in `fontconfig.txt` (a font mod). Whether the English HUD draws Cyrillic as blanks, boxes or question
-marks is not yet checked live.
+`Interface/fontconfig.txt`. Checked live on 2026-10-18 (two English games, names from `sPlayerName`): the
+stand-in's name tag in an English game draws a Cyrillic name in full (in the font's capitals: "Нейт Волков" shows
+as НЕЙТ ВОЛКОВ), and a CJK name as one box per character (内特·山本 as two boxes, the middle dot, two boxes); a
+Chinese or Japanese game's own font should draw it. Emoji are in no game font. A player who wants CJK in an English
+game can map a font with its glyphs in `fontconfig.txt` (a font mod).
 
 ## Status (2026-10-09)
 
