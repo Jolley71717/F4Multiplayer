@@ -31,4 +31,22 @@ namespace HangWatch
 	// main thread that answers its window but runs no frame of ours. The thread is stopped for the look,
 	// as for a hang. Any thread but the main one.
 	[[nodiscard]] std::string DescribeMainThread(void* a_window);
+
+	// The id of the thread that made a_window (the main thread), 0 when unknown.
+	[[nodiscard]] std::uint32_t WindowThread(void* a_window);
+
+	// One of the game's threads at one moment, stopped for the look the way the hang report stops the main thread:
+	// where it was and the likely return addresses on its stack (nearest first). Not looked (`looked` false) when the
+	// id is the caller's own thread, not the game's, or can't be opened.
+	struct ThreadLook
+	{
+		bool                        looked = false;
+		std::uintptr_t              ip = 0;
+		std::vector<std::uintptr_t> callers;
+	};
+	[[nodiscard]] ThreadLook LookAtThread(std::uint32_t a_threadId, std::size_t a_maxCallers);
+
+	// Copies a_size bytes of the game's memory at a_address, which may not be mapped (read rather than dereferenced:
+	// an address taken from another thread's register, or a list another thread changes). False when it can't be read.
+	[[nodiscard]] bool ReadMemory(std::uintptr_t a_address, void* a_out, std::size_t a_size);
 }
