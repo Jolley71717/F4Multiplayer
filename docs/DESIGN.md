@@ -610,7 +610,7 @@ server sends its refusals in English on the wire (any server version, and a dedi
 `Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order
 refusal, and anything else as it came. Arabic needs a font mod: the game ships no Arabic font and its Scaleform text
 fields do not shape right-to-left text. A translation's first header line says what it is: a first machine translation
-(most of them), or one reviewed against the game's own terminology in that language, with the date (German).
+(most of them), or one reviewed against the game's own terminology in that language, with the date (German, Polish).
 
 ### Player names (src/net/NameChoice.h)
 
