@@ -1,0 +1,10 @@
+Protocol 35: everyone needs 0.8.9
+Friends wear their own face, hair and sculpting (bFriendFaces, now on by default)
+When your mods differ from the host's, the F1 menu's Compare mods page names them: missing, extra or out of order
+The host's hang on a teleport is fixed, and a second hang in the game's physics too
+Character names in Cyrillic, Chinese, Japanese or emoji are seen as written
+The mod never changes your own gear for a friend; a friend paying in a conversation no longer charges you
+A friend's power armor frame made at runtime stands in your game too
+Fast loading no longer runs the GPU flat out on a stuck loading screen
+Voice chat costs nothing while nobody is in earshot
+Full notes on GitHub
