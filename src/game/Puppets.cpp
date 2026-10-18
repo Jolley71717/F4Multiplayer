@@ -9,6 +9,10 @@
 
 #include "Protocol.h"
 
+#include <atomic>
+#include <cstring>
+#include <vector>
+
 namespace Puppets
 {
 	namespace
@@ -805,11 +809,57 @@ namespace Puppets
 
 	const RE::BSFixedString& VariableName(const char* a_name)
 	{
-		static std::mutex                                         namesLock;
-		static std::unordered_map<const char*, RE::BSFixedString> names;
-		std::scoped_lock                                          l{ namesLock };
-		const auto                                                it = names.find(a_name);
-		return it != names.end() ? it->second : names.emplace(a_name, RE::BSFixedString{ a_name }).first->second;
+		// Every name a gait sends: made once, the first time any is asked for (the language guards a function-local
+		// static's making, and nothing of ours locks on the way through after that). A name outside the table would be
+		// a programming error: it is logged once and the graph is sent an empty name, which it refuses.
+		struct Entry
+		{
+			const char*       name;
+			RE::BSFixedString fixed;
+		};
+		static const auto names = [] {
+			std::vector<const char*> list{
+				Gait::Event(Gait::Kind::kWalk), Gait::Event(Gait::Kind::kRun),
+				Gait::WeaponEvent(Gait::Kind::kWalk), Gait::WeaponEvent(Gait::Kind::kRun),
+				CreatureGait::RANGE_VARIABLE, CreatureGait::MARKER_VARIABLE,
+				MirrorGait::PERSON_MARKER, MirrorGait::GAIT_VARIABLE, MirrorGait::WEAPON_GAIT_VARIABLE,
+				MirrorGait::WALK_RATE, MirrorGait::RUN_RATE, MirrorGait::WEAPON_WALK_RATE, MirrorGait::WEAPON_RUN_RATE,
+				MirrorGait::IDLE_VARIABLE
+			};
+			for (const auto& range : CreatureGait::RANGES) {
+				list.push_back(range.event);
+				list.push_back(range.rateVariable);
+			}
+			for (const auto variable : MirrorGait::CREATURE_VARIABLES) {
+				list.push_back(variable);
+			}
+			std::vector<Entry> table;
+			for (const auto name : list) {
+				if (name) {
+					table.push_back({ name, RE::BSFixedString{ name } });
+				}
+			}
+			return table;
+		}();
+		static const RE::BSFixedString none;
+
+		// By address first: the names given are the same constants the table was built from. By text for one that is
+		// not (the same literal in another translation unit).
+		for (const auto& entry : names) {
+			if (entry.name == a_name) {
+				return entry.fixed;
+			}
+		}
+		for (const auto& entry : names) {
+			if (a_name && std::strcmp(entry.name, a_name) == 0) {
+				return entry.fixed;
+			}
+		}
+		static std::atomic<bool> warned{ false };
+		if (!warned.exchange(true)) {
+			REX::WARN("Puppets: VariableName asked for a name outside its table: '{}'", a_name ? a_name : "(null)");
+		}
+		return none;
 	}
 
 	GaitGraph GaitGraphOf(const RE::Actor* a_actor)
