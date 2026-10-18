@@ -72,6 +72,40 @@ function Assert-LeakScanWorks {
 	}
 }
 
+# A version as xmake.lua, the tags and dist\RELEASE-*.md name it ("0.8.9" or "0.8.9-rc2") as four
+# numbers to compare, or $null for anything else. A release counts as the rc after all of its rcs.
+function ConvertTo-ReleaseVersion([string]$Text) {
+	if (-not ($Text -match '^(\d+)\.(\d+)\.(\d+)(-rc(\d+))?$')) { return $null }
+	$rc = [int]::MaxValue
+	if ($Matches[5]) { $rc = [int]$Matches[5] }
+	return ,@([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], $rc)
+}
+
+# -1, 0 or 1 as version $A is older than, the same as or newer than $B, by number and not as text:
+# 0.8.10 is newer than 0.8.9, and 0.8.9-rc2 is newer than 0.8.9-rc1 and older than 0.8.9.
+function Compare-ReleaseVersion([string]$A, [string]$B) {
+	$left = ConvertTo-ReleaseVersion $A
+	$right = ConvertTo-ReleaseVersion $B
+	if ($null -eq $left) { throw "'$A' is not a version like 0.8.9 or 0.8.9-rc2" }
+	if ($null -eq $right) { throw "'$B' is not a version like 0.8.9 or 0.8.9-rc2" }
+	for ($i = 0; $i -lt 4; $i++) {
+		if ($left[$i] -lt $right[$i]) { return -1 }
+		if ($left[$i] -gt $right[$i]) { return 1 }
+	}
+	return 0
+}
+
+# The names of the notes in $Dir (RELEASE-<version>.md) for versions newer than $Version. Files there
+# named for no version are left out.
+function Get-NewerReleaseNotes([string]$Dir, [string]$Version) {
+	foreach ($note in Get-ChildItem -LiteralPath $Dir -Filter 'RELEASE-*.md' -File) {
+		$noteVersion = $note.BaseName.Substring('RELEASE-'.Length)
+		if ($null -ne (ConvertTo-ReleaseVersion $noteVersion) -and (Compare-ReleaseVersion $noteVersion $Version) -gt 0) {
+			$note.Name
+		}
+	}
+}
+
 # Reads a file of key=value lines (a manifest, a soak verdict) into a hashtable.
 function Read-KeyValues([string]$Path) {
 	$values = @{}
