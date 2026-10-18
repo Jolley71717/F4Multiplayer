@@ -1,0 +1,10 @@
+Protocol 33: everyone needs 0.8.8
+The mod speaks your game's language: English, French, German, Italian, Spanish, Latin American Spanish, Polish, Brazilian Portuguese, Russian, Japanese, Simplified and Traditional Chinese
+Friends see your character's name instead of your Steam name
+A friend's parked power armor stays where they left it; a friend in power armor walks instead of gliding
+Friends' guns and NPCs' aim sweep smoothly; mirrored NPCs jog, walk and run at their owner's pace
+The host's character no longer hitches on a joiner's screen
+The Diamond City gate opens for friends
+A friend's grenade no longer kills your copies of random-encounter enemies
+Fewer crashes on save reloads; the host's workshop freeze is fixed
+Full notes on GitHub

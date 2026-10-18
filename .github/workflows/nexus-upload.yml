@@ -40,8 +40,10 @@ jobs:
             exit 1
           fi
           unzip -Z1 "$zip" | grep -qx 'F4SE/Plugins/F4Multiplayer.dll' || { echo "::error::$zip has no F4SE/Plugins/F4Multiplayer.dll"; exit 1; }
-          # The changelog, one line per entry, is dist/NEXUS-X.Y.Z.txt at the tag, when there is one.
-          if content=$(gh api "repos/$GITHUB_REPOSITORY/contents/dist/NEXUS-$version.txt?ref=$TAG" --jq .content 2>/dev/null); then
+          # The changelog, one line per entry, is dist/NEXUS-X.Y.Z.txt at the tag, or on main when it was written after
+          # the release (a promoted rc's tag is the rc's commit, which can't hold it).
+          if content=$(gh api "repos/$GITHUB_REPOSITORY/contents/dist/NEXUS-$version.txt?ref=$TAG" --jq .content 2>/dev/null) ||
+             content=$(gh api "repos/$GITHUB_REPOSITORY/contents/dist/NEXUS-$version.txt?ref=main" --jq .content 2>/dev/null); then
             printf '%s' "$content" | base64 -d | tr -d '\r' > changelog.txt
           else
             : > changelog.txt
