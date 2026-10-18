@@ -452,11 +452,12 @@ TEST("text: every language file holds only the mod's keys, with the placeholders
 				Test::Fail(__FILE__, __LINE__, std::format("{}: lacks the key '{}'", name, key));
 			}
 		}
-		// A file that is not English says how far it was checked, for the players who correct it: a machine's first
-		// pass, or a review against the game's own terminology.
+		// A file that is not English says how it was made, for the players who correct it: a machine-translated first
+		// pass, or one reviewed against the game's own terminology (with the date of the review; either capitalisation).
 		if (file.stem() != "en" && file.stem() != "en-gb") {
-			CHECK(text.find("# machine-translated first pass, corrections welcome") != std::string::npos ||
-			      text.find("# reviewed against the game's terminology") != std::string::npos);
+			const bool machine = text.find("# machine-translated first pass, corrections welcome") != std::string::npos;
+			const bool reviewed = text.find("# Reviewed against the game's") != std::string::npos || text.find("# reviewed against the game's") != std::string::npos;
+			CHECK(machine || reviewed);
 		}
 	}
 	CHECK(FileOf(files.front().parent_path() / "ar.txt").find("font") != std::string::npos);
