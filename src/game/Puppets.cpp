@@ -368,8 +368,11 @@ namespace Puppets
 				graph->SetGraphVariableFloat(weaponWalkMultVar, person.weaponWalkRate);
 				graph->SetGraphVariableFloat(weaponRunMultVar, person.weaponRunRate);
 				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
-					// The graph in use takes its own one and refuses the other.
-					graph->NotifyAnimationGraphImpl(VariableName(Gait::Event(gait)));
+					// The graph in use takes its own one and refuses the other. A jog has no weapon-away event: its
+					// start entered it by the sync variable.
+					if (const auto event = Gait::Event(gait)) {
+						graph->NotifyAnimationGraphImpl(VariableName(event));
+					}
 					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
 				}
 			}

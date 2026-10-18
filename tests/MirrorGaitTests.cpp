@@ -11,7 +11,8 @@
 // through a real server with what its own graph plays, as NpcSync::SendOwnedStates does; the copy's game decodes what
 // the server relays and plays each state the way Puppets::DriveAnimation does, against a model of the humanoid
 // locomotion graph: standing takes only "moveStart", which enters the gait iSyncLocomotionSpeed names; moving, it
-// changes gait only on "Walk", "Jog" and "Run"; each clip plays at its own rate variable.
+// changes gait only on "Walk" and "Run" (the jog's event, if it has one, is not known: Gait::Event); each clip plays
+// at its own rate variable.
 using namespace TestServer;
 using namespace std::chrono_literals;
 
@@ -52,9 +53,9 @@ namespace
 				moving = false;
 				return true;
 			}
-			const int to = std::strcmp(a_event, "Run") == 0 ? RUN : std::strcmp(a_event, "Jog") == 0 ? JOG : std::strcmp(a_event, "Walk") == 0 ? WALK : -1;
+			const int to = std::strcmp(a_event, "Run") == 0 ? RUN : std::strcmp(a_event, "Walk") == 0 ? WALK : -1;
 			if (to < 0 || !moving) {
-				return false;  // the weapon-drawn graph's events, or not in locomotion
+				return false;  // the weapon-drawn graph's events, an event it does not know, or not in locomotion
 			}
 			++gaitEvents;
 			gait = to;
@@ -88,7 +89,9 @@ namespace
 		a_graph.walkRate = plan.walkRate;
 		a_graph.runRate = plan.runRate;
 		if (Gait::Send(step.moving, a_copy.moving, plan.gait, a_copy.gait, step.resent != nullptr)) {
-			a_graph.Notify(Gait::Event(plan.gait));
+			if (const auto event = Gait::Event(plan.gait)) {
+				a_graph.Notify(event);
+			}
 			a_graph.Notify(Gait::WeaponEvent(plan.gait));
 		}
 		a_copy.moving = step.moving;
@@ -170,7 +173,7 @@ TEST("mirror gait: a settler the host's game has jogging jogs on the joiner's sc
 		CHECK(graph.moving);
 		CHECK(graph.gait == JOG);  // from the first frame
 	}
-	CHECK(graph.gaitEvents == 1);  // the one sent as it set off
+	CHECK(graph.gaitEvents == 0);  // its start entered the jog; no event was sent after it that would leave it
 }
 
 TEST("mirror gait: before, the joiner's copy of a jogging settler played the run in slow motion")
@@ -186,7 +189,7 @@ TEST("mirror gait: before, the joiner's copy of a jogging settler played the run
 	CHECK(graph.runRate < 0.7f);
 }
 
-TEST("mirror gait: the copy follows the owner's settler from a walk to a jog, a run and back, one event a change, at the owner's rates")
+TEST("mirror gait: the copy follows the owner's settler from a walk to a run and back, one event a change, at the owner's rates; a jog begun while walking waits for the next start")
 {
 	const struct
 	{
@@ -208,14 +211,32 @@ TEST("mirror gait: the copy follows the owner's settler from a walk to a jog, a 
 	for (std::size_t i = 0; i < got.size(); ++i) {
 		Frame(graph, copy, got[i]);
 		const auto& leg = legs[i / 10];
-		CHECK(graph.gait == leg.gait);
+		// The jog has no event of its own (Gait::Event): begun while the copy walks, the copy keeps the walk until its
+		// next start enters the jog by the sync variable, rather than being sent a guessed event.
+		CHECK(graph.gait == (leg.gait == JOG ? WALK : leg.gait));
+		CHECK(copy.gait == static_cast<Gait::Kind>(leg.gait));
 		if (leg.gait == WALK) {
 			CHECK(Near(graph.walkRate, leg.rate));
 		} else if (leg.gait == RUN) {
 			CHECK(Near(graph.runRate, leg.rate));
 		}
 	}
-	CHECK(graph.gaitEvents == 4);  // set off walking, then the jog, the run and the walk again; the faster run is no change
+	CHECK(graph.gaitEvents == 3);  // set off walking, then the run and the walk again; the jog sent none, the faster run is no change
+
+	// Stopped and started again while jogging, the copy jogs: a start enters what the sync variable names.
+	for (int i = 0; i < 10; ++i) {
+		sent.push_back(Owned(0.0f, 0, WALK, 1.0f));
+	}
+	for (int i = 0; i < 10; ++i) {
+		sent.push_back(Owned(240.0f, RUNNING, JOG, 0.0f));
+	}
+	PersonGraph again;
+	Copy        restarted;
+	for (const auto& state : ThroughServer(sent)) {
+		Frame(again, restarted, state);
+	}
+	CHECK(again.moving);
+	CHECK(again.gait == JOG);
 }
 
 TEST("mirror gait: an owner's weapon-drawn walk or run is sent as its weapon-drawn graph has it, at that clip's rate")
@@ -238,7 +259,9 @@ TEST("mirror gait: an owner's weapon-drawn walk or run is sent as its weapon-dra
 	CHECK(Near(drawnRun.runRate, Gait::Playback(373.0f, Gait::RUN_CLIP)));
 	CHECK(Gait::WeaponState(Gait::Kind::kJog) == 1);
 	CHECK(std::strcmp(Gait::WeaponEvent(Gait::Kind::kJog), "runStart") == 0);
-	CHECK(std::strcmp(Gait::Event(Gait::Kind::kJog), "Jog") == 0);
+	CHECK(Gait::Event(Gait::Kind::kJog) == nullptr);  // no event of its own is known
+	CHECK(std::strcmp(Gait::Event(Gait::Kind::kWalk), "Walk") == 0);
+	CHECK(std::strcmp(Gait::Event(Gait::Kind::kRun), "Run") == 0);
 	// A rate out of what still looks like the gait is held to it, as the speed's is.
 	CHECK(MirrorGait::Person(true, WALK, CreatureGait::PackRate(3.5f), false, 92.0f, Gait::Kind::kWalk, WALKING).walkRate == Gait::MAX_PLAYBACK);
 }
