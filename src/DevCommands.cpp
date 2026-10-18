@@ -18,6 +18,7 @@
 #include "game/MenuMessages.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
+#include "game/GpuWatch.h"
 #include "game/Perf.h"
 #include "game/GraphInfo.h"
 #include "game/Hotkeys.h"
@@ -158,7 +159,7 @@ namespace DevCommands
 				location && location->GetFullName() ? location->GetFullName() : "");
 		}
 
-		// frames: frame times since the last call (mean, worst, hitches over 100 ms).
+		// frames: frame times since the last call (mean, worst, hitches over 100 ms), and the GPU watch's state (GpuWatch.h).
 		std::string Frames(std::string_view)
 		{
 			// The renderer's own count next to ours: a trace on a game at 60 fps sampled only every third
@@ -166,7 +167,7 @@ namespace DevCommands
 			static std::uint32_t lastDrawn = 0;
 			const auto           state = RE::BSGraphics::State::GetSingleton();
 			const std::uint32_t  drawn = state ? state->frameCount : 0;
-			auto                 result = std::format("{} drawn={} {}", FrameStats::Global().Take().Describe(), drawn - lastDrawn, FrameStats::TakeThreads());
+			auto                 result = std::format("{} drawn={} {} {}", FrameStats::Global().Take().Describe(), drawn - lastDrawn, FrameStats::TakeThreads(), GpuWatch::Describe());
 			lastDrawn = drawn;
 			return result;
 		}

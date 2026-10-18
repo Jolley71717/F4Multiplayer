@@ -4,6 +4,7 @@
 #include "game/ExitMusic.h"
 #include "game/FastLoad.h"
 #include "game/FrameWatch.h"
+#include "game/GpuWatch.h"
 #include "game/Hud.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -681,6 +682,9 @@ namespace
 				// the game is stuck under one (a stop past its limit while the game draws): from this thread, which
 				// runs whatever holds the main thread (FastLoadCap.h).
 				FastLoad::Tick(result.past);
+				// The graphics driver taking the game's device away: logged once, before the crash with no plugin frame
+				// that follows (GpuDevice.h).
+				GpuWatch::Tick();
 			} catch (const std::exception& e) {
 				REX::ERROR("Frame watch: {}", e.what());
 			}

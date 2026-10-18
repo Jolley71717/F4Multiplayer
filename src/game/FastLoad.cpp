@@ -90,4 +90,10 @@ namespace FastLoad
 		const auto       offFor = cap.OffFor(now);  // before the tick turns it on
 		Apply(cap.Tick(now, a_stalled), offFor);
 	}
+
+	std::chrono::steady_clock::duration VsyncOffFor()
+	{
+		std::scoped_lock l{ lock };
+		return cap.OffFor(Clock::now());
+	}
 }
