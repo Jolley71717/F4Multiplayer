@@ -41,8 +41,10 @@
 #     (a frozen game, or one that draws on but runs no frame of ours). Logged as HANG, once per hang, with
 #     the plugin's own reports from the host's log (its hang watch and frame watch lines: where the main
 #     thread is), and on the host the game is caught in the act: tools/hangcatch.ps1 -Now writes every
-#     thread's stack and a minidump into <outDir>/hangs. The loop then waits until the game runs commands
-#     again; whatever a step missed meanwhile is put down to the hang, not counted as stuck.
+#     thread's stack and a minidump into <outDir>/hangs. The catch stops the game for the look, so it
+#     waits for a second timed-out answer in a row, unless the plugin's frame watch already reported the
+#     main thread stuck. The loop then waits until the game runs commands again; whatever a step missed
+#     meanwhile is put down to the hang, not counted as stuck.
 #       HANGCATCH ("auto": when powershell.exe is there; "none": never)  GAME_LOG (the host's plugin log,
 #       F4Multiplayer.log next to its token)
 #   - the channel not answering at all for SILENT_SECONDS (30): another client holds the channel, or the
@@ -101,20 +103,23 @@ f() { if [[ " $2" =~ \ $3=([^ ]*) ]]; then printf -v "$1" '%s' "${BASH_REMATCH[1
 # --- one game's loop (runs in its own subshell: everything below is per game) ---
 
 G=""; LOG=""; PORT=""; TOKEN=""; OUT=""; MENUS=""
-silent_since=0; silent_reported=0; hung_since=0; game_log_at=0
+silent_since=0; silent_reported=0; hung_since=0; hang_answers=0; hang_caught=0; game_log_at=0
 cycles=0; steps=0; misses=0; stuck_count=0; scraps=0; picks=0; picks_ignored=0; game_picks=0; game_picks_taken=0; silences=0; hangs=0
 
 log() { echo "$(date +%T) $*" >> "$LOG"; }
 
 # The host's plugin log: its size now, and the lines of the plugin's own hang and frame watches written
 # since the last look (the game flushes warnings at once, so they are there while it is still hung).
+# Succeeds when one of them is a frame watch line: the plugin's own word that the main thread is stuck.
 game_log_size() { if [ -f "$GAME_LOG" ]; then wc -c < "$GAME_LOG" | tr -d ' '; else echo 0; fi; }
 game_log_watch_lines() {
-	[ "$G" = host ] && [ -f "$GAME_LOG" ] || return
-	local size; size=$(game_log_size)
+	[ "$G" = host ] && [ -f "$GAME_LOG" ] || return 1
+	local size lines; size=$(game_log_size)
 	[ "$size" -lt "$game_log_at" ] && game_log_at=0  # a restarted game began a new log
-	tail -c +$((game_log_at + 1)) "$GAME_LOG" | head -c $((size - game_log_at)) | tr -d '\r' | grep -E 'Hang( watch)?:|Frame watch:' | sed 's/^/  game log: /' >> "$LOG"
+	lines=$(tail -c +$((game_log_at + 1)) "$GAME_LOG" | head -c $((size - game_log_at)) | tr -d '\r' | grep -E 'Hang( watch)?:|Frame watch:')
 	game_log_at=$size
+	[ -n "$lines" ] && printf '%s\n' "$lines" | sed 's/^/  game log: /' >> "$LOG"
+	[[ $lines == *"Frame watch:"* ]]
 }
 
 # The host's game caught in the act: every thread's stack and a minidump (tools/hangcatch.ps1 -Now, which
@@ -132,14 +137,24 @@ catch_hang() {
 }
 
 # The channel answered that the game thread ran none of our command for 12 s. The first such answer of a
-# hang is logged as HANG, with the plugin's own reports and a catch; the hang lasts until a command runs.
+# hang is logged as HANG, with the plugin's own reports; the hang lasts until a command runs. The game is
+# caught in the act once (catch_hang stops it for the look, which a game that was only loading would not
+# thank it for): at once when the plugin's frame watch says the main thread is stuck, else on the second
+# timed-out answer in a row.
 game_thread_hung() {
-	[ $hung_since != 0 ] && return
-	hung_since=$(($1 - 12)); hangs=$((hangs + 1))
-	log "HANG: the game thread has run no command for 12 s (the channel answers; the game runs no frame of ours)"
-	echo "$(date +%T) $G game thread hung" >> "$OUTDIR/stuck.txt"
-	game_log_watch_lines
-	catch_hang
+	local watched=1
+	if [ $hung_since = 0 ]; then
+		hung_since=$(($1 - 12)); hangs=$((hangs + 1)); hang_answers=0; hang_caught=0
+		log "HANG: the game thread has run no command for 12 s (the channel answers; the game runs no frame of ours)"
+		echo "$(date +%T) $G game thread hung" >> "$OUTDIR/stuck.txt"
+	fi
+	hang_answers=$((hang_answers + 1))
+	game_log_watch_lines && watched=0
+	[ $hang_caught = 1 ] && return
+	if [ $watched = 0 ] || [ $hang_answers -ge 2 ]; then
+		hang_caught=1
+		catch_hang
+	fi
 }
 
 # call <command...>: one command on the game's channel; OUT is the reply. Fails when the channel doesn't
