@@ -7,7 +7,11 @@
 #include "Protocol.h"
 #include "Server.h"
 
-#include <Windows.h>
+#ifdef _WIN32
+#	include <Windows.h>
+#else
+#	include <csignal>
+#endif
 
 #include <atomic>
 #include <charconv>
@@ -22,6 +26,7 @@ namespace
 	std::atomic<bool> quit{ false };
 	std::atomic<bool> stopped{ false };
 
+#ifdef _WIN32
 	BOOL WINAPI OnConsoleSignal(DWORD)
 	{
 		quit = true;
@@ -32,6 +37,14 @@ namespace
 		}
 		return TRUE;
 	}
+#else
+	// Ctrl+C or a kill (SIGINT, SIGTERM): the process goes on until main() returns, so only
+	// mark the end here; main() disconnects everyone and returns.
+	void OnSignal(int)
+	{
+		quit = true;
+	}
+#endif
 
 	template <class T>
 	bool ParseNumber(std::string_view a_str, T& a_out)
@@ -86,7 +99,12 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
+#ifdef _WIN32
 	SetConsoleCtrlHandler(OnConsoleSignal, TRUE);
+#else
+	std::signal(SIGINT, OnSignal);
+	std::signal(SIGTERM, OnSignal);
+#endif
 	std::cout << "Press Ctrl+C to stop." << std::endl;
 
 	while (!quit) {

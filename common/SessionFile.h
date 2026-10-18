@@ -235,6 +235,10 @@ namespace SessionFile
 
 	inline std::optional<Snapshot> Load(const std::filesystem::path& a_path)
 	{
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(a_path, error)) {  // a folder in its place opens on Linux, and reading it throws
+			return std::nullopt;
+		}
 		std::ifstream in{ a_path, std::ios::binary };
 		if (!in) {
 			return std::nullopt;
