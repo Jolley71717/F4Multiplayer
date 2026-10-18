@@ -31,6 +31,13 @@ namespace
 		bool            sendsTime = true;     // states say when they were sampled
 		Micro           trip = 30ms;          // server to the drawing game
 		Micro           jitter = 20ms;        // plus up to this much more, at random per batch
+		Clock::duration sendEvery = 33ms;     // the sender's schedule (Session's SEND_INTERVAL); a host's game that sends less often is a longer one
+		float           lateChance = 0.0f;    // a batch is held up by `lateBy` more this often, at random,
+		Clock::duration lateEvery{};          // or the first batch of every `lateEvery`
+		Micro           lateBy{};
+		bool            queued = false;       // batches come in the order they went: one held up holds up those behind it, which then come together
+		float           dropChance = 0.0f;    // a batch is lost on the way this often, at random: the next brings a state a gap later
+		Clock::duration senderClock{};        // the sender's steady clock is this far ahead of ours
 		Clock::duration length = 20s;
 		unsigned        seed = 1;
 		Clock::duration stallAt{};  // the drawing game stops for `stall` here
@@ -86,9 +93,9 @@ namespace
 				if (paused || now < nextSend) {
 					continue;
 				}
-				nextSend += 33ms;
+				nextSend += a_setup.sendEvery;
 				if (nextSend <= now) {
-					nextSend = now + 33ms;
+					nextSend = now + a_setup.sendEvery;
 				}
 				Protocol::PlayerState state;
 				state.sequence = ++sequence;
@@ -96,7 +103,7 @@ namespace
 				state.x = RUN * std::chrono::duration<float>(now - start).count();
 				state.heading = 1.5708f;
 				state.speed = RUN;
-				state.sentMs = a_setup.sendsTime ? Protocol::SentMs(now) : 0;
+				state.sentMs = a_setup.sendsTime ? Protocol::SentMs(now + a_setup.senderClock) : 0;
 				sent.emplace_back(now, state);
 			}
 		}
@@ -106,6 +113,7 @@ namespace
 		{
 			std::size_t   next = 0;
 			std::uint32_t tick = 0;
+			auto          nextLate = start + a_setup.lateEvery;
 			for (auto now = start; now < end; now += 16ms) {
 				std::optional<Protocol::PlayerState> newest;
 				while (next < sent.size() && sent[next].first <= now) {
@@ -114,8 +122,22 @@ namespace
 				if (!newest) {
 					continue;
 				}
-				const auto late = Micro{ static_cast<Micro::rep>(unit(random) * static_cast<float>(a_setup.jitter.count())) };
-				packets.push_back({ now + a_setup.trip + late, Protocol::Encode(Protocol::PlayerStates{ ++tick, { { FRIEND_ID, *newest } } }) });
+				if (a_setup.dropChance > 0.0f && unit(random) < a_setup.dropChance) {
+					continue;  // lost on the way (states go unreliable): the next tick's batch brings a newer one
+				}
+				auto late = Micro{ static_cast<Micro::rep>(unit(random) * static_cast<float>(a_setup.jitter.count())) };
+				if (a_setup.lateChance > 0.0f && unit(random) < a_setup.lateChance) {
+					late += a_setup.lateBy;
+				}
+				if (a_setup.lateEvery != Clock::duration{} && now >= nextLate) {
+					nextLate += a_setup.lateEvery;
+					late += a_setup.lateBy;
+				}
+				auto arrives = now + a_setup.trip + late;
+				if (a_setup.queued && !packets.empty()) {
+					arrives = (std::max)(arrives, packets.back().arrives);
+				}
+				packets.push_back({ arrives, Protocol::Encode(Protocol::PlayerStates{ ++tick, { { FRIEND_ID, *newest } } }) });
 			}
 			std::ranges::stable_sort(packets, {}, &Packet::arrives);
 		}
@@ -191,6 +213,8 @@ namespace
 		int held = 0;
 		int backwards = 0;  // drawn behind where it was the frame before
 		int uneven = 0;     // moved less than 80%, or more than 120%, of what the run covers in that frame
+		int leaps = 0;      // moved more than half as far again as the run covers in that frame
+		float heldFor = 0.0f;  // seconds of held frames
 	};
 
 	// From frame a_from on (the step into a_from counts).
@@ -204,6 +228,8 @@ namespace
 			out.held += a_drawn[i].held;
 			out.backwards += step < -0.5f;
 			out.uneven += step < 0.8f * ran || step > 1.2f * ran;
+			out.leaps += step > 1.5f * ran;
+			out.heldFor += a_drawn[i].held ? a_drawn[i].seconds : 0.0f;
 		}
 		return out;
 	}
@@ -365,7 +391,7 @@ TEST("state buffer: a stand-in is drawn evenly though our frame's work comes at 
 			const auto counts = Count(drawn, FirstAfter(drawn, 5s));  // once the delay has grown to what this asks for
 			CHECK(counts.frames > 200);
 			CHECK(counts.backwards == 0);
-			// Uneven only where its path ran out: about as often as the delay leaves out the furthest frames (StateBuffer::LEADS_LEFT_OUT).
+			// Uneven only where its path ran out: our work came later than it had in the last few seconds.
 			CHECK(counts.uneven <= counts.frames / 50);
 		}
 	}
@@ -419,4 +445,86 @@ TEST("state buffer: a friend raising their gun has their stand-in's pitch swept 
 	const auto held = buffer.Sample(now + 1s);
 	REQUIRE(held && held->held);
 	CHECK(held->pitch == 40.0f);
+}
+
+TEST("state buffer: a host sending 10 to 20 states a second through a connection that holds some up is drawn going on from where it stood, never leaping ahead")
+{
+	// The host's game sends less often than Session's 30 a second (a slow or busy game, or a route that drops some); now
+	// and then the connection holds a batch up and the ones behind it come together with it; the two games' clocks read
+	// differently; and ours runs at 30, 60 or 144 frames a second, unevenly. Run on past the newest state while the next
+	// was late, the stand-in stood, then leapt ahead by as long as it had stood when the late ones came: what a friend
+	// saw as the host running choppily.
+	for (const auto every : { 50ms, 66ms, 100ms }) {
+		for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+			for (unsigned seed = 1; seed <= 3; ++seed) {
+				Setup setup;
+				setup.sendEvery = every;
+				setup.fps = fps;
+				setup.frameJitter = 0.3f;
+				setup.jitter = 30ms;
+				setup.lateChance = 0.03f;
+				setup.lateBy = 80ms;
+				setup.queued = true;
+				setup.senderClock = 987654321ms;
+				setup.seed = seed;
+				const auto drawn = Play(setup);
+				const auto counts = Count(drawn, FirstAfter(drawn, 5s));
+				CHECK(counts.frames > 300);
+				CHECK(counts.backwards == 0);
+				CHECK(counts.leaps == 0);
+				// It stands still only while a held-up state is later than the delay covers: well under 1% of the time.
+				CHECK(counts.heldFor < 0.15f);
+			}
+		}
+	}
+}
+
+TEST("state buffer: a game at 144 fps remembers a late state for seconds, so the next one does not freeze the stand-in again")
+{
+	// Every two seconds one batch is held up 100 ms and the ones behind it come with it. Kept frame by frame, the delay
+	// remembered the last 64 frames: four seconds at 16 fps but under half a second at 144, so in a fast game each held-up
+	// batch was forgotten long before the next, and every one froze the stand-in. Remembered for seconds, the delay
+	// covers the next one, whatever our frame rate.
+	for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+		Setup setup;
+		setup.fps = fps;
+		setup.sendEvery = 50ms;
+		setup.jitter = 10ms;
+		setup.lateEvery = 2s;
+		setup.lateBy = 100ms;
+		setup.queued = true;
+		const auto drawn = Play(setup);
+		const auto counts = Count(drawn, FirstAfter(drawn, 5s));  // from the third held-up batch on
+		CHECK(counts.frames > 300);
+		CHECK(counts.backwards == 0);
+		CHECK(counts.leaps == 0);
+		// Over the seven held-up batches after that, a frame or two at most (one a little later than the one before).
+		CHECK(counts.heldFor < 0.02f);
+		CHECK(drawn.back().delay < 0.25f);
+	}
+}
+
+TEST("state buffer: a friend's states lost on the way now and then, at 10 to 30 a second, leave their stand-in going on evenly, drawn no further behind than the longer gap asks")
+{
+	// Player states go unreliable (Session sends them so), and one batch in twenty never comes: the next brings a state a
+	// gap later than usual. Where that outran the delay the stand-in stands a moment and goes on from there, never leaping
+	// or running backwards, and the delay settles to cover the longer gap and no more: about 100 ms at 30 states a second,
+	// 140 at 20, and the 250 ms most at 10 (a 200 ms gap with the jitter on top). Kept by frames, the delay of a game at
+	// 144 fps forgot each lost state within half a second, and the stand-in leapt after the next one at 30 a second too.
+	for (const auto every : { 33ms, 50ms, 100ms }) {
+		for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+			Setup setup;
+			setup.sendEvery = every;
+			setup.fps = fps;
+			setup.frameJitter = 0.2f;
+			setup.dropChance = 0.05f;
+			const auto drawn = Play(setup);
+			const auto counts = Count(drawn, FirstAfter(drawn, 5s));
+			CHECK(counts.frames > 300);
+			CHECK(counts.backwards == 0);
+			CHECK(counts.leaps == 0);
+			CHECK(counts.heldFor < 0.1f);
+			CHECK(drawn.back().delay <= (std::min)(std::chrono::duration<float>(2 * every).count() + 0.07f, 0.25f));
+		}
+	}
 }

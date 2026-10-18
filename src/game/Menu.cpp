@@ -6,6 +6,7 @@
 #include "net/Session.h"
 #include "steam/Steam.h"
 #include "steam/SteamTransport.h"
+#include "Text.h"
 
 namespace Menu
 {
@@ -93,7 +94,7 @@ namespace Menu
 		{
 			const auto manager = RE::MessageMenuManager::GetSingleton();
 			if (!manager) {
-				Hud::Notify("Multiplayer: the menu isn't available");
+				Hud::Notify(Text::Get("menu.unavailable"));
 				return;
 			}
 			if (a_buttons.size() > MAX_BUTTONS) {
@@ -144,14 +145,14 @@ namespace Menu
 				shown.push_back(std::move(a_entries[i]));
 			}
 			if (pages > 1) {
-				shown.push_back({ std::format("More ({}/{})", page + 1, pages), [=] { a_turn(page + 1); } });
+				shown.push_back({ Text::Format("menu.more", { { "page", page + 1 }, { "pages", pages } }), [=] { a_turn(page + 1); } });
 			}
 			Show(a_body, std::move(shown));
 		}
 
-		const char* OnOff(bool a_on)
+		std::string OnOff(bool a_on)
 		{
-			return a_on ? "On" : "Off";
+			return Text::Get(a_on ? "menu.on" : "menu.off");
 		}
 
 		// "Sam's game (Steam)" or "192.168.1.5:7779".
@@ -159,7 +160,7 @@ namespace Menu
 		{
 			if (const auto id = SteamTransport::ParseAddress(a_address)) {
 				const auto name = Steam::NameOf(id);
-				return (name.empty() ? std::format("Steam user {}", id) : name + "'s game") + " (Steam)";
+				return name.empty() ? Text::Format("menu.address_steam_unnamed", { { "id", id } }) : Text::Format("menu.address_steam_named", { { "player", name } });
 			}
 			return a_address;
 		}
@@ -174,40 +175,40 @@ namespace Menu
 			}
 			if (status.hosting) {
 				if (!status.steam) {
-					body += std::format("Hosting on UDP port {} ({} join by address).", settings.port, settings.transport == "enet" ? "friends" : "no Steam: friends");
+					body += Text::Format(settings.transport == "enet" ? "menu.hosting_udp" : "menu.hosting_udp_nosteam", { { "port", settings.port } });
 				} else if (Steam::LobbyOpen()) {
-					body += "Hosting through Steam. Friends join from their friends list (Join Game) or your invite.";
+					body += Text::Get("menu.hosting_steam");
 				} else {
-					body += "Hosting through Steam; opening the lobby...";
+					body += Text::Get("menu.hosting_steam_opening");
 				}
 				if (status.link != Session::Status::Link::kJoined) {
-					body += "\nYour own game is still connecting to it.";
+					body += "\n" + Text::Get("menu.own_game_connecting");
 				}
 			} else {
 				switch (status.link) {
 				case Session::Status::Link::kNone:
-					body += status.hostWaiting ? "Hosting starts once you're in the world and out of Vault 111." : "Not in a session. Host one, or join a friend who is hosting.";
+					body += Text::Get(status.hostWaiting ? "menu.host_waiting" : "menu.not_in_session");
 					break;
 				case Session::Status::Link::kConnecting:
-					body += "Connecting to " + DescribeAddress(status.address) + "...";
+					body += Text::Format("menu.connecting", { { "address", DescribeAddress(status.address) } });
 					if (!status.rejectReason.empty()) {
-						body += "\nRefused: " + status.rejectReason + (status.retrySoon ? " (trying again in a few seconds)" : " (trying again in a minute)");
+						body += "\n" + Text::Format(status.retrySoon ? "menu.refused_soon" : "menu.refused_later", { { "reason", Text::Reject(status.rejectReason) } });
 					}
 					break;
 				case Session::Status::Link::kConnected:
-					body += "Connected to " + DescribeAddress(status.address) + ", joining...";
+					body += Text::Format("menu.connected", { { "address", DescribeAddress(status.address) } });
 					break;
 				case Session::Status::Link::kJoined:
-					body += "In " + DescribeAddress(status.address);
+					body += Text::Format("menu.in_session", { { "address", DescribeAddress(status.address) } });
 					if (const auto ping = Party::RoundTripMs()) {
-						body += std::format(" (ping {} ms)", ping);
+						body += " (" + Text::Format("party.ping_info", { { "ms", ping } }) + ")";
 					}
 					break;
 				}
 			}
 			const auto players = Party::PlayerLines();
 			if (status.link == Session::Status::Link::kJoined) {
-				body += players.empty() ? "\nNobody else is here yet." : std::format("\nWith you ({}):", players.size());
+				body += players.empty() ? "\n" + Text::Get("menu.nobody_else") : "\n" + Text::Format("menu.with_you", { { "n", players.size() } });
 				for (const auto& line : players) {
 					body += "\n" + line;
 				}
@@ -218,7 +219,7 @@ namespace Menu
 		void Host()
 		{
 			if (const auto error = Session::StartHosting(); !error.empty()) {
-				notice = "Could not host: " + error + ".";
+				notice = Text::Format("menu.host_failed", { { "error", error } });
 			} else {
 				// As bHost would at startup, and remembered: next time the game starts, it hosts again.
 				Config::Mutable().host = true;
@@ -239,22 +240,22 @@ namespace Menu
 		{
 			const auto          status = Session::GetStatus();
 			std::vector<Button> entries;
-			entries.push_back({ "Close", {} });  // first: Tab closes the menu (see ShowPaged)
+			entries.push_back({ Text::Get("menu.close"), {} });  // first: Tab closes the menu (see ShowPaged)
 			if (status.hosting) {
 				if (status.steam && Steam::LobbyOpen()) {
-					entries.push_back({ "Invite friends", [] { Steam::OpenInviteDialog(); } });
+					entries.push_back({ Text::Get("menu.invite"), [] { Steam::OpenInviteDialog(); } });
 				}
-				entries.push_back({ "Stop hosting", StopHosting });
+				entries.push_back({ Text::Get("menu.stop_hosting"), StopHosting });
 			} else if (status.hostWaiting) {
-				entries.push_back({ "Stop hosting", StopHosting });  // bHost off: it won't start
+				entries.push_back({ Text::Get("menu.stop_hosting"), StopHosting });  // bHost off: it won't start
 			} else if (status.link != Session::Status::Link::kNone) {
-				entries.push_back({ "Leave", [] { Session::Leave(); ShowMain(); } });
-				entries.push_back({ "Join someone else", [] { RequestJoin(0); } });
+				entries.push_back({ Text::Get("menu.leave"), [] { Session::Leave(); ShowMain(); } });
+				entries.push_back({ Text::Get("menu.join_other"), [] { RequestJoin(0); } });
 			} else {
-				entries.push_back({ "Host a session", Host });
-				entries.push_back({ "Join a friend", [] { RequestJoin(0); } });
+				entries.push_back({ Text::Get("menu.host"), Host });
+				entries.push_back({ Text::Get("menu.join"), [] { RequestJoin(0); } });
 			}
-			entries.push_back({ "Settings", [] { ShowSettings(0); } });
+			entries.push_back({ Text::Get("menu.settings"), [] { ShowSettings(0); } });
 			Show(MainBody(), std::move(entries));
 		}
 
@@ -265,54 +266,53 @@ namespace Menu
 			std::string body;
 			std::vector<Button> entries;
 			if (!scan.hosting.empty()) {
-				body = "Steam friends hosting Fallout 4 co-op right now:";
+				body = Text::Get("menu.friends_hosting");
 				for (const auto& host : scan.hosting) {
 					body += "\n" + host.name;
 					entries.push_back({ host.name, [host] {
 										   Steam::Join(host.lobby);
-										   Hud::Notify(std::format("Multiplayer: joining {}'s game", host.name));
+										   Hud::Notify(Text::Format("menu.joining_host", { { "player", host.name } }));
 									   } });
 				}
 			} else if (!Steam::Available()) {
-				body = "Steam isn't available in this game, so friends can't be listed.";
+				body = Text::Get("menu.steam_missing");
 			} else {
 				// The counts tell a player (and us) where the list stops: no friends online, none
 				// in the game, or in the game but not hosting (or hosting with private game details).
-				body = std::format("None of your Steam friends is hosting right now ({} friends, {} online, {} in Fallout 4).\nA host shows up here only when Steam shows them playing Fallout 4 (their profile must say so): start the game through Steam with F4SE as the launcher, and set the profile's Game details to Friends Only or Public.\nOtherwise the host can invite you from the Steam overlay (Shift+Tab), or pick Join Game on them in your friends list.",
-					scan.friends, scan.online, scan.inGame);
+				body = Text::Format("menu.none_hosting", { { "friends", scan.friends }, { "online", scan.online }, { "ingame", scan.inGame } });
 			}
 			if (!settings.serverAddress.empty()) {
-				body += "\nAddress from the ini: " + settings.serverAddress;
-				entries.push_back({ "Join " + settings.serverAddress, [address = settings.serverAddress] {
+				body += "\n" + Text::Format("menu.ini_address", { { "address", settings.serverAddress } });
+				entries.push_back({ Text::Format("menu.join_address", { { "address", settings.serverAddress } }), [address = settings.serverAddress] {
 									   Session::ConnectTo(address);
-									   Hud::Notify("Multiplayer: connecting to " + address);
+									   Hud::Notify(Text::Format("menu.connecting_hud", { { "address", address } }));
 								   } });
 			}
 			if (entries.empty()) {
-				Show(body, { { "Back", ShowMain }, { "Look again", [] { RequestJoin(0); } } });
+				Show(body, { { Text::Get("menu.back"), ShowMain }, { Text::Get("menu.look_again"), [] { RequestJoin(0); } } });
 				return;
 			}
-			ShowPaged(body, std::move(entries), a_page, ShowJoin, { "Back", ShowMain });
+			ShowPaged(body, std::move(entries), a_page, ShowJoin, { Text::Get("menu.back"), ShowMain });
 		}
 
 		// A setting the menu toggles: shown in the body and on its button, applied to the running
 		// game at once and written to the ini.
 		struct Toggle
 		{
-			const char* name;
-			const char* what;  // what "On" means
+			const char* name;  // the key of its name
+			const char* what;  // the key of what "On" means
 			bool Config::Settings::*value;
 			const char* key;
 			const char* onValue;
 			const char* offValue;
 		};
 		constexpr std::array<Toggle, 6> TOGGLES{ {
-			{ "Friendly fire", "players can hurt each other (host's setting, from the next session hosted)", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
-			{ "Shared story", "anyone's main story and faction progress moves everyone along, achievements included, and goes into each save (host's setting, from the next session hosted)", &Config::Settings::sharedStory, "sStory", "shared", "own" },
-			{ "Voice chat", "hold the voice key to talk to friends", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
-			{ "Spoken lines", "hear what's said near you in a friend's conversations, in the speaker's voice", &Config::Settings::spokenLines, "bSpokenLines", "true", "false" },
-			{ "Compass markers", "friends on the compass", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
-			{ "Fast loading", "vsync off during loading screens", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },
+			{ "menu.friendly_fire", "menu.friendly_fire_what", &Config::Settings::friendlyFire, "bFriendlyFire", "true", "false" },
+			{ "menu.shared_story", "menu.shared_story_what", &Config::Settings::sharedStory, "sStory", "shared", "own" },
+			{ "menu.voice_chat", "menu.voice_chat_what", &Config::Settings::voiceChat, "bVoiceChat", "true", "false" },
+			{ "menu.spoken_lines", "menu.spoken_lines_what", &Config::Settings::spokenLines, "bSpokenLines", "true", "false" },
+			{ "menu.compass_markers", "menu.compass_markers_what", &Config::Settings::compassMarkers, "bCompassMarkers", "true", "false" },
+			{ "menu.fast_loading", "menu.fast_loading_what", &Config::Settings::fastLoading, "bFastLoading", "true", "false" },
 		} };
 
 		void ShowSettings(std::size_t a_page)
@@ -322,8 +322,9 @@ namespace Menu
 			std::vector<Button> entries;
 			for (const auto& toggle : TOGGLES) {
 				const bool on = settings.*toggle.value;
-				body += std::format("{}{}: {} ({})", body.empty() ? "" : "\n", toggle.name, OnOff(on), toggle.what);
-				entries.push_back({ std::format("{}: {}", toggle.name, OnOff(on)), [&toggle, a_page] {
+				const auto name = Text::Get(toggle.name);
+				body += (body.empty() ? "" : "\n") + Text::Format("menu.setting_line", { { "name", name }, { "state", OnOff(on) }, { "what", Text::Get(toggle.what) } });
+				entries.push_back({ Text::Format("menu.setting_button", { { "name", name }, { "state", OnOff(on) } }), [&toggle, a_page] {
 									   auto&      s = Config::Mutable();
 									   const bool now = !(s.*toggle.value);
 									   s.*toggle.value = now;
@@ -331,8 +332,8 @@ namespace Menu
 									   ShowSettings(a_page);
 								   } });
 			}
-			body += "\nChanges are saved to F4Multiplayer.ini.";
-			ShowPaged(body, std::move(entries), a_page, ShowSettings, { "Back", ShowMain });
+			body += "\n" + Text::Get("menu.settings_saved");
+			ShowPaged(body, std::move(entries), a_page, ShowSettings, { Text::Get("menu.back"), ShowMain });
 		}
 	}
 

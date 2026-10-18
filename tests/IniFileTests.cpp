@@ -38,3 +38,18 @@ TEST("IniFile: the last line without a newline can be replaced")
 {
 	CHECK(IniFile::SetValue("bHost = false\nbFastLoading = true", "bFastLoading", "false") == "bHost = false\nbFastLoading = false");
 }
+
+TEST("IniFile: reads a key's value, for the game's own ini files without regard to case")
+{
+	const std::string game = "\xEF\xBB\xBF[General]\r\nsLanguage=EN\r\n; sLanguage=fr\r\nuGridsToLoad = 5\r\n";
+	CHECK(IniFile::GetValue(game, "sLanguage", true) == "EN");
+	CHECK(IniFile::GetValue(game, "slanguage", true) == "EN");
+	CHECK(!IniFile::GetValue(game, "slanguage"));  // the plugin's own keys match exactly
+	CHECK(IniFile::GetValue(game, "uGridsToLoad") == "5");
+	CHECK(!IniFile::GetValue(game, "uGrids"));  // not as a prefix
+	CHECK(!IniFile::GetValue("", "sLanguage"));
+	CHECK(IniFile::GetValue("sLanguage =\n", "sLanguage") == "");
+	CHECK(IniFile::GetValue("a = 1\nsLanguage = ru\nsLanguage = de\n", "sLanguage") == "ru");  // the first, as SetValue changes
+	CHECK(IniFile::GetValue("sName = a = b", "sName") == "a = b");
+	CHECK(IniFile::GetValue("sLanguage=ja", "sLanguage") == "ja");  // no final line break
+}

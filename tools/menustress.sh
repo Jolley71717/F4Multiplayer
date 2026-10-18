@@ -37,8 +37,18 @@
 #   - any menu open longer than STUCK_SECONDS (120) whatever the step
 #   - a dialogue option picked, and nothing happening for PICK_SECONDS (4): no line, no new options. Then the
 #     same pick goes to the game past Windows (PICK_GAME), and the log says whether that one took.
-#   - the channel not answering for SILENT_SECONDS (30): the game is busy or hung (tools/hangcatch.ps1
-#     catches a hang in the act), or another client holds the channel
+#   - the game thread hung: the channel answers, but says it waited 12 s for the game thread and gave up
+#     (a frozen game, or one that draws on but runs no frame of ours). Logged as HANG, once per hang, with
+#     the plugin's own reports from the host's log (its hang watch and frame watch lines: where the main
+#     thread is), and on the host the game is caught in the act: tools/hangcatch.ps1 -Now writes every
+#     thread's stack and a minidump into <outDir>/hangs. The catch stops the game for the look, so it
+#     waits for a second timed-out answer in a row, unless the plugin's frame watch already reported the
+#     main thread stuck. The loop then waits until the game runs commands again; whatever a step missed
+#     meanwhile is put down to the hang, not counted as stuck.
+#       HANGCATCH ("auto": when powershell.exe is there; "none": never)  GAME_LOG (the host's plugin log,
+#       F4Multiplayer.log next to its token)
+#   - the channel not answering at all for SILENT_SECONDS (30): another client holds the channel, or the
+#     game is gone
 # A step the game refuses (no workbench near, no junk, the NPC elsewhere) is a miss, not stuck.
 # At the end, a summary per game; the exit code is 1 when anything got stuck, else 0. Stop early with
 # touch <outDir>/stop.
@@ -69,6 +79,9 @@ if [ -n "$F4MP_HOST_TOKEN" ]; then HOST_TOKEN=$F4MP_HOST_TOKEN
 elif [ -n "$USERPROFILE" ]; then HOST_TOKEN="$(cygpath -u "$USERPROFILE" 2>/dev/null || echo "$USERPROFILE")/Documents/My Games/Fallout4/F4SE/F4Multiplayer_dev.token"
 else HOST_TOKEN="$HOME/Documents/My Games/Fallout4/F4SE/F4Multiplayer_dev.token"; fi
 VM_TOKEN=${F4MP_VM_TOKEN:-}
+TOOLS=$(cd "$(dirname "$0")" && pwd)
+GAME_LOG=${GAME_LOG:-$(dirname "$HOST_TOKEN")/F4Multiplayer.log}
+HANGCATCH=${HANGCATCH:-auto}
 
 WS_ENTER=${WS_ENTER:-workshop enter}
 WS_SCRAP=${WS_SCRAP:-key 52 80}
@@ -90,13 +103,63 @@ f() { if [[ " $2" =~ \ $3=([^ ]*) ]]; then printf -v "$1" '%s' "${BASH_REMATCH[1
 # --- one game's loop (runs in its own subshell: everything below is per game) ---
 
 G=""; LOG=""; PORT=""; TOKEN=""; OUT=""; MENUS=""
-silent_since=0; silent_reported=0
-cycles=0; steps=0; misses=0; stuck_count=0; scraps=0; picks=0; picks_ignored=0; game_picks=0; game_picks_taken=0; silences=0
+silent_since=0; silent_reported=0; hung_since=0; hang_answers=0; hang_caught=0; game_log_at=0
+cycles=0; steps=0; misses=0; stuck_count=0; scraps=0; picks=0; picks_ignored=0; game_picks=0; game_picks_taken=0; silences=0; hangs=0
 
 log() { echo "$(date +%T) $*" >> "$LOG"; }
 
+# The host's plugin log: its size now, and the lines of the plugin's own hang and frame watches written
+# since the last look (the game flushes warnings at once, so they are there while it is still hung).
+# Succeeds when one of them is a frame watch line: the plugin's own word that the main thread is stuck.
+game_log_size() { if [ -f "$GAME_LOG" ]; then wc -c < "$GAME_LOG" | tr -d ' '; else echo 0; fi; }
+game_log_watch_lines() {
+	[ "$G" = host ] && [ -f "$GAME_LOG" ] || return 1
+	local size lines; size=$(game_log_size)
+	[ "$size" -lt "$game_log_at" ] && game_log_at=0  # a restarted game began a new log
+	lines=$(tail -c +$((game_log_at + 1)) "$GAME_LOG" | head -c $((size - game_log_at)) | tr -d '\r' | grep -E 'Hang( watch)?:|Frame watch:')
+	game_log_at=$size
+	[ -n "$lines" ] && printf '%s\n' "$lines" | sed 's/^/  game log: /' >> "$LOG"
+	[[ $lines == *"Frame watch:"* ]]
+}
+
+# The host's game caught in the act: every thread's stack and a minidump (tools/hangcatch.ps1 -Now, which
+# stops the game for the look and lets it go). Only this PC's game: the VM's is out of reach.
+catch_hang() {
+	[ "$G" = host ] && [ "$HANGCATCH" != none ] || return
+	if ! command -v powershell.exe > /dev/null || [ ! -f "$TOOLS/hangcatch.ps1" ]; then
+		log "  no catch: needs powershell.exe and tools/hangcatch.ps1 (HANGCATCH=none turns this off)"; return
+	fi
+	local dir="$OUTDIR/hangs" script="$TOOLS/hangcatch.ps1"
+	mkdir -p "$dir"
+	if command -v cygpath > /dev/null; then dir=$(cygpath -w "$dir"); script=$(cygpath -w "$script"); fi
+	log "  catching the game's threads (tools/hangcatch.ps1 -Now)"
+	powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" -Now -OutDir "$dir" 2>&1 | tr -d '\r' | sed 's/^/  hangcatch: /' >> "$LOG"
+}
+
+# The channel answered that the game thread ran none of our command for 12 s. The first such answer of a
+# hang is logged as HANG, with the plugin's own reports; the hang lasts until a command runs. The game is
+# caught in the act once (catch_hang stops it for the look, which a game that was only loading would not
+# thank it for): at once when the plugin's frame watch says the main thread is stuck, else on the second
+# timed-out answer in a row.
+game_thread_hung() {
+	local watched=1
+	if [ $hung_since = 0 ]; then
+		hung_since=$(($1 - 12)); hangs=$((hangs + 1)); hang_answers=0; hang_caught=0
+		log "HANG: the game thread has run no command for 12 s (the channel answers; the game runs no frame of ours)"
+		echo "$(date +%T) $G game thread hung" >> "$OUTDIR/stuck.txt"
+	fi
+	hang_answers=$((hang_answers + 1))
+	game_log_watch_lines && watched=0
+	[ $hang_caught = 1 ] && return
+	if [ $watched = 0 ] || [ $hang_answers -ge 2 ]; then
+		hang_caught=1
+		catch_hang
+	fi
+}
+
 # call <command...>: one command on the game's channel; OUT is the reply. Fails when the channel doesn't
-# answer, and keeps count of how long it hasn't: SILENT_SECONDS of that is logged once, and so is its end.
+# answer, or answers that the game thread didn't run the command (a hang, above). Keeps count of how long
+# the channel hasn't answered at all: SILENT_SECONDS of that is logged once, and so is its end.
 call() {
 	OUT=""
 	local tok a fd now
@@ -112,6 +175,15 @@ call() {
 	if [ -n "$OUT" ]; then
 		if [ $silent_reported = 1 ]; then log "the channel answers again after $((now - silent_since)) s"; fi
 		silent_since=0; silent_reported=0
+		if [[ $OUT == "error: timed out waiting for game thread"* ]]; then
+			game_thread_hung "$now"
+			return 1
+		fi
+		if [ $hung_since != 0 ]; then
+			log "the game thread runs commands again after about $((now - hung_since)) s"
+			game_log_watch_lines
+			hung_since=0
+		fi
 		return 0
 	fi
 	[ $silent_since = 0 ] && silent_since=$now
@@ -125,8 +197,12 @@ call() {
 
 # A step done, missed (the game wouldn't), or stuck (the game should have and didn't).
 done_step() { steps=$((steps + 1)); }
-miss() { misses=$((misses + 1)); log "miss: $*"; }
+miss() {
+	if [ $hung_since != 0 ]; then log "during the hang: $*"; return; fi
+	misses=$((misses + 1)); log "miss: $*"
+}
 stuck() {
+	if [ $hung_since != 0 ]; then log "during the hang: $*"; return; fi  # the hang says why, and the channel can't look
 	stuck_count=$((stuck_count + 1))
 	log "STUCK: $*"
 	echo "$(date +%T) $G $*" >> "$OUTDIR/stuck.txt"
@@ -306,7 +382,7 @@ dialogue_step() {
 }
 
 summary() {
-	echo "$G: cycles=$cycles steps=$steps misses=$misses stuck=$stuck_count silences=$silences scraps=$scraps picks=$picks ignored=$picks_ignored pickedPastWindows=$game_picks_taken/$game_picks"
+	echo "$G: cycles=$cycles steps=$steps misses=$misses stuck=$stuck_count hangs=$hangs silences=$silences scraps=$scraps picks=$picks ignored=$picks_ignored pickedPastWindows=$game_picks_taken/$game_picks"
 }
 
 run_game() {
@@ -314,6 +390,7 @@ run_game() {
 	if [ "$G" = host ]; then PORT=$HOST_PORT; TOKEN=$HOST_TOKEN; else PORT=$VM_PORT; TOKEN=$VM_TOKEN; fi
 	if [ -z "$TOKEN" ] || [ ! -r "$TOKEN" ]; then echo "$G: no token file (${TOKEN:-set F4MP_VM_TOKEN})" | tee -a "$LOG"; echo "$G: skipped" > "$OUTDIR/summary-$G.txt"; return; fi
 	local end=$(($(date +%s) + MINUTES * 60))
+	game_log_at=$(game_log_size)
 	log "start: $MINUTES min, steps $STEPS, npc ${NPC:-none}"
 	if ! call status || [[ $OUT != *ingame=true* ]]; then log "not in game: ${OUT:-no answer}"; echo "$G: not in game" > "$OUTDIR/summary-$G.txt"; return; fi
 	call menus
@@ -322,6 +399,15 @@ run_game() {
 	while [ "$(date +%s)" -lt $end ] && [ ! -e "$OUTDIR/stop" ]; do
 		cycles=$((cycles + 1))
 		for ((i = 0; i < ${#STEPS}; i++)); do
+			# A hung game gets no new step until it runs commands again, and then is put back in play: the
+			# step the hang cut short may have left a menu open.
+			if [ $hung_since != 0 ]; then
+				while [ $hung_since != 0 ] && [ "$(date +%s)" -lt $end ] && [ ! -e "$OUTDIR/stop" ]; do
+					call status || sleep 2
+				done
+				[ $hung_since = 0 ] || break 2  # still hung when the time ran out, or a stop was asked for
+				recover
+			fi
 			step=${STEPS:i:1}
 			case $step in
 			w) workshop_step ;;
@@ -333,6 +419,7 @@ run_game() {
 		done
 		((cycles % 10 == 0)) && log "$(summary)"
 	done
+	game_log_watch_lines  # and any the plugin wrote that the loop didn't see (a freeze shorter than the channel's 12 s)
 	log "end: $(summary)"
 	summary > "$OUTDIR/summary-$G.txt"
 }

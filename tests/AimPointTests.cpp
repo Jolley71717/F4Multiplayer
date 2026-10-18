@@ -352,3 +352,18 @@ TEST("aim point: a mirrored NPC's aim sweeps between two aims, and comes up or g
 	CHECK(order.act == AimPoint::MirrorOrder::Act::kSet);
 	CHECK(std::abs(AimPoint::PitchTo(Shoulders(feet), order.point) - 20.0f) < 0.6f);
 }
+
+TEST("aim point: straight along +y is heading 0, not a full turn, and a hair to the left wraps to just short of one")
+{
+	const AimPoint::Point at{ 10.0f, 20.0f, 30.0f };
+	// Exactly zero stays zero (the range is 0 up to a full turn, the turn itself excluded).
+	CHECK(AimPoint::HeadingTo(at, { 10.0f, 120.0f, 30.0f }) == 0.0f);
+	CHECK(AimPoint::HeadingTo(at, { 10.0f, 120.0f, 900.0f }) == 0.0f);  // however high it aims
+	// A hair toward -x is a hair short of a full turn.
+	const float justShort = AimPoint::HeadingTo(at, { 9.99f, 120.0f, 30.0f });
+	CHECK(justShort > 2.0f * AimPoint::PI - 0.001f);
+	CHECK(justShort < 2.0f * AimPoint::PI);
+	// A quarter turn to the left (-x) is three quarters of a turn, and the right (+x) a quarter.
+	CHECK(std::abs(AimPoint::HeadingTo(at, { -90.0f, 20.0f, 30.0f }) - 1.5f * AimPoint::PI) < 0.001f);
+	CHECK(std::abs(AimPoint::HeadingTo(at, { 110.0f, 20.0f, 30.0f }) - 0.5f * AimPoint::PI) < 0.001f);
+}

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/MirrorGait.h"
 #include "game/MotionPath.h"
 
 // Puppets are actors driven entirely by us: remote players' stand-ins, and NPCs whose AI runs in
@@ -17,8 +18,8 @@ namespace Puppets
 		float         pitch = 0.0f;      // aim up (+) or down (-), degrees: the owner's angle x (AimPoint.h)
 		std::uint16_t moveMode = 0;      // ActorState::moveMode bits of the remote player
 		std::uint8_t  flags = 0;         // Protocol::StateFlags
-		std::uint8_t  gait = 0;          // with Protocol::kOwnGait: a mirrored dog's gait and its clip's rate in its owner's game
-		std::uint8_t  gaitRate = 0;      // (Protocol::ActorState::gait, gaitRate; CreatureGait.h)
+		std::uint8_t  gait = 0;          // with Protocol::kOwnGait: a mirrored NPC's gait and its clip's rate in its owner's game
+		std::uint8_t  gaitRate = 0;      // (Protocol::ActorState::gait, gaitRate; MirrorGait.h, CreatureGait.h)
 		// A mirrored NPC: the pitch its owner's copy aims its gun at (Protocol::ActorState::aimPitch), none while that
 		// copy aims at nothing (AimPoint::ForMirror).
 		std::optional<float> ownerAim;
@@ -54,6 +55,22 @@ namespace Puppets
 
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
+
+	// Which locomotion graph any actor has (MirrorGait::Identify), and for a creature's the variable its state is in.
+	// Three variable reads: its users keep the answer per actor (a puppet's entry, NpcSync's owned entry), asking again
+	// only while it was kNone, since a graph loads after its actor.
+	struct GaitGraph
+	{
+		MirrorGait::Family family = MirrorGait::Family::kNone;
+		const char*        stateVariable = nullptr;  // MirrorGait::Family::kCreature only
+	};
+	[[nodiscard]] GaitGraph GaitGraphOf(const RE::Actor* a_actor);
+
+	// The graph name for a variable or event, made once: building a BSFixedString looks the text up in the engine's string
+	// table under its lock, which a mirror's every frame must not do. A fixed table of the names Gait, CreatureGait and
+	// MirrorGait define (their events, rate variables and state variables), found by address or text with no lock of
+	// ours; a name outside it is a programming error (logged once, an empty name answered).
+	[[nodiscard]] const RE::BSFixedString& VariableName(const char* a_name);
 
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
 	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how

@@ -133,7 +133,9 @@
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
   ours by the quickest trip of the last 64 states (src/game/Prediction.h, SenderClock), so states that came
   together after a stall are still drawn as far apart as they were sent. How far in the past (`delayMs`,
-  at least 70) follows how far past the newest state our recent frames were (src/game/StateBuffer.h).
+  at least 70, at most 250) follows the furthest past the newest state our frames of the last three
+  seconds were (src/game/StateBuffer.h). When the next state is late anyway, the drawn time waits at
+  the newest one, so the stand-in stands and then goes on from there rather than leaping ahead.
   `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
   was late and the stand-in stood still. More than a few percent means the delay is too short for
@@ -240,6 +242,24 @@
   `fVATSPlayerDamageMult` = 0.1 during playback). Not yet: the victim's perks, legendary armor
   effects, limb damage, radiation and stagger.
 - Shots are shared too (see Weapon fire).
+- Power armor frames standing in the world are shared the same way (`FrameShare.h`, game-free and tested), so a
+  friend's suit stands on their rack in your game too, parked before the session or not. A frame is furniture
+  (`TESFurniture` with the engine's power armor keyword), not an actor: the owner's game finds the ones standing in
+  its loaded cells by a walk of their references every 2 s, claims them through the same claims (a plugin's frame
+  reference is the same in every game; one made at runtime is not shared yet, see Party), keeps one it runs while
+  its reference is still there (worn by its player, or in a cell since unloaded), and sends its cell/worldspace,
+  position and heading as an `ActorState` once a second and at once when it moved a unit or turned a hundredth
+  of a turn. Who runs one: the last player to get into or out of it in this session (a use takes it over as a hit
+  takes over an NPC; the frame a player had left last as the session began counts as used), else the host's game,
+  whose world is the session's, for any standing in its loaded cells; a joiner's game never offers one it has not
+  used. The others move their own reference of the frame to where the owner's game has it, when that spot is in
+  the area their engine draws: in place when it is loaded within 256 units, else through the console (`moveto`
+  and `setpos`, three tries 10 s apart, `RetryBudget`); never one that is disabled there (their player wears it),
+  fills a quest alias of theirs (the museum's suit before Concord is done), or has an actor of theirs in it.
+  Nothing is mirrored (a frame has no AI) and its pieces are its own game's (loot keeps frames per player). A
+  synced frame is not written off as the receiver's own suit for having been moved, or for their player's earlier
+  use of it (`ArmorFrames::OriginalFacts::synced`). `net status`: `frames=` run/standing, `frameStates=`,
+  `framesMoved=` in place/through the console, `frameGaveUp=`; the `mirror <ref>` dev command describes one.
 
 ## Spawns (src/game/Spawns.cpp, src/game/SpawnBook.h)
 
@@ -445,6 +465,9 @@ else skips this: the player is never in those places.
   to them. Out of power armor, the status also carries the frame they got out of last
   (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
+  A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference
+  of it is moved to where the wearer's game has it, so it stands there within a second or two of the
+  status, and the parked copy below is for a frame made in the wearer's game, or one not reported yet.
   The receiver keeps a copy of it there for as long as they are out and the spot is in the area its
   engine draws, whether or not their stand-in is (`ArmorFrames::ChoosePark`): the copy left where the
   stand-in stood is moved onto it (the exit steps the wearer some 76 units off the frame), it is
@@ -567,6 +590,40 @@ else skips this: the player is never in those places.
   `Say <topic>` on our copy (off by default from 0.8.6-rc4: it could leave the player held in
   dialogue); the player's own lines were never voiced.
 
+## Text and languages (src/Text.h, src/TextEnglish.h, dist/lang)
+
+Everything a player reads that the plugin wrote (HUD notices, the F1 menu's pages and buttons, the server's refusals
+as the joining game shows them) is a key with a text, not a literal in the code: `Text::Get(key)`, or
+`Text::Format(key, { { "player", name }, { "n", 3 } })` for a text with `{named}` placeholders. A placeholder the
+arguments lack stays in the text as written, so a mistake in a translation shows where it is read. The English texts
+are compiled in (`TextEnglish.h`) and are the fallback for every key a language file lacks; `Text::Load` (at startup,
+after `Config::Load`) picks the language (`sLanguage` in `F4Multiplayer.ini`, else the game's own `sLanguage`, read
+from `Fallout4_Default.ini`, `Fallout4.ini` and `Fallout4Custom.ini` in that order, else English) and reads
+`Data\F4SE\Plugins\F4Multiplayer\lang\<code>.txt` (`key = text` lines, UTF-8, `#` comments, `\n` a line break).
+`Text::CodeFor` maps what the game calls its languages (`ptbr`, `cn` = Simplified, `zhhant`/`tchinese` = Traditional,
+`esmx` = Latin American Spanish, its own file `es-mx`) to the file codes. The files ship from `dist/lang` (tools/package.ps1, tools/deploy.ps1). The
+tests (tests/TextTests.cpp) hold every English key to the literal the code showed before, every language file to the
+mod's keys and each text's placeholders, `en.txt` to the built-in table, and the code to no bare English literal in a
+`Hud::Notify` or a menu page. The log, the dev channel's replies and the dedicated server stay English: they are
+for people debugging, and a notice's log line is written from the English text (`Text::FormatEnglish`). The
+server sends its refusals in English on the wire (any server version, and a dedicated one, sends the same text);
+`Text::Reject` shows the ones this client knows in the player's language, sentence by sentence for the load order
+refusal, and anything else as it came. Arabic needs a font mod: the game ships no Arabic font and its Scaleform text
+fields do not shape right-to-left text. Every translation but the English is a first machine translation, marked so in
+its header.
+
+### Player names (src/net/NameChoice.h)
+
+The name in the Hello comes from `NameChoice::Choose(sPlayerName, character, steam)`: a name in the ini is used as
+written; `character` (the default in the shipped ini) is the player character's display name
+(`PlayerCharacter::GetDisplayFullName`), else the Steam name, else "Vault Dweller"; an empty value (older ini files)
+is the Steam name. The server keeps only printable ASCII of a name (`SanitizeName`), so a character name with no
+ASCII letter in it counts as no name. The name is read when the Hello is sent, and nothing sends it again: a hosting
+game says hello again after every character change (hosting restarts and the game connects to its own server anew),
+a joining game that loads another character leaves and its next join reads the new name. The one case that can keep a
+stale name is a joining game that connects before a new character is named in the opening (the character is named
+in the opening, after the connect): it stays under the Steam name until it leaves or loses the connection.
+
 ## Status (2026-10-09)
 
 Protocol VERSION 31 (0.8.7; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic). The sections below record each review as it was written.
@@ -640,7 +697,8 @@ that changes the world cannot ship without a row here.
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
   waiting), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
   line of sight, what they fight as a session player and who runs them; this game's actor for a spawned one
-  another game listed), `status` (cell, worldspace and location), `log level info|debug`
+  another game listed), `spawnenemies <base> <n> <radius>` (n NPCs of a base round the player, at most 16, facing it,
+  each on the ground where it stands; made at runtime, so a session shares the hostile ones as it does an ambush), `status` (cell, worldspace and location), `log level info|debug`
   (the plugin log's level until the game restarts; `sLogLevel` in the ini), `log flush`, `log path`.
 - Dev commands for the menu stress loop: `menus` (the menus open and for how long, and how often each
   opened and closed, kept from their own events: no reference to a menu is taken), `input <userEvent>
@@ -648,8 +706,10 @@ that changes the world cannot ship without a row here.
   Windows and DirectInput), `controls [context]` (the control map's input contexts and their user events),
   `workshop [enter|exit|junk|select <ref>|scrap <ref>]`, and `dialogue menu` (the dialogue menu's own state).
 - `tools/menustress.sh`: workshop mode, the Pip-Boy and a conversation over and over on one game or both,
-  logging whatever gets stuck. `tools/hangcatch.ps1`: when the game stops answering for 10 s, a debugger
-  writes every thread's stack and a minidump.
+  logging whatever gets stuck (`tools/stress.ps1` runs it from PowerShell). A game thread that runs none of
+  its commands for 12 s is a HANG: the loop copies the plugin's hang and frame watch lines from the log and,
+  on this PC, catches the game with `tools/hangcatch.ps1 -Now`. `tools/hangcatch.ps1`: when the game stops
+  answering for 10 s, a debugger writes every thread's stack and a minidump.
 - `F4MPBot.exe`: a fake player that walks in a circle and can report kills, loot, pickups, doors,
   quest stages and hits, take over an NPC (`--own`), shoot (`--shoot <weapon>`, its own or the
   NPC's), report a status, ping and kill XP (`--status-health`, `--opening`, `--ping`, `--xp`), come back as the same player (`--identity`), set the session

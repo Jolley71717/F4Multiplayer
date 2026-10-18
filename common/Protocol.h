@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 32;
+	inline constexpr std::uint16_t VERSION = 33;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
@@ -160,7 +160,7 @@ namespace Protocol
 		kJumping = 1 << 4,    // left the ground by jumping rather than falling
 		kSwimming = 1 << 5,
 		kOwnDirection = 1 << 6,  // an NPC's direction is its owner's graph's own (ActorState::direction)
-		kOwnGait = 1 << 7,       // an NPC's gait is its owner's graph's own (ActorState::gait and gaitRate)
+		kOwnGait = 1 << 7,       // an NPC's gait is its owner's graph's own (ActorState::gait and gaitRate), a person's or a creature's
 	};
 
 	// A player's transform and movement, sampled on the owning client.
@@ -561,12 +561,15 @@ namespace Protocol
 		std::uint32_t worldspace = 0;  // worldspace form ID, or 0 when inside
 		float         x = 0, y = 0, z = 0;
 		float         heading = 0;
-		float         speed = 0;
+		float         speed = 0;  // what its legs play (0 while its graph stands, however it is carried: MirrorGait::Reported)
 		std::uint16_t moveMode = 0;
 		std::uint8_t  flags = kNone;  // StateFlags
 		std::uint8_t  direction = 0;  // with kOwnDirection: the owner's graph's Direction, as PlayerState::direction
-		std::uint8_t  gait = 0;       // with kOwnGait: the state its owner's graph walks, trots or runs in (CreatureGait.h)
-		std::uint8_t  gaitRate = 0;   // with kOwnGait: the rate that state's clip plays at there, in 64ths
+		// With kOwnGait: the state its owner's graph moves in, as that graph numbers it (MirrorGait.h): a person's walk, jog
+		// or run (its weapon-drawn walk or run while the weapon is out), a dog's walk, trot or run (CreatureGait.h), another
+		// creature's locomotion range.
+		std::uint8_t  gait = 0;
+		std::uint8_t  gaitRate = 0;  // with kOwnGait: the rate that state's clip plays at there, in 64ths (0: not known)
 		// The pitch its owner's copy aims its gun at, up (+) or down (-) in degrees (AimPoint.h), or NO_AIM while that
 		// copy has no aim point. The flags have no bit left to say which.
 		std::int8_t aimPitch = NO_AIM;

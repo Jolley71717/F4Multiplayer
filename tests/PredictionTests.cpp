@@ -205,3 +205,66 @@ TEST("prediction: once the sender clock has its window of trips, a quicker route
 	const auto trip = std::chrono::duration<float, std::milli>(stamp - sentAt).count();
 	CHECK(trip > 25.0f && trip < 35.0f);
 }
+
+TEST("prediction: the speed window closes at exactly a tenth of a second, not before")
+{
+	Prediction::SpeedWindow w;
+	// A step that leaves the window short only adds up: no new speed, and the call says so.
+	CHECK(!w.Add(5.0f, 0.04f));
+	CHECK(w.speed == 0.0f);
+	CHECK(w.distance == 5.0f && w.seconds == 0.04f);
+	CHECK(!w.Add(0.0f, 0.0f));  // the duplicate call of a frame that set its target twice
+	CHECK(w.speed == 0.0f);
+
+	// Exactly WINDOW seconds in one step closes it: the speed is half the way to what was covered (10 units in a
+	// tenth of a second, 100 a second, smoothed from standing still), and the next window starts empty.
+	Prediction::SpeedWindow exact;
+	CHECK(exact.Add(10.0f, Prediction::SpeedWindow::WINDOW));
+	CHECK(std::abs(exact.speed - 50.0f) < 0.001f);
+	CHECK(exact.distance == 0.0f && exact.seconds == 0.0f);
+
+	// The same reached in two steps closes on the second, not the first.
+	Prediction::SpeedWindow split;
+	CHECK(!split.Add(4.0f, 0.05f));
+	CHECK(split.Add(6.0f, 0.05f));
+	CHECK(split.speed > 0.0f);
+}
+
+TEST("prediction: the arrival clock keeps a state exactly RESYNC off the beat on its timeline, and starts over past it")
+{
+	using Clock = Prediction::ArrivalClock::Clock;
+	const auto start = Clock::time_point{} + 10s;
+	const auto resync = std::chrono::duration_cast<Clock::duration>(Prediction::ArrivalClock::RESYNC);
+
+	// A sender whose usual gap is half a second: the state after the first is expected 500 ms on. One that comes
+	// RESYNC early is not that far off the beat yet (it is not less than RESYNC after the last either, so the usual
+	// gap stays what it was): it is eased an eighth of the way to when it came, not stamped when it came.
+	{
+		Prediction::ArrivalClock clock;
+		clock.Next(start);
+		clock.gap = 0.5f;
+		CHECK(clock.Next(start + resync) == start + 500ms - 31250000ns);
+	}
+	// A nanosecond earlier is a restart: stamped when it came.
+	{
+		Prediction::ArrivalClock clock;
+		clock.Next(start);
+		clock.gap = 0.5f;
+		const auto arrived = start + resync - 1ns;
+		CHECK(clock.Next(arrived) == arrived);
+	}
+	// And the same on the late side: exactly RESYNC late is eased, a nanosecond more is a restart.
+	{
+		Prediction::ArrivalClock clock;
+		clock.Next(start);
+		clock.gap = 0.5f;
+		CHECK(clock.Next(start + 500ms + resync) == start + 500ms + 31250000ns);
+	}
+	{
+		Prediction::ArrivalClock clock;
+		clock.Next(start);
+		clock.gap = 0.5f;
+		const auto arrived = start + 500ms + resync + 1ns;
+		CHECK(clock.Next(arrived) == arrived);
+	}
+}

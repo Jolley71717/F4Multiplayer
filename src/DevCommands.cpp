@@ -10,6 +10,7 @@
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/EnemyList.h"
+#include "game/EnemySpawn.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
@@ -1082,6 +1083,64 @@ namespace DevCommands
 			}
 			REX::INFO("DevCommands: spawned {:08X} from base {:08X}", ref->GetFormID(), *baseID);
 			return DescribeRef(ref.get());
+		}
+
+		// spawnenemies <baseHex> <n> <radius>: n NPCs of a base round the player at radius, facing it (src/game/EnemySpawn.h).
+		// They are made at runtime, as a random encounter's are, so a session shares the hostile ones like an ambush.
+		std::string SpawnEnemies(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto cell = PlayerCell();
+			if (!player || !cell) {
+				return "error: not in game";
+			}
+			const bool interior = cell->IsInterior();
+			const auto order = EnemySpawn::Parse(a_args, interior);
+			if (!order) {
+				return EnemySpawn::Usage(interior);
+			}
+			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(order->base);
+			if (!npc) {
+				return std::format("error: {:08X} is not an NPC base form (findnpc lists them)", order->base);
+			}
+			// A second of a named character confuses its quests, and the session shares no copy of one (Spawns::BaseOk).
+			if (npc->IsUnique() || RemotePlayers::IsStandInBase(order->base)) {
+				return std::format("error: {:08X} is a unique character or a friend's stand-in", order->base);
+			}
+			const auto& at = player->data.location;
+			// Outdoors each is set on the ground where it stands, found with the engine's own pick (a ray through the
+			// cell's physics world, the same call its placement and its picking use), rather than at the player's height:
+			// at 4000 units a hillside is hundreds of units up or down, and one set inside a hill never dropped out of it.
+			// Indoors the player's floor is kept (EnemySpawn::REACH_UP).
+			const auto reach = EnemySpawn::GroundReach(at.z);
+			const EnemySpawn::Ground ground = [&](float a_x, float a_y) -> std::optional<float> {
+				if (interior) {
+					return std::nullopt;
+				}
+				RE::bhkPickData pick;
+				pick.SetStartEnd({ a_x, a_y, reach.top }, { a_x, a_y, reach.bottom });
+				static_cast<void>(cell->Pick(pick));  // what it hit is not needed, only where
+				if (!pick.HasHit()) {
+					return std::nullopt;
+				}
+				return EnemySpawn::HitHeight(reach, pick.GetHitFraction());
+			};
+			std::vector<std::uint32_t> placed;
+			for (const auto& spot : EnemySpawn::Ring(at.x, at.y, at.z, player->data.angle.z, order->count, order->radius, ground)) {
+				RE::NEW_REFR_DATA data;
+				data.location = { spot.x, spot.y, spot.z };
+				data.direction = { 0.0f, 0.0f, spot.heading };
+				data.object = npc;
+				data.interior = cell->IsInterior() ? cell : nullptr;
+				data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+				data.clearStillLoadingFlag = true;
+				const auto ref = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(data).get();
+				if (ref) {
+					placed.push_back(ref->GetFormID());
+				}
+			}
+			REX::INFO("DevCommands: spawnenemies placed {} of {} from base {:08X}", placed.size(), order->count, order->base);
+			return EnemySpawn::Answer(*order, RE::TESFullName::GetFullName(*npc), placed);
 		}
 
 		RE::TESObjectREFR* LookupRef(std::string_view a_hex)
@@ -2688,6 +2747,7 @@ namespace DevCommands
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
+			Entry{ "spawnenemies", SpawnEnemies },
 			Entry{ "safenpc", SafeNpc },
 			Entry{ "actors", Actors },
 			Entry{ "containers", Containers },

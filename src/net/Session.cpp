@@ -5,6 +5,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
+#include "Text.h"
 #include "game/Achievements.h"
 #include "game/AimPoint.h"
 #include "game/CharacterBinding.h"
@@ -34,6 +35,7 @@
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "net/Identity.h"
+#include "net/NameChoice.h"
 #include "net/NetClient.h"
 #include "net/Refusals.h"
 #include "net/SessionSteps.h"
@@ -92,11 +94,17 @@ namespace Session
 		// The session's own messages (connected, refused and why, disconnected) name nobody, so they go to
 		// the log at INFO too; players joining and leaving go to the HUD by name and to the log by ID. A
 		// refusal's reason is the host's text: Redact::OneLine keeps it one line (the wire drops control
-		// characters too, but not every message here came over it).
-		void Notify(const std::string& a_message)
+		// characters too, but not every message here came over it). The player reads a_shown in their language; the
+		// log gets a_logged, in English.
+		void Say(const std::string& a_shown, const std::string& a_logged)
 		{
-			REX::INFO("Session: {}", Redact::OneLine(a_message));
-			Hud::Notify(a_message);
+			REX::INFO("Session: {}", Redact::OneLine(a_logged));
+			Hud::Notify(a_shown);
+		}
+
+		void Notify(std::string_view a_key, std::initializer_list<Text::Arg> a_args = {})
+		{
+			Say(Text::Format(a_key, a_args), Text::FormatEnglish(a_key, a_args));
 		}
 
 		// FNV-1a over the load order, so players with different mods are told up front. The free high-resolution
@@ -120,14 +128,22 @@ namespace Session
 			return Protocol::LoadOrderHash(plugins);
 		}
 
+		// The name we say hello with (NameChoice::Choose). The character's name is read when the hello is sent: a joining
+		// game says hello once, as it connects, and again only after it has left or lost the session (the next connect
+		// reads the name anew).
 		std::string PlayerName()
 		{
-			const auto& name = Config::Get().playerName;
-			if (!name.empty()) {
-				return name;
+			const auto& ini = Config::Get().playerName;
+			std::string character;
+			if (NameChoice::WantsCharacter(ini)) {
+				// The player's name in the game: it is empty (or absent) until a new character has confirmed one in the opening.
+				if (const auto player = RE::PlayerCharacter::GetSingleton()) {
+					if (const char* name = player->GetDisplayFullName()) {
+						character = name;
+					}
+				}
 			}
-			auto steamName = Steam::PersonaName();
-			return steamName.empty() ? "Vault Dweller" : steamName;
+			return NameChoice::Choose(ini, character, Steam::PersonaName());
 		}
 
 		bool InGame()
@@ -251,15 +267,16 @@ namespace Session
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Story::SetShared(msg->sharedStory);
 					refusals.Clear();
-					Notify(std::format("Multiplayer: connected ({}{})", msg->sharedStory ? "shared story" : "everyone has their own story",
-						msg->friendlyFire ? ", friendly fire is on" : ""));
+					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
+					                          (msg->friendlyFire ? "session.connected_own_fire" : "session.connected_own"));
 				}
 				break;
 			case MessageType::kReject:
 				if (const auto msg = Protocol::DecodeReject(a_data)) {
 					const auto answer = refusals.OnReject(msg->reason);
 					if (answer.notify) {
-						Notify("Multiplayer: " + msg->reason);
+						Say(Text::Format("session.notice", { { "text", Text::Reject(msg->reason) } }),
+							Text::FormatEnglish("session.notice", { { "text", msg->reason } }));
 					}
 					nextConnectAttempt = Clock::now() + answer.retryIn;
 				}
@@ -268,7 +285,7 @@ namespace Session
 				if (const auto msg = Protocol::DecodePlayerJoined(a_data)) {
 					RemotePlayers::Add(msg->playerId, msg->name, msg->appearance);
 					REX::INFO("Session: player {} joined", msg->playerId);
-					Hud::Notify(msg->name + " joined");
+					Hud::Notify(Text::Format("session.player_joined", { { "player", msg->name } }));
 				}
 				break;
 			case MessageType::kPlayerLeft:
@@ -278,7 +295,7 @@ namespace Session
 					Party::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
 					REX::INFO("Session: player {} left", msg->playerId);
-					Hud::Notify(name.empty() ? "A player left" : name + " left");
+					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
 				break;
 			case MessageType::kExplosion:
@@ -542,7 +559,7 @@ namespace Session
 		void OnDisconnected()
 		{
 			if (welcomed) {
-				Notify("Multiplayer: disconnected");
+				Notify("session.disconnected");
 			}
 			welcomed = false;
 			localId = 0;
@@ -598,17 +615,17 @@ namespace Session
 				return;
 			}
 			if (hostedServer) {
-				Notify("Multiplayer: you're hosting. Set bHost = false to join friends.");
+				Notify("session.hosting_cant_join");
 				return;
 			}
 			// bHost waiting for our world: the hosting would take us back from the friend's game.
 			if (Config::Get().host) {
-				Notify("Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends.");
+				Notify("session.host_waits_for_world");
 				return;
 			}
 			const auto address = SteamTransport::FormatAddress(*target);
 			if (address != serverAddress) {
-				Notify("Multiplayer: joining your friend's game");
+				Notify("session.joining_friend");
 				SwitchServer(address);
 			}
 		}
@@ -637,7 +654,7 @@ namespace Session
 		const bool  wantSteam = settings.transport == "steam" || settings.transport == "auto";
 		steamMode = wantSteam && Steam::Available();
 		if (settings.transport == "steam" && !steamMode) {
-			Notify("Multiplayer: Steam isn't available");
+			Notify("session.no_steam");
 		}
 		REX::INFO("Session: transport '{}' -> {}", settings.transport, steamMode ? "steam" : "udp");
 
@@ -653,7 +670,8 @@ namespace Session
 		}
 		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
 		if (Story::InOpening()) {
-			return "you can host once you're out of Vault 111";
+			REX::INFO("Session: can't host: {}", Text::GetEnglish("host.err_opening"));
+			return Text::Get("host.err_opening");
 		}
 		const auto& settings = Config::Get();
 		hostedServer = std::make_unique<Server>([](std::string_view a_line) {
@@ -679,7 +697,7 @@ namespace Session
 					[character](const std::string& a_line) {
 						REX::INFO("Session: {}", a_line);
 						if (legacyTold.insert(character).second) {
-							Notify("Multiplayer: " + a_line);
+							Notify("session.notice", { { "text", a_line } });
 						}
 					});
 				options.sessionFile = path.string();
@@ -692,7 +710,8 @@ namespace Session
 		}
 		if (!hostedServer->Start(options, std::move(extra))) {
 			hostedServer.reset();
-			return std::format("could not host on port {}", settings.port);
+			REX::INFO("Session: can't host: {}", Text::FormatEnglish("host.err_port", { { "port", settings.port } }));
+			return Text::Format("host.err_port", { { "port", settings.port } });
 		}
 		if (steamMode) {
 			Steam::StartHosting(settings.maxPlayers);
@@ -801,7 +820,7 @@ namespace Session
 		}
 		if (std::exchange(leaveAfterPoll, false)) {
 			Leave();
-			Notify("Multiplayer: the host is in another session now (another character, or a fresh start); join again from the menu to play in it");
+			Notify("session.host_other_session");
 		}
 
 		PERF_NEXT(perf, "Hosting");
@@ -812,14 +831,14 @@ namespace Session
 			switch (binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() })) {
 			case CharacterBinding::Step::kStopHosting:
 				StopHosting();
-				Notify("Multiplayer: you loaded another character; hosting restarts with that character's session");
+				Notify("session.character_changed_host");
 				break;
 			case CharacterBinding::Step::kStartHosting:
 				if (now >= nextHostAttempt) {
 					nextHostAttempt = now + RECONNECT_DELAY;
 					auto error = StartHosting();
 					if (!error.empty() && error != lastHostError) {
-						Notify("Multiplayer: " + error);
+						Hud::Notify(Text::Format("session.notice", { { "text", error } }));  // StartHosting logged the English
 					}
 					lastHostError = std::move(error);
 				}
@@ -949,7 +968,7 @@ namespace Session
 
 		PERF_NEXT(perf, "NpcSync");
 		if (welcomed) {
-			NpcSync::Frame();
+			NpcSync::Frame(hostedServer && hostedServer->Running());
 			Spawns::Frame();
 		}
 		PERF_NEXT(perf, "QuestSync");
@@ -1092,11 +1111,10 @@ namespace Session
 				WorkshopSync::OnWorldGone();
 				if (a_step == CharacterBinding::Step::kStopHosting) {
 					StopHosting();
-					Notify(a_newGame ? "Multiplayer: hosting starts again once you're out of Vault 111" :
-					                   "Multiplayer: you loaded another character; hosting restarts with that character's session");
+					Notify(a_newGame ? "session.hosting_resumes" : "session.character_changed_host");
 				} else {
 					Leave();
-					Notify("Multiplayer: you loaded another character and left the session; join again from the menu");
+					Notify("session.character_changed_left");
 				}
 			},
 			[](const Protocol::WorldRequest& a_request) {
@@ -1128,7 +1146,7 @@ namespace Session
 	{
 		// (As for a Steam join: with bHost, our hosting starts once we're in the world, and would take us back.)
 		if (!hostedServer && Config::Get().host) {
-			Notify("Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends.");
+			Notify("session.host_waits_for_world");
 			return;
 		}
 		SwitchServer(std::move(a_address));

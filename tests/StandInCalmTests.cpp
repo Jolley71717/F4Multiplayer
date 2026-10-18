@@ -205,3 +205,45 @@ TEST("stand-in calm: a stand-in is placed in the faction SaveGuard knows it by, 
 	CHECK(StandInCalm::AGGRESSION == 0.0f);
 	CHECK(StandInCalm::ASSISTANCE == 0.0f);
 }
+
+TEST("stand-in calm: a fight is ended again exactly STOP_GAP after the last end, not a moment before")
+{
+	StandInCalm::Track track;
+	StandInCalm::Ours  ours;
+	const StandInCalm::Facts fighting{ .inCombat = true, .target = Foe::kStandIn };
+	CHECK(StandInCalm::Frame(track, ours, fighting, t0).stop);
+	CHECK(!StandInCalm::Frame(track, ours, fighting, t0 + StandInCalm::STOP_GAP - 1ns).stop);
+	CHECK(track.stops == 1);
+	// Exactly at the gap it goes again, and the gap runs from that stop.
+	CHECK(StandInCalm::Frame(track, ours, fighting, t0 + StandInCalm::STOP_GAP).stop);
+	CHECK(track.stops == 2);
+	CHECK(!StandInCalm::Frame(track, ours, fighting, t0 + StandInCalm::STOP_GAP + StandInCalm::STOP_GAP - 1ns).stop);
+	CHECK(StandInCalm::Frame(track, ours, fighting, t0 + StandInCalm::STOP_GAP + StandInCalm::STOP_GAP).stop);
+	CHECK(track.stops == 3);
+}
+
+TEST("stand-in calm: our combat is ended exactly OURS_SETTLE after a stand-in's fight with us, not a moment before")
+{
+	StandInCalm::Ours ours;
+	ours.stoppedAt = t0;
+	CHECK(!StandInCalm::OursDue(ours, true, false, t0 + StandInCalm::OURS_SETTLE - 1ns));
+	CHECK(ours.stoppedAt);  // still watching
+	CHECK(StandInCalm::OursDue(ours, true, false, t0 + StandInCalm::OURS_SETTLE));
+	CHECK(ours.clears == 1);
+	CHECK(!ours.stoppedAt);  // once
+}
+
+TEST("stand-in calm: our combat is still ended exactly OURS_WINDOW after, and left alone a moment past it")
+{
+	StandInCalm::Ours ours;
+	ours.stoppedAt = t0;
+	CHECK(StandInCalm::OursDue(ours, true, false, t0 + StandInCalm::OURS_WINDOW));
+	CHECK(ours.clears == 1);
+
+	// A moment past the window the stand-in's fight is forgotten, and our combat is the game's to end.
+	StandInCalm::Ours late;
+	late.stoppedAt = t0;
+	CHECK(!StandInCalm::OursDue(late, true, false, t0 + StandInCalm::OURS_WINDOW + 1ns));
+	CHECK(!late.stoppedAt);
+	CHECK(late.clears == 0);
+}

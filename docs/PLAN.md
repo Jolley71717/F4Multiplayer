@@ -23,7 +23,7 @@ user profile.
 | S1 | Flying NPCs (54x, GitHub #18) | confirmed: the 0.7.0 ragdoll push on a shared kill launched the killer's stand-in instead of the corpse (276 units on the pre-fix build, 10 after); fixed in 4902dce, 0.7.5 | Fight in Corvega and on the Sanctuary bridge stairs with both players. Extend the trace harness to sample mirrored NPCs against the owner's copy (z error over time, not one frame). Suspects: ragdoll push, the bring-over SetPosition, a mirror left in the air after its owner's copy died. |
 | S3 | Gunfire sound bug (8nh) | not reproduced on 0.7.3: 46 shots in three bursts all replayed and sounded, no loop left active | Both players fire automatic and semi-automatic weapons near and far; the loop counter must return to zero after every burst; listen on both sides in a recording. |
 | S3 | Corpse of an NPC killed in another game lies in a different spot (h7z) | seen in the Corvega trace, 271 units apart | Backlog; carry the death position with the dead list. |
-| S3 | Empty hand during the stand-in's throw wind-up (2r3) | confirmed on video | Backlog; the engine attaches the grenade mesh only through its own throw behaviour. |
+| S3 | Empty hand during the stand-in's throw wind-up (2r3) | confirmed on video; the grenade is equipped in time, and the engine lists it but shows no model | Backlog. What was tried, why round 3 was probably reverted, and the next in-game checks are in GRENADE-IN-HAND.md. |
 
 Fixed and verified this month, both directions, two games over Steam: buttons and switches
 (GitHub #5), ghost grenades (GitHub #6), terminal-linked locks lost after a minute (GitHub #7). Lifetime audit
