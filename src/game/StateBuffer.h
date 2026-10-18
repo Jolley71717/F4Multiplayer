@@ -23,18 +23,24 @@ namespace StateBuffer
 	using namespace std::chrono_literals;
 
 	// Stand-ins are drawn a little in the past, so there are two states to blend between. How far is eased
-	// toward how far past the newest state we have found ourselves lately (all but the furthest few frames
-	// of the last LEADS), plus slack: that covers the gap between their states, the trip, and the wait until
-	// our game next reads the network, which is a whole frame in a slow game. A friend whose states stop
-	// for longer than LEAD_LIMIT (a loading screen) is not counted. MIN_DELAY is the least, as before.
+	// toward how far past the newest state we have found ourselves lately, plus slack: that covers the gap
+	// between their states, the trip, and the wait until our game next reads the network, which is a whole
+	// frame in a slow game. A friend whose states stop for longer than LEAD_LIMIT (a loading screen) is not
+	// counted. MIN_DELAY is the least, as before.
+	//
+	// Lately is the last three seconds, whatever our frame rate: the furthest lead of each LEAD_SLOT, for the last
+	// LEADS of them. Kept per frame, all but the furthest of the last 64 frames were four seconds in a 16 fps game
+	// but under half a second at 144: a state held up on the way was forgotten long before the next, the delay
+	// eased back down, and the next one froze the stand-in again. A frame after a stall of our own game (longer
+	// than MAX_DELAY) is not counted: nothing was drawn meanwhile, so nothing stood still.
 	constexpr auto  MIN_DELAY = 70ms;
 	constexpr auto  MAX_DELAY = 250ms;
 	constexpr float DELAY_SLACK = 0.01f;  // seconds
 	constexpr float DELAY_SLEW = 0.05f;   // seconds per second, so the drawn time never jumps: it runs at most 5% fast or slow
 	constexpr float SLEW_FRAME_LIMIT = 0.1f;  // seconds: a longer frame (a stall) eases it no further
 	constexpr auto  LEAD_LIMIT = 500ms;
-	constexpr std::size_t LEADS = 64;
-	constexpr std::size_t LEADS_LEFT_OUT = 64;  // one in this many: the furthest frames, which may stand still
+	constexpr auto  LEAD_SLOT = 50ms;
+	constexpr std::size_t LEADS = 64;  // slots: 3.2 seconds
 	constexpr auto  STALE_AFTER = 5s;
 	constexpr std::size_t MAX_SNAPSHOTS = 32;
 
@@ -74,9 +80,12 @@ namespace StateBuffer
 		Prediction::ArrivalClock arrivals;  // for states that don't say when they were sent
 		Clock::time_point        arrived{};  // when the last state came
 		float                    delay = std::chrono::duration<float>(MIN_DELAY).count();  // seconds behind now it is drawn
-		std::array<float, LEADS> leads{};  // how far past the newest state our last frame handed over each recent frame was, seconds
+		std::array<float, LEADS> leads{};  // the furthest our frames went past the newest state the last one handed over, each recent slot, seconds
 		std::size_t              leadCount = 0;
 		std::size_t              leadNext = 0;
+		Clock::time_point        slotFrom{};  // when the newest slot began
+		bool                     waiting = false;    // the drawn time waits at the newest state for the next (see Frame)
+		float                    beforeWait = 0.0f;  // the delay when it began to
 		Clock::time_point        handedTo{};  // the newest state's stamp when the last frame sampled: where the path it handed over ends
 		Clock::time_point        framed{};    // when Frame last ran
 
@@ -105,14 +114,33 @@ namespace StateBuffer
 			return true;
 		}
 
-		// How far behind now it should be drawn, before easing: all but the furthest of the recent leads, plus slack.
+		// How far behind now it should be drawn, before easing: the furthest of the recent leads, plus slack.
 		float Wanted() const
 		{
-			auto       sorted = leads;
-			const auto end = sorted.begin() + static_cast<std::ptrdiff_t>(leadCount);
-			const auto at = sorted.begin() + static_cast<std::ptrdiff_t>(leadCount / LEADS_LEFT_OUT);
-			std::nth_element(sorted.begin(), at, end, std::greater<>{});
-			return std::clamp(*at + DELAY_SLACK, std::chrono::duration<float>(MIN_DELAY).count(), std::chrono::duration<float>(MAX_DELAY).count());
+			const float furthest = *std::max_element(leads.begin(), leads.begin() + static_cast<std::ptrdiff_t>(leadCount));
+			return std::clamp(furthest + DELAY_SLACK, std::chrono::duration<float>(MIN_DELAY).count(), std::chrono::duration<float>(MAX_DELAY).count());
+		}
+
+		// Notes a frame's lead (seconds) in the slot for a_now: the slots for the time since the last are opened empty.
+		void NoteLead(Clock::time_point a_now, float a_lead)
+		{
+			if (leadCount == 0) {
+				slotFrom = a_now;
+				leads[0] = a_lead;
+				leadNext = leadCount = 1;
+				return;
+			}
+			for (std::size_t i = 0; i < LEADS && a_now - slotFrom >= LEAD_SLOT; ++i) {
+				slotFrom += LEAD_SLOT;
+				leads[leadNext] = 0.0f;
+				leadNext = (leadNext + 1) % LEADS;
+				leadCount = (std::min)(leadCount + 1, LEADS);
+			}
+			if (a_now - slotFrom >= LEAD_SLOT) {
+				slotFrom = a_now;  // longer ago than all the slots: every one was opened empty
+			}
+			auto& slot = leads[(leadNext + LEADS - 1) % LEADS];
+			slot = (std::max)(slot, a_lead);
 		}
 
 		// Once a frame, before Sample: drops states too old to be drawn again, notes how far past the newest
@@ -130,16 +158,35 @@ namespace StateBuffer
 			const auto newest = snapshots.back().stamp;
 			const auto handed = handedTo != Clock::time_point{} ? (std::min)(handedTo, newest) : newest;
 			handedTo = newest;
-			if (const auto lead = a_now - handed; lead < LEAD_LIMIT) {
-				leads[leadNext] = std::chrono::duration<float>(lead).count();
-				leadNext = (leadNext + 1) % LEADS;
-				leadCount = (std::min)(leadCount + 1, LEADS);
+			const float frame = framed != Clock::time_point{} ? std::chrono::duration<float>(a_now - framed).count() : 0.0f;
+			framed = a_now;
+			if (const auto lead = a_now - handed; lead < LEAD_LIMIT && frame <= std::chrono::duration<float>(MAX_DELAY).count()) {
+				NoteLead(a_now, std::chrono::duration<float>(lead).count());
 			}
 			// By time, not by frame: 2 ms a frame moved a 60 fps game's stand-in 12% fast or slow while the delay changed.
-			const float seconds = framed != Clock::time_point{} ? std::clamp(std::chrono::duration<float>(a_now - framed).count(), 0.0f, SLEW_FRAME_LIMIT) : 0.0f;
-			framed = a_now;
+			const float seconds = std::clamp(frame, 0.0f, SLEW_FRAME_LIMIT);
 			if (leadCount) {
 				delay += std::clamp(Wanted() - delay, -DELAY_SLEW * seconds, DELAY_SLEW * seconds);
+			}
+			// Their next state is late: the stand-in stands at the newest one, and the drawn time waits there with it
+			// instead of running on past it. Run on, the next state to come was drawn from where the run had got to,
+			// and the stand-in froze and then leapt ahead by as long as it had stood; waited, it goes on from where it
+			// stood, and the delay eases back down afterwards. It waits MAX_DELAY at most. A silence past LEAD_LIMIT
+			// (a loading screen) is no late state: the delay goes back to what it was, and the leads its start left are
+			// forgotten, so a friend back from one is not drawn further behind for seconds after.
+			const float reached = std::chrono::duration<float>(a_now - newest).count();
+			if (reached <= delay) {
+				waiting = false;
+			} else if (a_now - newest <= LEAD_LIMIT) {
+				if (!waiting) {
+					waiting = true;
+					beforeWait = delay;
+				}
+				delay = (std::min)(reached, std::chrono::duration<float>(MAX_DELAY).count());
+			} else if (waiting) {
+				waiting = false;
+				delay = beforeWait;
+				leadCount = leadNext = 0;
 			}
 		}
 
@@ -163,8 +210,11 @@ namespace StateBuffer
 			if (renderTime <= snaps.front().stamp) {
 				return sampled(snaps.front().state, snaps.front().state.heading, 0, static_cast<float>(snaps.front().state.pitch));
 			}
+			// Frame waits at the newest state rather than running past it: there, it is held. (The delay is kept in
+			// float seconds, so the drawn time comes back a few nanoseconds either side of it.)
+			const bool atNewest = renderTime + std::chrono::microseconds(1) >= snaps.back().stamp;
 
-			for (std::size_t i = 1; i < snaps.size(); ++i) {
+			for (std::size_t i = 1; i < snaps.size() && !atNewest; ++i) {
 				const auto& a = snaps[i - 1];
 				const auto& b = snaps[i];
 				if (renderTime > b.stamp) {
@@ -191,7 +241,7 @@ namespace StateBuffer
 				return sampled(out, motionAngle, i, AimPoint::BlendPitch(static_cast<float>(a.state.pitch), static_cast<float>(b.state.pitch), t));
 			}
 
-			// Past the newest snapshot: hold position rather than guessing ahead, and stop
+			// At the newest snapshot: hold position rather than guessing ahead, and stop
 			// animating if updates have dried up.
 			auto held = snaps.back().state;
 			if (a_now - snaps.back().stamp > MIN_DELAY + 250ms) {
