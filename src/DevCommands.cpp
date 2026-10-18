@@ -1119,7 +1119,7 @@ namespace DevCommands
 				}
 				RE::bhkPickData pick;
 				pick.SetStartEnd({ a_x, a_y, reach.top }, { a_x, a_y, reach.bottom });
-				cell->Pick(pick);
+				static_cast<void>(cell->Pick(pick));  // what it hit is not needed, only where
 				if (!pick.HasHit()) {
 					return std::nullopt;
 				}
