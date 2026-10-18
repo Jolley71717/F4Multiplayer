@@ -149,3 +149,17 @@ menu.compass_markers = Kompassmarkierungen
 menu.compass_markers_what = Freunde auf dem Kompass
 menu.fast_loading = Schnelles Laden
 menu.fast_loading_what = VSync in Ladebildschirmen aus
+
+menu.mods = Mods vergleichen ({n})
+menu.mods_ask = Host erneut fragen
+
+# --- Deine Mods im Vergleich mit denen des Hosts ---
+mods.differ = Multiplayer: Deine Mods weichen von denen des Hosts ab ({n}): siehe {key}
+mods.match = Multiplayer: Deine Mods stimmen mit denen des Hosts überein
+mods.same = Deine Mods stimmen mit denen des Hosts überein.
+mods.page_intro = Deine Mods im Vergleich mit denen des Hosts: {n} zu ändern. Das Spiel lädt Mods nur beim Start: Passe deine an und starte es dann neu.
+mods.missing = Fehlen in deinem Spiel (installiere und aktiviere sie):
+mods.extra = Nur in deinem Spiel (deaktiviere sie):
+mods.order = An anderer Stelle in deiner Ladereihenfolge (sortiere sie wie beim Host):
+mods.light_here = {name} (bei dir Light-Plugin, beim Host volles Plugin)
+mods.full_here = {name} (bei dir volles Plugin, beim Host Light-Plugin)

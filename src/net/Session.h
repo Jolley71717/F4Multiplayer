@@ -1,5 +1,7 @@
 #pragma once
 
+#include "net/ModDiff.h"
+
 // Ties the network client, optional hosted server and remote players together.
 // All functions run on the game's main thread.
 namespace Session
@@ -52,6 +54,16 @@ namespace Session
 		bool          hostWaiting = false;  // bHost, but not hosting yet: it starts once we're in the world, out of Vault 111
 	};
 	[[nodiscard]] Status GetStatus();
+
+	// Our mods compared with the host's, once the host's list came: with a refusal for the load order, with the welcome
+	// when ours differs only in plugins the host lets differ, or after AskHostMods. None otherwise (our load order is
+	// the host's, or nothing came yet).
+	[[nodiscard]] std::optional<ModDiff::Difference> HostMods();
+	// Asks the host for its list again (the answer is told on the HUD whatever it says). False when not in a session
+	// we joined.
+	bool AskHostMods();
+	// Dev: what is known of the host's mods, on one line.
+	[[nodiscard]] std::string DescribeMods();
 
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
 	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);

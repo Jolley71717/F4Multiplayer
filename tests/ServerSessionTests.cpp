@@ -1435,6 +1435,69 @@ TEST("server session: a load order that differs only in the host's ignored plugi
 	CHECK(Contains(reject->reason, "Only you have: Other.esp"));
 }
 
+TEST("server session: a joiner whose load order differs is sent the session's, before the refusal, and one whose matches is not")
+{
+	Server::Options options;
+	options.ignoredPlugins = { "Textures.esp" };
+	Fixture f{ options };
+	auto    host = Fixture::MakeHello("Host");
+	host.plugins = { "Fallout4.esm", "DLCCoast.esm", "Story.esp", std::string{ Protocol::LIGHT_PLUGINS }, "Light.esl", "Textures.esp" };
+	REQUIRE(f.Join(1, host));
+	CHECK(Count(Received(f, 1), MT::kLoadOrder) == 0u);  // the first decides: nothing to compare
+
+	// Refused: the list first, then the refusal, both reliable on the same channel.
+	auto bob = Fixture::MakeHello("Bob");
+	bob.contentHash = 0x9999;
+	bob.plugins = { "Fallout4.esm", "DLCCoast.esm", "Extra.esp" };
+	f.fake->Connect(2);
+	f.fake->Deliver(2, Protocol::Encode(bob));
+	REQUIRE(WaitReject(f, 2));
+	const auto toBob = f.fake->Take(2);
+	const auto orders = Decoded(toBob, MT::kLoadOrder, [](auto a_data) { return Protocol::DecodeLoadOrder(a_data); });
+	REQUIRE(orders.size() == 1u);
+	CHECK(orders[0].plugins == host.plugins);
+	CHECK(f.fake->Disconnected(2));
+
+	// Let in with only the host's ignored plugin different: the list comes with the welcome.
+	auto carol = Fixture::MakeHello("Carol");
+	carol.contentHash = 0x7777;
+	carol.plugins = { "Fallout4.esm", "DLCCoast.esm", "Story.esp", std::string{ Protocol::LIGHT_PLUGINS }, "Light.esl" };
+	REQUIRE(f.Join(3, carol));
+	const auto toCarol = Received(f, 3);
+	REQUIRE(Count(toCarol, MT::kLoadOrder) == 1u);
+
+	// The same hash as the host's: no list.
+	auto dave = Fixture::MakeHello("Dave");
+	dave.plugins = host.plugins;
+	REQUIRE(f.Join(4, dave));
+	CHECK(Count(Received(f, 4), MT::kLoadOrder) == 0u);
+}
+
+TEST("server session: a player in the session gets the session's load order when they ask, once in a while")
+{
+	Fixture f;
+	auto    host = Fixture::MakeHello("Host");
+	host.plugins = { "Fallout4.esm", "Story.esp" };
+	REQUIRE(f.Join(1, host));
+	auto bob = Fixture::MakeHello("Bob");
+	bob.plugins = host.plugins;
+	REQUIRE(f.Join(2, bob));
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Protocol::Encode(Protocol::LoadOrderRequest{}));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::LoadOrderRequest{}));  // again at once: not answered twice
+	const auto got = Received(f, 2);
+	const auto orders = Decoded(got, MT::kLoadOrder, [](auto a_data) { return Protocol::DecodeLoadOrder(a_data); });
+	REQUIRE(orders.size() == 1u);
+	CHECK(orders[0].plugins == host.plugins);
+	CHECK(Count(Received(f, 1), MT::kLoadOrder) == 0u);  // only the one who asked
+
+	// A connection that hasn't been let in hears nothing.
+	f.fake->Connect(3);
+	f.fake->Deliver(3, Protocol::Encode(Protocol::LoadOrderRequest{}));
+	CHECK(!f.fake->WaitFor(3, Type(MT::kLoadOrder), std::chrono::milliseconds(200)));
+}
+
 namespace
 {
 	// A game's plugins as the engine loads them: the full ones (the HD texture pack among the game's own, when

@@ -149,3 +149,17 @@ menu.compass_markers = 罗盘标记
 menu.compass_markers_what = 在罗盘上显示好友
 menu.fast_loading = 快速加载
 menu.fast_loading_what = 加载画面期间关闭垂直同步
+
+menu.mods = 对比 MOD（{n}）
+menu.mods_ask = 再问一次主机
+
+# --- 你的 MOD 与主机的对比 ---
+mods.differ = 多人联机：你的 MOD 和主机的不一样（{n} 个）：见 {key}
+mods.match = 多人联机：你的 MOD 和主机的一样
+mods.same = 你的 MOD 和主机的一样。
+mods.page_intro = 你的 MOD 与主机的对比：需要改 {n} 个。游戏只在启动时加载 MOD：改好后重启游戏。
+mods.missing = 你的游戏里缺少（请安装并启用）：
+mods.extra = 只有你的游戏里有（请禁用）：
+mods.order = 在你的加载顺序里位置不同（请按主机的顺序排）：
+mods.light_here = {name}（你这里是轻量插件，主机那里是完整插件）
+mods.full_here = {name}（你这里是完整插件，主机那里是轻量插件）

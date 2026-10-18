@@ -2049,6 +2049,16 @@ namespace DevCommands
 			return Session::Describe();
 		}
 
+		// mods [ask]: our mods compared with the host's, as far as known (ask: asks the host for its list again).
+		std::string Mods(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "ask") {
+				return Session::AskHostMods() ? "asked" : "error: not in a session we joined";
+			}
+			return Session::DescribeMods();
+		}
+
 		// hotkeys: why a hotkey may do nothing (focus, menu mode, chords, each key's state).
 		std::string HotkeysCommand(std::string_view)
 		{
@@ -2794,6 +2804,7 @@ namespace DevCommands
 			Entry{ "voiceline", VoiceLine },
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
+			Entry{ "mods", Mods },
 			Entry{ "god", God },
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },

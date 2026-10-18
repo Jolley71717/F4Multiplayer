@@ -151,3 +151,17 @@ menu.compass_markers = Znaczniki na kompasie
 menu.compass_markers_what = znajomi na kompasie
 menu.fast_loading = Szybkie wczytywanie
 menu.fast_loading_what = V-Sync wyłączony na ekranach wczytywania
+
+menu.mods = Porównaj mody ({n})
+menu.mods_ask = Zapytaj hosta ponownie
+
+# --- Twoje mody w porównaniu z modami hosta ---
+mods.differ = Multiplayer: twoje mody różnią się od modów hosta ({n}): zobacz {key}
+mods.match = Multiplayer: twoje mody są takie same jak u hosta
+mods.same = Twoje mody są takie same jak u hosta.
+mods.page_intro = Twoje mody w porównaniu z modami hosta, do zmiany: {n}. Gra wczytuje mody tylko przy uruchomieniu: popraw swoje, a potem uruchom ją ponownie.
+mods.missing = Brakuje ich w twojej grze (zainstaluj je i włącz):
+mods.extra = Są tylko w twojej grze (wyłącz je):
+mods.order = W innym miejscu twojej kolejności wczytywania (ułóż je tak jak u hosta):
+mods.light_here = {name} (u ciebie lekki plugin, u hosta pełny)
+mods.full_here = {name} (u ciebie pełny plugin, u hosta lekki)

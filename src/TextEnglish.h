@@ -180,5 +180,18 @@ namespace Text
 		{ "menu.compass_markers_what", "friends on the compass" },
 		{ "menu.fast_loading", "Fast loading" },
 		{ "menu.fast_loading_what", "vsync off during loading screens" },
+		{ "menu.mods", "Compare mods ({n})" },
+		{ "menu.mods_ask", "Ask the host again" },
+
+		// --- A joiner's mods compared with the host's (src/net/ModDiff.h) ---
+		{ "mods.differ", "Multiplayer: your mods differ from the host's ({n}): see {key}" },
+		{ "mods.match", "Multiplayer: your mods match the host's" },
+		{ "mods.same", "Your mods match the host's." },
+		{ "mods.page_intro", "Your mods compared with the host's: {n} to change. The game loads mods only when it starts: change yours to match, then restart it." },
+		{ "mods.missing", "Missing in your game (install and enable these):" },
+		{ "mods.extra", "Only in your game (disable these):" },
+		{ "mods.order", "In another place in your load order (sort these like the host's):" },
+		{ "mods.light_here", "{name} (light in your game, full in the host's)" },
+		{ "mods.full_here", "{name} (full in your game, light in the host's)" },
 	};
 }

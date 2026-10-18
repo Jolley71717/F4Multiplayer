@@ -44,6 +44,21 @@ who is with you, one line each as the F6 player list shows them. Buttons depend 
   "Invite to Game" does).
 - *Stop hosting* disconnects everyone and closes the lobby.
 - *Leave* disconnects from the host and leaves their Steam lobby; the game stops reconnecting.
+- *Compare mods (N)* comes first, once the host's mod list has come and yours differs from it (a
+  refusal for the load order, or a join where only plugins the host lets differ do). With it the
+  main page has more buttons than a box holds, so they turn over with *More*.
+
+**Compare mods.** Your load order against the host's, by file name: *missing in your game* (the
+host's plugins you lack, in the host's order), *only in your game* (yours the host lacks), and *in
+another place in your load order* (plugins you both have that are out of the host's order among
+their kind, or light in one game and full in the other; one moved plugin is named alone, not every
+plugin it passed). Ten names a page, *More* to turn. In the session, *Ask the host again* asks the
+host for its list (at most every five seconds); the answer goes to the HUD whatever it says. The
+host's server sends its list (`kLoadOrder`, protocol 35) before refusing a joiner for the load
+order and before welcoming one whose list differs only in ignored plugins, so a refused joiner sees
+the notice "your mods differ from the host's (N): see F1" once, and again only when the difference
+changes. The log has every name (`Session: mods: ...` lines); the dev channel's `mods` says what is
+known and `mods ask` asks again. Whether you are let in is still the load order hash alone.
 
 **Join a friend.** Steam friends who are hosting Fallout 4 co-op right now, by name: those whose
 rich presence advertises a lobby (the same "connect" string the overlay's "Join Game" uses) or who

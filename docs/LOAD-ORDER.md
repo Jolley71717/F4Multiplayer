@@ -16,8 +16,11 @@ in the load order: with mods after it, a mod's NPC is 09000004 with it and 08000
 counts then). The hash travels in the hello message. The server keeps the first
 player's hash; a later hello with a different one is refused, and the refusal names the plugins only
 the joiner has and the ones they are missing (the plugin list travels with the hello; protocol 23),
-or says the order differs. Nothing else is compared: not plugin versions, not file contents, not F4SE
-plugins, not INI settings.
+or says the order differs. Since protocol 35 the server also sends the joiner the session's whole list
+(`kLoadOrder`, up to 512 names of up to 260 bytes; the hello carries as many), and the joining game names every
+plugin that differs on the HUD, on the F1 menu's *Compare mods* page and in the log: missing, extra, and out of
+order (src/net/ModDiff.h). That is information only: the hash still decides. Nothing else is compared: not plugin
+versions, not file contents, not F4SE plugins, not INI settings.
 
 ## Options, from cheapest to hardest
 

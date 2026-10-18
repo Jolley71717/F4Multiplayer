@@ -153,3 +153,17 @@ menu.compass_markers = Marqueurs de boussole
 menu.compass_markers_what = vos amis sur la boussole
 menu.fast_loading = Chargement rapide
 menu.fast_loading_what = vsync désactivée pendant les chargements
+
+menu.mods = Comparer les mods ({n})
+menu.mods_ask = Redemander à l'hôte
+
+# --- Vos mods comparés à ceux de l'hôte ---
+mods.differ = Multijoueur : vos mods diffèrent de ceux de l'hôte ({n}) : voir {key}
+mods.match = Multijoueur : vos mods sont les mêmes que ceux de l'hôte
+mods.same = Vos mods sont les mêmes que ceux de l'hôte.
+mods.page_intro = Vos mods comparés à ceux de l'hôte : {n} à changer. Le jeu ne charge les mods qu'au démarrage : modifiez les vôtres, puis relancez-le.
+mods.missing = Absents de votre jeu (installez-les et activez-les) :
+mods.extra = Présents uniquement dans votre jeu (désactivez-les) :
+mods.order = À une autre place dans votre ordre de chargement (classez-les comme chez l'hôte) :
+mods.light_here = {name} (plugin léger chez vous, complet chez l'hôte)
+mods.full_here = {name} (plugin complet chez vous, léger chez l'hôte)

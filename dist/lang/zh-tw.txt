@@ -149,3 +149,17 @@ menu.compass_markers = 羅盤標記
 menu.compass_markers_what = 在羅盤上顯示好友
 menu.fast_loading = 快速載入
 menu.fast_loading_what = 載入畫面期間關閉垂直同步
+
+menu.mods = 比較模組（{n}）
+menu.mods_ask = 再問一次主機
+
+# --- 你的模組與主機的比較 ---
+mods.differ = 多人連線：你的模組和主機的不一樣（{n} 個）：見 {key}
+mods.match = 多人連線：你的模組和主機的一樣
+mods.same = 你的模組和主機的一樣。
+mods.page_intro = 你的模組與主機的比較：需要改 {n} 個。遊戲只在啟動時載入模組：改好後重新啟動遊戲。
+mods.missing = 你的遊戲裡缺少（請安裝並啟用）：
+mods.extra = 只有你的遊戲裡有（請停用）：
+mods.order = 在你的載入順序裡位置不同（請照主機的順序排）：
+mods.light_here = {name}（你這裡是輕量插件，主機那裡是完整插件）
+mods.full_here = {name}（你這裡是完整插件，主機那裡是輕量插件）

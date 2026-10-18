@@ -1258,8 +1258,108 @@ TEST("protocol: Hello carries the load order, capped, and refuses too many plugi
 
 	hello.plugins.clear();
 	auto packet = Encode(hello);
-	packet.back() = static_cast<std::uint8_t>(MAX_PLUGINS + 1);  // the count byte is last when the list is empty
+	// The count's two bytes are last when the list is empty.
+	packet[packet.size() - 2] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) & 0xFF);
+	packet[packet.size() - 1] = static_cast<std::uint8_t>((MAX_PLUGINS + 1) >> 8);
 	CHECK(!DecodeHello(packet));
+}
+
+TEST("protocol: a load order's names may be as long as a Windows file name, and longer ones are cut")
+{
+	auto hello = MakeHello();
+	const std::string longest(MAX_PLUGIN_NAME_LENGTH, 'n');
+	hello.plugins = { "Fallout4.esm", longest + ".esp", longest };
+	const auto back = DecodeHello(Encode(hello));
+	REQUIRE(back);
+	CHECK(back->plugins.size() == 3u);
+	CHECK(back->plugins[1] == longest);  // cut to the most there is room for
+	CHECK(back->plugins[2] == longest);
+
+	const auto order = DecodeLoadOrder(Encode(LoadOrder{ hello.plugins }));
+	REQUIRE(order);
+	CHECK(order->plugins == back->plugins);
+
+	// A name longer than that on the wire is refused, as are more names than MAX_PLUGINS.
+	Writer w{ MT::kLoadOrder };
+	w.U16(1);
+	w.U16(static_cast<std::uint16_t>(MAX_PLUGIN_NAME_LENGTH + 1));
+	for (std::size_t i = 0; i <= MAX_PLUGIN_NAME_LENGTH; ++i) {
+		w.U8('a');
+	}
+	CHECK(!DecodeLoadOrder(w.Data()));
+	Writer many{ MT::kLoadOrder };
+	many.U16(static_cast<std::uint16_t>(MAX_PLUGINS + 1));
+	for (std::size_t i = 0; i <= MAX_PLUGINS; ++i) {
+		many.LongStr("x.esp", MAX_PLUGIN_NAME_LENGTH);
+	}
+	CHECK(!DecodeLoadOrder(many.Data()));
+
+	// A whole load order of the longest names stays well within one Steam message (512 KB).
+	CHECK(Encode(LoadOrder{ std::vector<std::string>(MAX_PLUGINS + 50, longest) }).size() < 200u * 1024u);
+
+	// Control characters are dropped, as from every other string on the wire.
+	const auto clean = DecodeLoadOrder(Encode(LoadOrder{ { "Evil.esp\r\nSession: connected" } }));
+	REQUIRE(clean);
+	CHECK(clean->plugins == std::vector<std::string>{ "Evil.espSession: connected" });
+}
+
+TEST("protocol: a hello of another version is read up to its version, so an older or newer game hears the versions differ")
+{
+	// Version 34's hello: the list as a byte's count of short names, where 35 has an empty one and then its own.
+	Writer old{ MT::kHello };
+	old.U32(MAGIC);
+	old.U16(34);
+	old.U32(0x1234);
+	old.Str("Alice", MAX_NAME_LENGTH);
+	old.Str("", MAX_PASSWORD_LENGTH);
+	old.U32(0);
+	old.U64(0);
+	old.U32(0);
+	old.U64(7);
+	old.U8(2);
+	old.Str("Fallout4.esm", 80);
+	old.Str("Mod.esp", 80);
+	const auto h = DecodeHello(old.Data());
+	REQUIRE(h);
+	CHECK(h->version == 34);
+	CHECK(h->magic == MAGIC);
+
+	// Version 35's, as version 34's decoder read a hello: every field up to the list, then a byte's count, which is 0.
+	const auto packet = Encode(MakeHello());
+	Reader r{ packet };
+	r.U8();
+	CHECK(r.U32() == MAGIC);
+	CHECK(r.U16() == VERSION);
+	r.U32();
+	CHECK(r.Str(MAX_NAME_LENGTH) == "Alice");
+	r.Str(MAX_PASSWORD_LENGTH);
+	r.U32();
+	r.U64();
+	r.U32();
+	CHECK(r.U64() == MakeHello().identity);
+	CHECK(r.U8() == 0);
+	CHECK(r.Ok());
+
+	// A hello of this version with something in the old list's place is not one this version wrote.
+	auto none = MakeHello();
+	none.plugins.clear();
+	auto broken = Encode(none);
+	broken[broken.size() - 3] = 1;  // the byte before the list's two-byte count
+	CHECK(DecodeHello(Encode(none)));
+	CHECK(!DecodeHello(broken));
+}
+
+TEST("protocol: LoadOrder and its request round trip")
+{
+	const LoadOrder order{ { "Fallout4.esm", "A.esp", std::string{ LIGHT_PLUGINS }, "B.esl" } };
+	const auto      back = DecodeLoadOrder(Encode(order));
+	REQUIRE(back);
+	CHECK(*back == order);
+	CHECK(DecodeLoadOrder(Encode(LoadOrder{})));
+	CHECK(DecodeLoadOrder(Encode(LoadOrder{}))->plugins.empty());
+	CHECK(Encode(LoadOrderRequest{}) == (Bytes{ 33 }));
+	CHECK(DecodeLoadOrderRequest(Encode(LoadOrderRequest{})));
+	CHECK(PeekType(Encode(order)) == MT::kLoadOrder);
 }
 
 TEST("protocol: LoadOrderDifference names what only one side has, or the order")

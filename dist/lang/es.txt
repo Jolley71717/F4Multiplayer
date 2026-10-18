@@ -149,3 +149,17 @@ menu.compass_markers = Marcadores en la brújula
 menu.compass_markers_what = tus amigos en la brújula
 menu.fast_loading = Carga rápida
 menu.fast_loading_what = sin vsync en las pantallas de carga
+
+menu.mods = Comparar mods ({n})
+menu.mods_ask = Volver a preguntar al anfitrión
+
+# --- Tus mods comparados con los del anfitrión ---
+mods.differ = Multijugador: tus mods no coinciden con los del anfitrión ({n}): consulta {key}
+mods.match = Multijugador: tus mods coinciden con los del anfitrión
+mods.same = Tus mods coinciden con los del anfitrión.
+mods.page_intro = Tus mods comparados con los del anfitrión: {n} por cambiar. El juego solo carga los mods al iniciarse: cambia los tuyos y reinícialo.
+mods.missing = Faltan en tu juego (instálalos y actívalos):
+mods.extra = Solo están en tu juego (desactívalos):
+mods.order = En otro lugar de tu orden de carga (ordénalos como el anfitrión):
+mods.light_here = {name} (ligero en tu juego, completo en el del anfitrión)
+mods.full_here = {name} (completo en tu juego, ligero en el del anfitrión)

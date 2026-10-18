@@ -353,6 +353,17 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.compass_markers_what", {}, "friends on the compass" },
 		{ "menu.fast_loading", {}, "Fast loading" },
 		{ "menu.fast_loading_what", {}, "vsync off during loading screens" },
+		{ "menu.mods", { { "n", 3 } }, "Compare mods (3)" },
+		{ "menu.mods_ask", {}, "Ask the host again" },
+		{ "mods.differ", { { "n", 3 }, { "key", "F1" } }, "Multiplayer: your mods differ from the host's (3): see F1" },
+		{ "mods.match", {}, "Multiplayer: your mods match the host's" },
+		{ "mods.same", {}, "Your mods match the host's." },
+		{ "mods.page_intro", { { "n", 3 } }, "Your mods compared with the host's: 3 to change. The game loads mods only when it starts: change yours to match, then restart it." },
+		{ "mods.missing", {}, "Missing in your game (install and enable these):" },
+		{ "mods.extra", {}, "Only in your game (disable these):" },
+		{ "mods.order", {}, "In another place in your load order (sort these like the host's):" },
+		{ "mods.light_here", { { "name", "A.esp" } }, "A.esp (light in your game, full in the host's)" },
+		{ "mods.full_here", { { "name", "A.esp" } }, "A.esp (full in your game, light in the host's)" },
 	};
 
 	English english;
