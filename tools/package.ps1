@@ -31,6 +31,7 @@ $OutDir = (Resolve-Path -LiteralPath $OutDir).ProviderPath
 # The label goes into a C++ string literal and into file names.
 if ($Label -notmatch '^[A-Za-z0-9.-]*$') { throw "Label '$Label' may hold only letters, digits, '.' and '-'" }
 $version = (Select-String -Path xmake.lua -Pattern 'set_version\("([^"]+)"\)').Matches[0].Groups[1].Value
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "xmake.lua's set_version is '$version', not a version like 0.8.9" }
 
 # What is packaged is a commit: no changes to tracked files, and an rc's notes are part of it.
 $changed = @(git status --porcelain --untracked-files=no)
@@ -49,6 +50,13 @@ if ($Label) {
 	$notes = "dist/RELEASE-$version-$Label.md"
 	if (-not (git ls-files -- $notes)) { $problems += "$notes is not committed (the rc's commit carries its notes)" }
 }
+# set_version is bumped by hand, so notes for a newer version mean it was missed: an rc was once
+# packaged as 0.8.7-rc1 that way. A release's own notes are written alongside its rcs, so they don't
+# count against one.
+$packaged = $version
+if ($Label -match '^rc\d+$') { $packaged = "$version-$Label" }
+$newer = @(Get-NewerReleaseNotes (Join-Path $root 'dist') $packaged | Where-Object { $_ -ne "RELEASE-$version.md" })
+if ($newer) { $problems += "dist has notes for a newer version than $packaged ($($newer -join ', ')): bump set_version in xmake.lua, or check -Label" }
 if ($problems) {
 	if (-not $AllowDirty) { throw "Not packaging: $($problems -join '; ')" }
 	Write-Warning "Packaging anyway (-AllowDirty): $($problems -join '; ')"
@@ -68,8 +76,31 @@ $env:F4MP_LABEL = "$Label $sha".Trim()
 
 # -P .: in a worktree nested inside another checkout, xmake would otherwise build the outer one.
 # --tracy=: never with Tracy's client, whatever the worktree was configured with for profiling.
-xmake config -P . -m $Mode --tracy= -y | Out-Null
-Assert-Native 'xmake config'
+# -p windows -a x64: the folder the build is read from below, whatever xmake would pick by itself (a
+# shell from Git for Windows makes it guess another platform) or the worktree was configured with.
+# --vs=2022: the Visual Studio CONTRIBUTING.md names, not whichever newer one is also installed. xmake
+# doesn't refuse one that is missing (it configures with another), so it is looked for first.
+# Its output is kept for a failure; Windows PowerShell 5.1 would stop at xmake's first line on stderr.
+if (-not (Find-VisualStudio '[17.0,18.0)')) {
+	throw ("Visual Studio 2022 with its C++ tools is not installed. Install Visual Studio 2022 (or its Build Tools) " +
+		"with the 'Desktop development with C++' workload; releases are built with that one.")
+}
+$preference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+	$configOutput = @(xmake config -P . -p windows -a x64 --vs=2022 -m $Mode --tracy= -y 2>&1 | ForEach-Object { "$_" })
+	$configFailed = $LASTEXITCODE
+} finally {
+	$ErrorActionPreference = $preference
+}
+if ($configFailed) {
+	$configOutput
+	if ($configOutput -match 'cannot get program for') {
+		throw ("xmake config found no C++ compiler although Visual Studio 2022 is installed. If it was just updated, " +
+			"clear xmake's remembered toolchain: xmake config -c -P . -p windows -a x64 --vs=2022 -m $Mode")
+	}
+	throw "xmake config failed (exit code $configFailed)"
+}
 xmake build -P . -y  # every default target, the unit tests included
 Assert-Native 'xmake build'
 

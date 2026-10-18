@@ -9,9 +9,12 @@ without the dedicated server's `F4MPServer.exe` (that stays on GitHub), passed t
 A version is first published as a GitHub pre-release tagged `vX.Y.Z-rcN`. Players who want the fixes
 early can run it and say whether it holds. In this order:
 
-1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes.
-2. `tools/package.ps1 -Label rcN` on that commit. It refuses uncommitted changes to tracked files and
-   notes that are not committed, builds every target, runs the unit tests (and stops if one fails),
+1. Write `dist/RELEASE-X.Y.Z-rcN.md` and commit it: the rc's commit carries its notes. For a new
+   version's first rc, `set_version` in `xmake.lua` is bumped to X.Y.Z in the same commit.
+2. `tools/package.ps1 -Label rcN` on that commit. It refuses uncommitted changes to tracked files,
+   notes that are not committed, and notes in `dist/` for a version newer than X.Y.Z-rcN (other than
+   X.Y.Z's own, which are written alongside its rcs): those mean `set_version` was not bumped. It
+   builds every target with Visual Studio 2022, runs the unit tests (and stops if one fails),
    checks that nothing in the zip names this PC or its user, and writes to `dist/out/`:
    - `F4Multiplayer-X.Y.Z-rcN.zip`, laid out like a Data folder;
    - `F4Multiplayer-X.Y.Z-rcN.manifest.txt`: the commit, the build label, the DLL's SHA-256;
