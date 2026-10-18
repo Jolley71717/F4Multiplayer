@@ -317,37 +317,42 @@ namespace Puppets
 			static const RE::BSFixedString sneakStart{ "sneakStart" };
 			static const RE::BSFixedString sneakStop{ "sneakStop" };
 
-			static const RE::BSFixedString walkMultVar{ "WalkSpeedMult" };
-			static const RE::BSFixedString runMultVar{ "RunSpeedMult" };
-			static const RE::BSFixedString weaponWalkMultVar{ "fLocomotionWalkPlaybackSpeed" };
-			static const RE::BSFixedString weaponRunMultVar{ "fLocomotionRunPlaybackSpeed" };
-			static const RE::BSFixedString gaitSyncVar{ "iSyncLocomotionSpeed" };
-			static const RE::BSFixedString weaponGaitVar{ "iLocomotionSpeedState" };
+			static const RE::BSFixedString walkMultVar{ MirrorGait::WALK_RATE };
+			static const RE::BSFixedString runMultVar{ MirrorGait::RUN_RATE };
+			static const RE::BSFixedString weaponWalkMultVar{ MirrorGait::WEAPON_WALK_RATE };
+			static const RE::BSFixedString weaponRunMultVar{ MirrorGait::WEAPON_RUN_RATE };
+			static const RE::BSFixedString gaitSyncVar{ MirrorGait::GAIT_VARIABLE };
+			static const RE::BSFixedString weaponGaitVar{ MirrorGait::WEAPON_GAIT_VARIABLE };
 			static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
-			static const RE::BSFixedString markerVar{ CreatureGait::MARKER_VARIABLE };
 
 			const auto  graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
 			const auto& motion = a_puppet.target;
 			const auto  now = std::chrono::steady_clock::now();
+			const auto  kind = GaitGraphOf(a_actor);
+			// A mirrored NPC's state may carry the gait its owner's graph plays (MirrorGait.h); a stand-in's never does.
+			const bool own = a_puppet.kind == Kind::kNpc && (motion.flags & Protocol::kOwnGait) != 0;
 
-			// Walk or run (Gait.h): only a humanoid graph has the walk's playback rate. The sync
+			// Walk, jog or run (Gait.h, MirrorGait.h): only a humanoid graph has the walk's playback rate. The sync
 			// variables go first, so a moveStart below enters the right gait.
-			float      walkMult = 0.0f;
-			const bool humanoid = graph->GetGraphVariableImplFloat(walkMultVar, walkMult);
+			const bool  humanoid = kind.family == MirrorGait::Family::kPerson;
 			const float seconds = a_puppet.gaitAt == std::chrono::steady_clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - a_puppet.gaitAt).count();
 			const float gaitSpeed = Gait::Smooth(a_puppet.gaitSpeed, motion.speed, seconds);
-			const auto  gait = humanoid ? Gait::Pick(gaitSpeed, a_puppet.gait, motion.moveMode) : a_puppet.gait;
+			const auto  person = MirrorGait::Person(own, motion.gait, motion.gaitRate, (motion.flags & Protocol::kWeaponDrawn) != 0, gaitSpeed, a_puppet.gait, motion.moveMode);
+			const auto  gait = humanoid ? person.gait : a_puppet.gait;
 			if (humanoid) {
 				graph->SetGraphVariableInt(gaitSyncVar, Gait::SyncValue(gait));
 				graph->SetGraphVariableInt(weaponGaitVar, Gait::WeaponState(gait));
 			}
 			// A dog's (CreatureGait.h): the gait and rate its owner's graph plays, its state set first for the same reason.
-			std::int32_t range = 0;
-			float        marker = 0.0f;
-			const bool   dog = !humanoid && graph->GetGraphVariableImplInt(rangeVar, range) && graph->GetGraphVariableImplFloat(markerVar, marker);
-			const auto   dogGait = CreatureGait::Choose((motion.flags & Protocol::kOwnGait) != 0, motion.gait, motion.gaitRate, motion.speed);
+			const bool dog = kind.family == MirrorGait::Family::kDog;
+			const auto dogGait = CreatureGait::Choose((motion.flags & Protocol::kOwnGait) != 0, motion.gait, motion.gaitRate, motion.speed);
 			if (dog) {
 				graph->SetGraphVariableInt(rangeVar, dogGait.range->id);
+			}
+			// Another creature's: the state its owner's graph moves in, so its start enters that rather than the walk. How
+			// its graph changes gait while moving is not known here: a change shows at the copy's next start.
+			if (kind.family == MirrorGait::Family::kCreature && own) {
+				graph->SetGraphVariableInt(VariableName(kind.stateVariable), motion.gait);
 			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
@@ -358,20 +363,20 @@ namespace Puppets
 			});
 			const bool moving = step.moving;
 			if (humanoid) {
-				graph->SetGraphVariableFloat(walkMultVar, Gait::Playback(gaitSpeed, Gait::WALK_CLIP));
-				graph->SetGraphVariableFloat(runMultVar, Gait::Playback(gaitSpeed, Gait::RUN_CLIP));
-				graph->SetGraphVariableFloat(weaponWalkMultVar, Gait::Playback(gaitSpeed, Gait::WEAPON_WALK_CLIP));
-				graph->SetGraphVariableFloat(weaponRunMultVar, Gait::Playback(gaitSpeed, Gait::WEAPON_RUN_CLIP));
+				graph->SetGraphVariableFloat(walkMultVar, person.walkRate);
+				graph->SetGraphVariableFloat(runMultVar, person.runRate);
+				graph->SetGraphVariableFloat(weaponWalkMultVar, person.weaponWalkRate);
+				graph->SetGraphVariableFloat(weaponRunMultVar, person.weaponRunRate);
 				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
 					// The graph in use takes its own one and refuses the other.
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::Event(gait) });
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::WeaponEvent(gait) });
+					graph->NotifyAnimationGraphImpl(VariableName(Gait::Event(gait)));
+					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
 				}
 			}
 			if (dog) {
-				graph->SetGraphVariableFloat(RE::BSFixedString{ dogGait.range->rateVariable }, dogGait.rate);
+				graph->SetGraphVariableFloat(VariableName(dogGait.range->rateVariable), dogGait.rate);
 				if (CreatureGait::Send(moving, a_puppet.moving, dogGait.range->id, a_puppet.range, step.resent != nullptr)) {
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ dogGait.range->event });
+					graph->NotifyAnimationGraphImpl(VariableName(dogGait.range->event));
 				}
 			}
 			// What the engine's own move actions keep and our bare events do not: a jump's take-off and
@@ -786,6 +791,38 @@ namespace Puppets
 		}
 	}
 
+	const RE::BSFixedString& VariableName(const char* a_name)
+	{
+		static std::mutex                                         namesLock;
+		static std::unordered_map<const char*, RE::BSFixedString> names;
+		std::scoped_lock                                          l{ namesLock };
+		const auto                                                it = names.find(a_name);
+		return it != names.end() ? it->second : names.emplace(a_name, RE::BSFixedString{ a_name }).first->second;
+	}
+
+	GaitGraph GaitGraphOf(const RE::Actor* a_actor)
+	{
+		static const RE::BSFixedString personVar{ MirrorGait::PERSON_MARKER };
+		static const RE::BSFixedString dogVar{ CreatureGait::MARKER_VARIABLE };
+		static const RE::BSFixedString creatureVars[] = { RE::BSFixedString{ MirrorGait::CREATURE_VARIABLES[0] }, RE::BSFixedString{ MirrorGait::CREATURE_VARIABLES[1] } };
+		static_assert(std::extent_v<decltype(MirrorGait::CREATURE_VARIABLES)> == std::extent_v<decltype(creatureVars)>);
+
+		const auto   graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
+		float        f = 0.0f;
+		std::int32_t n = 0;
+		if (graph->GetGraphVariableImplFloat(personVar, f)) {
+			return { MirrorGait::Family::kPerson };
+		}
+		int creature = -1;
+		for (int i = 0; i < static_cast<int>(std::size(creatureVars)) && creature < 0; ++i) {
+			if (graph->GetGraphVariableImplInt(creatureVars[i], n)) {
+				creature = i;
+			}
+		}
+		const auto family = MirrorGait::Identify(false, creature == 0 && graph->GetGraphVariableImplFloat(dogVar, f), creature);
+		return { family, family == MirrorGait::Family::kCreature ? MirrorGait::CREATURE_VARIABLES[creature] : nullptr };
+	}
+
 	std::string Describe(const RE::Actor* a_actor)
 	{
 		Puppet puppet;
@@ -798,14 +835,17 @@ namespace Puppets
 			puppet = *entry;
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} graph:", puppet.moving, puppet.target.speed, puppet.idleStops,
+		constexpr const char* FAMILIES[] = { "none", "person", "dog", "creature" };
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
 			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
-			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" });
+			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" },
+			FAMILIES[std::to_underlying(GaitGraphOf(a_actor).family)]);
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
 		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate its
-		// walk and run play at.
+		// walk and run play at; a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and iSyncIdleLocomotion is 1
+		// while a graph moves.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "fWalkClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;

@@ -8,6 +8,7 @@
 #include "game/FrameShare.h"
 #include "game/Gait.h"
 #include "game/Hud.h"
+#include "game/MirrorGait.h"
 #include "game/NpcClaims.h"
 #include "game/NpcHold.h"
 #include "game/NpcPlace.h"
@@ -439,6 +440,63 @@ namespace NpcSync
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
 		}
 
+		// Whether the NPC's graph stands (MirrorGait::Reported).
+		bool GraphStands(const RE::Actor* a_actor)
+		{
+			static const RE::BSFixedString idleVar{ MirrorGait::IDLE_VARIABLE };
+			std::int32_t                   locomotion = 0;
+			return static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor)->GetGraphVariableImplInt(idleVar, locomotion) && locomotion == 0;
+		}
+
+		// The gait the NPC's own graph plays and the rate its clip plays at, for its copies (MirrorGait.h; a dog's,
+		// CreatureGait.h). Left out when its graph does not say.
+		void ReadGait(const RE::Actor* a_actor, const Puppets::GaitGraph& a_kind, Protocol::ActorState& a_state)
+		{
+			const auto   graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
+			std::int32_t state = 0;
+			float        rate = 0.0f;
+			switch (a_kind.family) {
+			case MirrorGait::Family::kPerson:
+				{
+					static const RE::BSFixedString gaitVar{ MirrorGait::GAIT_VARIABLE };
+					static const RE::BSFixedString weaponGaitVar{ MirrorGait::WEAPON_GAIT_VARIABLE };
+					const bool drawn = a_actor->GetWeaponMagicDrawn();
+					const auto gait = graph->GetGraphVariableImplInt(drawn ? weaponGaitVar : gaitVar, state) ? MirrorGait::PersonGait(drawn, state) : std::nullopt;
+					if (!gait) {
+						return;
+					}
+					a_state.gait = static_cast<std::uint8_t>(*gait);
+					if (const auto rateVar = MirrorGait::PersonRate(drawn, *gait); rateVar && graph->GetGraphVariableImplFloat(Puppets::VariableName(rateVar), rate)) {
+						a_state.gaitRate = CreatureGait::PackRate(rate);
+					}
+					break;
+				}
+			case MirrorGait::Family::kDog:
+				{
+					static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
+					const auto                     gait = graph->GetGraphVariableImplInt(rangeVar, state) ? CreatureGait::Find(state) : nullptr;
+					if (!gait || !graph->GetGraphVariableImplFloat(Puppets::VariableName(gait->rateVariable), rate)) {
+						return;
+					}
+					a_state.gait = gait->id;
+					a_state.gaitRate = CreatureGait::PackRate(rate);
+					break;
+				}
+			case MirrorGait::Family::kCreature:
+				{
+					const auto own = graph->GetGraphVariableImplInt(Puppets::VariableName(a_kind.stateVariable), state) ? MirrorGait::CreatureState(state) : std::nullopt;
+					if (!own) {
+						return;
+					}
+					a_state.gait = *own;
+					break;
+				}
+			default:
+				return;
+			}
+			a_state.flags |= Protocol::kOwnGait;
+		}
+
 		void SendOwnedStates(Clock::time_point a_now)
 		{
 			if (GamePaused()) {
@@ -489,7 +547,9 @@ namespace NpcSync
 				state.z = pos.z;
 				state.heading = actor->data.angle.z;
 				const auto process = actor->currentProcess;
-				state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
+				const auto middle = process ? process->middleHigh : nullptr;
+				const auto kind = Puppets::GaitGraphOf(actor);
+				state.speed = MirrorGait::Reported(middle ? middle->animationSpeed : 0.0f, speed, kind.family, middle && !(middle->animationSpeed > 0.0f) && GraphStands(actor));
 				state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*actor).moveMode);
 				// The way its own graph has it go, rather than guessed from its path by the copies.
 				{
@@ -500,20 +560,7 @@ namespace NpcSync
 						state.flags |= Protocol::kOwnDirection;
 					}
 				}
-				// A dog's gait and the rate its clip plays at, as its own graph has them (CreatureGait.h).
-				{
-					static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
-					static const RE::BSFixedString markerVar{ CreatureGait::MARKER_VARIABLE };
-					const auto                     graph = static_cast<const RE::IAnimationGraphManagerHolder*>(actor);
-					std::int32_t                   range = 0;
-					float                          rate = 0.0f;
-					const auto                     gait = graph->GetGraphVariableImplInt(rangeVar, range) && graph->GetGraphVariableImplFloat(markerVar, rate) ? CreatureGait::Find(range) : nullptr;
-					if (gait && graph->GetGraphVariableImplFloat(RE::BSFixedString{ gait->rateVariable }, rate)) {
-						state.gait = gait->id;
-						state.gaitRate = CreatureGait::PackRate(rate);
-						state.flags |= Protocol::kOwnGait;
-					}
-				}
+				ReadGait(actor, kind, state);
 				// The pitch it aims its gun at, from the point its combat AI gave its weapon aim; the copies have no AI
 				// to give them one (AimPoint::ForMirror).
 				if (const auto point = Puppets::AimPointOf(actor)) {
