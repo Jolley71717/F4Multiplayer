@@ -78,8 +78,13 @@ $env:F4MP_LABEL = "$Label $sha".Trim()
 # --tracy=: never with Tracy's client, whatever the worktree was configured with for profiling.
 # -p windows -a x64: the folder the build is read from below, whatever xmake would pick by itself (a
 # shell from Git for Windows makes it guess another platform) or the worktree was configured with.
-# --vs=2022: the Visual Studio CONTRIBUTING.md names, not whichever newer one is also installed.
+# --vs=2022: the Visual Studio CONTRIBUTING.md names, not whichever newer one is also installed. xmake
+# doesn't refuse one that is missing (it configures with another), so it is looked for first.
 # Its output is kept for a failure; Windows PowerShell 5.1 would stop at xmake's first line on stderr.
+if (-not (Find-VisualStudio '[17.0,18.0)')) {
+	throw ("Visual Studio 2022 with its C++ tools is not installed. Install Visual Studio 2022 (or its Build Tools) " +
+		"with the 'Desktop development with C++' workload; releases are built with that one.")
+}
 $preference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
@@ -91,9 +96,8 @@ try {
 if ($configFailed) {
 	$configOutput
 	if ($configOutput -match 'cannot get program for') {
-		throw ("xmake config found no C++ compiler in Visual Studio 2022. Install Visual Studio 2022 (or its Build Tools) " +
-			"with the 'Desktop development with C++' workload, or run this from a 'Developer PowerShell for VS 2022'. " +
-			"If it is installed and was just updated, clear xmake's remembered toolchain: xmake config -c -P . -p windows -a x64 --vs=2022 -m $Mode")
+		throw ("xmake config found no C++ compiler although Visual Studio 2022 is installed. If it was just updated, " +
+			"clear xmake's remembered toolchain: xmake config -c -P . -p windows -a x64 --vs=2022 -m $Mode")
 	}
 	throw "xmake config failed (exit code $configFailed)"
 }

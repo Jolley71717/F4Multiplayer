@@ -106,6 +106,17 @@ function Get-NewerReleaseNotes([string]$Dir, [string]$Version) {
 	}
 }
 
+# Where the Visual Studio in $Versions (vswhere's range: '[17.0,18.0)' is 2022) with the x64 C++ tools
+# is installed, the Build Tools included, or $null. xmake can't say: with --vs naming one that isn't
+# installed, xmake config succeeds with whichever is, and the build then fails on its packages.
+function Find-VisualStudio([string]$Versions) {
+	$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+	if (-not (Test-Path -LiteralPath $vswhere)) { return $null }
+	$found = @(& $vswhere -products * -version $Versions -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -latest -property installationPath)
+	if ($LASTEXITCODE -or -not $found -or -not $found[0]) { return $null }
+	return "$($found[0])".Trim()
+}
+
 # Reads a file of key=value lines (a manifest, a soak verdict) into a hashtable.
 function Read-KeyValues([string]$Path) {
 	$values = @{}
