@@ -59,6 +59,8 @@ Tried and turned off:
 
 Known issues:
 
+- A `coc` or a fast travel that starts in the moment a friend disconnects can leave the host on a loading screen that
+  never ends (the game draws, nothing moves; no crash). Caught in rc1's soak with full thread stacks; being fixed.
 - A friend's face and hair aren't copied yet (see above): their stand-in is a settler of their sex with their body
   shape, their LooksMenu body sliders and their gear.
 - Dogmeat's mirrored animation can squat instead of running on the joiner; the capture that will tell why is in
