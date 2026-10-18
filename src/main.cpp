@@ -2,6 +2,7 @@
 #include "DevChannel.h"
 #include "DevCommands.h"
 #include "game/ExitMusic.h"
+#include "game/Face.h"
 #include "game/FastLoad.h"
 #include "game/FrameWatch.h"
 #include "game/GpuWatch.h"
@@ -288,6 +289,7 @@ namespace
 				[] {
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
+					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
 				},
 				"load");
 			break;
@@ -781,7 +783,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });  // one call patched (TextureWait::Install), two detours (HavokGuard::Install)
+	// 140 of 256 bytes used: two 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one)
+	// and HavokGuard::Install's two detours (2 x 56).
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -805,6 +809,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
+	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

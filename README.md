@@ -47,7 +47,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: real character faces, muzzle flash, workshop building, misc/radiant quests.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: muzzle flash, workshop building, misc/radiant quests.
 
 ## License
 

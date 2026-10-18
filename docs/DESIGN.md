@@ -107,12 +107,22 @@
   writes the look onto the copy (tint layers are rebuilt by vtable, pointing at the race's template
   entries by uniqueID), takes the settler's face template off it (faceNPC and the "use traits"
   flag: with those the engine loads the settler's baked FaceGen files as the head and looks at
-  nothing else) and spawns the stand-in from it. The copy is a runtime form with no FaceGen files,
-  which the engine was meant to build a head from as the stand-in loads, the way it builds the
-  player's; in every try so far it built none (FaceWatch, below, then falls back), so `bFriendFaces`
-  is off by default: only the sex and body shape are written, as 0.8.7 did for everyone, and the
-  dev's `facemask 7F` turns the whole look on for an experiment. A changed face deletes the stand-in; it respawns with
-  a fresh copy. Copies are never freed (forms can't be).
+  nothing else) and spawns the stand-in from it. The copy is a runtime form with no FaceGen files.
+  The engine asks one function, UsesPreprocessedHead (ID 2209308, +6DF3A0), whether an NPC's head is
+  a prebuilt FaceGen nif or is built at runtime from its parts; it answers "runtime" only for the
+  player, the chargen NPCs, the spouse and NPCs whose face a save has changed, and "prebuilt" for a
+  form with no file, so for our copy it went looking for a nif there is none of and attached no head.
+  `Face::Install` (at plugin load) points the six calls to it (in the head task, TESNPC's head part
+  update, the FaceGen head data queue, DoOnQueueMe and the head build, twice) at our own check,
+  which answers "runtime" for our copies (by address and form ID, in `FaceHeads::Copies`, lock-free
+  since the loader threads ask) and passes every other NPC on to the engine's. All six must be
+  calls to it as 1.11.240 has them (another plugin's patch at one, or another game version: none is
+  patched, and every copy gets the settler's head). `src/game/FaceHeads.h` (game-free, tested) holds
+  those rules and which pieces a copy gets; `tools/addrcheck.ps1` checks the six sites. With that,
+  `bFriendFaces` is on by default (live 2026-10-18: both directions, a cell change, a save reload, a
+  rebuild and a face changed in play), and the dev's `facemask` picks the pieces for an experiment.
+  A changed face deletes the stand-in; it respawns with a fresh copy. Copies are never freed (forms
+  can't be), and at most 512 a session get their own head (then the settler's).
   `src/game/FaceWatch.h` (game-free, tested) watches each stand-in placed with its own head: once
   its 3D is loaded with no face node on it for 3 s, the engine is asked to build its 3D again
   (`Actor::Reset3D`, what LooksMenu does after editing an NPC's face), once; with still no head 3 s
