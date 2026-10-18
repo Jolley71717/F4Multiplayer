@@ -262,21 +262,29 @@ TEST("mirror gait: a stand-in, and a state without the owner's gait, go by the s
 	CHECK(MirrorGait::Person(true, 7, 64, false, 373.0f, Gait::Kind::kWalk, 0).gait == Gait::Kind::kRun);
 }
 
-TEST("mirror gait: an owner's NPC carried with its legs still (a lift, a push) is sent standing, and its copy stands")
+TEST("mirror gait: an owner's NPC whose standing graph creeps is sent standing; one carried further is sent the ground it covers")
 {
 	using MirrorGait::Family;
-	CHECK(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, true) == 0.0f);
-	CHECK(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, false) == 120.0f);  // its graph not read: by the ground, as before
-	CHECK(MirrorGait::Reported(373.0f, 0.0f, Family::kPerson, true) == 373.0f);   // legs that play go before the graph's word
+	// Its graph stands, its legs play nothing, and the ground covered is within a standing NPC's creep: standing.
+	CHECK(MirrorGait::Reported(0.0f, 0.0f, Family::kPerson, true) == 0.0f);
+	CHECK(MirrorGait::Reported(0.0f, 12.0f, Family::kPerson, true) == 0.0f);
+	CHECK(MirrorGait::Reported(0.0f, MoveSync::START, Family::kPerson, true) == 0.0f);
+	// Carried past that with its legs still (a lift, a vertibird, a script, a push): the ground it covers, as before.
+	CHECK(MirrorGait::Reported(0.0f, MoveSync::START + 1.0f, Family::kPerson, true) == MoveSync::START + 1.0f);
+	CHECK(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, true) == 120.0f);
+	CHECK(MirrorGait::Reported(0.0f, 12.0f, Family::kPerson, false) == 12.0f);   // its graph not read: by the ground, as before
+	CHECK(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, false) == 120.0f);
+	CHECK(MirrorGait::Reported(373.0f, 0.0f, Family::kPerson, true) == 373.0f);  // legs that play go before the graph's word
 	CHECK(MirrorGait::Reported(92.6f, 300.0f, Family::kPerson, false) == 92.6f);
 	// A creature's graph is not taken at its word: one that never had the variable kept would slide along standing.
+	CHECK(MirrorGait::Reported(0.0f, 12.0f, Family::kDog, true) == 12.0f);
 	CHECK(MirrorGait::Reported(0.0f, 458.0f, Family::kDog, true) == 458.0f);
 	CHECK(MirrorGait::Reported(0.0f, 300.0f, Family::kCreature, true) == 300.0f);
 
-	// Carried at 120 units/s for two seconds: the copy's graph never sets off.
+	// Standing with a creep of 12 units/s for two seconds: the copy's graph never sets off.
 	std::vector<Protocol::ActorState> sent;
 	for (int i = 0; i < 40; ++i) {
-		sent.push_back(Owned(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, true), 0, WALK, 1.0f));
+		sent.push_back(Owned(MirrorGait::Reported(0.0f, 12.0f, Family::kPerson, true), 0, WALK, 1.0f));
 	}
 	PersonGraph graph;
 	Copy        copy;
@@ -284,6 +292,20 @@ TEST("mirror gait: an owner's NPC carried with its legs still (a lift, a push) i
 		Frame(graph, copy, state);
 		CHECK(!graph.moving);
 	}
+	// Carried at 120 units/s for as long: the copy walks along, as it did before its owner's graph was read.
+	sent.clear();
+	for (int i = 0; i < 40; ++i) {
+		sent.push_back(Owned(MirrorGait::Reported(0.0f, 120.0f, Family::kPerson, true), 0, WALK, 1.0f));
+	}
+	PersonGraph carriedGraph;
+	Copy        carried;
+	bool        walked = false;
+	for (const auto& state : ThroughServer(sent)) {
+		Frame(carriedGraph, carried, state);
+		walked = walked || carriedGraph.moving;
+	}
+	CHECK(walked);
+	CHECK(carriedGraph.moving && carriedGraph.gait == WALK);
 }
 
 TEST("mirror gait: which graph an NPC has is told from the variables it answers, the same in both games")
