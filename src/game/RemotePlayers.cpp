@@ -1768,7 +1768,8 @@ namespace RemotePlayers
 				a_player.faceOwnHead = made && Face::OwnHead(parts);
 			}
 			if (a_player.faceBaseId) {
-				if (const auto faceBase = RE::TESForm::GetFormByID<RE::TESNPC>(a_player.faceBaseId)) {
+				const auto faceBase = RE::TESForm::GetFormByID<RE::TESNPC>(a_player.faceBaseId);
+				if (faceBase && (!a_player.faceOwnHead || Face::MarkCopy(faceBase))) {
 					npc = faceBase;
 				} else {
 					a_player.faceBaseId = 0;  // gone with a load: made again next time

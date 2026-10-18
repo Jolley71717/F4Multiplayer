@@ -38,6 +38,11 @@ namespace Face
 	// Null if the race differs from a_base's or the game can't make the copy. a_parts comes back as the pieces it got:
 	// the body shape only when the copy can't be marked for a runtime head (FaceHeads::Copies full).
 	[[nodiscard]] RE::TESNPC* MakeBase(RE::TESNPC* a_base, const Protocol::Face& a_face, std::uint32_t& a_parts);
+	// A copy MakeBase made with its own head, worn again after a load kept it: marked again (ForgetCopies forgot it).
+	// False if it can't be (the marks are full): a stand-in must not wear it, it would have no head.
+	[[nodiscard]] bool MarkCopy(RE::TESNPC* a_copy);
+	// As a save loads, on the main thread: the marks are forgotten (FaceHeads::Copies).
+	void ForgetCopies();
 
 	// Whether an actor's loaded 3D has a face (head) on it.
 	[[nodiscard]] bool HasHead(RE::TESObjectREFR* a_actor);

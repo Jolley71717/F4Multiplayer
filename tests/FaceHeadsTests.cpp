@@ -117,6 +117,23 @@ TEST("face heads: a full list takes no more copies and keeps the ones it has")
 	CHECK(copies.Add(0x2000, 2));  // already there: still fine when full
 }
 
+TEST("face heads: a load forgets every copy, and a kept copy can be marked again")
+{
+	FaceHeads::Copies<2> copies;
+	CHECK(copies.Add(0x1000, 0xFF000801));
+	CHECK(copies.Add(0x2000, 0xFF000802));
+	copies.Clear();
+	CHECK(copies.Size() == 0);
+	// The load set the runtime IDs back: another NPC made at a freed copy's address with its ID is not ours.
+	CHECK(!copies.Contains(0x1000, 0xFF000801));
+	CHECK(!copies.Contains(0x2000, 0xFF000802));
+	// Room again: a copy the load kept is marked as a stand-in wears it.
+	CHECK(copies.Add(0x2000, 0xFF000802));
+	CHECK(copies.Add(0x3000, 0xFF000803));
+	CHECK(copies.Contains(0x2000, 0xFF000802));
+	CHECK(!copies.Contains(0x1000, 0xFF000801));
+}
+
 TEST("face heads: the loader threads read the copies while the main thread adds them")
 {
 	constexpr std::size_t N = 256;

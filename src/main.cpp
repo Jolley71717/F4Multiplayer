@@ -283,7 +283,12 @@ namespace
 			break;
 		case F4SE::MessagingInterface::kPreLoadGame:
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
-			RunBeforeSaveOrLoad([] { Session::OnBeforeSaveOrLoad(); }, "load");
+			RunBeforeSaveOrLoad(
+				[] {
+					Session::OnBeforeSaveOrLoad();
+					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
+				},
+				"load");
 			break;
 		case F4SE::MessagingInterface::kPreSaveGame:
 			BeginSaveOrLoad(HangWatch::Phase::kSave);
@@ -766,7 +771,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// Seven calls patched, 14 bytes each: TextureWait::Install's one, Face::Install's six.
+	// Seven calls patched through two 14-byte stubs: TextureWait::Install's one, Face::Install's six (they share one).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 160 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();

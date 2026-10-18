@@ -219,6 +219,23 @@ namespace Face
 		return face;
 	}
 
+	bool MarkCopy(RE::TESNPC* a_copy)
+	{
+		if (!a_copy || !patched) {
+			return false;
+		}
+		if (!copies.Add(reinterpret_cast<std::uintptr_t>(a_copy), a_copy->GetFormID())) {
+			++full;
+			return false;
+		}
+		return true;
+	}
+
+	void ForgetCopies()
+	{
+		copies.Clear();
+	}
+
 	std::uint32_t Parts()
 	{
 		return FaceHeads::Parts(Config::Get().friendFaces, parts, patched);

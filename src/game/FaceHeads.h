@@ -83,11 +83,11 @@ namespace FaceHeads
 		return sites;
 	}
 
-	// Our copies: the base NPCs made for stand-ins with their own head, by address and form ID (a form freed with a
-	// load and another made at its address with another ID is not ours). Added to on the main thread only; read from
-	// any (the engine's loader threads run the head task), without a lock. Never emptied: copies are never freed by
-	// us, there are a few per friend and session, and an entry for one the engine freed matches nothing (its address
-	// would have to come back with its ID).
+	// Our copies: the base NPCs made for stand-ins with their own head, by address and form ID. Added to on the main
+	// thread only; read from any (the engine's loader threads run the head task), without a lock. Emptied as a save
+	// loads (Face::ForgetCopies): the load sets the runtime form IDs back, so a form the engine makes after it at a
+	// freed copy's address can come back with that copy's ID too. A copy the load kept is marked again when a stand-in
+	// wears it (Face::MarkCopy).
 	template <std::size_t N>
 	class Copies
 	{
@@ -120,6 +120,10 @@ namespace FaceHeads
 		}
 
 		std::size_t Size() const { return count.load(std::memory_order_acquire); }
+
+		// Main thread only. A reader on another thread that read the count before may still compare a slot as it is
+		// written again: for that one call it can miss a copy being marked, which no head task asks about yet.
+		void Clear() { count.store(0, std::memory_order_release); }
 
 	private:
 		std::array<std::atomic<std::uintptr_t>, N> addresses{};
