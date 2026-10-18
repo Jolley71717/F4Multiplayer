@@ -8,11 +8,15 @@ code that reads what arrives from them must not trust it: a modified client can 
 
 ## What is built and scanned here
 
-Only the game-free parts build on Linux: `common/` (the wire protocol, the networking helpers,
-the relay server's logic), `server/` (the dedicated server) and `tests/` (the unit tests, which
+Only the game-free parts build on Linux (`.oss-scanner/Dockerfile`: Ubuntu 24.04, gcc 14, xmake
+v3.1.2): `common/` (the wire protocol, the networking helpers, the relay server's logic),
+`server/` (the dedicated server), `bot/` (the fake player) and `tests/` (the unit tests, which
 also include the game-free headers under `src/game` and `src/net`). The plugin DLL itself needs
-Fallout 4's engine and MSVC; its engine-facing code is out of scope for this scan, but the
-headers it shares with the tests are in scope.
+Fallout 4's engine and MSVC, so `xmake.lua` leaves its target out on every platform but Windows;
+its engine-facing code is out of scope for this scan, but the headers it shares with the tests
+are in scope. The tests pass in the image (1138, one marked as a known bug); the two that check
+Windows file sharing (a file another program holds open can't be renamed) check the Linux
+outcome there instead.
 
 ## Where untrusted input enters
 
