@@ -296,8 +296,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   owner's game.
 - Power armor frames a game made at runtime (0xFF......, placed by a script, a quest or an encounter rather than a plugin)
   are shared the same way (`FrameShare::SharesMade`, `SpawnBook::Theirs::DecideFrame`): the owner's frame walk (NpcSync,
-  every 2 s) finds the ones standing loaded, and its player's own (got into or out of in the session, or left last as it
-  began) wherever its world still has them, and reports each as a spawn whose base is the frame's furniture; its state
+  every 2 s) finds its player's own (got into or out of in the session, or left last as it began) wherever its world
+  still has them, and, in the host's game only, any standing loaded (a joiner's world makes its own frames, and its
+  stranger's would stand beside the host's own), and reports each as a spawn whose base is the frame's furniture; its state
   goes as a pre-placed frame's does (once a second, at once when it moved). Never one somebody is in (the engine disables
   a worn frame; the wearer's stand-in shows it), nor a copy the session placed (a friend's stand-in's, parked or shared
   frame). One that stops being shared (worn, gone, a stranger's left in a cell since unloaded) is let go, which ends

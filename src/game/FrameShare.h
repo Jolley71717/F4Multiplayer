@@ -128,12 +128,15 @@ namespace FrameShare
 	// good, its state sent as a pre-placed one's is (Due), and every other game places a copy of it where ours stands
 	// (SpawnBook::Theirs::DecideFrame). A friend's suit parked before we joined is told to us so, as the server tells a
 	// joiner every spawn shared so far.
-	// Shared while it stands loaded here, and our player's own (got into or out of in this session, or left last as it
-	// began) wherever our world still has it: their suit parked at home while they roam. One that only stood in a cell
-	// since unloaded is let go, and the copies go with it. Never while somebody is in it: the engine disables a worn
-	// frame, and the wearer's stand-in shows it then; the copies go and it is shared afresh where they get out. Never a
-	// copy the session placed here (that would send a friend's own frame back to them).
-	constexpr bool SharesMade(const Ours& a_ours, bool a_usedHere)
+	// Shared: our player's own (got into or out of in this session, or left last as it began) wherever our world still
+	// has it, their suit parked at home while they roam; and, from the host's game, any standing loaded there (its world
+	// is the session's, as for a pre-placed frame: Offers). A joiner's game never shares a stranger's: each game makes
+	// its own frames at runtime (an encounter's, a script's), and a joiner's sent to the host would stand a second suit
+	// beside the host's own in the same spot. One that only stood in a cell since unloaded is let go, and the copies go
+	// with it. Never while somebody is in it: the engine disables a worn frame, and the wearer's stand-in shows it then;
+	// the copies go and it is shared afresh where they get out. Never a copy the session placed here (that would send a
+	// friend's own frame back to them).
+	constexpr bool SharesMade(const Ours& a_ours, bool a_hosting, bool a_usedHere)
 	{
 		if (!a_ours.found || !a_ours.created || !a_ours.frame || a_ours.copy) {
 			return false;
@@ -141,7 +144,7 @@ namespace FrameShare
 		if (a_ours.wornHere || a_ours.off || a_ours.inUse) {
 			return false;
 		}
-		return a_ours.loaded || a_usedHere;
+		return a_usedHere || (a_hosting && a_ours.loaded);
 	}
 
 	// Of the spawns one game may share at once (Protocol::MAX_SPAWNS_PER_PLAYER), frames take this many at most: the

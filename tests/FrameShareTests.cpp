@@ -174,17 +174,23 @@ TEST("frame share: a frame is ours to share standing loaded, worn by our player,
 	CHECK(!FrameShare::Keeps(Share::kNo));
 }
 
-TEST("frame share: a frame our game made is shared as a spawn while it stands loaded, or wherever it is while it is our player's own")
+TEST("frame share: a frame our game made is shared as a spawn wherever it is while it is our player's own, and from the host's game while it stands loaded")
 {
-	using FrameShare::SharesMade;
-	auto made = Standing();
+	// SharesMade(ours, hosting, usedHere)
+	const auto SharesMade = [](const FrameShare::Ours& a_ours, bool a_usedHere, bool a_hosting = true) { return FrameShare::SharesMade(a_ours, a_hosting, a_usedHere); };
+	auto       made = Standing();
 	made.created = true;
 	CHECK(SharesMade(made, false));
 	CHECK(SharesMade(made, true));
+	// A joiner's game shares only its player's own: a stranger's frame its world made (an encounter's) is the host's
+	// game's word, which has its own in that spot.
+	CHECK(!SharesMade(made, false, false));
+	CHECK(SharesMade(made, true, false));
 	// In a cell since unloaded: only our player's own (their suit parked at home while they roam).
 	made.loaded = false;
 	CHECK(!SharesMade(made, false));
 	CHECK(SharesMade(made, true));
+	CHECK(SharesMade(made, true, false));
 	// Somebody is in it (the engine disables a worn frame): the copies go, and the wearer's stand-in shows it.
 	made = Standing();
 	made.created = true;

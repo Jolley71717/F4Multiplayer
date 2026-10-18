@@ -842,7 +842,7 @@ namespace NpcSync
 					continue;
 				}
 				const auto frame = MadeFrameRef(local);
-				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), usedMade.contains(local));
+				const bool share = frame && FrameShare::SharesMade(FrameOursOf(frame), hosting, usedMade.contains(local));
 				if (const auto spawn = Spawns::ShareFrame(frame, share)) {
 					a_loaded.insert(spawn);
 				}
@@ -909,7 +909,7 @@ namespace NpcSync
 				return std::nullopt;
 			}
 			const auto ours = FrameOursOf(frame);
-			if (made ? !FrameShare::SharesMade(ours, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
+			if (made ? !FrameShare::SharesMade(ours, hosting, usedMade.contains(made->GetFormID())) : !FrameShare::Keeps(FrameShare::ChooseShare(ours))) {
 				return std::nullopt;
 			}
 			const auto sent = sentFrames.find(a_id);
