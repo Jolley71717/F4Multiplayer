@@ -12,10 +12,10 @@ namespace GpuWatch
 		GpuDevice::Watch watch;
 	}
 
-	void Tick()
+	void Tick(bool (*a_quitting)())
 	{
-		if (watch.IsLost()) {
-			return;  // said once; the device never comes back
+		if (watch.IsLost() || a_quitting()) {
+			return;  // said once, the device never comes back; or the engine is letting it go
 		}
 		const auto renderer = RE::BSGraphics::GetRendererData();
 		const auto device = renderer ? renderer->device : nullptr;

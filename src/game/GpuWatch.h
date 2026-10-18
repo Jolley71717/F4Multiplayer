@@ -7,7 +7,8 @@
 namespace GpuWatch
 {
 	// Once a second, from the frame watch's thread (main.cpp).
-	void Tick();
+	// a_quitting is asked again just before the device is: the engine releases it as it quits.
+	void Tick(bool (*a_quitting)());
 
 	// For the developer's `frames` command: gpu=ok|lost(reason)|none and how many checks ran. Any thread.
 	[[nodiscard]] std::string Describe();

@@ -684,7 +684,7 @@ namespace
 				FastLoad::Tick(result.past);
 				// The graphics driver taking the game's device away: logged once, before the crash with no plugin frame
 				// that follows (GpuDevice.h).
-				GpuWatch::Tick();
+				GpuWatch::Tick(Quitting);
 			} catch (const std::exception& e) {
 				REX::ERROR("Frame watch: {}", e.what());
 			}
