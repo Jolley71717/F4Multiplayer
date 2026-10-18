@@ -29,9 +29,6 @@ reject.host_not_ready = El anfitrión aún no está en la partida
 reject.full = El servidor está lleno
 reject.order = Tu orden de carga no es el de los demás jugadores.
 reject.order_all = Todos necesitan los mismos mods en el mismo orden.
-reject.only_you = Solo tú tienes:
-reject.missing = No tienes:
-reject.same_mods = Mismos mods, distinto orden: ordena los tuyos como los suyos.
 reject.texture = Los plugins de texturas solo pueden diferir si cargan al final.
 party.unstable = Multijugador: la conexión con el anfitrión es inestable
 party.restored = Multijugador: conexión restablecida
@@ -149,3 +146,18 @@ menu.compass_markers = Marcadores en la brújula
 menu.compass_markers_what = tus amigos en la brújula
 menu.fast_loading = Carga rápida
 menu.fast_loading_what = sin vsync en las pantallas de carga
+
+menu.mods = Comparar mods ({n})
+menu.mods_ask = Preguntar otra vez
+
+# --- Tus mods comparados con los del anfitrión ---
+mods.differ = Multijugador: tus mods no son iguales a los del anfitrión ({n}): presiona {key}
+mods.match = Multijugador: tus mods son iguales a los del anfitrión
+mods.ask_wait = Multijugador: acabas de preguntarle al anfitrión; vuelve a intentarlo en unos segundos
+mods.same = Tus mods son iguales a los del anfitrión.
+mods.page_intro = Tus mods comparados con los del anfitrión: {n} por cambiar. El juego solo carga los mods al arrancar: cambia los tuyos y reinícialo.
+mods.missing = No están en tu juego (instálalos y actívalos):
+mods.extra = Solo están en tu juego (desactívalos):
+mods.order = En otra posición de tu orden de carga (acomódalos en el orden del anfitrión):
+mods.light_here = {name} (plugin ligero en tu juego, completo en el del anfitrión)
+mods.full_here = {name} (plugin completo en tu juego, ligero en el del anfitrión)

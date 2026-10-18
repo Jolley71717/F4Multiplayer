@@ -232,9 +232,6 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "reject.full", {}, "Server is full" },
 		{ "reject.order", {}, "Your load order is different from the other players." },
 		{ "reject.order_all", {}, "Everyone needs the same mods in the same order." },
-		{ "reject.only_you", {}, "Only you have:" },
-		{ "reject.missing", {}, "You are missing:" },
-		{ "reject.same_mods", {}, "Same mods, different order: sort yours like theirs." },
 		{ "reject.texture", {}, "Texture plugins may differ only when they load last." },
 		{ "party.unstable", {}, "Multiplayer: connection to the host is unstable" },
 		{ "party.restored", {}, "Multiplayer: connection restored" },
@@ -353,6 +350,18 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.compass_markers_what", {}, "friends on the compass" },
 		{ "menu.fast_loading", {}, "Fast loading" },
 		{ "menu.fast_loading_what", {}, "vsync off during loading screens" },
+		{ "menu.mods", { { "n", 3 } }, "Compare mods (3)" },
+		{ "menu.mods_ask", {}, "Ask the host again" },
+		{ "mods.differ", { { "n", 3 }, { "key", "F1" } }, "Multiplayer: your mods differ from the host's (3): see F1" },
+		{ "mods.match", {}, "Multiplayer: your mods match the host's" },
+		{ "mods.ask_wait", {}, "Multiplayer: you just asked the host; try again in a few seconds" },
+		{ "mods.same", {}, "Your mods match the host's." },
+		{ "mods.page_intro", { { "n", 3 } }, "Your mods compared with the host's: 3 to change. The game loads mods only when it starts: change yours to match, then restart it." },
+		{ "mods.missing", {}, "Missing in your game (install and enable these):" },
+		{ "mods.extra", {}, "Only in your game (disable these):" },
+		{ "mods.order", {}, "In another place in your load order (sort these like the host's):" },
+		{ "mods.light_here", { { "name", "A.esp" } }, "A.esp (light in your game, full in the host's)" },
+		{ "mods.full_here", { { "name", "A.esp" } }, "A.esp (full in your game, light in the host's)" },
 	};
 
 	English english;
@@ -396,14 +405,16 @@ TEST("text: a server's refusals read in the player's language, and a changed ser
 		"reject.password = Falsches Passwort\n"
 		"reject.version = Versionskonflikt: Server {server}, du {you}.\n"
 		"reject.order = Deine Ladereihenfolge ist anders.\n"
-		"reject.only_you = Nur du hast:\n"
-		"reject.missing = Dir fehlt:\n"));
+		"reject.order_all = Alle brauchen dieselben Mods.\n"));
 	CHECK(Text::Reject("Wrong password") == "Falsches Passwort");
 	CHECK(Text::Reject("Server is full") == "Server is full");  // no German text: the English
 	CHECK(Text::Reject(sent[4]) == "Versionskonflikt: Server 31, du 30.");
 	CHECK(Text::Reject("Version mismatch: server uses protocol x, you have 30. Install the same mod version.") ==
 		  "Version mismatch: server uses protocol x, you have 30. Install the same mod version.");
-	CHECK(Text::Reject(sent[5]) == "Deine Ladereihenfolge ist anders. Nur du hast: Evil.esp, Mine.esp. Dir fehlt: Theirs.esp.");
+	CHECK(Text::Reject(sent[5]) == "Deine Ladereihenfolge ist anders.");
+	CHECK(Text::Reject(sent[7]) == "Deine Ladereihenfolge ist anders. Alle brauchen dieselben Mods.");
+	// No German text for the texture sentence: it stays English.
+	CHECK(Text::Reject(sent[8]) == "Deine Ladereihenfolge ist anders. Texture plugins may differ only when they load last.");
 	CHECK(Text::Reject("Some refusal a changed server made up") == "Some refusal a changed server made up");
 	CHECK(Text::Reject("") == "");
 }

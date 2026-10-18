@@ -236,11 +236,44 @@ namespace Menu
 			ShowMain();
 		}
 
+		// Our mods compared with the host's (Session::HostMods), a page of names at a time (ModDiff::Pages). "Back"
+		// first; "Ask the host again" while in the session; "More" to turn the page.
+		void ShowMods(std::size_t a_page)
+		{
+			const auto diff = Session::HostMods();
+			if (!diff) {
+				ShowMain();  // gone meanwhile (another server, or let in with the host's load order)
+				return;
+			}
+			const auto  pages = ModDiff::Pages(*diff);
+			const auto  page = a_page % pages.size();
+			std::vector<Button> choices;
+			choices.push_back({ Text::Get("menu.back"), ShowMain });
+			if (Session::GetStatus().link == Session::Status::Link::kJoined && !Session::GetStatus().hosting) {
+				choices.push_back({ Text::Get("menu.mods_ask"), [] { Session::AskHostMods(); } });
+			}
+			if (pages.size() > 1) {
+				choices.push_back({ Text::Format("menu.more", { { "page", page + 1 }, { "pages", pages.size() } }), [=] { ShowMods(page + 1); } });
+			}
+			Show(pages[page], std::move(choices));
+		}
+
+		void ShowMainPage(std::size_t a_page);
+
 		void ShowMain()
+		{
+			ShowMainPage(0);
+		}
+
+		// More buttons than a box has (the Mods button, when our mods differ from the host's, besides Leave, Join
+		// someone else and Settings) turn into pages, "Close" first on each.
+		void ShowMainPage(std::size_t a_page)
 		{
 			const auto          status = Session::GetStatus();
 			std::vector<Button> entries;
-			entries.push_back({ Text::Get("menu.close"), {} });  // first: Tab closes the menu (see ShowPaged)
+			if (const auto mods = Session::HostMods(); mods && !mods->Empty() && !status.hosting) {
+				entries.push_back({ Text::Format("menu.mods", { { "n", mods->Count() } }), [] { ShowMods(0); } });
+			}
 			if (status.hosting) {
 				if (status.steam && Steam::LobbyOpen()) {
 					entries.push_back({ Text::Get("menu.invite"), [] { Steam::OpenInviteDialog(); } });
@@ -256,6 +289,12 @@ namespace Menu
 				entries.push_back({ Text::Get("menu.join"), [] { RequestJoin(0); } });
 			}
 			entries.push_back({ Text::Get("menu.settings"), [] { ShowSettings(0); } });
+			Button close{ Text::Get("menu.close"), {} };  // first: Tab closes the menu (see ShowPaged)
+			if (entries.size() + 1 > MAX_BUTTONS) {
+				ShowPaged(MainBody(), std::move(entries), a_page, ShowMainPage, std::move(close));
+				return;
+			}
+			entries.insert(entries.begin(), std::move(close));
 			Show(MainBody(), std::move(entries));
 		}
 

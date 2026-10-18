@@ -32,6 +32,8 @@ namespace
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
 	constexpr auto RENAME_INTERVAL = std::chrono::milliseconds(500);
+	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
+	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
@@ -211,6 +213,7 @@ namespace
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
 		Clock::time_point          lastRename{};  // a name changes twice a second at most (a game sends one on a change only, once a second)
+		Clock::time_point          loadOrderSent{};  // when the session's load order last went to them (LOAD_ORDER_INTERVAL)
 		std::optional<std::string> pendingName;   // cleaned; waits for RENAME_INTERVAL to pass (flushRename)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		// NPCs this player hurt, tried to take over, or ran until another took it over or they let it go, and when
@@ -572,6 +575,16 @@ void Server::Run()
 		disconnect(a_player);
 	};
 
+	// The session's load order, for the player's game to compare with its own (Protocol::LoadOrder). None before
+	// anyone set it.
+	const auto sendLoadOrder = [&](Player& a_player, Clock::time_point a_now) {
+		if (sessionPlugins.empty()) {
+			return;
+		}
+		a_player.loadOrderSent = a_now;
+		send(a_player.key, Protocol::Encode(Protocol::LoadOrder{ sessionPlugins, options.ignoredPlugins }), true);
+	};
+
 	// Counts an event against the player's budget. A flooding player loses the excess (logged once).
 	const auto allowEvent = [&](Player& a_player) {
 		if (!a_player.welcomed) {
@@ -818,6 +831,10 @@ void Server::Run()
 			sessionContentHash = hello->contentHash;
 			sessionPlugins = hello->plugins;
 		} else if (hello->contentHash != sessionContentHash) {
+			// The session's list first, whether they are let in or not: their game names every plugin that differs, the
+			// host's ignored ones left out where they move no other plugin (the refusal names none). Before the refusal, on
+			// the same channel, so it is there by then.
+			sendLoadOrder(a_player, Clock::now());
 			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
 			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
 				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins, options.ignoredPlugins));
@@ -1975,6 +1992,13 @@ void Server::Run()
 			break;
 		case MessageType::kRename:
 			handleRename(a_player, a_data);
+			break;
+		case MessageType::kRequestLoadOrder:
+			// A player in the session asks to compare their mods with the host's again. Big: once in a while only.
+			if (const auto now = Clock::now(); a_player.welcomed && Protocol::DecodeLoadOrderRequest(a_data) &&
+			                                   (a_player.loadOrderSent == Clock::time_point{} || now - a_player.loadOrderSent >= LOAD_ORDER_INTERVAL)) {
+				sendLoadOrder(a_player, now);
+			}
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);

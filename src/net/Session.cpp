@@ -36,6 +36,7 @@
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "net/Identity.h"
+#include "net/ModDiff.h"
 #include "net/NameChoice.h"
 #include "net/NetClient.h"
 #include "net/Refusals.h"
@@ -82,6 +83,7 @@ namespace Session
 		std::optional<Protocol::Face>             sentFace;
 		Clock::time_point nextConnectAttempt{};
 		Refusals          refusals;  // why the server last turned us away, and when to try again
+		ModDiff::Tracker  hostMods;  // our mods compared with the host's, once its list came (kLoadOrder)
 		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
@@ -253,6 +255,42 @@ namespace Session
 			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -damage);
 		}
 
+		// What the HUD says of our mods compared with the host's (ModDiff::Tracker decides when).
+		void NotifyMods()
+		{
+			if (const auto count = hostMods.Differing(); count == 0) {
+				Notify("mods.match");
+			} else {
+				Notify("mods.differ", { { "n", count }, { "key", ModDiff::KeyName(Config::Get().keyMenu) } });
+			}
+		}
+
+		// The session's load order came (kLoadOrder: our hello's differed, or we asked): ours compared with it, the
+		// plugins the host lets differ left out, goes to the log name by name, and to the HUD when it is news
+		// (ModDiff::Tracker). The hash alone still decides whether we are let in.
+		void OnHostLoadOrder(const Protocol::LoadOrder& a_hosts)
+		{
+			auto       diff = ModDiff::Compare(plugins, a_hosts.plugins, a_hosts.ignored);
+			const bool same = diff == hostMods.Known();
+			if (same) {
+				REX::INFO("Session: mods: the host's load order again, {} differ as before", diff.Count());
+			} else {
+				for (const auto& line : ModDiff::LogLines(diff)) {
+					REX::INFO("Session: mods: {}", Redact::OneLine(line));
+				}
+				if (!a_hosts.ignored.empty()) {
+					std::string names;
+					for (const auto& name : a_hosts.ignored) {
+						names += (names.empty() ? "" : ", ") + name;
+					}
+					REX::INFO("Session: mods: the host lets these differ where they move no other plugin: {}", Redact::OneLine(names));
+				}
+			}
+			if (hostMods.OnList(std::move(diff), Clock::now())) {
+				NotifyMods();
+			}
+		}
+
 		void HandlePacket(std::span<const std::uint8_t> a_data)
 		{
 			using Protocol::MessageType;
@@ -276,14 +314,29 @@ namespace Session
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
 					refusals.Clear();
+					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
 					                          (msg->friendlyFire ? "session.connected_own_fire" : "session.connected_own"));
+					if (tellMods) {
+						NotifyMods();  // the list that came before the welcome, after the line saying we are in
+					}
+				}
+				break;
+			case MessageType::kLoadOrder:
+				if (const auto msg = Protocol::DecodeLoadOrder(a_data)) {
+					OnHostLoadOrder(*msg);
 				}
 				break;
 			case MessageType::kReject:
 				if (const auto msg = Protocol::DecodeReject(a_data)) {
 					const auto answer = refusals.OnReject(msg->reason);
-					if (answer.notify) {
+					// Refused for our load order: the list just before it names every plugin that differs, so the HUD says
+					// that (one message) in place of the refusal's text.
+					const bool modsDiffer = hostMods.OnRefused() && msg->reason.starts_with(Protocol::REJECT_LOAD_ORDER);
+					if (answer.notify && modsDiffer) {
+						REX::INFO("Session: refused: {}", Redact::OneLine(msg->reason));
+						NotifyMods();
+					} else if (answer.notify) {
 						Say(Text::Format("session.notice", { { "text", Text::Reject(msg->reason) } }),
 							Text::FormatEnglish("session.notice", { { "text", msg->reason } }));
 					}
@@ -585,6 +638,7 @@ namespace Session
 				Notify("session.disconnected");
 			}
 			welcomed = false;
+			hostMods.OnDisconnected();  // an ask out on this connection gets no answer
 			localId = 0;
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
@@ -629,6 +683,7 @@ namespace Session
 			nextConnectAttempt = {};
 			refusals.Clear();
 			SessionSteps::OnServerChanged(binding, WorldSync::Loot());
+			hostMods.Reset();  // what we knew of the last host's mods
 		}
 
 		// A Steam invite or "Join Game" was accepted.
@@ -833,6 +888,7 @@ namespace Session
 					hello.identity = Identity::Get();
 					hello.plugins = plugins;
 					client->Send(Protocol::Encode(hello), true);
+					hostMods.OnConnected();
 				}
 				break;
 			case ClientConnection::Event::Type::kDisconnected:
@@ -1177,6 +1233,38 @@ namespace Session
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
 			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
+	}
+
+	std::optional<ModDiff::Difference> HostMods()
+	{
+		return hostMods.Known();
+	}
+
+	AskResult AskHostMods()
+	{
+		if (!welcomed || hostedServer || client->GetStatus() != ClientConnection::Status::kConnected) {
+			return AskResult::kNotJoined;
+		}
+		if (!hostMods.OnAsk(Clock::now())) {
+			Notify("mods.ask_wait");  // the server would not answer yet (ModDiff::Tracker::ASK_INTERVAL)
+			return AskResult::kTooSoon;
+		}
+		client->Send(Protocol::Encode(Protocol::LoadOrderRequest{}), true);
+		return AskResult::kAsked;
+	}
+
+	std::string DescribeMods()
+	{
+		const auto& known = hostMods.Known();
+		const bool  asking = hostMods.Asking(Clock::now());
+		if (!known) {
+			return std::format("mods: plugins={} nothing known of the host's (asking={})", plugins.size(), asking);
+		}
+		std::string out = std::format("mods: asking={}", asking);
+		for (const auto& line : ModDiff::LogLines(*known)) {
+			out += " | " + line;
+		}
+		return out;
 	}
 
 	void ConnectTo(std::string a_address)

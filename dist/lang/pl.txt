@@ -31,9 +31,6 @@ reject.host_not_ready = Host nie jest jeszcze w grze
 reject.full = Serwer jest pełny
 reject.order = Twoja kolejność wczytywania różni się od kolejności innych graczy.
 reject.order_all = Wszyscy muszą mieć te same mody w tej samej kolejności.
-reject.only_you = Tylko ty masz:
-reject.missing = Brakuje ci:
-reject.same_mods = Te same mody, inna kolejność: ułóż swoje tak jak u nich.
 reject.texture = Wtyczki tekstur mogą się różnić tylko wtedy, gdy wczytują się na końcu.
 party.unstable = Multiplayer: połączenie z hostem jest niestabilne
 party.restored = Multiplayer: połączenie przywrócone
@@ -151,3 +148,18 @@ menu.compass_markers = Znaczniki na kompasie
 menu.compass_markers_what = znajomi na kompasie
 menu.fast_loading = Szybkie wczytywanie
 menu.fast_loading_what = V-Sync wyłączony na ekranach wczytywania
+
+menu.mods = Porównaj mody ({n})
+menu.mods_ask = Zapytaj hosta ponownie
+
+# --- Twoje mody w porównaniu z modami hosta ---
+mods.differ = Multiplayer: twoje mody różnią się od modów hosta ({n}): naciśnij {key}
+mods.match = Multiplayer: twoje mody są takie same jak u hosta
+mods.ask_wait = Multiplayer: host został zapytany przed chwilą; spróbuj ponownie za kilka sekund
+mods.same = Twoje mody są takie same jak u hosta.
+mods.page_intro = Twoje mody w porównaniu z modami hosta, do zmiany: {n}. Gra wczytuje mody tylko przy uruchomieniu: popraw swoje, a potem uruchom ją ponownie.
+mods.missing = Brak w twojej grze (zainstaluj je i włącz):
+mods.extra = Są tylko w twojej grze (wyłącz je):
+mods.order = W innym miejscu twojej kolejności wczytywania (ułóż je tak jak u hosta):
+mods.light_here = {name} (u ciebie lekka wtyczka, u hosta pełna)
+mods.full_here = {name} (u ciebie pełna wtyczka, u hosta lekka)

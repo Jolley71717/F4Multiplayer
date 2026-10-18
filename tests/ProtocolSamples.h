@@ -239,6 +239,8 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kRename, MT::kRenamed }) {
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
 		}
+		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
+		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -289,6 +291,7 @@ namespace ProtocolSamples
 		case MT::kReportActivation:
 		case MT::kReportSpawn:
 		case MT::kRename:
+		case MT::kRequestLoadOrder:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -324,6 +327,7 @@ namespace ProtocolSamples
 		case MT::kActivation:
 		case MT::kSpawned:
 		case MT::kRenamed:
+		case MT::kLoadOrder:
 			return true;
 		}
 		return false;

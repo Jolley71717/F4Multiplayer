@@ -29,9 +29,6 @@ reject.host_not_ready = 主機還沒進入遊戲
 reject.full = 伺服器已滿
 reject.order = 你的載入順序和其他玩家不一樣。
 reject.order_all = 所有人的模組和載入順序都要一樣。
-reject.only_you = 只有你有：
-reject.missing = 你缺少：
-reject.same_mods = 模組相同但順序不同：請照他們的順序排。
 reject.texture = 材質插件只有排在最後載入時才可以不同。
 party.unstable = 多人連線：與主機的連線不穩定
 party.restored = 多人連線：連線已恢復
@@ -149,3 +146,18 @@ menu.compass_markers = 羅盤標記
 menu.compass_markers_what = 在羅盤上顯示好友
 menu.fast_loading = 快速載入
 menu.fast_loading_what = 載入畫面期間關閉垂直同步
+
+menu.mods = 比較模組（{n}）
+menu.mods_ask = 再次詢問主機
+
+# --- 你的模組與主機的比較 ---
+mods.differ = 多人連線：你的模組和主機的不一樣（{n} 個）：按 {key} 查看
+mods.match = 多人連線：你的模組和主機的一樣
+mods.ask_wait = 多人連線：剛問過主機，請過幾秒再試
+mods.same = 你的模組和主機的一樣。
+mods.page_intro = 你的模組與主機的比較：需要改 {n} 個。遊戲只在啟動時載入模組：改好後重新啟動遊戲。
+mods.missing = 你的遊戲裡缺少（請安裝並啟用）：
+mods.extra = 只有你的遊戲裡有（請停用）：
+mods.order = 在你的載入順序裡位置不同（請照主機的順序排）：
+mods.light_here = {name}（你這裡是輕量插件，主機那裡是完整插件）
+mods.full_here = {name}（你這裡是完整插件，主機那裡是輕量插件）

@@ -44,6 +44,27 @@ who is with you, one line each as the F6 player list shows them. Buttons depend 
   "Invite to Game" does).
 - *Stop hosting* disconnects everyone and closes the lobby.
 - *Leave* disconnects from the host and leaves their Steam lobby; the game stops reconnecting.
+- *Compare mods (N)* comes first, once the host's mod list has come and yours differs from it (a
+  refusal for the load order; plugins the host lets differ count only where they move another
+  plugin's form IDs, as they do for the server, so a join they alone differ in has none). With it the
+  main page has more buttons than a box holds, so they turn over with *More*.
+
+**Compare mods.** Your load order against the host's, by file name: *missing in your game* (the
+host's plugins you lack, in the host's order), *only in your game* (yours the host lacks), and *in
+another place in your load order* (plugins you both have that are out of the host's order among
+their kind, or light in one game and full in the other; one moved plugin is named alone, not every
+plugin it passed). The host's `sIgnoredPlugins` come with its list and are left out as the server
+leaves them out: named only where one moves another plugin's form IDs (missing, extra or out of
+place before it). Ten names a page, *More* to turn. In the session, *Ask the host again* asks the
+host for its list; the answer goes to the HUD whatever it says. The server answers one ask in five
+seconds of the last list it sent, so the game doesn't ask sooner, and says "you just asked the host;
+try again in a few seconds" instead; an ask unanswered in ten seconds is over. The host's server
+sends its list (`kLoadOrder`, protocol 35) before refusing a joiner for the load order and before
+welcoming one whose list differs only in ignored plugins. A refused joiner's HUD says one thing,
+"your mods differ from the host's (N): see F1", at every refusal (the refusal itself names no
+plugin); a joiner let in hears of a difference once, and again only when it changes. The log has
+every name (`Session: mods: ...` lines); the dev channel's `mods` says what is known and `mods ask`
+asks again. Whether you are let in is still the load order hash alone.
 
 **Join a friend.** Steam friends who are hosting Fallout 4 co-op right now, by name: those whose
 rich presence advertises a lobby (the same "connect" string the overlay's "Join Game" uses) or who

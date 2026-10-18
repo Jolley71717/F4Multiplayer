@@ -19,15 +19,24 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 34;
+	inline constexpr std::uint16_t VERSION = 35;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
-	inline constexpr std::size_t   MAX_PLUGINS = 250;          // plugin names in a hello (the game allows 255 full plugins plus light ones; the rest are left off)
-	inline constexpr std::size_t   MAX_PLUGIN_NAME_LENGTH = 80;
+	// A load order on the wire (a hello's, kLoadOrder's): at most this many names, the light plugins' mark among them (the
+	// game allows 255 full plugins plus thousands of light ones; the rest are left off), each of at most this many bytes
+	// (a file name on Windows is at most 260 characters).
+	inline constexpr std::size_t   MAX_PLUGINS = 512;
+	inline constexpr std::size_t   MAX_PLUGIN_NAME_LENGTH = 260;
+	// The plugins a host lets differ (sIgnoredPlugins) that kLoadOrder carries: far more than a host lists.
+	inline constexpr std::size_t   MAX_IGNORED_PLUGINS = 64;
 	inline constexpr std::size_t   MAX_PASSWORD_LENGTH = 64;
 	inline constexpr std::size_t   MAX_LINE_LENGTH = 200;  // a spoken line (subtitle text)
+
+	// How a Reject's reason for the load order starts (LoadOrderDifference). The joiner's game names the plugins that
+	// differ from the session's list (kLoadOrder, sent just before), so the reason names none.
+	inline constexpr std::string_view REJECT_LOAD_ORDER = "Your load order is different from the other players.";
 
 	// A Reject's reason when a hosted server's own game hasn't joined yet: the host's world decides the
 	// session, so nobody else may arrive first. The client knows this one and tries again soon, not in a
@@ -113,6 +122,7 @@ namespace Protocol
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
+		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -145,6 +155,7 @@ namespace Protocol
 		kActivation = 133,        // another player pressed one
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
+		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -238,9 +249,28 @@ namespace Protocol
 		// Random, kept on the player's PC: the server gives a player who comes back the same player
 		// ID, so their own changes to the world are still known as theirs. 0 = none.
 		std::uint64_t identity = 0;
-		// The load order (plugin file names, in order), so a refusal can say which plugins differ.
+		// The load order (plugin file names, in order: ComparedLoadOrder), so a refusal can say which plugins differ
+		// and a joiner can be sent the session's to compare with its own (kLoadOrder). At most MAX_PLUGINS.
 		std::vector<std::string> plugins;
 	};
+
+	// The session's load order as the server has it (the host's hello's, or a dedicated server's first arrival's), for a
+	// joiner to compare with its own (src/net/ModDiff.h): sent before a refusal for the load order, before the welcome
+	// of a joiner whose list differs only in plugins the host lets differ, and when a player asks (kRequestLoadOrder).
+	// Information only: whether a joiner is let in is still decided by the hello's hash.
+	struct LoadOrder
+	{
+		std::vector<std::string> plugins;  // as Hello::plugins
+		// The plugins the host lets differ (sIgnoredPlugins: SameLoadOrderIgnoring), for the joiner's game to leave out
+		// as the server does. At most MAX_IGNORED_PLUGINS.
+		std::vector<std::string> ignored;
+
+		bool operator==(const LoadOrder&) const = default;
+	};
+
+	// kRequestLoadOrder: the type alone.
+	struct LoadOrderRequest
+	{};
 
 	struct Welcome
 	{
@@ -848,6 +878,14 @@ namespace Protocol
 			Raw(a_value.data(), length);
 		}
 
+		// A string longer than Str's 255 bytes may be (a plugin's file name): a U16 length, then the bytes.
+		void LongStr(std::string_view a_value, std::size_t a_maxLength)
+		{
+			const auto length = (std::min)(a_value.size(), (std::min<std::size_t>)(a_maxLength, 0xFFFF));
+			U16(static_cast<std::uint16_t>(length));
+			Raw(a_value.data(), length);
+		}
+
 		// A length-prefixed byte string (at most 65535 bytes).
 		void Bytes(std::span<const std::uint8_t> a_value)
 		{
@@ -894,6 +932,20 @@ namespace Protocol
 			offset += length;
 			// Every string on the wire is text someone reads (a name, a reason, a line): control
 			// characters are dropped here, before any of it reaches a HUD, a log or a status line.
+			std::erase_if(out, [](const unsigned char c) { return c < 0x20 || c == 0x7F; });
+			return out;
+		}
+
+		// Writer::LongStr's string, its control characters dropped as Str's are.
+		std::string LongStr(std::size_t a_maxLength)
+		{
+			const auto length = U16();
+			if (failed || length > a_maxLength || offset + length > data.size()) {
+				failed = true;
+				return {};
+			}
+			std::string out(reinterpret_cast<const char*>(data.data() + offset), length);
+			offset += length;
 			std::erase_if(out, [](const unsigned char c) { return c < 0x20 || c == 0x7F; });
 			return out;
 		}
@@ -979,6 +1031,35 @@ namespace Protocol
 		return state;
 	}
 
+	// A list of plugins: a U16 count (at most a_max, MAX_PLUGINS for a load order; past it the rest are left off), then
+	// each name (LongStr, at most MAX_PLUGIN_NAME_LENGTH bytes).
+	inline void WritePlugins(Writer& a_writer, const std::vector<std::string>& a_plugins, std::size_t a_max = MAX_PLUGINS)
+	{
+		const auto count = (std::min)(a_plugins.size(), a_max);
+		a_writer.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			a_writer.LongStr(a_plugins[i], MAX_PLUGIN_NAME_LENGTH);
+		}
+	}
+
+	// None for more than a_max names or a name too long (the reader has failed then).
+	inline std::optional<std::vector<std::string>> ReadPlugins(Reader& a_reader, std::size_t a_max = MAX_PLUGINS)
+	{
+		const auto count = a_reader.U16();
+		if (!a_reader.Ok() || count > a_max) {
+			return std::nullopt;
+		}
+		std::vector<std::string> plugins;
+		plugins.reserve(count);
+		for (std::uint16_t i = 0; i < count && a_reader.Ok(); ++i) {
+			plugins.push_back(a_reader.LongStr(MAX_PLUGIN_NAME_LENGTH));
+		}
+		if (!a_reader.Ok()) {
+			return std::nullopt;
+		}
+		return plugins;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const Hello& a_msg)
 	{
 		Writer w{ MessageType::kHello };
@@ -991,14 +1072,15 @@ namespace Protocol
 		w.U64(a_msg.world.sessionId);
 		w.U32(a_msg.world.containerFrom);
 		w.U64(a_msg.identity);
-		const auto plugins = (std::min)(a_msg.plugins.size(), MAX_PLUGINS);
-		w.U8(static_cast<std::uint8_t>(plugins));
-		for (std::size_t i = 0; i < plugins; ++i) {
-			w.Str(a_msg.plugins[i], MAX_PLUGIN_NAME_LENGTH);
-		}
+		// Where versions before 35 had their list (a byte's count of names of up to 80 bytes): empty, so a server of
+		// one of those still reads the hello whole and says the version differs. The list follows.
+		w.U8(0);
+		WritePlugins(w, a_msg.plugins);
 		return w.Data();
 	}
 
+	// A hello of another version (or with another magic) is read up to its version only: the rest may be laid out
+	// otherwise, and the server needs no more to say the versions differ.
 	inline std::optional<Hello> DecodeHello(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
@@ -1006,6 +1088,12 @@ namespace Protocol
 		Hello msg;
 		msg.magic = r.U32();
 		msg.version = r.U16();
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		if (msg.magic != MAGIC || msg.version != VERSION) {
+			return msg;
+		}
 		msg.contentHash = r.U32();
 		msg.name = r.Str(MAX_NAME_LENGTH);
 		msg.password = r.Str(MAX_PASSWORD_LENGTH);
@@ -1013,17 +1101,50 @@ namespace Protocol
 		msg.world.sessionId = r.U64();
 		msg.world.containerFrom = r.U32();
 		msg.identity = r.U64();
-		const auto plugins = r.U8();
-		if (plugins > MAX_PLUGINS) {
+		if (r.U8() != 0) {
+			return std::nullopt;  // the old list's place, empty since version 35
+		}
+		auto plugins = ReadPlugins(r);
+		if (!plugins || !r.Ok()) {
 			return std::nullopt;
 		}
-		for (std::uint8_t i = 0; i < plugins && r.Ok(); ++i) {
-			msg.plugins.push_back(r.Str(MAX_PLUGIN_NAME_LENGTH));
-		}
-		if (!r.Ok()) {
-			return std::nullopt;
-		}
+		msg.plugins = std::move(*plugins);
 		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const LoadOrder& a_msg)
+	{
+		Writer w{ MessageType::kLoadOrder };
+		WritePlugins(w, a_msg.plugins);
+		WritePlugins(w, a_msg.ignored, MAX_IGNORED_PLUGINS);
+		return w.Data();
+	}
+
+	inline std::optional<LoadOrder> DecodeLoadOrder(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		auto plugins = ReadPlugins(r);
+		auto ignored = plugins ? ReadPlugins(r, MAX_IGNORED_PLUGINS) : std::nullopt;
+		if (!plugins || !ignored || !r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return LoadOrder{ std::move(*plugins), std::move(*ignored) };
+	}
+
+	inline std::vector<std::uint8_t> Encode(LoadOrderRequest)
+	{
+		return Writer{ MessageType::kRequestLoadOrder }.Data();
+	}
+
+	inline std::optional<LoadOrderRequest> DecodeLoadOrderRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return LoadOrderRequest{};
 	}
 
 	inline std::vector<std::uint8_t> Encode(const WorldRequest& a_msg)
@@ -1191,57 +1312,27 @@ namespace Protocol
 		return kept(a_theirs) == kept(a_sessions);
 	}
 
-	// What a refused player needs to hear: the plugins only they have, and the ones only the session
-	// has (in load-order terms: names and order; a different order shows as both sides "having"
-	// nothing extra, so the order is named then). Fits a Reject.
+	// What a player refused for their load order hears: that it differs (REJECT_LOAD_ORDER), and that texture plugins
+	// may differ only last when one the host lets differ (or the texture pack) is only in one game. No names: the
+	// joiner's game names every plugin that differs (src/net/ModDiff.h) from the session's list, which the server
+	// sends just before (kLoadOrder). Fits a Reject.
 	inline std::string LoadOrderDifference(const std::vector<std::string>& a_theirs, const std::vector<std::string>& a_sessions, const std::vector<std::string>& a_ignored = {})
 	{
-		const auto lower = [](std::string a_s) {
-			for (char& c : a_s) {
-				c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-			}
-			return a_s;
-		};
-		const auto only = [&](const std::vector<std::string>& a_in, const std::vector<std::string>& a_notIn) {
-			std::vector<std::string> out;
-			for (const auto& name : a_in) {
-				const auto l = lower(name);
-				if (name != LIGHT_PLUGINS && std::ranges::none_of(a_notIn, [&](const std::string& a_other) { return lower(a_other) == l; })) {
-					out.push_back(name);
-				}
-			}
-			return out;
-		};
-		const auto list = [](const std::vector<std::string>& a_names) {
-			std::string s;
-			for (std::size_t i = 0; i < a_names.size() && s.size() < 70; ++i) {
-				s += (i ? ", " : "") + a_names[i];
-			}
-			if (s.size() >= 70) {
-				s += "...";
-			}
-			return s;
-		};
-		std::string out = "Your load order is different from the other players.";
+		std::string out{ REJECT_LOAD_ORDER };
 		if (a_theirs.empty() || a_sessions.empty()) {
 			return out + " Everyone needs the same mods in the same order.";  // a list is missing: nothing to compare
 		}
-		const auto mine = only(a_theirs, a_sessions);
-		const auto missing = only(a_sessions, a_theirs);
-		if (!mine.empty()) {
-			out += " Only you have: " + list(mine) + ".";
-		}
-		if (!missing.empty()) {
-			out += " You are missing: " + list(missing) + ".";
-		}
-		if (mine.empty() && missing.empty()) {
-			out += " Same mods, different order: sort yours like theirs.";
-		}
-		// A plugin that may differ (the texture pack, or one the host lets differ) is named because others load after it.
-		const auto mayDiffer = [&](const std::string& a_name) {
-			return SamePluginName(a_name, TEXTURE_PACK) || std::ranges::any_of(a_ignored, [&](const std::string& a_ignore) { return SamePluginName(a_ignore, a_name); });
+		const auto has = [](const std::vector<std::string>& a_names, std::string_view a_name) {
+			return std::ranges::any_of(a_names, [&](const std::string& a_other) { return SamePluginName(a_other, a_name); });
 		};
-		if (std::ranges::any_of(mine, mayDiffer) || std::ranges::any_of(missing, mayDiffer)) {
+		// A plugin that may differ (the texture pack, or one the host lets differ) only one game has: others load after it.
+		const auto mayDiffer = [&](const std::string& a_name) {
+			return SamePluginName(a_name, TEXTURE_PACK) || has(a_ignored, a_name);
+		};
+		const auto onlyOne = [&](const std::vector<std::string>& a_in, const std::vector<std::string>& a_notIn) {
+			return std::ranges::any_of(a_in, [&](const std::string& a_name) { return mayDiffer(a_name) && !has(a_notIn, a_name); });
+		};
+		if (onlyOne(a_theirs, a_sessions) || onlyOne(a_sessions, a_theirs)) {
 			out += " Texture plugins may differ only when they load last.";
 		}
 		return out;

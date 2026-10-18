@@ -14,10 +14,15 @@ At startup the plugin hashes the names of the loaded plugins, in order (FNV-1a, 
 the free HD texture pack when it is the last full plugin (it holds no records, but it takes a place
 in the load order: with mods after it, a mod's NPC is 09000004 with it and 08000004 without, so it
 counts then). The hash travels in the hello message. The server keeps the first
-player's hash; a later hello with a different one is refused, and the refusal names the plugins only
-the joiner has and the ones they are missing (the plugin list travels with the hello; protocol 23),
-or says the order differs. Nothing else is compared: not plugin versions, not file contents, not F4SE
-plugins, not INI settings.
+player's hash; a later hello with a different one is refused (the plugin list travels with the hello;
+protocol 23). From protocol 23 to 34 the refusal named the plugins only the joiner has and the ones they
+are missing, or said the order differs. Since protocol 35 the server sends the joiner the session's whole
+list instead, with the host's `sIgnoredPlugins` (`kLoadOrder`, up to 512 names of up to 260 bytes; the hello
+carries as many), just before the refusal, which names no plugin; the joining game names every plugin that
+differs on the HUD, on the F1 menu's *Compare mods* page and in the log: missing, extra, and out of order
+(src/net/ModDiff.h), the ignored plugins left out where they move no other plugin, as the server leaves
+them out. That is information only: the hash still decides. Nothing else is compared: not plugin
+versions, not file contents, not F4SE plugins, not INI settings.
 
 ## Options, from cheapest to hardest
 
