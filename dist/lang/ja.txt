@@ -170,7 +170,7 @@ menu.mods = MODを比較（{n}）
 menu.mods_ask = ホストにもう一度確認
 
 # --- ホストのMODとの比較 ---
-mods.differ = マルチプレイ：ホストとMODが違います（{n}件）：{key}を参照
+mods.differ = マルチプレイ：ホストとMODが違います（{n}件）：{key}で確認
 mods.match = マルチプレイ：MODはホストと同じです
 mods.ask_wait = マルチプレイ：ホストに確認したばかりです。数秒後にもう一度試してください
 mods.same = MODはホストと同じです。

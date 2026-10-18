@@ -148,10 +148,10 @@ menu.fast_loading = 快速載入
 menu.fast_loading_what = 載入畫面期間關閉垂直同步
 
 menu.mods = 比較模組（{n}）
-menu.mods_ask = 再問一次主機
+menu.mods_ask = 再次詢問主機
 
 # --- 你的模組與主機的比較 ---
-mods.differ = 多人連線：你的模組和主機的不一樣（{n} 個）：見 {key}
+mods.differ = 多人連線：你的模組和主機的不一樣（{n} 個）：按 {key} 查看
 mods.match = 多人連線：你的模組和主機的一樣
 mods.ask_wait = 多人連線：剛問過主機，請過幾秒再試
 mods.same = 你的模組和主機的一樣。

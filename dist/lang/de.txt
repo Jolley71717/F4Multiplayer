@@ -151,11 +151,11 @@ menu.mods = Mods vergleichen ({n})
 menu.mods_ask = Host erneut fragen
 
 # --- Deine Mods im Vergleich mit denen des Hosts ---
-mods.differ = Multiplayer: Deine Mods weichen von denen des Hosts ab ({n}): siehe {key}
+mods.differ = Multiplayer: Deine Mods weichen von denen des Hosts ab ({n}): Drücke {key}
 mods.match = Multiplayer: Deine Mods stimmen mit denen des Hosts überein
 mods.ask_wait = Multiplayer: Du hast den Host gerade erst gefragt; versuch es in ein paar Sekunden noch einmal
 mods.same = Deine Mods stimmen mit denen des Hosts überein.
-mods.page_intro = Deine Mods im Vergleich mit denen des Hosts: {n} zu ändern. Das Spiel lädt Mods nur beim Start: Passe deine an und starte es dann neu.
+mods.page_intro = Deine Mods im Vergleich mit denen des Hosts, zu ändern: {n}. Das Spiel lädt Mods nur beim Start: Passe deine an und starte es dann neu.
 mods.missing = Fehlen in deinem Spiel (installiere und aktiviere sie):
 mods.extra = Nur in deinem Spiel (deaktiviere sie):
 mods.order = An anderer Stelle in deiner Ladereihenfolge (sortiere sie wie beim Host):

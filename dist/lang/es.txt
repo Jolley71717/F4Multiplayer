@@ -148,16 +148,16 @@ menu.fast_loading = Carga rápida
 menu.fast_loading_what = sin vsync en las pantallas de carga
 
 menu.mods = Comparar mods ({n})
-menu.mods_ask = Volver a preguntar al anfitrión
+menu.mods_ask = Volver a preguntar
 
 # --- Tus mods comparados con los del anfitrión ---
-mods.differ = Multijugador: tus mods no coinciden con los del anfitrión ({n}): consulta {key}
+mods.differ = Multijugador: tus mods no coinciden con los del anfitrión ({n}): pulsa {key}
 mods.match = Multijugador: tus mods coinciden con los del anfitrión
 mods.ask_wait = Multijugador: acabas de preguntar al anfitrión; vuelve a intentarlo en unos segundos
 mods.same = Tus mods coinciden con los del anfitrión.
 mods.page_intro = Tus mods comparados con los del anfitrión: {n} por cambiar. El juego solo carga los mods al iniciarse: cambia los tuyos y reinícialo.
 mods.missing = Faltan en tu juego (instálalos y actívalos):
 mods.extra = Solo están en tu juego (desactívalos):
-mods.order = En otro lugar de tu orden de carga (ordénalos como el anfitrión):
-mods.light_here = {name} (ligero en tu juego, completo en el del anfitrión)
-mods.full_here = {name} (completo en tu juego, ligero en el del anfitrión)
+mods.order = En otro lugar de tu orden de carga (ponlos en el orden del anfitrión):
+mods.light_here = {name} (plugin ligero en tu juego, completo en el del anfitrión)
+mods.full_here = {name} (plugin completo en tu juego, ligero en el del anfitrión)

@@ -149,16 +149,16 @@ menu.fast_loading = Caricamento rapido
 menu.fast_loading_what = vsync spento durante i caricamenti
 
 menu.mods = Confronta mod ({n})
-menu.mods_ask = Chiedi di nuovo all'host
+menu.mods_ask = Chiedi ancora all'host
 
 # --- Le tue mod confrontate con quelle dell'host ---
-mods.differ = Multiplayer: le tue mod sono diverse da quelle dell'host ({n}): vedi {key}
+mods.differ = Multiplayer: le tue mod sono diverse da quelle dell'host ({n}): premi {key}
 mods.match = Multiplayer: le tue mod sono uguali a quelle dell'host
 mods.ask_wait = Multiplayer: hai appena chiesto all'host; riprova tra qualche secondo
 mods.same = Le tue mod sono uguali a quelle dell'host.
 mods.page_intro = Le tue mod confrontate con quelle dell'host: {n} da cambiare. Il gioco carica le mod solo all'avvio: sistema le tue, poi riavvialo.
 mods.missing = Mancano nel tuo gioco (installale e attivale):
 mods.extra = Solo nel tuo gioco (disattivale):
-mods.order = In un altro punto del tuo ordine di caricamento (ordinale come l'host):
-mods.light_here = {name} (light nel tuo gioco, completo in quello dell'host)
-mods.full_here = {name} (completo nel tuo gioco, light in quello dell'host)
+mods.order = In un altro punto del tuo ordine di caricamento (mettile nell'ordine dell'host):
+mods.light_here = {name} (plugin light nel tuo gioco, completo in quello dell'host)
+mods.full_here = {name} (plugin completo nel tuo gioco, light in quello dell'host)

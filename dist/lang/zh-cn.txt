@@ -148,10 +148,10 @@ menu.fast_loading = 快速加载
 menu.fast_loading_what = 加载画面期间关闭垂直同步
 
 menu.mods = 对比 MOD（{n}）
-menu.mods_ask = 再问一次主机
+menu.mods_ask = 再次询问主机
 
 # --- 你的 MOD 与主机的对比 ---
-mods.differ = 多人联机：你的 MOD 和主机的不一样（{n} 个）：见 {key}
+mods.differ = 多人联机：你的 MOD 和主机的不一样（{n} 个）：按 {key} 查看
 mods.match = 多人联机：你的 MOD 和主机的一样
 mods.ask_wait = 多人联机：刚问过主机，请过几秒再试
 mods.same = 你的 MOD 和主机的一样。

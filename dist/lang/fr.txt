@@ -155,7 +155,7 @@ menu.mods = Comparer les mods ({n})
 menu.mods_ask = Redemander à l'hôte
 
 # --- Vos mods comparés à ceux de l'hôte ---
-mods.differ = Multijoueur : vos mods diffèrent de ceux de l'hôte ({n}) : voir {key}
+mods.differ = Multijoueur : vos mods diffèrent de ceux de l'hôte ({n}) : appuyez sur {key}
 mods.match = Multijoueur : vos mods sont les mêmes que ceux de l'hôte
 mods.ask_wait = Multijoueur : vous venez de demander à l'hôte ; réessayez dans quelques secondes
 mods.same = Vos mods sont les mêmes que ceux de l'hôte.
