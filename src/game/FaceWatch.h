@@ -7,11 +7,11 @@
 // Kept free of the game so it can be tested.
 //
 // The stand-in is placed from a copy of a settler's base NPC wearing the friend's head parts, hair, complexion,
-// sculpting and tints. The engine builds an NPC's head as it loads the actor's 3D: from the FaceGen files its base came
-// with when it has them, else from the base's head parts and sculpting right then (the player's head is always built
-// that way). Our copy is a runtime form with no files, so its head is built at load, or not: once (2026-10-15, see
-// docs/ROADMAP.md) a copy with its own head parts loaded with no head at all, and our own player's head went with it for
-// as long as that copy was loaded. So every stand-in placed with its own head is watched. With its 3D loaded and no face
+// sculpting and tints. The engine builds an NPC's head as it loads the actor's 3D: from the FaceGen files baked for it,
+// or from its head parts and sculpting right then, as for the player. Our copy is a runtime form with no files, which the
+// engine took for one with baked files and gave no head at all (2026-10-17, 3 of 3); game/FaceHeads.h has it built the
+// player's way. Once (2026-10-15, see docs/ROADMAP.md) our own player's head went for as long as such a copy was loaded.
+// So every stand-in placed with its own head is still watched; its first face is reported (kBuilt). With its 3D loaded and no face
 // on it HEAD_WAIT later, the engine is asked to build its 3D again, once (what LooksMenu does after editing an NPC's face).
 // With still no face HEAD_WAIT after that, or with our own player's face gone OUR_FACE_GRACE long while the stand-in is
 // loaded, their own head is given up here: the stand-in is placed again with the settler's face (as before 0.8.8) and
@@ -52,7 +52,8 @@ namespace FaceWatch
 	{
 		kNothing,
 		kRebuild,  // ask the engine to build the stand-in's 3D again
-		kGiveUp    // place it again with the settler's face
+		kGiveUp,   // place it again with the settler's face
+		kBuilt     // it has its own head: the first time since it was placed (for the log)
 	};
 
 	enum class Why
@@ -72,6 +73,7 @@ namespace FaceWatch
 		Step              step = Step::kNone;
 		Clock::time_point since{};  // when the step began
 		int               rebuilds = 0;
+		bool              reported = false;  // its first face was reported (kBuilt)
 		bool              oursGone = false;  // our face was missing last frame too
 		Clock::time_point oursGoneSince{};
 	};
@@ -119,6 +121,10 @@ namespace FaceWatch
 		}
 		if (a_facts.hasFace) {
 			s.step = Step::kBuilt;
+			if (!s.reported) {
+				s.reported = true;
+				return { Then::kBuilt, Why::kNoHead };
+			}
 			return {};
 		}
 		switch (s.step) {

@@ -1762,7 +1762,7 @@ namespace RemotePlayers
 			// the engine builds as the stand-in loads, unless that was given up for them (faceFallback; see FaceWatch).
 			if (a_player.face && !a_player.faceTried) {
 				a_player.faceTried = true;
-				const auto parts = a_player.faceFallback ? Face::BODY_ONLY : Face::Parts();
+				auto       parts = a_player.faceFallback ? Face::BODY_ONLY : Face::Parts();
 				const auto made = Face::MakeBase(npc, *a_player.face, parts);
 				a_player.faceBaseId = made ? made->GetFormID() : 0;
 				a_player.faceOwnHead = made && Face::OwnHead(parts);
@@ -2512,6 +2512,9 @@ namespace RemotePlayers
 					remote.faceOwnHead = false;
 					DeleteActor(remote);
 					continue;
+				case FaceWatch::Then::kBuilt:
+					Face::Built(remote.id, actor->GetFormID());
+					break;
 				case FaceWatch::Then::kNothing:
 					break;
 				}

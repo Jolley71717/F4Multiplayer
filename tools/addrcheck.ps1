@@ -243,6 +243,23 @@ if ($null -ne $onIdle -and $null -ne $pump) {
 		(HexMatches (BytesAt ($onIdle + 0x379) 2) '0F 84') -and $call[0] -eq 0xE8 -and ($onIdle + 0x384 + [BitConverter]::ToInt32($call, 1)) -eq $pump) 'Main::OnIdle tests the position flag and calls PositionPlayerJob::Run at +0x37F'
 }
 
+# The six calls Face::Install patches (src/game/FaceHeads.h): each calls the prebuilt-head check UsesPreprocessedHead,
+# and nothing else in the game calls it. The plugin checks the six itself at load and patches none unless all match.
+$usesPreprocessed = Resolve 2209308
+if ($null -ne $usesPreprocessed) {
+	Report ($usesPreprocessed -eq 0x6DF3A0) ('the prebuilt-head check 2209308 is +{0:X}' -f $usesPreprocessed)
+	foreach ($site in @(@(2192002, 0x191), @(2207435, 0x3B), @(2209307, 0xA7), @(2209326, 0x63), @(2209355, 0x62), @(2209355, 0x88))) {
+		$fn = Resolve $site[0]
+		if ($null -eq $fn) {
+			Report $false ('face site {0}: not in the Address Library' -f $site[0])
+			continue
+		}
+		$at = $fn + $site[1]
+		$call = BytesAt $at 5
+		Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $usesPreprocessed) ('{0}+0x{1:X} (+{2:X}) calls the prebuilt-head check' -f $site[0], $site[1], $at)
+	}
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

@@ -171,15 +171,29 @@ TEST("face watch: a stand-in with the settler's face is never judged")
 	CHECK(s.step == Step::kNone);
 }
 
-TEST("face watch: a head the engine built needs nothing, however long")
+TEST("face watch: a head the engine built is reported once and needs nothing more, however long")
 {
 	FaceWatch::StandIn s;
 	FaceWatch::Placed(s, T0);
 	CHECK(FaceWatch::Frame(s, Facts{}, T0 + 1s).then == Then::kNothing);  // not loaded yet
-	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 2s).then == Then::kNothing);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 2s).then == Then::kBuilt);
 	CHECK(s.step == Step::kBuilt);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 3s).then == Then::kNothing);
 	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 60s).then == Then::kNothing);
 	CHECK(s.rebuilds == 0);
+	// Unloaded (a cell away) and back with its head: not reported again for this placement.
+	CHECK(FaceWatch::Frame(s, Facts{}, T0 + 70s).then == Then::kNothing);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 80s).then == Then::kNothing);
+	// Placed again (through a door, after a load): its head is reported again.
+	FaceWatch::Placed(s, T0 + 90s);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 91s).then == Then::kBuilt);
+}
+
+TEST("face watch: a stand-in with the settler's face is never reported as built")
+{
+	FaceWatch::StandIn s;
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0).then == Then::kNothing);
+	CHECK(s.step == Step::kNone);
 }
 
 TEST("face watch: no head after the wait asks for one rebuild, then gives their head up")
@@ -214,7 +228,7 @@ TEST("face watch: a rebuild that comes back with a head is the end of it, and a 
 	// The engine takes the 3D down and builds it again, this time with a head.
 	CHECK(FaceWatch::Frame(s, Facts{}, T0 + HEAD_WAIT + 500ms).then == Then::kNothing);
 	CHECK(s.step == Step::kLoading);
-	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + HEAD_WAIT + 1s).then == Then::kNothing);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + HEAD_WAIT + 1s).then == Then::kBuilt);
 	CHECK(s.step == Step::kBuilt);
 	CHECK(FaceWatch::Frame(s, Loaded(true), T0 + 30s).then == Then::kNothing);
 	// Its head goes later (a reload by the engine): the one rebuild was used, so it is given up after the wait.
@@ -260,7 +274,7 @@ TEST("face watch: our own head gone while it is loaded gives theirs up after the
 {
 	FaceWatch::StandIn s;
 	FaceWatch::Placed(s, T0);
-	CHECK(FaceWatch::Frame(s, Loaded(true), T0).then == Then::kNothing);
+	CHECK(FaceWatch::Frame(s, Loaded(true), T0).then == Then::kBuilt);
 	auto gone = Loaded(true);
 	gone.oursGone = true;
 	CHECK(FaceWatch::Frame(s, gone, T0 + 1s).then == Then::kNothing);

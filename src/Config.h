@@ -49,9 +49,10 @@ namespace Config
 		std::uint32_t myAppearance = 0;
 
 		// Friends' stand-ins wear their own face (head parts, hair, complexion, sculpting, skin tone and face paint)
-		// on a copy of the settler, built by the engine as the stand-in loads. Off: the settler's face with their sex
-		// and body shape, as 0.8.7 showed everyone (and what a stand-in falls back to when the engine builds no head).
-		bool friendFaces = false;  // off: the engine built no head for a copy with its own head parts in every try (FaceWatch falls back)
+		// on a copy of the settler, built by the engine as the stand-in loads, the way it builds the player's head
+		// (game/FaceHeads.h). Off: the settler's face with their sex and body shape, as 0.8.8 and earlier showed everyone
+		// (and what a stand-in falls back to when the engine builds no head, or when the engine could not be patched).
+		bool friendFaces = true;
 
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;

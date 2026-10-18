@@ -26,7 +26,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 17 | Gunshot sound and muzzle flash | Fights sound and look complete | partly: sound done (protocol 20). Muzzle flash: the engine draws it only when it fires a real projectile; a stand-in has attacking disabled, so the engine's attack action does nothing on it (tried 2026-10-08), and letting it fire real bullets is not worth the risk |
 | 17b | Melee swings and punches | A friend's bat or fist swings on your screen | done (protocol 21): a swing is reported at its hit frame ("weaponSwing"); the stand-in performs the engine's right-attack action (the melee graph refuses "attackStart"), with its damage multiplied by zero so nobody is hit twice |
 | 18 | Player markers on the compass | Find friends without opening the list | done (protocol 20): a colored shape per player |
-| 19 | Remote players' faces | Friends look like their own character | in test (protocol 32): the whole look (head parts, hair colours, complexion, both kinds of sculpting slider, bones, tints) goes onto the copy, with the settler's face template taken off it, and the engine builds the head as the stand-in loads; a stand-in that loads with no head gets one `Actor::Reset3D` (what LooksMenu uses after editing an NPC's face) and then falls back to the settler's face (src/game/FaceWatch.h). The 2026-10-15 try with head parts alone gave a headless copy and took the local player's head away while the copy was loaded (the two seemed to share one runtime face slot); the watch falls back on that too and asks the player's head back. To check live |
+| 19 | Remote players' faces | Friends look like their own character | on by default since 2026-10-18 (protocol 32): the whole look (head parts, hair colours, complexion, both kinds of sculpting slider, bones, tints) goes onto the copy, with the settler's face template taken off it, and the engine builds the head as the stand-in loads, the way it builds the player's: the engine took a runtime form for one with a prebuilt FaceGen head and attached none, until the plugin answered its prebuilt-head check for our copies (src/game/FaceHeads.h); a stand-in that loads with no head gets one `Actor::Reset3D` (what LooksMenu uses after editing an NPC's face) and then falls back to the settler's face (src/game/FaceWatch.h). The 2026-10-15 try with head parts alone gave a headless copy and took the local player's head away while the copy was loaded (the two seemed to share one runtime face slot); the watch falls back on that too and asks the player's head back. Seen live both ways, through a cell change, a save reload and a face changed in play |
 | 20 | Spectating a friend after death | Watch while you reload | no (camera control is fragile) |
 
 ## 5 wild ideas
@@ -36,7 +36,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | Proximity voice chat | Done (protocol 17) | Steam's voice API (`ISteamUser::StartVoiceRecording`/`GetVoice`/`DecompressVoice`) is in the game's own steam_api64.dll; send it over the session, play it with volume by distance. |
 | Downed and revive | Done (protocol 16) | The player's character is essential while friends are in the session; a lethal hit knocks them down for 45 s, and a friend who stays next to them for 2 s helps them up; otherwise the normal death. |
 | Horde mode at a settlement | Partly | Spawned enemies are runtime references with different IDs in each game, so the host's game would have to run them and send "spawn this" with its own ID mapping. A bigger change to NpcSync. |
-| Real faces for friends | Hard | Needs the player's face morphs, head parts and tints copied to the stand-in; FO4's face data is large and poorly documented. |
+| Real faces for friends | Done (#19) | The player's face morphs, head parts and tints are copied to a copy of the stand-in's base, and the engine builds its head at runtime. |
 | Shared settlements (workshop) | Partly (protocol 22) | What a player places, moves or scraps is reported from the workshop's own events and copied into the others' games (the builder's reference ID keys each copy; a copy left in a save is adopted on the next session). Copies are plain objects: power, wiring and settler assignment stay the builder's. |
 
 ## Beyond the list (protocol 19-20)
@@ -58,6 +58,5 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 
 ## Next
 
-- Remote players' faces (#19).
 - Muzzle flash (#17).
 - Donation links (Ko-fi, Patreon, Nexus Donation Points): last, before the release.

@@ -12,11 +12,50 @@ namespace Face
 		std::uint32_t made = 0;
 		std::uint32_t rejected = 0;
 		std::uint32_t rebuilds = 0;
+		std::uint32_t built = 0;
 		std::uint32_t gaveUpNoHead = 0;
 		std::uint32_t gaveUpOurs = 0;
 		std::uint32_t repairs = 0;
+		std::uint32_t full = 0;
 		// Which pieces to apply, when the dev set them (facemask); else the ini decides (Parts).
 		std::optional<std::uint32_t> parts;
+
+		// The engine's "prebuilt head?" check (FaceHeads.h), BSFaceGenManager's +6DF3A0, and the six calls to it.
+		constexpr REL::ID USES_PREPROCESSED_HEAD{ 2209308 };
+
+		struct Site
+		{
+			REL::ID        function;
+			std::ptrdiff_t offset;
+		};
+		constexpr std::array<Site, 6> SITES{ {
+			{ REL::ID(2192002), 0x191 },  // the head task's processing, QueuedHead +2CC280: a runtime head?
+			{ REL::ID(2207435), 0x3B },   // TESNPC's head part update +655910: skipped for a prebuilt head
+			{ REL::ID(2209307), 0xA7 },   // BSFaceGenManager's head data queue +6DED10: head part meshes, or FaceGen textures
+			{ REL::ID(2209326), 0x63 },   // BSFaceGenPendingHeadData::DoOnQueueMe +6E0E50: the FaceGen nif asked for, or not
+			{ REL::ID(2209355), 0x62 },   // the head build +6E25A0: the FaceGen nif loaded...
+			{ REL::ID(2209355), 0x88 },   // ... or, with none, no head at all; else the head built from its parts
+		} };
+
+		FaceHeads::Copies<512>       copies;  // our copies with their own head
+		bool                         patched = false;
+		bool (*usesPreprocessed)(RE::TESNPC*) = nullptr;  // the engine's check, as the six sites called it
+		std::atomic<std::uint32_t>   toldNo{ 0 };       // times the engine was told one of ours builds its head (any thread)
+
+		// Every call to the check comes here (the head task runs on the engine's loader threads too): nothing in it
+		// may throw or lock.
+		bool UsesPreprocessedHead(RE::TESNPC* a_npc)
+		{
+			auto root = a_npc;
+			while (root && root->faceNPC) {
+				root = root->faceNPC;  // as the engine's check goes: the face comes from the end of the template chain
+			}
+			if (root && copies.Contains(reinterpret_cast<std::uintptr_t>(root), root->GetFormID())) {
+				toldNo.fetch_add(1, std::memory_order_relaxed);
+				return false;  // built at runtime, from its head parts: the player's path
+			}
+			return usesPreprocessed(a_npc);
+		}
 
 		std::uint32_t IdOf(const RE::TESForm* a_form)
 		{
@@ -68,6 +107,38 @@ namespace Face
 			}
 			return entry;
 		}
+	}
+
+	bool Install()
+	{
+		const auto target = USES_PREPROCESSED_HEAD.address();
+		std::array<std::uintptr_t, SITES.size()>               at{};
+		std::array<std::array<std::uint8_t, 5>, SITES.size()> bytes{};
+		for (std::size_t i = 0; i < SITES.size(); ++i) {
+			at[i] = SITES[i].function.address() + SITES[i].offset;
+			std::memcpy(bytes[i].data(), reinterpret_cast<const void*>(at[i]), bytes[i].size());
+		}
+		const auto sites = FaceHeads::Check(bytes, at, target);
+		if (!sites.All()) {
+			REX::WARN("Face: {} of the {} calls to the engine's prebuilt-head check are not where 1.11.240 has them (another plugin's patch?); none patched, so friends wear the settler's face", sites.total - sites.calling, sites.total);
+			return false;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		for (const auto site : at) {
+			// The same function at each site: the first patch's answer is the original.
+			const auto original = trampoline.write_call<5>(site, &UsesPreprocessedHead);
+			if (!usesPreprocessed) {
+				usesPreprocessed = reinterpret_cast<bool (*)(RE::TESNPC*)>(original);
+			}
+		}
+		patched = true;
+		REX::INFO("Face: the engine builds our stand-in copies' heads at runtime, as it builds the player's ({} calls patched)", at.size());
+		return true;
+	}
+
+	bool Patched()
+	{
+		return patched;
 	}
 
 	Protocol::Face Read(RE::TESNPC* a_npc)
@@ -150,7 +221,7 @@ namespace Face
 
 	std::uint32_t Parts()
 	{
-		return parts.value_or(Config::Get().friendFaces ? ALL : BODY_ONLY);
+		return FaceHeads::Parts(Config::Get().friendFaces, parts, patched);
 	}
 
 	void SetParts(std::uint32_t a_mask)
@@ -158,7 +229,7 @@ namespace Face
 		parts = a_mask;
 	}
 
-	RE::TESNPC* MakeBase(RE::TESNPC* a_base, const Protocol::Face& a_face, std::uint32_t a_parts)
+	RE::TESNPC* MakeBase(RE::TESNPC* a_base, const Protocol::Face& a_face, std::uint32_t& a_parts)
 	{
 		const auto race = a_base ? a_base->GetFormRace() : nullptr;
 		if (!race || race->GetFormID() != a_face.race) {
@@ -169,6 +240,12 @@ namespace Face
 		if (!npc) {
 			++rejected;
 			return nullptr;
+		}
+		// Marked before the look goes on: its head is the engine's to build at runtime (FaceHeads.h), from what follows.
+		if (OwnHead(a_parts) && patched && !copies.Add(reinterpret_cast<std::uintptr_t>(npc), npc->GetFormID())) {
+			++full;
+			REX::WARN("Face: {} copies already have their own head this session; {:08X} gets the settler's face", copies.Size(), npc->GetFormID());
+			a_parts = BODY_ONLY;
 		}
 		if (a_face.female) {
 			npc->actorData.actorBaseFlags.set(RE::ACTOR_BASE_DATA::Flag::kFemale);
@@ -266,8 +343,9 @@ namespace Face
 		}
 		// Its own face, not the base's: a settler's look comes from a template (faceNPC and the "use traits" template
 		// flag), whose FaceGen files the engine loads as the head; with those left in place the copy's own head parts,
-		// sculpting and tints are never looked at. Without them the copy is a runtime form with no files of its own, so
-		// the engine builds its head from these at load (or does not: FaceWatch.h watches for that).
+		// sculpting and tints are never looked at. Without them the copy is a runtime form with no files of its own:
+		// told it has no prebuilt head (it is in copies), the engine builds its head from these as it loads, as it does
+		// the player's (FaceWatch.h still watches for a head that does not come).
 		if (a_parts & kHeadParts) {
 			npc->faceNPC = nullptr;
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
@@ -295,6 +373,12 @@ namespace Face
 		a_actor->Reset3D(true, 0, true, 0);
 	}
 
+	void Built(std::uint32_t a_playerId, std::uint32_t a_actorId)
+	{
+		++built;
+		REX::INFO("Face: player {}'s stand-in {:08X} has its own head, built by the engine ({} times told a copy builds its head)", a_playerId, a_actorId, toldNo.load(std::memory_order_relaxed));
+	}
+
 	void GaveUp(std::uint32_t a_playerId, bool a_ours)
 	{
 		if (a_ours) {
@@ -320,6 +404,7 @@ namespace Face
 
 	std::string Describe()
 	{
-		return std::format("faces: parts={:02X} made={} rejected={} rebuilds={} gaveup={}/{} repairs={}", Parts(), made, rejected, rebuilds, gaveUpNoHead, gaveUpOurs, repairs);
+		return std::format("faces: parts={:02X} patched={} copies={} told={} made={} rejected={} built={} rebuilds={} gaveup={}/{} repairs={} full={}", Parts(), patched, copies.Size(),
+			toldNo.load(std::memory_order_relaxed), made, rejected, built, rebuilds, gaveUpNoHead, gaveUpOurs, repairs, full);
 	}
 }
