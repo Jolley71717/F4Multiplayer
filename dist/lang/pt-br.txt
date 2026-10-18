@@ -1,4 +1,4 @@
-# reviewed against the game's terminology on 2026-10-17 (Fallout 4's Brazilian Portuguese: Refúgio 111, Sobrevivência, viagem rápida, PV, missão, ordem de carregamento; the player is "você"); corrections welcome
+# reviewed against the game's Brazilian Portuguese terminology on 2026-10-17 (Refúgio 111, Sobrevivência, viagem rápida, PV, missão, ordem de carregamento; the player is "você"); corrections welcome
 # F4Multiplayer texts: Português do Brasil (Brazilian Portuguese). The format and the keys are explained in en.txt; keep the {placeholders} as they are.
 
 session.connected_shared = Multijogador: conectado (história compartilhada)
