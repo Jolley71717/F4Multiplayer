@@ -4,11 +4,13 @@
 #   .\tools\restart-game.ps1                  # load into SanctuaryExt
 #   .\tools\restart-game.ps1 -Cell QASmoke
 #   .\tools\restart-game.ps1 -Cell ''         # stop at the main menu
+#   .\tools\restart-game.ps1 -NoDeploy        # relaunch with the DLL the game has (a packaged one being tested)
 param(
 	[string]$GamePath = 'F:\SteamLibrary\steamapps\common\Fallout 4',
 	[string]$Cell = 'SanctuaryExt',
 	[bool]$GodMode = $true,
-	[int]$TimeoutSeconds = 120
+	[int]$TimeoutSeconds = 120,
+	[switch]$NoDeploy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +18,9 @@ $ErrorActionPreference = 'Stop'
 Get-Process Fallout4 -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
 Start-Sleep -Seconds 3
 
-& (Join-Path $PSScriptRoot 'deploy.ps1') -GamePath $GamePath
+if (-not $NoDeploy) {
+	& (Join-Path $PSScriptRoot 'deploy.ps1') -GamePath $GamePath
+}
 Start-Process -FilePath (Join-Path $GamePath 'f4se_loader.exe') -WorkingDirectory $GamePath
 
 $log = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'My Games\Fallout4\F4SE\F4Multiplayer.log'
