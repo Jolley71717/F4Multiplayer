@@ -51,6 +51,8 @@ namespace RemotePlayers
 	};
 
 	[[nodiscard]] std::vector<Info> List();
+	// Whether anyone else is in the session (List copies them all; this is for every frame).
+	[[nodiscard]] bool Any();
 
 	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
 	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);

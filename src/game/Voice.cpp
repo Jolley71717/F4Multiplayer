@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "game/Hotkeys.h"
 #include "game/RemotePlayers.h"
+#include "game/VoiceGate.h"
 #include "steam/SteamApi.h"
 
 // winmm waveOut (windows.h clashes with CommonLibF4's names).
@@ -45,12 +46,15 @@ namespace Voice
 	namespace
 	{
 		using Clock = std::chrono::steady_clock;
+		using VoiceGate::Mic;
 
 		constexpr std::uint32_t SAMPLE_RATE = 24000;  // Steam resamples to whatever we ask for
 		constexpr unsigned int  WAVE_MAPPER = 0xFFFFFFFF;
 		constexpr unsigned long WHDR_DONE = 0x1;
 		constexpr auto          JITTER_BUFFER = 80ms;  // silence played before a speaker starts
+		constexpr std::size_t   LEAD_SAMPLES = static_cast<std::size_t>(SAMPLE_RATE * JITTER_BUFFER / 1s);
 		constexpr std::size_t   MAX_QUEUED = 64;       // buffers per speaker; more means we're far behind
+		constexpr std::size_t   MAX_SPARE = 32;        // played buffers kept for the next pieces
 		constexpr float         FULL_VOLUME_METERS = 8.0f;
 		constexpr float         UNITS_TO_METERS = 0.0142875f;
 		constexpr std::uint32_t LOOPBACK_ID = 0xFFFFFFFF;
@@ -68,13 +72,17 @@ namespace Voice
 			Clock::time_point                   lastHeard{};
 		};
 
-		bool                                   recording = false;
+		Mic                                    mic = Mic::kOff;
+		Clock::time_point                      stoppedAt{};  // when the tail began
+		Clock::time_point                      askedAt{};    // when Steam was last asked for our voice
 		bool                                   forceTalk = false;
 		bool                                   loopback = false;
 		std::map<std::uint32_t, Speaker>       speakers;
+		std::vector<std::unique_ptr<Buffer>>   spare;  // a friend talking sends a piece every frame or two
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		std::vector<std::uint8_t>              captureBuffer(8192);
 		std::vector<std::int16_t>              pcmBuffer(SAMPLE_RATE);  // one second
+		const std::vector<std::int16_t>        silence(LEAD_SAMPLES);
 
 		std::uint64_t bytesSent = 0;
 		std::uint64_t bytesHeard = 0;
@@ -112,21 +120,16 @@ namespace Voice
 			if (!player || !player->GetParentCell()) {
 				return 0.0f;
 			}
-			for (const auto& info : RemotePlayers::List()) {
-				if (info.id != a_id || !info.state) {
-					continue;
-				}
-				if (SpaceOf(player) != std::pair{ info.state->cell, info.state->worldspace }) {
-					return 0.0f;
-				}
-				const RE::NiPoint3 position{ info.state->x, info.state->y, info.state->z };
-				const float        meters = player->data.location.GetDistance(position) * UNITS_TO_METERS;
-				if (meters <= FULL_VOLUME_METERS) {
-					return 1.0f;
-				}
-				return std::clamp(1.0f - (meters - FULL_VOLUME_METERS) / (std::max)(range - FULL_VOLUME_METERS, 1.0f), 0.0f, 1.0f);
+			const auto state = RemotePlayers::LastStateOf(a_id);
+			if (!state || SpaceOf(player) != std::pair{ state->cell, state->worldspace }) {
+				return 0.0f;
 			}
-			return 0.0f;
+			const RE::NiPoint3 position{ state->x, state->y, state->z };
+			const float        meters = player->data.location.GetDistance(position) * UNITS_TO_METERS;
+			if (meters <= FULL_VOLUME_METERS) {
+				return 1.0f;
+			}
+			return std::clamp(1.0f - (meters - FULL_VOLUME_METERS) / (std::max)(range - FULL_VOLUME_METERS, 1.0f), 0.0f, 1.0f);
 		}
 
 		void Close(Speaker& a_speaker)
@@ -148,15 +151,25 @@ namespace Voice
 		{
 			while (!a_speaker.queued.empty() && (a_speaker.queued.front()->header.flags & WHDR_DONE) != 0) {
 				waveOutUnprepareHeader(a_speaker.device, &a_speaker.queued.front()->header, sizeof(F4MP_WAVEHDR));
+				if (spare.size() < MAX_SPARE) {
+					spare.push_back(std::move(a_speaker.queued.front()));
+				}
 				a_speaker.queued.pop_front();
 				++buffersPlayed;
 			}
 		}
 
-		bool Queue(Speaker& a_speaker, std::vector<std::int16_t> a_samples)
+		bool Queue(Speaker& a_speaker, std::span<const std::int16_t> a_samples)
 		{
-			auto buffer = std::make_unique<Buffer>();
-			buffer->samples = std::move(a_samples);
+			std::unique_ptr<Buffer> buffer;
+			if (spare.empty()) {
+				buffer = std::make_unique<Buffer>();
+			} else {
+				buffer = std::move(spare.back());
+				spare.pop_back();
+				buffer->header = {};
+			}
+			buffer->samples.assign(a_samples.begin(), a_samples.end());
 			buffer->header.data = reinterpret_cast<char*>(buffer->samples.data());
 			buffer->header.bufferLength = static_cast<unsigned long>(buffer->samples.size() * sizeof(std::int16_t));
 			if (waveOutPrepareHeader(a_speaker.device, &buffer->header, sizeof(F4MP_WAVEHDR)) != 0) {
@@ -189,7 +202,7 @@ namespace Voice
 				++decodeErrors;
 				return;
 			}
-			std::vector<std::int16_t> samples(pcmBuffer.begin(), pcmBuffer.begin() + written / sizeof(std::int16_t));
+			const std::span samples{ pcmBuffer.data(), written / sizeof(std::int16_t) };
 			if (volume < 1.0f) {
 				for (auto& sample : samples) {
 					sample = static_cast<std::int16_t>(static_cast<float>(sample) * volume);
@@ -218,10 +231,9 @@ namespace Voice
 			}
 			// Starting from silence: a little lead so the next pieces arrive before this one ends.
 			if (speaker.queued.empty()) {
-				const auto lead = static_cast<std::size_t>(SAMPLE_RATE * std::chrono::duration<float>(JITTER_BUFFER).count());
-				Queue(speaker, std::vector<std::int16_t>(lead, 0));
+				Queue(speaker, silence);
 			}
-			Queue(speaker, std::move(samples));
+			Queue(speaker, samples);
 		}
 
 		bool TalkKeyHeld()
@@ -230,22 +242,36 @@ namespace Voice
 			return forceTalk || settings.voiceOpenMic || Hotkeys::Held(settings.keyVoice);
 		}
 
-		void Capture(const SteamApi::Api& a_api, bool a_inSession)
+		void Capture(const SteamApi::Api& a_api, bool a_mayTalk, bool a_inSession)
 		{
-			const bool talk = (a_inSession || loopback) && Config::Get().voiceChat && TalkKeyHeld();
-			if (talk && !recording) {
+			const bool talk = a_mayTalk && TalkKeyHeld();
+			const auto now = Clock::now();
+			switch (VoiceGate::Next(mic, talk)) {
+			case VoiceGate::Change::kStart:
 				a_api.StartVoiceRecording(a_api.user);
 				a_api.SetInGameVoiceSpeaking(a_api.friends, a_api.GetSteamID(a_api.user), true);
-				recording = true;
-			} else if (!talk && recording) {
+				mic = Mic::kOn;
+				break;
+			case VoiceGate::Change::kStop:
 				// Steam still hands out the last bit of speech after this.
 				a_api.StopVoiceRecording(a_api.user);
 				a_api.SetInGameVoiceSpeaking(a_api.friends, a_api.GetSteamID(a_api.user), false);
-				recording = false;
+				mic = Mic::kTail;
+				stoppedAt = now;
+				break;
+			case VoiceGate::Change::kNone:
+				break;
 			}
+			if (!VoiceGate::Ask(mic, now - askedAt)) {
+				return;
+			}
+			askedAt = now;
 
 			std::uint32_t available = 0;
 			lastResult = a_api.GetAvailableVoice(a_api.user, &available, nullptr, 0);
+			if (mic == Mic::kTail && VoiceGate::TailOver(lastResult, now - stoppedAt)) {
+				mic = Mic::kOff;
+			}
 			if (lastResult != SteamApi::VOICE_OK || available == 0) {
 				return;
 			}
@@ -272,18 +298,27 @@ namespace Voice
 
 	void Frame(bool a_inSession)
 	{
+		const bool mayTalk = VoiceGate::MayTalk(Config::Get().voiceChat, a_inSession, RemotePlayers::Any(), loopback);
+		const bool outputsOpen = std::ranges::any_of(speakers, [](const auto& a_entry) { return a_entry.second.device != nullptr; });
+		if (VoiceGate::Idle(mayTalk, mic, outputsOpen)) {
+			return;
+		}
 		const auto api = VoiceApi();
 		if (!api) {
 			return;
 		}
-		Capture(*api, a_inSession);
+		if (mayTalk || mic != Mic::kOff) {
+			Capture(*api, mayTalk, a_inSession);
+		}
 
 		// Close devices of players who stopped talking a while ago.
-		const auto now = Clock::now();
-		for (auto& [id, speaker] : speakers) {
-			Recycle(speaker);
-			if (speaker.device && speaker.queued.empty() && now - speaker.lastHeard > 30s) {
-				Close(speaker);
+		if (outputsOpen) {
+			const auto now = Clock::now();
+			for (auto& [id, speaker] : speakers) {
+				Recycle(speaker);
+				if (speaker.device && speaker.queued.empty() && now - speaker.lastHeard > 30s) {
+					Close(speaker);
+				}
 			}
 		}
 	}
@@ -312,15 +347,19 @@ namespace Voice
 
 	void Reset()
 	{
-		if (const auto api = VoiceApi(); api && recording) {
+		if (const auto api = VoiceApi(); api && mic == Mic::kOn) {
 			api->StopVoiceRecording(api->user);
 			api->SetInGameVoiceSpeaking(api->friends, api->GetSteamID(api->user), false);
+			// Frame still takes the tail Steam records on, out of session so it goes nowhere, rather than
+			// leave it to come out at the start of the next thing we say.
+			mic = Mic::kTail;
+			stoppedAt = Clock::now();
 		}
-		recording = false;
 		for (auto& [id, speaker] : speakers) {
 			Close(speaker);
 		}
 		speakers.clear();
+		spare.clear();
 		outgoing.clear();
 	}
 
@@ -340,7 +379,7 @@ namespace Voice
 		for (const auto& [id, speaker] : speakers) {
 			open += speaker.device != nullptr;
 		}
-		return std::format("voice: available={} recording={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} devices={} last={}",
-			VoiceApi() != nullptr, recording, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, open, lastResult);
+		return std::format("voice: available={} recording={} tail={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} devices={} last={}",
+			VoiceApi() != nullptr, mic == Mic::kOn, mic == Mic::kTail, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, open, lastResult);
 	}
 }
