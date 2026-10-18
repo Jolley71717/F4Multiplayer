@@ -238,12 +238,19 @@ namespace CopyWatch
 
 	void HealthSet(std::uint32_t a_refId, float a_before, float a_health)
 	{
-		book.Set(a_refId, a_health);
-		if (const auto owner = OtherOwner(a_refId)) {
+		// The book goes by the session's id, as Frame checks it: our copy of a friend's spawn has a form id of our game's
+		// own. Set under that, a friend's report on it was taken back the next frame as a drop with no hit of ours, and
+		// our player's next shot reported the copy's untouched health to its owner, healing the NPC there.
+		const auto wire = WireOf(a_refId);
+		if (wire == 0) {
+			return;  // one of our game's own, never shared: no copy of anyone's
+		}
+		book.Set(wire, a_health);
+		if (const auto owner = OtherOwner(wire)) {
 			++reportsSet;
 			if (reportsLogged < 40) {
 				++reportsLogged;
-				REX::INFO("CopyWatch: a report set our copy {:08X} (player {}'s) to {:.1f} health (from {:.1f})", a_refId, owner, a_health, a_before);
+				REX::INFO("CopyWatch: a report set our copy {:08X}{} (player {}'s) to {:.1f} health (from {:.1f})", a_refId, SpawnNote(a_refId, wire), owner, a_health, a_before);
 			}
 		}
 	}

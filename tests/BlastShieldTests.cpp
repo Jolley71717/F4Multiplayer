@@ -224,33 +224,49 @@ namespace
 		// Our player hits an NPC (WorldSync's HitWatcher, then its Frame): a shot that lands on a copy another game
 		// runs claims it (which tells the server we fight it) and sends its health; a ghost's passes it by, no hit.
 		// The hit's event can be heard a frame after its damage (a_heardLate).
-		void OurBlow(std::uint32_t a_id, float a_damage, bool a_heardLate = false)
+		// a_key is the NPC's form id here; the book and the wire go by the session's id.
+		void OurBlow(std::uint32_t a_key, float a_damage, bool a_heardLate = false)
 		{
-			auto& npc = npcs.at(a_id);
+			auto& npc = npcs.at(a_key);
 			if (npc.ghost || npc.ownGhost || npc.dead) {
 				return;
 			}
+			const auto id = SessionIdOf(a_key);
 			npc.Hurt(a_damage);
 			if (a_heardLate) {
 				Wait(std::chrono::milliseconds{ 50 });
 			}
-			copies.OurHit(a_id, now);
-			if (client.OwnerOf(a_id) != client.Id()) {
-				client.Claim(a_id, Reason::kInteract);
+			copies.OurHit(id, now);
+			if (client.OwnerOf(id) != client.Id()) {
+				client.Claim(id, Reason::kInteract);
 			}
 			if (!npc.dead) {
-				client.Hurt(a_id, npc.health / 100.0f);
+				client.Hurt(id, npc.health / 100.0f);
 			}
-			Died(a_id);
+			Died(a_key);
 		}
 
-		// WorldSync::TrySetHealth: another game's report of the NPC's health (a fraction of 100 here).
+		// WorldSync::ApplyRemoteHealth and TrySetHealth: another game's report of the NPC's health (a fraction of 100
+		// here) under the session's id, set on our NPC (a spawn's copy has a form id of our game's own) and in the
+		// book under the session's id, as CopyWatch::HealthSet keeps it (bookByOwnId: under our form id, as before).
+		bool bookByOwnId = false;
+
 		void HealthReport(std::uint32_t a_id, float a_fraction)
 		{
-			auto& npc = npcs.at(a_id);
+			const auto key = KeyOf(a_id);
+			auto&      npc = npcs.at(key);
 			if (!npc.dead) {
 				npc.health = a_fraction * 100.0f;
-				copies.Set(a_id, npc.health);
+				copies.Set(bookByOwnId ? key : SessionIdOf(key), npc.health);
+			}
+		}
+
+		// The reports our game has heard for the NPC (a_key, our form id), applied as they come.
+		void ApplyHeard(std::uint32_t a_key)
+		{
+			const auto id = SessionIdOf(a_key);
+			if (const auto heard = client.HealthHeard(id)) {
+				HealthReport(id, *heard);
 			}
 		}
 	};
@@ -813,6 +829,91 @@ TEST("copy health: the player's own blows on a copy are kept, one heard a frame 
 	c.s.Settle();
 	CHECK(host.WorldNow().dead.contains(RAIDER_1));
 	CHECK(bob.WorldNow().dead.contains(RAIDER_1));
+}
+
+namespace
+{
+	// Health that went through a report: a fraction of the maximum on the wire.
+	bool Near(float a_health, float a_expected)
+	{
+		return std::abs(a_health - a_expected) < 0.01f;
+	}
+
+	// The host's game spawned a raider (100 health) and shares it; the friend's game has a copy under a form id of its
+	// own. A spawn is run by the game that made it for good, so the friend's copy stays a copy however they fight it.
+	struct SpawnedRaider
+	{
+		Corvega c;
+
+		SpawnedRaider()
+		{
+			c.host.Raw(Protocol::Encode(Protocol::Spawn{ 0, SPAWN, RAIDER_BASE, 0, COMMONWEALTH, 1230.0f, 2100.0f, 0.0f, 0.0f }, MT::kReportSpawn));
+			c.s.Settle();
+			REQUIRE(c.bob.OwnerOf(SPAWN) == c.host.Id());
+			c.hostGame.npcs[HOST_SPAWN] = Npc{ .x = 1230.0f, .y = 2100.0f, .sessionId = SPAWN };
+			c.bobGame.npcs[BOB_COPY] = Npc{ .x = 1230.0f, .y = 2100.0f, .sessionId = SPAWN };
+			c.bobGame.Wait(std::chrono::milliseconds{ 100 });  // the copy is first seen at 100
+		}
+
+		// The host shoots it for 30 in the host's game; the friend's game applies the report and goes on a second.
+		void HostShoots()
+		{
+			c.hostGame.OurBlow(HOST_SPAWN, 30.0f);
+			c.s.Settle();
+			REQUIRE(c.bob.HealthHeard(SPAWN).has_value());
+			c.bobGame.ApplyHeard(BOB_COPY);
+			c.bobGame.Wait(std::chrono::seconds{ 1 });
+		}
+
+		// Then the friend shoots their copy for 10; the host's game applies the report.
+		void FriendShoots()
+		{
+			c.bobGame.OurBlow(BOB_COPY, 10.0f);
+			c.s.Settle();
+			c.hostGame.ApplyHeard(HOST_SPAWN);
+			c.hostGame.Wait(std::chrono::seconds{ 1 });
+			c.bobGame.Wait(std::chrono::seconds{ 1 });
+		}
+	};
+}
+
+TEST("copy health: a friend's copy of an enemy the host's game spawned keeps the host's shots from their reports, and the friend's shot then hurts it in the host's game too")
+{
+	SpawnedRaider r;
+	r.HostShoots();
+	CHECK(r.c.hostGame.npcs[HOST_SPAWN].health == 70.0f);
+	CHECK(Near(r.c.bobGame.npcs[BOB_COPY].health, 70.0f));  // as in the host's game
+	CHECK(r.c.bobGame.givenBack == 0.0f);
+
+	r.FriendShoots();
+	CHECK(Near(r.c.bobGame.npcs[BOB_COPY].health, 60.0f));
+	CHECK(Near(r.c.hostGame.npcs[HOST_SPAWN].health, 60.0f));  // both players' shots count
+	CHECK(r.c.bobGame.givenBack == 0.0f);
+	CHECK(r.c.bob.OwnerOf(SPAWN) == r.c.host.Id());
+
+	// Shot down by both in turn, it dies in both games.
+	for (int i = 0; i < 3 && !r.c.hostGame.npcs[HOST_SPAWN].dead; ++i) {
+		r.HostShoots();
+		if (!r.c.bobGame.npcs[BOB_COPY].dead && !r.c.hostGame.npcs[HOST_SPAWN].dead) {
+			r.FriendShoots();
+		}
+	}
+	CHECK(r.c.hostGame.npcs[HOST_SPAWN].dead);
+	r.c.s.Settle();
+	CHECK(r.c.bob.WorldNow().dead.contains(SPAWN));
+}
+
+TEST("copy health: with the report kept under the copy's own form id, the friend's copy of the host's spawned enemy was given the host's shots back, and the friend's shot healed it in the host's game")
+{
+	SpawnedRaider r;
+	r.c.bobGame.bookByOwnId = true;
+	r.HostShoots();
+	CHECK(r.c.hostGame.npcs[HOST_SPAWN].health == 70.0f);
+	CHECK(Near(r.c.bobGame.npcs[BOB_COPY].health, 100.0f));  // immortal to the friend
+	CHECK(Near(r.c.bobGame.givenBack, 30.0f));
+
+	r.FriendShoots();
+	CHECK(Near(r.c.hostGame.npcs[HOST_SPAWN].health, 90.0f));  // healed from 70 by the friend's shot
 }
 
 TEST("copy health: a copy's drop is judged after a tenth of a second, kept around our player's hit, and set by a report")
