@@ -211,6 +211,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "session.notice", { { "text", "Wrong password" } }, "Multiplayer: Wrong password" },
 		{ "session.player_joined", { { "player", "Sam" } }, "Sam joined" },
 		{ "session.player_left", { { "player", "Sam" } }, "Sam left" },
+		{ "session.player_renamed", { { "player", "Sam" }, { "name", "Nate" } }, "Sam is now Nate" },
 		{ "session.someone_left", {}, "A player left" },
 		{ "session.disconnected", {}, "Multiplayer: disconnected" },
 		{ "session.hosting_cant_join", {}, "Multiplayer: you're hosting. Set bHost = false to join friends." },

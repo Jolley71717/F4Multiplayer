@@ -20,11 +20,20 @@ TEST("name: 'character' falls back to Steam, then to Vault Dweller")
 	CHECK(NameChoice::Choose("character", "   ", "SteamUser") == "SteamUser");
 	CHECK(NameChoice::Choose("character", "", "") == "Vault Dweller");
 	CHECK(NameChoice::Choose("character", "  ", "  ") == "Vault Dweller");
-	// A name the server would strip to nothing (letters of another alphabet are dropped from names) is no name.
-	CHECK(NameChoice::Choose("character", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", "SteamUser") == "SteamUser");
-	CHECK(NameChoice::Choose("character", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", "") == "Vault Dweller");
-	// One with some ASCII in it is sent (the server keeps that part).
+	// A name the server would strip to nothing (control characters, markup) is no name.
+	CHECK(NameChoice::Choose("character", "\x01\x02", "SteamUser") == "SteamUser");
+	CHECK(NameChoice::Choose("character", "<>", "") == "Vault Dweller");
+}
+
+TEST("name: a character named in another script is sent under that name")
+{
+	// The server keeps the letters of every script (common/Name.h), so a Cyrillic, CJK or mixed name is the name.
+	CHECK(NameChoice::Choose("character", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", "SteamUser") == "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82");  // Нейт
+	CHECK(NameChoice::Choose("character", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", "") == "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82");
+	CHECK(NameChoice::Choose("character", "\xE5\x86\x85\xE7\x89\xB9", "SteamUser") == "\xE5\x86\x85\xE7\x89\xB9");  // 内特
 	CHECK(NameChoice::Choose("character", "Nate \xD0\x9D", "SteamUser") == "Nate \xD0\x9D");
+	// Bytes that aren't UTF-8 are all the server would drop: no name.
+	CHECK(NameChoice::Choose("character", "\xFF\xFE", "SteamUser") == "SteamUser");
 }
 
 TEST("name: a name in the ini is used as written, whoever the character is")

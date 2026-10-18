@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Name.h"
+
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -7,7 +9,7 @@
 
 // The name other players see for us: sPlayerName in the ini, the player character's name in the game, or the Steam
 // name. The choice is kept free of the game so it can be tested; Session reads the three values and sends the result
-// in the Hello.
+// in the Hello, and again (kRename) when it changes while connected.
 namespace NameChoice
 {
 	// sPlayerName's value for "the name of the character I play".
@@ -34,12 +36,11 @@ namespace NameChoice
 			});
 		}
 
-		// A name the server keeps something of: it drops everything but printable ASCII (Server.cpp SanitizeName), and
-		// one left with nothing becomes "Player 3". So a character name of letters from another alphabet is no better
-		// than none when the Steam name is there to use, and a blank one is none.
+		// A name the server keeps something of (common/Name.h: letters and digits of any script stay; control
+		// characters and markup go, and one left with nothing becomes "Player 3"). A blank one is none.
 		inline bool Usable(std::string_view a_name)
 		{
-			return std::ranges::any_of(a_name, [](char a_c) { return a_c > 0x20 && a_c < 0x7F; });
+			return !Name::Sanitize(a_name).empty();
 		}
 	}
 

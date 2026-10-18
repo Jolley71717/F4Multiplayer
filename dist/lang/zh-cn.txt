@@ -8,6 +8,7 @@ session.connected_own_fire = 多人联机：已连接（每人各玩各的剧情
 session.notice = 多人联机：{text}
 session.player_joined = {player} 加入了
 session.player_left = {player} 离开了
+session.player_renamed = {player} 现在是 {name}
 session.someone_left = 一名玩家离开了
 session.disconnected = 多人联机：已断开连接
 session.hosting_cant_join = 多人联机：你正在作为主机。将 bHost 设为 false 才能加入好友的游戏。

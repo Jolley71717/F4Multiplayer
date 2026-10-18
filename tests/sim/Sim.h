@@ -1297,6 +1297,15 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kRenamed:
+			if (const auto msg = Protocol::DecodeRename(a_data)) {
+				if (const auto it = friends.find(msg->playerId); it != friends.end()) {
+					it->second.name = msg->name;
+				}
+			} else {
+				unless(false);
+			}
+			break;
 		case MT::kPlayerLeft:
 			if (const auto msg = Protocol::DecodePlayerLeft(a_data)) {
 				friends.erase(msg->playerId);

@@ -1831,6 +1831,13 @@ namespace RemotePlayers
 		}
 	}
 
+	void Rename(std::uint32_t a_id, std::string a_name)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.name = std::move(a_name);  // the tag follows on the next Update (NameTag differs from shownName)
+		}
+	}
+
 	void Remove(std::uint32_t a_id)
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {

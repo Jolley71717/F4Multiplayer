@@ -13,6 +13,7 @@ session.connected_own_fire = اللعب الجماعي: تم الاتصال (ل�
 session.notice = اللعب الجماعي: {text}
 session.player_joined = انضم {player}
 session.player_left = غادر {player}
+session.player_renamed = {player} أصبح الآن {name}
 session.someone_left = غادر لاعب
 session.disconnected = اللعب الجماعي: انقطع الاتصال
 session.hosting_cant_join = اللعب الجماعي: أنت المضيف الآن. اجعل bHost = false للانضمام إلى الأصدقاء.

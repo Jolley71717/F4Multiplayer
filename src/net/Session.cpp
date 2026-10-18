@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "MainThread.h"
+#include "Name.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "Server.h"
@@ -69,6 +70,10 @@ namespace Session
 		std::uint32_t     localId = 0;
 		std::uint32_t     sequence = 0;
 		Clock::time_point nextSend{};
+		// The name our hello went out with, or our last rename: the name is looked at once a second while in the
+		// session (with the character check) and sent again (kRename) when it differs, which it does when a joiner
+		// names a new character in the opening after connecting (the hello went with the Steam name).
+		std::string       sentName;
 
 		// Equipment is checked once a second and sent when it changes (and after joining).
 		constexpr auto                            EQUIPMENT_INTERVAL = 1s;
@@ -283,9 +288,23 @@ namespace Session
 				break;
 			case MessageType::kPlayerJoined:
 				if (const auto msg = Protocol::DecodePlayerJoined(a_data)) {
-					RemotePlayers::Add(msg->playerId, msg->name, msg->appearance);
+					// The server cleaned the name; cleaned again here, so a changed server's name can't reach the HUD's text
+					// fields with markup or bytes that aren't UTF-8 in it (common/Name.h).
+					const auto name = Name::Shown(msg->name, msg->playerId);
+					RemotePlayers::Add(msg->playerId, name, msg->appearance);
 					REX::INFO("Session: player {} joined", msg->playerId);
-					Hud::Notify(Text::Format("session.player_joined", { { "player", msg->name } }));
+					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
+				}
+				break;
+			case MessageType::kRenamed:
+				if (const auto msg = Protocol::DecodeRename(a_data)) {
+					const auto before = RemotePlayers::NameOf(msg->playerId);
+					const auto name = Name::Shown(msg->name, msg->playerId);
+					if (!before.empty() && name != before) {
+						RemotePlayers::Rename(msg->playerId, name);  // their name tag and the player list follow
+						REX::INFO("Session: player {} renamed", msg->playerId);
+						Hud::Notify(Text::Format("session.player_renamed", { { "player", before }, { "name", name } }));
+					}
 				}
 				break;
 			case MessageType::kPlayerLeft:
@@ -802,6 +821,7 @@ namespace Session
 					Protocol::Hello hello;
 					hello.contentHash = contentHash;
 					hello.name = PlayerName();
+					sentName = hello.name;
 					hello.password = settings.password;
 					hello.appearance = settings.myAppearance ? settings.myAppearance : DefaultAppearance();
 					hello.world = SessionSteps::OnHello(binding, WorldSync::Loot(), CurrentCharacter());
@@ -828,6 +848,15 @@ namespace Session
 		// and rich presence come with the server, so friends can't even try before our own game is in.
 		if (now >= nextCharacterCheck) {
 			nextCharacterCheck = now + CHARACTER_CHECK_INTERVAL;
+			// Our name, once a second while in the session: a joiner who connected before naming a new character
+			// in the opening said hello under the Steam name, and sends the character's once it is there.
+			if (welcomed) {
+				if (auto name = PlayerName(); name != sentName) {
+					sentName = std::move(name);
+					REX::INFO("Session: our name changed; telling the others");
+					client->Send(Protocol::Encode(Protocol::Rename{ 0, sentName }, Protocol::MessageType::kRename), true);
+				}
+			}
 			switch (binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() })) {
 			case CharacterBinding::Step::kStopHosting:
 				StopHosting();

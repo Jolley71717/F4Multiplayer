@@ -8,6 +8,7 @@ session.connected_own_fire = Мультиплеер: подключено (у к
 session.notice = Мультиплеер: {text}
 session.player_joined = {player} присоединился
 session.player_left = {player} вышел
+session.player_renamed = {player} теперь {name}
 session.someone_left = Игрок вышел
 session.disconnected = Мультиплеер: отключено
 session.hosting_cant_join = Мультиплеер: вы создаёте игру. Установите bHost = false, чтобы присоединиться к друзьям.

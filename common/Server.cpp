@@ -1,6 +1,7 @@
 #include "Server.h"
 
 #include "EnetTransport.h"
+#include "Name.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "SessionFile.h"
@@ -207,6 +208,7 @@ namespace
 		RateWindow                 rate;
 		std::optional<Protocol::PlayerStatus> status;
 		Clock::time_point          lastPing{};
+		Clock::time_point          lastRename{};  // a name changes twice a second at most (a game sends one on a change only, once a second)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		// NPCs this player hurt, tried to take over, or ran until another took it over or they let it go, and when
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
@@ -225,20 +227,6 @@ namespace
 		Protocol::ClaimReason reason = Protocol::ClaimReason::kUnowned;
 		Clock::time_point     since{};
 	};
-
-	std::string SanitizeName(std::string_view a_name, std::uint32_t a_id)
-	{
-		std::string out;
-		for (const char c : a_name) {
-			if (c >= 0x20 && c < 0x7F) {
-				out += c;
-			}
-		}
-		if (out.empty()) {
-			out = std::format("Player {}", a_id);
-		}
-		return out;
-	}
 
 	std::uint64_t NewSessionId()
 	{
@@ -865,7 +853,8 @@ void Server::Run()
 			return;
 		}
 
-		a_player.name = SanitizeName(hello->name, a_player.id);
+		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
+		a_player.name = Name::Shown(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
 		a_player.welcomed = true;
 		a_player.local = local;
@@ -1604,6 +1593,30 @@ void Server::Run()
 		broadcast(Protocol::Encode(*ping, Protocol::MessageType::kPinged), true, a_player.key);
 	};
 
+	// Their name changed (a joiner named their new character in the opening after connecting): cleaned as a hello's
+	// name is, kept for later joiners' welcomes, and told to the others. A name that cleans to the one they have
+	// already changes nothing.
+	const auto handleRename = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto now = Clock::now();
+		// A game looks at its name once a second and sends one on a change: a floor of half that never drops a real
+		// change that the network brought a little early, while a flood of them costs the others nothing.
+		if (!allowEvent(a_player) || now - a_player.lastRename < std::chrono::milliseconds(500)) {
+			return;
+		}
+		const auto rename = Protocol::DecodeRename(a_data);
+		if (!rename) {
+			return;
+		}
+		a_player.lastRename = now;
+		auto name = Name::Shown(rename->name, a_player.id);
+		if (name == a_player.name) {
+			return;
+		}
+		a_player.name = std::move(name);
+		log(std::format("server: player {} renamed", a_player.id));  // never the name: the log is public
+		broadcast(Protocol::Encode(Protocol::Rename{ a_player.id, a_player.name }, Protocol::MessageType::kRenamed), true, a_player.key);
+	};
+
 	const auto handleActivation = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1948,6 +1961,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportSpawn:
 			handleSpawn(a_player, a_data);
+			break;
+		case MessageType::kRename:
+			handleRename(a_player, a_data);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);
