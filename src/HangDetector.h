@@ -202,8 +202,8 @@ namespace HangWatch
 
 	// A main thread stuck in a wait is waiting for another thread. In a host's freeze on 2026-10-11 it waited for
 	// the physics step while one of the engine's job threads went round an endless loop in Havok's constraint
-	// setup (a ragdoll whose bodies had all become NaN), and the main thread's stack alone said only that it
-	// waited. So the watch also times every thread of the game for a moment and names those that kept a
+	// setup (a ragdoll whose bodies had all become NaN; HavokNan.h ends that loop now), and the main thread's stack
+	// alone said only that it waited. So the watch also times every thread of the game for a moment and names those that kept a
 	// processor busy meanwhile, with where each one was.
 	constexpr auto        THREAD_LOOK = std::chrono::milliseconds(500);
 	constexpr int         BUSY_PERCENT = 50;  // of one processor, over the look
