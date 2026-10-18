@@ -64,6 +64,11 @@ namespace Puppets
 	};
 	[[nodiscard]] GaitGraph GaitGraphOf(const RE::Actor* a_actor);
 
+	// The graph name for a variable or event, made once: building a BSFixedString looks the text up in the engine's string
+	// table under its lock, which a mirror's every frame must not do. a_name must live as long as the game does (a
+	// literal, MirrorGait's and CreatureGait's names): it is keyed by address.
+	[[nodiscard]] const RE::BSFixedString& VariableName(const char* a_name);
+
 	// Dev: whether the puppet's graph is moving, the idle stops sent to free it, how often its graph was
 	// found in the other state and put back, its furniture state (sit state, the furniture it holds, how
 	// often it was stood up out of furniture, whether it is held for furniture), the gait a dog's owner's game says it plays

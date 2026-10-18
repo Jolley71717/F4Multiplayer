@@ -466,7 +466,7 @@ namespace NpcSync
 						return;
 					}
 					a_state.gait = static_cast<std::uint8_t>(*gait);
-					if (const auto rateVar = MirrorGait::PersonRate(drawn, *gait); rateVar && graph->GetGraphVariableImplFloat(RE::BSFixedString{ rateVar }, rate)) {
+					if (const auto rateVar = MirrorGait::PersonRate(drawn, *gait); rateVar && graph->GetGraphVariableImplFloat(Puppets::VariableName(rateVar), rate)) {
 						a_state.gaitRate = CreatureGait::PackRate(rate);
 					}
 					break;
@@ -475,7 +475,7 @@ namespace NpcSync
 				{
 					static const RE::BSFixedString rangeVar{ CreatureGait::RANGE_VARIABLE };
 					const auto                     gait = graph->GetGraphVariableImplInt(rangeVar, state) ? CreatureGait::Find(state) : nullptr;
-					if (!gait || !graph->GetGraphVariableImplFloat(RE::BSFixedString{ gait->rateVariable }, rate)) {
+					if (!gait || !graph->GetGraphVariableImplFloat(Puppets::VariableName(gait->rateVariable), rate)) {
 						return;
 					}
 					a_state.gait = gait->id;
@@ -484,7 +484,7 @@ namespace NpcSync
 				}
 			case MirrorGait::Family::kCreature:
 				{
-					const auto own = graph->GetGraphVariableImplInt(RE::BSFixedString{ a_kind.stateVariable }, state) ? MirrorGait::CreatureState(state) : std::nullopt;
+					const auto own = graph->GetGraphVariableImplInt(Puppets::VariableName(a_kind.stateVariable), state) ? MirrorGait::CreatureState(state) : std::nullopt;
 					if (!own) {
 						return;
 					}
@@ -549,7 +549,7 @@ namespace NpcSync
 				const auto process = actor->currentProcess;
 				const auto middle = process ? process->middleHigh : nullptr;
 				const auto kind = Puppets::GaitGraphOf(actor);
-				state.speed = MirrorGait::Reported(middle ? middle->animationSpeed : 0.0f, speed, kind.family, middle && GraphStands(actor));
+				state.speed = MirrorGait::Reported(middle ? middle->animationSpeed : 0.0f, speed, kind.family, middle && !(middle->animationSpeed > 0.0f) && GraphStands(actor));
 				state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*actor).moveMode);
 				// The way its own graph has it go, rather than guessed from its path by the copies.
 				{

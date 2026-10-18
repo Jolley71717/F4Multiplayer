@@ -352,7 +352,7 @@ namespace Puppets
 			// Another creature's: the state its owner's graph moves in, so its start enters that rather than the walk. How
 			// its graph changes gait while moving is not known here: a change shows at the copy's next start.
 			if (kind.family == MirrorGait::Family::kCreature && own) {
-				graph->SetGraphVariableInt(RE::BSFixedString{ kind.stateVariable }, motion.gait);
+				graph->SetGraphVariableInt(VariableName(kind.stateVariable), motion.gait);
 			}
 
 			// Start or stop, and every MoveSync::RESYNC tell the graph again in case it is in the other state.
@@ -369,14 +369,14 @@ namespace Puppets
 				graph->SetGraphVariableFloat(weaponRunMultVar, person.weaponRunRate);
 				if (Gait::Send(moving, a_puppet.moving, gait, a_puppet.gait, step.resent != nullptr)) {
 					// The graph in use takes its own one and refuses the other.
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::Event(gait) });
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ Gait::WeaponEvent(gait) });
+					graph->NotifyAnimationGraphImpl(VariableName(Gait::Event(gait)));
+					graph->NotifyAnimationGraphImpl(VariableName(Gait::WeaponEvent(gait)));
 				}
 			}
 			if (dog) {
-				graph->SetGraphVariableFloat(RE::BSFixedString{ dogGait.range->rateVariable }, dogGait.rate);
+				graph->SetGraphVariableFloat(VariableName(dogGait.range->rateVariable), dogGait.rate);
 				if (CreatureGait::Send(moving, a_puppet.moving, dogGait.range->id, a_puppet.range, step.resent != nullptr)) {
-					graph->NotifyAnimationGraphImpl(RE::BSFixedString{ dogGait.range->event });
+					graph->NotifyAnimationGraphImpl(VariableName(dogGait.range->event));
 				}
 			}
 			// What the engine's own move actions keep and our bare events do not: a jump's take-off and
@@ -789,6 +789,15 @@ namespace Puppets
 			entry->target = a_motion;
 			entry->hasTarget = true;
 		}
+	}
+
+	const RE::BSFixedString& VariableName(const char* a_name)
+	{
+		static std::mutex                                         namesLock;
+		static std::unordered_map<const char*, RE::BSFixedString> names;
+		std::scoped_lock                                          l{ namesLock };
+		const auto                                                it = names.find(a_name);
+		return it != names.end() ? it->second : names.emplace(a_name, RE::BSFixedString{ a_name }).first->second;
 	}
 
 	GaitGraph GaitGraphOf(const RE::Actor* a_actor)
