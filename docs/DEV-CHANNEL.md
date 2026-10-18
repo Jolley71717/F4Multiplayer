@@ -184,6 +184,28 @@ With the main thread in the pump, the frame watch's report (`Frame watch: no gam
 counters, which thread holds the lock and whether it is in the wait, and how many requests the main thread's batch,
 set aside by the wait, never handed over. `tools/hangcatch.ps1` prints them too, before it writes a full-memory dump.
 
+## Havok's angle loop and a body gone NaN
+
+The host's hang of 2026-10-11 was a job thread spinning for ever in Havok's constraint setup, on a ragdoll whose
+bodies had gone NaN (docs/HANG-20261011.md). The loop now ends on a NaN and counts it, and the main thread finds the
+reference whose 3D is not finite and, when nothing else has a stake in it, disables and enables it again (logged as
+`Havok NaN: ...`). `havoknan` looks at it:
+
+- `havoknan` (or `havoknan status`), from the channel's thread (it answers while the main thread is stuck): how many
+  of the loop's two copies have the detour, the NaN angles cut in all and per copy, how many looks the main thread
+  made (and how many deep ones), how many deep looks in a row put nothing right (and whether it has stopped making
+  them, until another space, a load or a new burst of cuts), how many references it reset, how many are waiting for
+  their enable, and the last one found.
+- `havoknan scan [roots]` (on the main thread): one look now, at every node of every loaded reference's 3D (`roots`:
+  the root nodes only, as the 5-second look does).
+- `havoknan poison <refHex> [dynamic]` (on the main thread): the dump's state made on purpose: a NaN rotation is
+  written straight into every physics body under the reference's 3D (the game's own SetTransform turns a NaN down)
+  and into its root node, and its physics is woken; `dynamic` first makes its bodies dynamic. On a ragdoll (a corpse,
+  or the skeleton `000BDD9A` near Sanctuary: `console player.moveto 000BDD9A` first), the next step's constraint setup
+  reaches the loop with a NaN: the game as it was hangs there; with the detour the cut is counted, and within a
+  second the reference is reset (an actor, a persistent or quest reference, or anything of the session's is only
+  logged). The reply says how many bodies read back NaN.
+
 ## Limits
 
 - `input.ps1` can click and press single keys but can't steer, so anything that needs real play still needs a person:

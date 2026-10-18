@@ -2871,7 +2871,7 @@ namespace DevCommands
 
 	std::string Help()
 	{
-		std::string out = "commands: ping, help";
+		std::string out = "commands: ping, help, texwait, havoknan";
 		for (const auto& entry : COMMANDS) {
 			out += ", ";
 			out += entry.name;

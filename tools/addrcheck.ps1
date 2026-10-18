@@ -243,6 +243,16 @@ if ($null -ne $onIdle -and $null -ne $pump) {
 		(HexMatches (BytesAt ($onIdle + 0x379) 2) '0F 84') -and $call[0] -eq 0xE8 -and ($onIdle + 0x384 + [BitConverter]::ToInt32($call, 1)) -eq $pump) 'Main::OnIdle tests the position flag and calls PositionPlayerJob::Run at +0x37F'
 }
 
+# Havok's angle loop HavokGuard::Install puts a detour on (HavokNan.h, docs/HANG-20261011.md): the constraint setup at
+# +156F5C0, and its two copies of the exit test (cmpneqss xmm0,xmm5; movd eax,xmm0; bt eax,0; jb back 0x8B to the top).
+$constraints = Resolve 2263389
+Report ($constraints -eq 0x156F5C0) ('the constraint setup ID 2263389 is +{0:X}' -f $constraints)
+if ($null -ne $constraints) {
+	foreach ($at in @(0x2369, 0x3038)) {
+		Report (HexMatches (BytesAt ($constraints + $at) 19) 'F3 0F C2 C5 04 66 0F 7E C0 0F BA E0 00 0F 82 75 FF FF FF') ('the constraint setup''s angle loop ends at +{0:X} as read' -f $at)
+	}
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

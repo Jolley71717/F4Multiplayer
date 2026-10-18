@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "DevCommands.h"
 #include "MainThread.h"
+#include "game/HavokGuard.h"
 #include "game/TextureWait.h"
 
 #include <WinSock2.h>
@@ -123,6 +124,13 @@ namespace DevChannel
 					return RunOnMainThread([args = std::string{ args }]() { return TextureWait::Command(args); });
 				}
 				return TextureWait::Command(args);
+			}
+			// The same for Havok's NaN guard: its status works while the main thread is stuck (HavokGuard.h).
+			if (cmd == "havoknan") {
+				if (HavokGuard::OnMainThread(args)) {
+					return RunOnMainThread([args = std::string{ args }]() { return HavokGuard::Command(args); });
+				}
+				return HavokGuard::Command(args);
 			}
 			if (const auto handler = DevCommands::Find(cmd)) {
 				return RunOnMainThread([handler, args = std::string{ args }]() { return handler(args); });
