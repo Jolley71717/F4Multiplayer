@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <format>
 #include <limits>
+#include <map>
+#include <string>
 #include <thread>
 
 using namespace TestServer;
@@ -532,6 +534,173 @@ TEST("server session: names lose control characters; an empty name becomes Playe
 	REQUIRE(!toNameless.empty());
 	CHECK(Protocol::DecodePlayerJoined(toNameless[0])->name == "Alice");
 	CHECK(f.Logged(std::format("player {} joined from fake 1", alice->playerId)));
+}
+
+namespace
+{
+	// UTF-8 spelled out in bytes, so the file's own encoding plays no part.
+	const std::string CYRILLIC = "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82";  // Нейт
+	const std::string CJK = "\xE5\x86\x85\xE7\x89\xB9";              // 内特
+	const std::string EMOJI = "\xF0\x9F\x98\x80";                    // 😀
+
+	// The names the PlayerJoined packets among a_packets carry, by player ID.
+	std::map<std::uint32_t, std::string> JoinedNames(const Packets& a_packets)
+	{
+		std::map<std::uint32_t, std::string> out;
+		for (const auto& packet : OfType(a_packets, MT::kPlayerJoined)) {
+			const auto joined = Protocol::DecodePlayerJoined(packet);
+			REQUIRE(joined);
+			out[joined->playerId] = joined->name;
+		}
+		return out;
+	}
+
+	std::vector<Protocol::Rename> Renames(const Packets& a_packets)
+	{
+		return Decoded(a_packets, MT::kRenamed, [](auto a_data) { return Protocol::DecodeRename(a_data); });
+	}
+
+	std::vector<std::uint8_t> RenameTo(std::string a_name)
+	{
+		return Protocol::Encode(Protocol::Rename{ 0, std::move(a_name) }, MT::kRename);
+	}
+}
+
+TEST("server session: a name in another script is kept whole, and so is one of emoji")
+{
+	Fixture f;
+	const auto cyrillic = f.Join(1, Fixture::MakeHello(CYRILLIC));
+	const auto cjk = f.Join(2, Fixture::MakeHello(CJK));
+	const auto emoji = f.Join(3, Fixture::MakeHello(EMOJI));
+	const auto mixed = f.Join(4, Fixture::MakeHello("Nate " + CYRILLIC + " " + CJK + EMOJI));
+	REQUIRE(cyrillic && cjk && emoji && mixed);
+
+	const auto heard = JoinedNames(Settle(f, 1));
+	REQUIRE(heard.size() == 3);
+	CHECK(heard.at(cjk->playerId) == CJK);
+	CHECK(heard.at(emoji->playerId) == EMOJI);
+	CHECK(heard.at(mixed->playerId) == "Nate " + CYRILLIC + " " + CJK + EMOJI);
+	const auto toCjk = JoinedNames(f.fake->Take(2));
+	CHECK(toCjk.at(cyrillic->playerId) == CYRILLIC);
+}
+
+TEST("server session: markup, bytes that aren't UTF-8 and the invisible characters are dropped from a name; the cap counts characters")
+{
+	Server::Options options;
+	options.maxPlayers = 8;  // five names to try (the default room is four)
+	Fixture        f{ options };
+	const auto markup = f.Join(1, Fixture::MakeHello("<b>Nate</b>"));
+	const auto broken = f.Join(2, Fixture::MakeHello("Na\xFF" "te\xD0"));
+	const auto reversed = f.Join(3, Fixture::MakeHello("\xE2\x80\xAE" "etaN"));  // a right-to-left override
+	std::string longCyrillic;
+	for (int i = 0; i < 10; ++i) {
+		longCyrillic += CYRILLIC;  // 40 characters, 80 bytes
+	}
+	const auto capped = f.Join(4, Fixture::MakeHello(longCyrillic));
+	const auto onlyBad = f.Join(5, Fixture::MakeHello("<\xFF>"));
+	REQUIRE(markup && broken && reversed && capped && onlyBad);
+
+	const auto heard = JoinedNames(Settle(f, 5));
+	REQUIRE(heard.size() == 4);
+	CHECK(heard.at(markup->playerId) == "bNate/b");
+	CHECK(heard.at(broken->playerId) == "Nate");
+	CHECK(heard.at(reversed->playerId) == "etaN");
+	CHECK(heard.at(capped->playerId) == longCyrillic.substr(0, 64));  // 32 characters, whole ones
+	const auto toMarkup = JoinedNames(f.fake->Take(1));
+	CHECK(toMarkup.at(onlyBad->playerId) == std::format("Player {}", onlyBad->playerId));
+}
+
+TEST("server session: a player's new name reaches the others, cleaned, and a later joiner hears it too")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("SteamAlice"));
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(alice && bob);
+	Clear(f, { 1, 2 });
+
+	// Alice named her character in the opening after connecting: the others see the character's name.
+	f.fake->Deliver(1, RenameTo(CYRILLIC));
+	auto toBob = Renames(Received(f, 2));
+	REQUIRE(toBob.size() == 1);
+	CHECK(toBob[0].playerId == alice->playerId);
+	CHECK(toBob[0].name == CYRILLIC);
+	CHECK(Renames(Received(f, 1)).empty());  // not echoed to her
+	CHECK(f.Logged(std::format("player {} renamed", alice->playerId)));
+	CHECK(!f.Logged(CYRILLIC));  // the log never holds a name
+
+	// The same name again changes nothing.
+	std::this_thread::sleep_for(1100ms);
+	f.fake->Deliver(1, RenameTo(CYRILLIC));
+	CHECK(Renames(Received(f, 2)).empty());
+
+	// A name with markup is cleaned as a hello's; one nothing is left of becomes Player N.
+	std::this_thread::sleep_for(1100ms);
+	f.fake->Deliver(1, RenameTo("<b>" + CYRILLIC + "</b> Jr"));
+	toBob = Renames(Received(f, 2));
+	REQUIRE(toBob.size() == 1);
+	CHECK(toBob[0].name == "b" + CYRILLIC + "/b Jr");
+	std::this_thread::sleep_for(1100ms);
+	f.fake->Deliver(1, RenameTo("\x01\x02"));
+	toBob = Renames(Received(f, 2));
+	REQUIRE(toBob.size() == 1);
+	CHECK(toBob[0].name == std::format("Player {}", alice->playerId));
+
+	// Whoever joins now hears the name she has now.
+	std::this_thread::sleep_for(1100ms);
+	f.fake->Deliver(1, RenameTo("Nora"));
+	Sync(f, 1);
+	const auto carol = f.Join(3, Fixture::MakeHello("Carol"));
+	REQUIRE(carol);
+	const auto toCarol = JoinedNames(Received(f, 3));
+	CHECK(toCarol.at(alice->playerId) == "Nora");
+	CHECK(toCarol.at(bob->playerId) == "Bob");
+}
+
+TEST("server session: a name changes twice a second at most, the last one sent stays, and not before the hello")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(alice && bob);
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, RenameTo("One"));
+	// Right after the first (the network brought two of her game's changes together): it waits, and the last one
+	// sent is the one that stays, for the others and for later joiners.
+	f.fake->Deliver(1, RenameTo("Two"));
+	f.fake->Deliver(1, RenameTo("Three"));
+	auto toBob = Renames(Received(f, 2));
+	REQUIRE(toBob.size() == 1);
+	CHECK(toBob[0].name == "One");
+	const auto later = f.fake->WaitFor(2, Type(MT::kRenamed));
+	REQUIRE(later);
+	const auto three = Protocol::DecodeRename(*later);
+	REQUIRE(three);
+	CHECK(three->playerId == alice->playerId);
+	CHECK(three->name == "Three");  // "Two" never went out: a newer name took its place
+	std::this_thread::sleep_for(700ms);
+	CHECK(Renames(Received(f, 2)).empty());
+	const auto carol = f.Join(3, Fixture::MakeHello("Carol"));
+	REQUIRE(carol);
+	CHECK(JoinedNames(Received(f, 3)).at(alice->playerId) == "Three");
+
+	// A flood reaches the others as two renames a second at most.
+	for (int i = 0; i < 50; ++i) {
+		f.fake->Deliver(1, RenameTo(std::format("Flood {}", i)));
+	}
+	std::this_thread::sleep_for(1200ms);
+	toBob = Renames(Received(f, 2));
+	CHECK(toBob.size() >= 1);
+	CHECK(toBob.size() <= 3);
+	REQUIRE(!toBob.empty());
+	CHECK(toBob.back().name == "Flood 49");
+
+	// A connection that never said hello has no name to change and nobody to tell.
+	f.fake->Connect(4);
+	f.fake->Deliver(4, RenameTo("Nobody"));
+	std::this_thread::sleep_for(600ms);  // past the floor: nothing was kept for later either
+	CHECK(Renames(Received(f, 2)).empty());
+	CHECK(!f.fake->Disconnected(4));
 }
 
 // ---- identities --------------------------------------------------------------------------

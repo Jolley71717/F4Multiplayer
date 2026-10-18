@@ -12,6 +12,7 @@ session.connected_own_fire = Multijoueur : connecté (chacun sa propre histoire,
 session.notice = Multijoueur : {text}
 session.player_joined = {player} est arrivé
 session.player_left = {player} est parti
+session.player_renamed = {player} s'appelle maintenant {name}
 session.someone_left = Un joueur est parti
 session.disconnected = Multijoueur : déconnecté
 session.hosting_cant_join = Multijoueur : vous hébergez. Réglez bHost sur false pour rejoindre des amis.

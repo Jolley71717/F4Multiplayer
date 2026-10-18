@@ -25,6 +25,7 @@ namespace Text
 		{ "session.notice", "Multiplayer: {text}" },
 		{ "session.player_joined", "{player} joined" },
 		{ "session.player_left", "{player} left" },
+		{ "session.player_renamed", "{player} is now {name}" },
 		{ "session.someone_left", "A player left" },
 		{ "session.disconnected", "Multiplayer: disconnected" },
 		{ "session.hosting_cant_join", "Multiplayer: you're hosting. Set bHost = false to join friends." },

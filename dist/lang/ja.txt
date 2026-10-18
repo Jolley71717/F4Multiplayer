@@ -13,6 +13,7 @@ session.connected_own_fire = マルチプレイ：接続しました（ストー
 session.notice = マルチプレイ：{text}
 session.player_joined = {player}が参加
 session.player_left = {player}が退出
+session.player_renamed = {player}が{name}に改名
 session.someone_left = プレイヤーが退出
 session.disconnected = マルチプレイ：切断されました
 session.hosting_cant_join = マルチプレイ：ホスト中です。参加するにはbHost = falseにしてください

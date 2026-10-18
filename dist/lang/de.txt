@@ -8,6 +8,7 @@ session.connected_own_fire = Multiplayer: verbunden (jeder mit eigener Story, Fr
 session.notice = Multiplayer: {text}
 session.player_joined = {player} ist beigetreten
 session.player_left = {player} ist gegangen
+session.player_renamed = {player} heißt jetzt {name}
 session.someone_left = Ein Spieler ist gegangen
 session.disconnected = Multiplayer: Verbindung getrennt
 session.hosting_cant_join = Multiplayer: Du hostest. Setze bHost = false, um Freunden beizutreten.

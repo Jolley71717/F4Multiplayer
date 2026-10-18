@@ -19,9 +19,10 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 33;
+	inline constexpr std::uint16_t VERSION = 34;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
-	inline constexpr std::size_t   MAX_NAME_LENGTH = 32;
+	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
+	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
 	inline constexpr std::size_t   MAX_REASON_LENGTH = 200;
 	inline constexpr std::size_t   MAX_PLUGINS = 250;          // plugin names in a hello (the game allows 255 full plugins plus light ones; the rest are left off)
 	inline constexpr std::size_t   MAX_PLUGIN_NAME_LENGTH = 80;
@@ -111,6 +112,7 @@ namespace Protocol
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
 		kReportActivation = 30,    // the sender pressed a button, switch or lever
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
+		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -142,6 +144,7 @@ namespace Protocol
 		kExplosion = 132,         // an explosion from another player's throw
 		kActivation = 133,        // another player pressed one
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
+		kRenamed = 135,           // another player's name changed
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -262,6 +265,17 @@ namespace Protocol
 	struct PlayerLeft
 	{
 		std::uint32_t playerId = 0;
+	};
+
+	// A player's name changed after their hello: a joiner who connected before naming a new character in the
+	// opening (Vault 111) sends it once the name is there. kRename: playerId is ignored client -> server; kRenamed:
+	// whose name it is, cleaned by the server as a hello's (common/Name.h).
+	struct Rename
+	{
+		std::uint32_t playerId = 0;
+		std::string   name;
+
+		bool operator==(const Rename&) const = default;
 	};
 
 	// Actors are identified by reference form ID, which is the same for everyone because the
@@ -1289,6 +1303,27 @@ namespace Protocol
 		PlayerLeft msg;
 		msg.playerId = r.U32();
 		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Rename& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.Str(a_msg.name, MAX_NAME_LENGTH);
+		return w.Data();
+	}
+
+	inline std::optional<Rename> DecodeRename(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Rename msg;
+		msg.playerId = r.U32();
+		msg.name = r.Str(MAX_NAME_LENGTH);
+		if (!r.Ok() || !r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

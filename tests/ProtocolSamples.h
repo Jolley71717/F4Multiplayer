@@ -236,6 +236,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
 		}
+		for (const auto type : { MT::kRename, MT::kRenamed }) {
+			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
+		}
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -285,6 +288,7 @@ namespace ProtocolSamples
 		case MT::kReportExplosion:
 		case MT::kReportActivation:
 		case MT::kReportSpawn:
+		case MT::kRename:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -319,6 +323,7 @@ namespace ProtocolSamples
 		case MT::kExplosion:
 		case MT::kActivation:
 		case MT::kSpawned:
+		case MT::kRenamed:
 			return true;
 		}
 		return false;

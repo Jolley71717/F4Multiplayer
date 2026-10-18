@@ -10,6 +10,8 @@ namespace RemotePlayers
 {
 	// a_appearance is the NPC base form the player asked to be shown as (0 = our default).
 	void Add(std::uint32_t a_id, std::string a_name, std::uint32_t a_appearance = 0);
+	// Their name changed (they named a new character after joining): the name tag and the player list show the new one.
+	void Rename(std::uint32_t a_id, std::string a_name);
 	void Remove(std::uint32_t a_id);
 	void RemoveAll();
 

@@ -8,6 +8,7 @@ session.connected_own_fire = 多人連線：已連線（各玩各的劇情，友
 session.notice = 多人連線：{text}
 session.player_joined = {player} 加入了
 session.player_left = {player} 離開了
+session.player_renamed = {player} 現在是 {name}
 session.someone_left = 一名玩家離開了
 session.disconnected = 多人連線：已斷線
 session.hosting_cant_join = 多人連線：你正在擔任主機。將 bHost 設為 false 才能加入好友。

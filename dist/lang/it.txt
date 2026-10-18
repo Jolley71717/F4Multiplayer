@@ -9,6 +9,7 @@ session.connected_own_fire = Multiplayer: connesso (ognuno con la propria storia
 session.notice = Multiplayer: {text}
 session.player_joined = {player} è entrato
 session.player_left = {player} è uscito
+session.player_renamed = {player} ora si chiama {name}
 session.someone_left = Un giocatore è uscito
 session.disconnected = Multiplayer: disconnesso
 session.hosting_cant_join = Multiplayer: stai ospitando. Imposta bHost = false per unirti agli amici.

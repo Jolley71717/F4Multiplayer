@@ -8,6 +8,7 @@ session.connected_own_fire = Multijogador: conectado (cada um com a própria his
 session.notice = Multijogador: {text}
 session.player_joined = {player} entrou
 session.player_left = {player} saiu
+session.player_renamed = {player} agora é {name}
 session.someone_left = Um jogador saiu
 session.disconnected = Multijogador: desconectado
 session.hosting_cant_join = Multijogador: hospedando. Defina bHost = false para entrar no jogo de amigos.

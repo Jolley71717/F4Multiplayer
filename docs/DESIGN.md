@@ -636,16 +636,39 @@ fields do not shape right-to-left text. A translation's first header line says w
 The name in the Hello comes from `NameChoice::Choose(sPlayerName, character, steam)`: a name in the ini is used as
 written; `character` (the default in the shipped ini) is the player character's display name
 (`PlayerCharacter::GetDisplayFullName`), else the Steam name, else "Vault Dweller"; an empty value (older ini files)
-is the Steam name. The server keeps only printable ASCII of a name (`SanitizeName`), so a character name with no
-ASCII letter in it counts as no name. The name is read when the Hello is sent, and nothing sends it again: a hosting
-game says hello again after every character change (hosting restarts and the game connects to its own server anew),
-a joining game that loads another character leaves and its next join reads the new name. The one case that can keep a
-stale name is a joining game that connects before a new character is named in the opening (the character is named
-in the opening, after the connect): it stays under the Steam name until it leaves or loses the connection.
+is the Steam name. The server keeps every letter and digit of every script (`common/Name.h`, `Name::Shown`: the
+name is validated as UTF-8 byte by byte, what isn't UTF-8 is dropped, so are control characters, line separators,
+the bidi overrides and other invisible characters, and `<` and `>` since the HUD's text fields read HTML; at most
+`Name::MAX_CHARACTERS` = 32 characters, counted in code points, so a Cyrillic name keeps as many letters as a Latin
+one; `Protocol::MAX_NAME_LENGTH` is 128 bytes on the wire, four per character; a name nothing is left of is
+"Player N"). The client cleans the names it hears the same way before they reach the HUD, and its own the same way
+before it sends it. The name is read when the Hello is sent, and looked at again once a second while in the session
+and in the world (with the character check; not at the main menu, where the character's name may be gone): a hosting game
+says hello again after every character change (hosting restarts and the game connects to its own server anew), a
+joining game that loads another character leaves and its next join reads the new name, and a joining game that
+connected before a new character was named in the opening (the character is named in the opening, after the
+connect) said hello under the Steam name and sends `kRename` once the character's name differs from what it sent
+(protocol 34). The server cleans it as a hello's name, keeps it for later joiners' welcomes, tells the others
+(`kRenamed`, not the sender; two a second per player at most, on top of the event budget: one that comes sooner waits
+on the player as `pendingName` and a newer one takes its place, so the last name a game sent is the one that stays
+even when the network brings two together; the same name again goes nowhere) and logs "player N renamed", never the name. The hearers change the stand-in's name tag and the player
+list's entry and show "{old} is now {new}".
+
+Encoding: a name is UTF-8 all the way. Steam's persona name is UTF-8 (the Steamworks API speaks nothing else), the
+game's strings are UTF-8 (its .STRINGS files and Scaleform's text, so the character name typed in the opening is
+UTF-8 in `GetDisplayFullName`), `Protocol::Reader::Str` drops only bytes below 0x20 (every byte of a multi-byte
+character is 0x80 or more), `Text::Format` copies bytes, and `ShowHUDMessage` and `ExtraDataList::SetOverrideName`
+take a UTF-8 `const char*` into Scaleform; no step narrows to ASCII or to the Windows code page. What the HUD can
+draw is another matter: the game's text fields use the fonts embedded in `Interface/fonts_<language>.swf` through
+`Interface/fontconfig.txt`. Checked live on 2026-10-18 (two English games, names from `sPlayerName`): the
+stand-in's name tag in an English game draws a Cyrillic name in full (in the font's capitals: "Нейт Волков" shows
+as НЕЙТ ВОЛКОВ), and a CJK name as one box per character (内特·山本 as two boxes, the middle dot, two boxes); a
+Chinese or Japanese game's own font should draw it. Emoji are in no game font. A player who wants CJK in an English
+game can map a font with its glyphs in `fontconfig.txt` (a font mod).
 
 ## Status (2026-10-09)
 
-Protocol VERSION 31 (0.8.7; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic). The sections below record each review as it was written.
+Protocol VERSION 34 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
