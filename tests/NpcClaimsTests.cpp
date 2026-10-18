@@ -278,3 +278,23 @@ TEST("npc claims: a refused companion claim waits 15 s, an unowned claim for it 
 	CHECK(book.Due(DOGMEAT, Reason::kCompanion, t0 + 5s));
 	CHECK(book.Refusals() == 3);
 }
+
+TEST("npc claims: a refused companion claim is let go of exactly COMPANION_BACKOFF after, not a moment before")
+{
+	NpcClaims::Book         book;
+	const auto              t0 = Clock::now();
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t FRIEND = 1;
+
+	book.Claimed(DOGMEAT, Reason::kCompanion, t0);
+	book.Answered(DOGMEAT, FRIEND, US, t0);
+	// A moment short of the backoff the wait holds, Expire or not.
+	CHECK(!book.Due(DOGMEAT, Reason::kCompanion, t0 + NpcClaims::COMPANION_BACKOFF - 1ns));
+	book.Expire(t0 + NpcClaims::COMPANION_BACKOFF - 1ns);
+	CHECK(!book.Due(DOGMEAT, Reason::kCompanion, t0 + NpcClaims::COMPANION_BACKOFF - 1ns));
+	// Exactly at it the claim may go, and the wait is dropped (asked about the moment before again, nothing is
+	// held: the book does not keep what no longer holds anything back).
+	CHECK(book.Due(DOGMEAT, Reason::kCompanion, t0 + NpcClaims::COMPANION_BACKOFF));
+	book.Expire(t0 + NpcClaims::COMPANION_BACKOFF);
+	CHECK(book.Due(DOGMEAT, Reason::kCompanion, t0 + NpcClaims::COMPANION_BACKOFF - 1ns));
+}

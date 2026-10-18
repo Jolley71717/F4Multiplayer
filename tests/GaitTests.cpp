@@ -11,7 +11,7 @@
 // Walk or run for a humanoid puppet (src/game/Gait.h), driven frame by frame together with MoveSync the way
 // Puppets::DriveAnimation does, against a model of the humanoid locomotion graph: standing takes only
 // "moveStart", which enters the gait its sync variable names; moving, the gait state machine changes only on
-// "Walk"/"Jog"/"Run" and writes its own state back into the sync variable; nothing changes the gait by Speed.
+// "Walk"/"Run" and writes its own state back into the sync variable; nothing changes the gait by Speed.
 namespace
 {
 	using namespace std::chrono_literals;
@@ -47,7 +47,7 @@ namespace
 				++stops;
 				return true;
 			}
-			const int to = std::strcmp(a_event, "Run") == 0 ? RUN : std::strcmp(a_event, "Jog") == 0 ? 1 : std::strcmp(a_event, "Walk") == 0 ? WALK : -1;
+			const int to = std::strcmp(a_event, "Run") == 0 ? RUN : std::strcmp(a_event, "Walk") == 0 ? WALK : -1;
 			if (to < 0 || !moving) {
 				return false;  // the weapon-drawn graph's events, or not in locomotion
 			}

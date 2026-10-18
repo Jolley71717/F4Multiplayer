@@ -570,6 +570,9 @@ namespace ArmorFrames
 		bool                 away = false;     // it was hidden as they got in: theirs stood parked somewhere else, and they got into it there
 		float                fromStart = 0.0f; // how far it stands from where it stood before it was first moved here (0: never moved)
 		std::optional<float> fromSpot;         // how far it stands from where they got in; none when that is another place
+		// Another player's game runs it (NpcSync, FrameShare.h): it stands here where their game has it, however it got
+		// there. Neither our player's last use of it nor the move that brought it here makes it our own suit.
+		bool                 synced = false;
 	};
 
 	enum class Original
@@ -598,7 +601,10 @@ namespace ArmorFrames
 		if (!a_facts.frame) {
 			return Original::kNotFrame;
 		}
-		if (a_facts.ours) {
+		// A frame another game runs stands here where that game has it (synced): it is theirs wherever our player last
+		// left it, and the move that brought it here is no use of it by our player. Where they get in is where their
+		// game has it, so it is looked at afresh each time rather than left alone for the wear (moved).
+		if (!a_facts.synced && a_facts.ours) {
 			return Original::kOurs;
 		}
 		if (a_facts.inUse) {
@@ -607,7 +613,7 @@ namespace ArmorFrames
 		if (a_facts.quest) {
 			return Original::kQuest;
 		}
-		if (!(a_facts.fromStart <= START_TOLERANCE)) {
+		if (!a_facts.synced && !(a_facts.fromStart <= START_TOLERANCE)) {
 			return Original::kUsed;
 		}
 		// They took theirs away and left it parked elsewhere (ChooseParkedOriginal hid ours), and got in again there:
@@ -615,7 +621,7 @@ namespace ArmorFrames
 		if (a_facts.away) {
 			return a_facts.loaded ? Original::kHide : Original::kNotLoaded;
 		}
-		if (a_facts.moved) {
+		if (!a_facts.synced && a_facts.moved) {
 			return Original::kElsewhere;
 		}
 		if (!a_facts.loaded) {
@@ -628,11 +634,14 @@ namespace ArmorFrames
 	}
 
 	// A frame a friend left standing: the one they got out of last, where their game has it now (Protocol::ParkedFrame).
-	// Their frames are not references every game shares (a pre-placed one is a reference of each game's own world, and
-	// one made in their game is none in ours), so a copy is shown in its place: in a power armor station they parked it
-	// in, or wherever they got out and walked off. It used to be shown only while they wore it and for a few seconds
-	// after, at the spot their stand-in stood as they got out (the exit steps the wearer out of the frame, so that spot
-	// was some 76 units off the frame); then it was gone, and a friend's suit parked in a station stood only in their game.
+	// A pre-placed frame is a reference every game has, and is shared as an NPC is (NpcSync, FrameShare.h): whoever
+	// runs it says where it stands, and ours is moved there, so it stands on their rack in our game too, whether they
+	// parked it before the session or got out of it in front of us. The parked frame is for the rest: one made in their
+	// game (none in ours), or one their game has not reported yet. A copy is shown in its place then: in a power armor
+	// station they parked it in, or wherever they got out and walked off. It used to be shown only while they wore it and
+	// for a few seconds after, at the spot their stand-in stood as they got out (the exit steps the wearer out of the
+	// frame, so that spot was some 76 units off the frame); then it was gone, and a friend's suit parked in a station
+	// stood only in their game.
 
 	// Our player's last frame, as Party::SampleStatus finds it (PlayerCharacter::lastUsedPowerArmor).
 	struct LastFrame
@@ -755,7 +764,8 @@ namespace ArmorFrames
 		if (a_facts.fromSpot && *a_facts.fromSpot <= ORIGINAL_RADIUS) {
 			return Original::kThere;
 		}
-		if (a_facts.ours) {
+		// Synced (see ChooseOriginal): theirs, wherever our player left it, and however it got where it stands.
+		if (!a_facts.synced && a_facts.ours) {
 			return Original::kOurs;
 		}
 		if (a_facts.inUse) {
@@ -764,7 +774,7 @@ namespace ArmorFrames
 		if (a_facts.quest) {
 			return Original::kQuest;
 		}
-		if (!(a_facts.fromStart <= START_TOLERANCE)) {
+		if (!a_facts.synced && !(a_facts.fromStart <= START_TOLERANCE)) {
 			return Original::kUsed;
 		}
 		if (!a_facts.loaded) {

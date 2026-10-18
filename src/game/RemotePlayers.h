@@ -38,6 +38,10 @@ namespace RemotePlayers
 	// Dev: the light form placed at a stand-in whose player has their Pip-Boy light on.
 	void SetLightForm(std::uint32_t a_formId);
 
+	// The game's uGridsToLoad (StandInRange), read once the game has read its ini: how far outside the engine draws
+	// around our player, for what is in our sight (a stand-in, a frame).
+	[[nodiscard]] int GridsToLoad();
+
 	struct Info
 	{
 		std::uint32_t                        id = 0;

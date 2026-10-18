@@ -252,3 +252,14 @@ TEST("door share: a joiner's world state opens the doors the session opened, and
 	CHECK(joiner.doors[DOOR].open == RS::kNo);
 	CHECK(joiner.applied == 1);
 }
+
+TEST("door share: a reference nothing is known of does not share its open state")
+{
+	// Facts left as they come (not a door, no flags, no script) say nothing a player opens.
+	CHECK(!DoorShare::SharesOpen(DoorShare::Facts{}));
+	CHECK(!DoorShare::SharesOpen({ .doorFlags = 0x08 }));
+	CHECK(!DoorShare::SharesOpen({ .scripted = true }));
+	CHECK(!DoorShare::Facts{}.door);
+	CHECK(!DoorShare::Facts{}.scripted);
+	CHECK(DoorShare::Facts{}.doorFlags == 0);
+}
