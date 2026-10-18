@@ -133,7 +133,9 @@
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
   ours by the quickest trip of the last 64 states (src/game/Prediction.h, SenderClock), so states that came
   together after a stall are still drawn as far apart as they were sent. How far in the past (`delayMs`,
-  at least 70) follows how far past the newest state our recent frames were (src/game/StateBuffer.h).
+  at least 70, at most 250) follows the furthest past the newest state our frames of the last three
+  seconds were (src/game/StateBuffer.h). When the next state is late anyway, the drawn time waits at
+  the newest one, so the stand-in stands and then goes on from there rather than leaping ahead.
   `net status` shows the average gap between a friend's states
   (`gapMs`, about 33) and `held=a/b`: frames, out of b with the friend moving, where the next state
   was late and the stand-in stood still. More than a few percent means the delay is too short for
