@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Keeps a physics body gone NaN from freezing the game (the host's hang of 2026-10-11, bead 4ov; docs/HANG-20261011.md
+// Keeps a physics body gone NaN from freezing the game (the host's hang of 2026-10-11; docs/HANG-20261011.md
 // has the dump). Havok's constraint setup (hknpSolverData's setup of a constraint's angular limits, game offset
 // +156F5C0 in 1.11.240) brings the angle between two bodies into [-pi, pi) with a loop that runs while the angle differs
 // from itself clamped to that range: `do { a -= 2pi * floor((a + pi) / 2pi); } while (clamp(a) != a)`. A NaN differs
