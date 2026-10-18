@@ -1907,6 +1907,11 @@ namespace RemotePlayers
 		return out;
 	}
 
+	bool Any()
+	{
+		return !players.empty();
+	}
+
 	std::string NameOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);

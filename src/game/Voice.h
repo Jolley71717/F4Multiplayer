@@ -7,7 +7,8 @@
 // decompress them and play them louder the closer the speaker's character is. Main thread only.
 namespace Voice
 {
-	// Captures our voice and recycles finished playback buffers. Call every frame.
+	// Captures our voice and recycles finished playback buffers. Call every frame: it returns at once
+	// while nobody could hear us and no friend's voice is playing (VoiceGate.h).
 	// a_inSession: welcomed by a server.
 	void Frame(bool a_inSession);
 
