@@ -2029,6 +2029,12 @@ namespace RemotePlayers
 
 	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)
 	{
+		// A frame copy (Spawns' copy of a friend's frame) goes as every frame of ours does: one taken over from the parked
+		// copy may be the stand-in's own, which the engine promoted when it got into it (BuryFrame).
+		if (const auto ref = a_ref.get(); ref && Equipment::IsPowerArmorFrame(ref->GetObjectReference())) {
+			BuryFrame(ref.get(), a_placedAt);
+			return;
+		}
 		Bury({ .actor = a_ref, .spawnedAt = a_placedAt });
 	}
 
