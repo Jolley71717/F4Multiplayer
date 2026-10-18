@@ -196,10 +196,12 @@ it:
   made (and how many deep ones), how many references it put right, and the last one.
 - `havoknan scan [roots]` (on the main thread): one look now, at every node of every loaded reference's 3D (`roots`:
   the root nodes only, as the 5-second look does).
-- `havoknan poison <refHex>` (on the main thread): the dump's state made on purpose: every physics body under the
-  reference's 3D gets a NaN rotation (its position kept) and its physics is woken. On a ragdoll (a corpse, or the
-  skeleton `000BDD9A` at SanctuaryExt), the next step's constraint setup reaches the loop with a NaN: the game as it
-  was hangs there; with the detour the cut is counted, and within a second the reference is reset.
+- `havoknan poison <refHex> [dynamic]` (on the main thread): the dump's state made on purpose: a NaN rotation is
+  written straight into every physics body under the reference's 3D (the game's own SetTransform turns a NaN down)
+  and into its root node, and its physics is woken; `dynamic` first makes its bodies dynamic. On a ragdoll (a corpse,
+  or the skeleton `000BDD9A` near Sanctuary: `console player.moveto 000BDD9A` first), the next step's constraint setup
+  reaches the loop with a NaN: the game as it was hangs there; with the detour the cut is counted, and within a
+  second the reference is reset. The reply says how many bodies read back NaN.
 
 ## Limits
 

@@ -186,15 +186,19 @@ namespace HavokGuard
 			return std::format("{} bad reference(s) found in a {} look; {}", found, deep ? "deep" : "root", Status());
 		}
 
-		// poison <refHex>: what the dump had, made on purpose. Every body under the reference's 3D gets a rotation of NaN
-		// (its position kept), and the reference's physics is woken. With a constraint between two of them, the next
-		// physics step reaches the angle loop with a NaN: the game, as it is, hangs there; with the detour the loop ends,
-		// is counted, and the reference is found and put right.
+		// poison <refHex> [dynamic]: what the dump had, made on purpose. Every body under the reference's 3D gets a
+		// rotation of NaN (its position kept), and the reference's physics is woken; `dynamic` first makes its bodies
+		// dynamic (as a skeleton is once something has knocked it about). With a constraint
+		// between two of them, the next physics step reaches the angle loop with a NaN: the game, as it was, hangs
+		// there; with the detour the loop ends, is counted, and the reference is found and put right.
 		std::string Poison(std::string_view a_args)
 		{
+			const auto    split = a_args.find(' ');
+			const auto    hex = a_args.substr(0, split);
+			const bool    dynamic = split != std::string_view::npos && a_args.substr(split + 1) == "dynamic";
 			std::uint32_t id = 0;
-			if (a_args.empty() || std::from_chars(a_args.data(), a_args.data() + a_args.size(), id, 16).ec != std::errc{}) {
-				return "error: usage: havoknan poison <refHex>";
+			if (hex.empty() || std::from_chars(hex.data(), hex.data() + hex.size(), id, 16).ec != std::errc{}) {
+				return "error: usage: havoknan poison <refHex> [dynamic]";
 			}
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
 			const auto root = ref ? ref->Get3D() : nullptr;
@@ -204,24 +208,15 @@ namespace HavokGuard
 			if (ref->IsPlayerRef()) {
 				return "error: not the player";
 			}
-			int                                bodies = 0;
-			std::vector<RE::NiAVObject*>       stack{ root };
-			std::size_t                        walked = 0;
-			const float                        nan = std::numeric_limits<float>::quiet_NaN();
+			std::vector<RE::bhkNPCollisionObject*> collisions;
+			std::vector<RE::NiAVObject*>           stack{ root };
+			std::size_t                            walked = 0;
 			while (!stack.empty() && walked++ < HavokNan::NODE_LIMIT) {
 				const auto node = stack.back();
 				stack.pop_back();
 				if (const auto object = node->collisionObject.get()) {
 					if (const auto collision = object->IsbhkNPCollisionObject()) {
-						alignas(16) RE::hkTransformf transform{};
-						if (collision->GetTransform(transform)) {
-							std::array<float, 12> rotation{};
-							rotation.fill(nan);
-							static_assert(sizeof(transform.m_rotation) == sizeof(rotation));
-							std::memcpy(&transform.m_rotation, rotation.data(), sizeof(rotation));
-							collision->SetTransform(transform);
-							++bodies;
-						}
+						collisions.push_back(collision);
 					}
 				}
 				if (const auto parent = node->IsNode()) {
@@ -232,12 +227,50 @@ namespace HavokGuard
 					}
 				}
 			}
+			int unmoving = 0;  // bodies with no motion of their own (static): motion id 0
+			for (const auto collision : collisions) {
+				if (const auto body = collision->GetBody()) {
+					std::uint32_t motion = 0;
+					std::memcpy(&motion, &body->m_motionId, sizeof(motion));
+					unmoving += motion == 0 ? 1 : 0;
+				}
+				if (dynamic) {
+					collision->SetMotionType(RE::hknpMotionPropertiesId::Preset::kDynamic);
+				}
+			}
+			// The game's SetTransform turns a NaN rotation down (the body reads back as it was), so the NaN goes straight
+			// into each body's own transform, where the next step's constraint setup reads it, and into the reference's
+			// root node, as the dump had it (the root's local and world transforms NaN), which keeps it NaN after the step.
+			const float           nan = std::numeric_limits<float>::quiet_NaN();
+			std::array<float, 12> rotation{};
+			rotation.fill(nan);
+			int bodies = 0, nanAfter = 0;
+			for (const auto collision : collisions) {
+				const auto body = const_cast<RE::hknpBody*>(collision->GetBody());
+				if (!body) {
+					continue;
+				}
+				static_assert(sizeof(body->m_transform.m_rotation) == sizeof(rotation));
+				std::memcpy(&body->m_transform.m_rotation, rotation.data(), sizeof(rotation));
+				++bodies;
+				alignas(16) RE::hkTransformf after{};
+				std::array<float, 16>        read{};
+				if (collision->GetTransform(after)) {
+					std::memcpy(read.data(), &after, sizeof(read));
+					nanAfter += HavokNan::Finite(read) ? 0 : 1;
+				}
+			}
 			if (bodies == 0) {
 				return std::format("error: {:08X} has no physics bodies", id);
 			}
+			for (auto& row : root->local.rotate.entry) {
+				row.x = row.y = row.z = nan;
+			}
 			RE::bhkWorld::Activate(root, true, true, true);
-			REX::WARN("Havok NaN: poison (dev): {} bod(ies) of {} given a NaN rotation", bodies, Describe(ref, root));
-			return std::format("poisoned {} bod(ies) of {:08X}; cut so far {}", bodies, id, Counted());
+			REX::WARN("Havok NaN: poison (dev): {} bod(ies) of {} given a NaN rotation ({} static before{}, {} read back NaN)", bodies, Describe(ref, root), unmoving,
+				dynamic ? ", all made dynamic" : "", nanAfter);
+			return std::format("poisoned {} bod(ies) of {:08X} ({} static before{}, {} read back NaN); cut so far {}", bodies, id, unmoving, dynamic ? ", all made dynamic" : "",
+				nanAfter, Counted());
 		}
 	}
 
@@ -325,6 +358,6 @@ namespace HavokGuard
 		if (verb == "poison") {
 			return Poison(rest);
 		}
-		return "error: usage: havoknan [status | scan [roots] | poison <refHex>]";
+		return "error: usage: havoknan [status | scan [roots] | poison <refHex> [dynamic]]";
 	}
 }
