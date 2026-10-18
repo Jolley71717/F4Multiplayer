@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <numbers>
 #include <optional>
 #include <span>
@@ -21,13 +22,23 @@ namespace EnemySpawn
 	constexpr int MAX_COUNT = 16;
 
 	// The ring's radius limits. Closer than the minimum, 16 of them stand inside each other and the player; past the
-	// maximum, outdoors they could land outside the loaded cells.
+	// maximum, outdoors they could land outside the loaded cells. Indoors a room is seldom 256 units across, so a
+	// closer ring is allowed there: a few of them in a corridor, not 16.
 	constexpr float MIN_RADIUS = 256.0f;
+	constexpr float INTERIOR_MIN_RADIUS = 128.0f;
 	constexpr float MAX_RADIUS = 4000.0f;
 
-	// How far above the player's feet they are set: the ground rises or falls over the radius, and one set a little
-	// above it drops onto it, where one set below it is inside the hill.
+	// How far above the ground they are set: one set a little above it drops onto it, where one set on it, or below it
+	// by a hair of the ground's reading, is inside it.
 	constexpr float LIFT = 64.0f;
+
+	// Where the ground is looked for outdoors: a ray straight down from REACH_UP above the player's feet to REACH_DOWN
+	// below them, the ground rising or falling over the radius (a hillside at 4000 units is often hundreds of units
+	// up or down). What the ray hits first is the ground there; nothing hit (the spot off the loaded land, or above a
+	// drop deeper than that), the player's own height is kept, as indoors, where a floor above or below the player's
+	// would be the ray's.
+	constexpr float REACH_UP = 512.0f;
+	constexpr float REACH_DOWN = 2048.0f;
 
 	struct Order
 	{
@@ -44,14 +55,37 @@ namespace EnemySpawn
 		float heading = 0;
 	};
 
-	inline std::string Usage()
+	constexpr float MinRadius(bool a_interior)
 	{
-		return std::format("error: usage: spawnenemies <baseHex> <n 1-{}> <radius {:.0f}-{:.0f}>", MAX_COUNT, MIN_RADIUS, MAX_RADIUS);
+		return a_interior ? INTERIOR_MIN_RADIUS : MIN_RADIUS;
+	}
+
+	inline std::string Usage(bool a_interior)
+	{
+		return std::format("error: usage: spawnenemies <baseHex> <n 1-{}> <radius {:.0f}-{:.0f}>", MAX_COUNT, MinRadius(a_interior), MAX_RADIUS);
+	}
+
+	// Where the ground ray runs for a player standing at a_z: its top and its bottom.
+	struct Reach
+	{
+		float top = 0;
+		float bottom = 0;
+	};
+	constexpr Reach GroundReach(float a_z)
+	{
+		return { a_z + REACH_UP, a_z - REACH_DOWN };
+	}
+
+	// The height the ray hit at: a_fraction of the way from its top to its bottom (what the engine's pick reports).
+	constexpr float HitHeight(const Reach& a_reach, float a_fraction)
+	{
+		return a_reach.top + (a_reach.bottom - a_reach.top) * a_fraction;
 	}
 
 	// The command's arguments, or nothing when one is missing, unreadable or out of range. A count over MAX_COUNT is
-	// capped, not refused, so a script asking for a horde still gets a fight.
-	inline std::optional<Order> Parse(std::string_view a_args)
+	// capped, not refused, so a script asking for a horde still gets a fight. a_interior: the player is in an interior
+	// cell, where the ring may be closer.
+	inline std::optional<Order> Parse(std::string_view a_args, bool a_interior)
 	{
 		std::vector<std::string_view> words;
 		while (!a_args.empty()) {
@@ -80,16 +114,19 @@ namespace EnemySpawn
 			return std::nullopt;
 		}
 		const auto [ptr, ec] = std::from_chars(words[2].data(), words[2].data() + words[2].size(), order.radius);
-		if (ec != std::errc{} || ptr != words[2].data() + words[2].size() || !(order.radius >= MIN_RADIUS && order.radius <= MAX_RADIUS)) {
+		if (ec != std::errc{} || ptr != words[2].data() + words[2].size() || !(order.radius >= MinRadius(a_interior) && order.radius <= MAX_RADIUS)) {
 			return std::nullopt;
 		}
 		order.count = order.asked < MAX_COUNT ? order.asked : MAX_COUNT;
 		return order;
 	}
 
+	// The ground's height at a point, or none when it is not known there (indoors, or off the loaded land).
+	using Ground = std::function<std::optional<float>(float a_x, float a_y)>;
+
 	// a_count spots evenly round a ring of a_radius about the player, the first straight ahead (a_heading), each set
-	// a little above the player's feet and facing the player.
-	inline std::vector<Spot> Ring(float a_x, float a_y, float a_z, float a_heading, int a_count, float a_radius)
+	// a little above the ground there (a_ground; the player's feet where it is not known) and facing the player.
+	inline std::vector<Spot> Ring(float a_x, float a_y, float a_z, float a_heading, int a_count, float a_radius, const Ground& a_ground)
 	{
 		constexpr float TURN = 2.0f * std::numbers::pi_v<float>;
 		std::vector<Spot> out;
@@ -98,7 +135,8 @@ namespace EnemySpawn
 			Spot spot;
 			spot.x = a_x + std::sin(angle) * a_radius;
 			spot.y = a_y + std::cos(angle) * a_radius;
-			spot.z = a_z + LIFT;
+			const auto ground = a_ground ? a_ground(spot.x, spot.y) : std::nullopt;
+			spot.z = (ground ? *ground : a_z) + LIFT;
 			spot.heading = std::fmod(angle + std::numbers::pi_v<float>, TURN);
 			if (spot.heading < 0.0f) {
 				spot.heading += TURN;

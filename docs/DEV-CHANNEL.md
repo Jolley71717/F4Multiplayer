@@ -28,8 +28,9 @@ game's own code can:
   has another form ID in each game: `enemies like <base|any> <x> <y> [within]` finds this game's actor
   of that base at that spot. Made for a test script playing a co-op follower.
 - **Start a fight:** `spawnenemies <base> <n> <radius>` sets n NPCs of an NPC base form (`findnpc`
-  finds one) evenly round the player at that radius (256 to 4000 units), the first straight ahead, all
-  facing the player and a little above its feet so they drop onto the ground. At most 16 are placed (more
+  finds one) evenly round the player at that radius (256 to 4000 units; 128 indoors), the first straight
+  ahead, all facing the player and a little above the ground where each stands (outdoors, found with the
+  engine's own pick; indoors the player's floor), so they drop onto it. At most 16 are placed (more
   asked are capped); a unique character or a friend's stand-in is refused. The answer is `placed=<n>
   asked=<n> base=<base> '<name>' radius=<r> ids=<ref>,<ref>...`, and `remove <ref>` deletes one again.
   They are made at runtime like a random encounter's raiders, so in a session the hostile ones are shared
