@@ -187,6 +187,12 @@ from you or puts on you any item, and a friend paying for something in a convers
   (the Institute's teleporter) comes after a 10-second warning, and not during a fight; once it has
   begun it finishes even if the connection drops, so you are never left without your controls.
   Nothing else of a session's story reaches your game once you have left it.
+- **Minutemen settlement requests:** with the shared story, when one of you gets a request from a
+  settlement (raiders, kidnappers, ghouls, a place to clear), everyone's game starts the same request
+  for the same settlement and the same place. Clearing it finishes it for everyone, and each of you
+  gets the reward once. A request your game can't match (it needs someone your game doesn't have)
+  stays the other player's own, and the log says why. Settlement attacks, companion quests and the
+  other factions' radiant quests stay each player's own. Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
   it side by side: kills count for everyone, and each of you talks to the characters yourself. A
@@ -326,7 +332,8 @@ without it they last until it stops.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
-- Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- Misc quests (holotapes, notes, "talk to" errands) and radiant quests other than the Minutemen's
+  settlement requests are not shared, nor are settlement attacks: each game runs its own.
 - Doors, gates and vault doors that a quest script opens (the Vault 114 door, for one) don't open for friends yet.
   That's being fixed.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server

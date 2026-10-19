@@ -61,8 +61,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Coming next: giving items to a friend. Not yet: muzzle flash, power and
-scrapping across games in settlements, misc/radiant quests.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: muzzle flash, scrapping across games in settlements, misc quests and radiant quests other than the Minutemen's settlement requests.
 
 ## License
 

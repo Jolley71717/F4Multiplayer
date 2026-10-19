@@ -111,6 +111,11 @@ namespace Config
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
 
+		// Share the Minutemen's radiant quests by their run (RadiantSync): a friend's settlement request starts
+		// here with the same settlement and place, and pays its reward once in each game. Needs syncQuests and a
+		// shared story.
+		bool sharedRadiants = true;
+
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
 		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).
 		bool revive = true;

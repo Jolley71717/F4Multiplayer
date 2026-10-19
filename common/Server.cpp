@@ -2156,6 +2156,33 @@ void Server::Run()
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
+	// A radiant quest's run (RadiantRules) is relayed as it comes and not kept: each run has its own fills, and a
+	// stage of one run isn't a stage of the next (a radiant runs again and again), so neither goes in the session's
+	// state, whose stages are kept once per quest. A player who joins later doesn't share a run already going.
+	const auto handleRadiantStart = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto start = Protocol::DecodeRadiantStart(a_data);
+		if (!start) {
+			return;
+		}
+		start->playerId = a_player.id;  // the run's origin
+		broadcast(Protocol::Encode(*start, Protocol::MessageType::kRadiantStarted), true, a_player.key);
+	};
+
+	const auto handleRadiantStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto stage = Protocol::DecodeRadiantStage(a_data);
+		if (!stage) {
+			return;
+		}
+		stage->playerId = a_player.id;
+		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kRadiantStage), true, a_player.key);
+	};
+
 	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2523,6 +2550,12 @@ void Server::Run()
 			break;
 		case MessageType::kReportQuestStage:
 			handleQuestStage(a_player, a_data);
+			break;
+		case MessageType::kReportRadiantStart:
+			handleRadiantStart(a_player, a_data);
+			break;
+		case MessageType::kReportRadiantStage:
+			handleRadiantStage(a_player, a_data);
 			break;
 		case MessageType::kRequestWorldState:
 			handleWorldRequest(a_player, a_data);

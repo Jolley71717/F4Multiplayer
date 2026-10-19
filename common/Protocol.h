@@ -133,6 +133,8 @@ namespace Protocol
 		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
 		// 18 and 120 were the ping before version 43, which named only where the sender stood.
 		kPing = 56,                // the sender pinged what is under their crosshair: a spot, an NPC, an item or a friend
+		kReportRadiantStart = 58,  // a radiant quest started in the sender's game: who and where it sends them to (RadiantRules)
+		kReportRadiantStage = 59,  // a shared radiant quest reached a new stage in the sender's game
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 		kReportDamage = 51,       // the sender took this much (ActorHealth: a fraction of the maximum) off an NPC another game runs
 		kReportDrop = 40,         // the sender dropped an item for the others to take (protocol 37)
@@ -177,6 +179,8 @@ namespace Protocol
 		kPinged = 156,            // another player pinged something
 		kObjectHeld = 152,        // another player holds this object (unreliable); to a player refused it, who holds it
 		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
+		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
+		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -1154,6 +1158,53 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 
 		bool operator==(const QuestStage&) const = default;
+	};
+
+	// A radiant quest's alias and what fills it in the sender's game (RadiantRules): a reference (a plugin's, or a
+	// spawn id for an NPC a game made at runtime that the session shares, RADIANT_UNSHARED_REF for one it doesn't) or a
+	// location; 0 when it is empty.
+	struct RadiantFill
+	{
+		std::uint32_t alias = 0;  // BGSBaseAlias::aliasID
+		std::uint8_t  kind = 0;   // 0 a reference, 1 a location
+		std::uint32_t form = 0;
+
+		bool operator==(const RadiantFill&) const = default;
+	};
+
+	// A radiant's reference that the sender's game made at runtime and the session doesn't share (a settler): the same in
+	// no other game. Not a spawn id (IsSpawnRef).
+	inline constexpr std::uint32_t RADIANT_UNSHARED_REF = 0xFF000000;
+
+	inline constexpr std::size_t MAX_RADIANT_FILLS = 128;  // Fallout4.esm's radiants have at most 60 aliases
+	inline constexpr std::size_t MAX_RADIANT_STAGES = 64;  // and at most 20 stages
+
+	// A radiant quest started in the sender's game (kReportRadiantStart, kRadiantStarted): the friends' games start
+	// the same quest with the same fills. One run of it is told apart by its origin's player id and a serial number
+	// that game picks (a radiant runs again and again). stages: those done already, ascending. playerId is ignored
+	// client -> server (the server stamps the sender, who is the origin).
+	struct RadiantStart
+	{
+		std::uint32_t              playerId = 0;
+		std::uint32_t              quest = 0;
+		std::uint32_t              serial = 0;
+		std::vector<RadiantFill>   fills;
+		std::vector<std::uint16_t> stages;
+
+		bool operator==(const RadiantStart&) const = default;
+	};
+
+	// A stage of a shared radiant's run, whoever's game did it: origin and serial name the run (RadiantStart).
+	// playerId is ignored client -> server.
+	struct RadiantStage
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t quest = 0;
+		std::uint32_t origin = 0;
+		std::uint32_t serial = 0;
+		std::uint16_t stage = 0;
+
+		bool operator==(const RadiantStage&) const = default;
 	};
 
 	// Everything that happened this session, sent on join and after loading a save. Large states
@@ -3452,6 +3503,91 @@ namespace Protocol
 		msg.stage = r.U16();
 		msg.playerId = r.U32();
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const RadiantStart& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.serial);
+		const auto fills = (std::min)(a_msg.fills.size(), MAX_RADIANT_FILLS);
+		w.U16(static_cast<std::uint16_t>(fills));
+		for (std::size_t i = 0; i < fills; ++i) {
+			w.U32(a_msg.fills[i].alias);
+			w.U8(a_msg.fills[i].kind);
+			w.U32(a_msg.fills[i].form);
+		}
+		const auto stages = (std::min)(a_msg.stages.size(), MAX_RADIANT_STAGES);
+		w.U16(static_cast<std::uint16_t>(stages));
+		for (std::size_t i = 0; i < stages; ++i) {
+			w.U16(a_msg.stages[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<RadiantStart> DecodeRadiantStart(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RadiantStart msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		msg.serial = r.U32();
+		const auto fills = r.U16();
+		if (fills > MAX_RADIANT_FILLS || !IsShareableRef(msg.quest)) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < fills && r.Ok(); ++i) {
+			RadiantFill fill;
+			fill.alias = r.U32();
+			fill.kind = r.U8();
+			fill.form = r.U32();
+			// A location is a plugin's form; a reference a plugin's or a spawn; nothing else names the same thing in two games.
+			const bool known = fill.form == 0 || (fill.kind == 0 ? IsActorRef(fill.form) || fill.form == RADIANT_UNSHARED_REF : fill.kind == 1 && IsShareableRef(fill.form));
+			if (fill.kind > 1 || !known) {
+				return std::nullopt;
+			}
+			msg.fills.push_back(fill);
+		}
+		const auto stages = r.U16();
+		if (stages > MAX_RADIANT_STAGES) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < stages && r.Ok(); ++i) {
+			msg.stages.push_back(r.U16());
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const RadiantStage& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.origin);
+		w.U32(a_msg.serial);
+		w.U16(a_msg.stage);
+		return w.Data();
+	}
+
+	inline std::optional<RadiantStage> DecodeRadiantStage(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RadiantStage msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		msg.origin = r.U32();
+		msg.serial = r.U32();
+		msg.stage = r.U16();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest) || msg.origin == 0) {
 			return std::nullopt;
 		}
 		return msg;

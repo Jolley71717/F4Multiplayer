@@ -108,6 +108,8 @@ namespace Config
 				settings.grenadeInHand = ParseBool(value);
 			} else if (key == "bSyncQuests") {
 				settings.syncQuests = ParseBool(value);
+			} else if (key == "bSharedRadiants") {
+				settings.sharedRadiants = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
 			} else if (key == "bShareMap") {

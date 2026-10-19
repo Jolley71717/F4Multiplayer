@@ -275,6 +275,12 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kRename, MT::kRenamed }) {
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
 		}
+		for (const auto type : { MT::kReportRadiantStart, MT::kRadiantStarted }) {
+			s.push_back({ "RadiantStart", Encode(RadiantStart{ 2, 0x00098136, 7, { { 20, 0, 0x0001F0C9 }, { 9, 0, RUNTIME_REF }, { 4, 1, 0x0001F228 }, { 6, 0, RADIANT_UNSHARED_REF }, { 19, 0, 0 } }, { 10, 20, 50 } }, type), D(DecodeRadiantStart) });
+		}
+		for (const auto type : { MT::kReportRadiantStage, MT::kRadiantStage }) {
+			s.push_back({ "RadiantStage", Encode(RadiantStage{ 2, 0x00098136, 3, 7, 400 }, type), D(DecodeRadiantStage) });
+		}
 		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
 		s.push_back({ "HostCommand", Encode(HostCommand{ HostAction::kSetPassword, 2, 0x0123456789ABCDEFull, "hunter2" }), D(DecodeHostCommand) });
 		s.push_back({ "HostInfoRequest", Encode(HostInfoRequest{}), D(DecodeHostInfoRequest) });
@@ -356,6 +362,8 @@ namespace ProtocolSamples
 		case MT::kRequestHostInfo:
 		case MT::kReportObjectHold:
 		case MT::kReportObjectRest:
+		case MT::kReportRadiantStart:
+		case MT::kReportRadiantStage:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -392,6 +400,8 @@ namespace ProtocolSamples
 		case MT::kActivation:
 		case MT::kSpawned:
 		case MT::kRenamed:
+		case MT::kRadiantStarted:
+		case MT::kRadiantStage:
 		case MT::kLoadOrder:
 		case MT::kDropPlaced:
 		case MT::kDropGone:

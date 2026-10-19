@@ -30,6 +30,7 @@
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
+#include "game/RadiantSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
@@ -317,6 +318,7 @@ namespace Session
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
+					RadiantSync::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Equipment::OnSessionStart();
@@ -378,6 +380,7 @@ namespace Session
 					RemotePlayers::Add(msg->playerId, name, msg->appearance);
 					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
+					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -459,6 +462,16 @@ namespace Session
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
 					QuestSync::Apply(*msg, true);
+				}
+				break;
+			case MessageType::kRadiantStarted:
+				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
+					RadiantSync::OnStart(*msg);
+				}
+				break;
+			case MessageType::kRadiantStage:
+				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
+					RadiantSync::OnStage(*msg);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -706,6 +719,7 @@ namespace Session
 			hostInfo.reset();
 			localId = 0;
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
+			RadiantSync::SetLocalPlayer(0);
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());

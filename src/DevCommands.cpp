@@ -34,6 +34,7 @@
 #include "game/SaveGuard.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
+#include "game/RadiantSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
@@ -1091,6 +1092,18 @@ namespace DevCommands
 			const auto done = QuestStageLayout::Done(quest);
 			return std::format("stage={} flags={:04X} type={} shared={} stages={} done({})={} waiting={}", quest->currentStage, quest->data.flags, quest->data.questType,
 				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
+		}
+
+		// aliases <questHex>: the quest's aliases, how each is filled (its definition as this game holds it) and what fills
+		// it here, and how forced aliases read (RadiantSync); read only.
+		std::string Aliases(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: aliases <questHex>";
+			}
+			return RadiantSync::DumpAliases(quest);
 		}
 
 		// draw on|off: draws or holsters the player's weapon.
@@ -3006,6 +3019,7 @@ namespace DevCommands
 			Entry{ "quests", Quests },
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
+			Entry{ "aliases", Aliases },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
