@@ -229,7 +229,7 @@ want to keep your solo playthrough untouched.
 The host's game also keeps the shared world on disk (`bSaveSession`, on by default), one file per
 character: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.<character>.session`. The next time
 they host that character, the session carries on where it stopped, whatever mods they have then (a
-session saved by 0.8.10 or older carries on only with the same load order). Hosting
+session saved by 0.8.11 or older carries on only with the same load order). Hosting
 another character (a solo playthrough, or a new one) hosts that character's own session, and the
 co-op character's is kept for later. A joined friend who loads a save of another character leaves
 the session. Delete a character's file to start its session over. The save before the last one is

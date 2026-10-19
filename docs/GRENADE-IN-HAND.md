@@ -297,7 +297,7 @@ The hand with no `WeaponLeft`, which the database-node hang was for, never came 
 the first and keeps the second as a dev experiment.
 
 - **The ini key.** `bGrenadeInHand`, next to `bFriendFaces` in `dist/F4Multiplayer.ini`, true by
-  default. `main.cpp` sets the toggle from it at load. False gives the empty fist of 0.8.10 and
+  default. `main.cpp` sets the toggle from it at load. False gives the empty fist of 0.8.11 and
   earlier.
 - **Only the stand-in's own nodes, by default.** A hand with no culled `WeaponLeft` holding something
   is left alone (`no WeaponLeft of the engine's to draw`, `Skip::kNoEngineNode`). Nothing is hung,

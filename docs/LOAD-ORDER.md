@@ -31,7 +31,7 @@ the free HD texture pack when it is the last full plugin, and sends the hash and
   needs the session's hash: with no lists there is nothing to translate by. Such a joiner is refused
   as before, and their game names what differs.
 - **The saved session** keeps its plugin table (session file layout 33), so the host carries on with any mods. A
-  file saved by 0.8.10 or older has none, and carries on only with the load order its hash names.
+  file saved by 0.8.11 or older has none, and carries on only with the load order its hash names.
 
 Nothing else is compared: not plugin versions, not file contents, not F4SE plugins, not INI settings.
 
