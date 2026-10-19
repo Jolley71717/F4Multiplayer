@@ -124,11 +124,8 @@ namespace Config
 		std::uint32_t reviveWindowMinutes = 0;     // that window; 0 = per fight
 		std::uint32_t reviveCooldownSeconds = 0;   // helped up, a lethal hit within this long kills instead of downing
 		bool          reviveOutOfCombat = false;   // friends can help only while they are not in a fight
-		// In a session, VATS, the Pip-Boy (with the perk chart) and the other menus that stop the game alone (containers,
-		// trading, workbenches, terminals, lockpicking...) run in real time, as in Fallout 76.
+		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
-		bool realTimePipboy = true;
-		bool realTimeMenus = true;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;

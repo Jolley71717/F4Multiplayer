@@ -592,17 +592,18 @@ else skips this: the player is never in those places.
   not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
   frame in combat (on the ground counts as in combat). The helper checks its own combat state for
   `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
-- Real time (src/game/RealTime.cpp, src/game/RealTimeMenus.h): the menus in RealTimeMenus::MENUS are made
-  without `kPausesGame` and `kFreezeFramePause` in a session whose rules say so: their `UIMenuEntry::create`
-  is wrapped once (the menu map's write lock, at the game's data being ready) and the flags are changed as
-  each menu is made, never later, so the UI's `menuMode` count is the same at open and close. The pause
-  menu, the console, waiting, the looks menu and the loading and main menus are never in the list. With them
-  in real time `menuMode` stays 0, so the hotkeys and the quest stages ask OpenMenus for them by name too.
-  VATS (`bRealTimeVats`): while VATS is up (its menu or a shot playing out), a global time multiplier under 1
-  is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier`), unless Jet's slow motion
-  (`VATS::magicTimeSlowdown`) is on. Tutorial hints: the game's `bShowTutorials:Interface`, which its help
-  messages read each time, is held off in a session (Background::Switch) and put back after; its tutorial
-  message boxes are not gated by it.
+- VATS in real time (src/game/RealTime.cpp, src/game/RealTimeVats.h; `bRealTimeVats`): the game slows VATS's
+  aiming through `VATS::magicTimeSlowdown` (0.04 while aiming, measured on 1.11.240; the global time multiplier
+  and its target follow it; Jet's slow motion is taken to use it too, not measured), and a shot playing out
+  through the VATS camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time multiplier under
+  1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the slowdown was
+  already on the frame before VATS came up (Jet or the like). Tutorial hints: the game's
+  `bShowTutorials:Interface`, which its help messages read each time, is held off in a session
+  (Background::Switch) and put back after; its tutorial message boxes are not gated by it.
+- Menus still pause: clearing `kPausesGame` as a menu is made (wrapping its `UIMenuEntry::create`) was tried
+  and taken out. The UI counts `menuMode` from the flag after the menu has handled its show message
+  (0x141a811bc) and again at close (0x141a80a49). Made without it, the Pip-Boy came up with a blank screen
+  and would not close, and a container was still counted (`menuMode` 1).
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within

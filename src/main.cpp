@@ -270,7 +270,6 @@ namespace
 		case F4SE::MessagingInterface::kGameDataReady:
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
 			OpenMenus::Install();  // which menus are open, for everything that asks: the UI itself is never asked
-			RealTime::Install();   // menus made in real time in a session (the host's bRealTimePipboy, bRealTimeMenus)
 			if (Config::Get().devChannel) {
 				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
 			}

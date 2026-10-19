@@ -229,21 +229,17 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	rules.downCooldownSeconds = 120;
 	rules.reviveOutsideCombat = true;
 	rules.realTimeVats = false;
-	rules.realTimePipboy = true;
-	rules.realTimeMenus = false;
 	const auto out = DecodeWelcome(Encode(Welcome{ 7, 8, false, true, rules }));
 	REQUIRE(out);
 	CHECK(out->rules == rules);
 	CHECK(out->sharedStory);
 
 	// Each flag alone, so none is read from another's bit.
-	for (int bit = 0; bit < 5; ++bit) {
+	for (int bit = 0; bit < 3; ++bit) {
 		SessionRules one;
 		one.revive = bit == 0;
 		one.reviveOutsideCombat = bit == 1;
 		one.realTimeVats = bit == 2;
-		one.realTimePipboy = bit == 3;
-		one.realTimeMenus = bit == 4;
 		const auto decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
 		REQUIRE(decoded);
 		CHECK(decoded->rules == one);

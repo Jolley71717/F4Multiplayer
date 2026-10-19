@@ -112,16 +112,14 @@ how many revives you have left. The dedicated server takes the same rules as opt
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
 `--revive-out-of-combat`, `--no-revive`).
 
-### Nothing stops the game for one player
+### VATS in real time
 
-In a session the game no longer stops or slows down while friends play on, as in Fallout 76. VATS runs
-at full speed (Jet still slows time), and the Pip-Boy, the perk chart, containers, trading, workbenches,
-cooking, terminals, lockpicking, books and message boxes leave the world running: enemies can hit you
-while you look, so find a quiet spot first. The pause menu (Esc), the console, waiting and sleeping, and
-the looks menu still stop your own game (the session goes on for your friends). The host can keep the
-game's own slow motion or pause with `bRealTimeVats`, `bRealTimePipboy` and `bRealTimeMenus = false`
-(server: `--slow-vats`, `--pausing-pipboy`, `--pausing-menus`). The game's tutorial hints stay hidden in a
-session (`bHideTutorials`, your own setting); its tutorial message boxes still show, in real time.
+In a session VATS runs at full speed instead of slowing the world almost to a stop, as in Fallout 76,
+so your friends don't see you stand still while they fight. On Jet (or the like) VATS keeps its slow
+motion. The host can keep the game's own slow motion for everyone with `bRealTimeVats = false` (server:
+`--slow-vats`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
+The Pip-Boy and the other menus still pause your own game, as before (the session goes on for your
+friends).
 
 ## What is shared
 

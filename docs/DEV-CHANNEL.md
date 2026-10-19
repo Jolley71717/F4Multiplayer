@@ -17,7 +17,7 @@ game's own code can:
   `console 000AE12F.removeallitems player` (loot a container), `console startquest 0001F25E`.
 - **Read state:** `status`, `pos`, `refinfo <ref>` (position, health, cell), `count <container> <item>`,
   `aim <actor>` (its pitch, the point its weapon aim turns toward, the pitch a mirrored NPC's
-  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paused`, `timescale` (the game's time multiplier and timer, VATS, and the menus made in real time), `rules` (the session's rules from the welcome, and the down state) and `net status`, which prints every
+  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paused`, `timescale` (the game's time multiplier and timer, VATS, and the menus' pause count), `rules` (the session's rules from the welcome, and the down state) and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
   sounds played, and so on.
 - **Find enemies:** `enemies [radius]` lists the actors near the player that are hostile to it, or

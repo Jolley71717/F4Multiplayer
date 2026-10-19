@@ -6,8 +6,7 @@
 // The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
-// (bReviveOutOfCombat), --slow-vats (bRealTimeVats = false), --pausing-pipboy and --pausing-menus (bRealTimePipboy,
-// bRealTimeMenus = false).
+// (bReviveOutOfCombat), --slow-vats (bRealTimeVats = false).
 
 #include "Protocol.h"
 #include "Server.h"
@@ -101,10 +100,6 @@ int main(int argc, char* argv[])
 			options.rules.reviveOutsideCombat = true;
 		} else if (arg == "--slow-vats") {
 			options.rules.realTimeVats = false;
-		} else if (arg == "--pausing-pipboy") {
-			options.rules.realTimePipboy = false;
-		} else if (arg == "--pausing-menus") {
-			options.rules.realTimeMenus = false;
 		} else if (arg == "--session-file" && hasValue) {
 			options.sessionFile = argv[++i];
 		} else if (arg == "--loopback-only") {
@@ -118,7 +113,7 @@ int main(int argc, char* argv[])
 		} else {
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
-						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--slow-vats] [--pausing-pipboy] [--pausing-menus]\n";
+						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--slow-vats]\n";
 			return 2;
 		}
 	}

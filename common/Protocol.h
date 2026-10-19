@@ -274,7 +274,7 @@ namespace Protocol
 
 	// The host's rules for everyone in the session (protocol 47): the host's ini (F4MPServer: its options), sent with the
 	// welcome, so every game, the host's own included, plays by the same ones. The defaults are the mod's behaviour before
-	// there were rules (and real time in VATS and the menus, which is new).
+	// there were rules (and VATS in real time, which is new).
 	struct SessionRules
 	{
 		// Downed and revive (src/game/DownRules.h).
@@ -287,10 +287,8 @@ namespace Protocol
 		std::uint16_t downCooldownSeconds = 0;    // helped up, a lethal hit within this long kills (iReviveCooldownSeconds)
 		bool          reviveOutsideCombat = false;  // friends can only help while they are not in a fight (bReviveOutOfCombat)
 
-		// Time (src/game/RealTime.h): in a session, these run in real time instead of slowing or stopping the game.
-		bool realTimeVats = true;    // VATS (bRealTimeVats)
-		bool realTimePipboy = true;  // the Pip-Boy and the perk chart (bRealTimePipboy)
-		bool realTimeMenus = true;   // containers, trading, workbenches, terminals, lockpicking, books, message boxes (bRealTimeMenus)
+		// Time (src/game/RealTime.h): in a session, VATS runs in real time instead of slowing the game.
+		bool realTimeVats = true;  // VATS (bRealTimeVats)
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -1236,8 +1234,7 @@ namespace Protocol
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
-		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.realTimePipboy ? 8 : 0) |
-		                           (rules.realTimeMenus ? 16 : 0);
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -1265,8 +1262,6 @@ namespace Protocol
 			rules.revive = (flags & 1) != 0;
 			rules.reviveOutsideCombat = (flags & 2) != 0;
 			rules.realTimeVats = (flags & 4) != 0;
-			rules.realTimePipboy = (flags & 8) != 0;
-			rules.realTimeMenus = (flags & 16) != 0;
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();

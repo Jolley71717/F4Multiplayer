@@ -348,7 +348,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		options.rules.reviveWindowMinutes = 10;
 		options.rules.downCooldownSeconds = 60;
 		options.rules.reviveOutsideCombat = true;
-		options.rules.realTimePipboy = false;
+		options.rules.realTimeVats = false;
 		options.rules.bleedOutSeconds = 9999;  // past the limit: brought within it
 		Fixture    f{ options };
 		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
@@ -357,8 +357,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.reviveWindowMinutes == 10);
 		CHECK(welcome->rules.downCooldownSeconds == 60);
 		CHECK(welcome->rules.reviveOutsideCombat);
-		CHECK(!welcome->rules.realTimePipboy);
-		CHECK(welcome->rules.realTimeMenus);
+		CHECK(!welcome->rules.realTimeVats);
 		CHECK(welcome->rules.bleedOutSeconds == Protocol::SessionRules::MAX_BLEED_OUT);
 	}
 }

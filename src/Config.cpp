@@ -128,10 +128,6 @@ namespace Config
 				settings.reviveOutOfCombat = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
-			} else if (key == "bRealTimePipboy") {
-				settings.realTimePipboy = ParseBool(value);
-			} else if (key == "bRealTimeMenus") {
-				settings.realTimeMenus = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {

@@ -26,27 +26,12 @@ namespace OpenMenus
 		kPowerArmorMod,
 		kVats,
 		kWorkshop,
-		// The rest of the menus that can run in real time in a session (game/RealTimeMenus.h): open, they keep hotkeys off
-		// as they did when they stopped the game.
-		kPipboyHolotape,
-		kLevelUp,
-		kContainer,
-		kBarter,
-		kExamine,
-		kCooking,
-		kTerminal,
-		kTerminalHolotape,
-		kLockpicking,
-		kBook,
-		kMessageBox,
-		kFavorites,
 		kCount
 	};
 
 	// The game's names for them (MenuOpenCloseEvent::menuName), in Menu's order.
 	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "LooksMenu", "PauseMenu", "PipboyMenu",
-		"PowerArmorModMenu", "VATSMenu", "WorkshopMenu", "PipboyHolotapeMenu", "LevelUpMenu", "ContainerMenu", "BarterMenu", "ExamineMenu", "CookingMenu",
-		"TerminalMenu", "TerminalHolotapeMenu", "LockpickingMenu", "BookMenu", "MessageBoxMenu", "FavoritesMenu" };
+		"PowerArmorModMenu", "VATSMenu", "WorkshopMenu" };
 
 	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):
 	// its string pool keeps a name in the case it was first made in, which need not be the menu's own.

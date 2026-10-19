@@ -2,7 +2,6 @@
 
 #include "Config.h"
 #include "game/OpenMenus.h"
-#include "game/RealTimeMenus.h"
 
 // user32/kernel32 (windows.h clashes with CommonLibF4's names).
 extern "C" {
@@ -50,8 +49,7 @@ namespace Hotkeys
 		bool MenuOpen()
 		{
 			const auto ui = RE::UI::GetSingleton();
-			// The Pip-Boy and the menus that run in real time in a session no longer stop the game: asked by name.
-			return !ui || ui->menuMode != 0 || OpenMenus::Open(OpenMenus::Menu::kConsole) || RealTimeMenus::AnyOpen(OpenMenus::Open);
+			return !ui || ui->menuMode != 0 || OpenMenus::Open(OpenMenus::Menu::kConsole);
 		}
 
 		bool IsDown(std::uint32_t a_vk)
