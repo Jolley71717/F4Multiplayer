@@ -142,6 +142,7 @@ namespace WeaponFire
 		std::uint32_t            shieldsHurt = 0;     // ... that lost health meanwhile all the same
 		std::uint32_t            shieldedDied = 0;    // ... that died meanwhile all the same
 		std::uint32_t            ghostsStuck = 0;     // ... still ghosts five frames after we took the ghost off
+		std::uint32_t            ghostsClearedAtOnce = 0;  // ghosts of ours cleared in their extra data before a save or a load (EndAllShields)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -559,7 +560,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} ghostsCleared={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsClearedAtOnce, releasesHeld.load(), DescribeHandThrowables());
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -1097,6 +1098,18 @@ namespace WeaponFire
 			return *reinterpret_cast<const bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData)) ? "on" : "off";
 		}
 
+		// Clears the ghost flag in the actor's extra data itself, which is what a save writes and the engine's hits read
+		// (GetGhost): the console's setghost takes a frame. Whether there was one on to clear.
+		bool ClearGhostData(RE::Actor* a_actor)
+		{
+			const auto extra = a_actor->extraList ? a_actor->extraList->GetByType(RE::EXTRA_DATA_TYPE::kGhost) : nullptr;
+			if (!extra) {
+				return false;
+			}
+			auto& flag = *reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData));
+			return std::exchange(flag, false);
+		}
+
 		bool WasGhost(RE::Actor* a_actor)
 		{
 			const auto npc = a_actor->GetNPC();
@@ -1312,8 +1325,31 @@ namespace WeaponFire
 
 	void EndAllShields()
 	{
+		// The console's setghost 0 lands a frame after it is sent, and a save is written the frame it is asked for: the
+		// ghost went into the save. Whoever loaded it (a player who died loads their last save) found those enemies
+		// ghosts for good, their shots passing through, and as ghosts already they were never ours to clear again. So
+		// the flag the save writes is cleared at once: on the copies still ghosts (the console's command goes too, as the
+		// engine's own way), on those whose setghost 0 went in the last frames and hasn't landed (NpcSync::ReleaseMirrors
+		// ends the shields of the copies it lets go just before this), and on those whose ghost was to come off once they
+		// loaded again.
 		for (const auto id : shields.EndAll()) {
 			Unshield(id, "a save, a load or the session's end");
+		}
+		std::uint32_t cleared = 0;
+		const auto    clear = [&](std::uint32_t a_id) {
+			if (const auto actor = CopyOf(a_id); actor && ClearGhostData(actor)) {
+				++cleared;
+			}
+		};
+		for (const auto& readback : ghostReadbacks) {
+			if (!readback.on) {
+				clear(readback.id);
+			}
+		}
+		std::ranges::for_each(unghostLater, clear);
+		if (cleared > 0) {
+			ghostsClearedAtOnce += cleared;
+			REX::INFO("WeaponFire: {} ghost{} against friends' explosions cleared at once (a save, a load or the session's end)", cleared, cleared == 1 ? "" : "s");
 		}
 	}
 
