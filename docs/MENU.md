@@ -34,7 +34,7 @@ who is with you, one line each as the F6 player list shows them. Buttons depend 
 |---|---|
 | Not in a session | Host a session, Join a friend, Settings, Close |
 | Joining or joined | Leave, Join someone else, Settings, Close |
-| Hosting | Invite friends (Steam lobby open), Stop hosting, Settings, Close |
+| Hosting | Invite friends (Steam lobby open), Host controls, Stop hosting, Settings, Close (with More) |
 
 - *Host a session* starts the session server in your game, as `bHost = true` does at startup, with
   the transport and settings from the ini, and connects your game to it. It also writes
@@ -48,6 +48,35 @@ who is with you, one line each as the F6 player list shows them. Buttons depend 
   refusal for the load order; plugins the host lets differ count only where they move another
   plugin's form IDs, as they do for the server, so a join they alone differ in has none). With it the
   main page has more buttons than a box holds, so they turn over with *More*.
+
+**Host controls** (hosting only). The first lines say whether the session is open or locked, the
+password (as your ini has it) or that there is none, and how many players are banned. Buttons:
+
+- *Kick or ban (N)* lists everyone else in the session; pressing a name gives *Kick* and *Ban*.
+  A kicked player is dropped with "Multiplayer: the host removed you from the session" and their
+  game stops reconnecting; they can join again. A banned one hears "the host banned you", and every
+  later join is refused with "The host has banned you from this session". The HUD says what was
+  done ("Sam was kicked"), or why not (the player left meanwhile; no Steam account known, so they
+  were kicked instead; the ban list could not be saved).
+- *Lock the session* / *Unlock the session*: while locked, nobody new is let in ("The session is
+  locked: the host isn't letting anyone new in"; their game tries again each minute). Those in it
+  stay, a game that restarts while still in the session gets back in, and the host's own game is
+  never locked out. The lock isn't saved: hosting again starts open.
+- *Password*: the box can't take typing, so *New password* makes up eight letters and digits (none
+  that look alike), writes it to `sPassword` in the ini and tells the server; the page shows it to
+  pass on. *Remove the password* clears both. Players already in stay. The log says only that the
+  password was changed or removed, never what it is.
+- *Banned (N)*: the bans, newest first, by name while the server that banned them still runs, and
+  by a short alias (`~3fa2c1`) and date after; pressing one lifts it, and *Unban everyone* lifts all.
+
+Each command goes to your own server (`kHostCommand`, protocol 42) and the page after it waits for
+its answer (`kHostInfo`), up to a second, so it shows what is true. The server takes these only
+from the host's own game (the local connection whose identity is the host's) and refuses and logs
+anyone else's ("player 2 is not the host: their host command was refused", at most once every ten
+seconds per player). Bans are kept by Steam account and by the game's own identity, both as salted
+hashes, in `F4Multiplayer.bans` beside the session files (`F4Multiplayer.dev.bans` with the dev
+channel); the file never has a name or a Steam ID, and the log names a banned player only by their
+alias. The dedicated server takes the same commands at its console (see INSTALL.md).
 
 **Compare mods.** Your load order against the host's, by file name: *missing in your game* (the
 host's plugins you lack, in the host's order), *only in your game* (yours the host lacks), and *in
@@ -115,7 +144,8 @@ text (line breaks shown as `/`; the channel's reply is a single line, as are all
 `hotkeys` says why a key may be doing nothing: focus, `menuMode`, the console, which chord keys
 (Alt, Ctrl, Win) are down, each hotkey's code and whether it's down, and how many presses were
 blocked. `steam friends` lists what Steam says about each friend (state, game, lobby, "connect"
-presence); `steam refresh` asks for their presence, as the join page does.
+presence); `steam refresh` asks for their presence, as the join page does. `hostctl` says what the
+host's game last heard from its server: locked, password set, the number of bans and their aliases.
 Things to check in a real two-game session: the menu opens in gameplay only (not in the Pip-Boy or
 over the console); hosting from the menu lets a friend's "Join Game" work; the friend's game lists
 the host on the join page and joining from there connects; Stop hosting disconnects the friend

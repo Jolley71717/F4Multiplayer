@@ -69,6 +69,18 @@ Accept invites and use Join Game **while the game is already running with F4SE**
 Fallout 4 for you from an invite, it starts without F4SE and the mod doesn't load: close it, start
 the game with F4SE, then join again.
 
+### Host controls
+
+The host's F1 menu has **Host controls**: kick a player (they are dropped and told the host removed
+them; they can join again), ban one (kicked, and refused every later join with "The host has banned
+you from this session"), lift bans, lock the session (nobody new can join, and a player who leaves
+can't come back until it is unlocked; those in it stay) and unlock it, and make up or remove the
+password. A new password is shown on the page and saved to your `sPassword`; friends put the same
+in theirs. Bans are kept by Steam account in `Documents\My Games\Fallout4\F4SE\F4Multiplayer.bans`,
+so they survive restarts; the file holds salted hashes, never names or Steam IDs, and the log calls a
+banned player by a short alias (`~3fa2c1`). Deleting the file lifts every ban. Only the host can do
+any of this: the server refuses the commands from anyone else.
+
 ### Without Steam (LAN or VPN)
 
 Everyone sets `sTransport = enet`. Friends set `sServerAddress` to the host's IP address. The
@@ -192,6 +204,13 @@ version's session afresh.
 `F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story]` runs a server
 without playing (over UDP only). Everyone, including you, then joins with `sTransport = enet` and
 `sServerAddress`.
+
+Its console takes commands while it runs: `players` lists who is in (by number), `kick <n>` and
+`ban <n>` remove one, `bans` lists the bans and `unban <n>`, `unban ~alias` or `unban all` lifts
+them, `lock` and `unlock` close and open the session to new players, `password <text>` sets the
+password (`password -` removes it, `password` says whether one is set) and `help` lists them;
+Ctrl+C stops the server. `--ban-file PATH` keeps the bans in a file so they outlive the server;
+without it they last until it stops.
 
 ## Known limitations (early version)
 
