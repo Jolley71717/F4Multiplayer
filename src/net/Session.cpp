@@ -1169,9 +1169,10 @@ namespace Session
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
 			auto face = Face::Read(RE::PlayerCharacter::GetSingleton()->GetNPC());
-			// With LooksMenu, its body sliders too: the face waits for the first read of them (a moment), so that
-			// friends do not make our stand-in once without them and again with them.
+			// With LooksMenu, its body sliders and overlays too: the face waits for the first read of them (a moment), so
+			// that friends do not make our stand-in once without them and again with them.
 			face.bodyMorphs = LooksMenu::PlayerMorphs();
+			face.overlays = LooksMenu::PlayerOverlays();
 			if (face.race != 0 && LooksMenu::Settled() && (!sentFace || *sentFace != face)) {
 				if (welcomed) {
 					client->Send(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);

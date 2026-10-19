@@ -144,6 +144,8 @@ namespace ProtocolSamples
 		f.tints = { { 1001, 1, 90, 0xFFC08060, 3 }, { 1003, 2, 100, 0, 0 } };
 		f.bodyTint[0] = 200, f.bodyTint[3] = 255;
 		f.bodyMorphs = { { "Breasts", 0.4f }, { "Waist", -0.25f } };
+		f.skin = 0x0001D4B5;
+		f.overlays = { { "Tattoo_Back01", 0, { 20, 20, 30, 230 }, { 0.0f, 0.1f }, { 1.0f, 1.0f } }, { "WarPaint03", 5, { 255, 0, 0, 128 }, { -0.2f, 0.0f }, { 0.8f, 1.2f } } };
 		return f;
 	}
 

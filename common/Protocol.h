@@ -638,6 +638,12 @@ namespace Protocol
 	inline constexpr std::size_t MAX_BODY_MORPHS = 128;
 	inline constexpr std::size_t MAX_BODY_MORPH_NAME = 64;
 	inline constexpr float       MAX_BODY_MORPH_VALUE = 2.0f;
+	// LooksMenu's overlays (tattoos, face and body paint: F4EE overlays), for players who have it: a template's ID as an
+	// overlay mod's json names it, laid over the skin at a priority with a tint and a placement. Only that many, with IDs
+	// that long, travel; the placement is brought into the range below (LooksMenu's own sliders stay well inside it).
+	inline constexpr std::size_t MAX_OVERLAYS = 64;
+	inline constexpr std::size_t MAX_OVERLAY_TEMPLATE = 128;
+	inline constexpr float       MAX_OVERLAY_UV = 10.0f;
 
 	// A workshop object (a wall, a turret, a crop...) placed, moved or scrapped by a player. refId is
 	// the object's reference ID in the sender's game (runtime IDs differ per game, so receivers map
@@ -828,6 +834,20 @@ namespace Protocol
 		bool operator==(const BodyMorph&) const = default;
 	};
 
+	// One of LooksMenu's overlays on a character, as its Papyrus script Overlays keeps it (Overlays#Entry): the template,
+	// its priority (the order overlays are laid in, one per priority), its tint and alpha as LooksMenu saves them (a byte
+	// each), and where it sits on the skin's texture.
+	struct Overlay
+	{
+		std::string  templateId;  // at most MAX_OVERLAY_TEMPLATE long
+		std::int32_t priority = 0;
+		std::uint8_t tint[4] = {};  // RGBA
+		float        offset[2] = {};
+		float        scale[2] = { 1.0f, 1.0f };
+
+		bool operator==(const Overlay&) const = default;
+	};
+
 	struct Face
 	{
 		std::uint32_t              playerId = 0;  // ignored client -> server
@@ -846,6 +866,12 @@ namespace Protocol
 		// LooksMenu's body sliders, sorted by name; empty when the sender has no LooksMenu (or never moved one).
 		// A receiver without LooksMenu leaves them be.
 		std::vector<BodyMorph>     bodyMorphs;
+		// The skin (a TESObjectARMO: the naked body and hands, and their textures) when the base NPC has one of its own
+		// rather than the race's, as a LooksMenu skin override leaves it; 0 = the race's.
+		std::uint32_t              skin = 0;
+		// LooksMenu's overlays, sorted by priority; empty when the sender has no LooksMenu (or wears none). A receiver
+		// without LooksMenu, or without the overlay mod a template comes from, goes without them.
+		std::vector<Overlay>       overlays;
 
 		bool operator==(const Face&) const = default;
 	};
@@ -2616,6 +2642,28 @@ namespace Protocol
 			w.Str(m->name, MAX_BODY_MORPH_NAME);
 			w.F32(m->value);
 		}
+		w.U32(a_msg.skin);
+		// As the sliders: a template ID too long to travel whole is left out, not cut to another's.
+		std::vector<const Overlay*> overlays;
+		for (const auto& o : a_msg.overlays) {
+			if (overlays.size() < MAX_OVERLAYS && !o.templateId.empty() && o.templateId.size() <= MAX_OVERLAY_TEMPLATE) {
+				overlays.push_back(&o);
+			}
+		}
+		w.U8(static_cast<std::uint8_t>(overlays.size()));
+		for (const auto o : overlays) {
+			w.Str(o->templateId, MAX_OVERLAY_TEMPLATE);
+			w.U32(static_cast<std::uint32_t>(o->priority));
+			for (const auto v : o->tint) {
+				w.U8(v);
+			}
+			for (const float v : o->offset) {
+				w.F32(v);
+			}
+			for (const float v : o->scale) {
+				w.F32(v);
+			}
+		}
 		return w.Data();
 	}
 
@@ -2707,6 +2755,37 @@ namespace Protocol
 			}
 			m.value = std::clamp(m.value, -MAX_BODY_MORPH_VALUE, MAX_BODY_MORPH_VALUE);
 			msg.bodyMorphs.push_back(std::move(m));
+		}
+		msg.skin = r.U32();
+		const auto overlays = r.U8();
+		if (overlays > MAX_OVERLAYS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < overlays && r.Ok(); ++i) {
+			Overlay o;
+			o.templateId = r.Str(MAX_OVERLAY_TEMPLATE);
+			o.priority = static_cast<std::int32_t>(r.U32());
+			for (auto& v : o.tint) {
+				v = r.U8();
+			}
+			for (float& v : o.offset) {
+				v = r.F32();
+			}
+			for (float& v : o.scale) {
+				v = r.F32();
+			}
+			const auto uv = [](float a_v) { return std::isfinite(a_v); };
+			if (r.Ok() && (o.templateId.empty() || !std::ranges::all_of(o.offset, uv) || !std::ranges::all_of(o.scale, uv))) {
+				return std::nullopt;
+			}
+			// Brought into range, as a slider's value is: a modified game cannot smear a tattoo over a friend's stand-in.
+			for (float& v : o.offset) {
+				v = std::clamp(v, -MAX_OVERLAY_UV, MAX_OVERLAY_UV);
+			}
+			for (float& v : o.scale) {
+				v = std::clamp(v, -MAX_OVERLAY_UV, MAX_OVERLAY_UV);
+			}
+			msg.overlays.push_back(std::move(o));
 		}
 		if (!r.Ok() || !r.AtEnd() || msg.race == 0) {
 			return std::nullopt;

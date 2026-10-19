@@ -215,11 +215,13 @@ TEST("protocol: a face carries at most MAX_BODY_MORPHS sliders, and none with a 
 
 	// A count past the limit, as a modified game might send, refuses the face.
 	auto over = Protocol::Encode(PlainFace(), MT::kReportFace);
-	REQUIRE(over.back() == 0);  // the slider count is last
+	over.resize(over.size() - 5);  // the skin and the overlay count follow the sliders
+	REQUIRE(over.back() == 0);
 	over.back() = static_cast<std::uint8_t>(Protocol::MAX_BODY_MORPHS + 1);
 	for (std::size_t i = 0; i <= Protocol::MAX_BODY_MORPHS; ++i) {
 		over.insert(over.end(), { 1, 'a', 0, 0, 0, 0x3F });
 	}
+	over.insert(over.end(), { 0, 0, 0, 0, 0 });
 	CHECK(!Protocol::DecodeFace(over));
 }
 

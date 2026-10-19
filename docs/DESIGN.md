@@ -138,6 +138,18 @@
   answered, if its 3D was built meanwhile) and removes them (RemoveAllMorphs) when the stand-in goes,
   since LooksMenu keeps them by form ID and the next runtime reference may get that ID. Without
   LooksMenu on either side nothing is called (`src/game/BodyMorphs.h` holds the rules, tested).
+  Since protocol 39 the face carries LooksMenu's overlays too (tattoos, face and body paint; at most
+  64, template IDs up to 128 characters, placement within +-10, tint and alpha a byte each as LooksMenu
+  saves them): read in the same round as the slider names with its Papyrus script Overlays (GetAll,
+  each an `Overlays#Entry` struct), added to each new stand-in (Add, one struct per overlay; Add
+  refuses a template from an overlay mod the receiver lacks), laid on with Update once every add is
+  answered, and removed with RemoveAll when the stand-in goes (`src/game/LooksOverlays.h`, tested).
+  A LooksMenu skin override needs no LooksMenu call: LooksMenu writes it onto the base NPC (its skin
+  armor, face texture set and head parts), so `Face::Read` carries the skin armor beside the head
+  parts and complexion it already carried, and the copy gets it (with the body, so with or without
+  the friend's own head). LooksMenu's sculpting is the vanilla face data, carried since protocol 32.
+  Not carried: F4EE's node transforms, which it offers no script or plugin call for. None of this
+  has been tried live: the rig has no LooksMenu (the calls follow F4EE's published source).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders a friend in the past
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
