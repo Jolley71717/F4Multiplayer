@@ -270,6 +270,20 @@ if ($null -ne $usesPreprocessed) {
 	}
 }
 
+# The two calls Equipment::InstallFrameUse patches (src/game/FrameUse.h): TESFurniture::Activate's call into the
+# player's furniture use, and the player's furniture enter's HUD message. The plugin checks each itself at load.
+foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the player''s furniture use'), @(2233039, 0x25F, 2222440, 'the player''s furniture enter shows its message'))) {
+	$fn = Resolve $site[0]
+	$target = Resolve $site[2]
+	if ($null -eq $fn -or $null -eq $target) {
+		Report $false ('frame use site {0}: not in the Address Library' -f $site[0])
+		continue
+	}
+	$at = $fn + $site[1]
+	$call = BytesAt $at 5
+	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

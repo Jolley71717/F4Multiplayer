@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Equipment.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -784,8 +785,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 140 of 256 bytes used: two 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one)
-	// and HavokGuard::Install's two detours (2 x 56).
+	// 168 of 256 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two) and HavokGuard::Install's two detours (2 x 56).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
@@ -812,6 +813,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
+	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);
