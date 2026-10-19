@@ -10,6 +10,7 @@
 #include "game/WorkshopCells.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
+#include "game/WorkshopSettle.h"
 
 #include "game/DeferredDelete.h"
 #include "game/Hud.h"
@@ -228,6 +229,65 @@ namespace WorkshopSync
 			return Push(item);
 		}
 
+		// Pieces placed or moved, looked at again over the next seconds (WorkshopSettle): reported again where the
+		// game ends up putting them. Noted by the event sinks (which may run off the game thread) under the lock, and
+		// looked at by Frame.
+		std::mutex            settleLock;
+		WorkshopSettle::Watch settle;  // under settleLock
+		std::uint32_t         settledAgain = 0;
+
+		WorkshopMove::Transform TransformOf(const RE::TESObjectREFR& a_ref)
+		{
+			return { { a_ref.data.location.x, a_ref.data.location.y, a_ref.data.location.z }, { a_ref.data.angle.x, a_ref.data.angle.y, a_ref.data.angle.z }, a_ref.refScale / 100.0f };
+		}
+
+		// A piece of ours just reported placed or moved (no wire: its ends tell where it goes).
+		void SettleLater(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			if (!base || !a_workshop || IsWire(base)) {
+				return;
+			}
+			std::scoped_lock l{ settleLock };
+			settle.Reported(a_ref->GetFormID(), a_workshop->GetFormID(), TransformOf(*a_ref), Clock::now());
+		}
+
+		struct SettleEngine
+		{
+			std::optional<WorkshopMove::Transform> TransformOf(std::uint32_t a_ref)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ref);
+				if (!ref || ref->IsDisabled() || ref->IsDeleted()) {
+					return std::nullopt;
+				}
+				if (const auto root = ref->Get3D(); root && root->world.translate.GetDistance(ref->data.location) > 1.0f) {
+					REX::DEBUG("WorkshopSync: {:08X} is drawn at {:.0f} {:.0f} {:.0f} but stands at {:.0f} {:.0f} {:.0f}", a_ref, root->world.translate.x, root->world.translate.y,
+						root->world.translate.z, ref->data.location.x, ref->data.location.y, ref->data.location.z);
+				}
+				return WorkshopSync::TransformOf(*ref);
+			}
+
+			bool Report(std::uint32_t a_ref, std::uint32_t a_workshop)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ref);
+				const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_workshop);
+				if (!ref || !ReportRef(ref, workshop, Protocol::WorkshopOp::kPlaced)) {
+					return false;
+				}
+				REX::DEBUG("WorkshopSync: {:08X} stands somewhere else since it was reported: reported again at {:.0f} {:.0f} {:.0f} rz={:.2f}", a_ref, ref->data.location.x,
+					ref->data.location.y, ref->data.location.z, ref->data.angle.z);
+				++settledAgain;
+				return true;
+			}
+		};
+
+		void CheckSettled(Clock::time_point a_now)
+		{
+			SettleEngine     engine;
+			std::scoped_lock l{ settleLock };
+			settle.Check(engine, a_now);
+		}
+
 		// Moving a piece moves the wires strung to it, but the game tells of no move of theirs: they are
 		// reported again once the game has redrawn them (a moment after the move). Taken by the event sinks
 		// (which may run off the game thread) under the lock, and reported by Frame.
@@ -297,7 +357,9 @@ namespace WorkshopSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemPlacedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>*) override
 			{
 				LogEvent("placed", a_event.placedItem.get(), a_event.workshop.get());
-				ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced);
+				if (ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
+					SettleLater(a_event.placedItem.get(), a_event.workshop.get());
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -308,7 +370,9 @@ namespace WorkshopSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemMovedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemMovedEvent>*) override
 			{
 				LogEvent("moved", a_event.movedItem.get(), a_event.workshop.get());
-				ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced);
+				if (ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
+					SettleLater(a_event.movedItem.get(), a_event.workshop.get());
+				}
 				CheckWiresLater(a_event.movedItem.get(), a_event.workshop.get());
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -1344,6 +1408,7 @@ namespace WorkshopSync
 			BuiltEngine engine;
 			builtWalk.ReportSome(engine);
 		}
+		CheckSettled(now);
 		ReportMovedWires(now);
 		DrawShapedWires(now);
 	}
@@ -1394,6 +1459,10 @@ namespace WorkshopSync
 			std::scoped_lock w{ wireChecksLock };
 			wireChecks.clear();
 		}
+		{
+			std::scoped_lock s{ settleLock };
+			settle.Clear();
+		}
 		sentScraps.Clear();
 		std::scoped_lock l{ outLock };
 		outgoing.Clear();
@@ -1439,7 +1508,7 @@ namespace WorkshopSync
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
-		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused);
+		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain);
 	}
 
 	std::string DescribeRef(RE::TESObjectREFR* a_ref)
