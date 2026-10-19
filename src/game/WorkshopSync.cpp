@@ -2132,6 +2132,13 @@ namespace WorkshopSync
 			out += std::format(" items={}", list->data.size());
 		}
 		out += std::format(" blocked={} powerPiece={}", Blocked(*a_ref), IsPowerPiece(*a_ref));
+		for (const auto& [key, copy] : copies) {
+			if (copy.ref.get().get() == a_ref) {
+				const auto wanted = mirror.Wanted(key);
+				out += std::format(" builder={} theirRef={:08X} theirPower={}", key.first, key.second, wanted ? (*wanted ? "on" : "off") : "unknown");
+				break;
+			}
+		}
 		if (BenchOf(*a_ref)) {
 			ReporterEngine engine;
 			const auto     powered = engine.Powered(a_ref->GetFormID());

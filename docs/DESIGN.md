@@ -677,9 +677,72 @@ as НЕЙТ ВОЛКОВ), and a CJK name as one box per character (内特·山�
 Chinese or Japanese game's own font should draw it. Emoji are in no game font. A player who wants CJK in an English
 game can map a font with its glyphs in `fontconfig.txt` (a font mod).
 
+## Settlement power (src/game/WorkshopPower.h, WorkshopSync.cpp)
+
+A friend's piece in our game is a copy (`WorkshopSync`): a plain reference of the same object, deleted when
+the session ends or its builder scraps it. Two things follow for power.
+
+**No saved grid may name a copy.** A settlement's power grids (`Workshop::ExtraData::powerGrid`, saved with the
+workbench) name their pieces by form ID. Workshop mode used to offer Attach Wire on a copy, and wiring our light
+to a friend's generator put the copy on our grid, gave it power links and linked it to our workbench. Deleting
+the copy left the grid naming a deleted reference, whose ID the game later hands to something else: the
+classic corrupt-grid save. Three layers, outermost first:
+
+1. *Out of reach.* Every copy, made or adopted from a save, gets the default object
+   `WorkshopBlockInteractionKeyword`'s keyword (`TESObjectREFR::AddKeyword`, saved with it). Workshop mode's pick
+   test skips a reference with it, so a copy can't be wired, stored, scrapped or moved (which also ends the free
+   components from scrapping a friend's piece).
+2. *Taken off.* An audit (`WorkshopPower::Audit`) looks for copies tied into our power: named by a grid of a
+   workbench we have seen, with power links (`ExtraPowerLinks`), or linked to a workbench as a workshop item. It
+   runs every 2 s in a session and before every save (`kPreSaveGame`, on the main thread before the game writes
+   anything). One it finds is taken off through the game's own scrap path: `Workshop::ExtraData::RemoveItem`
+   (the grid), `SplineUtils::DisconnectSpline` on each wire strung to it (our wires go with it, reported
+   scrapped so the friend's copy of the wire goes too), and its workbench link cleared.
+3. *Never deleted while tied in.* Every copy's removal goes through `WorkshopPower::Remove`: taken off first if
+   it is tied in, and if the game still ties it in after that, it is switched off and kept, never deleted, so
+   the grid's ID still names it and nothing else. Copies waiting in the graveyard count as copies for the
+   audit.
+
+Rejected: stripping copies' links before every save and putting them back after. A save happens at any moment
+(autosaves, quicksaves, the game's own on sleep and fast travel); a put-back would re-run grid code mid-session,
+fire the game's power events into scripts, and would need wires that were never ours. Blocking the wire in the
+first place keeps every grid our game builds made of our own pieces.
+
+**Each builder's game says what is powered.** Cross-player wiring is not done: each player wires their own
+pieces, and both games show the result.
+
+- The builder's game tracks its own pieces with power (runtime-made workshop items of its workbenches,
+  `PowerUtils::ItemIsPowerReceiver`, `ItemIsPowerConnection` or `ItemGeneratesPower`; no wires, turrets or
+  copies), polls `Workshop::IsPowered` every 500 ms and sends what changed (`kReportWorkshopPower`, 255 entries a
+  packet). It sends all of them when someone joins, after a load, and every 30 s (a late or lost packet heals).
+- The server relays it as the sender's (`kWorkshopPower`, the event budget, sender stamped) and keeps nothing.
+- A friend's game keeps what each builder says per (builder, piece) and shows it on the copy: the graph event the
+  game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and for a light (LIGH) its
+  light switched (`TESObjectLIGH::SwitchLight`). Shown again whenever the copy is drawn anew (its cell loaded
+  again, the copy made again), tried 8 times if the game doesn't take it. Not through the game's own power
+  handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
+  beacon's) would act on them as if the piece were ours.
+
+Trade-offs:
+
+- A real shared grid (copies as real workshop items of the receiver's workbench, the game computing power on
+  both sides) would let a friend's generator light our lamp. It needs copies to be our workshop items, which is
+  what made the corruption possible, and two games computing the same grid can disagree (destroyed generators,
+  a piece not loaded in one of them). The mirror shows exactly what the owner's game computed.
+- Pieces the settlement came with keep each game's own power (only runtime-made pieces have copies).
+- A piece whose builder is away shows its last state; nothing powers or unpowers it until they come back.
+- Turrets and other actors are not mirrored (their copies are actors in the player's faction, not powered pieces).
+
+Message: `kReportWorkshopPower` 62, `kWorkshopPower` 162: playerId (u32, stamped), a count (u8, at least 1), then
+per entry a reference (u32, runtime range only) and its state (u8, 0 or 1). Protocol 46.
+
+Dev: `wsgrid [bench]` (each grid's nodes, links and powered pieces, with any copy or deleted reference it names),
+`wspower` (counters), `wspower block on|off` (copies pickable again, to try the repair), `wspower audit`, `wspower
+show <ref> on|off`, and `wsinfo <ref>` (now with `blocked=`, `powerPiece=` and `powered=`).
+
 ## Status (2026-10-09)
 
-Protocol VERSION 38 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 kLoadOrder, 38 a power wire's shape on a workshop item). The sections below record each review as it was written.
+Protocol VERSION 46 (46 kReportWorkshopPower and kWorkshopPower, see "Settlement power"; 28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 kLoadOrder, 38 a power wire's shape on a workshop item). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -705,6 +768,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
+| `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 
 A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our
