@@ -1434,7 +1434,7 @@ namespace DevCommands
 		}
 
 		// wspower: settlement power across games. wspower block on|off: whether friends' copies are kept out of workshop
-		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower show <refHex>
+		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower copies: each copy and whose piece it is; wspower show <refHex>
 		// on|off: show the reference powered or not, as a friend's copy is shown.
 		std::string WsPower(std::string_view a_args)
 		{
@@ -1446,6 +1446,9 @@ namespace DevCommands
 				WorkshopSync::SetBlockCopies(args[1] == "on");
 				return WorkshopSync::DescribePower();
 			}
+			if (args[0] == "copies" && args.size() == 1) {
+				return WorkshopSync::DescribeCopies();
+			}
 			if (args[0] == "audit" && args.size() == 1) {
 				return WorkshopSync::AuditNow();
 			}
@@ -1456,7 +1459,7 @@ namespace DevCommands
 				}
 				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
 			}
-			return "error: usage: wspower [block on|off | audit | show <refHex> on|off]";
+			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.

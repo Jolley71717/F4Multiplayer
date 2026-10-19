@@ -81,6 +81,8 @@ namespace WorkshopSync
 	// Dev: the reference shown powered (or not) as a friend's copy is; false if the game didn't take it.
 	bool                      ShowPoweredForDev(RE::TESObjectREFR* a_ref, bool a_on);
 	[[nodiscard]] std::string DescribePower();
+	// Dev: each copy here, and whose piece it is: "copy=builder:theirRef".
+	[[nodiscard]] std::string DescribeCopies();
 	// Dev: the power grids of this workbench (or of every one seen), with any copy or deleted reference they name.
 	[[nodiscard]] std::string DescribeGrids(RE::TESObjectREFR* a_bench = nullptr);
 }

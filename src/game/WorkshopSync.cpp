@@ -1655,7 +1655,8 @@ namespace WorkshopSync
 		std::int64_t            pollUsMax = 0;
 		std::uint32_t           benchWorld = 0;     // the worldspace whose persistent cell was looked over for workbenches
 
-		// The workbenches among the cell's references.
+		// The workbenches among the cell's references, with their workshop data or not yet: a settlement's workbench gets its data
+		// the first time workshop mode is used there (PowerBenches looks again each time).
 		void NoteBenchesIn(RE::TESObjectCELL* a_cell)
 		{
 			if (!a_cell) {
@@ -1665,7 +1666,7 @@ namespace WorkshopSync
 			{
 				const RE::BSAutoLock l{ a_cell->spinLock };
 				for (const auto& ref : a_cell->references) {
-					if (ref && ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop) && !ref->As<RE::Actor>()) {
+					if (ref && IsWorkbenchAnchor(ref.get())) {
 						found.push_back(ref->GetFormID());
 					}
 				}
@@ -2057,6 +2058,16 @@ namespace WorkshopSync
 	bool ShowPoweredForDev(RE::TESObjectREFR* a_ref, bool a_on)
 	{
 		return a_ref && ShowPowered(*a_ref, a_on);
+	}
+
+	std::string DescribeCopies()
+	{
+		std::string out = std::format("{} copies", copies.size());
+		for (const auto& [key, copy] : copies) {
+			const auto ref = copy.ref.get();
+			out += std::format("; {:08X}={}:{:08X}", ref ? ref->GetFormID() : 0, key.first, key.second);
+		}
+		return out;
 	}
 
 	std::string DescribePower()
