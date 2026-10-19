@@ -66,7 +66,7 @@ Back up your saves first, or keep a separate save for co-op.
 [*]Radiant quests (Preston's "a settlement needs our help" and the like) aren't shared.
 [*]You can't scrap or power a friend's settlement pieces.
 [*]You can't hand a friend an item yet.
-[*]Doors, gates and vault doors that a quest script opens (the Vault 114 door, for one) don't open for friends yet. That's being fixed.
+[*]Vault 114's gear door and security gates opened from a terminal or card reader open for everyone; other doors a quest script opens may still open only for the player who opened them.
 [/list]
 
 [b]Something broke?[/b]

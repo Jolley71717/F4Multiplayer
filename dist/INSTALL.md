@@ -334,8 +334,8 @@ without it they last until it stops.
   muzzle flash yet.
 - Misc quests (holotapes, notes, "talk to" errands) and radiant quests other than the Minutemen's
   settlement requests are not shared, nor are settlement attacks: each game runs its own.
-- Doors, gates and vault doors that a quest script opens (the Vault 114 door, for one) don't open for friends yet.
-  That's being fixed.
+- Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
+  a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).

@@ -1270,6 +1270,27 @@ namespace DevCommands
 			return ref ? DescribeRef(ref) : "error: no such reference";
 		}
 
+		// gate <refHex>: what a two-state gate's script (Default2StateActivator, SharedGates) says of it.
+		std::string Gate(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto object = Papyrus::BoundObject(ref, "Default2StateActivator", false);
+			if (!object) {
+				return std::format("{:08X} 3d={} no Default2StateActivator object", ref->GetFormID(), ref->Get3D() != nullptr);
+			}
+			const auto flag = [&](const char* a_name) {
+				const auto var = object->GetProperty(RE::BSFixedString{ a_name });
+				return !var ? std::string("?") : var->is<bool>() ? std::string(RE::BSScript::get<bool>(*var) ? "1" : "0") : std::string("-");
+			};
+			const auto type = object->type.get();
+			return std::format("{:08X} 3d={} script={} state={} isOpen={} isAnimating={} doOnce={} setDefault={}", ref->GetFormID(), ref->Get3D() != nullptr,
+				type ? type->GetName() : "?", object->currentState.c_str() ? object->currentState.c_str() : "", flag("isOpen"), flag("isAnimating"), flag("doOnce"),
+				flag("shouldSetDefaultState"));
+		}
+
 		// setpos <refHex> <x> <y> <z> [rz degrees]
 		std::string SetPos(std::string_view a_args)
 		{
@@ -3051,6 +3072,7 @@ namespace DevCommands
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
+			Entry{ "gate", Gate },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
