@@ -240,6 +240,11 @@ namespace ProtocolSamples
 			s.push_back({ "Rename", Encode(Rename{ 2, "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82" }, type), D(DecodeRename) });  // "Нейт"
 		}
 		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
+		s.push_back({ "HostCommand", Encode(HostCommand{ HostAction::kSetPassword, 2, 0x0123456789ABCDEFull, "hunter2" }), D(DecodeHostCommand) });
+		s.push_back({ "HostInfoRequest", Encode(HostInfoRequest{}), D(DecodeHostInfoRequest) });
+		s.push_back({ "Removed", Encode(Removed{ RemovedReason::kBanned }), D(DecodeRemoved) });
+		s.push_back({ "HostInfo", Encode(HostInfo{ true, true, HostResult::kDone, HostAction::kBan, 2,
+			{ { 0x1111222233334444ull, "~3fa2c1", "\xD0\x9D\xD0\xB5\xD0\xB9\xD1\x82", 1792000000 }, { 0x5555666677778888ull, "~0b1c2d", "", 1792000100 } } }), D(DecodeHostInfo) });
 		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
@@ -292,6 +297,8 @@ namespace ProtocolSamples
 		case MT::kReportSpawn:
 		case MT::kRename:
 		case MT::kRequestLoadOrder:
+		case MT::kHostCommand:
+		case MT::kRequestHostInfo:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -328,6 +335,8 @@ namespace ProtocolSamples
 		case MT::kSpawned:
 		case MT::kRenamed:
 		case MT::kLoadOrder:
+		case MT::kRemoved:
+		case MT::kHostInfo:
 			return true;
 		}
 		return false;

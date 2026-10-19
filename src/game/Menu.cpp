@@ -3,10 +3,13 @@
 #include "Config.h"
 #include "game/Hud.h"
 #include "game/Party.h"
+#include "game/RemotePlayers.h"
 #include "net/Session.h"
 #include "steam/Steam.h"
 #include "steam/SteamTransport.h"
 #include "Text.h"
+
+#include <random>
 
 namespace Menu
 {
@@ -75,6 +78,22 @@ namespace Menu
 			std::size_t       asked;
 		};
 		std::optional<PendingJoin> pendingJoin;
+
+		// Host controls: a command goes to our own server, and the page after it waits for the server's answer (a new
+		// Session::HostControls) or a moment, so it shows what is true. a_done hears the answer (a HUD line saying what
+		// happened); nothing is on screen meanwhile, as for the join page.
+		constexpr auto HOST_WAIT = 1000ms;
+		struct PendingHost
+		{
+			std::function<void()>                          show;
+			std::function<void(const Protocol::HostInfo&)> done;
+			Clock::time_point                              deadline;
+			std::uint32_t                                  serial;
+		};
+		std::optional<PendingHost> pendingHost;
+		// Players just kicked or banned: their leaving comes a moment after the server's answer, so the player list
+		// leaves them out meanwhile. Forgotten when the host controls are opened again from the main page.
+		std::vector<std::uint32_t> justRemoved;
 
 		// Names and reject reasons come from other players: the box's text field reads markup, so
 		// '<' and '>' and control characters (other than line breaks) are dropped, as the HUD does.
@@ -258,6 +277,207 @@ namespace Menu
 			Show(pages[page], std::move(choices));
 		}
 
+		// --- Host controls (while hosting): kick, ban and unban players, lock the session, set or remove the password. Each
+		// goes to our own server (Session::SendHostCommand), which takes them from the host's game only.
+
+		void ShowHostControls(std::size_t a_page);
+		void ShowHostPlayers(std::size_t a_page);
+		void ShowBans(std::size_t a_page);
+
+		// Sends a_command, then shows a_show once the server has answered (a_done hears the answer first), or after a
+		// moment without one. Not hosting any more: the main page.
+		void HostDo(const Protocol::HostCommand& a_command, std::function<void()> a_show, std::function<void(const Protocol::HostInfo&)> a_done = {})
+		{
+			if (!Session::SendHostCommand(a_command)) {
+				ShowMain();
+				return;
+			}
+			pendingHost = PendingHost{ std::move(a_show), std::move(a_done), Clock::now() + HOST_WAIT, Session::HostControlsSerial() };
+		}
+
+		// What the HUD says of a command's answer: a_doneKey (with a_args) when it went through, else why not.
+		void SayResult(const Protocol::HostInfo& a_info, const char* a_doneKey, std::initializer_list<Text::Arg> a_args)
+		{
+			switch (a_info.result) {
+			case Protocol::HostResult::kDone:
+				if (a_doneKey) {
+					Hud::Notify(Text::Format(a_doneKey, a_args));
+				}
+				break;
+			case Protocol::HostResult::kNotSaved:
+				Hud::Notify(Text::Get("menu.hc_not_saved"));
+				break;
+			case Protocol::HostResult::kNoIdentity:
+				Hud::Notify(Text::Format("menu.hc_no_identity", a_args));
+				break;
+			case Protocol::HostResult::kNoSuchPlayer:
+				Hud::Notify(Text::Get("menu.hc_gone"));
+				break;
+			default:
+				break;
+			}
+		}
+
+		// "Password: k7m2qp9x ..." or "No password ...": the password is the ini's (the server only says one is set).
+		std::string PasswordLine(const Protocol::HostInfo& a_info)
+		{
+			const auto& password = Config::Get().password;
+			if (!a_info.password) {
+				return Text::Get("menu.hc_no_password");
+			}
+			return Text::Format("menu.hc_password", { { "password", password.empty() ? std::string{ "?" } : password } });
+		}
+
+		// A made-up password (the box can't take typing): eight letters and digits that can't be mistaken for each other.
+		std::string NewPassword()
+		{
+			static constexpr std::string_view LETTERS = "abcdefghjkmnpqrstuvwxyz23456789";
+			std::random_device                rd;
+			std::string                       password;
+			for (int i = 0; i < 8; ++i) {
+				password += LETTERS[rd() % LETTERS.size()];
+			}
+			return password;
+		}
+
+		// The password the host chose, for the ini (read at the next start) and the server (for the next join).
+		void SetPassword(const std::string& a_password)
+		{
+			Config::Mutable().password = a_password;
+			Config::Write("sPassword", a_password);
+			HostDo({ Protocol::HostAction::kSetPassword, 0, 0, a_password }, [] { ShowHostControls(0); });
+		}
+
+		void ShowHostPassword()
+		{
+			const auto info = Session::HostControls();
+			if (!info) {
+				ShowHostControls(0);
+				return;
+			}
+			const auto body = PasswordLine(*info) + "\n" + Text::Get("menu.hc_password_page") + "\n" + Text::Get("menu.settings_saved");
+			std::vector<Button> choices{ { Text::Get("menu.back"), [] { ShowHostControls(0); } }, { Text::Get("menu.hc_new_password"), [] { SetPassword(NewPassword()); } } };
+			if (info->password) {
+				choices.push_back({ Text::Get("menu.hc_remove_password"), [] { SetPassword({}); } });
+			}
+			Show(body, std::move(choices));
+		}
+
+		// One player: kick or ban them.
+		void ShowHostPlayer(std::uint32_t a_id)
+		{
+			const auto name = RemotePlayers::NameOf(a_id);
+			if (name.empty() || std::ranges::contains(justRemoved, a_id)) {
+				ShowHostPlayers(0);  // gone meanwhile
+				return;
+			}
+			const auto removed = [a_id, name](bool a_ban) {
+				return [a_id, name, a_ban] {
+					HostDo({ a_ban ? Protocol::HostAction::kBan : Protocol::HostAction::kKick, a_id }, [] { ShowHostPlayers(0); },
+						[a_id, name, a_ban](const Protocol::HostInfo& a_info) {
+							if (a_info.result == Protocol::HostResult::kDone || a_info.result == Protocol::HostResult::kNotSaved ||
+								a_info.result == Protocol::HostResult::kNoIdentity) {
+								justRemoved.push_back(a_id);
+							}
+							SayResult(a_info, a_ban ? "menu.hc_banned_hud" : "menu.hc_kicked", { { "player", name } });
+						});
+				};
+			};
+			Show(Text::Format("menu.hc_player", { { "player", name } }),
+				{ { Text::Get("menu.back"), [] { ShowHostPlayers(0); } }, { Text::Format("menu.hc_kick", { { "player", name } }), removed(false) },
+					{ Text::Format("menu.hc_ban", { { "player", name } }), removed(true) } });
+		}
+
+		// Everyone else in the session, a button each.
+		void ShowHostPlayers(std::size_t a_page)
+		{
+			std::string         body = Text::Get("menu.hc_pick_player");
+			std::vector<Button> entries;
+			for (const auto& player : RemotePlayers::List()) {
+				if (std::ranges::contains(justRemoved, player.id)) {
+					continue;
+				}
+				body += "\n" + player.name;
+				entries.push_back({ player.name, [id = player.id] { ShowHostPlayer(id); } });
+			}
+			if (entries.empty()) {
+				Show(Text::Get("menu.hc_nobody"), { { Text::Get("menu.back"), [] { ShowHostControls(0); } } });
+				return;
+			}
+			ShowPaged(body, std::move(entries), a_page, ShowHostPlayers, { Text::Get("menu.back"), [] { ShowHostControls(0); } });
+		}
+
+		// "Sam (~3fa2c1)" while the server that banned them runs, "~3fa2c1, banned 2026-10-18" after.
+		std::string BanLabel(const Protocol::HostInfo::Ban& a_ban)
+		{
+			if (!a_ban.name.empty()) {
+				return Text::Format("menu.hc_ban_named", { { "player", a_ban.name }, { "alias", a_ban.alias } });
+			}
+			const std::chrono::year_month_day day{ std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{ std::chrono::seconds{ a_ban.bannedAt } }) };
+			const auto date = std::format("{:04}-{:02}-{:02}", static_cast<int>(day.year()), static_cast<unsigned>(day.month()), static_cast<unsigned>(day.day()));
+			return Text::Format("menu.hc_ban_unnamed", { { "alias", a_ban.alias }, { "date", date } });
+		}
+
+		// The bans, newest first: pressing one lifts it.
+		void ShowBans(std::size_t a_page)
+		{
+			const auto info = Session::HostControls();
+			if (!info) {
+				ShowHostControls(0);
+				return;
+			}
+			if (info->list.empty()) {
+				Show(Text::Get("menu.hc_no_bans"), { { Text::Get("menu.back"), [] { ShowHostControls(0); } } });
+				return;
+			}
+			std::string         body = Text::Format("menu.hc_bans_page", { { "n", info->bans } });
+			std::vector<Button> entries;
+			for (const auto& ban : info->list) {
+				const auto label = BanLabel(ban);
+				body += "\n" + label;
+				entries.push_back({ Text::Format("menu.hc_unban", { { "who", label } }), [id = ban.id, label] {
+									   HostDo({ Protocol::HostAction::kUnban, 0, id }, [] { ShowBans(0); },
+										   [label](const Protocol::HostInfo& a_info) { SayResult(a_info, "menu.hc_unbanned", { { "who", label } }); });
+								   } });
+			}
+			if (info->list.size() > 1) {
+				entries.push_back({ Text::Get("menu.hc_unban_all"), [] {
+									   HostDo({ Protocol::HostAction::kUnban, 0, 0 }, [] { ShowHostControls(0); },
+										   [](const Protocol::HostInfo& a_info) { SayResult(a_info, nullptr, {}); });
+								   } });
+			}
+			ShowPaged(body, std::move(entries), a_page, ShowBans, { Text::Get("menu.back"), [] { ShowHostControls(0); } });
+		}
+
+		// The host controls' first page: the session's lock, password and bans, and a button for each.
+		void ShowHostControls(std::size_t a_page)
+		{
+			if (!Session::GetStatus().hosting) {
+				ShowMain();
+				return;
+			}
+			const auto info = Session::HostControls();
+			if (!info) {
+				// Not heard from our server yet (our own game still joining it): asked again, and said so.
+				Session::AskHostControls();
+				Show(Text::Get("menu.hc_waiting"), { { Text::Get("menu.back"), ShowMain }, { Text::Get("menu.look_again"), [] { ShowHostControls(0); } } });
+				return;
+			}
+			std::size_t others = 0;
+			for (const auto& player : RemotePlayers::List()) {
+				others += !std::ranges::contains(justRemoved, player.id);
+			}
+			const auto body = Text::Get(info->locked ? "menu.hc_locked" : "menu.hc_open") + "\n" + PasswordLine(*info) + "\n" + Text::Format("menu.hc_banned", { { "n", info->bans } });
+			std::vector<Button> entries;
+			entries.push_back({ Text::Format("menu.hc_players", { { "n", others } }), [] { ShowHostPlayers(0); } });
+			entries.push_back({ Text::Get(info->locked ? "menu.hc_unlock" : "menu.hc_lock"), [locked = info->locked, a_page] {
+								   HostDo({ locked ? Protocol::HostAction::kUnlock : Protocol::HostAction::kLock }, [a_page] { ShowHostControls(a_page); });
+							   } });
+			entries.push_back({ Text::Get("menu.hc_password_button"), ShowHostPassword });
+			entries.push_back({ Text::Format("menu.hc_bans", { { "n", info->bans } }), [] { ShowBans(0); } });
+			ShowPaged(body, std::move(entries), a_page, ShowHostControls, { Text::Get("menu.back"), ShowMain });
+		}
+
 		void ShowMainPage(std::size_t a_page);
 
 		void ShowMain()
@@ -278,6 +498,10 @@ namespace Menu
 				if (status.steam && Steam::LobbyOpen()) {
 					entries.push_back({ Text::Get("menu.invite"), [] { Steam::OpenInviteDialog(); } });
 				}
+				entries.push_back({ Text::Get("menu.host_controls"), [] {
+									   justRemoved.clear();
+									   ShowHostControls(0);
+								   } });
 				entries.push_back({ Text::Get("menu.stop_hosting"), StopHosting });
 			} else if (status.hostWaiting) {
 				entries.push_back({ Text::Get("menu.stop_hosting"), StopHosting });  // bHost off: it won't start
@@ -382,6 +606,7 @@ namespace Menu
 			openWaiting = true;  // shown from Frame once the UI has settled
 			return;
 		}
+		pendingHost.reset();  // the menu key again: the main page, not the page a command was waiting to show
 		ShowMain();
 	}
 
@@ -393,6 +618,7 @@ namespace Menu
 			return;
 		}
 		if (std::exchange(openWaiting, false)) {
+			pendingHost.reset();
 			ShowMain();
 			return;  // a press from the page that was up before is stale by now
 		}
@@ -400,6 +626,18 @@ namespace Menu
 			const auto page = pendingJoin->page;
 			pendingJoin.reset();
 			ShowJoin(page);
+		}
+		if (pendingHost) {
+			const auto info = Session::HostControls();
+			const bool answered = info.has_value() && Session::HostControlsSerial() != pendingHost->serial;
+			if (answered || Clock::now() >= pendingHost->deadline) {
+				auto pending = std::move(*pendingHost);
+				pendingHost.reset();
+				if (answered && pending.done) {
+					pending.done(*info);
+				}
+				pending.show();
+			}
 		}
 		std::optional<ButtonPress> press;
 		{
@@ -432,6 +670,6 @@ namespace Menu
 		// The body on one line (the dev channel's reply is one line).
 		std::string body = lastBody;
 		std::ranges::replace(body, '\n', '/');
-		return std::format("menu: pages={} presses={} serial={} pendingJoin={} openWaiting={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), openWaiting, labels, body);
+		return std::format("menu: pages={} presses={} serial={} pendingJoin={} pendingHost={} openWaiting={} buttons='{}' body='{}'", pagesShown, pressesHandled, serial, pendingJoin.has_value(), pendingHost.has_value(), openWaiting, labels, body);
 	}
 }
