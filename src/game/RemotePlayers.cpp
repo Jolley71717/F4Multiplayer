@@ -1429,7 +1429,7 @@ namespace RemotePlayers
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
 				WeaponFire::DropHandThrowable(actor->GetFormID());
-				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body
+				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body and tattoos
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
@@ -1813,10 +1813,10 @@ namespace RemotePlayers
 					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
 				}
 			}
-			// Their LooksMenu body sliders, when both games have LooksMenu (LooksMenu keeps them by reference, not on
-			// the base: so on each stand-in).
+			// Their LooksMenu body sliders and overlays, when both games have LooksMenu (LooksMenu keeps them by reference,
+			// not on the base: so on each stand-in).
 			if (a_player.face) {
-				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs);
+				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs, a_player.face->overlays);
 			}
 
 			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);

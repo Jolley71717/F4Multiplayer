@@ -4,7 +4,11 @@
 #include "game/GearPlan.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
+#include "game/TextureFlush.h"
 
+#include <array>
+#include <cstring>
+#include <optional>
 #include <unordered_map>
 
 namespace Equipment
@@ -32,6 +36,13 @@ namespace Equipment
 		constexpr REL::ID SWITCH_INTO_POWER_ARMOR{ 2219442 };
 		constexpr REL::ID GET_POWER_ARMOR_HANDLE{ 2190600 };  // ExtraDataList::GetPowerArmorHandle (+2908C0)
 		constexpr REL::ID SET_OWNER{ 2202623 };               // TESObjectREFR::SetOwner(TESForm*) (+562380)
+		// What the engine asks before it lets our player into furniture (see FrameUse.h).
+		constexpr REL::ID GET_MARKER_ENABLED{ 2198041 };      // TESFurniture::GetMarkerEnabled(uint) (+44C590)
+		constexpr REL::ID GET_MARKER_USER{ 2202566 };         // TESObjectREFR::GetMarkerUser(ActorHandle&, uint, bool) (+55EA40)
+		constexpr REL::ID HAS_FREE_MARKER{ 2202569 };         // TESObjectREFR::HasFreeMarker(bool) (+55F0B0)
+		constexpr REL::ID HAS_USERS_OTHER_THAN{ 2202574 };    // TESObjectREFR::HasUsersOtherThan(Actor*, bool) (+55F5A0)
+		constexpr REL::ID UPRIGHT_ANGLE_COSINE{ 4796566 };    // InteractionUtils::QUprightAngleCosine's value (+30EC270)
+		constexpr std::uint32_t FURNITURE_MARKERS = 22;       // the markers a piece of furniture can have (its loops' bound)
 		// A bone the power armor skeleton has and the human one has not (Meshes\Actors\PowerArmor\CharacterAssets\
 		// skeleton.nif against Meshes\Actors\Character\CharacterAssets\skeleton.nif in Fallout4 - Meshes.ba2: the armor
 		// bones, Pelvis_Armor, Helmet_Armor, Tank_Armor and the rest, are the power armor skeleton's alone; the human one
@@ -945,5 +956,172 @@ namespace Equipment
 			out += "]";
 		}
 		return out.empty() ? " nohands" : out;
+	}
+
+	FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame)
+	{
+		FrameUse::Facts facts;
+		const auto      base = a_frame ? a_frame->GetObjectReference() : nullptr;
+		const auto      furniture = base && base->GetFormType() == RE::ENUM_FORM_ID::kFURN ? base->As<RE::TESFurniture>() : nullptr;
+		const auto      player = RE::PlayerCharacter::GetSingleton();
+		if (!furniture || !player) {
+			return facts;
+		}
+		static REL::Relocation<float*> upMin{ UPRIGHT_ANGLE_COSINE };
+		facts.upMin = *upMin;
+		{
+			const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+			facts.playerBusy = static_cast<int>(player->DoGetSitSleepState()) != 0 || (middle && middle->occupiedFurniture.get()) || InPowerArmor(player);
+		}
+		// TESObjectREFR::GetOrientation builds a non-actor's from its angle (NiMatrix3::FromEulerAnglesXYZ), and the
+		// engine compares the z of its up axis: cos x times cos y.
+		facts.up = std::cos(a_frame->data.angle.x) * std::cos(a_frame->data.angle.y);
+		static REL::Relocation<bool (*)(const RE::TESFurniture*, std::uint32_t)>                          markerEnabled{ GET_MARKER_ENABLED };
+		static REL::Relocation<RE::ActorHandle* (*)(RE::TESObjectREFR*, RE::ActorHandle*, std::uint32_t, bool)> markerUser{ GET_MARKER_USER };
+		for (std::uint32_t i = 0; i < FURNITURE_MARKERS; ++i) {
+			if (!markerEnabled(furniture, i)) {
+				continue;
+			}
+			++facts.markers;
+			RE::ActorHandle handle;
+			const auto      user = markerUser(a_frame, &handle, i, true)->get();
+			if (!user) {
+				continue;
+			}
+			if (facts.used++ == 0) {
+				const auto middle = user->currentProcess ? user->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				facts.user = user->GetFormID();
+				facts.userMarker = static_cast<int>(i);
+				facts.userIsPlayer = user.get() == player;
+				facts.userIn = (occupied && occupied.get() == a_frame) || PowerArmorFrameOf(user.get()).get() == a_frame;
+			}
+		}
+		static REL::Relocation<bool (*)(RE::TESObjectREFR*, RE::Actor*, bool)> usersOtherThan{ HAS_USERS_OTHER_THAN };
+		static REL::Relocation<bool (*)(RE::TESObjectREFR*, bool)>             freeMarker{ HAS_FREE_MARKER };
+		facts.othersThanPlayer = usersOtherThan(a_frame, player, false);
+		facts.free = freeMarker(a_frame, true);
+		return facts;
+	}
+
+	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame)
+	{
+		if (!a_frame) {
+			return "none";
+		}
+		const auto facts = FrameUseOf(a_frame);
+		const auto base = a_frame->GetObjectReference();
+		const auto root = a_frame->Get3D();
+		return std::format("{:08X} base={:08X} {}: up={:.2f} (min {:.2f}) markers={} used={} user={:08X}{}{} othersThanPlayer={} free={} disabled={} 3d={} culled={}", a_frame->GetFormID(),
+			base ? base->GetFormID() : 0, FrameUse::Name(FrameUse::Judge(facts)), facts.up, facts.upMin, facts.markers, facts.used, facts.user, facts.userIsPlayer ? "(player)" : "",
+			facts.used ? (facts.userIn ? "(in it)" : "(not in it)") : "", facts.othersThanPlayer, facts.free, a_frame->IsDisabled(), root != nullptr, root && root->GetAppCulled());
+	}
+
+	namespace
+	{
+		constexpr REL::ID SET_MARKER_USED{ 2202567 };         // TESObjectREFR::SetMarkerUsed(uint, Actor&, bool used, bool force) (+55EB70)
+		constexpr REL::ID FURNITURE_ACTIVATE{ 2198054 };      // TESFurniture::Activate (+44CA40)
+		constexpr REL::ID PLAYER_USE_FURNITURE{ 2232956 };    // the player's furniture use, which asks for a free marker (+D5D6B0)
+		constexpr REL::ID PLAYER_ENTER_FURNITURE{ 2233039 };  // the player's furniture enter, which picks the animation (+D69B80)
+		constexpr REL::ID SHOW_HUD_MESSAGE{ 2222440 };        // the HUD's corner message (+A37270)
+		constexpr std::size_t CALL_STUB = 14;                 // what a write_call<5> takes of the trampoline (one per target)
+
+		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
+		using MessageFn = void (*)(const char*, const char*, bool, bool);
+		UseFn                   originalUse = nullptr;
+		MessageFn               originalMessage = nullptr;
+		std::uint32_t           seatsFreed = 0;
+		std::uint32_t           framesStoodUp = 0;
+		std::uint32_t           refusals = 0;
+		std::uint32_t           enterRefusals = 0;
+		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
+		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
+
+		// TESFurniture::Activate let our player at a frame (nobody else uses it) and asks the engine to seat them: what
+		// would turn them away is mended first (FrameUse::ChooseMend), and a refusal is logged with what the engine found.
+		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
+		{
+			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
+			if (frame) {
+				lastFrame = a_ref->GetFormID();
+				const auto facts = FrameUseOf(a_ref);
+				const auto mend = FrameUse::ChooseMend(facts);
+				if (mend.Any()) {
+					REX::INFO("Equipment: our player can't get into frame {} as it is; {}{}", DescribeFrameUse(a_ref), mend.standUp ? "standing it up" : "",
+						mend.freeSeat ? (mend.standUp ? " and giving back the seat the engine still has as theirs" : "giving back the seat the engine still has as theirs") : "");
+				}
+				if (mend.standUp) {
+					a_ref->data.angle.x = 0.0f;
+					a_ref->data.angle.y = 0.0f;
+					a_ref->Update3DPosition(true);
+					++framesStoodUp;
+				}
+				if (mend.freeSeat && facts.userMarker >= 0) {
+					static REL::Relocation<void (*)(RE::TESObjectREFR*, std::uint32_t, RE::Actor&, bool, bool)> setMarkerUsed{ SET_MARKER_USED };
+					setMarkerUsed(a_ref, static_cast<std::uint32_t>(facts.userMarker), *a_player, false, true);
+					++seatsFreed;
+				}
+			}
+			const bool seated = originalUse(a_player, a_ref);
+			if (frame && !seated && refusals++ < MAX_REFUSALS_LOGGED) {
+				REX::INFO("Equipment: the engine did not let our player into frame {}", DescribeFrameUse(a_ref));
+			}
+			return seated;
+		}
+
+		// The player's furniture enter found no animation to get them in (FrameUse.h): what it says, and the frame they
+		// last asked for.
+		void EnterMessageHook(const char* a_text, const char* a_sound, bool a_throttle, bool a_warning)
+		{
+			if (enterRefusals++ < MAX_REFUSALS_LOGGED) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto race = player ? player->race : nullptr;
+				const auto frame = lastFrame ? RE::TESForm::GetFormByID(lastFrame) : nullptr;
+				const auto ref = frame ? frame->As<RE::TESObjectREFR>() : nullptr;
+				REX::INFO("Equipment: no animation gets our player into furniture (\"{}\"); race {:08X}, inPA={}, last frame {}", a_text ? a_text : "", race ? race->GetFormID() : 0,
+					player && InPowerArmor(player), ref ? DescribeFrameUse(ref) : "none");
+			}
+			originalMessage(a_text, a_sound, a_throttle, a_warning);
+		}
+
+		// The call at a_function + a_offset, if it calls a_target as 1.11.240 has it.
+		std::optional<std::uintptr_t> CallAt(const REL::ID& a_function, std::size_t a_offset, const REL::ID& a_target)
+		{
+			const auto                  site = a_function.address() + a_offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+			if (TextureFlush::CallTarget(bytes, site) != a_target.address()) {
+				return std::nullopt;
+			}
+			return site;
+		}
+	}
+
+	void InstallFrameUse()
+	{
+		if (originalUse) {
+			return;
+		}
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < 2 * CALL_STUB) {
+			REX::WARN("Equipment: no room to watch power armor entry ({} bytes free); left as it is", trampoline.free_size());
+			return;
+		}
+		if (const auto site = CallAt(FURNITURE_ACTIVATE, FrameUse::USE_CALL, PLAYER_USE_FURNITURE)) {
+			originalUse = reinterpret_cast<UseFn>(trampoline.write_call<5>(*site, &UseHook));
+		} else {
+			REX::WARN("Equipment: TESFurniture::Activate doesn't call the player's furniture use where 1.11.240 does (another plugin's patch?); frames are not mended");
+		}
+		if (const auto site = CallAt(PLAYER_ENTER_FURNITURE, FrameUse::ENTER_MESSAGE_CALL, SHOW_HUD_MESSAGE)) {
+			originalMessage = reinterpret_cast<MessageFn>(trampoline.write_call<5>(*site, &EnterMessageHook));
+		} else {
+			REX::WARN("Equipment: the player's furniture enter doesn't show its message where 1.11.240 does; its refusals are not logged");
+		}
+		REX::INFO("Equipment: power armor entry watched (use {}, enter message {})", originalUse != nullptr, originalMessage != nullptr);
+	}
+
+	std::string DescribeFrameMends()
+	{
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={}", seatsFreed, framesStoodUp, refusals, enterRefusals);
 	}
 }

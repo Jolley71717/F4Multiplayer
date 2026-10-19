@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 
 // Our copy of an NPC another game runs has its health there: the owner's game deals what the NPC takes, our player's
 // hits are reported (WorldSync's health reports, then the server's belief in our kill), and another player's hits come
@@ -18,6 +19,11 @@
 // come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
 // given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
 // passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on.
+//
+// What our hits take off a copy is booked (TakeOurs) and sent as damage (kReportDamage), which the game that runs the NPC
+// takes off its own health; that game then shares where its health stands (HealthShare). A report of the copy's health
+// instead, as before protocol 40, healed off the NPC whatever its own game had taken from it since the copy last heard (a
+// fire's burn, a friend's shot on its way).
 //
 // Our hits are our player's and those of the actors our game is answerable for (Judge): each hit is to count in one
 // game only, the game that runs whoever struck it. Pure, so it can be tested without the game.
@@ -86,12 +92,35 @@ namespace CopyHealth
 		bool claim = false;
 	};
 
-	constexpr AfterHit After(Hitter a_hitter, std::uint32_t a_owner, std::uint32_t a_local, bool a_killed)
+	// What a blow was, as the hit event says.
+	struct Blow
 	{
+		bool explosion = false;     // an explosion's (HitData's kExplosion flag)
+		bool throwable = false;     // its weapon, or the source, is a grenade, a Molotov or a mine
+		bool spellAlone = false;    // a spell or an enchantment with no weapon: what a Molotov's fire leaves burning
+	};
+
+	// Whether the game that runs the NPC deals this blow there itself, so that a copy's hit is no hit of ours: a throw's.
+	// Every throw's explosion is reported by the thrower's game and set off in each friend's (WeaponFire::ApplyExplosion),
+	// where it hurts the NPCs that game runs, the fire it leaves too. Reported from the copy as well, a friend's Molotov
+	// hurt the NPC twice in its own game: a super mutant at full health lay dead within two seconds of one in the
+	// 2026-10-18 test, while the thrower's copy stood at 67. Our hits on our copies with a weapon in hand still count.
+	constexpr bool OwnersToDeal(const Blow& a_blow)
+	{
+		return a_blow.explosion || a_blow.throwable || a_blow.spellAlone;
+	}
+
+	// a_ownersToDeal: the blow is one OwnersToDeal says the NPC's own game deals; on a copy it is reported never, and
+	// claims the NPC only if it killed it here (so the server believes a kill no other blow told it of).
+	constexpr AfterHit After(Hitter a_hitter, std::uint32_t a_owner, std::uint32_t a_local, bool a_killed, bool a_ownersToDeal = false)
+	{
+		const bool copy = a_owner != 0 && a_local != 0 && a_owner != a_local;
+		if (copy && a_ownersToDeal && a_hitter != Hitter::kNotOurs) {
+			return { .report = false, .claim = a_killed };
+		}
 		if (a_hitter == Hitter::kOurPlayer) {
 			return { .report = true, .claim = true };
 		}
-		const bool copy = a_owner != 0 && a_local != 0 && a_owner != a_local;
 		if (a_hitter != Hitter::kOurs || !copy) {
 			return {};
 		}
@@ -148,8 +177,9 @@ namespace CopyHealth
 			if (!entry.dropSince) {
 				entry.dropSince = a_now;
 			}
-			// A hit of ours around the drop: the copy is ours to hurt.
+			// A hit of ours around the drop: the copy is ours to hurt, and what it took goes to the NPC's game (TakeOurs).
 			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
+				entry.ours += *entry.health - a_health;
 				entry.health = a_health;
 				entry.dropSince.reset();
 				return 0.0f;
@@ -159,6 +189,26 @@ namespace CopyHealth
 			}
 			entry.dropSince.reset();
 			return *entry.health - a_health;
+		}
+
+		// Another game's report sets the copy from a_before to a_health now. What a hit of ours took off it since it was last
+		// checked (the report came between the blow and the next frame) is ours all the same, not overwritten.
+		void Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				auto& entry = it->second;
+				if (entry.health && entry.ourHit && a_before < *entry.health - SLACK && *entry.ourHit + OURS_GRACE >= a_now) {
+					entry.ours += *entry.health - a_before;
+				}
+			}
+			Set(a_id, a_health);
+		}
+
+		// What hits of ours took off the copy since this was last asked (0: nothing): for the game that runs it to take off.
+		float TakeOurs(std::uint32_t a_id)
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() ? std::exchange(it->second.ours, 0.0f) : 0.0f;
 		}
 
 		// The health the copy stands at (none before it is first seen).
@@ -187,6 +237,7 @@ namespace CopyHealth
 			std::optional<float>             health;
 			std::optional<Clock::time_point> ourHit;
 			std::optional<Clock::time_point> dropSince;
+			float                            ours = 0.0f;  // taken by hits of ours, not yet sent (TakeOurs)
 		};
 
 		std::unordered_map<std::uint32_t, Entry> entries;

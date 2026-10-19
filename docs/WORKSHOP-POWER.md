@@ -79,3 +79,48 @@ after 0.6.1, with everyone updating once.
   settlement is shared.
 - Settlers assigned by the builder (to a copy of a crop, a guard post) stay the builder's: NPC
   assignment is per game and would need a separate message. Leave for later.
+
+## Found in play (protocol 38)
+
+Tried on the rig, host and client in Sanctuary, after wires were shared:
+
+- A friend's copy is not as plain as step 2 assumed: workshop mode highlights it and offers Store, Scrap
+  and Attach Wire, like any object the workshop builds. Scrapping or storing it works in that game only
+  (nothing is reported: it is a copy), and the scrap pays out its components.
+- Wiring your light to a friend's generator works in your game: the game links the copy to your
+  workbench as one of its items, the light comes on, and the generator adds to your settlement's power
+  (it counts in both games). The friend sees the wire drawn, but in their game the wire is only drawn:
+  their generator powers nothing of yours, and your light's copy stays dark.
+- A copy of anything powered stays dark in the friend's game whatever its builder's grid does: copies
+  are on no grid. Mirroring the builder's powered state still needs the engine call noted above.
+- A copy wired into your grid is deleted like any copy when the session ends (or its builder scraps
+  it). The game is not told: the wire stays, the light stays lit, and the grid keeps the deleted
+  reference, whose ID the game later gives to something else. Nothing crashed in a save and reload, but
+  this is how power grids get corrupted. Until copies are real workshop items (step 2), the safe course
+  is to keep players from wiring to copies, or to unwire a copy through the game before deleting it.
+
+## Done in protocol 46 (see DESIGN.md, "Settlement power")
+
+Copies stay plain copies; power is mirrored, not shared:
+
+- A friend's copy carries the game's WorkshopBlockInteractionKeyword, so workshop mode can't pick it: no wire
+  reaches it, and it can't be stored, scrapped or moved here.
+- None is ever left on one of our power grids. Every 2 seconds, before every save, before a copy is deleted and
+  when the session ends, any copy a grid names, or with a wire or a workbench link, is taken off as the game's
+  own scrapping takes a piece off (the workbench's RemoveItem, the wires disconnected, ours removed and reported
+  scrapped). One the game still kept would be switched off and kept, never deleted.
+- Each player's game sends which of its pieces are powered (on a change, to a joiner, after a load, every 30 s);
+  the friend's game shows that on its copies: the lights in the copy's model switched and its graph told
+  "Powered" / "Unpowered", as the game's own powering does, without the power events scripts act on.
+
+Rig, 2026-10-19 (host and VM in Sanctuary, wires strung with `wswire`):
+
+- Host's generator wired to its light: the host's grid at 000250FE had 2 nodes, both powered; the VM's copies
+  said `theirPower=on` and the light copy lit. Scrapping the generator in host workshop mode: the VM's light copy
+  went `theirPower=off`. The same from the VM to the host.
+- Copies in both games had the keyword (`blocked=true`).
+- With blocking off, a light of ours wired to a friend's generator copy: the grid named the copy (`COPY`); within
+  2 s the audit had taken it off (0 grids, the copy without power links, our wire removed, our light unpowered).
+  The same when the copy's builder scrapped it, and when the session ended (`net leave`) with the copy still
+  tied: then a save and reload of that game found no grid naming a copy or a deleted reference.
+- No copy was ever retired (`retired=0`): the game let go of every one.

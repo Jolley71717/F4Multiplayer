@@ -8,7 +8,7 @@ namespace
 	using OwnGear::Target;
 	using OwnGear::Verdict;
 
-	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer };
+	constexpr Change ALL[] = { Change::kDressStandIn, Change::kDressCopy, Change::kEmptyFrame, Change::kTakeLoose, Change::kContainer, Change::kDropCopy };
 
 	Target Player()
 	{
@@ -166,4 +166,25 @@ TEST("own gear: a friend's loot goes to containers and corpses, never to a stand
 	CHECK(OwnGear::Judge(Change::kContainer, StandIn()) == Verdict::kWrongActor);
 	CHECK(OwnGear::Name(Change::kContainer) == "container");
 	CHECK(OwnGear::Name(Verdict::kOurPlayer) == "our player");
+}
+
+TEST("own gear: an item given by dropping it: only this game's own copy, lying loose, is placed, taken away or swapped")
+{
+	Target copy;
+	copy.madeHere = true;
+	CHECK(OwnGear::Judge(Change::kDropCopy, copy) == Verdict::kGo);
+	// One of the world's own items (a plugin's), never ours to take away.
+	CHECK(OwnGear::Judge(Change::kDropCopy, Target{}) == Verdict::kNotCopy);
+	// Already picked up: the local player's from then on, or another inventory's.
+	auto ours = copy;
+	ours.inWorld = false;
+	ours.heldByPlayer = true;
+	CHECK(OwnGear::Judge(Change::kDropCopy, ours) == Verdict::kInOurInventory);
+	CHECK(OwnGear::Alarming(Verdict::kInOurInventory));
+	auto held = copy;
+	held.inWorld = false;
+	held.heldHere = true;
+	CHECK(OwnGear::Judge(Change::kDropCopy, held) == Verdict::kInInventory);
+	CHECK(OwnGear::Judge(Change::kDropCopy, Player()) == Verdict::kOurPlayer);
+	CHECK(OwnGear::Name(Change::kDropCopy) == "dropCopy");
 }

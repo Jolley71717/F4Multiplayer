@@ -15,6 +15,7 @@ namespace Papyrus
 
 		// Slots from the game's IVirtualMachine vtable.
 		constexpr std::size_t CREATE_OBJECT_SLOT = 0x17;          // CreateObject(name, out)
+		constexpr std::size_t CREATE_STRUCT_SLOT = 0x18;          // CreateStruct(name, out)
 		constexpr std::size_t DISPATCH_STATIC_SLOT = 0x2C;         // DispatchStaticCall(script, function, ...)
 		constexpr std::size_t DISPATCH_METHOD_OBJECT_SLOT = 0x2D;  // DispatchMethodCall(object, ...)
 
@@ -29,11 +30,17 @@ namespace Papyrus
 			return reinterpret_cast<fn_t>(Slot(a_vm, CREATE_OBJECT_SLOT))(a_vm, a_name, a_out);
 		}
 
-		inline bool DispatchMethodCall(RE::BSScript::IVirtualMachine* a_vm, const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, const RE::BSFixedString& a_function, const ArgsFn& a_args)
+		inline bool CreateStruct(RE::BSScript::IVirtualMachine* a_vm, const RE::BSFixedString& a_name, RE::BSTSmartPointer<RE::BSScript::Struct>& a_out)
+		{
+			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSFixedString&, RE::BSTSmartPointer<RE::BSScript::Struct>&);
+			return reinterpret_cast<fn_t>(Slot(a_vm, CREATE_STRUCT_SLOT))(a_vm, a_name, a_out);
+		}
+
+		inline bool DispatchMethodCall(RE::BSScript::IVirtualMachine* a_vm, const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, const RE::BSFixedString& a_function, const ArgsFn& a_args,
+			const Callback& a_callback = {})
 		{
 			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSTSmartPointer<RE::BSScript::Object>&, const RE::BSFixedString&, const ArgsFn&, const Callback&);
-			const Callback none{};
-			return reinterpret_cast<fn_t>(Slot(a_vm, DISPATCH_METHOD_OBJECT_SLOT))(a_vm, a_self, a_function, a_args, none);
+			return reinterpret_cast<fn_t>(Slot(a_vm, DISPATCH_METHOD_OBJECT_SLOT))(a_vm, a_self, a_function, a_args, a_callback);
 		}
 
 		inline bool DispatchStaticCall(RE::BSScript::IVirtualMachine* a_vm, const RE::BSFixedString& a_script, const RE::BSFixedString& a_function, const ArgsFn& a_args, const Callback& a_callback)
@@ -79,6 +86,30 @@ namespace Papyrus
 		return object;
 	}
 
+	// A new struct of a script's (a_name as "Script#Struct"), its fields at their defaults; null if the VM has no such
+	// struct (the script missing, say).
+	inline RE::BSTSmartPointer<RE::BSScript::Struct> NewStruct(std::string_view a_name)
+	{
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		RE::BSTSmartPointer<RE::BSScript::Struct> out;
+		if (!vm || !detail::CreateStruct(vm.get(), RE::BSFixedString{ a_name }, out)) {
+			return {};
+		}
+		return out;
+	}
+
+	// A struct's field by name, or null if it has none by that name.
+	inline RE::BSScript::Variable* Field(RE::BSScript::Struct& a_struct, std::string_view a_name)
+	{
+		if (!a_struct.type) {
+			return nullptr;
+		}
+		const auto& names = a_struct.type->varNameIndexMap;
+		const auto  it = names.find(RE::BSFixedString{ a_name });
+		return it != names.end() && it->second < a_struct.type->variables.size() ? &a_struct.variables[it->second] : nullptr;
+	}
+
 	// Calls a script's global function (a plugin's native one, say) with the arguments a_args fills in. a_callback,
 	// if any, is told the result, or that the call was cancelled, later on one of the VM's threads. False if the
 	// call could not be queued.
@@ -112,9 +143,10 @@ namespace Papyrus
 		return detail::DispatchMethodCall(vm.get(), a_self, RE::BSFixedString{ a_function }, args);
 	}
 
-	// T must be the object's script type (e.g. RE::Actor for actors). a_create: see BoundObject.
+	// As CallMethod, and a_callback (if any) is told once the call has run (or that the VM cancelled it), later on one of
+	// the VM's threads: what the call did has taken effect by then.
 	template <class T, class... Args>
-	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
+	bool CallMethodThen(const detail::Callback& a_callback, T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
 	{
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
@@ -127,6 +159,13 @@ namespace Papyrus
 			a_out = RE::BSScript::detail::PackVariables(a_args...);
 			return true;
 		} };
-		return detail::DispatchMethodCall(vm.get(), object, RE::BSFixedString{ a_function }, args);
+		return detail::DispatchMethodCall(vm.get(), object, RE::BSFixedString{ a_function }, args, a_callback);
+	}
+
+	// T must be the object's script type (e.g. RE::Actor for actors). a_create: see BoundObject.
+	template <class T, class... Args>
+	bool CallMethod(T* a_object, std::string_view a_scriptName, std::string_view a_function, bool a_create, Args... a_args)
+	{
+		return CallMethodThen({}, a_object, a_scriptName, a_function, a_create, a_args...);
 	}
 }

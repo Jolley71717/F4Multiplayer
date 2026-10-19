@@ -1,12 +1,15 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Equipment.h"
+#include "game/Drops.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
 #include "game/FrameWatch.h"
 #include "game/GpuWatch.h"
 #include "game/Hud.h"
+#include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Perf.h"
@@ -22,6 +25,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/HavokGuard.h"
 #include "game/TextureWait.h"
+#include "game/WorkshopSync.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -200,9 +204,17 @@ namespace
 	// save or load, on its thread, and touch only the plugin's own records; the hold keeps frames out then.
 	constexpr std::uint32_t SERIALIZATION_ID = 'F4MP';
 
+	constexpr std::uint32_t DROP_RECORD = 'DROP';
+	constexpr std::uint32_t DROP_VERSION = 1;
+	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
 		WorldSync::SaveResyncPoint(a_intfc);
+		// What our world holds of the items given between players (Drops): read back with the save.
+		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
+			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
+		}
 	}
 
 	void OnGameLoaded(const F4SE::SerializationInterface* a_intfc)
@@ -213,6 +225,11 @@ namespace
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (type == 'CONT') {
 				WorldSync::LoadResyncPoint(a_intfc, version, length);
+			} else if (type == DROP_RECORD && version == DROP_VERSION && length <= DROP_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Drops::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -220,6 +237,7 @@ namespace
 	void OnRevert(const F4SE::SerializationInterface*)
 	{
 		WorldSync::RevertResyncPoint();
+		Drops::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -303,6 +321,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
+					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},
 				"save");
 			break;
@@ -783,8 +802,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 140 of 256 bytes used: two 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one)
-	// and HavokGuard::Install's two detours (2 x 56).
+	// 168 of 256 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two) and HavokGuard::Install's two detours (2 x 56).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
@@ -809,7 +828,9 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
+	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
+	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

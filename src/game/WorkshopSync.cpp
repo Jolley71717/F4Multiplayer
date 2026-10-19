@@ -1,5 +1,6 @@
 #include "game/WorkshopSync.h"
 
+#include "game/BuiltWalk.h"
 #include "game/EngineRefs.h"
 #include "game/RemoteEdits.h"
 #include "game/SavedScraps.h"
@@ -9,10 +10,24 @@
 #include "game/WorkshopCells.h"
 #include "game/WorkshopInbox.h"
 #include "game/WorkshopMove.h"
+#include "game/WorkshopPower.h"
+#include "game/WorkshopSettle.h"
 
 #include "game/DeferredDelete.h"
 #include "game/Hud.h"
+#include "game/MenuWatch.h"
 #include "Text.h"
+
+// A grid's links are kept in sets (BSTSet<PowerUtils::GridConnection>), which CommonLibF4 gives no equality: the same
+// connection to the same piece, through the same connector.
+template <>
+struct std::equal_to<RE::PowerUtils::GridConnection>
+{
+	bool operator()(const RE::PowerUtils::GridConnection& a_lhs, const RE::PowerUtils::GridConnection& a_rhs) const noexcept
+	{
+		return a_lhs.connection == a_rhs.connection && a_lhs.connector == a_rhs.connector;
+	}
+};
 
 namespace WorkshopSync
 {
@@ -63,6 +78,8 @@ namespace WorkshopSync
 		constexpr std::size_t             MAX_BAD_ANCHORS_WARNED = 64;
 		std::uint32_t itemsRescued = 0;   // copies of containers that held what we kept in them, emptied into our inventory first
 		std::unordered_set<std::uint32_t> stockedBases;  // container bases refused for what they hold (logged once each)
+		std::uint32_t                     unplaceable = 0;  // reports of a base we don't have, or that workshop mode doesn't build
+		std::unordered_set<std::uint32_t> unplaceableBases;  // logged once each
 		std::int64_t  applyUsMax = 0;     // the longest frame's placing, in microseconds
 
 		// Workshop::WorkshopCanScrapRef(TESObjectREFR&, bool): whether workshop mode lets a player scrap
@@ -129,6 +146,69 @@ namespace WorkshopSync
 			return true;
 		}
 
+		// WorkshopItemKeyword: what links each of a settlement's workshop items to its workbench.
+		constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
+
+		// A power wire's shape, from its ExtraBendableSplineParams (whose members CommonLibF4 keeps
+		// private): slack, thickness and the half extents from 0x18, whether an end hangs loose at 0x2C (a
+		// wire still being strung). None if it has none, or an end is loose.
+		std::optional<Protocol::WireShape> WireShapeOf(const RE::TESObjectREFR& a_wire)
+		{
+			const auto params = a_wire.extraList ? a_wire.extraList->GetByType<RE::ExtraBendableSplineParams>() : nullptr;
+			if (!params) {
+				return std::nullopt;
+			}
+			const auto bytes = reinterpret_cast<const std::uint8_t*>(params);
+			const auto raw = reinterpret_cast<const float*>(bytes + 0x18);
+			if (bytes[0x2C] != 0) {
+				return std::nullopt;
+			}
+			Protocol::WireShape shape;
+			shape.slack = raw[0];
+			shape.thickness = raw[1];
+			shape.halfExtents[0] = raw[2];
+			shape.halfExtents[1] = raw[3];
+			shape.halfExtents[2] = raw[4];
+			return Protocol::Sane(shape) ? std::optional{ shape } : std::nullopt;
+		}
+
+		bool IsWire(const RE::TESBoundObject* a_base)
+		{
+			return a_base && a_base->Is(RE::ENUM_FORM_ID::kBNDS);
+		}
+
+		// The workbench the reference is linked to as one of its workshop items, if any.
+		RE::TESObjectREFR* BenchOf(const RE::TESObjectREFR& a_ref)
+		{
+			const auto linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+			if (!linked) {
+				return nullptr;
+			}
+			for (const auto& link : linked->linkedRefs) {
+				if (link.keyword && link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && link.REFR) {
+					return link.REFR;
+				}
+			}
+			return nullptr;
+		}
+
+		// The wires strung to the reference (its power links that are wires).
+		std::vector<RE::NiPointer<RE::TESObjectREFR>> WiresOf(const RE::TESObjectREFR& a_ref)
+		{
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> wires;
+			const auto links = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraPowerLinks>() : nullptr;
+			if (!links) {
+				return wires;
+			}
+			for (const auto& link : links->powerLinks) {
+				RE::NiPointer<RE::TESObjectREFR> other{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(link.formID) };
+				if (other && IsWire(other->GetObjectReference())) {
+					wires.push_back(other);
+				}
+			}
+			return wires;
+		}
+
 		// False if nothing was reported.
 		bool ReportRef(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 		{
@@ -138,6 +218,13 @@ namespace WorkshopSync
 			}
 			if ((base->GetFormID() >> 24) == 0xFF) {
 				return false;  // a base made at runtime exists only here
+			}
+			std::optional<Protocol::WireShape> wire;
+			if (IsWire(base) && a_op == Protocol::WorkshopOp::kPlaced) {
+				wire = WireShapeOf(*a_ref);
+				if (!wire) {
+					return false;  // still being strung, or a shape no friend's game would take
+				}
 			}
 			Protocol::WorkshopItem item;
 			item.refId = a_ref->GetFormID();
@@ -151,7 +238,138 @@ namespace WorkshopSync
 			item.rotation[1] = a_ref->data.angle.y;
 			item.rotation[2] = a_ref->data.angle.z;
 			item.scale = a_ref->refScale / 100.0f;
+			item.wire = wire;
 			return Push(item);
+		}
+
+		// Pieces placed or moved, looked at again over the next seconds (WorkshopSettle): reported again where the
+		// game ends up putting them. Noted by the event sinks (which may run off the game thread) under the lock, and
+		// looked at by Frame.
+		std::mutex            settleLock;
+		WorkshopSettle::Watch settle;  // under settleLock
+		std::uint32_t         settledAgain = 0;
+		std::uint32_t         putBack = 0;  // pieces drawn where they stand again (WorkshopSettle::PutBack)
+
+		WorkshopMove::Transform TransformOf(const RE::TESObjectREFR& a_ref)
+		{
+			return { { a_ref.data.location.x, a_ref.data.location.y, a_ref.data.location.z }, { a_ref.data.angle.x, a_ref.data.angle.y, a_ref.data.angle.z }, a_ref.refScale / 100.0f };
+		}
+
+		// A piece of ours just reported placed or moved (no wire: its ends tell where it goes).
+		void SettleLater(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			if (!base || !a_workshop || IsWire(base)) {
+				return;
+			}
+			std::scoped_lock l{ settleLock };
+			settle.Reported(a_ref->GetFormID(), a_workshop->GetFormID(), TransformOf(*a_ref), Clock::now());
+		}
+
+		struct SettleEngine
+		{
+			std::optional<WorkshopMove::Transform> TransformOf(std::uint32_t a_ref)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ref);
+				if (!ref || ref->IsDisabled() || ref->IsDeleted()) {
+					return std::nullopt;
+				}
+				if (const auto root = ref->Get3D()) {
+					const auto base = ref->GetObjectReference();
+					const bool loose = ref->As<RE::Actor>() || !base || base->Is(RE::ENUM_FORM_ID::kMISC) || IsWire(base);
+					const auto drawn = root->world.translate;
+					if (WorkshopSettle::PutBack(drawn.GetDistance(ref->data.location), MenuWatch::IsOpen("WorkshopMenu"sv), loose)) {
+						REX::INFO("WorkshopSync: {:08X} was left drawn at {:.0f} {:.0f} {:.0f} (workshop mode closed while it was being moved), but stands at {:.0f} {:.0f} {:.0f}: drawn there again",
+							a_ref, drawn.x, drawn.y, drawn.z, ref->data.location.x, ref->data.location.y, ref->data.location.z);
+						ref->Update3DPosition(true);
+						++putBack;
+					}
+				}
+				return WorkshopSync::TransformOf(*ref);
+			}
+
+			bool Report(std::uint32_t a_ref, std::uint32_t a_workshop)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ref);
+				const auto workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_workshop);
+				if (!ref || !ReportRef(ref, workshop, Protocol::WorkshopOp::kPlaced)) {
+					return false;
+				}
+				REX::DEBUG("WorkshopSync: {:08X} stands somewhere else since it was reported: reported again at {:.0f} {:.0f} {:.0f} rz={:.2f}", a_ref, ref->data.location.x,
+					ref->data.location.y, ref->data.location.z, ref->data.angle.z);
+				++settledAgain;
+				return true;
+			}
+		};
+
+		void CheckSettled(Clock::time_point a_now)
+		{
+			SettleEngine     engine;
+			std::scoped_lock l{ settleLock };
+			settle.Check(engine, a_now);
+		}
+
+		// Moving a piece moves the wires strung to it, but the game tells of no move of theirs: they are
+		// reported again once the game has redrawn them (a moment after the move). Taken by the event sinks
+		// (which may run off the game thread) under the lock, and reported by Frame.
+		constexpr auto WIRE_SETTLE = std::chrono::milliseconds(500);
+
+		struct WireCheck
+		{
+			std::uint32_t     piece;
+			std::uint32_t     workshop;
+			Clock::time_point due;
+		};
+
+		std::mutex             wireChecksLock;
+		std::vector<WireCheck> wireChecks;  // under wireChecksLock
+
+		void CheckWiresLater(const RE::TESObjectREFR* a_piece, const RE::TESObjectREFR* a_workshop)
+		{
+			if (!a_piece || !a_workshop) {
+				return;
+			}
+			std::scoped_lock l{ wireChecksLock };
+			if (wireChecks.size() < 256) {
+				wireChecks.push_back({ a_piece->GetFormID(), a_workshop->GetFormID(), Clock::now() + WIRE_SETTLE });
+			}
+		}
+
+		void ReportMovedWires(Clock::time_point a_now)
+		{
+			std::vector<WireCheck> due;
+			{
+				std::scoped_lock l{ wireChecksLock };
+				if (wireChecks.empty()) {
+					return;
+				}
+				std::erase_if(wireChecks, [&](const WireCheck& a_check) {
+					if (a_check.due > a_now) {
+						return false;
+					}
+					due.push_back(a_check);
+					return true;
+				});
+			}
+			for (const auto& check : due) {
+				const RE::NiPointer<RE::TESObjectREFR> piece{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(check.piece) };
+				const auto                             workshop = RE::TESForm::GetFormByID<RE::TESObjectREFR>(check.workshop);
+				if (!piece || !workshop || piece->IsDisabled() || piece->IsDeleted()) {
+					continue;
+				}
+				for (const auto& wire : WiresOf(*piece)) {
+					if (!wire->IsDisabled() && !wire->IsDeleted()) {
+						ReportRef(wire.get(), workshop, Protocol::WorkshopOp::kPlaced);
+					}
+				}
+			}
+		}
+
+		void LogEvent(const char* a_what, const RE::TESObjectREFR* a_ref, const RE::TESObjectREFR* a_workshop)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			REX::DEBUG("WorkshopSync: {} {:08X} base {:08X} ({}) at workbench {:08X}", a_what, a_ref ? a_ref->GetFormID() : 0, base ? base->GetFormID() : 0,
+				base ? base->GetFormTypeString() : "none", a_workshop ? a_workshop->GetFormID() : 0);
 		}
 
 		class PlacedSink : public RE::BSTEventSink<RE::Workshop::ItemPlacedEvent>
@@ -159,7 +377,10 @@ namespace WorkshopSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemPlacedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemPlacedEvent>*) override
 			{
-				ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced);
+				LogEvent("placed", a_event.placedItem.get(), a_event.workshop.get());
+				if (ReportRef(a_event.placedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
+					SettleLater(a_event.placedItem.get(), a_event.workshop.get());
+				}
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -169,7 +390,11 @@ namespace WorkshopSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemMovedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemMovedEvent>*) override
 			{
-				ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced);
+				LogEvent("moved", a_event.movedItem.get(), a_event.workshop.get());
+				if (ReportRef(a_event.movedItem.get(), a_event.workshop.get(), Protocol::WorkshopOp::kPlaced)) {
+					SettleLater(a_event.movedItem.get(), a_event.workshop.get());
+				}
+				CheckWiresLater(a_event.movedItem.get(), a_event.workshop.get());
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -180,7 +405,14 @@ namespace WorkshopSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::Workshop::ItemDestroyedEvent& a_event, RE::BSTEventSource<RE::Workshop::ItemDestroyedEvent>*) override
 			{
 				const auto ref = a_event.objectDestroyed.get();
+				LogEvent("destroyed", ref, a_event.workshop.get());
 				const auto id = ref ? ref->GetFormID() : 0;
+				// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.
+				if (ref && !IsWire(ref->GetObjectReference())) {
+					for (const auto& wire : WiresOf(*ref)) {
+						ReportRef(wire.get(), a_event.workshop.get(), Protocol::WorkshopOp::kScrapped);
+					}
+				}
 				const bool world = Protocol::IsShareableRef(id);
 				if (world && !sentScraps.Note(id)) {
 					return RE::BSEventNotifyControl::kContinue;  // reported already
@@ -269,14 +501,60 @@ namespace WorkshopSync
 			return now;
 		}
 
+		// Copies of wires whose shape is set but not drawn yet: the game draws a wire from its shape when its 3D
+		// loads, and draws it again only when asked (QueueRebuildBendableSpline), which wants the 3D there.
+		struct Unbuilt
+		{
+			RE::ObjectRefHandle ref;
+			Clock::time_point   since;
+		};
+
+		std::vector<Unbuilt>   unbuiltWires;
+		constexpr auto         UNBUILT_GIVE_UP = std::chrono::seconds(30);
+		std::uint32_t          wiresDrawn = 0;
+
+		// Gives the copy of a wire its builder's shape, and has it drawn again.
+		void ShapeWire(RE::TESObjectREFR& a_ref, const Protocol::WireShape& a_shape)
+		{
+			if (!a_ref.extraList) {
+				return;
+			}
+			float       thickness = a_shape.thickness;
+			float       slack = a_shape.slack;
+			RE::NiPoint3 half{ a_shape.halfExtents[0], a_shape.halfExtents[1], a_shape.halfExtents[2] };
+			bool        detached = false;
+			a_ref.extraList->SetBendableSplineInfo(&thickness, &slack, &half, &detached);
+			unbuiltWires.push_back({ a_ref.GetHandle(), Clock::now() });
+		}
+
+		void DrawShapedWires(Clock::time_point a_now)
+		{
+			const auto tasks = RE::TaskQueueInterface::GetSingleton();
+			std::erase_if(unbuiltWires, [&](const Unbuilt& a_wire) {
+				const auto ref = a_wire.ref.get();
+				if (!ref || !tasks || a_now - a_wire.since > UNBUILT_GIVE_UP) {
+					return true;
+				}
+				if (!ref->Get3D()) {
+					return false;
+				}
+				tasks->QueueRebuildBendableSpline(*ref, false, nullptr);
+				++wiresDrawn;
+				return true;
+			});
+		}
+
 		// Moves the copy within its cell to where the report puts it. The reference's place alone moves
 		// neither what is drawn nor what collides: the 3D is moved too, and an actor (a turret, a robot)
-		// through its character controller.
+		// through its character controller. A wire takes its new shape (one of its ends moved).
 		void MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item)
 		{
 			const auto ref = a_copy.ref.get();
 			if (!ref) {
 				return;
+			}
+			if (a_item.wire && IsWire(ref->GetObjectReference())) {
+				ShapeWire(*ref, *a_item.wire);
 			}
 			if (const auto scale = RemoteEdits::ScaleToApply(a_item, ref->refScale / 100.0f)) {  // a friend's message can say any size
 				ref->SetScale(*scale);
@@ -309,6 +587,283 @@ namespace WorkshopSync
 			return !list->data.empty();
 		}
 
+		// ---- Power: no grid names a copy (see WorkshopPower) ----------------------------------------------
+		//
+		// The game's own functions, found in 1.11.240 (their names from the game's symbols of an earlier version, where
+		// the same code sits 0x1000 lower):
+
+		// The default object WorkshopBlockInteractionKeyword's keyword (a BGSKeyword*): workshop mode won't pick a
+		// reference that has it (Workshop's pick test, 2195179, which the picker 2195312 asks), so it can't be wired,
+		// stored, scrapped or moved there.
+		constexpr REL::ID BLOCK_INTERACTION_KEYWORD{ 4797360 };
+		// Workshop::ExtraData::RemoveItem(TESObjectREFR&): takes the reference off the workbench's power grids (its
+		// links with it), as scrapping it does (Workshop::FinishDestroyItem).
+		constexpr REL::ID REMOVE_GRID_ITEM{ 2194997 };
+		// SplineUtils::DisconnectSpline(TESObjectREFR&): takes the reference out of the power links (ExtraPowerLinks) of
+		// everything it is linked to, and drops its own; for a wire, what scrapping it does.
+		constexpr REL::ID DISCONNECT_SPLINE{ 2195074 };
+		// Workshop::IsPowered(TESObjectREFR&): whether a workshop item of a workbench is powered (a generator: whether
+		// it makes power).
+		constexpr REL::ID IS_POWERED{ 2194916 };
+		// PowerUtils::ItemGeneratesPower(TESObjectREFR&): its power generated (an actor value) is above 0.
+		constexpr REL::ID ITEM_GENERATES_POWER{ 2195079 };
+		// TESObjectLIGH::SwitchLight(TESObjectREFR&, bool off): the lights of a reference's 3D on or off (a LIGH's own, or one in a
+		// model), as the game's own powering does for every piece (the power handler, 2195089, passes the "off" it fires PowerOffEvent for).
+		constexpr REL::ID SWITCH_LIGHT{ 2198253 };
+
+		bool                     blockCopies = true;  // dev (wspower block off): copies can be picked, to try the repair
+		std::uint32_t            copiesBlocked = 0;
+		WorkshopPower::Counts    untied;              // copies found tied into our power, and what became of them
+		std::uint32_t            wiresUntied = 0;     // wires of ours strung to a copy, removed with it
+		std::uint32_t            audits = 0;
+		std::uint32_t            stuckWarned = 0;
+		std::unordered_set<std::uint32_t> retired;   // copies switched off and kept: the game kept them tied in
+		std::set<std::uint32_t>  powerBenches;       // workbenches seen in loaded cells, and ones a copy was linked to
+		std::uint64_t            frameNumber = 0;
+		std::uint64_t            gridNamedFrame = ~0ull;
+		std::unordered_set<std::uint32_t> gridNamed;  // what the benches' grids name, as of gridNamedFrame
+
+		RE::BGSKeyword* WorkshopItemKeyword()
+		{
+			return RE::TESForm::GetFormByID<RE::BGSKeyword>(WORKSHOP_ITEM_KEYWORD);
+		}
+
+		// Gives a copy the keyword that keeps workshop mode from picking it. Saved with the copy, so one left in a save
+		// (a crash) stays out of reach too.
+		void BlockInteraction(RE::TESObjectREFR& a_copy)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+			if (!blockCopies || !*keyword) {
+				return;
+			}
+			if (!static_cast<const RE::IKeywordFormBase&>(a_copy).HasKeyword(*keyword)) {
+				a_copy.AddKeyword(*keyword);
+				++copiesBlocked;
+			}
+		}
+
+		bool Blocked(const RE::TESObjectREFR& a_ref)
+		{
+			static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+			return *keyword && static_cast<const RE::IKeywordFormBase&>(a_ref).HasKeyword(*keyword);
+		}
+
+		RE::Workshop::ExtraData* WorkshopDataOf(const RE::TESObjectREFR* a_bench)
+		{
+			return a_bench && a_bench->extraList ? a_bench->extraList->GetByType<RE::Workshop::ExtraData>() : nullptr;
+		}
+
+		std::vector<WorkshopPower::Grid> GridsOf(const RE::TESObjectREFR* a_bench)
+		{
+			std::vector<WorkshopPower::Grid> grids;
+			const auto                       data = WorkshopDataOf(a_bench);
+			if (!data) {
+				return grids;
+			}
+			for (const auto grid : data->powerGrid) {
+				if (!grid) {
+					continue;
+				}
+				auto& out = grids.emplace_back();
+				for (const auto& node : grid->adjacencyMap) {
+					out.nodes.push_back(node.first);
+					if (node.second) {
+						for (const auto& link : *node.second) {
+							out.edges.push_back({ node.first, link.connection, link.connector });
+						}
+					}
+				}
+				for (const auto id : grid->currentlyPowered) {
+					out.powered.push_back(id);
+				}
+			}
+			return grids;
+		}
+
+		bool GridsName(const RE::TESObjectREFR* a_bench, std::uint32_t a_id)
+		{
+			for (const auto& grid : GridsOf(a_bench)) {
+				if (std::ranges::binary_search(WorkshopPower::Named(grid), a_id)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// The workbenches to look at: those seen, and those our copies are linked to (noted for good: one let go of may
+		// still name it).
+		std::vector<RE::TESObjectREFR*> PowerBenches()
+		{
+			std::vector<std::uint32_t> copyList;
+			{
+				std::scoped_lock l{ copyIdsLock };
+				copyList.assign(copyIds.begin(), copyIds.end());
+			}
+			for (const auto id : copyList) {
+				const auto copy = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+				if (const auto bench = copy ? BenchOf(*copy) : nullptr) {
+					powerBenches.insert(bench->GetFormID());
+				}
+			}
+			std::vector<RE::TESObjectREFR*> benches;
+			for (const auto id : powerBenches) {
+				if (const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id); WorkshopDataOf(bench)) {
+					benches.push_back(bench);
+				}
+			}
+			return benches;
+		}
+
+		const std::unordered_set<std::uint32_t>& GridNamed()
+		{
+			if (gridNamedFrame != frameNumber) {
+				gridNamedFrame = frameNumber;
+				gridNamed.clear();
+				for (const auto bench : PowerBenches()) {
+					for (const auto& grid : GridsOf(bench)) {
+						const auto named = WorkshopPower::Named(grid);
+						gridNamed.insert(named.begin(), named.end());
+					}
+				}
+			}
+			return gridNamed;
+		}
+
+		bool HasPowerLinks(const RE::TESObjectREFR& a_ref)
+		{
+			const auto links = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraPowerLinks>() : nullptr;
+			return links && !links->powerLinks.empty();
+		}
+
+		// The game, as WorkshopPower asks it about our copies.
+		struct PowerEngine
+		{
+			WorkshopPower::Links LinksOf(std::uint32_t a_id)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+				if (!ref) {
+					return {};
+				}
+				return { GridNamed().contains(a_id), HasPowerLinks(*ref), BenchOf(*ref) != nullptr };
+			}
+
+			// Off its grids (the workbench's own removal), its wires (disconnected; ours removed, and reported scrapped
+			// so the friend's copy of the wire goes too), any power link left (a piece snapped on), and its workbench.
+			void Detach(std::uint32_t a_id)
+			{
+				const RE::NiPointer<RE::TESObjectREFR> copy{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
+				if (!copy) {
+					return;
+				}
+				using remove_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&);
+				using disconnect_t = void (*)(RE::TESObjectREFR&);
+				static REL::Relocation<remove_t>     removeItem{ REMOVE_GRID_ITEM };
+				static REL::Relocation<disconnect_t> disconnect{ DISCONNECT_SPLINE };
+				const auto                           bench = BenchOf(*copy);
+				if (bench) {
+					powerBenches.insert(bench->GetFormID());
+				}
+				for (const auto other : PowerBenches()) {
+					if (GridsName(other, a_id)) {
+						removeItem(WorkshopDataOf(other), *copy);
+					}
+				}
+				for (const auto& wire : WiresOf(*copy)) {
+					disconnect(*wire);
+					if (!WorkshopSync::IsCopy(wire.get()) && !wire->IsDeleted()) {
+						const auto wireBench = BenchOf(*wire);
+						ReportRef(wire.get(), wireBench ? wireBench : bench, Protocol::WorkshopOp::kScrapped);
+						if (const auto keyword = WorkshopItemKeyword(); keyword && wireBench) {
+							wire->SetLinkedRef(nullptr, keyword);
+						}
+						wire->Disable();
+						wire->SetDelete(true);
+						++wiresUntied;
+					}
+				}
+				if (HasPowerLinks(*copy)) {
+					disconnect(*copy);
+				}
+				if (const auto keyword = WorkshopItemKeyword(); keyword && bench) {
+					copy->SetLinkedRef(nullptr, keyword);
+				}
+				gridNamedFrame = ~0ull;  // the grids changed
+				REX::WARN("WorkshopSync: copy {:08X} was tied into our power (workbench {:08X}): taken off its grid, wires and workbench", a_id, bench ? bench->GetFormID() : 0);
+			}
+
+			void Delete(std::uint32_t a_id)
+			{
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id)) {
+					ref->Disable();
+					ref->SetDelete(true);
+				}
+			}
+
+			// Switched off and kept, never deleted: the grid that still names it names it, not whatever would be given
+			// its ID next.
+			void Retire(std::uint32_t a_id)
+			{
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id)) {
+					ref->Disable();
+				}
+				retired.insert(a_id);
+				REX::WARN("WorkshopSync: copy {:08X} is still tied into our power after taking it off: switched off and kept, not deleted", a_id);
+			}
+
+			std::vector<WorkshopPower::Grid> Grids()
+			{
+				std::vector<WorkshopPower::Grid> all;
+				for (const auto bench : PowerBenches()) {
+					auto grids = GridsOf(bench);
+					all.insert(all.end(), std::make_move_iterator(grids.begin()), std::make_move_iterator(grids.end()));
+				}
+				return all;
+			}
+
+			// Our copies, and those waiting in the graveyard to be deleted (saved too, if a save comes first).
+			std::vector<std::uint32_t> Copies()
+			{
+				std::vector<std::uint32_t> ids;
+				{
+					std::scoped_lock l{ copyIdsLock };
+					ids.assign(copyIds.begin(), copyIds.end());
+				}
+				for (const auto& copy : graveyard) {
+					if (const auto ref = copy.ref.get()) {
+						ids.push_back(ref->GetFormID());
+					}
+				}
+				return ids;
+			}
+
+			bool IsCopy(std::uint32_t a_id)
+			{
+				{
+					std::scoped_lock l{ copyIdsLock };
+					if (copyIds.contains(a_id)) {
+						return true;
+					}
+				}
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+				return ref && InGraveyard(ref);
+			}
+		};
+
+		// Looks for copies tied into our power, and takes them off (see WorkshopPower::Audit).
+		void AuditPower(std::string_view a_when)
+		{
+			++audits;
+			PowerEngine engine;
+			const auto  before = untied.found;
+			const auto  stuck = WorkshopPower::Audit(engine, untied);
+			if (untied.found != before) {
+				REX::WARN("WorkshopSync: {}: {} copies were tied into our power; {} still are", a_when, untied.found - before, stuck.size());
+			}
+			if (!stuck.empty() && stuckWarned++ < 8) {
+				REX::WARN("WorkshopSync: {}: copy {:08X} stays tied into our power; it won't be deleted", a_when, stuck.front());
+			}
+		}
+
 		WorkshopApply::Kind KindOf(RE::TESObjectREFR* a_ref)
 		{
 			if (a_ref->As<RE::Actor>()) {
@@ -329,8 +884,9 @@ namespace WorkshopSync
 				Hud::Notify(Text::Get("workshop.rescued"));
 				++itemsRescued;
 			}
-			a_ref->Disable();
-			a_ref->SetDelete(true);
+			// Taken off our power grid first if it is on one; one the game keeps on it is never deleted.
+			PowerEngine engine;
+			WorkshopPower::Remove(engine, a_ref->GetFormID(), untied);
 		}
 
 		void Remove(Copy& a_copy)
@@ -436,14 +992,20 @@ namespace WorkshopSync
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item)
 		{
 			const auto base = RE::TESForm::GetFormByID<RE::TESBoundObject>(a_item.base);
-			if (!base || !Buildable(base)) {
+			const bool wire = IsWire(base) && a_item.wire;  // a wire is drawn from its shape: one without is nothing to draw
+			if (!base || (!wire && !Buildable(base))) {
+				++unplaceable;
+				if (unplaceableBases.size() < 64 && unplaceableBases.insert(a_item.base).second) {
+					REX::INFO("WorkshopSync: not placing player {}'s {:08X}: its base {:08X} is {}", a_item.playerId, a_item.refId, a_item.base,
+						base ? base->GetFormTypeString() : "not in this game");
+				}
 				return WorkshopApply::Placeable::kNo;
 			}
-			// A container the workshop builds starts empty; one whose base holds things of its own is loot,
-			// ours on opening the copy (and again on every rescue from it).
+			// A container the workshop builds starts empty; one whose base holds things of its own (a bureau) would
+			// be loot, ours on opening the copy (and again on every rescue from it): its copy is emptied (Empty).
 			if (const auto container = base->As<RE::TESObjectCONT>(); container && container->numContainerObjects != 0) {
 				if (stockedBases.insert(base->GetFormID()).second) {
-					REX::INFO("WorkshopSync: not placing copies of container {:08X}: it comes with things in it", base->GetFormID());
+					REX::INFO("WorkshopSync: container {:08X} comes with things in it: its copies are emptied", base->GetFormID());
 				}
 				return WorkshopApply::Placeable::kStocked;
 			}
@@ -471,6 +1033,9 @@ namespace WorkshopSync
 			}
 			if (const auto scale = RemoteEdits::ScaleToApply(a_item, 1.0f)) {
 				ref->SetScale(*scale);
+			}
+			if (a_item.wire && IsWire(base)) {
+				ShapeWire(*ref, *a_item.wire);
 			}
 			// A turret or robot the game builds is the settlement's, on the players' side, through its
 			// workbench's scripts; a copy has none of that and would fire on us. It goes in the player's
@@ -570,9 +1135,23 @@ namespace WorkshopSync
 			}
 			auto                     StandingOf(const Copy& a_copy) { return WorkshopSync::StandingOf(a_copy); }
 			void                     MoveTo(const Copy& a_copy, const Protocol::WorkshopItem& a_item) { WorkshopSync::MoveTo(a_copy, a_item); }
-			void                     Keep(const Copy& a_copy) { NoteCopy(a_copy.ref); }
+			// A copy made, or found standing from an earlier session: ours to remove, and out of workshop mode's reach.
+			void Keep(const Copy& a_copy)
+			{
+				NoteCopy(a_copy.ref);
+				if (const auto ref = a_copy.ref.get()) {
+					BlockInteraction(*ref);
+				}
+			}
 			WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) { return WorkshopSync::CanPlace(a_item); }
 			std::optional<Copy>      Create(const Protocol::WorkshopItem& a_item) { return WorkshopSync::Create(a_item); }
+			// Destroys what the copy holds (its base's things: it was just made), as the workshop's own build does.
+			void Empty(const Copy& a_copy)
+			{
+				if (const auto ref = a_copy.ref.get()) {
+					RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", ref->GetFormID()).c_str());
+				}
+			}
 			bool                     ScrapWorldRef(const Protocol::WorkshopItem& a_item) { return WorkshopSync::ScrapWorldRef(a_item); }
 
 			void Discard(const Copy& a_copy)
@@ -580,6 +1159,23 @@ namespace WorkshopSync
 				ForgetCopy(a_copy.ref);
 				auto copy = a_copy;
 				Remove(copy);
+			}
+
+			bool OwnLoaded(const Protocol::WorkshopItem& a_item) { return RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId) != nullptr; }
+
+			// Ours of a piece of the world a friend moved, if a friend may move it: one of that workbench's own
+			// workshop items here too (what workshop mode lets a player move: no quest's prop, door or loose
+			// item is linked to a workbench), the same object, standing.
+			std::optional<Copy> OwnPiece(const Protocol::WorkshopItem& a_item)
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_item.refId);
+				const auto base = ref ? ref->GetObjectReference() : nullptr;
+				const auto bench = ref ? BenchOf(*ref) : nullptr;
+				if (!base || base->GetFormID() != a_item.base || !Buildable(base) || ref->IsDisabled() || ref->IsDeleted() || !bench || bench->GetFormID() != a_item.workshop ||
+					!IsWorkbenchAnchor(bench)) {
+					return std::nullopt;
+				}
+				return Copy{ ref->GetHandle(), Clock::now() };
 			}
 
 			std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item)
@@ -895,10 +1491,126 @@ namespace WorkshopSync
 		SavedScraps::Walk<WalkEngine> walk{ sentScraps };
 		Clock::time_point             lastSend{};  // when the walk's reports last had their turn
 
+		// ---- What the host built before the session ---------------------------------------------------
+		//
+		// See BuiltWalk. The pieces are found in each cell as it attaches (and the worldspace's persistent
+		// cell), and in the list of workshop items of each workbench found there (which names pieces in cells
+		// that aren't loaded, while they are in memory).
+
+		BuiltWalk::Walk builtWalk;
+		std::uint32_t   builtWorld = 0;  // the worldspace whose persistent cell was looked over
+
+		BuiltWalk::Piece PieceOf(RE::TESObjectREFR& a_ref)
+		{
+			const auto base = a_ref.GetObjectReference();
+			const auto bench = BenchOf(a_ref);
+			return { .ref = a_ref.GetFormID(),
+				.bench = bench && IsWorkbenchAnchor(bench) ? bench->GetFormID() : 0,
+				.buildable = base && (base->GetFormID() >> 24) != 0xFF && (Buildable(base) || IsWire(base)),
+				.copy = IsCopy(&a_ref),
+				.off = a_ref.IsDisabled() || a_ref.IsDeleted() };
+		}
+
+		void OfferBuilt(std::uint32_t a_id)
+		{
+			if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) }) {
+				builtWalk.Offer(PieceOf(*ref));
+			}
+		}
+
+		// The workshop items the workbench lists.
+		void OfferBenchItems(std::uint32_t a_bench)
+		{
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_bench);
+			const auto children = bench && bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+			if (!children) {
+				return;
+			}
+			std::vector<std::uint32_t> ids;
+			for (const auto& child : children->linkedChildren) {
+				if (child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD) {
+					if (const auto ref = child.REFR.get(); ref && !Protocol::IsShareableRef(ref->GetFormID())) {
+						ids.push_back(ref->GetFormID());
+					}
+				}
+			}
+			for (const auto id : ids) {
+				OfferBuilt(id);
+			}
+		}
+
+		// The cell's pieces made at runtime, and its workbenches' lists (taken under the cell's lock, looked at
+		// after).
+		void OfferBuiltIn(RE::TESObjectCELL* a_cell)
+		{
+			if (!a_cell) {
+				return;
+			}
+			std::vector<std::uint32_t> made, benches;
+			{
+				const RE::BSAutoLock l{ a_cell->spinLock };
+				for (const auto& ref : a_cell->references) {
+					if (!ref) {
+						continue;
+					}
+					const auto id = ref->GetFormID();
+					if ((id >> 24) == 0xFF) {
+						made.push_back(id);
+					} else if (ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop)) {
+						benches.push_back(id);
+					}
+				}
+			}
+			for (const auto id : made) {
+				OfferBuilt(id);
+			}
+			for (const auto id : benches) {
+				OfferBenchItems(id);
+			}
+		}
+
+		struct BuiltEngine
+		{
+			// Waits while the send queue is half full: the session's own building goes first.
+			bool Report(const BuiltWalk::Piece& a_piece)
+			{
+				{
+					std::scoped_lock l{ outLock };
+					if (outgoing.Size() >= SendPacer::WORKSHOP_QUEUED / 2) {
+						return false;
+					}
+				}
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_piece.ref) };
+				const auto                             bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_piece.bench);
+				if (ref && bench && !ref->IsDisabled() && !ref->IsDeleted()) {
+					ReportRef(ref.get(), bench, Protocol::WorkshopOp::kPlaced);
+				}
+				return true;  // gone since: nothing to report
+			}
+		};
+
+		void OfferAndReportBuilt(const std::vector<AttachedCell>& a_fresh)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			const auto world = tes && !tes->interiorCell ? tes->worldSpace : nullptr;
+			if (world && world->persistentCell && world->GetFormID() != builtWorld) {
+				builtWorld = world->GetFormID();
+				OfferBuiltIn(world->persistentCell);
+			}
+			for (const auto& cell : a_fresh) {
+				const auto found = RE::TESForm::GetFormByID<RE::TESObjectCELL>(cell.id);
+				if (found && found->IsAttached()) {
+					OfferBuiltIn(found);
+				}
+			}
+		}
+
 		void ClearWalk()
 		{
 			attachedCells.clear();
 			walk.Clear();
+			builtWalk.Clear();
+			builtWorld = 0;
 		}
 
 		// Queues the worldspace's persistent references (the workbenches are among them), until they have
@@ -930,8 +1642,191 @@ namespace WorkshopSync
 		}
 
 		// Another player's report, its turn come (see WorkshopApply::Apply).
+		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item);
+
+		// ---- Power: which pieces are powered, across games ----------------------------------------------
+
+		WorkshopPower::Reporter reporter;  // our pieces with power
+		WorkshopPower::Mirror   mirror;    // what friends' games say of theirs
+		Clock::time_point       nextPowerAudit{};
+		std::uint32_t           powerSent = 0;     // entries sent
+		std::uint32_t           powerReceived = 0;  // entries received
+		std::uint32_t           powerShown = 0;     // copies shown powered or not
+		std::int64_t            pollUsMax = 0;
+		std::uint32_t           benchWorld = 0;     // the worldspace whose persistent cell was looked over for workbenches
+
+		// The workbenches among the cell's references, with their workshop data or not yet: a settlement's workbench gets its data
+		// the first time workshop mode is used there (PowerBenches looks again each time).
+		void NoteBenchesIn(RE::TESObjectCELL* a_cell)
+		{
+			if (!a_cell) {
+				return;
+			}
+			std::vector<std::uint32_t> found;
+			{
+				const RE::BSAutoLock l{ a_cell->spinLock };
+				for (const auto& ref : a_cell->references) {
+					if (ref && IsWorkbenchAnchor(ref.get())) {
+						found.push_back(ref->GetFormID());
+					}
+				}
+			}
+			powerBenches.insert(found.begin(), found.end());
+		}
+
+		void NoteBenches(const std::vector<AttachedCell>& a_fresh)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			const auto world = tes && !tes->interiorCell ? tes->worldSpace : nullptr;
+			if (world && world->persistentCell && world->GetFormID() != benchWorld) {
+				benchWorld = world->GetFormID();
+				NoteBenchesIn(world->persistentCell);
+			}
+			for (const auto& cell : a_fresh) {
+				const auto found = RE::TESForm::GetFormByID<RE::TESObjectCELL>(cell.id);
+				if (found && found->IsAttached()) {
+					NoteBenchesIn(found);
+				}
+			}
+		}
+
+		// Whether the reference takes, makes or carries power.
+		bool IsPowerPiece(const RE::TESObjectREFR& a_ref)
+		{
+			using generates_t = bool (*)(const RE::TESObjectREFR&);
+			static REL::Relocation<generates_t> generates{ ITEM_GENERATES_POWER };
+			return RE::PowerUtils::ItemIsPowerReceiver(&a_ref) || RE::PowerUtils::ItemIsPowerConnection(&a_ref) || generates(a_ref);
+		}
+
+		// A piece of ours a friend's game has a copy of: one we built (made at runtime), standing, one of a workbench's
+		// workshop items, with power, and no wire, actor (a turret: its copy isn't shown powered) or copy.
+		bool OwnPowerPiece(RE::TESObjectREFR& a_ref)
+		{
+			const auto base = a_ref.GetObjectReference();
+			return Protocol::IsRuntimeRef(a_ref.GetFormID()) && base && !IsWire(base) && !a_ref.As<RE::Actor>() && !a_ref.IsDisabled() && !a_ref.IsDeleted() &&
+			       !IsCopy(&a_ref) && BenchOf(a_ref) && IsPowerPiece(a_ref);
+		}
+
+		// Our pieces with power, from the workshop items each workbench lists.
+		void TrackOwnPower()
+		{
+			for (const auto bench : PowerBenches()) {
+				const auto children = bench->extraList ? bench->extraList->GetByType<RE::ExtraLinkedRefChildren>() : nullptr;
+				if (!children) {
+					continue;
+				}
+				std::vector<std::uint32_t> ids;
+				for (const auto& child : children->linkedChildren) {
+					const auto ref = child.REFR.get();
+					if (ref && child.keyword && child.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && Protocol::IsRuntimeRef(ref->GetFormID()) && !reporter.Tracks(ref->GetFormID())) {
+						ids.push_back(ref->GetFormID());
+					}
+				}
+				for (const auto id : ids) {
+					if (const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) }; ref && OwnPowerPiece(*ref)) {
+						reporter.Track(id);
+					}
+				}
+			}
+		}
+
+		struct ReporterEngine
+		{
+			std::optional<bool> Powered(std::uint32_t a_id)
+			{
+				using powered_t = bool (*)(RE::TESObjectREFR&);
+				static REL::Relocation<powered_t>      isPowered{ IS_POWERED };
+				const RE::NiPointer<RE::TESObjectREFR> ref{ RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) };
+				if (!ref || !OwnPowerPiece(*ref)) {
+					return std::nullopt;
+				}
+				return isPowered(*ref);
+			}
+		};
+
+		void SendPower(Clock::time_point a_now)
+		{
+			const auto     start = Clock::now();
+			ReporterEngine engine;
+			const auto     entries = reporter.Poll(engine, a_now);
+			pollUsMax = (std::max)(pollUsMax, std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count());
+			for (auto& chunk : WorkshopPower::Chunks(entries)) {
+				const auto count = chunk.size();
+				std::scoped_lock l{ outLock };
+				if (outgoing.Push({ Protocol::Encode(Protocol::PowerStates{ 0, std::move(chunk) }, Protocol::MessageType::kReportWorkshopPower), 0 })) {
+					powerSent += static_cast<std::uint32_t>(count);
+				}
+			}
+		}
+
+		// A friend's piece shown powered or not, as the game's own powering shows one (Workshop's power handler, 2195089):
+		// the lights in its 3D switched (SwitchLight, which the handler calls for every piece, not only a LIGH: a
+		// construction light is an activator with a light in its model) and its graph told ("Powered", "Unpowered": a
+		// machine's running). Not through the handler itself: that fires the power events, and the scripts on a copy (a
+		// workshop object's, a radio beacon's) would act on them as if it were ours. False while it has no 3D.
+		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
+		{
+			static const RE::BSFixedString        powered{ "Powered" };
+			static const RE::BSFixedString        unpowered{ "Unpowered" };
+			using switch_t = void (*)(RE::TESObjectREFR&, bool);
+			static REL::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
+			if (!a_copy.Get3D()) {
+				return false;
+			}
+			switchLight(a_copy, !a_on);
+			RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
+			if (a_copy.GetAnimationGraphManagerImpl(graph) && graph) {
+				a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered);
+			}
+			return true;
+		}
+
+		struct MirrorEngine
+		{
+			RE::NiPointer<RE::TESObjectREFR> CopyOf(const WorkshopPower::Key& a_key)
+			{
+				const auto it = copies.find(a_key);
+				auto       ref = it != copies.end() ? it->second.ref.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				if (!ref || !IsCopy(ref.get()) || ref->As<RE::Actor>() || ref->IsDisabled()) {
+					return {};
+				}
+				return ref;
+			}
+
+			std::uintptr_t Drawn(const WorkshopPower::Key& a_key)
+			{
+				const auto ref = CopyOf(a_key);
+				return ref ? reinterpret_cast<std::uintptr_t>(ref->Get3D()) : 0;
+			}
+
+			bool Show(const WorkshopPower::Key& a_key, bool a_on)
+			{
+				const auto ref = CopyOf(a_key);
+				if (!ref || !ShowPowered(*ref, a_on)) {
+					return false;
+				}
+				++powerShown;
+				return true;
+			}
+		};
+
+		void PowerFrame(Clock::time_point a_now)
+		{
+			if (a_now >= nextPowerAudit) {
+				nextPowerAudit = a_now + WorkshopPower::AUDIT_EVERY;
+				AuditPower("session");
+				TrackOwnPower();
+			}
+			SendPower(a_now);
+			MirrorEngine engine;
+			mirror.Refresh(engine, a_now);
+		}
+
 		void ApplyNow(const Key& a_key, const Protocol::WorkshopItem& a_item)
 		{
+			if (a_item.op == Protocol::WorkshopOp::kScrapped) {
+				mirror.Forget(a_key);
+			}
 			EngineWorld world;
 			WorkshopApply::Apply(world, copies, inbox, counts, a_key, a_item);
 		}
@@ -971,6 +1866,7 @@ namespace WorkshopSync
 	void Frame(bool a_host)
 	{
 		const auto now = Clock::now();
+		++frameNumber;  // what the grids name is read again (GridNamed)
 		std::erase_if(graveyard, [&](Copy& a_copy) {
 			const auto ref = a_copy.ref.get();
 			if (!ref) {
@@ -989,7 +1885,9 @@ namespace WorkshopSync
 			// stay theirs.
 			if (a_host) {
 				QueueWalks(fresh);
+				OfferAndReportBuilt(fresh);
 			}
+			NoteBenches(fresh);
 			for (const auto& cell : fresh) {
 				TryPendingNear(cell.where);
 				TryPendingScrapsIn(cell.id);
@@ -1005,7 +1903,13 @@ namespace WorkshopSync
 		}
 		if (a_host) {
 			WalkAndSend(now);
+			BuiltEngine engine;
+			builtWalk.ReportSome(engine);
 		}
+		CheckSettled(now);
+		ReportMovedWires(now);
+		DrawShapedWires(now);
+		PowerFrame(now);
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending)
@@ -1049,7 +1953,20 @@ namespace WorkshopSync
 		}
 		ClearWalk();
 		scrapsDeferred.clear();
+		unbuiltWires.clear();
+		{
+			std::scoped_lock w{ wireChecksLock };
+			wireChecks.clear();
+		}
+		{
+			std::scoped_lock s{ settleLock };
+			settle.Clear();
+		}
 		sentScraps.Clear();
+		reporter.Clear();
+		mirror.Clear();
+		powerBenches.clear();
+		benchWorld = 0;
 		std::scoped_lock l{ outLock };
 		outgoing.Clear();
 	}
@@ -1063,19 +1980,145 @@ namespace WorkshopSync
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
 		copies.clear();
 		graveyard.clear();
+		unbuiltWires.clear();
 		{
 			std::scoped_lock l{ copyIdsLock };
 			copyIds.clear();
 		}
 		ClearWalk();
+		// Our pieces are sent again (the load may have set them otherwise), and friends' are shown again on the copies
+		// found or made after the load. The workbenches are looked for again.
+		reporter.SendAll();
+		mirror.Invalidate();
+		powerBenches.clear();
+		benchWorld = 0;
 	}
 
 	void OnWorldGone()
 	{
 		copies.clear();
 		graveyard.clear();
+		unbuiltWires.clear();
+		reporter.Clear();
+		mirror.Invalidate();
+		powerBenches.clear();
+		benchWorld = 0;
 		std::scoped_lock l{ copyIdsLock };
 		copyIds.clear();
+	}
+
+	void ApplyPower(const Protocol::PowerStates& a_power)
+	{
+		for (const auto& entry : a_power.entries) {
+			mirror.Set(a_power.playerId, entry);
+		}
+		powerReceived += static_cast<std::uint32_t>(a_power.entries.size());
+	}
+
+	void OnPlayerJoined()
+	{
+		reporter.SendAll();
+	}
+
+	void BeforeSave()
+	{
+		AuditPower("save");
+	}
+
+	void SetBlockCopies(bool a_block)
+	{
+		blockCopies = a_block;
+		static REL::Relocation<RE::BGSKeyword**> keyword{ BLOCK_INTERACTION_KEYWORD };
+		if (!*keyword) {
+			return;
+		}
+		std::vector<std::uint32_t> ids;
+		{
+			std::scoped_lock l{ copyIdsLock };
+			ids.assign(copyIds.begin(), copyIds.end());
+		}
+		for (const auto id : ids) {
+			if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id)) {
+				if (a_block) {
+					BlockInteraction(*ref);
+				} else if (Blocked(*ref)) {
+					ref->RemoveKeyword(*keyword);
+				}
+			}
+		}
+	}
+
+	std::string AuditNow()
+	{
+		const auto before = untied;
+		AuditPower("dev");
+		return std::format("audit: found={} detached={} retired={}", untied.found - before.found, untied.detached - before.detached, untied.retired - before.retired);
+	}
+
+	bool ShowPoweredForDev(RE::TESObjectREFR* a_ref, bool a_on)
+	{
+		return a_ref && ShowPowered(*a_ref, a_on);
+	}
+
+	std::string DescribeCopies()
+	{
+		std::string out = std::format("{} copies", copies.size());
+		for (const auto& [key, copy] : copies) {
+			const auto ref = copy.ref.get();
+			out += std::format("; {:08X}={}:{:08X}", ref ? ref->GetFormID() : 0, key.first, key.second);
+		}
+		return out;
+	}
+
+	std::string DescribePower()
+	{
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} mirrorDropped={} pollMsMax={:.2f}",
+			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.Dropped(), static_cast<double>(pollUsMax) / 1000.0);
+	}
+
+	std::string DescribeGrids(RE::TESObjectREFR* a_bench)
+	{
+		std::vector<RE::TESObjectREFR*> benches;
+		if (a_bench) {
+			benches.push_back(a_bench);
+		} else {
+			benches = PowerBenches();
+		}
+		PowerEngine engine;
+		std::string out = std::format("{} workbenches", benches.size());
+		std::size_t copiesNamed = 0, gone = 0;
+		for (const auto bench : benches) {
+			const auto grids = GridsOf(bench);
+			if (grids.empty() && !a_bench) {
+				continue;
+			}
+			out += std::format("; {:08X}: {} grids", bench->GetFormID(), grids.size());
+			for (const auto& grid : grids) {
+				const auto named = WorkshopPower::Named(grid);
+				out += std::format(" [nodes={} links={} powered={}", grid.nodes.size(), grid.edges.size(), grid.powered.size());
+				if (a_bench) {  // one workbench asked for: its grids' pieces too
+					for (std::size_t i = 0; i < grid.nodes.size() && i < 8; ++i) {
+						out += std::format(" n{:08X}", grid.nodes[i]);
+					}
+					for (std::size_t i = 0; i < grid.edges.size() && i < 8; ++i) {
+						out += std::format(" e{:08X}>{:08X}/{:08X}", grid.edges[i].node, grid.edges[i].connection, grid.edges[i].connector);
+					}
+				}
+				for (const auto id : named) {
+					const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+					if (engine.IsCopy(id) || (ref && Blocked(*ref))) {
+						out += std::format(" COPY {:08X}", id);
+						++copiesNamed;
+					} else if (!ref || ref->IsDeleted()) {
+						out += std::format(" GONE {:08X}", id);
+						++gone;
+					}
+				}
+				out += "]";
+			}
+		}
+		return out + std::format("; copies named={} gone named={}", copiesNamed, gone);
 	}
 
 	std::string Describe()
@@ -1087,11 +2130,74 @@ namespace WorkshopSync
 			droppedNow = dropped;
 			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
-			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
-		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={}", anchorRefused, scrapRefused, scrapsDeferred.size());
+		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
+		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack);
+	}
+
+	std::string DescribeRef(RE::TESObjectREFR* a_ref)
+	{
+		const auto base = a_ref->GetObjectReference();
+		const auto cell = a_ref->GetParentCell();
+		const auto& at = a_ref->data.location;
+		std::string out = std::format("{:08X} base={:08X} type={} copy={} bench={} disabled={} deleted={} cell={:08X} at {:.0f} {:.0f} {:.0f}", a_ref->GetFormID(),
+			base ? base->GetFormID() : 0, base ? base->GetFormTypeString() : "none", IsCopy(a_ref), IsBench(a_ref), a_ref->IsDisabled(), a_ref->IsDeleted(),
+			cell ? cell->GetFormID() : 0, at.x, at.y, at.z);
+		if (const auto list = a_ref->inventoryList) {
+			RE::BSAutoReadLock l{ list->rwLock };
+			out += std::format(" items={}", list->data.size());
+		}
+		out += std::format(" blocked={} powerPiece={}", Blocked(*a_ref), IsPowerPiece(*a_ref));
+		for (const auto& [key, copy] : copies) {
+			if (copy.ref.get().get() == a_ref) {
+				const auto wanted = mirror.Wanted(key);
+				out += std::format(" builder={} theirRef={:08X} theirPower={}", key.first, key.second, wanted ? (*wanted ? "on" : "off") : "unknown");
+				break;
+			}
+		}
+		if (BenchOf(*a_ref)) {
+			ReporterEngine engine;
+			const auto     powered = engine.Powered(a_ref->GetFormID());
+			out += std::format(" powered={}", powered ? (*powered ? "yes" : "no") : "n/a");
+		}
+		const auto extra = a_ref->extraList.get();
+		if (!extra) {
+			return out;
+		}
+		if (const auto linked = extra->GetByType<RE::ExtraLinkedRef>()) {
+			for (const auto& link : linked->linkedRefs) {
+				out += std::format(" link[{:08X}]={:08X}", link.keyword ? link.keyword->GetFormID() : 0, link.REFR ? link.REFR->GetFormID() : 0);
+			}
+		}
+		if (const auto children = extra->GetByType<RE::ExtraLinkedRefChildren>()) {
+			std::size_t shown = 0;
+			for (const auto& child : children->linkedChildren) {
+				const auto ref = child.REFR.get();
+				if (shown++ < 24) {
+					out += std::format(" child[{:08X}]={:08X}", child.keyword ? child.keyword->GetFormID() : 0, ref ? ref->GetFormID() : 0);
+				}
+			}
+			out += std::format(" children={}", children->linkedChildren.size());
+		}
+		if (const auto power = extra->GetByType<RE::ExtraPowerLinks>()) {
+			for (const auto& link : power->powerLinks) {
+				out += std::format(" power={:08X}/{}", link.formID, link.linkType);
+			}
+		}
+		if (const auto spline = extra->GetByType<RE::ExtraBendableSplineParams>()) {
+			const auto raw = reinterpret_cast<const float*>(reinterpret_cast<const std::uint8_t*>(spline) + 0x18);
+			out += std::format(" spline slack={:.2f} thickness={:.2f} half={:.1f},{:.1f},{:.1f} detached={}", raw[0], raw[1], raw[2], raw[3], raw[4],
+				*(reinterpret_cast<const std::uint8_t*>(spline) + 0x2C));
+		}
+		for (std::int32_t type = 0; type < RE::EXTRA_DATA_TYPE::kTotal; ++type) {
+			if (extra->HasType(static_cast<RE::EXTRA_DATA_TYPE>(type))) {
+				out += std::format(" x{:02X}", type);
+			}
+		}
+		return out;
 	}
 
 	std::string DescribeBenches(RE::TESObjectREFR* a_ref)

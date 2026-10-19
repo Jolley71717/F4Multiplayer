@@ -8,11 +8,14 @@
 #include "game/DownRules.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/FadeWatch.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/Menu.h"
+#include "game/NpcSync.h"
 #include "game/OpenMenus.h"
+#include "game/PingRules.h"
 #include "game/QuestSync.h"
 #include "game/RemotePlayers.h"
 #include "game/StandInSeat.h"
@@ -95,6 +98,12 @@ namespace Party
 		Clock::time_point killFeedWindow{};
 		int               killFeedShown = 0;
 
+		// Pings shown (ours and our friends'), ours held to one a second, and for Describe what went out and came in.
+		PingRules::Board   pings;
+		PingRules::Limiter pingLimit;
+		std::uint32_t      pingsSent = 0;
+		std::uint32_t      pingsReceived = 0;
+
 		RE::PlayerCharacter* Player()
 		{
 			const auto player = RE::PlayerCharacter::GetSingleton();
@@ -153,6 +162,253 @@ namespace Party
 				return Text::Get("player.right_here");
 			}
 			return Text::Format("player.distance", { { "m", std::format("{:.0f}", meters) }, { "dir", Bearing(dx, dy) } });
+		}
+
+		// --- Pings ---------------------------------------------------------------------------------------------
+
+		std::string BaseName(std::uint32_t a_base)
+		{
+			return Protocol::IsShareableRef(a_base) ? NameOfForm(a_base) : std::string{};
+		}
+
+		// Our game's copy of what a ping names: the NPC under the session's id for it (NpcSync, the same NPC in every
+		// game, a friend's spawn as our copy of it), or the item's own reference. None for a spot, a friend, or a target
+		// our game has no copy of (or not loaded).
+		RE::TESObjectREFR* LocalTarget(const Protocol::Ping& a_ping)
+		{
+			std::uint32_t id = 0;
+			if (a_ping.kind == Protocol::PingKind::kActor && a_ping.target) {
+				id = NpcSync::LocalRef(a_ping.target);
+			} else if (a_ping.kind == Protocol::PingKind::kItem && Protocol::IsShareableRef(a_ping.target)) {
+				id = a_ping.target;
+			}
+			const auto ref = id ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(id) : nullptr;
+			return ref && ref->GetParentCell() && !ref->IsDeleted() && !ref->IsDisabled() ? ref : nullptr;
+		}
+
+		// What a ping names, as our player reads it: our own game's name for the NPC or item ("Raider", "Stimpak"),
+		// else the one the pinger's game sent; the friend's name ("you" for us); "over here" for a spot.
+		std::string WhatOf(const Protocol::Ping& a_ping)
+		{
+			switch (a_ping.kind) {
+			case Protocol::PingKind::kSpot:
+				return Text::Get("party.ping_here");
+			case Protocol::PingKind::kPlayer:
+				{
+					if (a_ping.target == localId) {
+						return Text::Get("party.ping_you");
+					}
+					const auto name = RemotePlayers::NameOf(a_ping.target);
+					return name.empty() ? Text::Get("party.a_friend") : name;
+				}
+			case Protocol::PingKind::kActor:
+			case Protocol::PingKind::kItem:
+				{
+					std::string name;
+					if (const auto ref = LocalTarget(a_ping); ref && ref->GetObjectReference()) {
+						name = RE::TESFullName::GetFullName(*ref->GetObjectReference());
+					}
+					if (name.empty()) {
+						name = BaseName(a_ping.base);
+					}
+					if (name.empty()) {
+						name = a_ping.name;
+					}
+					return name.empty() ? Text::Get("party.ping_something") : name;
+				}
+			}
+			return Text::Get("party.ping_something");
+		}
+
+		// How far and which way a ping is from our player, or where it is when that's elsewhere.
+		std::string WhereOf(const Protocol::Ping& a_ping)
+		{
+			auto where = DistanceTo(a_ping.cell, a_ping.worldspace, a_ping.x, a_ping.y);
+			if (where.empty()) {
+				const auto it = known.find(a_ping.playerId);
+				const auto place = it != known.end() && it->second.hasStatus ? PlaceName(it->second.status.location, a_ping.cell) : NameOfForm(a_ping.cell);
+				where = place.empty() ? Text::Get("party.somewhere_else") : Text::Format("party.at_place", { { "place", place } });
+			}
+			return where;
+		}
+
+		// Moves the pings that follow something to where it is now: an NPC or an item our game has (it walks, or is
+		// thrown about), a friend (their stand-in's last place), ourselves. The rest stay where they were pinged.
+		void FollowPings()
+		{
+			for (auto& [pinger, mark] : pings.Marks()) {
+				auto& ping = mark.ping;
+				if (ping.kind == Protocol::PingKind::kPlayer) {
+					if (ping.target == localId) {
+						if (const auto player = Player()) {
+							std::tie(ping.cell, ping.worldspace) = SpaceOf(player);
+							ping.x = player->data.location.x;
+							ping.y = player->data.location.y;
+							ping.z = player->data.location.z;
+						}
+					} else if (const auto state = RemotePlayers::LastStateOf(ping.target)) {
+						ping.cell = state->cell;
+						ping.worldspace = state->worldspace;
+						ping.x = state->x;
+						ping.y = state->y;
+						ping.z = state->z;
+					}
+					continue;
+				}
+				const auto ref = LocalTarget(ping);
+				const auto cell = ref ? ref->GetParentCell() : nullptr;
+				if (!cell) {
+					continue;
+				}
+				ping.cell = cell->IsInterior() ? cell->GetFormID() : 0;
+				ping.worldspace = cell->IsInterior() ? 0 : (cell->worldSpace ? cell->worldSpace->GetFormID() : 0);
+				ping.x = ref->data.location.x;
+				ping.y = ref->data.location.y;
+				ping.z = ref->data.location.z;
+			}
+		}
+
+		// Whether a reference is something lying in the world that can be picked up.
+		bool IsItem(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref->GetObjectReference();
+			if (!base) {
+				return false;
+			}
+			using enum RE::ENUM_FORM_ID;
+			switch (base->GetFormType()) {
+			case kWEAP:
+			case kARMO:
+			case kAMMO:
+			case kALCH:
+			case kMISC:
+			case kBOOK:
+			case kKEYM:
+			case kNOTE:
+			case kINGR:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		// How far along a ray the world's surface is, by the engine's own pick through the cell's physics world (the
+		// call DevCommands' spawnenemies grounds NPCs with). A hit on our own player's body (the camera sits in it in
+		// first person and behind it in third) is passed through. Nothing: the sky, or nothing within reach.
+		std::optional<float> SurfaceAlong(RE::TESObjectCELL* a_cell, const PingRules::Ray& a_ray, const RE::NiPoint3& a_feet)
+		{
+			float start = PingRules::MIN_ALONG;
+			for (int tries = 0; tries < 3 && start < PingRules::REACH; ++tries) {
+				const auto from = PingRules::Along(a_ray, start);
+				const auto to = PingRules::Along(a_ray, PingRules::REACH);
+				RE::bhkPickData pick;
+				pick.SetStartEnd({ from.x, from.y, from.z }, { to.x, to.y, to.z });
+				static_cast<void>(a_cell->Pick(pick));  // what it hit is not needed, only where
+				if (!pick.HasHit()) {
+					return std::nullopt;
+				}
+				const float fraction = pick.GetHitFraction();
+				if (!std::isfinite(fraction)) {
+					return std::nullopt;
+				}
+				const float along = start + std::clamp(fraction, 0.0f, 1.0f) * (PingRules::REACH - start);
+				const auto  hit = PingRules::Along(a_ray, along);
+				const float dx = hit.x - a_feet.x;
+				const float dy = hit.y - a_feet.y;
+				if (dx * dx + dy * dy > 60.0f * 60.0f || hit.z < a_feet.z - 10.0f || hit.z > a_feet.z + 150.0f) {
+					return along;
+				}
+				start = along + 20.0f;  // our own body: look past it
+			}
+			return std::nullopt;
+		}
+
+		// The ping our player means: what the crosshair is on (an NPC, a friend, an item lying there), else the surface
+		// under it, else where they stand. The ray goes from the camera along the player's look; the targets near it
+		// are the loaded references within reach (PingRules::ChooseTarget picks one).
+		Protocol::Ping AimedPing(RE::PlayerCharacter* a_player)
+		{
+			const auto [cell, worldspace] = SpaceOf(a_player);
+			const auto& feet = a_player->data.location;
+			Protocol::Ping ping{ 0, cell, worldspace, feet.x, feet.y, feet.z };
+
+			PingRules::Vec eye{ feet.x, feet.y, feet.z + 120.0f };
+			if (const auto camera = RE::PlayerCamera::GetSingleton(); camera && camera->cameraRoot) {
+				const auto& at = camera->cameraRoot->world.translate;
+				if (std::isfinite(at.x) && std::isfinite(at.y) && std::isfinite(at.z) && (at.x != 0.0f || at.y != 0.0f || at.z != 0.0f)) {
+					eye = { at.x, at.y, at.z };
+				}
+			}
+			const auto ray = PingRules::LookRay(eye, a_player->data.angle.z, a_player->data.angle.x);
+			const auto surface = SurfaceAlong(a_player->GetParentCell(), ray, feet);
+
+			std::vector<PingRules::Candidate>  candidates;
+			std::vector<RE::TESObjectREFR*>    refs;
+			if (const auto tes = RE::TES::GetSingleton()) {
+				tes->ForEachReferenceInRange(RE::NiPoint3{ eye.x, eye.y, eye.z }, PingRules::REACH, [&](RE::TESObjectREFR* a_ref) {
+					if (!a_ref || a_ref == a_player || a_ref->IsDisabled() || a_ref->IsDeleted() || !a_ref->Get3D() || candidates.size() >= 2048) {
+						return RE::BSContainer::ForEachResult::kContinue;
+					}
+					const auto& at = a_ref->data.location;
+					if (const auto actor = a_ref->As<RE::Actor>()) {
+						const auto friendId = RemotePlayers::PlayerIdFor(actor->GetFormID());
+						candidates.push_back({ friendId ? Protocol::PingKind::kPlayer : Protocol::PingKind::kActor, friendId, { at.x, at.y, at.z + PingRules::ACTOR_MIDDLE }, PingRules::ACTOR_RADIUS });
+						refs.push_back(a_ref);
+					} else if (IsItem(a_ref)) {
+						candidates.push_back({ Protocol::PingKind::kItem, 0, { at.x, at.y, at.z + 5.0f }, PingRules::ITEM_RADIUS });
+						refs.push_back(a_ref);
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				});
+			}
+
+			const auto chosen = PingRules::ChooseTarget(ray, surface, candidates);
+			if (!chosen) {
+				const auto spot = PingRules::SpotFor(ray, surface, { feet.x, feet.y, feet.z });
+				ping.x = spot.x;
+				ping.y = spot.y;
+				ping.z = spot.z;
+				return ping;
+			}
+			const auto& candidate = candidates[*chosen];
+			const auto  ref = refs[*chosen];
+			const auto  base = ref->GetObjectReference();
+			ping.kind = candidate.kind;
+			ping.x = ref->data.location.x;
+			ping.y = ref->data.location.y;
+			ping.z = ref->data.location.z;
+			if (candidate.kind == Protocol::PingKind::kPlayer) {
+				ping.target = candidate.id;
+				return ping;
+			}
+			ping.base = base && Protocol::IsShareableRef(base->GetFormID()) ? base->GetFormID() : 0;
+			ping.name = base ? std::string{ RE::TESFullName::GetFullName(*base) } : std::string{};
+			if (ping.name.size() > Protocol::MAX_PING_NAME_LENGTH) {
+				auto cut = Protocol::MAX_PING_NAME_LENGTH;
+				while (cut > 0 && (static_cast<unsigned char>(ping.name[cut]) & 0xC0) == 0x80) {
+					--cut;  // not in the middle of a character
+				}
+				ping.name.resize(cut);
+			}
+			ping.target = candidate.kind == Protocol::PingKind::kActor ? NpcSync::SessionId(ref->GetFormID()) :
+			              Protocol::IsShareableRef(ref->GetFormID())   ? ref->GetFormID() :
+			                                                             0;
+			return ping;
+		}
+
+		const char* KindName(Protocol::PingKind a_kind)
+		{
+			switch (a_kind) {
+			case Protocol::PingKind::kSpot:
+				return "spot";
+			case Protocol::PingKind::kActor:
+				return "actor";
+			case Protocol::PingKind::kItem:
+				return "item";
+			case Protocol::PingKind::kPlayer:
+				return "player";
+			}
+			return "?";
 		}
 
 		std::string Describe(const RemotePlayers::Info& a_player)
@@ -500,6 +756,8 @@ namespace Party
 		const auto now = Clock::now();
 		HandleHotkeys();
 		FinishTeleport(now);
+		pings.Expire(now);
+		FollowPings();
 		// Not in the opening: no friend could get there to help.
 		Downed::Frame(localId != 0 && !RemotePlayers::List().empty() && !Story::InOpening());
 		if (localId == 0) {
@@ -551,16 +809,18 @@ namespace Party
 		Downed::SetFriendDown(a_status.playerId, a_status.downed);
 	}
 
+	// A friend's ping: on our compass in their color for PingRules::LIFETIME (in place of their last one), and a HUD
+	// line naming what it is and how far.
 	void ApplyPing(const Protocol::Ping& a_ping)
 	{
+		++pingsReceived;
+		pings.Add(a_ping, Clock::now());
+		FollowPings();  // our own copy of the NPC or item, where it is here
+		const auto& shown = pings.Marks().at(a_ping.playerId).ping;
+		REX::INFO("Party: player {} pinged a {} (target {:08X}, ours {:08X})", a_ping.playerId, KindName(a_ping.kind), a_ping.target,
+			LocalTarget(a_ping) ? LocalTarget(a_ping)->GetFormID() : 0);
 		const auto name = RemotePlayers::NameOf(a_ping.playerId);
-		auto       where = DistanceTo(a_ping.cell, a_ping.worldspace, a_ping.x, a_ping.y);
-		if (where.empty()) {
-			const auto it = known.find(a_ping.playerId);
-			const auto place = it != known.end() ? PlaceName(it->second.status.location, a_ping.cell) : NameOfForm(a_ping.cell);
-			where = place.empty() ? Text::Get("party.somewhere_else") : Text::Format("party.at_place", { { "place", place } });
-		}
-		Hud::Notify(Text::Format("party.ping", { { "player", name.empty() ? Text::Get("party.a_friend") : name }, { "where", where } }));
+		Hud::Notify(Text::Format("party.ping", { { "player", name.empty() ? Text::Get("party.a_friend") : name }, { "what", WhatOf(shown) }, { "where", WhereOf(shown) } }));
 	}
 
 	void ApplyXp(const Protocol::XpGain& a_gain)
@@ -626,10 +886,16 @@ namespace Party
 		}
 	}
 
+	bool FriendInOpening()
+	{
+		return std::ranges::any_of(known, [](const auto& a_entry) { return a_entry.first != localId && a_entry.second.hasStatus && a_entry.second.status.opening; });
+	}
+
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		known.erase(a_id);
 		Downed::OnPlayerLeft(a_id);
+		pings.Forget(a_id);
 		if (teleportTarget == a_id) {
 			teleportTarget = 0;
 		}
@@ -712,6 +978,7 @@ namespace Party
 		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
 		// crashes the engine unloading it or the next save. They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
+			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
 			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
@@ -724,6 +991,7 @@ namespace Party
 				Hud::Notify(Text::Format("party.cant_teleport_into", { { "player", target->name } }));
 				return;
 			}
+			FadeWatch::Arm("teleported the player to a friend");
 			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
@@ -734,6 +1002,7 @@ namespace Party
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
+			FadeWatch::Arm("teleported the player to a friend");
 			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
@@ -752,10 +1021,34 @@ namespace Party
 		if (!player) {
 			return;
 		}
+		if (localId == 0) {
+			Hud::Notify(Text::Get("party.not_in_session"));
+			return;
+		}
 		const auto [cell, worldspace] = SpaceOf(player);
-		const auto& pos = player->data.location;
-		outgoing.push_back(Protocol::Encode(Protocol::Ping{ 0, cell, worldspace, pos.x, pos.y, pos.z }, Protocol::MessageType::kPing));
-		Hud::Notify(Text::Get("party.called"));
+		if ((cell == 0) == (worldspace == 0)) {
+			return;  // nowhere the others could place it
+		}
+		const auto now = Clock::now();
+		if (!pingLimit.Try(now)) {
+			return;  // a second press within PingRules::MIN_GAP: the last ping stands
+		}
+		auto ping = AimedPing(player);
+		outgoing.push_back(Protocol::Encode(ping, Protocol::MessageType::kPing));
+		++pingsSent;
+		ping.playerId = localId;
+		pings.Add(ping, now);
+		REX::INFO("Party: pinged a {} (target {:08X}, base {:08X})", KindName(ping.kind), ping.target, ping.base);
+		Hud::Notify(Text::Format("party.called", { { "what", WhatOf(ping) }, { "where", WhereOf(ping) } }));
+	}
+
+	std::vector<PingMarker> PingMarkers()
+	{
+		std::vector<PingMarker> markers;
+		for (const auto& [pinger, mark] : pings.Marks()) {
+			markers.push_back({ pinger, mark.ping.cell, mark.ping.worldspace, mark.ping.x, mark.ping.y });
+		}
+		return markers;
 	}
 
 	std::uint32_t RoundTripMs()
@@ -789,6 +1082,8 @@ namespace Party
 		teleportTarget = 0;
 		pendingTeleport.reset();
 		Downed::Reset();
+		pings.Clear();
+		pingLimit.Reset();
 	}
 
 	std::string Describe()
@@ -796,6 +1091,12 @@ namespace Party
 		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld);
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
+		}
+		out += std::format(" pings: sent={} received={} tooSoon={}", pingsSent, pingsReceived, pingLimit.Refused());
+		for (const auto& [pinger, mark] : pings.Marks()) {
+			const auto ref = LocalTarget(mark.ping);
+			out += std::format(" [ping {} {} target={:08X} ours={:08X} base={:08X} at={:.0f},{:.0f},{:.0f} left={}s]", pinger, KindName(mark.ping.kind), mark.ping.target, ref ? ref->GetFormID() : 0,
+				mark.ping.base, mark.ping.x, mark.ping.y, mark.ping.z, std::chrono::duration_cast<std::chrono::seconds>(mark.until - Clock::now()).count());
 		}
 		return out + " " + Downed::Describe();
 	}

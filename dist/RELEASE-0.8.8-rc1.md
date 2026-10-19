@@ -16,7 +16,7 @@ What changed:
   `sLanguage` in the ini): English, English (UK), French, German, Italian, Spanish, Latin American Spanish, Polish,
   Brazilian Portuguese, Russian, Japanese, Simplified and Traditional Chinese, Arabic. All but English are a first
   machine pass, marked as such in `Data\F4SE\Plugins\F4Multiplayer\lang\`; corrections are welcome as pull requests
-  or Nexus comments. Cyrillic and CJK text needs the game to have that language's font loaded; Arabic needs a font mod.
+  or Nexus comments. Japanese and Chinese text needs the game to have that language's font loaded (Russian shows on any game); Arabic needs a font mod.
 - A friend's parked power armor stands where they left it. Frames the game placed (the museum's, the ones at
   settlements) are shared like NPCs: whoever last used or moved one runs it, everyone else's copy follows. A suit parked
   before you joined is on the rack when you arrive, and the second frame that used to sit a few feet from where a friend

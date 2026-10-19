@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Protocol.h"
 #include "net/ModDiff.h"
 
 // Ties the network client, optional hosted server and remote players together.
@@ -35,6 +36,21 @@ namespace Session
 	void StopHosting();
 	// Leaves the session we joined (and its Steam lobby) and stops reconnecting.
 	void Leave();
+	// Dev only (`net drop`): as the link to the server dropping: the session ends here and the connection is tried again
+	// (the server sees us go). Whether we were connected.
+	bool DropConnection();
+
+	// Host controls, while we host: the server's last word on its lock, password and bans (none before it came), and a
+	// count that grows with each (the menu waits for the answer to a command by it).
+	[[nodiscard]] std::optional<Protocol::HostInfo> HostControls();
+	[[nodiscard]] std::uint32_t                     HostControlsSerial();
+	// Kick, ban, unban, lock, unlock or a new password, to our own server (it takes them from the host's game only).
+	// False when we aren't hosting and in our own session.
+	bool SendHostCommand(const Protocol::HostCommand& a_command);
+	// Asks our server for the state again (the answer comes as HostControls).
+	void AskHostControls();
+	// Dev: the host controls' state on one line, bans by alias.
+	[[nodiscard]] std::string DescribeHostControls();
 
 	struct Status
 	{
@@ -70,12 +86,16 @@ namespace Session
 	AskResult AskHostMods();
 	// Dev: what is known of the host's mods, on one line.
 	[[nodiscard]] std::string DescribeMods();
+	// Dev: our form IDs against the session's plugin table (FormIds.h), what was skipped either way, and a_id as ours
+	// in the session's numbering and as the session's in ours.
+	[[nodiscard]] std::string DescribeForms(std::optional<std::uint32_t> a_id);
 
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
 	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);
 
 	// Test: leaves the current session and connects to another address ("ip[:port]" or "steam:<id>").
 	void ConnectTo(std::string a_address);
-	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command).
+	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command), in our own numbering: they are
+	// not translated from the session's.
 	void InjectPacket(std::span<const std::uint8_t> a_data);
 }

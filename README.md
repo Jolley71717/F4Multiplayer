@@ -2,7 +2,21 @@
 
 Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https://github.com/libxse/commonlibf4).
 
-**Status:** alpha. Up to 4 players share one world: players see each other (gear, weapon, name), NPC AI is shared between games, enemies can fight any player, and deaths, loot, pickups, doors, locks and quest progress are synced. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
+**Status:** alpha. Up to 4 players share one world, over Steam or a LAN. Each player keeps their own save. Friends see each other with their own face, gear and name. NPC AI is shared between games, and enemies can fight any player. Deaths, loot, pickups, doors, locks and side quests are synced, and so is the main story unless the host gives each player their own. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
+
+## Playing together
+
+- [How friends appear](dist/INSTALL.md#how-friends-appear): each friend is a stand-in in your game, with their own
+  face and the gear from their own save. You can't loot, trade with or talk to a stand-in.
+- [How your stories can differ](dist/INSTALL.md#how-your-stories-can-differ): what every game shares, what stays
+  each player's, and the host's choice between one shared story and each player's own.
+- [New characters and alternate starts](dist/INSTALL.md#new-characters-and-alternate-starts): the Vault 111 opening
+  is played alone; alternate-start mods are untried.
+- Friends may have other mods, or the same ones in another order: what comes from a mod only one player has is left out in the other games. The F1 menu's *Compare mods* page names the mods that differ.
+
+Newest: 0.8.10 makes your hits stick on enemies a friend's game spawned (they used to heal back). 0.8.9 gave friends
+their own faces, named the mods that differ from the host's, fixed two host hangs, and made sure the mod never
+changes your own gear for a friend. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
 
 ## Requirements
 
@@ -47,7 +61,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: muzzle flash, workshop building, misc/radiant quests.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests and radiant quests other than the Minutemen's settlement requests.
 
 ## License
 

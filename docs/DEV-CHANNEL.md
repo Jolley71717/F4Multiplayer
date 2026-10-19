@@ -17,9 +17,11 @@ game's own code can:
   `console 000AE12F.removeallitems player` (loot a container), `console startquest 0001F25E`.
 - **Read state:** `status`, `pos`, `refinfo <ref>` (position, health, cell), `count <container> <item>`,
   `aim <actor>` (its pitch, the point its weapon aim turns toward, the pitch a mirrored NPC's
-  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paused` and `net status`, which prints every
+  owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paframes [radius]` (each power armor frame near the player, and whether the game would let the player into it, and why not: tilted, or its seat still taken), `paused` and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
-  sounds played, and so on.
+  sounds played, and so on. `mods` says what is known of the host's mods (`mods ask` asks again), and
+  `mods forms [formHex]` shows our load order against the session's plugin table, what was skipped
+  either way, and a form ID in both numberings.
 - **Find enemies:** `enemies [radius]` lists the actors near the player that are hostile to it, or
   fighting a player, nearest first: whether the player can see each one (`los`), what it fights as a
   session player number (`targetPlayer`, the same in every game, where a friend's stand-in has another
@@ -35,6 +37,7 @@ game's own code can:
   asked=<n> base=<base> '<name>' radius=<r> ids=<ref>,<ref>...`, and `remove <ref>` deletes one again.
   They are made at runtime like a random encounter's raiders, so in a session the hostile ones are shared
   as one is (`made=true` in `enemies`). Indoors a wide ring can put them inside a wall: use a small radius.
+- **Moved objects:** `objects` prints what is shared of loose objects moved by hand (the `objects:` part of `net status`), `objects grab` what the player holds (its reference, the grab type, its distance, and whether it is shared), and `objects probe <ref>` a reference's place and angles beside its 3D transform (translation, rotation matrix and XYZ Euler angles) and its physics bodies, to compare two games' copies.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
   characters say; HUD messages name players and are never logged) until the game restarts, `log
@@ -146,6 +149,15 @@ The commands it uses:
   control map's input contexts and their user events and keys.
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
+- `key`, `mouse` and `click` send through Windows, which hands input to whatever window is in front. They
+  send only with the game in front (bringing it there first, a few tries) and drop the input otherwise,
+  rather than typing it into a console or the window someone at the PC is using. Their answer ends in
+  `front=yes`, or `front=no (<window> is in front)` as the command came in; `focus` asks for the front and
+  answers the same, with the tally of what became of the input so far (`input: sent= broughtFront=
+  dropped=` and the last one dropped). The loop checks `focus` before each pick: a pick that can't reach
+  the game is logged as such, not as an option the menu ignored. On the VM a scheduled task (a screenshot,
+  `input.ps1`) takes the front for a moment; a press sent then went nowhere, and on 2026-10-11 that was
+  read as a dialogue that no longer took input.
 
 `tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't
 answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),

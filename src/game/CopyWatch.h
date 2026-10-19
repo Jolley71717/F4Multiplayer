@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace RE
 {
@@ -19,6 +21,9 @@ namespace CopyWatch
 	// What the reference is as the cause of a hit or a death, for CopyHealth::Judge (0, or gone: nothing).
 	[[nodiscard]] CopyHealth::Cause CauseOf(std::uint32_t a_refId);
 
+	// What the hit's blow was (an explosion's, a throw's, a spell's alone), for CopyHealth::OwnersToDeal. Any thread.
+	[[nodiscard]] CopyHealth::Blow BlowOf(const RE::TESHitEvent& a_event);
+
 	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
 	void NoteHit(const RE::TESHitEvent& a_event);
 
@@ -31,6 +36,10 @@ namespace CopyWatch
 
 	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
 	void Frame();
+
+	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
+	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
+	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
 
 	void Reset();
 
