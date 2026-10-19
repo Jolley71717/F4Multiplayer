@@ -8,6 +8,7 @@
 #include "game/DownRules.h"
 #include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/FadeWatch.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/MapShare.h"
@@ -885,6 +886,11 @@ namespace Party
 		}
 	}
 
+	bool FriendInOpening()
+	{
+		return std::ranges::any_of(known, [](const auto& a_entry) { return a_entry.first != localId && a_entry.second.hasStatus && a_entry.second.status.opening; });
+	}
+
 	void OnPlayerLeft(std::uint32_t a_id)
 	{
 		known.erase(a_id);
@@ -972,6 +978,7 @@ namespace Party
 		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
 		// crashes the engine unloading it or the next save. They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
+			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
 			REX::INFO("Party: teleported to player {}", target->id);
 			Hud::Notify(Text::Format("party.teleported", { { "player", target->name } }));
@@ -984,6 +991,7 @@ namespace Party
 				Hud::Notify(Text::Format("party.cant_teleport_into", { { "player", target->name } }));
 				return;
 			}
+			FadeWatch::Arm("teleported the player to a friend");
 			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
@@ -994,6 +1002,7 @@ namespace Party
 				return;
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
+			FadeWatch::Arm("teleported the player to a friend");
 			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
