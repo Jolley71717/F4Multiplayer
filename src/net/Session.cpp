@@ -402,6 +402,11 @@ namespace Session
 					WorldSync::ApplyRemoteHealth(msg->refId, msg->health);
 				}
 				break;
+			case MessageType::kActorDamaged:
+				if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
+					WorldSync::ApplyRemoteDamage(msg->refId, msg->health);
+				}
+				break;
 			case MessageType::kContainerChanged:
 				if (const auto msg = Protocol::DecodeIndexedContainerChange(a_data)) {
 					WorldSync::ApplyContainerChange(*msg);

@@ -38,6 +38,9 @@ namespace WorldSync
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId);  // another player pressed a button, switch or lever
 	void ApplyWorldState(const Protocol::WorldState& a_state);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
+	// Another player took a_damage (a fraction of the maximum) off their copy of an NPC: taken off here if our game runs it
+	// (its health then goes to everyone, HealthShare); nothing otherwise.
+	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage);
 	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
 	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
 	// character: FoundDead::Shared). The server gives nobody a dead NPC, so a death we hold for one that now has

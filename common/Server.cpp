@@ -1113,7 +1113,10 @@ void Server::Run()
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
-	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
+	// another game runs (kReportDamage, as kActorDamaged: the game that runs it takes it off). Both tell the server the
+	// sender fights it.
+	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data, Protocol::MessageType a_out) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
@@ -1123,11 +1126,14 @@ void Server::Run()
 		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId)) || deadActors.contains(health->refId)) {
 			return;
 		}
+		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
+			return;  // no damage, or more than all of it
+		}
 		if (!spawn) {
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		}
 		noteFighting(a_player, health->refId, Clock::now());
-		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
+		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};
 
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
@@ -1925,7 +1931,10 @@ void Server::Run()
 			handleDeath(a_player, a_data);
 			break;
 		case MessageType::kReportHealth:
-			handleHealth(a_player, a_data);
+			handleHealth(a_player, a_data, MessageType::kActorHealth);
+			break;
+		case MessageType::kReportDamage:
+			handleHealth(a_player, a_data, MessageType::kActorDamaged);
 			break;
 		case MessageType::kReportContainer:
 			handleContainer(a_player, a_data);

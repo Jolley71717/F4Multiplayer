@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 40;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -124,6 +124,7 @@ namespace Protocol
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
+		kReportDamage = 51,       // the sender took this much (ActorHealth: a fraction of the maximum) off an NPC another game runs
 
 		// server -> client
 		kWelcome = 101,
@@ -162,6 +163,7 @@ namespace Protocol
 		kVoiceRelay = 125,        // a piece of another player's voice
 		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
 		kLineSpoken = 127,        // another player (or an NPC they run) said something
+		kActorDamaged = 151,      // another player took this much off an NPC: the game that runs it takes it off too
 	};
 
 	enum StateFlags : std::uint8_t
@@ -326,7 +328,8 @@ namespace Protocol
 	};
 
 	// Health as a fraction of maximum: leveled actors can have different max health in each
-	// player's world, so absolute values don't transfer.
+	// player's world, so absolute values don't transfer. kReportDamage and kActorDamaged carry the damage dealt the same
+	// way (a fraction of the maximum taken off).
 	struct ActorHealth
 	{
 		std::uint32_t refId = 0;
