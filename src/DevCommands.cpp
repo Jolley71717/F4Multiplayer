@@ -35,6 +35,7 @@
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
+#include "game/WindowFocus.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
 
@@ -45,7 +46,6 @@
 extern "C" {
 __declspec(dllimport) void __stdcall keybd_event(unsigned char a_vk, unsigned char a_scan, unsigned long a_flags, unsigned long long a_extra);
 __declspec(dllimport) unsigned int __stdcall MapVirtualKeyA(unsigned int a_code, unsigned int a_mapType);
-__declspec(dllimport) void* __stdcall FindWindowA(const char* a_class, const char* a_title);
 __declspec(dllimport) int __stdcall ShowWindow(void* a_window, int a_show);
 __declspec(dllimport) int __stdcall SetForegroundWindow(void* a_window);
 __declspec(dllimport) void* __stdcall GetForegroundWindow();
@@ -54,6 +54,11 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
 __declspec(dllimport) int __stdcall AttachThreadInput(unsigned long a_attach, unsigned long a_to, int a_flag);
 __declspec(dllimport) int __stdcall BringWindowToTop(void* a_window);
 __declspec(dllimport) void __stdcall mouse_event(unsigned long a_flags, unsigned long a_dx, unsigned long a_dy, unsigned long a_data, unsigned long long a_extra);
+__declspec(dllimport) int __stdcall EnumWindows(int(__stdcall* a_callback)(void*, long long), long long a_param);
+__declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
+__declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
+__declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
+__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
 }
 
 namespace DevCommands
@@ -258,34 +263,122 @@ namespace DevCommands
 		// Frame()), so two games can be driven at the same instant from a script; scheduled tasks on the
 		// VM used to fire seconds late. focus: brings the game window to the front (a tapped Alt lifts
 		// Windows' foreground lock), so a desktop capture shows the game and not whatever popped over it.
+		//
+		// Windows hands injected input to the window in front, whichever it is. So key, mouse and click send
+		// only with the game in front, bringing it there first; input that can't get there is dropped (it
+		// used to go to whatever window was in front: a console, or the window someone at the PC was using).
+		// Their answer says whether the game was in front as the command came in (front=yes|no); focus says
+		// whether it is now, and the tally of what became of the input so far (WindowFocus).
+
+		WindowFocus::Tally inputTally;
 
 		void KeyEvent(std::uint8_t a_vk, bool a_down)
 		{
 			const auto scan = static_cast<std::uint8_t>(MapVirtualKeyA(a_vk, 0));
 			// The arrows, Insert/Delete/Home/End/PageUp/PageDown and the right-hand Ctrl/Alt are extended
-			// keys: without the flag the game's input layer sees the numpad key with the same scan code, and a
-			// dialogue option picked with an arrow never registered.
+			// keys: without the flag the game's input layer sees the numpad key with the same scan code.
 			const bool extended = (a_vk >= 0x21 && a_vk <= 0x28) || a_vk == 0x2D || a_vk == 0x2E || a_vk == 0xA3 || a_vk == 0xA5 || a_vk == 0x6F;
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u | (extended ? 1u : 0u), 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY)
 		}
 
+		// Whether a window of this process (the game's) is the one in front. Sends no window a message, so it
+		// is safe on the game thread.
+		bool GameInFront()
+		{
+			unsigned long pid = 0;
+			const auto    front = GetForegroundWindow();
+			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId();
+		}
+
+		// The window in front, for a report: its process and title when it is another process's (reading the
+		// title of one of our own windows would send it a message), else "the game".
+		std::string FrontWindowName()
+		{
+			const auto front = GetForegroundWindow();
+			if (!front) {
+				return "none";
+			}
+			unsigned long pid = 0;
+			GetWindowThreadProcessId(front, &pid);
+			if (pid == GetCurrentProcessId()) {
+				return "the game";
+			}
+			std::array<char, 128> title{};
+			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
+			return std::format("pid {} '{}'", pid, WindowFocus::Printable(title.data()));
+		}
+
+		// The game's main window: this process's visible top-level window that has no owner (not FindWindow
+		// by the title "Fallout4", which another process's window can have too).
+		void* GameWindow()
+		{
+			struct Search
+			{
+				unsigned long pid;
+				void*         found;
+			} search{ GetCurrentProcessId(), nullptr };
+			EnumWindows(
+				[](void* a_window, long long a_param) -> int {
+					auto&         s = *reinterpret_cast<Search*>(a_param);
+					unsigned long pid = 0;
+					GetWindowThreadProcessId(a_window, &pid);
+					if (pid == s.pid && IsWindowVisible(a_window) && !GetWindow(a_window, 4)) {  // GW_OWNER
+						s.found = a_window;
+						return 0;
+					}
+					return 1;
+				},
+				reinterpret_cast<long long>(&search));
+			return search.found;
+		}
+
 		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
-		// would be stronger, but called on the game thread it hung the game.)
+		// would be stronger, but called on the game thread it hung the game.) Off the game thread only: the
+		// window calls send messages to it. Tries a few times; returns whether the game ended up in front.
 		bool BringGameToFront()
 		{
-			const auto window = FindWindowA(nullptr, "Fallout4");
+			if (GameInFront()) {
+				return true;
+			}
+			const auto window = GameWindow();
 			if (!window) {
 				return false;
 			}
-			if (GetForegroundWindow() == window) {
-				return true;
+			for (int i = 0; i < WindowFocus::FRONT_TRIES; ++i) {
+				KeyEvent(0x12, true);
+				KeyEvent(0x12, false);
+				ShowWindow(window, 9);  // SW_RESTORE
+				BringWindowToTop(window);
+				SetForegroundWindow(window);
+				std::this_thread::sleep_for(std::chrono::milliseconds(WindowFocus::FRONT_STEP_MS));
+				if (GameInFront()) {
+					return true;
+				}
 			}
-			KeyEvent(0x12, true);
-			KeyEvent(0x12, false);
-			ShowWindow(window, 9);  // SW_RESTORE
-			BringWindowToTop(window);
-			const bool ok = SetForegroundWindow(window) != 0;
-			return ok && GetForegroundWindow() == window;
+			return false;
+		}
+
+		// Off the game thread: the game to the front if it isn't, then whether the input may go. What became of
+		// it is tallied, and a dropped one logged with the window that was in front instead.
+		bool SendToGame(const std::string& a_what)
+		{
+			const bool before = GameInFront();
+			const bool after = before || BringGameToFront();
+			const auto outcome = WindowFocus::Decide(before, after);
+			if (outcome == WindowFocus::Outcome::kDropped) {
+				const auto front = FrontWindowName();
+				inputTally.Record(outcome, a_what, front);
+				REX::WARN("DevCommands: {} not sent: the game isn't in front ({} is)", a_what, front);
+				return false;
+			}
+			inputTally.Record(outcome, a_what);
+			return true;
+		}
+
+		// For an answer: whether the game is in front as the command runs.
+		std::string FrontNow()
+		{
+			return GameInFront() ? "front=yes" : std::format("front=no ({} is in front)", FrontWindowName());
 		}
 
 		std::string KeyPress(std::string_view a_args)
@@ -300,12 +393,14 @@ namespace DevCommands
 			const auto key = static_cast<std::uint8_t>(*vk);
 			const auto hold = std::stoi(std::string{ args[1] });
 			std::thread([key, hold] {
-				BringGameToFront();
+				if (!SendToGame(std::format("key {:02X}", key))) {
+					return;
+				}
 				KeyEvent(key, true);
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				KeyEvent(key, false);
+				KeyEvent(key, false);  // whatever is in front by now: a key left down would stay down
 			}).detach();
-			return std::format("pressing {:02X} for {} ms", *vk, args[1]);
+			return std::format("pressing {:02X} for {} ms {}", *vk, args[1], FrontNow());
 		}
 
 		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
@@ -319,10 +414,11 @@ namespace DevCommands
 			const auto dx = std::stoi(std::string{ args[0] });
 			const auto dy = std::stoi(std::string{ args[1] });
 			std::thread([dx, dy] {
-				BringGameToFront();
-				mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
+				if (SendToGame("mouse")) {
+					mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
+				}
 			}).detach();
-			return "moving";
+			return std::format("moving {}", FrontNow());
 		}
 
 		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
@@ -331,20 +427,27 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			const int hold = args.empty() ? 60 : std::stoi(std::string{ args[0] });
 			std::thread([hold] {
-				BringGameToFront();
+				if (!SendToGame("click")) {
+					return;
+				}
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				mouse_event(0x0004u, 0, 0, 0, 0);  // left up
+				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
 			}).detach();
-			return std::format("clicking for {} ms", hold);
+			return std::format("clicking for {} ms {}", hold, FrontNow());
 		}
 
+		// focus: asks for the game to come to the front if it isn't, and says whether it is in front as the
+		// command runs (ask again a moment later for the request's effect) and what became of the input so far.
 		std::string Focus(std::string_view)
 		{
 			// Never waited for: the window calls send messages to the game thread, which is the thread
 			// running this command (waiting here deadlocked the game on 2026-10-09).
-			std::thread([] { BringGameToFront(); }).detach();
-			return "requested";
+			const auto now = FrontNow();
+			if (!GameInFront()) {
+				std::thread([] { BringGameToFront(); }).detach();
+			}
+			return std::format("{} input: {}", now, inputTally.Describe());
 		}
 
 		// pa: the local player's power armor state as the status reports it.
