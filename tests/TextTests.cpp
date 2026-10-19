@@ -5,6 +5,8 @@
 #include "Text.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <regex>
 #include <map>
 #include <set>
 #include <string>
@@ -570,4 +572,30 @@ TEST("text: no player-facing message is a bare English literal in the code")
 		}
 	}
 	CHECK(found == 0);
+}
+
+TEST("text: every key the plugin asks for by name is in the English table")
+{
+	// A key nobody wrote shows as the key itself (a friend's name tag once read "STANDIN.TAG_PIPBOY").
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	const std::regex call{ R"(Text::(?:Format|Get|FormatEnglish|GetEnglish)\("([a-z0-9_.]+)\")" };
+	std::size_t      keys = 0;
+	for (const auto& file : std::filesystem::recursive_directory_iterator(*root / "src")) {
+		const auto extension = file.path().extension();
+		if (!file.is_regular_file() || (extension != ".cpp" && extension != ".h")) {
+			continue;
+		}
+		const auto text = FileOf(file.path());
+		for (auto it = std::sregex_iterator(text.begin(), text.end(), call); it != std::sregex_iterator(); ++it) {
+			const auto key = (*it)[1].str();
+			++keys;
+			const bool known = std::ranges::any_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == key; });
+			if (!known) {
+				std::printf("  unknown text key %s in %s\n", key.c_str(), file.path().filename().string().c_str());
+			}
+			CHECK(known);
+		}
+	}
+	CHECK(keys > 50);
 }

@@ -2289,8 +2289,21 @@ namespace DevCommands
 
 		// menuicons: each friend's menu (their status), the spot over their stand-in's head, the engine's projection of it
 		// and where its icon goes on the HUD (MenuIcons); read only.
-		std::string MenuIconsCommand(std::string_view)
+		std::string MenuIconsCommand(std::string_view a_args)
 		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "layer") {
+				if (args.size() < 3) {
+					return "error: usage: menuicons layer <path> <class>";
+				}
+				return MenuIcons::Layer(std::string(args[1]), std::string(args[2]));
+			}
+			if (!args.empty() && args[0] == "opt") {
+				if (args.size() < 3) {
+					return "error: usage: menuicons opt scale|readd|remake 0|1";
+				}
+				return MenuIcons::Opt(std::string(args[1]), args[2] == "1" || args[2] == "on");
+			}
 			return MenuIcons::Probe() + " " + MenuIcons::Describe();
 		}
 

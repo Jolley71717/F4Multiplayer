@@ -392,10 +392,10 @@ namespace RemotePlayers
 			auto      tag = shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
 			// In their Pip-Boy or another menu (the icon over them says which kind; MenuIcons).
 			if (a_player.menu == Protocol::MenuKind::kPipboy) {
-				return Text::Format("standin.tag_pipboy", { { "name", tag } });
+				return Text::Format("party.tag_pipboy", { { "name", tag } });
 			}
 			if (a_player.menu != Protocol::MenuKind::kNone) {
-				return Text::Format("standin.tag_menu", { { "name", tag } });
+				return Text::Format("party.tag_menu", { { "name", tag } });
 			}
 			return tag;
 		}

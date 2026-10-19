@@ -17,6 +17,12 @@ namespace MenuIcons
 		// The HUD movie's own timeline: the icons go in a layer of their own on it.
 		constexpr const char* ROOT_PATH = "root";
 		constexpr const char* LAYER_NAME = "f4mpMenuIcons";
+		// Dev (menuicons layer <path> <class>): where the layer goes and what it is made as, to try others on the rig.
+		std::mutex        layerLock;
+		std::string       layerParent = ROOT_PATH;
+		std::string       layerClass = "flash.display.Sprite";
+		std::string       oldParent;
+		std::atomic<bool> relayer{ false };
 		// The bone the icon hangs over (Fallout 4's human skeleton).
 		constexpr const char* HEAD_BONE = "Head";
 		// What the icons are drawn in besides the HUD's own color (the player's choice in the game's settings).
@@ -44,7 +50,13 @@ namespace MenuIcons
 			std::uint32_t       color = 0;
 			MenuIconPlace::Spot spot;
 			bool                visible = false;
+			float               drawnScale = 0.0f;  // the size the glyph was drawn at
 		};
+		// Dev (menuicons opt <name> 0|1), to find how the HUD takes our writes: scale the shape instead of drawing it at its
+		// size; add an icon to its parent again after moving it; make it anew each time it moves.
+		std::atomic<bool> optScale{ false };
+		std::atomic<bool> optReadd{ false };
+		std::atomic<bool> optRemake{ false };
 		std::map<std::uint32_t, Drawn> drawn;
 		bool                           layerVisible = false;  // HUD thread only
 
@@ -106,44 +118,48 @@ namespace MenuIcons
 			return a_graphics.Invoke(a_method, nullptr, a_args.begin(), a_args.size());
 		}
 
-		// The glyph, MenuIconPlace::SIZE across, its bottom edge at (0, 0) so it stands on the spot over the head.
-		void DrawGlyph(GValue& a_graphics, Glyph a_glyph, std::uint32_t a_color)
+		// The glyph, MenuIconPlace::SIZE across at a_scale 1, its bottom edge at (0, 0) so it stands on the spot over the
+		// head. Drawn at its size rather than scaled (scaleX and scaleY).
+		void DrawGlyph(GValue& a_graphics, Glyph a_glyph, std::uint32_t a_color, double a_scale = 1.0)
 		{
+			const auto p = [&](double a_value) { return GValue(a_value * a_scale); };
+			const auto color = GValue(a_color);
+			const auto dark = GValue(DARK);
 			Draw(a_graphics, "clear", {});
 			switch (a_glyph) {
 			case Glyph::kPipboy:
 				// The wrist unit: a dark body, a lit screen and the dial beside it.
-				Draw(a_graphics, "lineStyle", { GValue(2.0), GValue(a_color), GValue(1.0) });
-				Draw(a_graphics, "beginFill", { GValue(DARK), GValue(0.8) });
-				Draw(a_graphics, "drawRoundRect", { GValue(-13.0), GValue(-22.0), GValue(26.0), GValue(19.0), GValue(6.0), GValue(6.0) });
+				Draw(a_graphics, "lineStyle", { p(2.0), color, GValue(1.0) });
+				Draw(a_graphics, "beginFill", { dark, GValue(0.8) });
+				Draw(a_graphics, "drawRoundRect", { p(-13.0), p(-22.0), p(26.0), p(19.0), p(6.0), p(6.0) });
 				Draw(a_graphics, "endFill", {});
-				Draw(a_graphics, "lineStyle", { GValue(0.0), GValue(a_color), GValue(0.0) });
-				Draw(a_graphics, "beginFill", { GValue(a_color), GValue(0.9) });
-				Draw(a_graphics, "drawRect", { GValue(-9.0), GValue(-18.5), GValue(12.0), GValue(12.0) });
-				Draw(a_graphics, "drawCircle", { GValue(8.0), GValue(-12.5), GValue(2.5) });
+				Draw(a_graphics, "lineStyle", { GValue(0.0), color, GValue(0.0) });
+				Draw(a_graphics, "beginFill", { color, GValue(0.9) });
+				Draw(a_graphics, "drawRect", { p(-9.0), p(-18.5), p(12.0), p(12.0) });
+				Draw(a_graphics, "drawCircle", { p(8.0), p(-12.5), p(2.5) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kPause:
-				Draw(a_graphics, "lineStyle", { GValue(1.5), GValue(DARK), GValue(0.9) });
-				Draw(a_graphics, "beginFill", { GValue(a_color), GValue(1.0) });
-				Draw(a_graphics, "drawRect", { GValue(-8.0), GValue(-22.0), GValue(5.5), GValue(18.0) });
-				Draw(a_graphics, "drawRect", { GValue(2.5), GValue(-22.0), GValue(5.5), GValue(18.0) });
+				Draw(a_graphics, "lineStyle", { p(1.5), dark, GValue(0.9) });
+				Draw(a_graphics, "beginFill", { color, GValue(1.0) });
+				Draw(a_graphics, "drawRect", { p(-8.0), p(-22.0), p(5.5), p(18.0) });
+				Draw(a_graphics, "drawRect", { p(2.5), p(-22.0), p(5.5), p(18.0) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kBusy:
 				// A speech bubble with three dots, its tail pointing down at the head.
-				Draw(a_graphics, "lineStyle", { GValue(2.0), GValue(a_color), GValue(1.0) });
-				Draw(a_graphics, "beginFill", { GValue(DARK), GValue(0.8) });
-				Draw(a_graphics, "drawRoundRect", { GValue(-14.0), GValue(-24.0), GValue(28.0), GValue(16.0), GValue(10.0), GValue(10.0) });
+				Draw(a_graphics, "lineStyle", { p(2.0), color, GValue(1.0) });
+				Draw(a_graphics, "beginFill", { dark, GValue(0.8) });
+				Draw(a_graphics, "drawRoundRect", { p(-14.0), p(-24.0), p(28.0), p(16.0), p(10.0), p(10.0) });
 				Draw(a_graphics, "endFill", {});
-				Draw(a_graphics, "moveTo", { GValue(-4.0), GValue(-8.0) });
-				Draw(a_graphics, "lineTo", { GValue(0.0), GValue(-2.0) });
-				Draw(a_graphics, "lineTo", { GValue(4.0), GValue(-8.0) });
-				Draw(a_graphics, "lineStyle", { GValue(0.0), GValue(a_color), GValue(0.0) });
-				Draw(a_graphics, "beginFill", { GValue(a_color), GValue(1.0) });
-				Draw(a_graphics, "drawCircle", { GValue(-7.0), GValue(-16.0), GValue(2.2) });
-				Draw(a_graphics, "drawCircle", { GValue(0.0), GValue(-16.0), GValue(2.2) });
-				Draw(a_graphics, "drawCircle", { GValue(7.0), GValue(-16.0), GValue(2.2) });
+				Draw(a_graphics, "moveTo", { p(-4.0), p(-8.0) });
+				Draw(a_graphics, "lineTo", { p(0.0), p(-2.0) });
+				Draw(a_graphics, "lineTo", { p(4.0), p(-8.0) });
+				Draw(a_graphics, "lineStyle", { GValue(0.0), color, GValue(0.0) });
+				Draw(a_graphics, "beginFill", { color, GValue(1.0) });
+				Draw(a_graphics, "drawCircle", { p(-7.0), p(-16.0), p(2.2) });
+				Draw(a_graphics, "drawCircle", { p(0.0), p(-16.0), p(2.2) });
+				Draw(a_graphics, "drawCircle", { p(7.0), p(-16.0), p(2.2) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kNone:
@@ -166,7 +182,7 @@ namespace MenuIcons
 			return child;
 		}
 
-		std::optional<GValue> Make(Scaleform::GFx::Movie* a_movie, GValue& a_parent, const char* a_class, const std::string& a_name)
+		std::optional<GValue> Make(Scaleform::GFx::Movie* a_movie, GValue& a_parent, const char* a_class, const std::string& a_name, Glyph a_glyph = Glyph::kNone, std::uint32_t a_color = 0, double a_scale = 1.0)
 		{
 			GValue object;
 			a_movie->CreateObject(&object, a_class);
@@ -174,6 +190,14 @@ namespace MenuIcons
 				return std::nullopt;
 			}
 			object.SetMember("name", GValue(a_name.c_str()));
+			if (a_glyph != Glyph::kNone) {
+				// Drawn before it goes on the stage, as the compass markers are.
+				GValue graphics;
+				if (!object.GetMember("graphics", &graphics)) {
+					return std::nullopt;
+				}
+				DrawGlyph(graphics, a_glyph, a_color, a_scale);
+			}
 			if (!a_parent.Invoke("addChild", nullptr, &object, 1)) {
 				return std::nullopt;
 			}
@@ -219,17 +243,39 @@ namespace MenuIcons
 			return;
 		}
 		const auto movie = a_hud ? a_hud->uiMovie.get() : nullptr;
-		GValue     root;
-		if (!movie || !movie->GetVariable(&root, ROOT_PATH) || !root.IsDisplayObject()) {
+		if (!movie) {
 			return;
 		}
-		auto layer = ChildByName(root, LAYER_NAME);
+		std::string parentPath;
+		std::string className;
+		std::string previous;
+		{
+			std::scoped_lock l{ layerLock };
+			parentPath = layerParent;
+			className = layerClass;
+			previous = oldParent;
+		}
+		if (relayer.exchange(false)) {
+			GValue old;
+			if (movie->GetVariable(&old, previous.c_str()) && old.IsDisplayObject()) {
+				if (auto stale = ChildByName(old, LAYER_NAME)) {
+					old.Invoke("removeChild", nullptr, &*stale, 1);
+				}
+			}
+			drawn.clear();
+		}
+		GValue root;
+		if (!movie->GetVariable(&root, parentPath.c_str()) || !root.IsDisplayObject()) {
+			return;
+		}
+		const bool direct = className == "none";  // dev: the icons straight into the parent, no layer of ours
+		auto layer = direct ? std::optional<GValue>(root) : ChildByName(root, LAYER_NAME);
 		if (!layer) {
 			if (hide) {
 				shown = 0;
 				return;  // a HUD rebuilt since: nothing of ours is on it
 			}
-			layer = Make(movie, root, "flash.display.Sprite", LAYER_NAME);
+			layer = Make(movie, root, className.c_str(), LAYER_NAME);
 			if (!layer) {
 				return;
 			}
@@ -246,7 +292,7 @@ namespace MenuIcons
 		++writes;
 		if (hide || targets.empty()) {
 			if (layerVisible) {
-				SetVisible(*layer, false);
+				if (!direct) SetVisible(*layer, false);
 				layerVisible = false;
 				++hides;
 			}
@@ -254,7 +300,7 @@ namespace MenuIcons
 			return;
 		}
 		if (!layerVisible) {
-			SetVisible(*layer, true);
+			if (!direct) SetVisible(*layer, true);
 			layerVisible = true;
 		}
 		const auto     frame = movie->GetVisibleFrameRect();
@@ -267,15 +313,21 @@ namespace MenuIcons
 			const auto name = IconName(target.id);
 			auto       icon = ChildByName(*layer, name.c_str());
 			auto&      was = drawn[target.id];
+			const bool scaled = optScale.load();
+			const auto size = scaled ? 1.0f : spot.scale;  // the size it is drawn at
+			if (icon && spot.shown && optRemake.load() && was.visible && (MenuIconPlace::Moved(was.spot, spot) || std::abs(was.drawnScale - size) >= MenuIconPlace::SCALE_STEP)) {
+				layer->Invoke("removeChild", nullptr, &*icon, 1);
+				icon.reset();
+			}
 			if (!icon) {
 				if (!spot.shown) {
 					continue;
 				}
-				icon = Make(movie, *layer, "flash.display.Shape", name);
+				icon = Make(movie, *layer, "flash.display.Shape", name, target.glyph, color, size);
 				if (!icon) {
 					continue;
 				}
-				was = {};
+				was = { .glyph = target.glyph, .color = color, .drawnScale = size };
 			}
 			if (!spot.shown) {
 				if (was.visible) {
@@ -284,25 +336,34 @@ namespace MenuIcons
 				}
 				continue;
 			}
-			if (was.glyph != target.glyph || was.color != color) {
+			bool changed = false;
+			if (was.glyph != target.glyph || was.color != color || std::abs(was.drawnScale - size) >= MenuIconPlace::SCALE_STEP) {
 				GValue graphics;
 				if (!icon->GetMember("graphics", &graphics)) {
 					continue;
 				}
-				DrawGlyph(graphics, target.glyph, color);
+				DrawGlyph(graphics, target.glyph, color, size);
 				was.glyph = target.glyph;
 				was.color = color;
+				was.drawnScale = size;
+				changed = true;
 			}
 			if (!was.visible || MenuIconPlace::Moved(was.spot, spot)) {
 				icon->SetMember("x", GValue(static_cast<double>(spot.x)));
 				icon->SetMember("y", GValue(static_cast<double>(spot.y)));
-				icon->SetMember("scaleX", GValue(static_cast<double>(spot.scale)));
-				icon->SetMember("scaleY", GValue(static_cast<double>(spot.scale)));
+				if (scaled) {
+					icon->SetMember("scaleX", GValue(static_cast<double>(spot.scale)));
+					icon->SetMember("scaleY", GValue(static_cast<double>(spot.scale)));
+				}
 				was.spot = spot;
+				changed = true;
 			}
 			if (!was.visible) {
 				SetVisible(*icon, true);
 				was.visible = true;
+			}
+			if (changed && optReadd.load()) {
+				layer->Invoke("addChild", nullptr, &*icon, 1);
 			}
 			++visible;
 		}
@@ -343,8 +404,37 @@ namespace MenuIcons
 		return out;
 	}
 
+	std::string Opt(const std::string& a_name, bool a_on)
+	{
+		auto* opt = a_name == "scale" ? &optScale : a_name == "readd" ? &optReadd : a_name == "remake" ? &optRemake : nullptr;
+		if (!opt) {
+			return "error: menuicons opt scale|readd|remake 0|1";
+		}
+		*opt = a_on;
+		queued = true;
+		return std::format("{} = {}", a_name, a_on);
+	}
+
+	std::string Layer(const std::string& a_parent, const std::string& a_class)
+	{
+		{
+			std::scoped_lock l{ layerLock };
+			oldParent = layerParent;
+			layerParent = a_parent;
+			layerClass = a_class;
+		}
+		relayer = true;
+		queued = true;
+		return std::format("layer goes in {} as {}", a_parent, a_class);
+	}
+
 	std::string Describe()
 	{
-		return std::format("menuIcons: shown={} made={} writes={} hides={} skippedMenus={}", shown.load(), made.load(), writes.load(), hides.load(), skippedMenus.load());
+		std::uint32_t color = 0;
+		{
+			std::scoped_lock l{ targetsLock };
+			color = latestColor;
+		}
+		return std::format("menuIcons: shown={} made={} writes={} hides={} skippedMenus={} color={:06X} opt=scale:{},readd:{},remake:{}", shown.load(), made.load(), writes.load(), hides.load(), skippedMenus.load(), color, optScale.load(), optReadd.load(), optRemake.load());
 	}
 }

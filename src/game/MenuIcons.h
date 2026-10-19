@@ -15,5 +15,12 @@ namespace MenuIcons
 	// Dev (menuicons): each friend's menu, the spot over their head, its projection and where the icon went.
 	[[nodiscard]] std::string Probe();
 
+	// Dev (menuicons layer <path> <class>): makes the layer again under another object of the HUD's movie, as another
+	// class (flash.display.Sprite or MovieClip).
+	[[nodiscard]] std::string Layer(const std::string& a_parent, const std::string& a_class);
+
+	// Dev (menuicons opt scale|readd|remake 0|1): ways of writing the icons, to try on the rig.
+	[[nodiscard]] std::string Opt(const std::string& a_name, bool a_on);
+
 	[[nodiscard]] std::string Describe();
 }
