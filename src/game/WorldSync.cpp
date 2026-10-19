@@ -7,6 +7,7 @@
 #include "game/Equipment.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
+#include "game/LinkedRefs.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
 #include "game/SessionDeaths.h"
@@ -839,8 +840,10 @@ namespace WorldSync
 				if (!(inWorld ? *inWorld : InWorld() && !Story::InOpening())) {  // in the opening: once they're out
 					return false;
 				}
+				// In a cell, loaded or not (a reference of a cell the game let go of keeps its cell): one in none is
+				// between places, or on its way out, and waits.
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
-				return ref && !ref->IsDeleted();
+				return ref && !ref->IsDeleted() && ref->GetParentCell();
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
@@ -1098,19 +1101,30 @@ namespace WorldSync
 			return true;
 		}
 
-		// The reference a linked-ref entry points at. The engine fills the entry with the target's form ID
-		// and resolves it to a pointer later ("transient" refs); until then the pointer field holds the
-		// ID, and reading it as a pointer crashed both games at the Red Rocket terminal (2026-10-10).
-		RE::TESObjectREFR* LinkedTarget(const RE::ExtraLinkedRef& a_links, const RE::ExtraLinkedRef::LinkedRef& a_link)
+		// The form ID a form's memory says it has, every read guarded: a stale pointer must cost a lookup, not the game.
+		bool ReadFormId(const RE::TESForm* a_form, std::uint32_t& a_out)
 		{
-			const auto raw = reinterpret_cast<std::uintptr_t>(a_link.REFR);
-			if (!raw) {
-				return nullptr;
+			__try {
+				a_out = a_form->formID;
+				return true;
+			} __except (1) {
+				return false;
 			}
-			if (a_links.transientRefs || raw <= 0xFFFFFFFFull) {
-				return RE::TESForm::GetFormByID<RE::TESObjectREFR>(static_cast<std::uint32_t>(raw));
-			}
-			return a_link.REFR;
+		}
+
+		// The reference a linked-ref entry points at (LinkedRefs::Resolve): by the form ID the engine may still hold
+		// there, or by a pointer that names itself. Before 0.7.3 the field was read as a pointer whatever it held, and
+		// both games crashed at the Red Rocket terminal (2026-10-10); a pointer was then still taken on trust, and an
+		// entry marked transient was looked up by the pointer's low half.
+		RE::TESObjectREFR* LinkedTarget(const RE::ExtraLinkedRef::LinkedRef& a_link)
+		{
+			return LinkedRefs::Resolve<RE::TESObjectREFR>(
+				reinterpret_cast<std::uintptr_t>(a_link.REFR),
+				[](const RE::TESObjectREFR* a_ref) -> std::optional<std::uint32_t> {
+					std::uint32_t id = 0;
+					return ReadFormId(a_ref, id) ? std::optional{ id } : std::nullopt;
+				},
+				[](std::uint32_t a_id) { return RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id); });
 		}
 
 		// Starts watching references the player activated, and reports changes to watched ones.
@@ -1125,7 +1139,7 @@ namespace WorldSync
 				const auto links = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
 				if (links) {
 					for (const auto& link : links->linkedRefs) {
-						const auto target = LinkedTarget(*links, link);
+						const auto target = LinkedTarget(link);
 						if (target && Protocol::IsShareableRef(target->GetFormID())) {
 							watched[target->GetFormID()].until = a_now + WATCH_TIME;
 							++linkedWatched;
