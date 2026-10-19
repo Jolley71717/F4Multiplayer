@@ -10,7 +10,7 @@ docs/RELEASING.md.
 - **Category:** Gameplay
 - **Short description** (350 characters max):
 
-Co-op for up to 4 players through Steam: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save and plays their own main story. F4SE plugin, early alpha.
+Co-op for up to 4 players through Steam: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default (the host can keep it separate). F4SE plugin, early alpha.
 
 ## Description (BBCode)
 
