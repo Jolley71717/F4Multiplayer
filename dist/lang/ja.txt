@@ -110,6 +110,9 @@ quest.stuck = メインクエストが止まっていたため、{quest}から�
 quest.next = 次のクエスト
 quest.completed = {player}が{quest}を完了
 workshop.rescued = フレンドのコンテナに入れていたアイテムはインベントリにあります
+drops.container_hint = コンテナに入れた武器と防具はあなたのゲームにだけ残ります。フレンドに渡すには、そのそばで捨ててください
+drops.not_given = このアイテムはフレンドには拾えません。あなたのゲームの地面にだけ残ります
+drops.taken_first = フレンドが先に拾いました
 
 # --- The F1 menu ---
 menu.unavailable = マルチプレイ：メニューを利用できません

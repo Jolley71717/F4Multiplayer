@@ -122,6 +122,9 @@ namespace Text
 		{ "quest.next", "the next quest" },
 		{ "quest.completed", "{player} completed {quest}" },
 		{ "workshop.rescued", "What you kept in a friend's container is in your inventory" },
+		{ "drops.container_hint", "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
+		{ "drops.not_given", "Friends can't pick this item up: it stays on the ground in your game only" },
+		{ "drops.taken_first", "A friend picked it up first" },
 
 		// --- The F1 menu ---
 		{ "menu.unavailable", "Multiplayer: the menu isn't available" },

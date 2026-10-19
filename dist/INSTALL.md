@@ -153,6 +153,11 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+- **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
+  your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
+  Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,
+  holotapes, bobbleheads, magazines and quest items can't be given (each player collects their own).
+  Items left lying about are kept with the host's session.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
   backwards). A friend who hasn't started that quest has it started for them, so everyone sees the
   same gates open and the same people move on. When you join, your game is caught up on the host's

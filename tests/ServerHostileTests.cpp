@@ -157,6 +157,23 @@ namespace
 		case MT::kActivation:
 			add(DecodeActivation(a_packet));
 			break;
+		case MT::kDropPlaced:
+			if (const auto drop = DecodeDroppedItem(a_packet)) {
+				ids.push_back(drop->ownerId);
+			}
+			break;
+		case MT::kDropGone:
+			if (const auto gone = DecodeDropGone(a_packet)) {
+				ids.push_back(gone->takerId);
+			}
+			break;
+		case MT::kDropList:
+			if (const auto list = DecodeDropList(a_packet)) {
+				for (const auto& drop : list->drops) {
+					ids.push_back(drop.ownerId);
+				}
+			}
+			break;
 		default:
 			break;
 		}
@@ -259,7 +276,7 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		// Not by passing nothing on: some of each kind that names a player got through.
 		const auto relayed = TypesNaming(bobDuring, mallory->playerId);
 		for (const auto type : { MT::kVoiceRelay, MT::kWorkshopItem, MT::kActivation, MT::kLineSpoken, MT::kPinged, MT::kPlayerFace,
-				 MT::kPlayerEquipment, MT::kPlayerStatus, MT::kShotFired, MT::kQuestDone }) {
+				 MT::kPlayerEquipment, MT::kPlayerStatus, MT::kShotFired, MT::kQuestDone, MT::kDropPlaced }) {
 			if (!relayed.contains(Type(type))) {
 				Test::Fail(__FILE__, __LINE__, std::format("Bob was sent no type {} packet from Mallory", Type(type)));
 			}

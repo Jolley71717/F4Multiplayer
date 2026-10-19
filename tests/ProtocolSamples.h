@@ -39,6 +39,26 @@ namespace ProtocolSamples
 		bool        rejectsTrailing = true;
 	};
 
+	// A modded, renamed gun lying outside, as the server numbers it.
+	inline DroppedItem MakeDrop()
+	{
+		DroppedItem d;
+		d.dropId = 4;
+		d.ownerId = 2;
+		d.nonce = 0x0102030405060708ull;
+		d.base = 0x0004F46A;
+		d.count = 1;
+		d.templateIndex = 3;
+		d.mods = { { 0x0004F46B, 0, 0 }, { 0x001C3D37, 1, 0 } };
+		d.health = 0.75f;
+		d.name = "Old Reliable";
+		d.worldspace = 0x0000003C;
+		d.x = -59420.5f;
+		d.y = 72560.25f;
+		d.z = 6174.0f;
+		return d;
+	}
+
 	inline PlayerState MakeState(std::uint32_t a_seed)
 	{
 		PlayerState s;
@@ -241,6 +261,20 @@ namespace ProtocolSamples
 		}
 		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
 		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
+		for (const auto type : { MT::kReportDrop, MT::kDropPlaced }) {
+			s.push_back({ "Drop", Encode(MakeDrop(), type), D(DecodeDroppedItem) });
+			DroppedItem plain{ .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3 };
+			s.push_back({ "Drop(plain)", Encode(plain, type), D(DecodeDroppedItem) });
+		}
+		s.push_back({ "ClaimDrop", Encode(ClaimDrop{ 4, DropClaim::kGiveBack }), D(DecodeClaimDrop) });
+		// The dropper's game swapped its item for a copy: drop 1, the first a fresh server numbers (the Drop above, from a
+		// hostile client in ServerHostileTests), lies there for the others then.
+		s.push_back({ "ClaimDrop(placed)", Encode(ClaimDrop{ 1, DropClaim::kPlaced }), D(DecodeClaimDrop) });
+		s.push_back({ "ClaimDrop(kept)", Encode(ClaimDrop{ 9, DropClaim::kKept }), D(DecodeClaimDrop) });
+		s.push_back({ "DropGone", Encode(DropGone{ 4, 2 }), D(DecodeDropGone) });
+		s.push_back({ "DropRecord", Encode(DropRecord{ 0x1122334455667788ull, { 7, 8 }, { 3 } }), D(DecodeDropRecord) });
+		s.push_back({ "DropList", Encode(DropList{ false, { MakeDrop(), MakeDrop() } }), D(DecodeDropList) });
+		s.push_back({ "DropList(empty)", Encode(DropList{}), D(DecodeDropList) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -293,6 +327,9 @@ namespace ProtocolSamples
 		case MT::kReportSpawn:
 		case MT::kRename:
 		case MT::kRequestLoadOrder:
+		case MT::kReportDrop:
+		case MT::kClaimDrop:
+		case MT::kDropRecord:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -330,6 +367,9 @@ namespace ProtocolSamples
 		case MT::kSpawned:
 		case MT::kRenamed:
 		case MT::kLoadOrder:
+		case MT::kDropPlaced:
+		case MT::kDropGone:
+		case MT::kDropList:
 			return true;
 		}
 		return false;
