@@ -62,7 +62,6 @@ Back up your saves first, or keep a separate save for co-op.
 
 [b]Known gaps[/b]
 [list]
-[*]No muzzle flash on a friend's shots. You still see them fire and hear the gun.
 [*]Radiant quests (Preston's "a settlement needs our help" and the like) aren't shared.
 [*]You can't scrap or power a friend's settlement pieces.
 [*]You can't hand a friend an item yet.

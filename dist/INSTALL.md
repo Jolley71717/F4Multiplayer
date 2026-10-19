@@ -131,7 +131,7 @@ character your game places where your friend is, and moves as they move.
   faces, friends keep a settler's face instead (the log says so).
 - **What they wear:** the armor and weapons from their own save, with the mods on each one. Nothing of it is in
   your game: you can't loot it, and their inventory, caps and perks stay theirs.
-- **What you see them do:** walk, run, sneak and jump, aim, shoot (with the gun's sound, no muzzle flash yet),
+- **What you see them do:** walk, run, sneak and jump, aim, shoot (with the gun's sound and muzzle flash),
   reload, swing, punch, throw grenades, climb into power armor and park it, emote (F2, F3, F4), and turn on their
   Pip-Boy light. Their name is over their head when you look at them, with their health when they're hurt.
 - **What they can do in your world:** enemies see them and fight them, and a hit on their stand-in reaches the real
