@@ -158,9 +158,11 @@ namespace Equipment
 	// That, for the log and the paframes dev command.
 	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
 
-	// Hooks furniture activation (TESFurniture's Activate): as our player gets into a frame, what would have the engine
-	// say "You cannot use this at this time." is mended first (FrameUse::ChooseMend), and a refusal is logged with what
-	// the engine found (DescribeFrameUse). Once, as the game's data is ready.
+	// Patches TESFurniture::Activate's call into the player's furniture use (FrameUse::USE_CALL): as our player gets into
+	// a frame, what would have the engine say "You cannot use this at this time." is mended first (FrameUse::ChooseMend),
+	// and a refusal is logged with what the engine found (DescribeFrameUse). The player's furniture enter's message, the
+	// other place the game says it, is logged too (FrameUse::ENTER_MESSAGE_CALL). Each call is patched only where
+	// 1.11.240 has it. Once, at load.
 	void InstallFrameUse();
 
 	// What that hook mended and logged, for the paframes dev command.

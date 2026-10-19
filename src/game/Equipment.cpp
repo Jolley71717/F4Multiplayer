@@ -4,7 +4,11 @@
 #include "game/GearPlan.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
+#include "game/TextureFlush.h"
 
+#include <array>
+#include <cstring>
+#include <optional>
 #include <unordered_map>
 
 namespace Equipment
@@ -1015,22 +1019,31 @@ namespace Equipment
 
 	namespace
 	{
-		constexpr REL::ID SET_MARKER_USED{ 2202567 };  // TESObjectREFR::SetMarkerUsed(uint, Actor&, bool used, bool force) (+55EB70)
+		constexpr REL::ID SET_MARKER_USED{ 2202567 };         // TESObjectREFR::SetMarkerUsed(uint, Actor&, bool used, bool force) (+55EB70)
+		constexpr REL::ID FURNITURE_ACTIVATE{ 2198054 };      // TESFurniture::Activate (+44CA40)
+		constexpr REL::ID PLAYER_USE_FURNITURE{ 2232956 };    // the player's furniture use, which asks for a free marker (+D5D6B0)
+		constexpr REL::ID PLAYER_ENTER_FURNITURE{ 2233039 };  // the player's furniture enter, which picks the animation (+D69B80)
+		constexpr REL::ID SHOW_HUD_MESSAGE{ 2222440 };        // the HUD's corner message (+A37270)
+		constexpr std::size_t CALL_STUB = 14;                 // what a write_call<5> takes of the trampoline (one per target)
 
-		using FurnitureActivateFn = bool (*)(RE::TESForm*, RE::TESObjectREFR*, RE::TESObjectREFR*, RE::TESBoundObject*, std::int32_t);
-		FurnitureActivateFn originalFurnitureActivate = nullptr;
-		std::uint32_t       seatsFreed = 0;
-		std::uint32_t       framesStoodUp = 0;
-		std::uint32_t       refusalsLogged = 0;
+		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
+		using MessageFn = void (*)(const char*, const char*, bool, bool);
+		UseFn                   originalUse = nullptr;
+		MessageFn               originalMessage = nullptr;
+		std::uint32_t           seatsFreed = 0;
+		std::uint32_t           framesStoodUp = 0;
+		std::uint32_t           refusals = 0;
+		std::uint32_t           enterRefusals = 0;
+		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
 		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
 
-		// Our player pressed E on a frame (or a script had them activate one): what would turn them away is mended first
-		// (FrameUse::ChooseMend), and a refusal is logged with what the engine found.
-		bool FurnitureActivateHook(RE::TESForm* a_this, RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_by, RE::TESBoundObject* a_get, std::int32_t a_count)
+		// TESFurniture::Activate let our player at a frame (nobody else uses it) and asks the engine to seat them: what
+		// would turn them away is mended first (FrameUse::ChooseMend), and a refusal is logged with what the engine found.
+		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
 		{
-			const auto player = RE::PlayerCharacter::GetSingleton();
-			const bool ours = a_ref && player && a_by == player && IsPowerArmorFrame(a_this);
-			if (ours) {
+			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
+			if (frame) {
+				lastFrame = a_ref->GetFormID();
 				const auto facts = FrameUseOf(a_ref);
 				const auto mend = FrameUse::ChooseMend(facts);
 				if (mend.Any()) {
@@ -1045,34 +1058,70 @@ namespace Equipment
 				}
 				if (mend.freeSeat && facts.userMarker >= 0) {
 					static REL::Relocation<void (*)(RE::TESObjectREFR*, std::uint32_t, RE::Actor&, bool, bool)> setMarkerUsed{ SET_MARKER_USED };
-					setMarkerUsed(a_ref, static_cast<std::uint32_t>(facts.userMarker), *player, false, true);
+					setMarkerUsed(a_ref, static_cast<std::uint32_t>(facts.userMarker), *a_player, false, true);
 					++seatsFreed;
 				}
 			}
-			const bool done = originalFurnitureActivate(a_this, a_ref, a_by, a_get, a_count);
-			if (ours && !done && !InPowerArmor(player) && refusalsLogged < MAX_REFUSALS_LOGGED) {
-				++refusalsLogged;
+			const bool seated = originalUse(a_player, a_ref);
+			if (frame && !seated && refusals++ < MAX_REFUSALS_LOGGED) {
 				REX::INFO("Equipment: the engine did not let our player into frame {}", DescribeFrameUse(a_ref));
 			}
-			return done;
+			return seated;
+		}
+
+		// The player's furniture enter found no animation to get them in (FrameUse.h): what it says, and the frame they
+		// last asked for.
+		void EnterMessageHook(const char* a_text, const char* a_sound, bool a_throttle, bool a_warning)
+		{
+			if (enterRefusals++ < MAX_REFUSALS_LOGGED) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto race = player ? player->race : nullptr;
+				const auto frame = lastFrame ? RE::TESForm::GetFormByID(lastFrame) : nullptr;
+				const auto ref = frame ? frame->As<RE::TESObjectREFR>() : nullptr;
+				REX::INFO("Equipment: no animation gets our player into furniture (\"{}\"); race {:08X}, inPA={}, last frame {}", a_text ? a_text : "", race ? race->GetFormID() : 0,
+					player && InPowerArmor(player), ref ? DescribeFrameUse(ref) : "none");
+			}
+			originalMessage(a_text, a_sound, a_throttle, a_warning);
+		}
+
+		// The call at a_function + a_offset, if it calls a_target as 1.11.240 has it.
+		std::optional<std::uintptr_t> CallAt(const REL::ID& a_function, std::size_t a_offset, const REL::ID& a_target)
+		{
+			const auto                  site = a_function.address() + a_offset;
+			std::array<std::uint8_t, 5> bytes{};
+			std::memcpy(bytes.data(), reinterpret_cast<const void*>(site), bytes.size());
+			if (TextureFlush::CallTarget(bytes, site) != a_target.address()) {
+				return std::nullopt;
+			}
+			return site;
 		}
 	}
 
 	void InstallFrameUse()
 	{
-		if (originalFurnitureActivate) {
+		if (originalUse) {
 			return;
 		}
-		REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE::TESFurniture[0] };
-		constexpr std::size_t ACTIVATE_INDEX = 0x40;  // TESForm::Activate
-		const auto            slot = vtable.address() + sizeof(void*) * ACTIVATE_INDEX;
-		originalFurnitureActivate = *reinterpret_cast<FurnitureActivateFn*>(slot);
-		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&FurnitureActivateHook));
-		REX::INFO("Equipment: hooked furniture activation (vtable {:X})", vtable.address());
+		auto& trampoline = REL::GetTrampoline();
+		if (trampoline.free_size() < 2 * CALL_STUB) {
+			REX::WARN("Equipment: no room to watch power armor entry ({} bytes free); left as it is", trampoline.free_size());
+			return;
+		}
+		if (const auto site = CallAt(FURNITURE_ACTIVATE, FrameUse::USE_CALL, PLAYER_USE_FURNITURE)) {
+			originalUse = reinterpret_cast<UseFn>(trampoline.write_call<5>(*site, &UseHook));
+		} else {
+			REX::WARN("Equipment: TESFurniture::Activate doesn't call the player's furniture use where 1.11.240 does (another plugin's patch?); frames are not mended");
+		}
+		if (const auto site = CallAt(PLAYER_ENTER_FURNITURE, FrameUse::ENTER_MESSAGE_CALL, SHOW_HUD_MESSAGE)) {
+			originalMessage = reinterpret_cast<MessageFn>(trampoline.write_call<5>(*site, &EnterMessageHook));
+		} else {
+			REX::WARN("Equipment: the player's furniture enter doesn't show its message where 1.11.240 does; its refusals are not logged");
+		}
+		REX::INFO("Equipment: power armor entry watched (use {}, enter message {})", originalUse != nullptr, originalMessage != nullptr);
 	}
 
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={}", seatsFreed, framesStoodUp, refusalsLogged);
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={}", seatsFreed, framesStoodUp, refusals, enterRefusals);
 	}
 }

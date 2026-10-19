@@ -269,7 +269,6 @@ namespace
 			}
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
-			Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
 			ExitMusic::AtShutdown([] {
 				shutdownStage = true;  // first: a frame message the engine dispatches from here on runs nothing
@@ -785,8 +784,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 140 of 256 bytes used: two 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one)
-	// and HavokGuard::Install's two detours (2 x 56).
+	// 168 of 256 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two) and HavokGuard::Install's two detours (2 x 56).
 	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
@@ -812,6 +811,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
+	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

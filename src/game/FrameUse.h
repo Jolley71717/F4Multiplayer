@@ -1,22 +1,37 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // Why the engine turns our player away from a power armor frame with "You cannot use this at this time." (the game
-// setting sFailedActivation). Read from disk in 1.11.240: TESFurniture::Activate (2198054) refuses a frame silently
-// when another actor uses or reserves its marker (TESObjectREFR::HasUsersOtherThan with the player, 2202574); past that,
-// the player's own furniture use (2232956) asks TESObjectREFR::HasFreeMarker(true) (2202569, which is
-// GetFirstFreeMarkerIndex(no actor, reservations ignored), 2202570) and shows that message when it finds none. That
-// finds none when:
-// - the frame is not upright: the up axis of its orientation (TESObjectREFR::GetOrientation, from its angle) is further
-//   from straight up than InteractionUtils::QUprightAngleCosine (4796566) allows. A frame knocked onto its back or side
-//   cannot be got into;
-// - every enabled marker is used (ExtraUsedMarkers) by an actor that still exists, whoever it is: with no actor asking,
-//   our own player counts too. A marker the engine still has as used by our player once they are out of the frame is
-//   what HasUsersOtherThan lets through and HasFreeMarker refuses.
+// setting sFailedActivation). Read from disk in 1.11.240, where the setting's value is read in two places only:
+// - TESFurniture::Activate (2198054) refuses a frame without a word when another actor uses or reserves its marker
+//   (TESObjectREFR::HasUsersOtherThan with the player, 2202574). Past that, it calls the player's furniture use
+//   (2232956, at +0x384) and returns true whatever that answers, so a refusal is seen at that call, not in Activate's
+//   answer. The use asks TESObjectREFR::HasFreeMarker(true) (2202569: GetFirstFreeMarkerIndex with no actor and
+//   reservations ignored, 2202570). When it finds none it shows sFailedActivation for anything that is not a workbench
+//   or a terminal (a frame is neither), unless the frame is the one the engine last told the player was in use, which
+//   gets sObjectInUse instead. It finds none when:
+//   - the frame is not upright: the z of its up axis (TESObjectREFR::GetOrientation, from its angle for a non-actor)
+//     is under InteractionUtils::QUprightAngleCosine (4796566), the cosine of the game setting fFurnitureUprightAngle
+//     (10 degrees). A frame leaning more than 10 degrees, or with an angle that is not a number, cannot be got into;
+//   - every enabled marker is used (ExtraUsedMarkers) by an actor that still exists, whoever it is: with no actor
+//     asking, our own player counts too. A marker the engine still has as used by our player once they are out of the
+//     frame is what HasUsersOtherThan lets through and HasFreeMarker refuses.
+// - The player's furniture enter (2233039) shows it when no enter animation fits the player and the furniture, on
+//   their race nor the power armor race (sPARequred or sPADisallowed when one fits the other race). For a human player
+//   and a frame, Fallout4.esm's FurnitureInteractionEnter tree always has one (FurnitureEnterFromStand and its combat
+//   twin between them cover in and out of combat), so this one is only logged (ENTER_MESSAGE_CALL).
 // Kept free of the game so it can be tested; Equipment::FrameUseOf reads the facts.
 namespace FrameUse
 {
+	// TESFurniture::Activate's call into the player's furniture use: where our player's refusals are seen, and where
+	// what would refuse them is mended first.
+	inline constexpr std::size_t USE_CALL = 0x384;
+
+	// The player's furniture enter's one HUD message call: sFailedActivation, sPARequred or sPADisallowed.
+	inline constexpr std::size_t ENTER_MESSAGE_CALL = 0x25F;
+
 	struct Facts
 	{
 		float         up = 1.0f;          // the up axis's z (cos of the tilt), from its angle
@@ -42,6 +57,7 @@ namespace FrameUse
 		kNoMarker,   // no enabled marker
 	};
 
+	// Upright as the engine asks it (comiss and jae): an up that is not a number is not upright.
 	constexpr bool Upright(const Facts& a_facts)
 	{
 		return a_facts.up >= a_facts.upMin;
@@ -67,10 +83,11 @@ namespace FrameUse
 		return a_facts.used > 0 ? Verdict::kInUse : Verdict::kFree;
 	}
 
-	// What is done for our player pressing E on a frame the engine would turn them away from (Equipment's activation
-	// hook), before the engine is asked: a seat the engine still has as our own player's while they are not in it is
-	// given back, once they are in no furniture and no frame (nobody else's is ever touched: theirs is refused without a word anyway, and is theirs); a frame the
-	// engine finds not upright is stood up where it is, turned as it was. Anything else is left to the engine.
+	// What is done for our player pressing E on a frame the engine would turn them away from (Equipment's hook on the
+	// call into the use), before the engine asks for a free marker: a frame the engine finds not upright is stood up
+	// where it is, turned as it was; a seat the engine still has as our own player's while they are not in it is given
+	// back, once they are in no furniture and no frame. Nobody else's seat is ever touched: theirs is refused without a
+	// word before this, and is theirs. Anything else is left to the engine.
 	struct Mend
 	{
 		bool standUp = false;

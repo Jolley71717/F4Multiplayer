@@ -7,6 +7,8 @@
 #include "game/FrameUse.h"
 
 #include <cmath>
+#include <limits>
+#include <string_view>
 
 namespace
 {
@@ -15,7 +17,7 @@ namespace
 
 	constexpr std::uint32_t PLAYER = 0x00000014;
 	constexpr std::uint32_t RAIDER = 0x0002A001;
-	constexpr float         UP_MIN = 0.7071f;  // about what the engine's InteractionUtils::QUprightAngleCosine is
+	constexpr float         UP_MIN = 0.9848f;  // the engine's InteractionUtils::QUprightAngleCosine: cos of fFurnitureUprightAngle, 10 degrees
 
 	// A frame standing upright with its one seat free: the player gets in.
 	Facts Standing()
@@ -49,12 +51,33 @@ TEST("frame use: a frame knocked onto its back says the player cannot use it at 
 	CHECK(FrameUse::Judge(frame) == Verdict::kTilted);
 }
 
-TEST("frame use: a frame tipped a little, within what the game allows, is still upright")
+TEST("frame use: a frame tipped a little, within the 10 degrees the game allows, is still upright")
 {
 	auto frame = Standing();
-	frame.up = std::cos(0.3f);
+	frame.up = std::cos(0.1f);  // under 6 degrees
 	CHECK(FrameUse::Upright(frame));
 	CHECK(FrameUse::Judge(frame) == Verdict::kFree);
+}
+
+TEST("frame use: a frame leaning 15 degrees, on a slope, say, is past what the game allows and is stood up")
+{
+	auto frame = Standing();
+	frame.up = std::cos(15.0f * 3.14159265f / 180.0f);
+	frame.free = false;
+	CHECK(FrameUse::Judge(frame) == Verdict::kTilted);
+	const auto mend = FrameUse::ChooseMend(frame);
+	CHECK(mend.standUp);
+	CHECK(!mend.freeSeat);
+}
+
+TEST("frame use: a frame whose angle is not a number is not upright to the game either, and is stood up")
+{
+	auto frame = Standing();
+	frame.up = std::cos(std::numeric_limits<float>::quiet_NaN());
+	frame.free = false;
+	CHECK(!FrameUse::Upright(frame));
+	CHECK(FrameUse::Judge(frame) == Verdict::kTilted);
+	CHECK(FrameUse::ChooseMend(frame).standUp);
 }
 
 TEST("frame use: a frame whose seat the game still has as our player's, with the player out of it, is a stale use")
