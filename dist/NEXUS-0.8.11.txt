@@ -1,0 +1,3 @@
+Fixed a crash for the other players when a friend who had just picked a new face in the game's face editor loaded in nearby
+Still protocol 35 (plays with 0.8.9 and 0.8.10), but the fix only works in games that have it: everyone should update, the host most of all
+Full notes on GitHub
