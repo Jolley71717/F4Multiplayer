@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 
 // Our copy of an NPC another game runs has its health there: the owner's game deals what the NPC takes, our player's
 // hits are reported (WorldSync's health reports, then the server's belief in our kill), and another player's hits come
@@ -18,6 +19,11 @@
 // come a frame after its damage, is never taken back; what wears a copy down a little at a time (a fire, a bleed) is
 // given back before it adds up. A lethal blow in one go is not given back (the explosions of friends' throws are
 // passed by: BlastShield). Health a report sets, or a copy gains, is where it stands from then on.
+//
+// What our hits take off a copy is booked (TakeOurs) and sent as damage (kReportDamage), which the game that runs the NPC
+// takes off its own health; that game then shares where its health stands (HealthShare). A report of the copy's health
+// instead, as before protocol 40, healed off the NPC whatever its own game had taken from it since the copy last heard (a
+// fire's burn, a friend's shot on its way).
 //
 // Our hits are our player's and those of the actors our game is answerable for (Judge): each hit is to count in one
 // game only, the game that runs whoever struck it. Pure, so it can be tested without the game.
@@ -148,8 +154,9 @@ namespace CopyHealth
 			if (!entry.dropSince) {
 				entry.dropSince = a_now;
 			}
-			// A hit of ours around the drop: the copy is ours to hurt.
+			// A hit of ours around the drop: the copy is ours to hurt, and what it took goes to the NPC's game (TakeOurs).
 			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
+				entry.ours += *entry.health - a_health;
 				entry.health = a_health;
 				entry.dropSince.reset();
 				return 0.0f;
@@ -159,6 +166,26 @@ namespace CopyHealth
 			}
 			entry.dropSince.reset();
 			return *entry.health - a_health;
+		}
+
+		// Another game's report sets the copy from a_before to a_health now. What a hit of ours took off it since it was last
+		// checked (the report came between the blow and the next frame) is ours all the same, not overwritten.
+		void Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now)
+		{
+			if (auto it = entries.find(a_id); it != entries.end()) {
+				auto& entry = it->second;
+				if (entry.health && entry.ourHit && a_before < *entry.health - SLACK && *entry.ourHit + OURS_GRACE >= a_now) {
+					entry.ours += *entry.health - a_before;
+				}
+			}
+			Set(a_id, a_health);
+		}
+
+		// What hits of ours took off the copy since this was last asked (0: nothing): for the game that runs it to take off.
+		float TakeOurs(std::uint32_t a_id)
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() ? std::exchange(it->second.ours, 0.0f) : 0.0f;
 		}
 
 		// The health the copy stands at (none before it is first seen).
@@ -187,6 +214,7 @@ namespace CopyHealth
 			std::optional<float>             health;
 			std::optional<Clock::time_point> ourHit;
 			std::optional<Clock::time_point> dropSince;
+			float                            ours = 0.0f;  // taken by hits of ours, not yet sent (TakeOurs)
 		};
 
 		std::unordered_map<std::uint32_t, Entry> entries;

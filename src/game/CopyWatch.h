@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace RE
 {
@@ -31,6 +33,10 @@ namespace CopyWatch
 
 	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
 	void Frame();
+
+	// What our hits took off our copies since the last call (CopyHealth::Book::TakeOurs), each as a session id and a
+	// fraction of the copy's maximum: WorldSync sends it to the game that runs the NPC (kReportDamage).
+	[[nodiscard]] std::vector<std::pair<std::uint32_t, float>> TakeDamage();
 
 	void Reset();
 

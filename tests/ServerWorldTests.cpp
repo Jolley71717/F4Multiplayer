@@ -257,6 +257,29 @@ TEST("server world: health is relayed to the others, but not for the dead")
 	CHECK(Count(Received(f, 2), MT::kActorHealth) == 0);
 }
 
+TEST("server world: damage a player took off their copy of an NPC is relayed to the others as damage, never none, more than all of it, or for the dead")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.25f }, MT::kReportDamage));
+	const auto damage = Decoded(Received(f, 2), MT::kActorDamaged, Protocol::DecodeActorHealth);
+	REQUIRE(damage.size() == 1);
+	CHECK(damage[0].refId == NPC);
+	CHECK(damage[0].health == 0.25f);
+	CHECK(Count(Received(f, 1), MT::kActorDamaged) == 0);
+
+	for (const float bad : { 0.0f, -0.5f, 1.5f }) {
+		f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, bad }, MT::kReportDamage));
+	}
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ RUNTIME, 0.2f }, MT::kReportDamage));
+	f.fake->Deliver(1, Death(NPC));
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.2f }, MT::kReportDamage));
+	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 0);
+}
+
 // ---- containers -------------------------------------------------------------------------
 
 TEST("server world: container changes are numbered and echoed to everyone with the sender's ID")

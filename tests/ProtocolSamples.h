@@ -150,7 +150,7 @@ namespace ProtocolSamples
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
 			s.push_back({ "ActorDeath found dead", Encode(ActorDeath{ .refId = REF_A, .playerId = 3, .foundDead = true }, type), D(DecodeActorDeath) });
 		}
-		for (const auto type : { MT::kReportHealth, MT::kActorHealth }) {
+		for (const auto type : { MT::kReportHealth, MT::kActorHealth, MT::kReportDamage, MT::kActorDamaged }) {
 			s.push_back({ "ActorHealth", Encode(ActorHealth{ REF_A, 0.25f }, type), D(DecodeActorHealth) });
 		}
 		s.push_back({ "ContainerChange", Encode(ContainerChange{ REF_A, 0x0000000F, -12 }, MT::kReportContainer), D(DecodeContainerChange) });
@@ -263,6 +263,7 @@ namespace ProtocolSamples
 		case MT::kPlayerState:
 		case MT::kReportDeath:
 		case MT::kReportHealth:
+		case MT::kReportDamage:
 		case MT::kReportContainer:
 		case MT::kReportPickup:
 		case MT::kReportRefState:
@@ -300,6 +301,7 @@ namespace ProtocolSamples
 		case MT::kActorDied:
 		case MT::kWorldState:
 		case MT::kActorHealth:
+		case MT::kActorDamaged:
 		case MT::kContainerChanged:
 		case MT::kRefPickedUp:
 		case MT::kRefStateChanged:

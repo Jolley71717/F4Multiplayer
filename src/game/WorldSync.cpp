@@ -6,6 +6,7 @@
 #include "game/DoorShare.h"
 #include "game/Equipment.h"
 #include "game/FoundDead.h"
+#include "game/HealthShare.h"
 #include "game/Hud.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
@@ -221,6 +222,9 @@ namespace WorldSync
 
 		std::uint32_t                     downNotDead = 0;    // a death event or a found-dead check on one that only went down (not reported)
 		std::uint32_t                     essentialHolds = 0;  // deaths heard of for one essential here: held, not applied
+		std::uint32_t                     damageReported = 0;  // what our hits took off copies, sent (kReportDamage)
+		std::uint32_t                     damageApplied = 0;   // friends' damage taken off NPCs we run (kActorDamaged)
+		std::uint32_t                     damageIgnored = 0;   // ... that came for one we don't run (its runner takes it off)
 		std::unordered_set<std::uint32_t> essentialHeld;       // those, logged once each
 
 		// Down, and gets up again (SessionDeaths::GetsUp: Dogmeat at the end of his health): alive for the session.
@@ -562,6 +566,45 @@ namespace WorldSync
 			}
 			CopyWatch::HealthSet(a_refId, before, values.GetActorValue(*info));
 			return true;
+		}
+
+		// The health of the NPCs our game runs, as the friends last heard it (HealthShare): what changed is reported.
+		HealthShare::Book healthShare;
+
+		// Reports the health of every loaded NPC our game runs that changed since the session last heard it, by
+		// anything (a fire, a burn, poison: no hit of ours reports those), a few times a second at most for each.
+		void ShareHealth(const RE::ActorValueInfo& a_info, Clock::time_point a_now)
+		{
+			const auto local = NpcSync::LocalPlayer();
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (local == 0 || !lists) {
+				healthShare.Clear();
+				return;
+			}
+			std::unordered_set<std::uint32_t> seen;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || Puppets::IsPuppet(actor) || actor->IsDead(false) || !actor->Get3D() || !actor->GetParentCell()) {
+					continue;
+				}
+				const auto id = actor->GetFormID();
+				const auto wire = WireId(id);
+				if (wire == 0 || dead.Contains(id) || NpcSync::Owner(wire) != local) {
+					continue;
+				}
+				const auto& values = static_cast<RE::ActorValueOwner&>(*actor);
+				const float maximum = values.GetPermanentActorValue(a_info);
+				if (maximum <= 0.0f) {
+					continue;
+				}
+				seen.insert(wire);
+				const float fraction = std::clamp(values.GetActorValue(a_info) / maximum, 0.0f, 1.0f);
+				if (healthShare.Due(wire, fraction, a_now)) {
+					Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
+				}
+			}
+			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); });
 		}
 
 		class HitWatcher :
@@ -1461,6 +1504,33 @@ namespace WorldSync
 		}
 	}
 
+	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage)
+	{
+		if (!(a_damage > 0.0f && a_damage <= 1.0f) || !CanApply()) {
+			return;
+		}
+		// A spawn's: our own NPC (a copy of a friend's is not ours to hurt). A plugin's reference is the same everywhere.
+		const auto local = Protocol::IsSpawnRef(a_refId) ? Spawns::LocalOf(a_refId) : IsShareableRef(a_refId) ? a_refId : 0;
+		const auto us = NpcSync::LocalPlayer();
+		if (local == 0 || dead.Contains(local) || us == 0 || NpcSync::Owner(a_refId) != us) {
+			++damageIgnored;
+			return;
+		}
+		const auto info = HealthInfo();
+		const auto actor = LoadedActor(local);
+		if (!info || !actor || actor->IsDead(false)) {
+			++damageIgnored;
+			return;
+		}
+		auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
+		const float maximum = values.GetPermanentActorValue(*info);
+		if (maximum <= 0.0f) {
+			return;
+		}
+		values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
+		++damageApplied;
+	}
+
 	bool MayClaim(std::uint32_t a_refId, bool a_essential)
 	{
 		return dead.MayClaim(a_refId, Clock::now(), a_essential);
@@ -1564,11 +1634,21 @@ namespace WorldSync
 					if (maximum > 0.0f) {
 						const float fraction = values.GetActorValue(*info) / maximum;
 						Queue(Protocol::Encode(Protocol::ActorHealth{ wire, fraction }, Protocol::MessageType::kReportHealth));
+						healthShare.Sent(wire, fraction, Clock::now());
 					}
 				}
 			}
 		}
 		hitLastFrame.clear();
+		// The NPCs we run: what they lost (or got back) since, by anything but our hits.
+		if (const auto info = HealthInfo()) {
+			ShareHealth(*info, Clock::now());
+		}
+		// What our hits took off copies of NPCs other games run: theirs to take off (their health comes back shared).
+		for (const auto& [wire, damage] : CopyWatch::TakeDamage()) {
+			Queue(Protocol::Encode(Protocol::ActorHealth{ wire, damage }, Protocol::MessageType::kReportDamage));
+			++damageReported;
+		}
 		// Our hits (CopyHealth::Judge): our player's, and on a copy of an NPC another game runs, those of the actors our
 		// game runs (our companion, a settler, a raider of ours). Fighting or talking to an NPC another player's game runs
 		// brings it over to ours; another actor of ours claims it only with the blow that killed it (CopyHealth::After).
@@ -1588,7 +1668,8 @@ namespace WorldSync
 			const auto target = hitter != CopyHealth::Hitter::kNotOurs ? RE::TESForm::GetFormByID<RE::Actor>(hit.target) : nullptr;
 			const bool killed = dead.Contains(hit.target) || (target && target->IsDead(false));
 			const auto after = CopyHealth::After(hitter, owner, local, killed);
-			if (after.report) {
+			// On a copy what the hit took goes as damage (CopyWatch books it: TakeDamage below), not as the copy's health.
+			if (after.report && !copy) {
 				hitLastFrame.insert(hit.target);
 			}
 			if (after.claim) {
@@ -1705,6 +1786,7 @@ namespace WorldSync
 		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
 		hitLastFrame.clear();
+		healthShare.Clear();
 		recentActivations.clear();
 		watched.clear();
 		pendingRefStates.clear();
@@ -1799,7 +1881,8 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size()) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
-			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds);
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={} damage={}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), damageReported, damageApplied,
+			   damageIgnored);
 	}
 }
