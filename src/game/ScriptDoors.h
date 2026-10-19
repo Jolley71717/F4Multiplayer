@@ -30,8 +30,11 @@
 //   - Vault 75's and Vault 95's gear doors are statics, already open; DLCCoast.esm (Vault 118) has no such console.
 //   - The console's own lever animation: cosmetic, and the friend's console still works (once the stage is done,
 //     pulling it only plays the lever).
-//   - Other dungeon stages that open a door (DN050, DN058, DN084, DN102, DN136...): they also start scenes or
-//     packages, move NPCs or set more stages. Not checked one by one; not listed.
+//   - Every other stage that opens a way. docs/script-doors-survey.md read the whole game for them (2026-10-19)
+//     and found none that only opens it: the rest also start scenes, send NPCs out, set objectives or more stages
+//     (DN050, DN102, DN048...), are the story's (DN084, DN136...), are set by a quest QuestSync shares (DN017's
+//     200, DN130's 20), or are set by nothing placed in the world (DN066's 10 and 20; its terminals open the doors).
+//     A door a terminal or a card reader opens is an activator's open state (below), not a stage.
 //   - Any activator's open state (an elevator's doors and car, a call panel: DoorShare), and the open state of the
 //     containers, furniture and markers a player uses (their lids and the like), which WorldSync logs as "opened by
 //     a script (not a door)".
