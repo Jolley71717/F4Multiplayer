@@ -32,7 +32,8 @@ namespace
 		bool                         moving = false;
 		int                          state = CreatureGait::WALK;  // the MovingStateMachine state it plays
 		std::int32_t                 sync = CreatureGait::WALK;   // iSyncLocomotionRangeID
-		std::map<std::string, float> rates{ { "fWalkClipMult", 1.0f }, { "fTrotClipMult", 1.0f }, { "fTrotFastClipMult", 1.0f }, { "fRunClipMult", 1.0f } };
+		// The rates as the root graph (DogmeatRoot.hkx) starts them: the fast trot's at 0.
+		std::map<std::string, float> rates{ { "fWalkClipMult", 1.0f }, { "fTrotClipMult", 1.0f }, { "fTrotFastClipMult", 0.0f }, { "fRunClipMult", 1.0f } };
 		int                          gaitEvents = 0;
 		int                          restarts = 0;  // a gait event to the state it was in: its clip started over
 
@@ -81,7 +82,7 @@ namespace
 		std::int32_t                range = -1;
 	};
 
-	// One DriveAnimation frame for a dog, in its order: the gait's state, start or stop, the clip's rate, the event.
+	// One DriveAnimation frame for a dog, in its order: the gait's state, start or stop, every clip's rate, the event.
 	void Frame(DogGraph& a_graph, Copy& a_copy, const Protocol::ActorState& a_state, MoveSync::Clock::time_point a_now)
 	{
 		const auto plan = CreatureGait::Choose((a_state.flags & Protocol::kOwnGait) != 0, a_state.gait, a_state.gaitRate, a_state.speed);
@@ -89,7 +90,9 @@ namespace
 		const auto step = MoveSync::Drive(a_copy.moving, a_copy.nextResync, a_state.speed, a_now, [&](MoveSync::Event a_event) {
 			return a_graph.Notify(a_event == MoveSync::Event::kStart ? "moveStart" : "moveStop");
 		});
-		a_graph.rates[plan.range->rateVariable] = plan.rate;
+		for (const auto& write : CreatureGait::Rates(plan, a_state.speed)) {
+			a_graph.rates[write.variable] = write.rate;
+		}
 		if (CreatureGait::Send(step.moving, a_copy.moving, plan.range->id, a_copy.range, step.resent != nullptr)) {
 			a_graph.Notify(plan.range->event);
 		}
@@ -301,4 +304,104 @@ TEST("creature gait: a state without the owner's gait goes by the speed, and the
 	CHECK(CreatureGait::Send(true, false, CreatureGait::RUN, CreatureGait::RUN, false));
 	CHECK(CreatureGait::Find(4) == nullptr);
 	CHECK(std::strcmp(CreatureGait::Find(CreatureGait::RUN)->event, "ToRunForward") == 0);
+}
+
+TEST("creature gait: the host's Dogmeat that set off walking and broke into a run is shown running, though his graph still says walk")
+{
+	// Nothing in the dog's graph writes iSyncLocomotionRangeID (its MovingStateMachine keeps no sync variable): it says
+	// the gait he set off in. A dog following his player sets off at a walk and runs to keep up, reported walking, the
+	// walk's rate as it last was, at the run's speed.
+	std::vector<Protocol::ActorState> sent = Repeat(Owned(95.0f, CreatureGait::WALK, 1.0f), 8);
+	for (const float speed : { 300.0f, 458.0f, 470.0f }) {
+		const auto part = Repeat(Owned(speed, CreatureGait::WALK, 1.0f), 8);
+		sent.insert(sent.end(), part.begin(), part.end());
+	}
+	const auto got = ThroughServer(sent);
+	REQUIRE(got.size() == sent.size());
+	CHECK(got.back().gait == CreatureGait::WALK);  // what the joiner is told
+
+	DogGraph graph;
+	Copy     copy;
+	auto     now = t0;
+	for (std::size_t i = 0; i < got.size(); ++i) {
+		Frame(graph, copy, got[i], now += FRAME);
+		CHECK(graph.moving);
+		if (i < 8) {
+			CHECK(graph.state == CreatureGait::WALK);  // a walk at a walk's speed is believed
+			CHECK(Near(graph.Rate(), 1.0f));
+		}
+	}
+	// At 458 and over: the run, at the speed over the run's pace, not a walk carried along at five times its own.
+	CHECK(graph.state == CreatureGait::RUN);
+	CHECK(Near(graph.Rate(), 470.0f / CreatureGait::Find(CreatureGait::RUN)->pace));
+	const float legs = CreatureGait::Find(graph.state)->pace * graph.Rate();
+	CHECK(legs > 440.0f);
+	CHECK(legs < 500.0f);
+	CHECK(graph.gaitEvents == 3);  // setting off, the trot fast at 300 (nearest pace), the run
+}
+
+TEST("creature gait: a walk backwards at a run's speed is not believed, a slow one is")
+{
+	CHECK(CreatureGait::Choose(true, CreatureGait::WALK_BACK, CreatureGait::PackRate(1.0f), 458.0f).range->id == CreatureGait::RUN);
+	CHECK(CreatureGait::Choose(true, CreatureGait::WALK_BACK, CreatureGait::PackRate(0.4f), 30.0f).range->id == CreatureGait::WALK_BACK);
+	CHECK(Near(CreatureGait::Choose(true, CreatureGait::WALK_BACK, CreatureGait::PackRate(0.4f), 30.0f).rate, 0.4f));
+	// Overruled, the owner's rate goes with its gait: the rate is the speed's for the gait played.
+	CHECK(Near(CreatureGait::Choose(true, CreatureGait::WALK, CreatureGait::PackRate(1.0f), 458.0f).rate, 1.0f));
+	CHECK(Near(CreatureGait::Choose(true, CreatureGait::TROT, CreatureGait::PackRate(1.0f), 900.0f).rate, 900.0f / 458.0f));
+
+	// Fits: up to twice the clip's pace, and any speed under it.
+	const auto& walk = *CreatureGait::Find(CreatureGait::WALK);
+	CHECK(CreatureGait::Fits(walk, 0.0f));
+	CHECK(CreatureGait::Fits(walk, 150.0f));
+	CHECK(CreatureGait::Fits(walk, walk.pace * CreatureGait::FIT));
+	CHECK(!CreatureGait::Fits(walk, 200.0f));
+	CHECK(CreatureGait::Fits(*CreatureGait::Find(CreatureGait::TROT), 400.0f));
+	CHECK(!CreatureGait::Fits(*CreatureGait::Find(CreatureGait::TROT), 458.0f));
+	CHECK(CreatureGait::Fits(*CreatureGait::Find(CreatureGait::RUN), 900.0f));
+	// The engine's own pairs, as read live and in the tests above, all fit.
+	CHECK(CreatureGait::Choose(true, CreatureGait::WALK, CreatureGait::PackRate(0.98f), 93.4f).range->id == CreatureGait::WALK);
+	CHECK(CreatureGait::Choose(true, CreatureGait::TROT, CreatureGait::PackRate(1.05f), 230.0f).range->id == CreatureGait::TROT);
+	CHECK(CreatureGait::Choose(true, CreatureGait::TROT_FAST, CreatureGait::PackRate(1.0f), 377.0f).range->id == CreatureGait::TROT_FAST);
+}
+
+TEST("creature gait: every clip's rate is written, so a fast trot nobody told the copy about is not frozen")
+{
+	// The run planned at its own rate; the rest at the speed over their pace, within the limits.
+	const auto plan = CreatureGait::Choose(true, CreatureGait::RUN, CreatureGait::PackRate(1.03f), 458.0f);
+	const auto rates = CreatureGait::Rates(plan, 458.0f);
+	std::map<std::string, float> by;
+	for (const auto& write : rates) {
+		REQUIRE(write.variable != nullptr);
+		by[write.variable] = write.rate;
+	}
+	CHECK(by.size() == 4);
+	CHECK(Near(by["fRunClipMult"], 1.03f));
+	CHECK(Near(by["fTrotFastClipMult"], 458.0f / 377.2f));
+	CHECK(Near(by["fTrotClipMult"], 458.0f / 219.0f));
+	CHECK(by["fWalkClipMult"] == CreatureGait::MAX_RATE);
+	for (const auto& entry : by) {
+		CHECK(entry.second >= CreatureGait::MIN_RATE);
+	}
+	// The walk backwards shares the walk's variable: the plan's rate is the one written.
+	const auto back = CreatureGait::Choose(true, CreatureGait::WALK_BACK, CreatureGait::PackRate(0.92f), 70.0f);
+	for (const auto& write : CreatureGait::Rates(back, 70.0f)) {
+		if (std::strcmp(write.variable, "fWalkClipMult") == 0) {
+			CHECK(Near(write.rate, 0.92f));
+		}
+	}
+
+	// A copy running whose graph something put in the fast trot (the root graph starts that clip's rate at 0): it
+	// plays it moving, not stuck in its first pose.
+	const auto got = ThroughServer(Repeat(Owned(458.0f, CreatureGait::RUN, 1.0f), 10));
+	DogGraph   graph;
+	Copy       copy;
+	auto       now = t0;
+	REQUIRE(graph.rates["fTrotFastClipMult"] == 0.0f);
+	Frame(graph, copy, got[0], now += FRAME);
+	graph.state = CreatureGait::TROT_FAST;
+	for (std::size_t i = 1; i < got.size(); ++i) {
+		Frame(graph, copy, got[i], now += FRAME);
+	}
+	CHECK(graph.state == CreatureGait::TROT_FAST);  // told nothing new: the copy sends a gait's event only on a change
+	CHECK(graph.Rate() > 1.0f);
 }
