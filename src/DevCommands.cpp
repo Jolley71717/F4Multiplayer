@@ -2099,13 +2099,26 @@ namespace DevCommands
 			return "error: log [level info|debug | flush | path]";
 		}
 
-		// net [connect <address>]
+		// net [connect <address> | leave | stophost | host]: leave and stophost are the in-game menu's Leave and Stop
+		// hosting (the session ends here, as a player's would); host starts hosting again.
 		std::string Net(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (args.size() == 2 && args[0] == "connect") {
 				Session::ConnectTo(std::string(args[1]));
 				return "ok";
+			}
+			if (args.size() == 1 && args[0] == "leave") {
+				Session::Leave();
+				return "left";
+			}
+			if (args.size() == 1 && args[0] == "stophost") {
+				Session::StopHosting();
+				return "stopped hosting";
+			}
+			if (args.size() == 1 && args[0] == "host") {
+				const auto error = Session::StartHosting();
+				return error.empty() ? "hosting" : "error: " + error;
 			}
 			return Session::Describe();
 		}
