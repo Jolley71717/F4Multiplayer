@@ -3,7 +3,7 @@
 Up to 4 players. Everyone needs:
 
 - Fallout 4 **1.11.240** on Steam
-- Windows. Linux through Proton should work (F4SE runs there; Steam invites and relays go through the game's own Steam library) but is untested; the saved session and per-player files land inside the Proton prefix's Documents folder.
+- Windows, or Linux / Steam Deck through Proton (see [Linux and Steam Deck](#linux-and-steam-deck): start the game through Steam there)
 - [F4SE 0.7.9](https://www.nexusmods.com/fallout4/mods/42147?tab=files): copy `f4se_loader.exe` and `f4se_1_11_240.dll` next to `Fallout4.exe`
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
 - This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)
@@ -13,6 +13,46 @@ Up to 4 players. Everyone needs:
 before playing; this is an early alpha.
 
 Always start the game with F4SE (`f4se_loader.exe`, or your mod manager's F4SE launcher).
+
+## Linux and Steam Deck
+
+F4SE and this mod run under Proton, and a Linux player can play with Windows players (same mods, same load order).
+What matters is that **Steam starts the game**: Steam puts its overlay into a game only when Steam itself launches it.
+Started any other way (a mod manager running `f4se_loader.exe` straight in the Proton prefix, a "non-Steam game"
+shortcut), Shift+Tab, *Invite to Game* and the F1 menu's invite do nothing, and the game may not reach Steam at all
+(then nobody can join you, and you can't join anyone).
+
+1. Install F4SE, the Address Library and this mod into the game folder as on Windows
+   (`steamapps/common/Fallout 4`, with `Data/F4SE/Plugins/F4Multiplayer.dll`, `F4Multiplayer.ini`, the
+   `F4Multiplayer` folder and the Address Library's `version-1-11-240-0.bin` side by side).
+2. Make Steam's Play button start F4SE. Either:
+   - Steam > Fallout 4 > Properties > General > **Launch Options**:
+     `bash -c 'exec "${@/Fallout4Launcher.exe/f4se_loader.exe}"' -- %command%`
+   - or the loader as the game: rename `Fallout4Launcher.exe` to `Fallout4Launcher.exe.bak`, then copy
+     `f4se_loader.exe` to `Fallout4Launcher.exe`. A game update can put the launcher back: do it again then.
+3. Start Fallout 4 from Steam (Library, Play). In Amethyst or another Linux mod manager, pick its *Steam* launch (or
+   deploy, then press Play in Steam), not a direct start of `f4se_loader.exe`.
+4. In the game, Shift+Tab should open Steam's overlay, and F1 the multiplayer menu.
+
+Use **Proton 9 or later** (or Proton Experimental). With older ones, Wine's DirectInput can keep the keyboard from
+the mod, so F1 and the other hotkeys do nothing.
+
+`WINEDLLOVERRIDES` is not needed for F4SE or this mod. Only a mod that puts its own Windows DLL next to
+`Fallout4.exe` (an ENB's or ReShade's `d3d11.dll` / `dxgi.dll`, a preloader's `winhttp.dll` or `version.dll`) needs one,
+for that DLL: `WINEDLLOVERRIDES="dxgi=n,b" bash -c 'exec "${@/Fallout4Launcher.exe/f4se_loader.exe}"' -- %command%`.
+
+Linux file names are case sensitive. Wine looks past case on its own, but if a mod manager made a second folder that
+differs only in case (`Data/f4se/plugins` beside `Data/F4SE/Plugins`, as real folders rather than links to one
+folder), Wine may only look in one of them: keep all of F4SE's plugins in one.
+
+The logs are inside the game's Proton prefix:
+`steamapps/compatdata/377160/pfx/drive_c/users/steamuser/Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`
+(under `~/.local/share/Steam/`, or `~/.var/app/com.valvesoftware.Steam/.local/share/Steam/` for Steam's Flatpak, or the
+Steam library folder the game is installed in). F4SE's own `f4se.log` is beside it: it says whether
+`F4Multiplayer.dll` loaded. The mod's log starts with lines saying what it runs on and how the game was started:
+"Launch: this game was not started by Steam" means the overlay is missing (see step 2), and "Steam is not available
+to the mod" says why invites and Join Game are off. The saved session and the other per-player files are in that
+same folder.
 
 ## Settings
 
