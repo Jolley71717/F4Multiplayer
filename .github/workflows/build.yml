@@ -1,15 +1,15 @@
 # Builds the plugin, the server, the bot and the unit tests on GitHub's Windows machines and runs the tests, so
-# branches don't all compile on the maintainer's PC. Runs on every push to a branch other than main, on pull
-# requests, and by hand for any branch (Actions > Build > Run workflow, or `gh workflow run build.yml -f ref=<branch>`),
-# which also builds branches made before this file existed. The built plugin and the test log are kept for 7 days as
-# the run's artifact "build-<branch>" (`gh run download <run id>`). Release zips are still made by tools/package.ps1.
+# branches don't all compile on the maintainer's PC. Only people with write access can start it: it runs on their pushes to a
+# branch other than main, and by hand (Actions > Build > Run workflow, or `gh workflow run build.yml -f ref=<ref>`), never for
+# pull requests, so a fork can't spend build time. Building by hand also covers branches made before this file existed.
+# The built plugin and the test log are kept for 7 days as the run's artifact "build-<ref>" (`gh run download <run id>`).
+# Release zips are still made by tools/package.ps1. The job runs only for the repository owner, even if others get write access.
 name: Build
 run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
 on:
   push:
     branches-ignore: [main, "ci-tmp/**"]  # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh)
-  pull_request:
   workflow_dispatch:
     inputs:
       ref:
@@ -25,6 +25,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.actor == github.repository_owner
     runs-on: windows-2022
     timeout-minutes: 60
     env:
