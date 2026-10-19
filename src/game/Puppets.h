@@ -56,6 +56,15 @@ namespace Puppets
 	// Sets the puppet's target motion; applied on the actor's next update.
 	void SetTarget(RE::Actor* a_actor, const Motion& a_motion);
 
+	// Dev (trace): when the engine's update last put the puppet at its target, and where. That is what is drawn, at that
+	// moment of the frame; the actor's place read at another moment says nothing of how evenly it went.
+	struct Put
+	{
+		std::chrono::steady_clock::time_point at;
+		RE::NiPoint3                          position;
+	};
+	[[nodiscard]] std::optional<Put> LastPut(const RE::Actor* a_actor);
+
 	// Which locomotion graph any actor has (MirrorGait::Identify), and for a creature's the variable its state is in.
 	// Three variable reads: its users keep the answer per actor (a puppet's entry, NpcSync's owned entry), asking again
 	// only while it was kNone, since a graph loads after its actor.

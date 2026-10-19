@@ -50,6 +50,7 @@ namespace Puppets
 			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
+			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
 		};
 
 		std::mutex                                    lock;
@@ -518,6 +519,12 @@ namespace Puppets
 				}
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
+				{
+					std::scoped_lock l{ lock };
+					if (const auto entry = Find(a_this)) {
+						entry->put = Put{ now, puppet->target.position };
+					}
+				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
 				MatchWeaponDrawn(a_this, *puppet);
 				// The engine feeds its locomotion graph from the actor's desired movement, which for an
@@ -805,6 +812,13 @@ namespace Puppets
 			entry->target = a_motion;
 			entry->hasTarget = true;
 		}
+	}
+
+	std::optional<Put> LastPut(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		const auto entry = Find(a_actor);
+		return entry ? entry->put : std::nullopt;
 	}
 
 	const RE::BSFixedString& VariableName(const char* a_name)
