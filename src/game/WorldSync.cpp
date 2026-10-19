@@ -17,10 +17,12 @@
 #include "game/NpcHold.h"
 #include "game/NpcSync.h"
 #include "game/PendingContainers.h"
+#include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/ScriptDoors.h"
 #include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
@@ -132,6 +134,16 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 		DoorShare::Book                                        refBook;      // what the session last said of each door: a world state's repeats aren't applied again
 		std::unordered_map<std::uint32_t, bool>                opensShared;  // per reference with an open state: whether a player's opening it is shared
+
+		// Doors only a quest stage opens (ScriptDoors: Vault 114's gear door): the stage is shared, and set here once
+		// its door is loaded.
+		ScriptDoors::Book          scriptDoors;
+		std::vector<std::uint32_t> scriptDoorQuests;  // ScriptDoors::DOORS[i]'s quest by this game's ID (0: not in this game)
+		std::vector<std::uint32_t> scriptDoorRefs;    // ... and its door
+		bool                       scriptDoorsReported = false;  // the host's open ones, since its welcome or the last load
+		Clock::time_point          nextDoorLook{};
+		std::uint32_t              scriptDoorsSent = 0, scriptDoorsSet = 0, scriptDoorsGaveUp = 0;
+		constexpr auto             DOOR_LOOK_INTERVAL = 500ms;
 
 		// Container changes are numbered by the server. Everything before the ledger's next number is in
 		// our world already or waits in the loot's queue (its container isn't loaded, or an NPC lives here);
@@ -1116,8 +1128,11 @@ namespace WorldSync
 			facts.scripted = door && ScriptAttached(a_ref);
 			const bool shared = DoorShare::SharesOpen(facts);
 			if (!shared) {
+				// Not a door: an activator's script, or a container's lid, a chair, a marker (by the base's type). A door
+				// only a quest stage opens is shared by that stage (ScriptDoors), not by its open state.
 				REX::INFO("WorldSync: {:08X} (base {:08X}) is opened by {}; its open state isn't shared", a_ref->GetFormID(), base ? base->GetFormID() : 0,
-					!door ? "a script (not a door)" : facts.scripted ? "a script on the door" : "itself (an automatic door)");
+					!door ? std::format("a script or itself (a {}, not a door)", base ? base->GetFormTypeString() : "?") :
+					facts.scripted ? std::string("a script on the door") : std::string("itself (an automatic door)"));
 			}
 			opensShared.emplace(a_ref->GetFormID(), shared);
 			return shared;
@@ -1299,6 +1314,74 @@ namespace WorldSync
 			return InWorld() && !Story::InOpening();
 		}
 
+		// ScriptDoors::DOORS by the IDs this game has them under, once its data is loaded. A door whose plugin
+		// isn't loaded keeps 0 and is never looked at.
+		void ResolveScriptDoors()
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler || !scriptDoorQuests.empty()) {
+				return;
+			}
+			for (const auto& door : ScriptDoors::DOORS) {
+				const auto quest = handler->LookupForm<RE::TESQuest>(door.quest, door.file);
+				scriptDoorQuests.push_back(quest ? quest->GetFormID() : 0);
+				scriptDoorRefs.push_back(quest ? handler->LookupFormID(door.door, door.file) : 0);
+			}
+		}
+
+		// Looks at the doors only a quest stage opens (ScriptDoors), twice a second: one our player opened is
+		// reported (a stage of a quest QuestSync doesn't share), and the session's are set here once their door is
+		// loaded. The host's game reports those open in its world once its server welcomes it.
+		void LookAtScriptDoors(Clock::time_point a_now, bool a_hosting)
+		{
+			if (a_now < nextDoorLook || scriptDoorQuests.empty()) {
+				return;
+			}
+			nextDoorLook = a_now + DOOR_LOOK_INTERVAL;
+			// Not at the main menu or behind a loading screen: the first look after a load must see the save's stages.
+			if (!InWorld()) {
+				return;
+			}
+			if (a_hosting && !std::exchange(scriptDoorsReported, true)) {
+				scriptDoors.ReportOpen();
+			}
+			const auto ui = RE::UI::GetSingleton();
+			const bool canApply = CanApply() && ui && ui->menuMode == 0;  // a menu pauses scripts
+			for (std::size_t i = 0; i < scriptDoorQuests.size(); ++i) {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(scriptDoorQuests[i]);
+				if (!quest) {
+					continue;
+				}
+				const auto& door = ScriptDoors::DOORS[i];
+				const auto  ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(scriptDoorRefs[i]);
+				ScriptDoors::Look look;
+				look.running = (quest->data.flags & StageLog::QUEST_RUNNING) != 0;
+				look.done = QuestStageLayout::IsStageDone(quest, door.stage);
+				look.doorLoaded = ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->Get3D() && ref->GetParentCell();
+				look.canApply = canApply;
+				switch (scriptDoors.See(i, look, a_now)) {
+				case ScriptDoors::Act::kReport:
+					Queue(Protocol::Encode(Protocol::QuestStage{ quest->GetFormID(), door.stage }, Protocol::MessageType::kReportQuestStage));
+					++scriptDoorsSent;
+					REX::INFO("WorldSync: {} is open here ({:08X} stage {}); shared", door.what, quest->GetFormID(), door.stage);
+					break;
+				case ScriptDoors::Act::kSet:
+					// Through the console, as QuestSync sets a friend's stage: the stage's script runs as it did for them.
+					RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", quest->GetFormID(), door.stage).c_str());
+					++scriptDoorsSet;
+					REX::INFO("WorldSync: opening {} (setting {:08X} stage {}, done in another player's game)", door.what, quest->GetFormID(), door.stage);
+					break;
+				case ScriptDoors::Act::kGiveUp:
+					++scriptDoorsGaveUp;
+					REX::WARN("WorldSync: {:08X} stage {} still not done {} s after setting it; {} left as it is", quest->GetFormID(), door.stage,
+						std::chrono::duration_cast<std::chrono::seconds>(ScriptDoors::Book::TIMEOUT).count(), door.what);
+					break;
+				case ScriptDoors::Act::kNone:
+					break;
+				}
+			}
+		}
+
 		// Applies whatever waits for reference a_id (an actor's death or health, changes to a container, a
 		// pickup, a door's state). A lookup in each queue; the game is asked only about what waits. Returns
 		// how many were applied.
@@ -1394,6 +1477,7 @@ namespace WorldSync
 			ui->RegisterSink<RE::MenuOpenCloseEvent>(&menuWatcher);
 		}
 		FindVendorChests();
+		ResolveScriptDoors();
 	}
 
 	void OnWelcome(bool a_friendlyFire)
@@ -1503,6 +1587,22 @@ namespace WorldSync
 		++activationsApplied;
 	}
 
+	bool ApplyScriptDoor(const Protocol::QuestStage& a_stage)
+	{
+		MainThread::Assert("WorldSync::ApplyScriptDoor");
+		const auto door = ScriptDoors::Find(scriptDoorQuests, a_stage.quest, a_stage.stage);
+		if (!door) {
+			return false;
+		}
+		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
+		if (quest && !scriptDoors.Pending(*door) && !QuestStageLayout::IsStageDone(quest, a_stage.stage)) {
+			REX::INFO("WorldSync: {} is open in another player's game ({:08X} stage {}); opened here once it is loaded", ScriptDoors::DOORS[*door].what,
+				a_stage.quest, a_stage.stage);
+		}
+		scriptDoors.Take(*door);
+		return true;
+	}
+
 	void ApplyWorldState(const Protocol::WorldState& a_state)
 	{
 		MainThread::Assert("WorldSync::ApplyWorldState");
@@ -1530,7 +1630,9 @@ namespace WorldSync
 			OfferRefState(state, inWorld);
 		}
 		for (const auto& stage : a_state.questStages) {
-			QuestSync::Apply(stage, false);
+			if (!ApplyScriptDoor(stage)) {
+				QuestSync::Apply(stage, false);
+			}
 		}
 		REX::INFO("WorldSync: session state: {} dead, {} container changes from #{}, {} pickups, {} doors, {} quest stages",
 			a_state.deadActors.size(), a_state.containerChanges.size(), a_state.containerFirstIndex, a_state.pickedUp.size(),
@@ -1757,6 +1859,7 @@ namespace WorldSync
 		const auto now = Clock::now();
 		MatchPickups(now, newActivations, newPickups);
 		WatchRefStates(now, newActivations);
+		LookAtScriptDoors(now, a_hosting);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
 		// server is asked again (the answer to the last request may have been refused, or never come), and
 		// after asking long enough the gap is skipped (ContainerLedger::Ledger::Skip).
@@ -1848,6 +1951,9 @@ namespace WorldSync
 		pendingRefStates.clear();
 		refBook.Clear();
 		opensShared.clear();
+		scriptDoors.Clear();
+		scriptDoorsReported = false;
+		nextDoorLook = {};
 		unmatchedPickups.clear();
 		// What is loaded is kept (a save's actors can load before the game says the save has loaded), and
 		// all of it is checked again when we host: what we knew to be dead is forgotten.
@@ -1937,8 +2043,8 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size()) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={} damage={}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={} damage={}/{}/{} scriptDoors={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), damageReported, damageApplied,
-			   damageIgnored);
+			   damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp, scriptDoors.PendingCount());
 	}
 }

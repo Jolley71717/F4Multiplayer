@@ -462,7 +462,9 @@ namespace Session
 				break;
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
-					QuestSync::Apply(*msg, true);
+					if (!WorldSync::ApplyScriptDoor(*msg)) {  // a stage that opens a door (ScriptDoors), not one QuestSync shares
+						QuestSync::Apply(*msg, true);
+					}
 				}
 				break;
 			case MessageType::kRadiantStarted:
