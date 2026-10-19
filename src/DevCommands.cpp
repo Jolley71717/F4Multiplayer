@@ -361,6 +361,28 @@ namespace DevCommands
 			return std::format("engineSaysPA={} extraPA={} occupied={:08X} base={:08X} lastFrame={:08X}", RE::PowerArmor::PlayerInPowerArmor(), Equipment::InPowerArmor(player), occupied ? occupied->GetFormID() : 0, base ? base->GetFormID() : 0, last ? last->GetFormID() : 0);
 		}
 
+		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
+		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		std::string PowerArmorFrames(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell()) {
+				return "error: not in game";
+			}
+			const auto  args = SplitArgs(a_args);
+			const float radius = args.empty() ? 3000.0f : ParseFloat(args[0]).value_or(3000.0f);
+			std::string out;
+			int         count = 0;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				out += std::format("{}{} at {:.0f} owner={:08X}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()));
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
+		}
+
 		std::string Console(std::string_view a_args)
 		{
 			if (a_args.empty()) {
@@ -2791,6 +2813,7 @@ namespace DevCommands
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
 			Entry{ "pa", PowerArmorInfo },
+			Entry{ "paframes", PowerArmorFrames },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },

@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Equipment.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -268,6 +269,7 @@ namespace
 			}
 			Hud::Install();  // the loading screen watcher, for the frame and the hang watch too
 			ExitMusic::Install();  // quitting crashed in the cells' music check after the region state was gone
+			Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 			// Quitting ended the server thread without its last save (up to 15 s of kills and loot lost each time).
 			ExitMusic::AtShutdown([] {
 				shutdownStage = true;  // first: a frame message the engine dispatches from here on runs nothing
