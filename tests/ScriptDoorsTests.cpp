@@ -77,6 +77,47 @@ TEST("script doors: the list holds Vault 114's gear door (DN142's 50) and only s
 	CHECK(!ScriptDoors::Find({}, DN142, OPENS));        // nor before the game's data is loaded
 }
 
+TEST("script doors: the stages the survey left out are not listed (docs/script-doors-survey.md)")
+{
+	// Each opens a way, and was read off the game's files and found to do more, to be set by a quest QuestSync
+	// shares already, or to be set by nothing placed in the world.
+	struct Stage
+	{
+		std::string_view file;
+		std::uint32_t    quest;
+		std::uint16_t    stage;
+	};
+	constexpr std::array LEFT_OUT{
+		Stage{ "Fallout4.esm", 0x00045770, 15 },   // DN050 (General Atomics): the Proctor's test course doors, nothing sets 15
+		Stage{ "Fallout4.esm", 0x00045770, 30 },   //   30 and 40 also start the Proctor's next test scene
+		Stage{ "Fallout4.esm", 0x00045770, 40 },
+		Stage{ "Fallout4.esm", 0x00084CE1, 10 },   // DN066 (Med-Tek): its lab doors, but nothing placed sets 10 (terminals open them)
+		Stage{ "Fallout4.esm", 0x00084CE1, 20 },   //   the cell doors, same
+		Stage{ "Fallout4.esm", 0x0003479A, 23 },   // DN102 (HalluciGen): the amnesiac's door, and sends him out
+		Stage{ "Fallout4.esm", 0x0003479A, 55 },   //   55, 56, 58: lab doors, and the test subjects let go
+		Stage{ "Fallout4.esm", 0x0003479A, 56 },
+		Stage{ "Fallout4.esm", 0x0003479A, 58 },
+		Stage{ "Fallout4.esm", 0x000CC19F, 10 },   // DN048 (Fraternal Post 115): unlocks the doors and springs an ambush
+		Stage{ "Fallout4.esm", 0x000FF3C2, 400 },  // DN011 (Boston Public Library): makes the player a friend of the robots
+		Stage{ "Fallout4.esm", 0x000C5093, 730 },  // DN019JoinCult: the amphitheater door, a reward for joining
+		Stage{ "Fallout4.esm", 0x001243D6, 15 },   // DN083_Barney (Gun Run): objectives, and Barney runs to his bunker
+		Stage{ "Fallout4.esm", 0x00080834, 200 },  // DN017 (Arcjet): set by BoS101, which QuestSync shares
+		Stage{ "Fallout4.esm", 0x0006F08A, 20 },   // DN130 (Cambridge PD): set by BoS100, which QuestSync shares
+		Stage{ "DLCCoast.esm", 0x000052B7, 100 },  // DLC03AcadiaDialogue: set by DLC03DialogueDiMA, which QuestSync shares
+		Stage{ "DLCCoast.esm", 0x000140FC, 20 },   // DLC03KyeDialogue: ends the talk with Kye
+		Stage{ "DLCCoast.esm", 0x00043822, 100 },  // DLC03MQ02Fight: Far Harbor's gate, and the story quest's 300
+	};
+	for (const auto& door : ScriptDoors::DOORS) {
+		for (const auto& left : LEFT_OUT) {
+			CHECK(!(door.file == left.file && door.quest == left.quest && door.stage == left.stage));
+		}
+	}
+	for (const auto& left : LEFT_OUT) {
+		CHECK(left.quest != 0 && (left.quest >> 24) == 0);  // IDs within their file, as the list has them
+		CHECK(!ScriptDoors::Find(QUESTS, left.quest, left.stage));
+	}
+}
+
 TEST("script doors: the player opening the door is reported once; a door already open in the save is no news")
 {
 	Book book;
