@@ -1558,6 +1558,64 @@ TEST("protocol: Explosion refuses a position that is not a number")
 	}
 }
 
+TEST("protocol: a wire's shape round trips with its workshop item, and an item without one stays without")
+{
+	auto wire = MakeWorkshopItem();
+	wire.base = 0x0001D971;  // the game's power wire
+	wire.wire = WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
+	const auto back = DecodeWorkshopItem(Encode(wire, MT::kWorkshopItem));
+	REQUIRE(back);
+	REQUIRE(back->wire);
+	CHECK(*back == wire);
+	const auto batch = DecodeWorkshopItems(Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire, MakeWorkshopItem() }));
+	REQUIRE(batch);
+	REQUIRE(batch->size() == 3);
+	CHECK(!(*batch)[0].wire);
+	CHECK((*batch)[1] == wire);
+	CHECK(!(*batch)[2].wire);
+	// One byte more than before protocol 38 for an item without a wire, 21 with one.
+	CHECK(Encode(wire, MT::kWorkshopItem).size() == Encode(MakeWorkshopItem(), MT::kWorkshopItem).size() + 20);
+}
+
+TEST("protocol: a wire's shape that is no number, or past what the game strings, spoils its item")
+{
+	const auto with = [](WireShape a_shape) {
+		auto item = MakeWorkshopItem();
+		item.wire = a_shape;
+		return Encode(item, MT::kReportWorkshopItem);
+	};
+	for (const float bad : { NaN, Inf, -Inf }) {
+		for (int axis = 0; axis < 3; ++axis) {
+			WireShape shape;
+			shape.halfExtents[axis] = bad;
+			CHECK(!DecodeWorkshopItem(with(shape)));
+		}
+		CHECK(!DecodeWorkshopItem(with(WireShape{ {}, bad, 1.5f })));
+		CHECK(!DecodeWorkshopItem(with(WireShape{ {}, 0.05f, bad })));
+	}
+	CHECK(!DecodeWorkshopItem(with(WireShape{ { MAX_WIRE_HALF_LENGTH * 2.0f, 0.0f, 0.0f }, 0.05f, 1.5f })));
+	CHECK(!DecodeWorkshopItem(with(WireShape{ {}, -0.1f, 1.5f })));
+	CHECK(!DecodeWorkshopItem(with(WireShape{ {}, MAX_WIRE_SLACK + 1.0f, 1.5f })));
+	CHECK(!DecodeWorkshopItem(with(WireShape{ {}, 0.05f, 0.0f })));
+	CHECK(!DecodeWorkshopItem(with(WireShape{ {}, 0.05f, MAX_WIRE_THICKNESS * 2.0f })));
+	CHECK(DecodeWorkshopItem(with(WireShape{ { MAX_WIRE_HALF_LENGTH, -MAX_WIRE_HALF_LENGTH, 0.0f }, MAX_WIRE_SLACK, MAX_WIRE_THICKNESS })));
+	// The byte that says whether a shape follows is 0 or 1, nothing else.
+	auto bytes = Encode(MakeWorkshopItem(), MT::kReportWorkshopItem);
+	bytes.back() = 2;
+	CHECK(!DecodeWorkshopItem(bytes));
+	// An item as a build before protocol 38 wrote it (no such byte) is refused on the wire, and read only
+	// where the session file says its layout has none.
+	bytes.pop_back();
+	CHECK(!DecodeWorkshopItem(bytes));
+	auto batch = Encode(std::vector<WorkshopItem>{ MakeWorkshopItem() });
+	batch.pop_back();
+	CHECK(!DecodeWorkshopItems(batch));
+	const auto old = DecodeWorkshopItemsBeforeWires(batch);
+	REQUIRE(old);
+	REQUIRE(old->size() == 1);
+	CHECK((*old)[0] == MakeWorkshopItem());
+}
+
 TEST("protocol: WorkshopItem refuses a position, rotation or scale that is not a number")
 {
 	for (const float bad : { NaN, Inf, -Inf }) {

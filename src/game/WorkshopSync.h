@@ -4,9 +4,11 @@
 
 // Shared settlement building: what a player places, moves or scraps in workshop mode is copied
 // into the other players' games (a plain copy of the object: it isn't part of their workshop, so
-// they can't scrap or power it; the builder keeps that). Copies are removed when the session
-// ends; what a player kept in a copy of a container comes to them first. The host also reports
-// the settlement junk its save had scrapped before the session.
+// they can't scrap or power it; the builder keeps that). A power wire's copy is drawn from its
+// builder's shape; a piece the settlement came with, moved, moves in the others' games instead.
+// Copies are removed when the session ends; what a player kept in a copy of a container comes to
+// them first. The host also reports the settlement junk its save had scrapped before the session,
+// and what it built before the session (BuiltWalk).
 // Main thread only.
 namespace WorkshopSync
 {
@@ -14,7 +16,7 @@ namespace WorkshopSync
 	void Install();
 
 	// Places copies (and scraps pieces of the world) that were waiting for their cell to load and, on
-	// the host (a_host), walks the loaded cells for junk scrapped before the session. Call every frame
+	// the host (a_host), walks the loaded cells for junk scrapped, and pieces built, before the session. Call every frame
 	// while in a session.
 	void Frame(bool a_host);
 
@@ -49,6 +51,10 @@ namespace WorkshopSync
 	void OnWorldGone();
 
 	[[nodiscard]] std::string Describe();
+
+	// Dev: what the reference is to the workshop: its base's type, whether it is one of our copies or a workbench,
+	// its linked references, power links and wire (spline) data, and which extra data it carries.
+	[[nodiscard]] std::string DescribeRef(RE::TESObjectREFR* a_ref);
 
 	// Dev: the workbenches the walk found (or this one), with whether the player stands in each one's
 	// build area; for any other reference, what the walk makes of it.

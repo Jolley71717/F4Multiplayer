@@ -37,7 +37,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | Downed and revive | Done (protocol 16) | The player's character is essential while friends are in the session; a lethal hit knocks them down for 45 s, and a friend who stays next to them for 2 s helps them up; otherwise the normal death. |
 | Horde mode at a settlement | Partly | Spawned enemies are runtime references with different IDs in each game, so the host's game would have to run them and send "spawn this" with its own ID mapping. A bigger change to NpcSync. |
 | Real faces for friends | Done (#19) | The player's face morphs, head parts and tints are copied to a copy of the stand-in's base, and the engine builds its head at runtime. |
-| Shared settlements (workshop) | Partly (protocol 22) | What a player places, moves or scraps is reported from the workshop's own events and copied into the others' games (the builder's reference ID keys each copy; a copy left in a save is adopted on the next session). Copies are plain objects: power, wiring and settler assignment stay the builder's. |
+| Shared settlements (workshop) | Partly (protocol 22) | What a player places, moves or scraps is reported from the workshop's own events and copied into the others' games (the builder's reference ID keys each copy; a copy left in a save is adopted on the next session). Since protocol 38 a power wire is drawn the same in the others' games, a piece the settlement came with that a player moves moves in the others' games rather than being copied beside itself, and the host shares what it built before the session (found as cells load). Copies are plain objects: power and settler assignment stay the builder's. |
 
 ## Beyond the list (protocol 19-20)
 

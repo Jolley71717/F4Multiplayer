@@ -27,13 +27,14 @@ namespace SessionFile
 	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
 	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
 	// the layout did not change from the file's first (protocol 23) until 29, which added the deaths an
-	// older build saved (Snapshot::healable) after the identities. 30 adds the items players dropped for each other
-	// (Snapshot::drops, as kDropList packets); a 29 file is read as one with none.
-	inline constexpr std::uint16_t FORMAT = 30;
+	// older build saved (Snapshot::healable) after the identities. 31 gives each workshop item a byte for a power
+	// wire's shape (protocol 38's WorkshopItem::wire); a file of 29 or before is read as one whose items have none.
+	inline constexpr std::uint16_t FORMAT = 31;
+	inline constexpr std::uint16_t BEFORE_WIRES = 29;  // the layout before wires
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 31.
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 32 (30 is another change's).
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -220,7 +221,7 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorkshopItems: {
-				const auto items = Protocol::DecodeWorkshopItems(packet);
+				const auto items = version == FORMAT ? Protocol::DecodeWorkshopItems(packet) : Protocol::DecodeWorkshopItemsBeforeWires(packet);
 				if (!items) {
 					return std::nullopt;
 				}
