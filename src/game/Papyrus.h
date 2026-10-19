@@ -15,6 +15,7 @@ namespace Papyrus
 
 		// Slots from the game's IVirtualMachine vtable.
 		constexpr std::size_t CREATE_OBJECT_SLOT = 0x17;          // CreateObject(name, out)
+		constexpr std::size_t CREATE_STRUCT_SLOT = 0x18;          // CreateStruct(name, out)
 		constexpr std::size_t DISPATCH_STATIC_SLOT = 0x2C;         // DispatchStaticCall(script, function, ...)
 		constexpr std::size_t DISPATCH_METHOD_OBJECT_SLOT = 0x2D;  // DispatchMethodCall(object, ...)
 
@@ -27,6 +28,12 @@ namespace Papyrus
 		{
 			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSFixedString&, RE::BSTSmartPointer<RE::BSScript::Object>&);
 			return reinterpret_cast<fn_t>(Slot(a_vm, CREATE_OBJECT_SLOT))(a_vm, a_name, a_out);
+		}
+
+		inline bool CreateStruct(RE::BSScript::IVirtualMachine* a_vm, const RE::BSFixedString& a_name, RE::BSTSmartPointer<RE::BSScript::Struct>& a_out)
+		{
+			using fn_t = bool (*)(RE::BSScript::IVirtualMachine*, const RE::BSFixedString&, RE::BSTSmartPointer<RE::BSScript::Struct>&);
+			return reinterpret_cast<fn_t>(Slot(a_vm, CREATE_STRUCT_SLOT))(a_vm, a_name, a_out);
 		}
 
 		inline bool DispatchMethodCall(RE::BSScript::IVirtualMachine* a_vm, const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, const RE::BSFixedString& a_function, const ArgsFn& a_args)
@@ -77,6 +84,30 @@ namespace Papyrus
 			vm->GetObjectBindPolicy().BindObject(object, handle);
 		}
 		return object;
+	}
+
+	// A new struct of a script's (a_name as "Script#Struct"), its fields at their defaults; null if the VM has no such
+	// struct (the script missing, say).
+	inline RE::BSTSmartPointer<RE::BSScript::Struct> NewStruct(std::string_view a_name)
+	{
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		RE::BSTSmartPointer<RE::BSScript::Struct> out;
+		if (!vm || !detail::CreateStruct(vm.get(), RE::BSFixedString{ a_name }, out)) {
+			return {};
+		}
+		return out;
+	}
+
+	// A struct's field by name, or null if it has none by that name.
+	inline RE::BSScript::Variable* Field(RE::BSScript::Struct& a_struct, std::string_view a_name)
+	{
+		if (!a_struct.type) {
+			return nullptr;
+		}
+		const auto& names = a_struct.type->varNameIndexMap;
+		const auto  it = names.find(RE::BSFixedString{ a_name });
+		return it != names.end() && it->second < a_struct.type->variables.size() ? &a_struct.variables[it->second] : nullptr;
 	}
 
 	// Calls a script's global function (a plugin's native one, say) with the arguments a_args fills in. a_callback,
