@@ -528,3 +528,156 @@ TEST("state buffer: a friend's states lost on the way now and then, at 10 to 30 
 		}
 	}
 }
+
+TEST("state buffer: over a Steam relay that holds states up now and then, a running friend's stand-in carries on instead of standing, and never leaps")
+{
+	// What a host saw as a jittery friend (Nexus, 2026-10-19): states through a relay come with some jitter, one in thirty
+	// or so held up 60 to 120 ms with the ones behind it, and one in a hundred lost. Stood at the newest state while the
+	// next was late, the stand-in stopped in its run each time, then went on.
+	for (const auto late : { 60ms, 120ms }) {
+		for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+			for (unsigned seed = 1; seed <= 3; ++seed) {
+				Setup setup;
+				setup.fps = fps;
+				setup.frameJitter = 0.2f;
+				setup.trip = 40ms;
+				setup.jitter = 25ms;
+				setup.lateChance = 0.03f;
+				setup.lateBy = late;
+				setup.queued = true;
+				setup.dropChance = 0.01f;
+				setup.workApart = true;
+				setup.seed = seed;
+				const auto drawn = Play(setup);
+				const auto counts = Count(drawn, FirstAfter(drawn, 5s));
+				CHECK(counts.frames > 300);
+				CHECK(counts.backwards == 0);
+				CHECK(counts.leaps == 0);
+				CHECK(counts.heldFor < 0.02f);
+				CHECK(counts.uneven <= counts.frames / 50);
+			}
+		}
+	}
+}
+
+namespace
+{
+	// A friend running along x at RUN, a state every 33 ms, who stops dead at a_stopAt: the states after that say they stand
+	// there. The ones from a_lateFrom on come a_lateBy late (together). Drawn every a_frame; where it is drawn each frame.
+	std::vector<float> RunAndStop(Clock::duration a_stopAt, Clock::duration a_lateFrom, Clock::duration a_lateBy, Clock::duration a_frame = 7ms)
+	{
+		StateBuffer::Buffer buffer;
+		struct Due
+		{
+			Clock::time_point     at;
+			Protocol::PlayerState state;
+		};
+		std::vector<Due> dues;
+		std::uint32_t    sequence = 0;
+		for (auto t = 0ms; t < 6s; t += 33ms) {
+			const float           ran = RUN * std::chrono::duration<float>((std::min)(Clock::duration(t), a_stopAt)).count();
+			Protocol::PlayerState state;
+			state.sequence = ++sequence;
+			state.worldspace = 0x3C;
+			state.x = ran;
+			state.speed = t < a_stopAt ? RUN : 0.0f;
+			state.sentMs = Protocol::SentMs(start + t);
+			auto at = start + t + 30ms;
+			if (t >= a_lateFrom && t < a_lateFrom + a_lateBy) {
+				at = start + a_lateFrom + a_lateBy + 30ms;
+			}
+			dues.push_back({ at, state });
+		}
+		std::vector<float> xs;
+		std::size_t        next = 0;
+		for (auto now = start; now < start + 6s; now += a_frame) {
+			while (next < dues.size() && dues[next].at <= now) {
+				buffer.Push(dues[next++].state, now);
+			}
+			buffer.Frame(now);
+			if (const auto sampled = buffer.Sample(now); sampled && now > start + 1s) {
+				xs.push_back(sampled->state.x);
+			}
+		}
+		return xs;
+	}
+}
+
+TEST("state buffer: a friend who stops while their next state is late is drawn going on a little, then easing back to where they stopped")
+{
+	// Their run stops at 3 s; the states from then on come 150 ms late. Carried on past the last running state, the
+	// stand-in went at most EXTRAPOLATE further than where they stopped, and goes back there without a jump.
+	const auto  xs = RunAndStop(3s, 3s, 150ms);
+	const float stop = RUN * 3.0f;
+	REQUIRE(xs.size() > 400);
+	const float furthest = *std::ranges::max_element(xs);
+	CHECK(furthest <= stop + RUN * 0.1f + 1.0f);
+	float worstStep = 0.0f;
+	for (std::size_t i = 1; i < xs.size(); ++i) {
+		worstStep = (std::max)(worstStep, std::abs(xs[i] - xs[i - 1]));
+	}
+	CHECK(worstStep < RUN * 0.007f * 1.5f);  // never more than a run's step and a half in a 7 ms frame
+	CHECK(std::abs(xs.back() - stop) < 0.5f);
+}
+
+TEST("state buffer: a late state that came on time changes nothing; one far off (a teleport) is gone to at once")
+{
+	// No state late: nothing carried on, nothing to ease out, and the stand-in is exactly where interpolation puts it.
+	{
+		const auto xs = RunAndStop(3s, 10s, 0ms);
+		REQUIRE(xs.size() > 400);
+		CHECK(std::abs(xs.back() - RUN * 3.0f) < 0.01f);
+		for (std::size_t i = 1; i < xs.size(); ++i) {
+			CHECK(xs[i] >= xs[i - 1] - 0.01f);
+		}
+	}
+	// A friend put 2000 units on between two states (setpos, a door in the same space) is not eased there.
+	StateBuffer::Buffer   buffer;
+	Protocol::PlayerState state;
+	state.worldspace = 0x3C;
+	state.speed = RUN;
+	auto now = start;
+	for (std::uint32_t i = 1; i <= 20; ++i) {
+		state.sequence = i;
+		state.x = RUN * 0.033f * static_cast<float>(i);
+		state.sentMs = Protocol::SentMs(now);
+		buffer.Push(state, now);
+		buffer.Frame(now);
+		now += 33ms;
+	}
+	now += 200ms;  // the next is late: the stand-in has gone on and then stood
+	buffer.Frame(now);
+	state.sequence = 21;
+	state.x += 2000.0f;
+	state.sentMs = Protocol::SentMs(now - 30ms);
+	buffer.Push(state, now);
+	CHECK(buffer.correction.Left(now) == 0.0f);
+}
+
+TEST("state buffer: carried on past the newest state, a running friend's path goes on too, for the engine's updates between our frames")
+{
+	StateBuffer::Buffer   buffer;
+	Protocol::PlayerState state;
+	state.worldspace = 0x3C;
+	state.speed = RUN;
+	auto now = start;
+	for (std::uint32_t i = 1; i <= 30; ++i) {
+		state.sequence = i;
+		state.x = RUN * 0.033f * static_cast<float>(i);
+		state.sentMs = Protocol::SentMs(now);
+		buffer.Push(state, now);
+		buffer.Frame(now);
+		now += 33ms;
+	}
+	// The next state is late: our frame comes as the drawn time reaches the newest one.
+	now += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(buffer.delay)) - 33ms;
+	buffer.Frame(now);
+	const auto sampled = buffer.Sample(now);
+	REQUIRE(sampled);
+	const auto at = [&](Clock::duration a_later) { return sampled->path.At(now + a_later)->x; };
+	CHECK(at(20ms) > at(0ms) + RUN * 0.015f);
+	CHECK(at(60ms) > at(20ms) + RUN * 0.03f);
+	// It stands once EXTRAPOLATE has run out.
+	CHECK(std::abs(at(400ms) - at(300ms)) < 0.01f);
+	CHECK(at(400ms) <= state.x + RUN * 0.1f + 0.5f);
+}

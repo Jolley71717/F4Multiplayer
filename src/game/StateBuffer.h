@@ -44,6 +44,17 @@ namespace StateBuffer
 	constexpr auto  STALE_AFTER = 5s;
 	constexpr std::size_t MAX_SNAPSHOTS = 32;
 
+	// Past the newest state (the next is late on the way: a relay route that hiccups), a friend who was moving goes on the
+	// way they were going for up to EXTRAPOLATE, instead of standing until it comes and then going on from there. Stood,
+	// every late state over Steam's relays was a stop in their run, which a host saw as a jittery friend. When the late
+	// state comes, what that guess got wrong (they turned or stopped meanwhile) is eased out over CORRECTION seconds rather
+	// than jumped (see Correction). Past EXTRAPOLATE it stands as before, and the drawn time waits there for the next.
+	constexpr auto  EXTRAPOLATE = 100ms;
+	constexpr float EXTRAPOLATE_SPEED = 1200.0f;  // units/second: faster than any run between two states is a jump, not carried on
+	constexpr float EXTRAPOLATE_FROM = 10.0f;     // units/second: the newest state says they stand (MoveSync::STOP): not carried on
+	constexpr float CORRECTION = 0.1f;            // seconds: the time constant a correction is eased out with
+	constexpr float SNAP_DISTANCE = 256.0f;       // units: a correction further than this is a jump (setpos, a fast stride): taken at once
+
 	struct Snapshot
 	{
 		Clock::time_point     stamp;  // when it was sampled, on our clock (see Prediction::SenderClock)
@@ -54,7 +65,8 @@ namespace StateBuffer
 	{
 		Protocol::PlayerState state;
 		float                 motionAngle = 0.0f;  // world heading of travel, radians
-		bool                  held = false;        // past the newest state: it stands where that one put it
+		bool                  held = false;        // past the newest state, and past going on from it: it stands
+		bool                  ahead = false;       // past the newest state, going on the way they went (EXTRAPOLATE)
 		float                 heldSpeed = 0.0f;    // when held: the speed the newest state said (state.speed is stopped once states dry up)
 		// The pitch it aims at, degrees up (+) or down (-): state.pitch blended between the two states it is drawn
 		// between, as its place and heading are (AimPoint::BlendPitch), so its gun sweeps rather than steps.
@@ -73,6 +85,28 @@ namespace StateBuffer
 		return a_from + StandInHold::TurnBetween(a_from, a_to) * a_t;
 	}
 
+	// What the stand-in is drawn off from its states by, while a jump is eased out. A late state the stand-in was carried
+	// on past (EXTRAPOLATE), or stamps the sender's clock moved back (SenderClock::steppedBack), change where the states put
+	// it at the moment it is drawn: it would jump there. Instead the difference is kept here at the moment it came and shrinks
+	// to nothing with CORRECTION as its time constant; what is drawn goes on from where it was.
+	struct Correction
+	{
+		float             x = 0.0f;
+		float             y = 0.0f;
+		float             z = 0.0f;
+		Clock::time_point at{};  // when it was that much
+
+		// How much of it is left at a_now (1 at `at`, falling off from there; all of it before).
+		[[nodiscard]] float Left(Clock::time_point a_now) const
+		{
+			if (x == 0.0f && y == 0.0f && z == 0.0f) {
+				return 0.0f;
+			}
+			const float since = std::chrono::duration<float>(a_now - at).count();
+			return since <= 0.0f ? 1.0f : std::exp(-since / CORRECTION);
+		}
+	};
+
 	struct Buffer
 	{
 		std::deque<Snapshot>     snapshots;
@@ -88,6 +122,7 @@ namespace StateBuffer
 		float                    beforeWait = 0.0f;  // the delay when it began to
 		Clock::time_point        handedTo{};  // the newest state's stamp when the last frame sampled: where the path it handed over ends
 		Clock::time_point        framed{};    // when Frame last ran
+		Correction               correction;  // a jump being eased out (Correct)
 
 		// Takes a state that came at a_now; false (and nothing kept) when it is no newer than the newest held.
 		bool Push(const Protocol::PlayerState& a_state, Clock::time_point a_now)
@@ -95,6 +130,8 @@ namespace StateBuffer
 			if (!snapshots.empty() && a_state.sequence <= snapshots.back().state.sequence) {
 				return false;
 			}
+			// Where it is drawn now, before this state changes that (see Correction).
+			const auto before = Sample(a_now);
 			const auto steps = snapshots.empty() ? 1u : a_state.sequence - snapshots.back().state.sequence;
 			const auto stamp = a_state.sentMs ? sender.Next(a_now, a_state.sentMs) : arrivals.Next(a_now, steps);
 			if (a_state.sentMs && sender.steppedBack > Clock::duration::zero()) {
@@ -111,7 +148,49 @@ namespace StateBuffer
 			while (snapshots.size() > MAX_SNAPSHOTS) {
 				snapshots.pop_front();
 			}
+			Correct(before, a_now);
 			return true;
+		}
+
+		// A state just came: where the states now draw it at a_now against a_before, where they drew it a moment ago (with
+		// what was left of the correction then, which Sample adds to both). The difference is kept, to be eased out from
+		// a_now on. In another space, or further than SNAP_DISTANCE, there is nothing to ease: it goes there. Nor after a
+		// stall of our own game (no frame for longer than SLEW_FRAME_LIMIT): nothing was drawn meanwhile, so nothing would
+		// be seen to jump, and eased it would trail behind for a while after.
+		void Correct(const std::optional<Sampled>& a_before, Clock::time_point a_now)
+		{
+			const bool drawing = framed != Clock::time_point{} && a_now - framed <= std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(SLEW_FRAME_LIMIT));
+			const auto after = a_before && drawing ? Sample(a_now) : std::nullopt;
+			if (!after || a_before->state.cell != after->state.cell || a_before->state.worldspace != after->state.worldspace) {
+				correction = {};
+				return;
+			}
+			const Correction next{ a_before->state.x - after->state.x + correction.x * correction.Left(a_now), a_before->state.y - after->state.y + correction.y * correction.Left(a_now),
+				a_before->state.z - after->state.z + correction.z * correction.Left(a_now), a_now };
+			const bool none = std::abs(next.x) < 0.01f && std::abs(next.y) < 0.01f && std::abs(next.z) < 0.01f;
+			correction = none || next.x * next.x + next.y * next.y + next.z * next.z > SNAP_DISTANCE * SNAP_DISTANCE ? Correction{} : next;
+		}
+
+		// The way the newest state was going (units a second), from the one before it: none when they stand, the two are in
+		// different spaces or too far apart in time to say, or it is faster than anyone runs (a jump).
+		[[nodiscard]] std::optional<std::array<float, 3>> Velocity() const
+		{
+			if (snapshots.size() < 2) {
+				return std::nullopt;
+			}
+			const auto& a = snapshots[snapshots.size() - 2];
+			const auto& b = snapshots.back();
+			const float span = std::chrono::duration<float>(b.stamp - a.stamp).count();
+			if (b.state.speed < EXTRAPOLATE_FROM || a.state.cell != b.state.cell || a.state.worldspace != b.state.worldspace || span <= 0.0f || span > std::chrono::duration<float>(MAX_DELAY).count()) {
+				return std::nullopt;
+			}
+			// In the air the fall is not a line: only the way across is carried on.
+			const bool                 inAir = (b.state.flags & Protocol::kInAir) != 0;
+			const std::array<float, 3> v{ (b.state.x - a.state.x) / span, (b.state.y - a.state.y) / span, inAir ? 0.0f : (b.state.z - a.state.z) / span };
+			if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > EXTRAPOLATE_SPEED * EXTRAPOLATE_SPEED) {
+				return std::nullopt;
+			}
+			return v;
 		}
 
 		// How far behind now it should be drawn, before easing: the furthest of the recent leads, plus slack.
@@ -174,15 +253,17 @@ namespace StateBuffer
 			// stood, and the delay eases back down afterwards. It waits MAX_DELAY at most. A silence past LEAD_LIMIT
 			// (a loading screen) is no late state: the delay goes back to what it was, and the leads its start left are
 			// forgotten, so a friend back from one is not drawn further behind for seconds after.
+			// A friend who was moving goes on past it first, for up to EXTRAPOLATE (see there), and waits only after that.
 			const float reached = std::chrono::duration<float>(a_now - newest).count();
-			if (reached <= delay) {
+			const float ahead = Velocity() ? std::chrono::duration<float>(EXTRAPOLATE).count() : 0.0f;
+			if (reached <= delay + ahead) {
 				waiting = false;
 			} else if (a_now - newest <= LEAD_LIMIT) {
 				if (!waiting) {
 					waiting = true;
 					beforeWait = delay;
 				}
-				delay = (std::min)(reached, std::chrono::duration<float>(MAX_DELAY).count());
+				delay = (std::min)(reached - ahead, std::chrono::duration<float>(MAX_DELAY).count());
 			} else if (waiting) {
 				waiting = false;
 				delay = beforeWait;
@@ -190,8 +271,42 @@ namespace StateBuffer
 			}
 		}
 
-		// Interpolated state at (now - delay), or nullopt if we have nothing recent.
+		// Interpolated state at (now - delay), or nullopt if we have nothing recent: carried on past the newest state for a
+		// moment (EXTRAPOLATE), and off its states by what is left of a correction (Correction). Its path ends going on the
+		// way the newest state went, for the engine's updates between our frames.
 		std::optional<Sampled> Sample(Clock::time_point a_now) const
+		{
+			auto out = Raw(a_now);
+			if (!out) {
+				return out;
+			}
+			const auto& newest = snapshots.back();
+			const auto  behind = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(delay));
+			const auto& path = out->path;
+			// The path ran to the newest state, in its space (Ahead ends it at a door): it goes on from there.
+			const bool toNewest = out->state.cell == newest.state.cell && out->state.worldspace == newest.state.worldspace && path.count > 0 &&
+			                      (out->held || out->ahead || path.points[path.count - 1].at == newest.stamp + behind);
+			if (const auto v = toNewest ? Velocity() : std::nullopt) {
+				const float seconds = std::chrono::duration<float>(EXTRAPOLATE).count();
+				out->path.Add({ newest.stamp + behind + EXTRAPOLATE, newest.state.x + (*v)[0] * seconds, newest.state.y + (*v)[1] * seconds, newest.state.z + (*v)[2] * seconds, newest.state.heading });
+			}
+			if (const float left = correction.Left(a_now); left > 0.0f) {
+				out->state.x += correction.x * left;
+				out->state.y += correction.y * left;
+				out->state.z += correction.z * left;
+				for (std::uint8_t i = 0; i < out->path.count; ++i) {
+					auto&       point = out->path.points[i];
+					const float k = correction.Left(point.at);
+					point.x += correction.x * k;
+					point.y += correction.y * k;
+					point.z += correction.z * k;
+				}
+			}
+			return out;
+		}
+
+	private:
+		std::optional<Sampled> Raw(Clock::time_point a_now) const
 		{
 			const auto& snaps = snapshots;
 			if (snaps.empty() || a_now - snaps.back().stamp > STALE_AFTER) {
@@ -210,8 +325,8 @@ namespace StateBuffer
 			if (renderTime <= snaps.front().stamp) {
 				return sampled(snaps.front().state, snaps.front().state.heading, 0, static_cast<float>(snaps.front().state.pitch));
 			}
-			// Frame waits at the newest state rather than running past it: there, it is held. (The delay is kept in
-			// float seconds, so the drawn time comes back a few nanoseconds either side of it.)
+			// Frame waits at the newest state, or a moment past it, rather than running on: there, it is held. (The delay is
+			// kept in float seconds, so the drawn time comes back a few nanoseconds either side of it.)
 			const bool atNewest = renderTime + std::chrono::microseconds(1) >= snaps.back().stamp;
 
 			for (std::size_t i = 1; i < snaps.size() && !atNewest; ++i) {
@@ -241,15 +356,26 @@ namespace StateBuffer
 				return sampled(out, motionAngle, i, AimPoint::BlendPitch(static_cast<float>(a.state.pitch), static_cast<float>(b.state.pitch), t));
 			}
 
-			// At the newest snapshot: hold position rather than guessing ahead, and stop
-			// animating if updates have dried up.
-			auto held = snaps.back().state;
-			if (a_now - snaps.back().stamp > MIN_DELAY + 250ms) {
+			// Past the newest snapshot: on the way it went for up to EXTRAPOLATE, then held there; and the animation stops if
+			// updates have dried up.
+			const auto& newest = snaps.back();
+			auto        held = newest.state;
+			const auto  past = (std::max)(renderTime - newest.stamp, Clock::duration::zero());
+			const auto  v = Velocity();
+			if (v) {
+				const float seconds = std::chrono::duration<float>((std::min)(past, std::chrono::duration_cast<Clock::duration>(EXTRAPOLATE))).count();
+				held.x += (*v)[0] * seconds;
+				held.y += (*v)[1] * seconds;
+				held.z += (*v)[2] * seconds;
+			}
+			if (a_now - newest.stamp > MIN_DELAY + 250ms) {
 				held.speed = 0.0f;
 			}
-			auto out = sampled(held, held.heading, snaps.size(), static_cast<float>(held.pitch));
-			out.held = true;
-			out.heldSpeed = snaps.back().state.speed;
+			const float motionAngle = v && ((*v)[0] != 0.0f || (*v)[1] != 0.0f) ? std::atan2((*v)[0], (*v)[1]) : held.heading;
+			auto        out = sampled(held, motionAngle, snaps.size(), static_cast<float>(held.pitch));
+			out.ahead = v && past < EXTRAPOLATE;
+			out.held = !out.ahead;
+			out.heldSpeed = newest.state.speed;
 			return out;
 		}
 	};

@@ -302,6 +302,8 @@ namespace RemotePlayers
 		// this is more than a few percent.
 		std::uint32_t                         movingFrames = 0;
 		std::uint32_t                         heldFrames = 0;
+		// ... and how many were carried on past the newest state instead, the way the friend went (StateBuffer::EXTRAPOLATE).
+		std::uint32_t                         aheadFrames = 0;
 		// Frames a stand-in was drawn a body's room away from us instead of at its friend's spot, which was ours (StandInSpace).
 		std::uint32_t                         spacedFrames = 0;
 
@@ -2361,6 +2363,7 @@ namespace RemotePlayers
 			const auto sampled = remote.states.Sample(now);
 			// The newest state's own speed, as for movingFrames: Sample stops a long hold's speed, and those are the holds to count.
 			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
+			aheadFrames += sampled && sampled->ahead && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
@@ -2693,7 +2696,7 @@ namespace RemotePlayers
 			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={}", switchesIn, switchesOut, switchFails, stillStandIns);
 		}
 		if (movingFrames) {
-			out += std::format(" held={}/{}", heldFrames, movingFrames);
+			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 		}
