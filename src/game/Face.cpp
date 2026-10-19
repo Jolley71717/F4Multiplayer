@@ -302,11 +302,18 @@ namespace Face
 			npc->morphWeight = { a_face.weight[0], a_face.weight[1], a_face.weight[2] };
 		}
 
+		std::size_t sliderCount = 0;
 		if (a_parts & kSliders) {
-			const auto sliders = new RE::BSTArray<float>();
-			for (const float v : a_face.sliders) {
-				sliders->push_back(v);
+			// Never an empty array: the engine indexes it by body region unchecked (FaceHeads::RegionSliders).
+			const auto values = FaceHeads::RegionSliders(a_face.sliders);
+			RE::BSTArray<float>* sliders = nullptr;
+			if (!values.empty()) {
+				sliders = new RE::BSTArray<float>();
+				for (const float v : values) {
+					sliders->push_back(v);
+				}
 			}
+			sliderCount = values.size();
 			npc->morphRegionSliderValues = sliders;
 			const auto morphs = EngineRefs::New<RE::BSTHashMap<std::uint32_t, float>>();
 			if (!morphs) {
@@ -369,7 +376,7 @@ namespace Face
 		}
 		++made;
 		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
-			(a_parts & kHeadParts) ? headParts.size() : 0, (a_parts & kSliders) ? a_face.sliders.size() : 0, (a_parts & kSliders) ? a_face.morphs.size() : 0,
+			(a_parts & kHeadParts) ? headParts.size() : 0, sliderCount, (a_parts & kSliders) ? a_face.morphs.size() : 0,
 			(a_parts & kBones) ? a_face.bones.size() : 0, tintCount, OwnHead(a_parts) ? " (its own head)" : " (the settler's head)");
 		return npc;
 	}
