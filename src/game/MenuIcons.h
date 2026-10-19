@@ -1,0 +1,19 @@
+#pragma once
+
+// An icon over a friend's stand-in while they are in the Pip-Boy or another menu (their status's menu): the Pip-Boy,
+// two bars while paused, a bubble with three dots for the rest (MenuIconPlace). Drawn on the HUD from inside its own
+// update, the way the compass markers are (Compass hooks it), and only while the HUD may be written to (Hud::IsSettled);
+// while a menu of ours is up they are hidden, once, and nothing is written until it closes. bMenuIcons turns them off.
+namespace MenuIcons
+{
+	// Main thread, each frame after RemotePlayers::Update: where each icon goes now.
+	void Frame();
+
+	// Inside the HUD's own update (Compass's hook): writes them.
+	void OnHudAdvance(RE::IMenu* a_hud);
+
+	// Dev (menuicons): each friend's menu, the spot over their head, its projection and where the icon went.
+	[[nodiscard]] std::string Probe();
+
+	[[nodiscard]] std::string Describe();
+}

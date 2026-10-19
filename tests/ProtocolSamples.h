@@ -185,6 +185,9 @@ namespace ProtocolSamples
 			PlayerStatus seated{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42 };
 			seated.seat = Seat{ .ref = REF_B, .base = 0x0004A0F5, .x = 1200.0f, .y = -350.0f, .z = 64.0f };
 			s.push_back({ "PlayerStatus(seat)", Encode(seated, type), D(DecodePlayerStatus) });
+			PlayerStatus inPipboy{ 3, 0x0001D5E0, 0x0001A2B3, 87, 42 };
+			inPipboy.menu = MenuKind::kPipboy;
+			s.push_back({ "PlayerStatus(menu)", Encode(inPipboy, type), D(DecodePlayerStatus) });
 		}
 		for (const auto type : { MT::kReportTime, MT::kWorldTime }) {
 			s.push_back({ "WorldTime", Encode(WorldTime{ 1, 13.5f, 21.75f, 0x3C, 0x0001F2A3 }, type), D(DecodeWorldTime) });

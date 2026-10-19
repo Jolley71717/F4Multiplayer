@@ -262,6 +262,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.friend_down_near", { { "player", "Sam" }, { "where", "20 m N" } }, "Sam is down! Get to them to help them up (20 m N)" },
 		{ "party.friend_died", { { "player", "Sam" } }, "Sam died" },
 		{ "party.friend_back_up", { { "player", "Sam" } }, "Sam is back up" },
+		{ "party.tag_pipboy", { { "name", "Sam (60%)" } }, "Sam (60%) [Pip-Boy]" },
+		{ "party.tag_menu", { { "name", "Sam" } }, "Sam [in a menu]" },
 		{ "party.ping", { { "player", "Sam" }, { "where", "at Sanctuary" } }, "Sam: over here! (at Sanctuary)" },
 		{ "party.called", {}, "You called your party over" },
 		{ "party.killed", { { "killer", "Sam" }, { "victim", "Raider" } }, "Sam killed Raider" },

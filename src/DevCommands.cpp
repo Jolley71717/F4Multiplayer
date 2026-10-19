@@ -16,6 +16,7 @@
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
 #include "game/MenuMessages.h"
+#include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
@@ -2286,6 +2287,13 @@ namespace DevCommands
 			return MenuWatch::Describe();
 		}
 
+		// menuicons: each friend's menu (their status), the spot over their stand-in's head, the engine's projection of it
+		// and where its icon goes on the HUD (MenuIcons); read only.
+		std::string MenuIconsCommand(std::string_view)
+		{
+			return MenuIcons::Probe() + " " + MenuIcons::Describe();
+		}
+
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
 		// own input receivers, the menus' (MenuControls) and then the player's controls (PlayerControls), and
 		// its release once the hold is over (Frame). Past Windows, DirectInput and the control map, which a key
@@ -2867,6 +2875,7 @@ namespace DevCommands
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "menus", Menus },
+			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },

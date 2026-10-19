@@ -71,6 +71,10 @@ namespace Config
 		// is behind loading-screen crashes.
 		bool compassMarkers = true;
 
+		// An icon over a friend's stand-in while they are in the Pip-Boy or another menu (bMenuIcons; MenuIcons). Their
+		// stand-in raises its Pip-Boy and its name tag says so either way.
+		bool menuIcons = true;
+
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 

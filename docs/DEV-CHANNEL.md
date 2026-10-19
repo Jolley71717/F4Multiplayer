@@ -44,6 +44,10 @@ game's own code can:
   every other command (`gfxset` writes to it), outside the plugin's own HUD timing: not for use during
   a crash soak. `menu` opens and closes menus by message, but not the dialogue or the workshop menu: a
   conversation ends on its own, and workshop mode is `workshop enter` and `workshop exit`.
+- **The icons over friends in a menu:** `menuicons` projects each friend's spot over the head as the
+  icon would (where on the screen, how far, shown or not) and says what was drawn (`shown`, `made`,
+  `writes`, `hides`). `net status` names each friend's menu kind and how often their stand-in raised
+  and lowered its Pip-Boy (`menu= pipboyRaises= lowers=`).
 - **Make things happen:** `say <npc> <topic>` makes an NPC speak, and `playsound <sound>` plays a
   sound. `weapsound <actor>` shows which gunshot an actor's weapon uses, and `gs <name>` reads game
   settings such as the difficulty damage multipliers.

@@ -82,6 +82,9 @@ namespace Text
 		{ "party.friend_down_near", "{player} is down! Get to them to help them up ({where})" },
 		{ "party.friend_died", "{player} died" },
 		{ "party.friend_back_up", "{player} is back up" },
+		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
+		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
+		{ "party.tag_menu", "{name} [in a menu]" },
 		{ "party.ping", "{player}: over here! ({where})" },
 		{ "party.called", "You called your party over" },
 		{ "party.killed", "{killer} killed {victim}" },
