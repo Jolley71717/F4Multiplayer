@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Companion.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -408,6 +409,7 @@ namespace
 				DevCommands::Frame();
 			}
 			Session::Frame();  // its parts are timed inside it
+			Companion::Frame();  // test rig only: lets go of a stand-in the session just took away
 			{
 				PERF_SCOPE("Background");
 				RunInBackground();

@@ -1303,9 +1303,11 @@ namespace DevCommands
 			return ok ? "dispatched" : "error: dispatch failed";
 		}
 
-		// companion [on <refHex> [pack <packHex>] [runonce] [nodrive] | off | drive 0|1 [native] | path <refHex> [speed]]:
-		// companion mode for testing (game/Companion.h): our player follows a reference under the game's own AI. No
-		// arguments: what the player's AI is running.
+		// companion [on <refHex> [pack <packHex>] [kw <keywordHex>|nokw] | off | drive 0|1 [native] | path <refHex> [speed] | kw <keywordHex>]:
+		// companion mode for testing (game/Companion.h): our player follows a reference under the game's own AI, by
+		// default with REFollowBrahmin and the RELinkFollow link. `kw` alone sets the keyword later `on`s use. No
+		// arguments: whether it is on, the target and the distance.
+		std::uint32_t companionKeyword = Companion::FOLLOW_LINK_KEYWORD;
 		std::string CompanionCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -1314,6 +1316,10 @@ namespace DevCommands
 			}
 			if (args[0] == "off") {
 				return Companion::Off();
+			}
+			if (args[0] == "kw" && args.size() > 1) {
+				companionKeyword = ParseHex(args[1]).value_or(0);
+				return "ok";
 			}
 			if (args[0] == "drive" && args.size() > 1) {
 				return Companion::Drive(args[1] == "1" || args[1] == "on", args.size() > 2 && args[2] == "native");
@@ -1330,25 +1336,24 @@ namespace DevCommands
 				if (!target) {
 					return "error: no such reference";
 				}
-				std::uint32_t packageId = Companion::FOLLOW_NPC_PACKAGE;
-				auto          way = Companion::Way::kPut;
-				bool          drive = true;
+				std::uint32_t packageId = Companion::FOLLOW_PACKAGE;
+				std::uint32_t keyword = companionKeyword;
 				for (std::size_t i = 2; i < args.size(); ++i) {
 					if (args[i] == "pack" && i + 1 < args.size()) {
 						packageId = ParseHex(args[++i]).value_or(0);
-					} else if (args[i] == "runonce") {
-						way = Companion::Way::kRunOnce;
-					} else if (args[i] == "nodrive") {
-						drive = false;
+					} else if (args[i] == "kw" && i + 1 < args.size()) {
+						keyword = ParseHex(args[++i]).value_or(0);
+					} else if (args[i] == "nokw") {
+						keyword = 0;
 					}
 				}
 				const auto package = RE::TESForm::GetFormByID<RE::TESPackage>(packageId);
 				if (!package) {
 					return "error: no such package";
 				}
-				return Companion::On(target, package, way, drive);
+				return Companion::On(target, package, keyword);
 			}
-			return "error: usage: companion [on <refHex> [pack <packHex>] [runonce] [nodrive] | off | drive 0|1 [native] | path <refHex> [speed]]";
+			return "error: usage: companion [on <refHex> [pack <packHex>] [kw <keywordHex>|nokw] | off | drive 0|1 [native] | path <refHex> [speed] | kw <keywordHex>]";
 		}
 
 		// flags <refHex> [ni|bool|more] [set|clear] [maskHex]: reads or edits actor flag words.
