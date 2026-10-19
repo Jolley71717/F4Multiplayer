@@ -73,6 +73,8 @@ namespace SharedGates
 		FileForm{ "Fallout4.esm", 0x000F850D, "Mass Fusion's DN084_AirlockDoor02" },
 		FileForm{ "Fallout4.esm", 0x000F9CDE, "Mass Fusion's DN084_ControlRoomDoor" },
 		FileForm{ "Fallout4.esm", 0x0015FAFD, "Mass Fusion's DN084_LabsUpperSecurityDoor" },
+		FileForm{ "Fallout4.esm", 0x000F8606, "Mass Fusion's lab gate (its security terminal's, before DN084_LabSecurityDoor01)" },
+		FileForm{ "Fallout4.esm", 0x00098B11, "Mass Fusion's DN084_ReactorLabSecurityDoor" },
 	};
 
 	// Whether a script's name is the gate script's (the VM's names keep the case they were written with; the game's
