@@ -78,6 +78,12 @@ These are the gaps worth closing, most noticed first. None of them is a quest st
    stand-in doesn't ride, it is moved to where its player reports being. Load elevators (`LoadElevatorPanelScript`,
    `loadelevatordoorscript`) teleport whoever uses them: each player rides their own and there is nothing to share.
 
+Since then (`SharedGates`, src/game/SharedGates.h): 1 and 2 are closed for gates that run `Default2StateActivator` and
+no other script (the scripts that extend it set stages or sound klaxons, and are left out, as are Mass Fusion's gates):
+their open state is shared as a door's and set in a friend's game through `SetOpenNoWait`. For 3, the gates among
+those switches are covered by the same state; the other switches are not pressed again later (they toggle, with
+effects of their own). 4 is left as it is.
+
 ## Quest stages, by quest
 
 Form IDs are within their plugin (no load-order byte). "Set by" says what sets the stage in a normal game.
