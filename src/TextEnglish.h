@@ -229,10 +229,10 @@ namespace Text
 		{ "mods.match", "Multiplayer: your mods match the host's" },
 		{ "mods.ask_wait", "Multiplayer: you just asked the host; try again in a few seconds" },
 		{ "mods.same", "Your mods match the host's." },
-		{ "mods.page_intro", "Your mods compared with the host's: {n} to change. The game loads mods only when it starts: change yours to match, then restart it." },
+		{ "mods.page_intro", "Your mods compared with the host's: {n} only one of you has. You can still play together: what comes from those (an NPC, an item, a quest) is left out in the other game. To share it, match the host's mods, then restart the game: it loads mods only when it starts." },
 		{ "mods.missing", "Missing in your game (install and enable these):" },
 		{ "mods.extra", "Only in your game (disable these):" },
-		{ "mods.order", "In another place in your load order (sort these like the host's):" },
+		{ "mods.order", "In another place in your load order (no need to change these):" },
 		{ "mods.light_here", "{name} (light in your game, full in the host's)" },
 		{ "mods.full_here", "{name} (full in your game, light in the host's)" },
 	};

@@ -2382,7 +2382,8 @@ namespace DevCommands
 			return Session::Describe();
 		}
 
-		// mods [ask]: our mods compared with the host's, as far as known (ask: asks the host for its list again).
+		// mods [ask | forms [formHex]]: our mods compared with the host's, as far as known (ask: asks the host for its list again;
+		// forms: our form IDs against the session's plugin table).
 		std::string Mods(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -2396,6 +2397,10 @@ namespace DevCommands
 					break;
 				}
 				return "error: not in a session we joined";
+			}
+			// mods forms [formHex]: our form IDs against the session's plugin table, and one ID both ways.
+			if (!args.empty() && args[0] == "forms") {
+				return Session::DescribeForms(args.size() > 1 ? ParseHex(args[1]) : std::nullopt);
 			}
 			return Session::DescribeMods();
 		}

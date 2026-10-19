@@ -86,12 +86,16 @@ namespace Session
 	AskResult AskHostMods();
 	// Dev: what is known of the host's mods, on one line.
 	[[nodiscard]] std::string DescribeMods();
+	// Dev: our form IDs against the session's plugin table (FormIds.h), what was skipped either way, and a_id as ours
+	// in the session's numbering and as the session's in ours.
+	[[nodiscard]] std::string DescribeForms(std::optional<std::uint32_t> a_id);
 
 	// Test mode: shows a puppet that copies the local player's movement, offset to the side.
 	void SetEcho(bool a_enabled, float a_offsetX = 150.0f, float a_offsetY = 0.0f);
 
 	// Test: leaves the current session and connects to another address ("ip[:port]" or "steam:<id>").
 	void ConnectTo(std::string a_address);
-	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command).
+	// Test: handles these bytes as if the server had sent them (the dev "fuzz" command), in our own numbering: they are
+	// not translated from the session's.
 	void InjectPacket(std::span<const std::uint8_t> a_data);
 }

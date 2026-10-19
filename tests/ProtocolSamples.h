@@ -304,6 +304,7 @@ namespace ProtocolSamples
 		s.push_back({ "DropRecord", Encode(DropRecord{ 0x1122334455667788ull, { 7, 8 }, { 3 } }), D(DecodeDropRecord) });
 		s.push_back({ "DropList", Encode(DropList{ false, { MakeDrop(), MakeDrop() } }), D(DecodeDropList) });
 		s.push_back({ "DropList(empty)", Encode(DropList{}), D(DecodeDropList) });
+		s.push_back({ "PluginTable", Encode(PluginTable{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" } }), D(DecodePluginTable) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -413,6 +414,7 @@ namespace ProtocolSamples
 		case MT::kHostInfo:
 		case MT::kObjectHeld:
 		case MT::kObjectRested:
+		case MT::kPluginTable:
 			return true;
 		}
 		return false;

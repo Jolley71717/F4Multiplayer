@@ -19,7 +19,9 @@ game's own code can:
   `aim <actor>` (its pitch, the point its weapon aim turns toward, the pitch a mirrored NPC's
   owner's copy aims at, and the aim modifier's graph variables), `quests [name]`, `actors`, `containers`, `paframes [radius]` (each power armor frame near the player, and whether the game would let the player into it, and why not: tilted, or its seat still taken), `paused` and `net status`, which prints every
   multiplayer counter: hits taken and ignored, NPCs owned and handed off, quests caught up,
-  sounds played, and so on.
+  sounds played, and so on. `mods` says what is known of the host's mods (`mods ask` asks again), and
+  `mods forms [formHex]` shows our load order against the session's plugin table, what was skipped
+  either way, and a form ID in both numberings.
 - **Find enemies:** `enemies [radius]` lists the actors near the player that are hostile to it, or
   fighting a player, nearest first: whether the player can see each one (`los`), what it fights as a
   session player number (`targetPlayer`, the same in every game, where a friend's stand-in has another

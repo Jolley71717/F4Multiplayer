@@ -12,7 +12,7 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
   each player's, and the host's choice between one shared story and each player's own.
 - [New characters and alternate starts](dist/INSTALL.md#new-characters-and-alternate-starts): the Vault 111 opening
   is played alone; alternate-start mods are untried.
-- Everyone needs the same mods in the same load order. If yours differ, the F1 menu's *Compare mods* page names them.
+- Friends may have other mods, or the same ones in another order: what comes from a mod only one player has is left out in the other games. The F1 menu's *Compare mods* page names the mods that differ.
 
 Newest: 0.8.10 makes your hits stick on enemies a friend's game spawned (they used to heal back). 0.8.9 gave friends
 their own faces, named the mods that differ from the host's, fixed two host hangs, and made sure the mod never

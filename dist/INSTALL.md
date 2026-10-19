@@ -7,7 +7,7 @@ Up to 4 players. Everyone needs:
 - [F4SE 0.7.9](https://www.nexusmods.com/fallout4/mods/42147?tab=files): copy `f4se_loader.exe` and `f4se_1_11_240.dll` next to `Fallout4.exe`
 - [Address Library for F4SE Plugins](https://www.nexusmods.com/fallout4/mods/47327?tab=files) (1.11.240 file)
 - This mod: install the zip with Vortex or Mod Organizer 2 (or extract it into `Fallout 4\Data`)
-- **The same mods in the same load order** as everyone else (the server refuses mismatches)
+- Ideally **the same mods** as everyone else, in any order: what comes from a mod only one of you has (its NPCs, items, quests) is left out in the other game
 
 **Everyone must use the same version of this mod.** Back up your saves (or start a fresh one)
 before playing; this is an early alpha.
@@ -46,13 +46,12 @@ Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through
 so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
 can join. Optionally set the same `sPassword` for everyone.
 
-If a friend has a purely cosmetic mod you don't (textures, sounds, UI), the host can list its plugin
-in `sIgnoredPlugins` (comma-separated) and the load orders are compared without it. Only do that for
-mods that add nothing the session shares: an NPC, item or settlement mod listed there desyncs quietly.
-Such a plugin must load after all your other plugins (an `.esl` or light one after the other light
-ones): one earlier changes the form IDs of every mod after it, so the friend is refused. The free HD
-texture pack works the same way: without other mods it never matters, with mods it loads before them,
-so everyone needs it or nobody does.
+Friends may have other mods than you, or the same ones in another order: the mod matches what you
+share by plugin file name, so a reorder changes nothing. What comes from a mod only one of you has (an
+NPC, an item, a quest, a settlement piece) is left out in the other game, and the joiner is told which
+mods differ (F1, *Compare mods*). To share a mod's content, everyone needs that mod. Two versions of one
+mod count as the same mod, so keep those the same. The host can list cosmetic plugins (textures, sounds,
+UI) in `sIgnoredPlugins` (comma-separated) so the joiner is not told about them.
 
 ## Playing
 
@@ -229,7 +228,8 @@ want to keep your solo playthrough untouched.
 
 The host's game also keeps the shared world on disk (`bSaveSession`, on by default), one file per
 character: `Documents\My Games\Fallout4\F4SE\F4Multiplayer.<character>.session`. The next time
-they host that character with the same load order, the session carries on where it stopped. Hosting
+they host that character, the session carries on where it stopped, whatever mods they have then (a
+session saved by 0.8.10 or older carries on only with the same load order). Hosting
 another character (a solo playthrough, or a new one) hosts that character's own session, and the
 co-op character's is kept for later. A joined friend who loads a save of another character leaves
 the session. Delete a character's file to start its session over. The save before the last one is
@@ -309,8 +309,8 @@ welcome.
   friend who joined before naming theirs may be told "you loaded another character" the next time they load a save.
 - With the shared story, the host's and your friends' main-story progress may be brought into your game even if
   your start skipped the main quest (the session starts a quest you haven't, unless your start stopped it). If your character is meant to have a story of their own, ask the host for `sStory = own`.
-- Everyone needs the alternate-start mod installed, even players who don't use its start, because the load orders
-  must match.
+- Everyone needs the alternate-start mod installed to share its start (what comes from a mod only one player has
+  is left out in the other games).
 
 ## Dedicated server (optional)
 
@@ -352,7 +352,7 @@ without it they last until it stops.
   accounts by a short alias such as `~3fa2c1`, and mask IP addresses, so they are fine to attach to a
   public bug report. Crash logs, hang `.dmp` files, screenshots and logs from older versions can still
   hold names: check those first. `sLogLevel = debug` adds more detail when you are asked for it.
-- "Your mods differ from the host's (N): see F1" (refused for your load order, or joined and told so): the multiplayer menu's *Compare mods* page lists every plugin you are missing, every one only you have, and the ones in another place in your load order (the log has them too). Plugins the host lets differ (`sIgnoredPlugins`) are listed only where they move another plugin. Install, disable or sort yours to match, then restart the game: it loads mods only when it starts. "You just asked the host; try again in a few seconds": *Ask the host again* works once in five seconds.
+- "Your mods differ from the host's (N): see F1" (joined and told so): the multiplayer menu's *Compare mods* page lists every plugin you are missing and every one only you have (the log has them too); you can play, but what comes from those is left out in the other game. Plugins in another place in your load order are listed as nothing to change. Plugins the host lets differ (`sIgnoredPlugins`) are listed only where they move another plugin. To share a mod's content, install or disable yours to match, then restart the game: it loads mods only when it starts. "You just asked the host; try again in a few seconds": *Ask the host again* works once in five seconds.
 - "Version mismatch": everyone needs the same version of this mod.
 - No "Invite to Game" or "Join Game" in Steam: the host must have started the game with F4SE and
   `bHost = true`; check the host's log for a "Steam: hosting lobby" line.

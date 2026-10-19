@@ -39,10 +39,10 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
 [*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
-[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods are untried. The mod spots the opening only by pre-war Sanctuary and Vault 111, so a start anywhere else is shared from the first moment. Play the alternate start through, name your character and save before you host or join. Everyone needs the alternate-start mod installed, since the load orders must match. Details in INSTALL.md.
+[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods are untried. The mod spots the opening only by pre-war Sanctuary and Vault 111, so a start anywhere else is shared from the first moment. Play the alternate start through, name your character and save before you host or join. Everyone needs the alternate-start mod installed to share its start. Details in INSTALL.md.
 [*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. The mod never changes your own gear for a friend, and a friend paying in a conversation doesn't charge you. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
-[*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). If yours differ, the F1 menu's Compare mods page names the mods only the host has, the ones only you have and the ones out of place. Different mod collections per player don't work.
 [*][b]Languages:[/b] the mod's messages and F1 menu follow your game's language: English, French, German, Italian, Spanish (Spain and Latin America), Polish, Brazilian Portuguese, Russian, Japanese, and Simplified and Traditional Chinese. Russian shows on any game. Japanese and Chinese need the game itself in that language, or they show as boxes.
+[*][b]Mods:[/b] friends may have other mods, or the same ones in another order: what comes from a mod only one player has (its NPCs, items, quests) is left out in the other games, and a joiner is told which mods differ. To share a mod's content, everyone needs that mod.
 [/list]
 
 [size=4][b]Requirements[/b][/size]
@@ -51,7 +51,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*]Windows. Linux through Proton should work (F4SE runs there and Steam networking goes through the game's own Steam library), but it is untested: reports welcome.
 [*][url=https://www.nexusmods.com/fallout4/mods/42147]F4SE[/url] 0.7.9
 [*][url=https://www.nexusmods.com/fallout4/mods/47327]Address Library for F4SE Plugins[/url]
-[*]Everyone needs the same version of this mod and [b]the same mods in the same load order[/b].
+[*]Everyone needs the same version of this mod, and ideally [b]the same mods[/b] (in any order).
 [/list]
 
 [size=4][b]Install[/b][/size]

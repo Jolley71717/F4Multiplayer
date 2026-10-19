@@ -1112,6 +1112,10 @@ TEST("protocol: an indexed container change must be a valid change")
 	CHECK(!ok({ REF_A, 0x0F, MAX_ITEM_COUNT + 1 }));
 	CHECK(!ok({ REF_A, 0x0F, -MAX_ITEM_COUNT - 1 }));
 	CHECK(!ok({ REF_A, 0x0F, std::numeric_limits<std::int32_t>::min() }));
+	// Emptied by the form translation (a change of a plugin this game lacks): numbered, and applies nothing.
+	CHECK(ok({ 0, 0, 0 }));
+	CHECK(IsEmpty(ContainerChange{}));
+	CHECK(!IsEmpty(ContainerChange{ REF_A, 0x0F, 1 }));
 
 	CHECK(IsValid(ContainerChange{ REF_A, 0x0F, -1 }));
 	CHECK(!IsValid(ContainerChange{ REF_A, 0x0F, 0 }));

@@ -15,8 +15,8 @@
 #include <vector>
 
 // The session's shared world, saved on the host's disk so it survives the host quitting: the next
-// time the host plays with the same load order, the session carries on (dead NPCs stay dead, loot
-// stays taken, built walls stand). The file is a header followed by ordinary protocol packets
+// time the host plays, the session carries on (dead NPCs stay dead, loot stays taken, built walls
+// stand), with their mods in any order (the file keeps the plugin table its form IDs are numbered by). The file is a header followed by ordinary protocol packets
 // (the same ones a joiner gets), each length-prefixed, so nothing here has its own wire format.
 namespace SessionFile
 {
@@ -39,6 +39,9 @@ namespace SessionFile
 	{
 		return a_format >= 23 && a_format <= 28;
 	}
+
+	// The layout of 29: 31's, without a plugin table (its form IDs are the load order its hash names).
+	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
@@ -68,6 +71,10 @@ namespace SessionFile
 		// Items players dropped for each other (common/DropStore.h): those lying in the session, and those taken (takerId set),
 		// which a taker's reload may bring back.
 		std::vector<Protocol::DroppedItem>                  drops;
+		// The plugins that number every form ID above (Protocol::PluginTable): kept, so a host who changes their mods,
+		// or their order, carries on with the same world. Empty in a file of an older layout: its IDs are the load order
+		// contentHash names, and only a host with that one carries on.
+		std::vector<std::string>                            plugins;
 
 		[[nodiscard]] bool Empty() const
 		{
@@ -101,6 +108,9 @@ namespace SessionFile
 			put(id);
 		}
 
+		if (!a_snapshot.plugins.empty()) {
+			packet(Protocol::Encode(Protocol::PluginTable{ a_snapshot.plugins }));
+		}
 		// World state in the same chunks a joiner gets.
 		const auto slice = [](const auto& a_list, std::size_t a_offset) {
 			using T = typename std::decay_t<decltype(a_list)>::value_type;
@@ -190,6 +200,14 @@ namespace SessionFile
 				return std::nullopt;
 			}
 			switch (*type) {
+			case Protocol::MessageType::kPluginTable: {
+				auto table = version == FORMAT ? Protocol::DecodePluginTable(packet) : std::nullopt;
+				if (!table || !snapshot.plugins.empty()) {
+					return std::nullopt;  // one, in the layout that has it
+				}
+				snapshot.plugins = std::move(table->plugins);
+				break;
+			}
 			case Protocol::MessageType::kWorldState: {
 				const auto world = Protocol::DecodeWorldState(packet);
 				if (!world) {
