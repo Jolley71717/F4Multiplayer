@@ -68,6 +68,7 @@ namespace WorldSync
 		{
 			std::uint32_t target = 0;
 			std::uint32_t cause = 0;
+			bool          ownersToDeal = false;  // a throw's blow (CopyHealth::OwnersToDeal)
 		};
 		constexpr std::size_t MAX_HIT_INBOX = 512;  // other actors' hits a frame (a big fight); our player's are always kept
 		std::vector<Hit>      hitInbox;
@@ -643,7 +644,7 @@ namespace WorldSync
 				if (actor && target != cause && (byPlayer || cause->As<RE::Actor>()) && (IsShareableRef(target->GetFormID()) || Protocol::IsSpawnRef(target->GetFormID())) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
 					if (byPlayer || hitInbox.size() < MAX_HIT_INBOX) {
-						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID() });
+						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID(), CopyHealth::OwnersToDeal(CopyWatch::BlowOf(a_event)) });
 					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
@@ -1667,7 +1668,7 @@ namespace WorldSync
 			                                                           CopyHealth::Hitter::kNotOurs;
 			const auto target = hitter != CopyHealth::Hitter::kNotOurs ? RE::TESForm::GetFormByID<RE::Actor>(hit.target) : nullptr;
 			const bool killed = dead.Contains(hit.target) || (target && target->IsDead(false));
-			const auto after = CopyHealth::After(hitter, owner, local, killed);
+			const auto after = CopyHealth::After(hitter, owner, local, killed, hit.ownersToDeal);
 			// On a copy what the hit took goes as damage (CopyWatch books it: TakeDamage below), not as the copy's health.
 			if (after.report && !copy) {
 				hitLastFrame.insert(hit.target);

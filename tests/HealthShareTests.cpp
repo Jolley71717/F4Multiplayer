@@ -289,3 +289,56 @@ TEST("copy health: what our hits take off a copy is booked once as ours to send;
 	CHECK(Near(book.Check(RAIDER, 75.0f, t0 + std::chrono::seconds{ 5 } + CopyHealth::JUDGE_AFTER), 5.0f, 0.01f));
 	CHECK(book.TakeOurs(RAIDER) == 0.0f);
 }
+
+TEST("health share: Bob's Molotov on his copy of the host's raider hurts it once, in the host's game, where its explosion goes off too")
+{
+	for (const bool v0810 : { false, true }) {
+		Fight f{ v0810 };
+		// Bob's throw: the blast on his copy (with 0.8.10 taken as his hit and reported), then the same explosion set off
+		// in the host's game (WeaponFire::ApplyExplosion), on the raider the host's game runs.
+		f.bobGame.health -= 30.0f;
+		if (v0810) {
+			f.bobGame.copy.OurHit(RAIDER, f.bobGame.now);
+		}
+		f.bobGame.Frame();
+		if (v0810) {
+			f.bobGame.Report(f.bobGame.health / 100.0f);
+		}
+		f.Deliver();
+		f.hostGame.Burn(30.0f);  // the host's own explosion: no hit of the host's player
+		f.hostGame.Burn(1.0f, 20);  // and its fire
+		f.Pass();
+		if (v0810) {
+			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 30.0f - 20.0f));  // the blast twice: 20 left
+			CHECK(Near(f.bobGame.health, 70.0f));                           // and Bob's copy never saw the fire
+		} else {
+			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f));
+			CHECK(Near(f.bobGame.health, f.hostGame.health));
+			CHECK(f.bobGame.givenBack == 30.0f);  // the blast on Bob's copy was the host's game's to deal
+		}
+	}
+}
+
+TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own hit, the burn its fire leaves) is the NPC's own game's to deal: no report, a claim only for a kill")
+{
+	using CopyHealth::After;
+	using CopyHealth::Blow;
+	using CopyHealth::Hitter;
+	using CopyHealth::OwnersToDeal;
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t FRIEND = 1;
+	CHECK(OwnersToDeal(Blow{ .explosion = true }));
+	CHECK(OwnersToDeal(Blow{ .throwable = true }));
+	CHECK(OwnersToDeal(Blow{ .spellAlone = true }));
+	CHECK(!OwnersToDeal(Blow{}));  // a gun's, a bat's: ours to report
+
+	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).report);
+	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).claim);
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, true, true).claim);  // killed it here: the server must believe it
+	CHECK(!After(Hitter::kOurs, FRIEND, US, false, true).report);
+	// On one our game runs, or nobody does, our player's throw is ours as before.
+	CHECK(After(Hitter::kOurPlayer, US, US, false, true).report);
+	CHECK(After(Hitter::kOurPlayer, 0, US, false, true).report);
+	CHECK(After(Hitter::kOurPlayer, 0, US, false, true).claim);
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, false).report);
+}

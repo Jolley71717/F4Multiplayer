@@ -92,12 +92,35 @@ namespace CopyHealth
 		bool claim = false;
 	};
 
-	constexpr AfterHit After(Hitter a_hitter, std::uint32_t a_owner, std::uint32_t a_local, bool a_killed)
+	// What a blow was, as the hit event says.
+	struct Blow
 	{
+		bool explosion = false;     // an explosion's (HitData's kExplosion flag)
+		bool throwable = false;     // its weapon, or the source, is a grenade, a Molotov or a mine
+		bool spellAlone = false;    // a spell or an enchantment with no weapon: what a Molotov's fire leaves burning
+	};
+
+	// Whether the game that runs the NPC deals this blow there itself, so that a copy's hit is no hit of ours: a throw's.
+	// Every throw's explosion is reported by the thrower's game and set off in each friend's (WeaponFire::ApplyExplosion),
+	// where it hurts the NPCs that game runs, the fire it leaves too. Reported from the copy as well, a friend's Molotov
+	// hurt the NPC twice in its own game: a super mutant at full health lay dead within two seconds of one in the
+	// 2026-10-18 test, while the thrower's copy stood at 67. Our hits on our copies with a weapon in hand still count.
+	constexpr bool OwnersToDeal(const Blow& a_blow)
+	{
+		return a_blow.explosion || a_blow.throwable || a_blow.spellAlone;
+	}
+
+	// a_ownersToDeal: the blow is one OwnersToDeal says the NPC's own game deals; on a copy it is reported never, and
+	// claims the NPC only if it killed it here (so the server believes a kill no other blow told it of).
+	constexpr AfterHit After(Hitter a_hitter, std::uint32_t a_owner, std::uint32_t a_local, bool a_killed, bool a_ownersToDeal = false)
+	{
+		const bool copy = a_owner != 0 && a_local != 0 && a_owner != a_local;
+		if (copy && a_ownersToDeal && a_hitter != Hitter::kNotOurs) {
+			return { .report = false, .claim = a_killed };
+		}
 		if (a_hitter == Hitter::kOurPlayer) {
 			return { .report = true, .claim = true };
 		}
-		const bool copy = a_owner != 0 && a_local != 0 && a_owner != a_local;
 		if (a_hitter != Hitter::kOurs || !copy) {
 			return {};
 		}

@@ -21,6 +21,9 @@ namespace CopyWatch
 	// What the reference is as the cause of a hit or a death, for CopyHealth::Judge (0, or gone: nothing).
 	[[nodiscard]] CopyHealth::Cause CauseOf(std::uint32_t a_refId);
 
+	// What the hit's blow was (an explosion's, a throw's, a spell's alone), for CopyHealth::OwnersToDeal. Any thread.
+	[[nodiscard]] CopyHealth::Blow BlowOf(const RE::TESHitEvent& a_event);
+
 	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
 	void NoteHit(const RE::TESHitEvent& a_event);
 
