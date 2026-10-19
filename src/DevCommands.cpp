@@ -1404,6 +1404,26 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
+		// wswire <fromHex> <toHex>: a wire strung from one reference to the other by F4SE's ObjectReference.CreateWire
+		// (from must be one of a workbench's items; the call runs a frame or so later, and wsinfo <fromHex> shows the
+		// wire among its power links). For the rig, whose scripts can't aim workshop mode's wiring.
+		std::string WsWire(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto from = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto to = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!from || !to) {
+				return "error: usage: wswire <fromHex> <toHex>";
+			}
+			const auto self = Papyrus::BoundObject(from, "ObjectReference", true);
+			const auto target = Papyrus::BoundObject(to, "ObjectReference", true);
+			const bool asked = self && target && Papyrus::CallOn(self, "CreateWire", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
+				a_out[0] = target;
+			});
+			return asked ? "asked" : "error: the call could not be queued";
+		}
+
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
 		std::string WsInfo(std::string_view a_args)
 		{
@@ -2933,6 +2953,7 @@ namespace DevCommands
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "wsinfo", WsInfo },
+			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
 			Entry{ "wspower", WsPower },
 			Entry{ "menus", Menus },
