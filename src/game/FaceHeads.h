@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "game/TextureFlush.h"
 
@@ -43,6 +44,26 @@ namespace FaceHeads
 	// Sex and body shape on the settler's own face (how 0.8.7 showed every friend): nothing of the face shows without
 	// the copy's own head, since a settler's look comes baked with its template's FaceGen files.
 	inline constexpr std::uint32_t BODY_ONLY = kBody;
+
+	// The body's sculpting regions (head, upper torso, arms, lower torso, legs): the NPC's region slider values
+	// (TESNPC::morphRegionSliderValues) hold one value per region, by region index.
+	inline constexpr std::size_t BODY_REGIONS = 5;
+
+	// The region slider values a copy gets from a friend's (kSliders). The engine reads them by region index without
+	// looking at the array's size: as it scales a body's bones while loading its 3D (1.11.240, Fallout4.exe+664D87,
+	// on the background loader thread), a bone in regions 0-4 reads values[region] whenever the array pointer is set;
+	// only a null pointer reads as 0. A friend fresh out of the game's face editor (a preset picked) reported none,
+	// the copy got an empty array (data null) and the first bone, in region 4, read address 0x10: the host's crash,
+	// 2026-10-18. So none stays none (empty: the copy gets no array, and the engine reads 0 for every region), and
+	// fewer than the regions are filled with 0 up to them, so every region the engine can ask for is there.
+	inline std::vector<float> RegionSliders(std::span<const float> a_sent)
+	{
+		std::vector<float> values(a_sent.begin(), a_sent.end());
+		if (!values.empty() && values.size() < BODY_REGIONS) {
+			values.resize(BODY_REGIONS, 0.0f);
+		}
+		return values;
+	}
 
 	// Whether a copy made with these pieces has its own head (so its head is the engine's to build at runtime).
 	constexpr bool OwnHead(std::uint32_t a_parts) { return (a_parts & kHeadParts) != 0; }
