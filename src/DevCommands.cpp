@@ -27,6 +27,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/InjectInput.h"
+#include "game/MuzzleFlash.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
@@ -2186,6 +2187,47 @@ namespace DevCommands
 			return std::format("{}.{} = {} -> {}", path, member, text, set);
 		}
 
+		// muzzle mode off|refused|always | muzzle hold <s> | muzzle watch <actorHex> | muzzle <actorHex> [tree] | muzzle show
+		// <actorHex>: when a replayed shot gets our flash (the engine draws its own for an animated one); what an actor's
+		// gun flashes and where, and the engine's flash object for it; show ours on any actor now.
+		std::string Muzzle(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "mode") {
+				const auto mode = args[1] == "off" ? MuzzleFlash::Mode::kOff : (args[1] == "always" ? MuzzleFlash::Mode::kAlways : MuzzleFlash::Mode::kRefused);
+				if (args[1] != "off" && args[1] != "always" && args[1] != "refused") {
+					return "error: usage: muzzle mode off|refused|always";
+				}
+				MuzzleFlash::SetMode(mode);
+				return MuzzleFlash::Describe();
+			}
+			if (!args.empty() && args[0] == "watch") {
+				const auto ref = args.size() > 1 ? LookupRef(args[1]) : nullptr;
+				return MuzzleFlash::Watch(ref ? ref->GetFormID() : 0, ref ? 90 : 0);
+			}
+			if (args.size() == 2 && args[0] == "hold") {
+				float seconds = 0.0f;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), seconds);
+				MuzzleFlash::SetHold(seconds);
+				return std::format("hold={:.2f} ", seconds) + MuzzleFlash::Describe();
+			}
+			if (args.size() == 2 && args[0] == "show") {
+				const auto ref = LookupRef(args[1]);
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				if (!actor) {
+					return "error: no such actor";
+				}
+				MuzzleFlash::OnShot(actor, false);
+				return MuzzleFlash::Describe() + " | " + MuzzleFlash::DescribeActor(actor, false);
+			}
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: muzzle mode off|refused|always | muzzle hold <seconds> | muzzle <actorHex> [tree] | muzzle show <actorHex>";
+			}
+			return MuzzleFlash::DescribeActor(actor, args.size() > 1 && args[1] == "tree");
+		}
+
 		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
 		std::string WeapSound(std::string_view a_args)
 		{
@@ -3217,6 +3259,7 @@ namespace DevCommands
 			Entry{ "gfx", Gfx },
 			Entry{ "gfxset", GfxSet },
 			Entry{ "weapsound", WeapSound },
+			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },

@@ -5,6 +5,7 @@
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/HandThrowable.h"
+#include "game/MuzzleFlash.h"
 #include "game/AttackKind.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -396,6 +397,7 @@ namespace WeaponFire
 		RemoveGhostGrenades();
 		UpdateHandThrowables();
 		EndDueShields();
+		MuzzleFlash::Frame();
 	}
 
 	namespace
@@ -473,10 +475,17 @@ namespace WeaponFire
 		}
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
+		bool animated = false;
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
 		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
+			animated = true;
+		}
+		// The engine shows the gun's flash and light with the firing animation; a shot whose animation the graph
+		// refused gets the flash from MuzzleFlash instead (nothing is fired: ROADMAP #17).
+		if (replay == AttackKind::Replay::kFire) {
+			MuzzleFlash::OnShot(a_actor, animated);
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
 		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one
@@ -559,7 +568,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -979,11 +988,13 @@ namespace WeaponFire
 
 	void DropHandThrowable(std::uint32_t a_actorFormId)
 	{
+		MuzzleFlash::Drop(a_actorFormId);  // called before the actor is deleted, like this
 		TakeOff(a_actorFormId, HandThrowable::Drop::kDeleted);
 	}
 
 	void DropHandThrowables()
 	{
+		MuzzleFlash::DropAll();  // before a save or a load, and when the session ends, like this
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kDeleted);
 		}

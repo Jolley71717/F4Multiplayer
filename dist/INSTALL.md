@@ -330,8 +330,6 @@ without it they last until it stops.
 - Friends' faces haven't been tried with LooksMenu or with a heavily sculpted character yet; reports welcome.
 - You can't give a friend an item yet: what you drop stays in your game. Giving items is coming in a later version.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
-- Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
-  muzzle flash yet.
 - Misc quests (holotapes, notes, "talk to" errands) and radiant quests other than the Minutemen's
   settlement requests are not shared, nor are settlement attacks: each game runs its own.
 - Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
