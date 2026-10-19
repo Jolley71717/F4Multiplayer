@@ -4,6 +4,7 @@
 # which also builds branches made before this file existed. The built plugin and the test log are kept for 7 days as
 # the run's artifact "build-<branch>" (`gh run download <run id>`). Release zips are still made by tools/package.ps1.
 name: Build
+run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
 on:
   push:
