@@ -8,6 +8,7 @@
 #include "game/Papyrus.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/Spawns.h"
 #include "game/StandInGear.h"
 #include "Text.h"
 
@@ -15,6 +16,7 @@
 #include <atomic>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -35,9 +37,10 @@ namespace Drops
 		constexpr float REMOVE_RANGE = 7000.0f;
 		// Where an item our player dropped is looked for when the engine's event names no reference.
 		constexpr float FIND_RADIUS = 400.0f;
-		// A copy is placed hidden and shown once the script call blocking its activation has had time to run (it is
-		// queued to the script VM): never a moment in which Take would pick it up without asking.
-		constexpr auto  SHOW_AFTER = 300ms;
+		// A copy is placed hidden and shown once the script call blocking its activation has run (it is queued to the script
+		// VM, which says when it has): never a moment in which Take would pick it up without asking. One whose call hasn't
+		// run by BLOCK_WAIT goes (it is placed again).
+		constexpr auto  BLOCK_WAIT = 5s;
 		constexpr auto  PLACE_EVERY = 500ms;
 		constexpr int   PLACE_PER_FRAME = 2;
 		// A granted take is checked the frames after: our player's inventory has the item, or it is tried again, then given
@@ -61,6 +64,8 @@ namespace Drops
 		std::mutex                 inboxLock;
 		std::vector<Left>          leftInbox;
 		std::vector<std::uint32_t> activatedInbox;
+		std::vector<std::uint32_t> equippedInbox;  // bases our player equipped, or used up (food, a stim)
+		std::vector<std::uint32_t> blockedInbox;   // our copies (form IDs) whose activation is blocked now (the VM's threads)
 		std::atomic<bool>          listening{ false };  // welcomed: our player's drops are the session's
 		std::atomic<bool>          keptInContainer{ false };
 		std::atomic<bool>          devDrop{ false };
@@ -99,16 +104,15 @@ namespace Drops
 			RE::ObjectRefHandle ref;
 			std::uint32_t       refId = 0;
 			Clock::time_point   placedAt{};
+			bool                blocked = false;  // its activation is (the VM ran the call)
 			bool                shown = false;
 		};
 		std::unordered_map<std::uint32_t, Copy> copies;
 		std::unordered_set<std::uint32_t>       unplaceable;  // an item with a base or a mod this game lacks
 
 		DropBook::Claims claims;
-		// Drops of ours whose item our player picked up again before the server's answer came: claimed back, by drop ID
-		// (the nonce goes into the record with the take).
-		std::unordered_map<std::uint32_t, std::uint64_t> reclaiming;
-		// Copies our player picked up although their activation should have been blocked: claimed as any take.
+		// Copies our player picked up although their activation should have been blocked: claimed as any take, and taken
+		// out of their inventory again if someone else gets it.
 		std::unordered_set<std::uint32_t> pickedUnblocked;
 
 		// A take the server granted us, being finished.
@@ -129,6 +133,11 @@ namespace Drops
 		// References of an item's base seen near our player at a drop the event named none for, that weren't it: not taken
 		// for a later one.
 		std::unordered_set<std::uint32_t> seenLoose;
+		// Our player's count of each base they carry, a frame before the events at hand (DropBook::MayScan): kept while the
+		// Pip-Boy or the console is open, where items are dropped.
+		std::optional<std::unordered_map<std::uint32_t, std::uint32_t>> carriedBefore;
+		// Bases our player used up (an equip event) or we took out of their inventory, since the last frame: not scanned for.
+		std::unordered_set<std::uint32_t> usedNow;
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		Clock::time_point                      nextPlace{};
@@ -137,6 +146,7 @@ namespace Drops
 
 		std::uint32_t dropped = 0, notGiven = 0, reported = 0, refused = 0, swapped = 0, received = 0, placed = 0, placeFailed = 0, removed = 0;
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
+		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0;
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -177,6 +187,35 @@ namespace Drops
 		bool Loose(RE::TESObjectREFR* a_ref)
 		{
 			return a_ref && !a_ref->IsDeleted() && a_ref->GetParentCell() != nullptr;
+		}
+
+		// Our player's count of every base they carry.
+		std::unordered_map<std::uint32_t, std::uint32_t> CarriedAll()
+		{
+			std::unordered_map<std::uint32_t, std::uint32_t> out;
+			const auto                                       player = Player();
+			const auto                                       list = player ? player->inventoryList : nullptr;
+			if (!list) {
+				return out;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (!item.object) {
+					continue;
+				}
+				auto& count = out[item.object->GetFormID()];
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					count += stack->count;
+				}
+			}
+			return out;
+		}
+
+		// A reference another of our systems placed or keeps (a stand-in's, a copy of a friend's NPC or frame, a light): never
+		// taken for an item our player dropped, nor swapped out for a copy.
+		bool OtherSystems(const RE::TESObjectREFR* a_ref)
+		{
+			return SaveGuard::Placed(a_ref) || Spawns::IdOf(a_ref->GetFormID()) != 0;
 		}
 
 		LootScope::Item KindOf(const RE::TESForm* a_form)
@@ -272,7 +311,7 @@ namespace Drops
 				}
 				if (const auto text = a_ref->extraList->GetByType<RE::ExtraTextDisplayData>();
 					text && text->ownerInstance.get() == RE::ExtraTextDisplayData::DisplayDataType::kCustomName && !text->displayName.empty()) {
-					item.name = std::string{ text->displayName.c_str() }.substr(0, Protocol::MAX_ITEM_NAME_LENGTH);
+					item.name = Protocol::Utf8Prefix(text->displayName.c_str(), Protocol::MAX_ITEM_NAME_LENGTH);
 				}
 			}
 			const auto& at = a_ref->data.location;
@@ -301,8 +340,9 @@ namespace Drops
 		}
 
 		// The reference our player's item became: the one the event names, or else (in the Pip-Boy or the console only,
-		// where items are dropped) the newest reference of that item near them that we haven't seen before.
-		RE::TESObjectREFR* FindDropped(const Left& a_left)
+		// where items are dropped, and when it can only have been a drop: a_mayScan, DropBook::MayScan) the newest reference
+		// of that item near them that we haven't seen before. Never one another of our systems keeps.
+		RE::TESObjectREFR* FindDropped(const Left& a_left, bool a_mayScan)
 		{
 			const auto player = Player();
 			if (!player) {
@@ -311,17 +351,21 @@ namespace Drops
 			if (a_left.ref != 0) {
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_left.ref);
 				const auto base = ref ? ref->GetObjectReference() : nullptr;
-				return ref && base && base->GetFormID() == a_left.base && ref->IsCreated() && Loose(ref) && !Known(a_left.ref) ? ref : nullptr;
+				return ref && base && base->GetFormID() == a_left.base && ref->IsCreated() && Loose(ref) && !Known(a_left.ref) && !OtherSystems(ref) ? ref : nullptr;
 			}
 			if (!a_left.inMenu) {
 				return nullptr;  // an item used up (ammo fired, food eaten)
+			}
+			if (!a_mayScan) {
+				++notScanned;  // used up in the Pip-Boy (food, a stim), or its count changed some other way too
+				return nullptr;
 			}
 			RE::TESObjectREFR*         found = nullptr;
 			std::vector<std::uint32_t> others;
 			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, FIND_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
 				if (base && base->GetFormID() == a_left.base && a_ref->IsCreated() && Loose(a_ref) && !a_ref->IsDisabled() && !Known(a_ref->GetFormID()) &&
-					!seenLoose.contains(a_ref->GetFormID())) {
+					!seenLoose.contains(a_ref->GetFormID()) && !OtherSystems(a_ref)) {
 					if (found) {
 						others.push_back((std::min)(found->GetFormID(), a_ref->GetFormID()));
 					}
@@ -402,6 +446,32 @@ namespace Drops
 			return extra;
 		}
 
+		// Told when the VM has run a copy's BlockActivation (on one of its threads): from then on Take only asks the server.
+		// A cancelled call says nothing; the copy goes after BLOCK_WAIT.
+		class Blocked final :
+			public RE::BSScript::IStackCallbackFunctor
+		{
+		public:
+			explicit Blocked(std::uint32_t a_refId) :
+				refId(a_refId)
+			{}
+
+			void CallQueued() override {}
+			void CallCanceled() override {}
+			void StartMultiDispatch() override {}
+			void EndMultiDispatch() override {}
+			void operator()(RE::BSScript::Variable) override
+			{
+				std::scoped_lock l{ inboxLock };
+				if (blockedInbox.size() < MAX_INBOX) {
+					blockedInbox.push_back(refId);
+				}
+			}
+
+		private:
+			std::uint32_t refId;
+		};
+
 		RE::ObjectRefHandle PlaceCopy(const Protocol::DroppedItem& a_drop, RE::TESObjectCELL* a_cell)
 		{
 			const auto form = RE::TESForm::GetFormByID(a_drop.base);
@@ -416,7 +486,7 @@ namespace Drops
 			data.world = a_cell->IsInterior() ? nullptr : a_cell->worldSpace;
 			data.extra = ExtraFor(a_drop, object);
 			data.clearStillLoadingFlag = true;
-			data.initiallyDisabled = true;  // shown once its activation is blocked (SHOW_AFTER)
+			data.initiallyDisabled = true;  // shown once its activation is blocked (ShowCopies)
 			const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 			const auto ref = handle.get();
 			if (!ref) {
@@ -424,7 +494,8 @@ namespace Drops
 			}
 			SaveGuard::Track(ref.get());
 			// Take only asks the server (OnActivated); the engine's own pickup runs once the server grants it (StartTake).
-			if (!Papyrus::CallMethod(ref.get(), "ObjectReference", "BlockActivation", true, true, false)) {
+			const RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> blocked{ new Blocked(ref->GetFormID()) };
+			if (!Papyrus::CallMethodThen(blocked, ref.get(), "ObjectReference", "BlockActivation", true, true, false)) {
 				RemotePlayers::Discard(handle, Clock::now());
 				return {};
 			}
@@ -489,7 +560,7 @@ namespace Drops
 				if (placedNow >= PLACE_PER_FRAME) {
 					break;
 				}
-				if (copies.contains(id) || unplaceable.contains(id) || reclaiming.contains(id) || (taking && taking->dropId == id) || !Near(drop, cell, at, PLACE_RANGE)) {
+				if (copies.contains(id) || unplaceable.contains(id) || pickedUnblocked.contains(id) || (taking && taking->dropId == id) || !Near(drop, cell, at, PLACE_RANGE)) {
 					continue;
 				}
 				if (!Placeable(drop)) {
@@ -515,10 +586,23 @@ namespace Drops
 			}
 		}
 
-		void ShowCopies(Clock::time_point a_now)
+		// A copy is shown once the VM has blocked its activation (Blocked), and goes if it hasn't by BLOCK_WAIT.
+		void ShowCopies(const std::vector<std::uint32_t>& a_blocked, Clock::time_point a_now)
 		{
+			for (const auto refId : a_blocked) {
+				if (const auto it = std::ranges::find_if(copies, [&](const auto& a_entry) { return a_entry.second.refId == refId; }); it != copies.end()) {
+					it->second.blocked = true;
+				}
+			}
+			std::vector<std::uint32_t> late;
 			for (auto& [id, copy] : copies) {
-				if (copy.shown || a_now - copy.placedAt < SHOW_AFTER) {
+				if (copy.shown) {
+					continue;
+				}
+				if (!copy.blocked) {
+					if (a_now - copy.placedAt >= BLOCK_WAIT) {
+						late.push_back(id);
+					}
 					continue;
 				}
 				if (const auto ref = copy.ref.get()) {
@@ -526,21 +610,51 @@ namespace Drops
 				}
 				copy.shown = true;
 			}
+			for (const auto id : late) {
+				++blockLate;
+				if (Log()) {
+					REX::WARN("Drops: copy of drop {} wasn't blocked in time; placed again", id);
+				}
+				RemoveCopy(id);
+			}
 		}
 
 		// ---- our player's drops ----
 
-		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated)
+		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated, std::vector<std::uint32_t>& a_blocked)
 		{
 			std::scoped_lock l{ inboxLock };
 			a_left.swap(leftInbox);
 			a_activated.swap(activatedInbox);
+			a_blocked.swap(blockedInbox);
+			usedNow.insert(equippedInbox.begin(), equippedInbox.end());
+			equippedInbox.clear();
 		}
 
 		void NoticeDrops(const std::vector<Left>& a_left, Clock::time_point a_now)
 		{
+			// What left our player's inventory of each base, against their count of it a frame before: a reference the
+			// events don't name is only looked for when that is all that changed (DropBook::MayScan).
+			std::unordered_map<std::uint32_t, std::int64_t>                 leftOf;
+			std::optional<std::unordered_map<std::uint32_t, std::uint32_t>> carriedNow;
 			for (const auto& left : a_left) {
-				const auto ref = FindDropped(left);
+				leftOf[left.base] += left.count;
+			}
+			for (const auto& left : a_left) {
+				bool mayScan = false;
+				if (left.ref == 0 && left.inMenu) {
+					if (!carriedNow) {
+						carriedNow = CarriedAll();
+					}
+					std::optional<std::uint32_t> before;
+					if (carriedBefore) {
+						const auto it = carriedBefore->find(left.base);
+						before = it != carriedBefore->end() ? it->second : 0;
+					}
+					const auto now = carriedNow->find(left.base);
+					mayScan = DropBook::MayScan(before, now != carriedNow->end() ? now->second : 0, leftOf[left.base], usedNow.contains(left.base));
+				}
+				const auto ref = FindDropped(left, mayScan);
 				if (!ref) {
 					continue;
 				}
@@ -563,6 +677,17 @@ namespace Drops
 				if (Log()) {
 					REX::INFO("Drops: {:08X} ({:08X} x{}) dropped{}; reported once it rests", ref->GetFormID(), left.base, left.count, left.ref ? "" : " (found near the player)");
 				}
+			}
+			usedNow.clear();
+		}
+
+		// Our player's counts while a menu items are dropped from is open: the next frame's "before" (NoticeDrops).
+		void NoteCarried()
+		{
+			if (OpenMenus::AnyOpen({ OpenMenus::Menu::kPipboy, OpenMenus::Menu::kConsole })) {
+				carriedBefore = CarriedAll();
+			} else {
+				carriedBefore.reset();
 			}
 		}
 
@@ -622,24 +747,44 @@ namespace Drops
 			Activate(ref.get(), a_drop->count);
 		}
 
+		// Whether the take at hand is done: our copy left the world and came to our player (DropBook::JudgeTake).
+		bool TakeDone(const Take& a_take)
+		{
+			const auto ref = a_take.ref.get();
+			return DropBook::JudgeTake(ref && Loose(ref.get()), a_take.before, Carried(a_take.base), a_take.count) == DropBook::TakeState::kTaken;
+		}
+
+		void RecordTake(const Take& a_take)
+		{
+			{
+				std::scoped_lock l{ recordLock };
+				record.Took(a_take.dropId);
+			}
+			++taken;
+			if (Log()) {
+				REX::INFO("Drops: took drop {} ({:08X} x{})", a_take.dropId, a_take.base, a_take.count);
+			}
+		}
+
+		// The take at hand didn't finish: our copy goes, wherever it is, and the item lies there again for anyone (the
+		// server tells every game, ours too, and a fresh copy is placed).
+		void FailTake(const Take& a_take)
+		{
+			if (const auto ref = a_take.ref.get(); ref && Loose(ref.get())) {
+				RemotePlayers::Discard(a_take.ref, a_take.placedAt);
+			}
+			Claim(a_take.dropId, Protocol::DropClaim::kGiveBack);
+			++takeFailed;
+		}
+
 		void FinishTake(Clock::time_point a_now)
 		{
 			if (!taking) {
 				return;
 			}
-			auto&      take = *taking;
-			const auto ref = take.ref.get();
-			// In our inventory: its count grew, or our copy left the world (the engine moved it in; the count of a stack can
-			// fall meanwhile, ammo fired).
-			if (Carried(take.base) > take.before || !ref || !Loose(ref.get())) {
-				{
-					std::scoped_lock l{ recordLock };
-					record.Took(take.dropId);
-				}
-				++taken;
-				if (Log()) {
-					REX::INFO("Drops: took drop {} ({:08X} x{})", take.dropId, take.base, take.count);
-				}
+			auto& take = *taking;
+			if (TakeDone(take)) {
+				RecordTake(take);
 				taking.reset();
 				return;
 			}
@@ -647,7 +792,11 @@ namespace Drops
 				return;  // the engine's pickup may take a frame or two
 			}
 			take.triedAt = a_now;
+			const auto ref = take.ref.get();
 			if (++take.tries < TAKE_TRIES) {
+				if (!ref || !Loose(ref.get())) {
+					return;  // gone from the world, but not (yet) to us: looked at again
+				}
 				if (take.tries == TAKE_TRIES - 1) {
 					Player()->PickUpObject(ref.get(), take.count, true);  // the engine's pickup itself, once
 				} else {
@@ -655,12 +804,69 @@ namespace Drops
 				}
 				return;
 			}
-			// Still lying there: it is there again for anyone (our copy stands again).
-			++takeFailed;
-			REX::WARN("Drops: the take of drop {} ({:08X}) didn't finish; it lies there again", take.dropId, take.base);
-			Claim(take.dropId, Protocol::DropClaim::kGiveBack);
-			copies[take.dropId] = { take.ref, take.refId, take.placedAt, true };
+			REX::WARN("Drops: the take of drop {} ({:08X} x{}) didn't finish (copy {}, carried {} of {} before); it lies there again", take.dropId, take.base, take.count,
+				ref && Loose(ref.get()) ? "still lying" : "gone", Carried(take.base), take.before);
+			FailTake(take);
 			taking.reset();
+		}
+
+		// Our player has an item someone else was granted (picked up past a block that hadn't taken): it goes out of their
+		// inventory again, from the stack that is that item (its mods and name) where one is, so it is in one inventory only.
+		bool TakeBack(const Protocol::DroppedItem& a_drop)
+		{
+			const auto player = Player();
+			const auto list = player ? player->inventoryList : nullptr;
+			const auto form = RE::TESForm::GetFormByID(a_drop.base);
+			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+			if (!list || !object || Carried(a_drop.base) < static_cast<std::uint32_t>(a_drop.count)) {
+				return false;
+			}
+			std::vector<std::uint32_t> wanted;
+			for (const auto& mod : a_drop.mods) {
+				wanted.push_back(mod.mod);
+			}
+			std::ranges::sort(wanted);
+			std::optional<std::uint32_t> stackId;
+			bool                         instanced = false;
+			{
+				RE::BSAutoReadLock l{ list->rwLock };
+				for (auto& item : list->data) {
+					if (item.object != object) {
+						continue;
+					}
+					std::uint32_t index = 0;
+					for (auto stack = item.stackData.get(); stack && !stackId; stack = stack->nextStack.get(), ++index) {
+						const auto extra = stack->extra.get();
+						const auto instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
+						std::vector<std::uint32_t> mods;
+						if (instance && instance->values) {
+							instanced = true;
+							for (const auto& data : instance->GetIndexData()) {
+								if (!data.disabled && data.objectID != 0) {
+									mods.push_back(data.objectID);
+								}
+							}
+						}
+						std::ranges::sort(mods);
+						const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
+						const std::string_view name = text && !text->displayName.empty() ? text->displayName.c_str() : "";
+						if (stack->count >= static_cast<std::uint32_t>(a_drop.count) && (a_drop.mods.empty() || mods == wanted) &&
+							(a_drop.name.empty() || Protocol::Utf8Prefix(name, Protocol::MAX_ITEM_NAME_LENGTH) == a_drop.name)) {
+							stackId = index;
+						}
+					}
+				}
+			}
+			if (!stackId && instanced) {
+				return false;  // a gun or armor of that base, but none that is that item: not another one in its place
+			}
+			RE::TESObjectREFR::RemoveItemData data{ object, a_drop.count };
+			if (stackId) {
+				data.stackData.push_back(*stackId);
+			}
+			usedNow.insert(a_drop.base);  // its leaving their inventory is no drop
+			player->RemoveItem(data);
+			return true;
 		}
 
 		void NoticeActivations(const std::vector<std::uint32_t>& a_activated, Clock::time_point a_now)
@@ -718,6 +924,17 @@ namespace Drops
 		}
 	}
 
+	void OnEquipped(std::uint32_t a_base)
+	{
+		if (!listening) {
+			return;
+		}
+		std::scoped_lock l{ inboxLock };
+		if (equippedInbox.size() < MAX_INBOX) {
+			equippedInbox.push_back(a_base);
+		}
+	}
+
 	void DevDropNext()
 	{
 		devDrop = true;
@@ -744,12 +961,13 @@ namespace Drops
 			}
 			return;
 		}
-		lying[a_drop.dropId] = a_drop;
-		unplaceable.erase(a_drop.dropId);
 		if (it == pending.end()) {
+			lying[a_drop.dropId] = a_drop;
+			unplaceable.erase(a_drop.dropId);
 			return;
 		}
-		// Ours: the item we dropped makes way for a copy like everyone's.
+		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
+		// does the server tell the others (kPlaced), so nobody can take it while it is still in our world.
 		const auto ref = it->ref.get();
 		if (ref && Loose(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
 			RemotePlayers::Discard(it->ref, it->droppedAt);
@@ -757,15 +975,19 @@ namespace Drops
 				std::scoped_lock l{ recordLock };
 				record.Made(a_drop.nonce);
 			}
+			Claim(a_drop.dropId, Protocol::DropClaim::kPlaced);
+			lying[a_drop.dropId] = a_drop;
+			unplaceable.erase(a_drop.dropId);
 			++swapped;
 			if (Log()) {
 				REX::INFO("Drops: drop {} is the session's: {:08X} makes way for a copy", a_drop.dropId, it->refId);
 			}
 		} else {
-			// Our player picked it up again before the answer came: it is in our inventory, so it is claimed back.
-			reclaiming[a_drop.dropId] = a_drop.nonce;
-			if (claims.Start(a_drop.dropId, Clock::now())) {
-				Claim(a_drop.dropId, Protocol::DropClaim::kTake);
+			// Our player picked it up again before the offer came (or it is gone): it never lay there for anyone.
+			Claim(a_drop.dropId, Protocol::DropClaim::kKept);
+			++reclaimed;
+			if (Log()) {
+				REX::INFO("Drops: drop {} kept: {:08X} was picked up again before the server's answer", a_drop.dropId, it->refId);
 			}
 		}
 		pending.erase(it);
@@ -781,17 +1003,6 @@ namespace Drops
 		}
 		const bool ours = claims.Answered(a_gone.dropId);
 		if (a_gone.takerId == localId && localId != 0) {
-			if (const auto back = reclaiming.find(a_gone.dropId); back != reclaiming.end()) {
-				{
-					std::scoped_lock l{ recordLock };
-					record.Made(back->second);
-					record.Took(a_gone.dropId);
-				}
-				reclaiming.erase(back);
-				RemoveCopy(a_gone.dropId);
-				++reclaimed;
-				return;
-			}
 			if (pickedUnblocked.erase(a_gone.dropId)) {
 				std::scoped_lock l{ recordLock };
 				record.Took(a_gone.dropId);
@@ -818,10 +1029,16 @@ namespace Drops
 			StartTake(a_gone.dropId, item ? &*item : nullptr);
 			return;
 		}
-		// Someone else's now, or back with its owner: our copy goes.
-		if (reclaiming.erase(a_gone.dropId) || pickedUnblocked.erase(a_gone.dropId)) {
-			++dupRisk;
-			REX::WARN("Drops: drop {} went to player {} while our player had picked it up; both have it", a_gone.dropId, a_gone.takerId);
+		// Someone else's now, or back with its owner: our copy goes, and the item too if our player picked it up all the same.
+		if (pickedUnblocked.erase(a_gone.dropId)) {
+			if (item && TakeBack(*item)) {
+				++takenBack;
+				REX::WARN("Drops: drop {} went to player {} while our player had picked it up; taken out of their inventory again", a_gone.dropId, a_gone.takerId);
+			} else {
+				++dupRisk;
+				REX::WARN("Drops: drop {} went to player {} while our player had picked it up, and it isn't there to take back; both have it", a_gone.dropId,
+					a_gone.takerId);
+			}
 		}
 		RemoveCopy(a_gone.dropId);
 		if (ours && a_gone.takerId != 0) {
@@ -857,13 +1074,15 @@ namespace Drops
 		const auto                 now = Clock::now();
 		std::vector<Left>          left;
 		std::vector<std::uint32_t> activated;
-		TakeInbox(left, activated);
+		std::vector<std::uint32_t> blocked;
+		TakeInbox(left, activated, blocked);
 		NoticeDrops(left, now);
 		SettleDrops(now);
 		NoticeActivations(activated, now);
 		FinishTake(now);
 		PlaceCopies(now);
-		ShowCopies(now);
+		ShowCopies(blocked, now);
+		NoteCarried();
 		if (keptInContainer.exchange(false) && !std::exchange(hinted, true)) {
 			Hud::Notify(Text::Get("drops.container_hint"));
 		}
@@ -906,15 +1125,11 @@ namespace Drops
 		if (taking) {
 			// A take not checked yet: settled now, so the save's record says what its inventory holds. In it, the take is
 			// recorded; not, the item lies there again for anyone (our copy goes with the others).
-			const auto ref = taking->ref.get();
-			if (Carried(taking->base) > taking->before || !ref || !Loose(ref.get())) {
-				std::scoped_lock l{ recordLock };
-				record.Took(taking->dropId);
-				++taken;
+			if (TakeDone(*taking)) {
+				RecordTake(*taking);
 			} else {
-				RemotePlayers::Discard(taking->ref, taking->placedAt);
-				Claim(taking->dropId, Protocol::DropClaim::kGiveBack);
-				++takeFailed;
+				REX::WARN("Drops: the take of drop {} ({:08X}) hadn't finished by the save; it lies there again", taking->dropId, taking->base);
+				FailTake(*taking);
 			}
 			taking.reset();
 		}
@@ -927,14 +1142,17 @@ namespace Drops
 		copies.clear();
 		pending.clear();
 		taking.reset();
-		reclaiming.clear();
 		pickedUnblocked.clear();
 		claims.Clear();
 		seenLoose.clear();
 		unplaceable.clear();
+		carriedBefore.reset();
+		usedNow.clear();
 		std::scoped_lock l{ inboxLock };
 		leftInbox.clear();
 		activatedInbox.clear();
+		equippedInbox.clear();
+		blockedInbox.clear();
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
@@ -1029,8 +1247,8 @@ namespace Drops
 	std::string Describe()
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
-		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} dupRisk={} lost={} byScan={}",
+		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, dupRisk, lost, foundByScan);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate);
 	}
 }

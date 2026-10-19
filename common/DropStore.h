@@ -24,6 +24,11 @@
 // save after the drop lays it down again. The one case left is an item two worlds hold, as when someone else took a drop
 // and its owner loads a save from before dropping it: both have it then (counted, dupRisk).
 //
+// A new drop is an offer at first, to its dropper's game alone: it lies there for the others only once that game says it
+// has swapped the item it dropped for a copy (Confirm), so nobody can take an item that is still in its dropper's world.
+// An offer is never taken, listed or saved, and goes when its dropper leaves (DropOffers) or picked the item up again
+// (Keep).
+//
 // Kept free of the server's loop so it can be tested; saved with the session (SessionFile).
 class DropStore
 {
@@ -55,6 +60,8 @@ public:
 	{
 		std::vector<Protocol::DropGone>    withdrawn;  // lying no more: in this player's world (takerId 0: their own, back with them)
 		std::vector<Protocol::DroppedItem> returned;   // not with their taker: lying there again
+		std::vector<Protocol::DroppedItem> confirmed;  // their offers their world swapped out after all: lying there now
+		std::vector<Protocol::DropGone>    unoffered;  // their offers their world still has: gone (for them alone to hear)
 		std::size_t                        dupRisk = 0;  // their world holds one someone else holds too
 		bool                               changed = false;  // the book changed (to be saved)
 	};
@@ -64,15 +71,17 @@ public:
 		limits(a_limits)
 	{}
 
-	// A player's drop (a_item as their game reported it; its ids are set here).
+	// A player's drop (a_item as their game reported it; its ids are set here): an offer to them until they Confirm it.
 	Added Add(std::uint32_t a_owner, Protocol::DroppedItem a_item)
 	{
 		if (a_item.nonce == 0) {
 			return {};
 		}
-		for (const auto& [id, drop] : lying) {
-			if (drop.ownerId == a_owner && drop.nonce == a_item.nonce) {
-				return { Outcome::kRepeat, drop };
+		for (const auto* book : { &offers, &lying }) {
+			for (const auto& [id, drop] : *book) {
+				if (drop.ownerId == a_owner && drop.nonce == a_item.nonce) {
+					return { Outcome::kRepeat, drop };
+				}
 			}
 		}
 		for (const auto& [id, drop] : taken) {
@@ -80,7 +89,7 @@ public:
 				return { Outcome::kRepeat, std::nullopt };  // taken already: nothing to answer
 			}
 		}
-		if (lying.size() >= limits.lying) {
+		if (lying.size() + offers.size() >= limits.lying) {
 			return { Outcome::kFull, std::nullopt };
 		}
 		if (LyingOf(a_owner) >= limits.perOwner) {
@@ -89,11 +98,41 @@ public:
 		a_item.dropId = nextId++;
 		a_item.ownerId = a_owner;
 		a_item.takerId = 0;
-		lying.emplace(a_item.dropId, a_item);
+		offers.emplace(a_item.dropId, a_item);
 		return { Outcome::kAdded, a_item };
 	}
 
-	// a_player's game asks to take the item: granted while it lies there, to whoever asks first.
+	// a_owner's game swapped the item it dropped for a copy: the offer lies there for anyone now (to be told to the others).
+	std::optional<Protocol::DroppedItem> Confirm(std::uint32_t a_owner, std::uint32_t a_dropId)
+	{
+		const auto it = offers.find(a_dropId);
+		if (it == offers.end() || it->second.ownerId != a_owner) {
+			return std::nullopt;
+		}
+		auto drop = std::move(it->second);
+		offers.erase(it);
+		lying[drop.dropId] = drop;
+		return drop;
+	}
+
+	// a_owner's player picked the item up again before the offer came: it never lay there.
+	bool Keep(std::uint32_t a_owner, std::uint32_t a_dropId)
+	{
+		const auto it = offers.find(a_dropId);
+		if (it == offers.end() || it->second.ownerId != a_owner) {
+			return false;
+		}
+		offers.erase(it);
+		return true;
+	}
+
+	// a_owner left: their offers go (their game never swapped those items out, as far as anyone knows).
+	std::size_t DropOffers(std::uint32_t a_owner)
+	{
+		return static_cast<std::size_t>(std::erase_if(offers, [&](const auto& a_entry) { return a_entry.second.ownerId == a_owner; }));
+	}
+
+	// a_player's game asks to take the item: granted while it lies there, to whoever asks first (never an offer).
 	std::optional<Protocol::DropGone> Take(std::uint32_t a_player, std::uint32_t a_dropId)
 	{
 		const auto it = lying.find(a_dropId);
@@ -129,6 +168,21 @@ public:
 		const auto holds = [&](const Protocol::DroppedItem& a_drop) {
 			return took.contains(a_drop.dropId) || (a_drop.ownerId == a_player && !made.contains(a_drop.nonce));
 		};
+		// Their offers: one their world swapped out (a confirm lost with a load) lies there now; one it still has goes.
+		for (auto it = offers.begin(); it != offers.end();) {
+			if (it->second.ownerId != a_player) {
+				++it;
+				continue;
+			}
+			auto drop = std::move(it->second);
+			it = offers.erase(it);
+			if (made.contains(drop.nonce)) {
+				lying[drop.dropId] = drop;
+				out.confirmed.push_back(std::move(drop));
+			} else {
+				out.unoffered.push_back({ drop.dropId, 0 });
+			}
+		}
 		for (auto it = lying.begin(); it != lying.end();) {
 			if (!holds(it->second)) {
 				++it;
@@ -154,7 +208,7 @@ public:
 			}
 			++it;
 		}
-		out.changed = !out.withdrawn.empty() || !out.returned.empty();
+		out.changed = !out.withdrawn.empty() || !out.returned.empty() || !out.confirmed.empty();
 		return out;
 	}
 
@@ -210,14 +264,18 @@ public:
 
 	[[nodiscard]] std::size_t LyingCount() const { return lying.size(); }
 	[[nodiscard]] std::size_t TakenCount() const { return taken.size(); }
+	[[nodiscard]] std::size_t OfferCount() const { return offers.size(); }
 
+	// What a_owner has lying there or offered.
 	[[nodiscard]] std::size_t LyingOf(std::uint32_t a_owner) const
 	{
-		return static_cast<std::size_t>(std::ranges::count_if(lying, [&](const auto& a_entry) { return a_entry.second.ownerId == a_owner; }));
+		const auto of = [&](const auto& a_entry) { return a_entry.second.ownerId == a_owner; };
+		return static_cast<std::size_t>(std::ranges::count_if(lying, of) + std::ranges::count_if(offers, of));
 	}
 
 	void Clear()
 	{
+		offers.clear();
 		lying.clear();
 		taken.clear();
 		nextId = 1;
@@ -245,6 +303,7 @@ private:
 	}
 
 	Limits        limits;
+	Book          offers;  // not confirmed by their dropper yet: lying nowhere
 	Book          lying;
 	Book          taken;
 	std::uint32_t nextId = 1;

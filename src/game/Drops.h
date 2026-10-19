@@ -8,11 +8,12 @@
 #include <vector>
 
 // Giving items to friends by dropping them. Our player drops an item; once it has come to rest it is reported
-// (kReportDrop), and the server tells every game (kDropPlaced): each places its own copy where it lies, ours too, in place
-// of the item we dropped. A copy can't be picked up as it is (its activation is blocked): pressing Take on one asks the
-// server (kClaimDrop), which grants each item to whoever asks first (common/DropStore.h), and only then does our player
-// pick it up, as their own take. Every other game removes its copy. So an item moves once: never into two inventories,
-// never into none.
+// (kReportDrop), and the server offers it back to us alone (kDropPlaced): our game swaps the item we dropped for a copy and
+// says so (kClaimDrop kPlaced), and only then does the server tell the other games, each placing its own copy where it
+// lies. So no friend can take an item that is still in our world. A copy can't be picked up as it is (it is shown only once
+// its activation is blocked): pressing Take on one asks the server (kClaimDrop), which grants each item to whoever asks
+// first (common/DropStore.h), and only then does our player pick it up, as their own take. Every other game removes its
+// copy. So an item moves once: never into two inventories, never into none.
 //
 // Copies are never saved; they go before every save and load and are placed again while our player is near. What our
 // world holds of the transfers (the drops whose item left it, the items it took in) goes into the co-save (record 'DROP')
@@ -21,13 +22,16 @@
 //
 // Not given: keys, notes, holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, and an item
 // whose base or mods exist in our game only. Those stay on our ground, in our game only. Main thread only, but for the
-// two event hooks.
+// event hooks.
 namespace Drops
 {
 	// The engine's events (any thread): our player's inventory lost an item to nothing (a drop, or an item used up), with
 	// the reference it became if the event names one; and our player activated a reference made at runtime.
 	void OnLeftInventory(std::uint32_t a_base, std::int32_t a_count, std::uint32_t a_ref);
 	void OnActivated(std::uint32_t a_ref);
+
+	// The engine's event (any thread): our player equipped something of a_base (using up food or a stim is one too).
+	void OnEquipped(std::uint32_t a_base);
 
 	// Dev only (the dropitem command): the next item our player loses to nothing is taken as dropped, as from the Pip-Boy
 	// (the console's drop runs with no menu open).

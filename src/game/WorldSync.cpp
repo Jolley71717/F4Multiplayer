@@ -699,6 +699,22 @@ namespace WorldSync
 
 		ActivateWatcher activateWatcher;
 
+		// Our player equipping something: using up food or a stim is one too, which Drops tells from a drop by it.
+		class EquipWatcher :
+			public RE::BSTEventSink<RE::TESEquipEvent>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent& a_event, RE::BSTEventSource<RE::TESEquipEvent>*) override
+			{
+				if (a_event.equipped && a_event.actor && a_event.actor->IsPlayerRef()) {
+					Drops::OnEquipped(a_event.baseObject);
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		EquipWatcher equipWatcher;
+
 		constexpr std::uint32_t FEATURED_ITEM_KEYWORD = 0x001B3FAC;  // bobbleheads and magazines
 
 		// What kind of item a base form is, for LootScope (the quest-alias fact is the holder's, see
@@ -1307,6 +1323,9 @@ namespace WorldSync
 		}
 		if (const auto source = RE::TESActivateEvent::GetEventSource()) {
 			source->RegisterSink(&activateWatcher);
+		}
+		if (const auto source = RE::TESEquipEvent::GetEventSource()) {
+			source->RegisterSink(&equipWatcher);
 		}
 		if (const auto ui = RE::UI::GetSingleton()) {
 			ui->RegisterSink<RE::MenuOpenCloseEvent>(&menuWatcher);

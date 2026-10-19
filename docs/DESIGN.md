@@ -416,7 +416,10 @@ So players give each other items by dropping them, and the server decides who ha
 
 - The giver drops an item (the Pip-Boy's Drop). The container event (old = the player, new = nothing)
   names the reference it became, or, with no reference named and the Pip-Boy or the console open, it is
-  the newest runtime reference of that item near the player not seen before. Once it has come to rest
+  the newest runtime reference of that item near the player not seen before, only when the player's count of
+  that base fell by just what the events said left since the frame before and no equip event of it came
+  (food eaten or a stim used in the Pip-Boy is one: `DropBook::MayScan`, `notScanned=`), and never a reference
+  another system keeps (SaveGuard's, Spawns'). Once it has come to rest
   (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
   with a random number of the giver's game (the nonce), its mods and template combination (read as
   Equipment reads worn gear, so a legendary effect travels as the mod it is), a power armor piece's
@@ -425,34 +428,46 @@ So players give each other items by dropping them, and the server decides who ha
   holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, an item whose base
   or a mod was made at runtime (no other game has it: `DropBook::Judge`), more than one reference holds.
   Caps can't be dropped in Fallout 4: they still go through a container (shared as before).
-- The server numbers it and tells every game (`kDropPlaced`), the giver's too, or refuses it past the
-  session's share (1024 lying about, 256 a player): then the giver alone hears it with no number, and
-  keeps the item as an ordinary one. On its own drop's answer the giver's game swaps its item for a copy
-  like everyone's and records the swap (the nonce: `made`). Each game places its copy where the item
+- The server numbers it and offers it to the giver's game alone (`kDropPlaced`), or refuses it past the
+  session's share (1024 lying about or offered, 256 a player): then the giver alone hears it with no
+  number, and keeps the item as an ordinary one. On the offer the giver's game swaps its item for a copy
+  like everyone's, records the swap (the nonce: `made`) and says so (`kClaimDrop` kPlaced); only then does
+  the server tell the other games, so nobody can take an item still in the giver's world. A giver who
+  picked the item up again before the offer came says kKept, and it never lay anywhere. An offer is never
+  taken, listed or saved; one not answered goes when the giver leaves, and the giver's next record
+  settles one a load overtook (its nonce in `made`: laid down; not: gone). Each game places its copy where the item
   lies while its player is within 5000 units (removed past 7000): the same base, built with the item's
   mods as Equipment builds a stand-in's (or the base's default combination for a plain one), the count,
   condition and name. A game that lacks the base or one of its mods places none (an item with a mod
   this game hasn't would be another item).
 - A copy is placed disabled; its activation is blocked by script (`ObjectReference.BlockActivation`) and
-  it is shown 300 ms later, once the script call has run. Pressing Take on it only asks the server
+  it is shown once the VM says the call has run (its stack callback); one not blocked within 5 s is
+  removed and placed again (`blockLate=`). Pressing Take on it only asks the server
   (`kClaimDrop` kTake; one claim per item until answered, again after 5 s). The server grants the first
   claim and tells everyone who took it (`kDropGone`): the taker's game picks its copy up as the player's
-  own take (`ActivateRef` with the default processing only, which a block doesn't stop) and checks the
-  inventory; every other game removes its copy. A later claim is answered with who has it. A take the
-  game couldn't finish in four tries is given back (`kGiveBack`) and lies there again for everyone.
-  Taking your own item back is the same claim. Nothing is ever added to or taken from the local player's
-  inventory on a friend's behalf (OwnGear `kDropCopy`: only references this game made, loose in the
-  world).
+  own take (`ActivateRef` with the default processing only, which a block doesn't stop) and checks that
+  the copy left the world and the count of its base rose by the drop's count (`DropBook::JudgeTake`);
+  every other game removes its copy. A later claim is answered with who has it. A take the game couldn't
+  finish in four tries is given back (`kGiveBack`) and lies there again for everyone; its copy goes and
+  a fresh one is placed. Taking your own item back is the same claim. Nothing is ever added to the local
+  player's inventory on a friend's behalf (OwnGear `kDropCopy`: only references this game made, loose in
+  the world); one thing is taken from it: a copy picked up past its block (`unblocked=`) whose claim
+  someone else won goes out of the player's inventory again (the stack with its mods and name;
+  `takenBack=`, else `dupRisk=`).
+- Reports and claims are not counted against the server's event budget (a dropped one would leave an
+  item in two inventories or none); the list answering a record goes after a welcome and then at most
+  every 10 s (up to ~385 KB).
 - Copies are never saved: they go before every save and load (with the stand-ins) and are placed again.
   What a world holds of the transfers is the co-save record `DROP` (v1, `DropBook::Record`): per session
   (the last 8), the nonces of the drops whose item left it and the drop numbers it took in. It goes to
-  the server after every welcome and after a load that stays in the session (`kDropRecord`, at most 4 a
-  second), and the server makes the session agree with it (`DropStore::Reconcile`): what the world
+  the server after every welcome and after a load that stays in the session (`kDropRecord`, answered at
+  most 4 a second), and the server makes the session agree with it (`DropStore::Reconcile`): what the world
   holds (an item it took, or its own drop whose nonce it lacks: a save from before the drop) is that
   player's and lies nowhere; what the book had them hold but the world lacks (a save from before the take,
   or after a drop it had withdrawn) is laid down again for everyone. Each load is judged on its own, so
   loading the wrong save first and the right one after leaves the book as the right one says.
-  The answer is the list of what lies about (`kDropList`). A record of another session counts as
+  A loaded save without an entry for the session it is played in gets a fresh one, so the transfers
+  made after the load are recorded. The answer is the list of what lies about (`kDropList`). A record of another session counts as
   empty. What lies about and who took what is kept in the session file (layout 30), so it survives the
   host's server restarting.
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
@@ -460,7 +475,8 @@ So players give each other items by dropping them, and the server decides who ha
 
 Left open, counted in the log and `net status` (`drops:`): a giver who reloads a save from before a drop
 a friend already took has the item again (the server can't take it back from the friend's inventory:
-`dupRisk` on the server's log); a copy picked up before its block took effect (`unblocked=`); items lying
+`dupRisk` on the server's log); a giver whose kPlaced is lost with their connection loses the item (its
+offer goes with them); items lying
 about are the host's session's, so they are gone if the host starts another session or loses the session
 file; a host crash between a drop and the session file's next write (it is written at once after every
 change) loses it. A world that never played the session (a new game in the same character's slot, as the

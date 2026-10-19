@@ -267,6 +267,10 @@ namespace ProtocolSamples
 			s.push_back({ "Drop(plain)", Encode(plain, type), D(DecodeDroppedItem) });
 		}
 		s.push_back({ "ClaimDrop", Encode(ClaimDrop{ 4, DropClaim::kGiveBack }), D(DecodeClaimDrop) });
+		// The dropper's game swapped its item for a copy: drop 1, the first a fresh server numbers (the Drop above, from a
+		// hostile client in ServerHostileTests), lies there for the others then.
+		s.push_back({ "ClaimDrop(placed)", Encode(ClaimDrop{ 1, DropClaim::kPlaced }), D(DecodeClaimDrop) });
+		s.push_back({ "ClaimDrop(kept)", Encode(ClaimDrop{ 9, DropClaim::kKept }), D(DecodeClaimDrop) });
 		s.push_back({ "DropGone", Encode(DropGone{ 4, 2 }), D(DecodeDropGone) });
 		s.push_back({ "DropRecord", Encode(DropRecord{ 0x1122334455667788ull, { 7, 8 }, { 3 } }), D(DecodeDropRecord) });
 		s.push_back({ "DropList", Encode(DropList{ false, { MakeDrop(), MakeDrop() } }), D(DecodeDropList) });

@@ -32,6 +32,15 @@ namespace
 	{
 		return { a_session, std::move(a_made), std::move(a_taken) };
 	}
+
+	// a_owner drops a_item and their game swaps it for a copy: it lies there for anyone. Its drop ID.
+	std::uint32_t Laid(DropStore& a_store, std::uint32_t a_owner, const Protocol::DroppedItem& a_item)
+	{
+		const auto added = a_store.Add(a_owner, a_item);
+		REQUIRE(added.drop);
+		REQUIRE(a_store.Confirm(a_owner, added.drop->dropId));
+		return added.drop->dropId;
+	}
 }
 
 TEST("drop store: a drop is numbered and kept as its dropper's, with what it carries")
@@ -44,8 +53,67 @@ TEST("drop store: a drop is numbered and kept as its dropper's, with what it car
 	CHECK(added.drop->ownerId == ALICE);
 	CHECK(added.drop->takerId == 0);
 	CHECK(added.drop->mods == Gun(11).mods);
+	REQUIRE(store.Confirm(ALICE, added.drop->dropId));
 	CHECK(store.LyingCount() == 1);
 	CHECK(store.Find(added.drop->dropId) != nullptr);
+}
+
+// The dropper's game hasn't swapped the item it dropped for a copy yet: an offer to it alone, which nobody can take.
+TEST("drop store: a drop is only offered to its dropper until their game confirms it; nobody takes, lists or saves an offer")
+{
+	DropStore  store;
+	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	CHECK(store.LyingCount() == 0);
+	CHECK(store.OfferCount() == 1);
+	CHECK(store.Find(id) == nullptr);
+	CHECK(store.Lying().empty());
+	CHECK(store.All().empty());
+	CHECK(!store.Take(BOB, id));
+	CHECK(!store.Take(ALICE, id));
+	CHECK(!store.Confirm(BOB, id));  // only its dropper's game
+	const auto laid = store.Confirm(ALICE, id);
+	REQUIRE(laid);
+	CHECK(laid->dropId == id);
+	CHECK(!store.Confirm(ALICE, id));  // once
+	CHECK(store.Take(BOB, id));
+}
+
+TEST("drop store: an offer its dropper kept (picked up again) or left without confirming goes; others' offers stay")
+{
+	DropStore  store;
+	const auto kept = store.Add(ALICE, Gun(11)).drop->dropId;
+	CHECK(!store.Keep(BOB, kept));
+	CHECK(store.Keep(ALICE, kept));
+	CHECK(!store.Confirm(ALICE, kept));
+	CHECK(store.OfferCount() == 0);
+	store.Add(ALICE, Gun(12));
+	store.Add(ALICE, Gun(13));
+	const auto bobs = store.Add(BOB, Gun(12)).drop->dropId;
+	const auto laid = Laid(store, ALICE, Gun(14));
+	CHECK(store.DropOffers(ALICE) == 2);
+	CHECK(store.OfferCount() == 1);
+	CHECK(store.Find(laid) != nullptr);  // confirmed: it lies there whoever leaves
+	CHECK(store.Confirm(BOB, bobs));
+}
+
+// A load reached the dropper's game before the offer did: its record says whether its world still has the item.
+TEST("drop store: a dropper's record settles their offers: one their world swapped out lies there, one it has goes")
+{
+	DropStore  store;
+	const auto swapped = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto held = store.Add(ALICE, Gun(12)).drop->dropId;
+	const auto bobs = store.Add(BOB, Gun(11)).drop->dropId;
+	const auto out = store.Reconcile(ALICE, Record({ 11 }, { bobs }), SESSION);
+	REQUIRE(out.confirmed.size() == 1);
+	CHECK(out.confirmed[0].dropId == swapped);
+	REQUIRE(out.unoffered.size() == 1);
+	CHECK(out.unoffered[0].dropId == held);
+	CHECK(out.unoffered[0].takerId == 0);
+	CHECK(out.withdrawn.empty());  // never lay anywhere: nobody else is told
+	CHECK(out.changed);
+	CHECK(store.Find(swapped) != nullptr);
+	CHECK(store.OfferCount() == 1);  // Bob's stays his to confirm, whatever her record names
+	CHECK(store.Confirm(BOB, bobs));
 }
 
 TEST("drop store: the same drop reported twice is kept once, and a drop needs its game's number")
@@ -56,6 +124,9 @@ TEST("drop store: the same drop reported twice is kept once, and a drop needs it
 	CHECK(again.outcome == DropStore::Outcome::kRepeat);
 	REQUIRE(again.drop);
 	CHECK(again.drop->dropId == first.drop->dropId);
+	CHECK(store.OfferCount() == 1);
+	REQUIRE(store.Confirm(ALICE, first.drop->dropId));
+	CHECK(store.Add(ALICE, Gun(11)).outcome == DropStore::Outcome::kRepeat);  // lying there by now: the same answer
 	CHECK(store.LyingCount() == 1);
 	// Another player's game may number one the same: theirs is another drop.
 	CHECK(store.Add(BOB, Gun(11)).outcome == DropStore::Outcome::kAdded);
@@ -65,7 +136,7 @@ TEST("drop store: the same drop reported twice is kept once, and a drop needs it
 TEST("drop store: two players taking the same item at once: the first gets it, the second nothing")
 {
 	DropStore  store;
-	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id = Laid(store, ALICE, Gun(11));
 	const auto bob = store.Take(BOB, id);
 	const auto carol = store.Take(CAROL, id);
 	REQUIRE(bob);
@@ -81,7 +152,7 @@ TEST("drop store: two players taking the same item at once: the first gets it, t
 TEST("drop store: the dropper may take their own item back")
 {
 	DropStore  store;
-	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id = Laid(store, ALICE, Gun(11));
 	const auto back = store.Take(ALICE, id);
 	REQUIRE(back);
 	CHECK(back->takerId == ALICE);
@@ -90,7 +161,7 @@ TEST("drop store: the dropper may take their own item back")
 TEST("drop store: a take its game couldn't finish lies there again, under its own number; only the taker can give it back")
 {
 	DropStore  store;
-	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id = Laid(store, ALICE, Gun(11));
 	REQUIRE(store.Take(BOB, id));
 	CHECK(!store.GiveBack(CAROL, id));
 	const auto back = store.GiveBack(BOB, id);
@@ -117,9 +188,10 @@ TEST("drop store: one player can't fill the session, nor everyone together beyon
 	CHECK(store.Add(ALICE, Gun(2)).outcome == DropStore::Outcome::kAdded);
 	CHECK(store.Add(ALICE, Gun(3)).outcome == DropStore::Outcome::kOwnerFull);
 	CHECK(store.Add(BOB, Gun(1)).outcome == DropStore::Outcome::kAdded);
-	CHECK(store.Add(CAROL, Gun(1)).outcome == DropStore::Outcome::kFull);
+	CHECK(store.Add(CAROL, Gun(1)).outcome == DropStore::Outcome::kFull);  // offers count
 	// Taken items make room again.
-	REQUIRE(store.Take(BOB, store.Lying().front().dropId));
+	REQUIRE(store.Confirm(ALICE, 1));
+	REQUIRE(store.Take(BOB, 1));
 	CHECK(store.Add(ALICE, Gun(3)).outcome == DropStore::Outcome::kAdded);
 }
 
@@ -128,7 +200,7 @@ TEST("drop store: takes are remembered up to the cap, the oldest forgotten first
 	DropStore store{ DropStore::Limits{ .lying = 10, .taken = 2, .perOwner = 10 } };
 	std::vector<std::uint32_t> ids;
 	for (std::uint64_t n = 1; n <= 3; ++n) {
-		ids.push_back(store.Add(ALICE, Gun(n)).drop->dropId);
+		ids.push_back(Laid(store, ALICE, Gun(n)));
 		REQUIRE(store.Take(BOB, ids.back()));
 	}
 	CHECK(store.TakenCount() == 2);
@@ -140,9 +212,9 @@ TEST("drop store: takes are remembered up to the cap, the oldest forgotten first
 TEST("drop store: a drop its owner's world has again (a save from before it) is withdrawn")
 {
 	DropStore  store;
-	const auto kept = store.Add(ALICE, Gun(11)).drop->dropId;
-	const auto undone = store.Add(ALICE, Gun(12)).drop->dropId;
-	const auto bobs = store.Add(BOB, Gun(12)).drop->dropId;
+	const auto kept = Laid(store, ALICE, Gun(11));
+	const auto undone = Laid(store, ALICE, Gun(12));
+	const auto bobs = Laid(store, BOB, Gun(12));
 	const auto out = store.Reconcile(ALICE, Record({ 11 }, {}), SESSION);
 	REQUIRE(out.withdrawn.size() == 1);
 	CHECK(out.withdrawn[0].dropId == undone);
@@ -158,7 +230,7 @@ TEST("drop store: a drop its owner's world has again (a save from before it) is 
 TEST("drop store: an item its taker's world lacks (a save from before the take) lies there again")
 {
 	DropStore  store;
-	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id = Laid(store, ALICE, Gun(11));
 	REQUIRE(store.Take(BOB, id));
 	const auto out = store.Reconcile(BOB, Record({}, {}), SESSION);
 	REQUIRE(out.returned.size() == 1);
@@ -167,7 +239,7 @@ TEST("drop store: an item its taker's world lacks (a save from before the take) 
 	CHECK(store.Find(id) != nullptr);
 	// A save from after the take has it: nothing changes.
 	DropStore  other;
-	const auto id2 = other.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id2 = Laid(other, ALICE, Gun(11));
 	REQUIRE(other.Take(BOB, id2));
 	const auto same = other.Reconcile(BOB, Record({}, { id2 }), SESSION);
 	CHECK(same.returned.empty());
@@ -179,8 +251,8 @@ TEST("drop store: an item its taker's world lacks (a save from before the take) 
 TEST("drop store: a giver's save from after the drop keeps it lying; one from before a take of it by another is only counted")
 {
 	DropStore  store;
-	const auto lying = store.Add(ALICE, Gun(11)).drop->dropId;
-	const auto taken = store.Add(ALICE, Gun(12)).drop->dropId;
+	const auto lying = Laid(store, ALICE, Gun(11));
+	const auto taken = Laid(store, ALICE, Gun(12));
 	REQUIRE(store.Take(BOB, taken));
 	const auto after = store.Reconcile(ALICE, Record({ 11, 12 }, {}), SESSION);
 	CHECK(after.withdrawn.empty());
@@ -198,7 +270,7 @@ TEST("drop store: a giver's save from after the drop keeps it lying; one from be
 TEST("drop store: an item its owner took back, then a save from before the drop: it lies nowhere")
 {
 	DropStore  store;
-	const auto id = store.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id = Laid(store, ALICE, Gun(11));
 	REQUIRE(store.Take(ALICE, id));
 	const auto out = store.Reconcile(ALICE, Record({}, {}), SESSION);
 	CHECK(out.returned.empty());
@@ -208,7 +280,7 @@ TEST("drop store: an item its owner took back, then a save from before the drop:
 	CHECK(store.TakerOf(id) == ALICE);
 	// A save from after the drop, before taking it back: her world has no item, so it lies there again.
 	DropStore  other;
-	const auto id2 = other.Add(ALICE, Gun(11)).drop->dropId;
+	const auto id2 = Laid(other, ALICE, Gun(11));
 	REQUIRE(other.Take(ALICE, id2));
 	const auto mid = other.Reconcile(ALICE, Record({ 11 }, {}), SESSION);
 	REQUIRE(mid.returned.size() == 1);
@@ -220,8 +292,8 @@ TEST("drop store: an item its owner took back, then a save from before the drop:
 TEST("drop store: a world without the record, then the save with it: what it gave lies there again, what it took is its own again")
 {
 	DropStore  store;
-	const auto given = store.Add(ALICE, Gun(11)).drop->dropId;      // Alice's, lying
-	const auto bobs = store.Add(BOB, Gun(21)).drop->dropId;         // Bob's, Alice took it
+	const auto given = Laid(store, ALICE, Gun(11));      // Alice's, lying
+	const auto bobs = Laid(store, BOB, Gun(21));         // Bob's, Alice took it
 	REQUIRE(store.Take(ALICE, bobs));
 	const auto wrong = store.Reconcile(ALICE, Record({}, {}), SESSION);
 	REQUIRE(wrong.withdrawn.size() == 1);
@@ -247,8 +319,8 @@ TEST("drop store: a world without the record, then the save with it: what it gav
 TEST("drop store: a record of another session counts as none")
 {
 	DropStore  store;
-	const auto mine = store.Add(ALICE, Gun(11)).drop->dropId;
-	const auto took = store.Add(BOB, Gun(5)).drop->dropId;
+	const auto mine = Laid(store, ALICE, Gun(11));
+	const auto took = Laid(store, BOB, Gun(5));
 	REQUIRE(store.Take(ALICE, took));
 	const auto out = store.Reconcile(ALICE, Record({ 11 }, { took }, SESSION + 1), SESSION);
 	REQUIRE(out.withdrawn.size() == 1);
@@ -260,8 +332,8 @@ TEST("drop store: a record of another session counts as none")
 TEST("drop store: what's kept goes into the session file and comes back, numbering on from where it was")
 {
 	DropStore  store;
-	const auto lying = store.Add(ALICE, Gun(11)).drop->dropId;
-	const auto taken = store.Add(ALICE, Gun(12)).drop->dropId;
+	const auto lying = Laid(store, ALICE, Gun(11));
+	const auto taken = Laid(store, ALICE, Gun(12));
 	REQUIRE(store.Take(BOB, taken));
 
 	SessionFile::Snapshot snapshot;
@@ -280,7 +352,7 @@ TEST("drop store: what's kept goes into the session file and comes back, numberi
 	REQUIRE(again.Find(lying) != nullptr);
 	CHECK(*again.Find(lying) == *store.Find(lying));
 	CHECK(again.TakerOf(taken) == BOB);
-	const auto next = again.Add(CAROL, Gun(1)).drop->dropId;
+	const auto next = Laid(again, CAROL, Gun(1));
 	CHECK(next > taken);
 	// Bob's reload from before his take still brings it back after the restart.
 	CHECK(again.Reconcile(BOB, Record({}, {}), SESSION).returned.size() == 1);
@@ -290,7 +362,7 @@ TEST("drop store: the session file holds any number of drops, in packets")
 {
 	DropStore store{ DropStore::Limits{ .lying = 1000, .taken = 10, .perOwner = 1000 } };
 	for (std::uint64_t n = 1; n <= 150; ++n) {
-		store.Add(ALICE, Gun(n));
+		Laid(store, ALICE, Gun(n));
 	}
 	SessionFile::Snapshot snapshot;
 	snapshot.drops = store.All();

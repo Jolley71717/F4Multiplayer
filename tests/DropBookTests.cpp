@@ -170,3 +170,76 @@ TEST("drop book: the record keeps the latest sessions and, in each, the latest t
 	const auto loaded = DropBook::Record::Load(record.Save());
 	CHECK(loaded.has_value());
 }
+
+// A save from before this session (or from another host's) has no entry for it: what our player gives and takes from
+// then on must still be recorded, or a reload copies those items or loses them.
+TEST("drop book: a loaded save with no entry for the session we are in, or a revert, still records what we give and take")
+{
+	DropBook::Record older;
+	older.Bind(0xB);
+	older.Took(4);
+	auto loaded = DropBook::Record::Load(older.Save());
+	REQUIRE(loaded);
+
+	DropBook::Record now;
+	now.Bind(0xA);
+	now.Took(99);
+	now.Replace(std::move(*loaded));
+	CHECK(now.Current() == 0xA);
+	CHECK(now.ForServer().sessionId == 0xA);
+	CHECK(now.ForServer().taken.empty());  // the loaded world has none of this session's transfers
+	now.Made(7);
+	now.Took(5);
+	CHECK(now.HasMade(7));
+	CHECK(now.HasTaken(5));
+	const auto sent = now.ForServer();
+	CHECK(sent.made == std::vector<std::uint64_t>{ 7 });
+	CHECK(sent.taken == std::vector<std::uint32_t>{ 5 });
+	// And the save made now holds them, beside the older session's.
+	const auto saved = DropBook::Record::Load(now.Save());
+	REQUIRE(saved);
+	DropBook::Record again;
+	again.Bind(0xA);
+	again.Replace(*saved);
+	CHECK(again.HasTaken(5));
+	again.Bind(0xB);
+	CHECK(again.HasTaken(4));
+
+	// A revert (a new game, or the load's own first step) empties the record; we are still in the session.
+	DropBook::Record reverted;
+	reverted.Bind(0xA);
+	reverted.Took(1);
+	reverted.Replace(DropBook::Record{});
+	CHECK(!reverted.HasTaken(1));
+	reverted.Took(2);
+	CHECK(reverted.HasTaken(2));
+	CHECK(reverted.ForServer().sessionId == 0xA);
+	// Out of any session, a load binds nothing.
+	DropBook::Record alone;
+	alone.Replace(DropBook::Record{});
+	CHECK(alone.Empty());
+}
+
+TEST("drop book: a take is done only once our copy left the world and our player's count rose by the drop's count")
+{
+	using DropBook::TakeState;
+	CHECK(DropBook::JudgeTake(false, 10, 13, 3) == TakeState::kTaken);
+	CHECK(DropBook::JudgeTake(false, 10, 14, 3) == TakeState::kTaken);    // something else of that base came in too
+	CHECK(DropBook::JudgeTake(true, 10, 13, 3) == TakeState::kWaiting);   // the count rose, but our copy still lies there
+	CHECK(DropBook::JudgeTake(false, 10, 11, 3) == TakeState::kWaiting);  // gone from the world, but not (all) to us
+	CHECK(DropBook::JudgeTake(false, 10, 10, 1) == TakeState::kWaiting);  // its cell unloaded under it
+	CHECK(DropBook::JudgeTake(false, 10, 9, 1) == TakeState::kWaiting);
+	CHECK(DropBook::JudgeTake(false, 0, 1, 1) == TakeState::kTaken);
+}
+
+TEST("drop book: an item with no reference named is looked for only when it can only have been dropped")
+{
+	CHECK(DropBook::MayScan(5u, 4u, 1, false));
+	CHECK(DropBook::MayScan(5u, 0u, 5, false));
+	CHECK(!DropBook::MayScan(5u, 4u, 1, true));           // used up: a stim, food (an equip event of it came)
+	CHECK(!DropBook::MayScan(std::nullopt, 4u, 1, false));  // no count from before: the menu just opened
+	CHECK(!DropBook::MayScan(5u, 5u, 1, false));          // the count didn't fall (the item came back, or never left)
+	CHECK(!DropBook::MayScan(5u, 3u, 1, false));          // fell by more than the events say: something else went too
+	CHECK(!DropBook::MayScan(5u, 6u, 1, false));
+	CHECK(!DropBook::MayScan(5u, 5u, 0, false));
+}

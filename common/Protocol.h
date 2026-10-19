@@ -165,7 +165,7 @@ namespace Protocol
 		kVoiceRelay = 125,        // a piece of another player's voice
 		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
 		kLineSpoken = 127,        // another player (or an NPC they run) said something
-		kDropPlaced = 140,        // an item lies in the session for anyone to take (to every game, the dropper's too)
+		kDropPlaced = 140,        // an item lies in the session for anyone to take (offered to its dropper alone first: DropClaim)
 		kDropGone = 141,          // a dropped item was taken (by takerId: that game takes it) or went back to its owner
 		kDropList = 142,          // every item lying in the session now (the answer to kDropRecord)
 	};
@@ -450,10 +450,17 @@ namespace Protocol
 	// kClaimDrop. kTake: the sender's player pressed Take on its copy; the server grants it to the first who asks (kDropGone
 	// naming them). kGiveBack: a grant the sender's game could not finish (its copy was gone, a load came first): it lies
 	// there again for anyone.
+	//
+	// A new drop is offered to its dropper's game alone (kDropPlaced), and goes to the others only once that game has
+	// swapped the item it dropped for a copy: kPlaced says it has. kKept: their player picked the item up again before the
+	// offer came, so it never lay anywhere. An offer that is neither goes when its dropper leaves. So nobody can take an
+	// item that is still in its dropper's world.
 	enum class DropClaim : std::uint8_t
 	{
 		kTake = 0,
 		kGiveBack = 1,
+		kPlaced = 2,
+		kKept = 3,
 	};
 
 	struct ClaimDrop
@@ -954,6 +961,21 @@ namespace Protocol
 
 	// ---- serialization -------------------------------------------------------------
 
+	// The longest start of a_text that is at most a_maxBytes long and doesn't end inside a UTF-8 character: a cut name
+	// loses its last character whole, never leaving half of one (which the game would show as junk).
+	[[nodiscard]] inline std::string_view Utf8Prefix(std::string_view a_text, std::size_t a_maxBytes)
+	{
+		if (a_text.size() <= a_maxBytes) {
+			return a_text;
+		}
+		std::size_t length = a_maxBytes;
+		// Back off continuation bytes (10xxxxxx) to the start of the character cut through, at most three.
+		for (int i = 0; i < 3 && length > 0 && (static_cast<unsigned char>(a_text[length]) & 0xC0) == 0x80; ++i) {
+			--length;
+		}
+		return a_text.substr(0, length);
+	}
+
 	class Writer
 	{
 	public:
@@ -965,9 +987,10 @@ namespace Protocol
 		void U64(std::uint64_t a_value) { Raw(&a_value, sizeof(a_value)); }
 		void F32(float a_value) { Raw(&a_value, sizeof(a_value)); }
 
+		// Cut short at a whole character (Utf8Prefix).
 		void Str(std::string_view a_value, std::size_t a_maxLength)
 		{
-			const auto length = (std::min)(a_value.size(), (std::min<std::size_t>)(a_maxLength, 255));
+			const auto length = Utf8Prefix(a_value, (std::min<std::size_t>)(a_maxLength, 255)).size();
 			U8(static_cast<std::uint8_t>(length));
 			Raw(a_value.data(), length);
 		}
@@ -975,7 +998,7 @@ namespace Protocol
 		// A string longer than Str's 255 bytes may be (a plugin's file name): a U16 length, then the bytes.
 		void LongStr(std::string_view a_value, std::size_t a_maxLength)
 		{
-			const auto length = (std::min)(a_value.size(), (std::min<std::size_t>)(a_maxLength, 0xFFFF));
+			const auto length = Utf8Prefix(a_value, (std::min<std::size_t>)(a_maxLength, 0xFFFF)).size();
 			U16(static_cast<std::uint16_t>(length));
 			Raw(a_value.data(), length);
 		}
@@ -2760,7 +2783,7 @@ namespace Protocol
 		ClaimDrop msg;
 		msg.dropId = r.U32();
 		const auto op = r.U8();
-		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0 || op > static_cast<std::uint8_t>(DropClaim::kGiveBack)) {
+		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0 || op > static_cast<std::uint8_t>(DropClaim::kKept)) {
 			return std::nullopt;
 		}
 		msg.op = static_cast<DropClaim>(op);

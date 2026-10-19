@@ -50,13 +50,22 @@ namespace
 		return { out, last };
 	}
 
-	// Alice drops a_item; returns its drop as everyone was told it.
-	Protocol::DroppedItem Drop(Fixture& a_f, PeerId a_peer, const Protocol::DroppedItem& a_item)
+	// a_peer's player drops a_item: the offer they get (to them alone).
+	Protocol::DroppedItem Offer(Fixture& a_f, PeerId a_peer, const Protocol::DroppedItem& a_item)
 	{
 		a_f.fake->Deliver(a_peer, Protocol::Encode(a_item, MT::kReportDrop));
 		const auto placed = Placed(Received(a_f, a_peer));
 		REQUIRE(placed.size() == 1);
 		return placed[0];
+	}
+
+	// a_peer's player drops a_item and their game swaps it for a copy (kPlaced): it lies there for everyone. The drop.
+	Protocol::DroppedItem Drop(Fixture& a_f, PeerId a_peer, const Protocol::DroppedItem& a_item)
+	{
+		const auto offer = Offer(a_f, a_peer, a_item);
+		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::ClaimDrop{ offer.dropId, Protocol::DropClaim::kPlaced }));
+		CHECK(Placed(Received(a_f, a_peer)).empty());  // their game has it already
+		return offer;
 	}
 
 	void Claim(Fixture& a_f, PeerId a_peer, std::uint32_t a_dropId, Protocol::DropClaim a_op = Protocol::DropClaim::kTake)
@@ -70,21 +79,86 @@ namespace
 	}
 }
 
-TEST("server drops: a drop goes to every game, the dropper's too, as the dropper's, with its mods and name")
+TEST("server drops: a drop is offered to its dropper alone, and goes to every other game, as theirs, once their game swapped it")
 {
 	Fixture    f;
 	const auto alice = JoinAs(f, 1, "Alice", 0xA);
 	JoinAs(f, 2, "Bob", 0xB);
 	Clear(f, { 1, 2 });
-	const auto drop = Drop(f, 1, Gun(77));
+	const auto drop = Offer(f, 1, Gun(77));
 	CHECK(drop.dropId != 0);
 	CHECK(drop.ownerId == alice);
 	CHECK(drop.nonce == 77);
 	CHECK(drop.mods == Gun(77).mods);
 	CHECK(drop.name == "Old Reliable");
+	CHECK(Placed(Received(f, 2)).empty());  // Alice's game still has her item
+	Claim(f, 2, drop.dropId, Protocol::DropClaim::kPlaced);  // nor can anyone but her say it swapped it
+	CHECK(Placed(Received(f, 2)).empty());
+	Claim(f, 1, drop.dropId, Protocol::DropClaim::kPlaced);
 	const auto bob = Placed(Received(f, 2));
 	REQUIRE(bob.size() == 1);
 	CHECK(bob[0] == drop);
+	CHECK(Placed(Received(f, 1)).empty());
+}
+
+// The dropper's game hasn't swapped its item for a copy yet (or never will: it left first): nobody else can have it.
+TEST("server drops: an offer can't be taken, listed or kept past its dropper leaving or picking it up again")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice", 0xA);
+	const auto welcome = f.Join(2, Fixture::MakeHello("Bob", 0xB));
+	REQUIRE(welcome);
+	Clear(f, { 1, 2 });
+	const auto offered = Offer(f, 1, Gun(1));
+	Claim(f, 2, offered.dropId);
+	auto gone = Gone(Received(f, 2));
+	REQUIRE(gone.size() == 1);
+	CHECK(gone[0].takerId == 0);  // refused: not granted to Bob
+	CHECK(Gone(Received(f, 1)).empty());
+	SendRecord(f, 2, { welcome->sessionId, {}, {} });
+	CHECK(Listed(Received(f, 2)).first.empty());
+
+	// Picked up again before the offer came: it never lay there.
+	const auto kept = Offer(f, 1, Gun(2));
+	Claim(f, 1, kept.dropId, Protocol::DropClaim::kKept);
+	Claim(f, 1, kept.dropId, Protocol::DropClaim::kPlaced);  // too late: gone
+	CHECK(Placed(Received(f, 2)).empty());
+
+	// Alice leaves before her game says it swapped the first: it goes with her.
+	f.fake->Drop(1);
+	Claim(f, 2, offered.dropId);
+	gone = Gone(Received(f, 2));
+	REQUIRE(gone.size() == 1);
+	CHECK(gone[0].takerId == 0);
+	JoinAs(f, 1, "Alice", 0xA);
+	Clear(f, { 1, 2 });
+	Claim(f, 1, offered.dropId, Protocol::DropClaim::kPlaced);
+	CHECK(Placed(Received(f, 2)).empty());
+}
+
+// The dropper loaded a save before the offer reached their game: their record says whether their world still has it.
+TEST("server drops: a dropper's record settles an offer a load overtook: laid down if their world swapped it out, else gone")
+{
+	Fixture    f;
+	const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
+	REQUIRE(welcome);
+	JoinAs(f, 2, "Bob", 0xB);
+	Clear(f, { 1, 2 });
+	const auto swapped = Offer(f, 1, Gun(1));
+	const auto held = Offer(f, 1, Gun(2));
+	SendRecord(f, 1, { welcome->sessionId, { 1 }, {} });
+	const auto aliceGot = Received(f, 1);
+	const auto gone = Gone(aliceGot);
+	REQUIRE(gone.size() == 1);
+	CHECK(gone[0].dropId == held.dropId);
+	const auto [list, last] = Listed(aliceGot);
+	REQUIRE(list.size() == 1);
+	CHECK(list[0].dropId == swapped.dropId);
+	const auto bobGot = Received(f, 2);
+	const auto bob = Placed(bobGot);
+	REQUIRE(bob.size() == 1);
+	CHECK(bob[0].dropId == swapped.dropId);
+	CHECK(Gone(bobGot).empty());  // he never heard of the other
 }
 
 TEST("server drops: two players taking the same item at once: one gets it, and every game hears who")
@@ -204,19 +278,63 @@ TEST("server drops: a giver's reload from before the drop takes it back from eve
 	CHECK(back[0].dropId == kept.dropId);
 }
 
-TEST("server drops: records sent over and over are answered at most four times a second, the last one too")
+// The list is up to ~385 KB: a game sending records over and over must not have it sent each time.
+TEST("server drops: records sent over and over are settled at most four times a second, the last one too, and the list goes once")
 {
 	Fixture    f;
 	const auto welcome = f.Join(1, Fixture::MakeHello("Alice", 0xA));
 	REQUIRE(welcome);
-	Clear(f, { 1 });
+	JoinAs(f, 2, "Bob", 0xB);
+	Clear(f, { 1, 2 });
+	Drop(f, 1, Gun(1));
+	const auto undone = Drop(f, 1, Gun(2));
+	Clear(f, { 2 });
 	for (int i = 0; i < 50; ++i) {
-		SendRecord(f, 1, { welcome->sessionId, {}, {} });
+		SendRecord(f, 1, { welcome->sessionId, { 1, 2 }, {} });
 	}
+	SendRecord(f, 1, { welcome->sessionId, { 1 }, {} });  // the last: a save from before the second drop
 	const auto first = Received(f, 1);
 	CHECK(Count(first, MT::kDropList) == 1);
-	Packets later;
-	CHECK(Await(f, 1, MT::kDropList, later, 2000ms));
+	// The last one is settled at the tick (the second drop goes back to her)...
+	Packets bob;
+	REQUIRE(Await(f, 2, MT::kDropGone, bob, 2000ms));
+	const auto gone = Gone(bob);
+	REQUIRE(gone.size() == 1);
+	CHECK(gone[0].dropId == undone.dropId);
+	// ... but not answered with the list again.
+	CHECK(Count(During(f, 1, 500ms), MT::kDropList) == 0);
+	std::this_thread::sleep_for(300ms);
+	SendRecord(f, 1, { welcome->sessionId, { 1 }, {} });
+	CHECK(Count(Received(f, 1), MT::kDropList) == 0);
+}
+
+// "Take all" from a big chest, or a long fight, can spend a player's event budget: a drop or a claim dropped then would
+// leave an item in no inventory, or in two.
+TEST("server drops: reports and claims get through while the player's event budget is spent")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice", 0xA);
+	JoinAs(f, 2, "Bob", 0xB);
+	Clear(f, { 1, 2 });
+	const auto spend = [&](PeerId a_peer) {
+		for (int i = 0; i < 600; ++i) {
+			f.fake->Deliver(a_peer, Protocol::Encode(Protocol::PlayerStatus{}, MT::kReportStatus));
+		}
+	};
+	spend(1);
+	const auto drop = Drop(f, 1, Gun(1));
+	CHECK(f.Logged("sends too many events"));
+	const auto bobGot = Placed(Received(f, 2));
+	REQUIRE(bobGot.size() == 1);
+	CHECK(bobGot[0].dropId == drop.dropId);
+	spend(2);
+	Claim(f, 2, drop.dropId);
+	const auto gone = Gone(Received(f, 1));
+	REQUIRE(gone.size() == 1);
+	CHECK(gone[0].takerId != 0);
+	spend(2);
+	Claim(f, 2, drop.dropId, Protocol::DropClaim::kGiveBack);
+	CHECK(Placed(Received(f, 1)).size() == 1);
 }
 
 TEST("server drops: what lies in the session, and who took what, survive the host's server restarting")

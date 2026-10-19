@@ -76,6 +76,33 @@ namespace DropBook
 		return a_sinceDrop >= SETTLE_MAX || (a_sinceDrop >= SETTLE_MIN && a_sinceMoved >= SETTLE_STILL);
 	}
 
+	// ---- which reference our player's item became ----------------------------------------------------------------
+
+	// The engine's event names no reference for some drops, so the item is looked for near our player (Drops' scan). Only
+	// when it can only have been a drop: our player's count of that base fell by just what the events said left (a_before:
+	// the count a frame before them, if known), and none of it was used up (food eaten, a stim used: an equip event of
+	// that base among them). Else the scan could take another item lying near them for ours, and the swap delete it.
+	constexpr bool MayScan(std::optional<std::uint32_t> a_before, std::uint32_t a_now, std::int64_t a_left, bool a_used)
+	{
+		return !a_used && a_before && a_left > 0 && *a_before >= a_now && std::int64_t{ *a_before - a_now } == a_left;
+	}
+
+	// ---- a take being finished --------------------------------------------------------------------------------
+
+	enum class TakeState : std::uint8_t
+	{
+		kTaken,    // our copy left the world and our player's count of its base rose by the drop's count
+		kWaiting,  // not yet (the engine's pickup may take a frame or two): checked again, then tried again
+	};
+
+	// Our player's take of a granted drop of a_count: a_before the count of its base when it began, a_now the count now,
+	// a_copyInWorld whether our copy still lies loose. Both must have happened: the count alone may rise for another reason
+	// (an item of that base looted meanwhile), and our copy may leave the world without coming to us (its cell unloaded).
+	constexpr TakeState JudgeTake(bool a_copyInWorld, std::uint32_t a_before, std::uint32_t a_now, std::int32_t a_count)
+	{
+		return !a_copyInWorld && a_count > 0 && std::int64_t{ a_now } - a_before >= a_count ? TakeState::kTaken : TakeState::kWaiting;
+	}
+
 	// ---- our player's claims ---------------------------------------------------------------------------------
 
 	// Our player pressed Take on a copy: one claim per item until the server answers, and one at a time so a held key
@@ -260,12 +287,15 @@ namespace DropBook
 			return record;
 		}
 
-		// A loaded save's record replaces ours (the world it describes is the save's); we are still in the session we were.
+		// A loaded save's record replaces ours (the world it describes is the save's; a revert's is empty); we are still in
+		// the session we were, bound again (Bind): a save from before it has no entry for it, and our transfers from now on
+		// go into a fresh one rather than nowhere.
 		void Replace(Record a_loaded)
 		{
 			const auto session = current;
 			*this = std::move(a_loaded);
-			current = session;
+			current = 0;
+			Bind(session);
 		}
 
 	private:

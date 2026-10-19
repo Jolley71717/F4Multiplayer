@@ -1623,3 +1623,24 @@ TEST("protocol: a player's own direction and aim pitch, as their graph has them,
 		CHECK(batch->players[0].state.pitch == in.pitch);
 	}
 }
+
+// A renamed gun's name past MAX_ITEM_NAME_LENGTH bytes is cut at a whole character: half of one would show as junk.
+TEST("protocol: a string cut to its length on the wire never ends inside a UTF-8 character")
+{
+	Protocol::DroppedItem item;
+	item.nonce = 1;
+	item.base = 0x0004F46A;
+	item.count = 1;
+	item.worldspace = 0x3C;
+	for (const std::string tail : { "\xC3\xA9", "\xE6\x97\xA5", "\xF0\x9F\x94\xAB" }) {  // é, 日, a pistol emoji
+		item.name = std::string(Protocol::MAX_ITEM_NAME_LENGTH - 1, 'a') + tail;
+		const auto read = Protocol::DecodeDroppedItem(Protocol::Encode(item, Protocol::MessageType::kReportDrop));
+		REQUIRE(read);
+		CHECK(read->name == std::string(Protocol::MAX_ITEM_NAME_LENGTH - 1, 'a'));
+	}
+	item.name = std::string(Protocol::MAX_ITEM_NAME_LENGTH - 2, 'a') + "\xC3\xA9";  // fits whole
+	CHECK(Protocol::DecodeDroppedItem(Protocol::Encode(item, Protocol::MessageType::kReportDrop))->name == item.name);
+	CHECK(Protocol::Utf8Prefix("abc", 2) == "ab");
+	CHECK(Protocol::Utf8Prefix("\xC3\xA9", 1).empty());
+	CHECK(Protocol::Utf8Prefix("", 0).empty());
+}
