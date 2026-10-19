@@ -45,7 +45,12 @@ namespace MovedObjects
 		std::unordered_map<std::uint32_t, Clock::time_point> flying;
 		// Objects we made keyframed (held still for a friend's hands), to make physics again: by handle, so it is that
 		// very reference.
-		std::unordered_map<std::uint32_t, RE::ObjectRefHandle> keyframed;
+		struct Still
+		{
+			RE::ObjectRefHandle        handle;
+			std::vector<std::uint32_t> filters;  // each body's collision filter before: it collides with nothing while held here
+		};
+		std::unordered_map<std::uint32_t, Still> keyframed;
 		// Our player grabbed what a friend holds (the server said so): its copy is turned off and on again so the game
 		// lets go of it (the engine drops a grab whose 3D goes).
 		std::unordered_map<std::uint32_t, std::pair<RE::ObjectRefHandle, Clock::time_point>> released;
@@ -164,7 +169,7 @@ namespace MovedObjects
 			return { 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0 };
 		}
 
-		// Where the reference is: where its 3D is drawn (physics moves that first), at the reference's angles.
+		// Where the reference is: where its 3D is drawn (physics moves that first), turned as its 3D is.
 		std::optional<Pose> PoseOf(RE::TESObjectREFR* a_ref)
 		{
 			const auto root = a_ref ? a_ref->Get3D() : nullptr;
@@ -176,8 +181,10 @@ namespace MovedObjects
 				return std::nullopt;
 			}
 			const auto& t = root->world.translate;
-			const auto& a = a_ref->data.angle;
-			Pose pose{ .cell = cell, .worldspace = worldspace, .position = { t.x, t.y, t.z }, .angles = { a.x, a.y, a.z } };
+			// Its angles from its 3D too: the reference's own lag behind physics while it is held (0.03 rad seen).
+			const auto& r = root->world.rotate.entry;
+			const ObjectShare::Mat3 rotation{ Vec3{ r[0].x, r[0].y, r[0].z }, Vec3{ r[1].x, r[1].y, r[1].z }, Vec3{ r[2].x, r[2].y, r[2].z } };
+			Pose pose{ .cell = cell, .worldspace = worldspace, .position = { t.x, t.y, t.z }, .angles = ObjectShare::ToAngles(rotation) };
 			if (!ObjectShare::Finite(pose.position) || !ObjectShare::Finite(pose.angles)) {
 				return std::nullopt;
 			}
@@ -215,10 +222,25 @@ namespace MovedObjects
 		void HoldStill(RE::TESObjectREFR* a_ref)
 		{
 			const auto id = a_ref->GetFormID();
-			if (!keyframed.contains(id)) {
-				SetMotion(a_ref, RE::hknpMotionPropertiesId::Preset::kKeyframed);
-				keyframed.emplace(id, a_ref->GetHandle());
+			if (keyframed.contains(id)) {
+				return;
 			}
+			SetMotion(a_ref, RE::hknpMotionPropertiesId::Preset::kKeyframed);
+			// And it touches nothing: drawn in a friend's stand-in's hands it would push the stand-in away (and anything
+			// else in the way, which the holder's game moves itself, and reports).
+			Still still{ .handle = a_ref->GetHandle() };
+			if (const auto root = a_ref->Get3D()) {
+				ForEachCollision(root, [&](RE::bhkNPCollisionObject* a_collision) {
+					const auto body = a_collision->GetBody();
+					RE::CFilter filter{ body ? body->m_collisionFilterInfo : 0u };
+					still.filters.push_back(filter.filter);
+					if (body) {
+						filter.SetNoCollision(true);
+						a_collision->SetCollisionFilterInfo(filter);
+					}
+				});
+			}
+			keyframed.emplace(id, std::move(still));
 		}
 
 		// Physics again, as the game made it (a reference we held still for a friend).
@@ -228,9 +250,23 @@ namespace MovedObjects
 			if (it == keyframed.end()) {
 				return;
 			}
-			const auto ref = it->second.get();
+			const auto ref = it->second.handle.get();
+			const auto filters = std::move(it->second.filters);
 			keyframed.erase(it);
 			if (ref && ref->GetFormID() == a_id && !ref->IsDeleted()) {
+				if (const auto root = ref->Get3D()) {
+					std::size_t i = 0;
+					ForEachCollision(root, [&](RE::bhkNPCollisionObject* a_collision) {
+						const auto body = a_collision->GetBody();
+						if (body && i < filters.size()) {
+							RE::CFilter filter{ filters[i] };
+							if (filter.filter != 0 && filter.filter != body->m_collisionFilterInfo) {
+								a_collision->SetCollisionFilterInfo(filter);
+							}
+						}
+						++i;
+					});
+				}
 				SetMotion(ref.get(), RE::hknpMotionPropertiesId::Preset::kDynamic);
 			}
 		}
@@ -238,7 +274,7 @@ namespace MovedObjects
 		void LetAllLoose()
 		{
 			std::vector<std::uint32_t> ids;
-			for (const auto& [id, handle] : keyframed) {
+			for (const auto& [id, still] : keyframed) {
 				ids.push_back(id);
 			}
 			for (const auto id : ids) {

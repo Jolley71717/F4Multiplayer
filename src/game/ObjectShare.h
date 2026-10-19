@@ -85,12 +85,60 @@ namespace ObjectShare
 		float heading = 0.0f;
 	};
 
+	// --- rotations ------------------------------------------------------------------------------------------------
+	//
+	// A reference's angles (x, y, z) are its 3D's rotation R = Rz(z) Ry(y) Rx(x), the rows of R being the object's own
+	// axes in the world (row 1 is where it faces: a heading h faces (sin h, cos h)). So the object turned with its holder
+	// by a heading d is R Rz(d): measured in the game, carrying a tilted tire round (its x and y angles change as it
+	// turns, and R's third column stays put). The game's NiMatrix3::ToEulerAnglesXYZ gives these angles back.
+
+	using Mat3 = std::array<Vec3, 3>;  // rows
+
+	inline Mat3 Multiply(const Mat3& a_a, const Mat3& a_b)
+	{
+		Mat3 out{};
+		for (std::size_t r = 0; r < 3; ++r) {
+			for (std::size_t c = 0; c < 3; ++c) {
+				out[r][c] = a_a[r][0] * a_b[0][c] + a_a[r][1] * a_b[1][c] + a_a[r][2] * a_b[2][c];
+			}
+		}
+		return out;
+	}
+
+	// Rz(a_heading): a player's own rotation at that heading.
+	inline Mat3 Yaw(float a_heading)
+	{
+		const float c = std::cos(a_heading), s = std::sin(a_heading);
+		return { Vec3{ c, -s, 0.0f }, Vec3{ s, c, 0.0f }, Vec3{ 0.0f, 0.0f, 1.0f } };
+	}
+
+	// R = Rz(z) Ry(y) Rx(x).
+	inline Mat3 FromAngles(const Vec3& a_angles)
+	{
+		const float cx = std::cos(a_angles[0]), sx = std::sin(a_angles[0]);
+		const float cy = std::cos(a_angles[1]), sy = std::sin(a_angles[1]);
+		const Mat3  x{ Vec3{ 1.0f, 0.0f, 0.0f }, Vec3{ 0.0f, cx, -sx }, Vec3{ 0.0f, sx, cx } };
+		const Mat3  y{ Vec3{ cy, 0.0f, sy }, Vec3{ 0.0f, 1.0f, 0.0f }, Vec3{ -sy, 0.0f, cy } };
+		return Multiply(Multiply(Yaw(a_angles[2]), y), x);
+	}
+
+	// The angles of a rotation (FromAngles undone), each in [-pi, pi]; y in [-pi/2, pi/2].
+	inline Vec3 ToAngles(const Mat3& a_m)
+	{
+		const float sy = std::clamp(-a_m[2][0], -1.0f, 1.0f);
+		const float y = std::asin(sy);
+		if (std::fabs(sy) < 0.99999f) {
+			return { std::atan2(a_m[2][1], a_m[2][2]), y, std::atan2(a_m[1][0], a_m[0][0]) };
+		}
+		return { 0.0f, y, std::atan2(-a_m[0][1], a_m[1][1]) };  // pitched straight up or down: x folded into z
+	}
+
 	// --- the holder's frame ---------------------------------------------------------------------------------------
 
 	struct Relative
 	{
 		Vec3 offset{};    // to the holder's right, ahead, up
-		Vec3 rotation{};  // the object's angles, z less the holder's heading
+		Vec3 rotation{};  // the object's angles in the holder's frame: its rotation turned back by their heading
 
 		bool operator==(const Relative&) const = default;
 	};
@@ -102,7 +150,7 @@ namespace ObjectShare
 		const float dx = a_position[0] - a_holder.position[0], dy = a_position[1] - a_holder.position[1];
 		return {
 			.offset = { dx * c - dy * s, dx * s + dy * c, a_position[2] - a_holder.position[2] },
-			.rotation = { Wrap(a_angles[0]), Wrap(a_angles[1]), Wrap(a_angles[2] - a_holder.heading) },
+			.rotation = ToAngles(Multiply(FromAngles(a_angles), Yaw(-a_holder.heading))),
 		};
 	}
 
@@ -113,7 +161,7 @@ namespace ObjectShare
 		const auto& o = a_relative.offset;
 		return {
 			Vec3{ a_holder.position[0] + o[0] * c + o[1] * s, a_holder.position[1] - o[0] * s + o[1] * c, a_holder.position[2] + o[2] },
-			Vec3{ Wrap(a_relative.rotation[0]), Wrap(a_relative.rotation[1]), Wrap(a_relative.rotation[2] + a_holder.heading) },
+			ToAngles(Multiply(FromAngles(a_relative.rotation), Yaw(a_holder.heading))),
 		};
 	}
 

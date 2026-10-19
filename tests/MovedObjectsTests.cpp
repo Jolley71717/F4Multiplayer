@@ -151,7 +151,7 @@ TEST("moved objects frame: an object ahead of a holder facing +x is ahead in the
 	const ObjectShare::Holder east{ .position = { 1000, 2000, 50 }, .heading = std::numbers::pi_v<float> / 2 };
 	const auto                relative = ObjectShare::ToHolderFrame({ 1100, 2000, 150 }, { 0.2f, -0.1f, 2.0f }, east);
 	CHECK(Near(relative.offset, { 0, 100, 100 }));
-	CHECK(Near(relative.rotation, { 0.2f, -0.1f, 2.0f - std::numbers::pi_v<float> / 2 }));
+	CHECK(Near(ObjectShare::Turned(ObjectShare::ToHolderFrame({ 0, 0, 0 }, { 0, 0, 2.0f }, east).rotation, { 0, 0, 2.0f - std::numbers::pi_v<float> / 2 }), 0.0f));  // a level one: its heading less theirs
 	const auto [position, angles] = ObjectShare::FromHolderFrame(relative, east);
 	CHECK(Near(position, { 1100, 2000, 150 }));
 	CHECK(Near(angles, { 0.2f, -0.1f, 2.0f }));
@@ -173,6 +173,50 @@ TEST("moved objects frame: a held object turns and walks with the friend's stand
 	CHECK(Near(drawn[0], 510 - 80 * std::sin(0.3f), 0.05f));
 	CHECK(Near(drawn[1], 495 - 80 * std::cos(0.3f), 0.05f));
 	CHECK(Near(ObjectShare::Wrap(drawnAngles[2] - standIn.heading), 0.0f));
+}
+
+TEST("moved objects frame: angles are the game's rotation Rz Ry Rx, and come back from it")
+{
+	// A shovel lying in Sanctuary, as the game had it: its angles and its 3D's rotation (rows), read with `objects probe`.
+	const auto shovel = ObjectShare::FromAngles({ -0.3990f, 0.2646f, 3.9796f });
+	const ObjectShare::Mat3 game{ Vec3{ -0.646f, 0.753f, 0.128f }, Vec3{ -0.717f, -0.541f, -0.439f }, Vec3{ -0.262f, -0.375f, 0.889f } };
+	for (std::size_t r = 0; r < 3; ++r) {
+		CHECK(Near(shovel[r], game[r], 0.002f));
+	}
+	// And back: z comes back the short way round (3.9796 - 2 pi).
+	CHECK(Near(ObjectShare::ToAngles(game), { -0.3990f, 0.2646f, 3.9796f - 2 * std::numbers::pi_v<float> }, 0.003f));
+	// A player's own rotation is the yaw alone: facing 45 degrees right of +y, their right is (+x, -y).
+	CHECK(Near(ObjectShare::Yaw(0.7854f)[0], { 0.7071f, -0.7071f, 0.0f }, 0.001f));
+	CHECK(Near(ObjectShare::Yaw(0.7854f)[1], { 0.7071f, 0.7071f, 0.0f }, 0.001f));
+	// Pitched straight up: x folds into z, the rotation is the same.
+	const Vec3 up{ 0.3f, std::numbers::pi_v<float> / 2, 1.0f };
+	const auto back = ObjectShare::FromAngles(ObjectShare::ToAngles(ObjectShare::FromAngles(up)));
+	const auto want = ObjectShare::FromAngles(up);
+	for (std::size_t r = 0; r < 3; ++r) {
+		CHECK(Near(back[r], want[r], 0.002f));
+	}
+}
+
+TEST("moved objects frame: a tilted object carried round keeps its angles in the holder's frame")
+{
+	// Turned with its holder by d, an object's rotation is R Rz(d) (measured: a tilted tire carried round).
+	const Vec3 tilted{ 0.6f, -0.4f, 1.2f };
+	const ObjectShare::Holder before{ .position = { 0, 0, 0 }, .heading = 0.5f };
+	const auto                relative = ObjectShare::ToHolderFrame({ 0, 80, 40 }, tilted, before);
+	for (const float turn : { 0.3f, 1.5f, -2.8f }) {
+		const ObjectShare::Holder after{ .position = { 0, 0, 0 }, .heading = 0.5f + turn };
+		const auto                angles = ObjectShare::ToAngles(ObjectShare::Multiply(ObjectShare::FromAngles(tilted), ObjectShare::Yaw(turn)));
+		CHECK(Near(ObjectShare::ToHolderFrame({ 0, 80, 40 }, angles, after).rotation, relative.rotation, 0.001f));
+		// And drawn in front of a stand-in at that heading, it is turned the same.
+		const auto drawn = ObjectShare::FromAngles(ObjectShare::FromHolderFrame(relative, after).second);
+		const auto want = ObjectShare::FromAngles(angles);
+		for (std::size_t r = 0; r < 3; ++r) {
+			CHECK(Near(drawn[r], want[r], 0.001f));
+		}
+	}
+	// Its x and y angles change as it turns (z alone would not do): so they go in the holder's frame.
+	const auto turned = ObjectShare::ToAngles(ObjectShare::Multiply(ObjectShare::FromAngles(tilted), ObjectShare::Yaw(1.5f)));
+	CHECK(!Near(turned[0], tilted[0], 0.05f));
 }
 
 // --- what our player holds ----------------------------------------------------------------------------------------
