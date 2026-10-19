@@ -57,7 +57,7 @@ namespace HandThrowable
 	{
 		kNone,
 		kOff,           // turned off (bGrenadeInHand = false, or the dev's handthrowable off)
-		kNotReplayed,  // not a friend's throw replayed here (an NPC's own throw, or one already let go of)
+		kNotReplayed,   // not a friend's throw replayed here (an NPC's own throw, or one already let go of)
 		kNotLoaded,     // the actor is gone, dead or has no 3D
 		kNoHand,        // its 3D has no LArm_Hand node
 		kEngineShows,   // the engine hung its own WeaponLeft there: nothing of ours is needed

@@ -4,7 +4,7 @@ A friend throws a grenade, mine or Molotov. Their stand-in plays the throw in yo
 is empty during the wind-up. This is cosmetic (S3). The explosion comes as its own report and goes
 off where it did in the thrower's game. This note sets out what main already does, what the rig
 showed across three rounds, why the third round was reverted, and round 4: the options weighed,
-the one drafted (off by default) and the checks that decide it. Each step below needs the game. A
+the one drafted (off by default) and the checks that decide it, then round 5, which turns it on. Each step below needs the game. A
 Linux build can't tell which one works.
 
 ## What main does today
@@ -39,7 +39,8 @@ nothing unequips it. **The engine lists the grenade but never shows its model.**
 | 1 (83fd2e9) | Equip through the equip manager instead of the console | The engine lists the grenade at equip index 2. The throw's `weaponAttach(2)` event arrives (`attaches=` in `net status`). The hand is still empty. |
 | 2 (25341ad) | Ask `TESObjectREFR::AttachWeapon(instance, index 2)` for the 3D | The biped's grenade slot (`3d[42]` in `equipped`) stays empty, and so does the hand. |
 | 3 (1f59f34, reverted in 6ade87a) | The plugin loads the weapon's model (`BSModelDB::Demand`), clones it and hangs it under `LArm_Hand` until the release | Reverted three minutes after the merge: the game crashed in `BSGeometry::ProcessClone` (bead notes). |
-| 4 (this branch) | Read-only readouts of the preload and the hands. The database's own node, no clone, hung under `LArm_Hand` behind `handthrowable on` (off at every start) | The readout showed the engine *does* hang the grenade on the stand-in, in a `WeaponLeft` it keeps culled, so the hang never ran (`the engine shows its own`). Reworked to draw that node instead: the grenade shows. See "Round 4 on the rig" below. |
+| 4 (PR #81, 1d61b6f) | Read-only readouts of the preload and the hands. The database's own node, no clone, hung under `LArm_Hand` behind `handthrowable on` (off at every start) | The readout showed the engine *does* hang the grenade on the stand-in, in a `WeaponLeft` it keeps culled, so the hang never ran (`the engine shows its own`). Reworked to draw that node instead: the grenade shows. See "Round 4 on the rig" below. |
+| 5 (this branch) | Round 4's drawing of the engine's own `WeaponLeft`, on from the start (ini `bGrenadeInHand`, true by default). The database's node hangs only with the dev's `handthrowable model` | See "Round 5: on by default" below. |
 
 Round 3 also noted that the local player's biped grenade slot is empty, yet the player is shown the
 grenade. So the engine hangs a throwable's model at attach time somewhere other than the biped slot.
@@ -286,5 +287,22 @@ hangs under it instead.
   before the throw. `hands:` in that readout shows nothing of ours under `LArm_Hand` once the throw
   is over.
 - No crash over ten throws in a row, with a cell change and a save reload in between.
-- Only then does option 4 leave the dev toggle: as an ini key, off by default, for one release
-  candidate's soak.
+- Only then does option 4 leave the dev toggle: as an ini key, for one release candidate's soak.
+  Round 5 ships it on by default, with the key as the way back to an empty fist (below).
+
+## Round 5: on by default
+
+Round 4's drawing of the engine's own culled `WeaponLeft` is the only path that ever ran on the rig.
+The hand with no `WeaponLeft`, which the database-node hang was for, never came up. So round 5 ships
+the first and keeps the second as a dev experiment.
+
+- **The ini key.** `bGrenadeInHand`, next to `bFriendFaces` in `dist/F4Multiplayer.ini`, true by
+  default. `main.cpp` sets the toggle from it at load. False gives the empty fist of 0.8.10 and
+  earlier.
+- **Only the stand-in's own nodes, by default.** A hand with no culled `WeaponLeft` holding something
+  is left alone (`no WeaponLeft of the engine's to draw`, `Skip::kNoEngineNode`). Nothing is hung,
+  cloned or shared, and the model database is never asked for anything.
+- **The dev's commands.** `handthrowable on|off` turns the drawing on or off for the session.
+  `handthrowable model` also allows round 4's database-node hang on a hand with no `WeaponLeft`.
+  Going back from `model` to `on` takes every hung database node off at once, as `off` does.
+- **No protocol change.** The form is already in the gear report, and the drawing is local.
