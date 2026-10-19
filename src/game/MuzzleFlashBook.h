@@ -9,9 +9,9 @@
 #include <vector>
 
 // A friend's shot (or a mirrored NPC's) is replayed on its stand-in as the firing animation and the gun's sound
-// (WeaponFire::PlayShot); nothing is fired, so the engine draws no muzzle flash (ROADMAP #17). MuzzleFlash.cpp shows
-// the flash itself: the gun's projectile names a muzzle flash model, which is shown at the stand-in's weapon muzzle
-// for the projectile's muzzle flash time. This is the bookkeeping, pure so it can be tested without the game: how long
+// (WeaponFire::PlayShot). The engine shows the gun's flash with the animation; a replay whose animation the graph
+// refuses gets the flash from MuzzleFlash.cpp instead: the gun's projectile names a muzzle flash model, which is
+// shown at the stand-in's weapon muzzle for the projectile's muzzle flash time (ROADMAP #17). This is the bookkeeping, pure so it can be tested without the game: how long
 // a flash shows, how often one shooter may flash and how many flashes show at once (a minigun's stream of shots costs
 // one flash at a time per shooter), and when each one comes off again.
 namespace MuzzleFlashBook

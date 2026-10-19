@@ -10,31 +10,20 @@ namespace MuzzleFlash
 	{
 		using Clock = MuzzleFlashBook::Clock;
 
-		Mode mode = Mode::kArt;
+		Mode mode = Mode::kRefused;
 
 		MuzzleFlashBook::Book book;
 		float                 holdSeconds = 0.0f;  // dev `muzzle hold`: every flash shows this long (0: its own time)
 
-		// What shows for one shooter, held by us while it shows. For a hung model: the model (the database's own node,
-		// never a copy), the muzzle it hangs under and the actor's 3D root, so the skeleton the muzzle is in stays alive
-		// if the engine lets go of the actor's 3D meanwhile, and the model always comes off a live node. For an art
-		// effect: the engine's effect, which the engine itself ends at its lifetime or when its target goes.
-		struct Showing
-		{
-			Mode                                    how = Mode::kOff;
-			RE::NiPointer<RE::NiNode>               model;
-			RE::NiPointer<RE::NiNode>               muzzle;
-			RE::NiPointer<RE::NiAVObject>           root;
-			RE::NiPointer<RE::ModelReferenceEffect> effect;
-		};
-		std::unordered_map<std::uint32_t, Showing> showing;
+		// The engine's temporary effect showing one shooter's flash, held while it shows. The engine itself ends it at
+		// its lifetime or when its target goes; it holds the muzzle node it hangs under, and the shooter only by handle.
+		std::unordered_map<std::uint32_t, RE::NiPointer<RE::ModelReferenceEffect>> showing;
 
-		constexpr std::size_t                                      MAX_MODELS = 48;  // flash models kept (one per kind of gun)
-		std::unordered_map<std::string, RE::NiPointer<RE::NiNode>> models;           // path -> the database's node
-		std::unordered_map<std::string, RE::BGSArtObject*>         arts;             // path -> our art object (never freed: forms live as long as the game)
-		std::unordered_set<std::string>                            failedPaths;      // models that did not load: not tried again
+		constexpr std::size_t                              MAX_MODELS = 48;  // art objects made (one per flash model)
+		std::unordered_map<std::string, RE::BGSArtObject*> arts;             // path -> our art object (never freed: forms live as long as the game)
+		std::unordered_set<std::string>                    failedPaths;      // models no art object could be made for: not tried again
 
-		std::uint32_t shown = 0, extended = 0, tooSoon = 0, tooMany = 0, noFlash = 0, noMuzzle = 0, inUse = 0, failed = 0, takenDown = 0;
+		std::uint32_t animated = 0, shown = 0, extended = 0, tooSoon = 0, tooMany = 0, noFlash = 0, noMuzzle = 0, failed = 0, takenDown = 0;
 		std::string   lastModel;
 
 		struct Gun
@@ -90,34 +79,8 @@ namespace MuzzleFlash
 			return found ? found->IsNode() : nullptr;
 		}
 
-		// The model as the engine's model database keeps it (loaded from the archives the first time: a small file, on
-		// this thread), and kept for the next shot.
-		RE::NiNode* Model(const char* a_path)
-		{
-			if (const auto it = models.find(a_path); it != models.end()) {
-				return it->second.get();
-			}
-			if (models.size() >= MAX_MODELS || failedPaths.contains(a_path)) {
-				return nullptr;
-			}
-			RE::BSModelDB::DBTraits::ArgsType args{};
-			args.lodFadeMult = RE::ENUM_LOD_MULT::kNone;
-			args.loadLevel = 0;
-			args.prepareAfterLoad = 1;
-			args.performProcess = 1;
-			args.loadTextures = 1;
-			RE::NiPointer<RE::NiNode> loaded;
-			const auto                error = RE::BSModelDB::Demand(a_path, &loaded, args);
-			if (error != RE::BSResource::ErrorCode::kNone || !loaded) {
-				failedPaths.emplace(a_path);
-				REX::WARN("MuzzleFlash: the model '{}' did not load (error {})", a_path, std::to_underlying(error));
-				return nullptr;
-			}
-			models.emplace(a_path, loaded);
-			return loaded.get();
-		}
-
-		// An art object of our own for the model (made once per model, at runtime).
+		// An art object of our own for the model (made once per model, at runtime). Its form ID is 0, so an effect of
+		// it caught in a save is saved without one and loads as nothing.
 		RE::BGSArtObject* ArtFor(const char* a_path)
 		{
 			if (const auto it = arts.find(a_path); it != arts.end()) {
@@ -140,15 +103,12 @@ namespace MuzzleFlash
 			return art;
 		}
 
-		// Takes a flash down: a hung model off the muzzle it was hung under (one moved elsewhere meanwhile is left where
-		// it is), an art effect ended at once.
-		void TakeDown(Showing& a_flash)
+		// Takes a flash down: its effect ends at once (the engine removes it on its next update). Our reference keeps
+		// the effect itself alive until here, even if its shooter is gone.
+		void TakeDown(RE::ModelReferenceEffect* a_effect)
 		{
-			if (a_flash.how == Mode::kDatabase && a_flash.model && a_flash.muzzle && a_flash.model->parent == a_flash.muzzle.get()) {
-				a_flash.muzzle->DetachChild(a_flash.model.get());
-			}
-			if (a_flash.how == Mode::kArt && a_flash.effect && !a_flash.effect->finished && a_flash.effect->lifetime > a_flash.effect->age) {
-				a_flash.effect->lifetime = a_flash.effect->age;
+			if (a_effect && !a_effect->finished && a_effect->lifetime > a_effect->age) {
+				a_effect->lifetime = a_effect->age;
 			}
 			++takenDown;
 		}
@@ -156,44 +116,34 @@ namespace MuzzleFlash
 		void TakeDown(std::uint32_t a_actorId)
 		{
 			if (const auto it = showing.find(a_actorId); it != showing.end()) {
-				TakeDown(it->second);
+				TakeDown(it->second.get());
 				showing.erase(it);
 			}
 		}
 
-		bool Show(RE::Actor* a_actor, RE::NiAVObject* a_root, RE::NiNode* a_muzzle, const char* a_path, float a_seconds)
+		// The effect's clone of the flash model is a fade node of its own, nested in the actor's 3D, where the engine's
+		// distance fading never reaches it: it stays at fade 0, drawn fully transparent (seen on the rig). It is drawn
+		// at full strength while it shows (its 3D may come a frame late, so this is done every frame).
+		void ShowFaded(RE::ModelReferenceEffect* a_effect)
 		{
-			Showing flash;
-			flash.how = mode;
-			if (mode == Mode::kDatabase) {
-				const auto model = Model(a_path);
-				if (!model) {
-					++failed;
-					return false;
-				}
-				// A node has one parent: a model hanging anywhere (another shooter's flash of the same gun) is left there.
-				if (model->parent) {
-					++inUse;
-					return false;
-				}
-				a_muzzle->AttachChild(model, true);
-				if (model->parent != a_muzzle) {
-					++failed;
-					return false;
-				}
-				flash.model.reset(model);
-				flash.muzzle.reset(a_muzzle);
-				flash.root.reset(a_root);
-			} else {
-				const auto art = ArtFor(a_path);
-				const auto effect = art ? a_actor->ApplyArtObject(art, a_seconds, nullptr, false, false, a_muzzle, false) : nullptr;
-				if (!effect) {
-					++failed;
-					return false;
-				}
-				flash.effect.reset(effect);
+			const auto object = a_effect && !a_effect->finished ? a_effect->artObject3D.get() : nullptr;
+			if (const auto fade = object ? object->IsFadeNode() : nullptr) {
+				fade->currentFade = 1.0f;
 			}
-			showing[a_actor->GetFormID()] = std::move(flash);
+		}
+
+		// The flash model as a temporary art effect hung at the muzzle (the engine clones the model, plays its
+		// particles and controllers, and removes it at its lifetime).
+		bool Show(RE::Actor* a_actor, RE::NiNode* a_muzzle, const char* a_path, float a_seconds)
+		{
+			const auto art = ArtFor(a_path);
+			const auto effect = art ? a_actor->ApplyArtObject(art, a_seconds, nullptr, false, false, a_muzzle, false) : nullptr;
+			if (!effect) {
+				++failed;
+				return false;
+			}
+			ShowFaded(effect);
+			showing[a_actor->GetFormID()].reset(effect);
 			return true;
 		}
 
@@ -219,6 +169,8 @@ namespace MuzzleFlash
 			}
 		}
 
+		bool detailed = false;  // Label adds each object's scale, world position, flags and a fade node's fade
+
 		std::string Label(const RE::NiAVObject* a_object)
 		{
 			if (!a_object) {
@@ -229,7 +181,93 @@ namespace MuzzleFlash
 			if (!ReadObject(a_object, name, sizeof(name), &kind)) {
 				return "?";
 			}
-			return std::format("{}'{}'{}{}", kind, name, a_object->GetAppCulled() ? "(culled)" : "", a_object->controllers ? "(animated)" : "");
+			auto out = std::format("{}'{}'{}{}", kind, name, a_object->GetAppCulled() ? "(culled)" : "", a_object->controllers ? "(animated)" : "");
+			if (detailed) {
+				const auto& w = a_object->world.translate;
+				out += std::format("[s={:.2f}/{:.2f} w=({:.0f},{:.0f},{:.0f}) f={:X}", a_object->local.scale, a_object->world.scale, w.x, w.y, w.z, a_object->GetFlags());
+				if (std::string_view{ kind } == "BSFadeNode") {
+					out += std::format(" fade={:.2f}", static_cast<const RE::BSFadeNode*>(a_object)->currentFade);
+				}
+				out += "]";
+			}
+			return out;
+		}
+
+		// The class name MSVC's RTTI gives an object with a vtable in the game's image (no call made, every read
+		// guarded), or nullptr.
+		const char* TypeName(std::uintptr_t a_object)
+		{
+			static const auto base = reinterpret_cast<std::uintptr_t>(REX::W32::GetModuleHandleW(nullptr));
+			__try {
+				if (a_object < 0x10000 || (a_object & 7) != 0) {
+					return nullptr;
+				}
+				const auto vtable = *reinterpret_cast<const std::uintptr_t*>(a_object);
+				if (vtable < base || vtable > base + 0x8000000) {
+					return nullptr;
+				}
+				const auto locator = *reinterpret_cast<const std::uintptr_t*>(vtable - 8);
+				if (locator < base || locator > base + 0x8000000 || *reinterpret_cast<const std::uint32_t*>(locator) != 1) {
+					return nullptr;
+				}
+				const auto type = base + *reinterpret_cast<const std::int32_t*>(locator + 12);
+				return reinterpret_cast<const char*>(type + 16);
+			} __except (1) {
+				return nullptr;
+			}
+		}
+
+		// The first qwords of an object we have no layout for (the engine's MuzzleFlash), guarded.
+		bool ReadQwords(const void* a_object, std::uint64_t* a_out, std::size_t a_count)
+		{
+			__try {
+				for (std::size_t i = 0; i < a_count; ++i) {
+					a_out[i] = static_cast<const std::uint64_t*>(a_object)[i];
+				}
+				return true;
+			} __except (1) {
+				return false;
+			}
+		}
+
+		// The engine's own flash object on an equipped gun, as read on the rig (no layout in CommonLib): flags (byte 0
+		// asked for, byte 1 showing), a timer, then the clone of the flash model, the muzzle, the light, the projectile
+		// and the weapon. Every read guarded and type-checked.
+		std::string EngineFlash(const void* a_flash)
+		{
+			const auto    flash = static_cast<const std::uint8_t*>(a_flash);
+			std::uint64_t words[5]{};
+			if (!flash || !ReadQwords(flash, words, std::size(words))) {
+				return "-";
+			}
+			float timer = 0.0f;
+			std::memcpy(&timer, flash + 4, sizeof(timer));
+			auto out = std::format("[{:08X} t={:.3f}", static_cast<std::uint32_t>(words[0]), timer);
+			if (const auto type = TypeName(words[2]); type && std::string_view{ type } == ".?AVBSFadeNode@@") {
+				const auto node = reinterpret_cast<const RE::BSFadeNode*>(words[2]);
+				out += std::format(" node{} fade={:.2f}", node->GetAppCulled() ? "(culled)" : "", node->currentFade);
+			}
+			if (const auto type = TypeName(words[4]); type && std::string_view{ type } == ".?AVNiPointLight@@") {
+				const auto light = reinterpret_cast<const RE::NiLight*>(words[4]);
+				out += std::format(" light{} dim={:.2f}", light->GetAppCulled() ? "(culled)" : "", light->dimmer);
+			}
+			return out + "]";
+		}
+
+		// Dev `muzzle watch <actor>`: the engine's flash object of the actor's gun, sampled every frame for a while.
+		std::uint32_t watchActor = 0;
+		int           watchFrames = 0;
+		std::string   watched;
+
+		void SampleWatch()
+		{
+			if (watchFrames <= 0) {
+				return;
+			}
+			--watchFrames;
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(watchActor);
+			const auto gun = actor ? EquippedGun(actor) : Gun{};
+			watched += EngineFlash(gun.data ? gun.data->muzzleFlash : nullptr) + " ";
 		}
 
 		void Tree(const RE::NiAVObject* a_object, int a_depth, std::string& a_out, int& a_budget)
@@ -255,24 +293,14 @@ namespace MuzzleFlash
 				a_out += "}";
 			}
 		}
-
-		// The first qwords of an object we have no layout for (the engine's MuzzleFlash), guarded.
-		bool ReadQwords(const void* a_object, std::uint64_t* a_out, std::size_t a_count)
-		{
-			__try {
-				for (std::size_t i = 0; i < a_count; ++i) {
-					a_out[i] = static_cast<const std::uint64_t*>(a_object)[i];
-				}
-				return true;
-			} __except (1) {
-				return false;
-			}
-		}
 	}
 
-	void OnShot(RE::Actor* a_actor)
+	void OnShot(RE::Actor* a_actor, bool a_animated)
 	{
-		if (mode == Mode::kOff || !a_actor || a_actor->IsDeleted()) {
+		if (a_animated) {
+			++animated;  // the engine draws this one
+		}
+		if (mode == Mode::kOff || (mode == Mode::kRefused && a_animated) || !a_actor || a_actor->IsDeleted()) {
 			return;
 		}
 		const auto root = a_actor->Get3D();
@@ -298,16 +326,11 @@ namespace MuzzleFlash
 		}
 		const float seconds = holdSeconds > 0.0f ? holdSeconds : MuzzleFlashBook::FlashSeconds(projectile->data.muzzleFlashDuration);
 		if (kind == MuzzleFlashBook::Kind::kExtend) {
-			// One flash per shooter at a time: an automatic gun's next shot keeps it up. A shooter whose flash is no
-			// longer where it was put (a new 3D, the gun changed) gets a new one.
+			// One flash per shooter at a time: an automatic gun's next shot keeps it up. One the engine ended meanwhile
+			// (its 3D went) is shown anew.
 			const auto it = showing.find(id);
-			const bool intact = it != showing.end() &&
-			                    (it->second.how == Mode::kDatabase ? it->second.model && it->second.muzzle && it->second.model->parent == it->second.muzzle.get() && it->second.root.get() == root :
-			                                                         it->second.effect && !it->second.effect->finished);
-			if (intact) {
-				if (it->second.effect) {
-					it->second.effect->lifetime = it->second.effect->age + seconds;
-				}
+			if (it != showing.end() && it->second && !it->second->finished) {
+				it->second->lifetime = it->second->age + seconds;
 				book.Extended(id, now, seconds);
 				++extended;
 				return;
@@ -320,7 +343,7 @@ namespace MuzzleFlash
 			++noMuzzle;
 			return;
 		}
-		if (Show(a_actor, root, muzzle, path, seconds)) {
+		if (Show(a_actor, muzzle, path, seconds)) {
 			book.Shown(id, now, seconds);
 			++shown;
 			lastModel = path;
@@ -329,11 +352,15 @@ namespace MuzzleFlash
 
 	void Frame()
 	{
+		SampleWatch();
 		if (showing.empty()) {
 			return;
 		}
 		for (const auto id : book.TakeDue(Clock::now())) {
 			TakeDown(id);
+		}
+		for (const auto& [id, effect] : showing) {
+			ShowFaded(effect.get());
 		}
 	}
 
@@ -346,8 +373,8 @@ namespace MuzzleFlash
 	void DropAll()
 	{
 		(void)book.TakeAll();
-		for (auto& [id, flash] : showing) {
-			TakeDown(flash);
+		for (const auto& [id, effect] : showing) {
+			TakeDown(effect.get());
 		}
 		showing.clear();
 	}
@@ -367,6 +394,15 @@ namespace MuzzleFlash
 	{
 		holdSeconds = a_seconds > 0.0f && a_seconds <= 10.0f ? a_seconds : 0.0f;
 		book.SetHold(MuzzleFlashBook::ToDuration(holdSeconds));
+	}
+
+	std::string Watch(std::uint32_t a_actorFormId, int a_frames)
+	{
+		auto out = std::move(watched);
+		watched.clear();
+		watchActor = a_actorFormId;
+		watchFrames = a_frames;
+		return out.empty() ? "none" : out;
 	}
 
 	std::string DescribeActor(RE::Actor* a_actor, bool a_tree)
@@ -391,17 +427,9 @@ namespace MuzzleFlash
 			out += std::format("@({:.0f},{:.0f},{:.0f})", at.x, at.y, at.z);
 		}
 		if (gun.data) {
-			out += std::format(" fireNode={} engineFlash={:X}", Label(gun.data->fireNode), reinterpret_cast<std::uintptr_t>(gun.data->muzzleFlash));
-			if (gun.data->muzzleFlash) {
-				std::uint64_t words[16]{};
-				if (ReadQwords(gun.data->muzzleFlash, words, std::size(words))) {
-					out += " flashWords=";
-					for (const auto word : words) {
-						out += std::format("{:X} ", word);
-					}
-				}
-			}
+			out += std::format(" fireNode={} engineFlash={}", Label(gun.data->fireNode), EngineFlash(gun.data->muzzleFlash));
 		}
+		detailed = a_tree;
 		if (a_tree) {
 			int budget = 120;
 			out += " muzzleTree=";
@@ -410,20 +438,22 @@ namespace MuzzleFlash
 				out += " fireTree=";
 				Tree(gun.data->fireNode, 6, out, budget);
 			}
-			if (const auto model = path ? Model(path) : nullptr) {
-				out += " modelTree=";
-				Tree(model, 6, out, budget);
-			}
 		}
-		if (const auto it = showing.find(a_actor->GetFormID()); it != showing.end()) {
-			out += std::format(" showing({})", it->second.how == Mode::kDatabase ? "db" : "art");
+		if (const auto it = showing.find(a_actor->GetFormID()); it != showing.end() && it->second) {
+			const auto& effect = it->second;
+			out += std::format(" showing age={:.3f} life={:.3f} finished={} 3d=", effect->age, effect->lifetime, effect->finished);
+			detailed = true;
+			int budget = 40;
+			Tree(effect->artObject3D.get(), 4, out, budget);
 		}
+		detailed = false;
 		return out;
 	}
 
 	std::string Describe()
 	{
-		const char* name = mode == Mode::kOff ? "off" : (mode == Mode::kArt ? "art" : "db");
-		return std::format("flash={}:{}/{} flashSkips={}/{}/{}/{}/{}/{} flashing={}", name, shown, extended, tooSoon, tooMany, noFlash, noMuzzle, inUse, failed, showing.size());
+		const char* name = mode == Mode::kOff ? "off" : (mode == Mode::kRefused ? "refused" : "always");
+		return std::format("flash={}:engine={} ours={}/{} flashSkips={}/{}/{}/{}/{} flashing={}", name, animated, shown, extended, tooSoon, tooMany, noFlash, noMuzzle, failed,
+			showing.size());
 	}
 }

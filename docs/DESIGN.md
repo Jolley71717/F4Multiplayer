@@ -351,8 +351,17 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `theirs=` counts shots sounded with the shooter's mapping, `kssm=` is the last one played (with
   `(loop)` for a looping, automatic sound); `weapsound <actor>` shows a gun's mapping in either game.
   (Papyrus `Sound.Play` crashed the VM when called from here.)
-- Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
-  the player.
+- Muzzle flash (src/game/MuzzleFlash.cpp): the engine shows it by itself. At the first replayed shot it
+  makes its own flash object on the stand-in's `EquippedWeaponData` (`muzzleFlash`: a clone of the projectile's
+  muzzle flash model under the gun's ProjectileNode, and a point light) and shows it for a few frames whenever
+  the graph takes "attackStart", like a real shot; no projectile is needed (checked on the rig for pistols,
+  shotguns, the laser rifle, the SMG and the minigun, both ways). `muzzle watch <actor>` samples that object
+  every frame. A replay the graph refuses gets no animation and so no flash: for it the flash model is applied
+  at the muzzle as a temporary art effect (`ApplyArtObject` with a runtime art object of form ID 0, so a save
+  that catches one loads it as nothing), forced to full fade every frame (the clone nested in the actor's 3D
+  stays at fade 0 otherwise) and ended at the projectile's flash time. MuzzleFlashBook keeps one flash per
+  shooter (an automatic gun's next shot keeps it up), 50 ms between two, and 12 at once. `muzzle mode always`
+  shows it on every shot, to try it; the status line's `flash=` counts both.
 
 ## Shared world (src/game/WorldSync.cpp)
 

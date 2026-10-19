@@ -475,14 +475,17 @@ namespace WeaponFire
 		}
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
+		bool animated = false;
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
 		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
+			animated = true;
 		}
-		// The engine draws no flash for a shot it did not fire: the gun's own is shown at its muzzle (MuzzleFlash.h).
+		// The engine shows the gun's flash and light with the firing animation; a shot whose animation the graph
+		// refused gets the flash from MuzzleFlash instead (nothing is fired: ROADMAP #17).
 		if (replay == AttackKind::Replay::kFire) {
-			MuzzleFlash::OnShot(a_actor);
+			MuzzleFlash::OnShot(a_actor, animated);
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
 		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one

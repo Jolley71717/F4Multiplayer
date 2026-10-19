@@ -197,8 +197,6 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 
 - Other players appear as a settler of their sex and body shape wearing their gear, with their
   weapon and armor mods: their face and hair aren't copied yet.
-- Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
-  muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.

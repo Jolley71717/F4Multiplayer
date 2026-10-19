@@ -1888,18 +1888,23 @@ namespace DevCommands
 			return std::format("{}.{} = {} -> {}", path, member, text, set);
 		}
 
-		// muzzle mode off|art|db | muzzle <actorHex> [tree] | muzzle show <actorHex>: how a replayed shot's muzzle flash
-		// is shown; what an actor's gun flashes and where (tree: the nodes under its muzzle); show one on any actor now.
+		// muzzle mode off|refused|always | muzzle hold <s> | muzzle watch <actorHex> | muzzle <actorHex> [tree] | muzzle show
+		// <actorHex>: when a replayed shot gets our flash (the engine draws its own for an animated one); what an actor's
+		// gun flashes and where, and the engine's flash object for it; show ours on any actor now.
 		std::string Muzzle(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			if (args.size() == 2 && args[0] == "mode") {
-				const auto mode = args[1] == "off" ? MuzzleFlash::Mode::kOff : (args[1] == "db" ? MuzzleFlash::Mode::kDatabase : MuzzleFlash::Mode::kArt);
-				if (args[1] != "off" && args[1] != "db" && args[1] != "art") {
-					return "error: usage: muzzle mode off|art|db";
+				const auto mode = args[1] == "off" ? MuzzleFlash::Mode::kOff : (args[1] == "always" ? MuzzleFlash::Mode::kAlways : MuzzleFlash::Mode::kRefused);
+				if (args[1] != "off" && args[1] != "always" && args[1] != "refused") {
+					return "error: usage: muzzle mode off|refused|always";
 				}
 				MuzzleFlash::SetMode(mode);
 				return MuzzleFlash::Describe();
+			}
+			if (!args.empty() && args[0] == "watch") {
+				const auto ref = args.size() > 1 ? LookupRef(args[1]) : nullptr;
+				return MuzzleFlash::Watch(ref ? ref->GetFormID() : 0, ref ? 90 : 0);
 			}
 			if (args.size() == 2 && args[0] == "hold") {
 				float seconds = 0.0f;
@@ -1913,13 +1918,13 @@ namespace DevCommands
 				if (!actor) {
 					return "error: no such actor";
 				}
-				MuzzleFlash::OnShot(actor);
+				MuzzleFlash::OnShot(actor, false);
 				return MuzzleFlash::Describe() + " | " + MuzzleFlash::DescribeActor(actor, false);
 			}
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 			if (!actor) {
-				return "error: usage: muzzle mode off|art|db | muzzle hold <seconds> | muzzle <actorHex> [tree] | muzzle show <actorHex>";
+				return "error: usage: muzzle mode off|refused|always | muzzle hold <seconds> | muzzle <actorHex> [tree] | muzzle show <actorHex>";
 			}
 			return MuzzleFlash::DescribeActor(actor, args.size() > 1 && args[1] == "tree");
 		}
