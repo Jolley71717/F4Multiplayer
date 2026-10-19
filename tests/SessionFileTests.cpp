@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (30), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), another change's layout (30), one to come (32), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 32 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -151,8 +151,10 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
 	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the
 	// shared-quest test builds, before rc3 gave the file its own, 26): the same, less the list of deaths that may be
-	// mistakes, which are all of them there.
-	auto legacy = bytes;
+	// mistakes, which are all of them there. (Without workshop items: those had no wire byte then, see below.)
+	auto withoutItems = MakeSnapshot();
+	withoutItems.workshopItems.clear();
+	auto legacy = SessionFile::Encode(withoutItems);
 	const std::size_t at = 4 + 2 + 4 + 8 + 4 + 2 + MakeSnapshot().identities.size() * 12;
 	legacy.erase(legacy.begin() + at, legacy.begin() + at + 4);
 	for (std::uint16_t written = 23; written <= 28; ++written) {
@@ -214,6 +216,50 @@ TEST("session file: a file 0.8.5 wrote (protocol 26 in its header) still loads")
 	CHECK(again->healable == out->deadActors);
 	CHECK(again->deadActors == out->deadActors);
 	CHECK(again->workshopItems.size() == 1);
+}
+
+// Layout 29, as the releases before wires wrote it: each workshop item without the byte that says whether a wire's shape follows.
+// Made here from the new layout by taking that byte out of each item (the snapshot's one item is the file's last packet).
+TEST("session file: a layout 29 file loads with its workshop items, and is written again with their wire byte")
+{
+	auto in = MakeSnapshot();
+	auto bytes = SessionFile::Encode(in);
+	REQUIRE(bytes.back() == 0);  // the one item's wire byte: none
+	bytes.pop_back();
+	// The last packet's length, before its type byte, the item count and one item of 45 bytes.
+	constexpr std::size_t PACKET = 1 + 1 + 45;
+	const std::size_t     lengthAt = bytes.size() - PACKET - sizeof(std::uint32_t);
+	std::uint32_t         length = 0;
+	std::memcpy(&length, bytes.data() + lengthAt, sizeof(length));
+	REQUIRE(length == PACKET + 1);
+	length = PACKET;
+	std::memcpy(bytes.data() + lengthAt, &length, sizeof(length));
+	CHECK(!SessionFile::Decode(bytes));  // under the new layout's number it is damage
+	const std::uint16_t layout = SessionFile::BEFORE_WIRES;
+	std::memcpy(bytes.data() + 4, &layout, sizeof(layout));
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	REQUIRE(out->workshopItems.size() == 1);
+	CHECK(out->workshopItems[0] == in.workshopItems[0]);
+	CHECK(!out->workshopItems[0].wire);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->healable.empty());  // a 29 file's deaths are its own kind (see Snapshot::healable)
+	const auto again = SessionFile::Decode(SessionFile::Encode(*out));
+	REQUIRE(again);
+	CHECK(again->workshopItems == out->workshopItems);
+}
+
+TEST("session file: a wire's shape is kept through the file")
+{
+	auto in = MakeSnapshot();
+	auto wire = in.workshopItems[0];
+	wire.refId = 0xFF000FCA;
+	wire.base = 0x0001D971;
+	wire.wire = Protocol::WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
+	in.workshopItems.push_back(wire);
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->workshopItems == in.workshopItems);
 }
 
 TEST("session file: the deaths an older build saved stay marked through the new layout, and a death since is never one")

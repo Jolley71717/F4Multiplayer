@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 38;  // 38: a workshop item can carry a power wire's shape (WorkshopItem::wire)
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -467,16 +467,47 @@ namespace Protocol
 		bool operator==(const Activation&) const = default;
 	};
 
+	// A power wire's shape. The game makes a wire (a BGSBendableSpline reference) between two things the
+	// player wired: its reference stands halfway between its ends, each end halfExtents away (one plus, one
+	// minus), and it sags by slack. The game draws it from these alone, so a friend's game draws the same
+	// wire whatever its ends are there.
+	struct WireShape
+	{
+		float halfExtents[3] = { 0.0f, 0.0f, 0.0f };
+		float slack = 0.0f;
+		float thickness = 1.5f;
+
+		bool operator==(const WireShape&) const = default;
+	};
+
+	// How far a wire's ends may be from its middle, and how much it may sag and how thick it may be: a
+	// friend's message can say anything (the game's own wires reach a few thousand units at most).
+	inline constexpr float MAX_WIRE_HALF_LENGTH = 4096.0f;
+	inline constexpr float MAX_WIRE_SLACK = 2.0f;
+	inline constexpr float MAX_WIRE_THICKNESS = 16.0f;
+
+	[[nodiscard]] inline bool Sane(const WireShape& a_wire)
+	{
+		for (const float v : a_wire.halfExtents) {
+			if (!std::isfinite(v) || v < -MAX_WIRE_HALF_LENGTH || v > MAX_WIRE_HALF_LENGTH) {
+				return false;
+			}
+		}
+		return std::isfinite(a_wire.slack) && a_wire.slack >= 0.0f && a_wire.slack <= MAX_WIRE_SLACK && std::isfinite(a_wire.thickness) && a_wire.thickness > 0.0f &&
+		       a_wire.thickness <= MAX_WIRE_THICKNESS;
+	}
+
 	struct WorkshopItem
 	{
-		std::uint32_t playerId = 0;
-		std::uint32_t refId = 0;
-		std::uint8_t  op = WorkshopOp::kPlaced;
-		std::uint32_t base = 0;
-		std::uint32_t workshop = 0;
-		float         position[3] = { 0.0f, 0.0f, 0.0f };
-		float         rotation[3] = { 0.0f, 0.0f, 0.0f };
-		float         scale = 1.0f;
+		std::uint32_t            playerId = 0;
+		std::uint32_t            refId = 0;
+		std::uint8_t             op = WorkshopOp::kPlaced;
+		std::uint32_t            base = 0;
+		std::uint32_t            workshop = 0;
+		float                    position[3] = { 0.0f, 0.0f, 0.0f };
+		float                    rotation[3] = { 0.0f, 0.0f, 0.0f };
+		float                    scale = 1.0f;
+		std::optional<WireShape> wire;  // a power wire's shape (since protocol 38); none for anything else
 
 		bool operator==(const WorkshopItem&) const = default;
 	};
@@ -1791,10 +1822,19 @@ namespace Protocol
 				w.F32(v);
 			}
 			w.F32(a_msg.scale);
+			w.U8(a_msg.wire ? 1 : 0);
+			if (a_msg.wire) {
+				for (const float v : a_msg.wire->halfExtents) {
+					w.F32(v);
+				}
+				w.F32(a_msg.wire->slack);
+				w.F32(a_msg.wire->thickness);
+			}
 		}
 
-		// False if the item is not one we would accept.
-		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg)
+		// False if the item is not one we would accept. a_withWire: the wire's byte is there (written since
+		// protocol 38; a session file of an older layout has none).
+		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg, bool a_withWire = true)
 		{
 			msg.playerId = r.U32();
 			msg.refId = r.U32();
@@ -1812,6 +1852,22 @@ namespace Protocol
 			}
 			msg.scale = r.F32();
 			finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
+			if (a_withWire) {
+				const auto hasWire = r.U8();
+				if (hasWire > 1) {
+					return false;
+				}
+				if (hasWire == 1) {
+					WireShape wire;
+					for (float& v : wire.halfExtents) {
+						v = r.F32();
+					}
+					wire.slack = r.F32();
+					wire.thickness = r.F32();
+					finite = finite && Sane(wire);
+					msg.wire = wire;
+				}
+			}
 			return r.Ok() && finite && msg.refId != 0 && msg.op <= WorkshopOp::kScrapped && (msg.op != WorkshopOp::kPlaced || (msg.base != 0 && (msg.base >> 24) != 0xFF));
 		}
 	}
@@ -1846,24 +1902,38 @@ namespace Protocol
 		return w.Data();
 	}
 
-	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data)
+	namespace detail
 	{
-		Reader r{ a_data };
-		r.U8();
-		const auto count = r.U8();
-		if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
-			return std::nullopt;
-		}
-		std::vector<WorkshopItem> items(count);
-		for (auto& item : items) {
-			if (!detail::ReadWorkshopItem(r, item)) {
+		inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data, bool a_withWire)
+		{
+			Reader r{ a_data };
+			r.U8();
+			const auto count = r.U8();
+			if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
 				return std::nullopt;
 			}
+			std::vector<WorkshopItem> items(count);
+			for (auto& item : items) {
+				if (!ReadWorkshopItem(r, item, a_withWire)) {
+					return std::nullopt;
+				}
+			}
+			if (!r.AtEnd()) {
+				return std::nullopt;
+			}
+			return items;
 		}
-		if (!r.AtEnd()) {
-			return std::nullopt;
-		}
-		return items;
+	}
+
+	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorkshopItems(a_data, true);
+	}
+
+	// A session file's packet of a layout before protocol 38: its items have no wire byte (SessionFile::Decode).
+	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItemsBeforeWires(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorkshopItems(a_data, false);
 	}
 
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)

@@ -102,7 +102,38 @@ namespace
 		bool                 InReach(const Protocol::WorkshopItem& a_item) const { return std::hypot(a_item.position[0] - BENCH_X, a_item.position[1] - BENCH_Y) <= REACH; }
 		void                 Keep(Copy) {}
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const { return stocked.contains(a_item.base) ? WorkshopApply::Placeable::kStocked : WorkshopApply::Placeable::kYes; }
-		bool                     ScrapWorldRef(const Protocol::WorkshopItem&) const { return true; }
+
+		// Pieces of the world itself (the settlement's own beds and crops), by their reference ID in every game.
+		std::map<std::uint32_t, int> own;
+		std::set<std::uint32_t>      unmovable;  // ones no friend may move here (not that workbench's, say)
+
+		bool ScrapWorldRef(const Protocol::WorkshopItem& a_item)
+		{
+			if (const auto it = own.find(a_item.refId); it != own.end()) {
+				world.erase(it->second);
+				own.erase(it);
+			}
+			return true;
+		}
+
+		bool OwnLoaded(const Protocol::WorkshopItem& a_item) const
+		{
+			const auto it = own.find(a_item.refId);
+			return it != own.end() && loaded.contains(WorkshopCells::Exterior(COMMONWEALTH, world.at(it->second).at.position[0], world.at(it->second).at.position[1]));
+		}
+
+		std::optional<Copy> OwnPiece(const Protocol::WorkshopItem& a_item) const
+		{
+			const auto it = own.find(a_item.refId);
+			return it != own.end() && !unmovable.contains(a_item.refId) ? std::optional<Copy>{ it->second } : std::nullopt;
+		}
+
+		// A piece the settlement came with, at the spot.
+		void Own(std::uint32_t a_ref, float a_x, float a_y = 1000.0f)
+		{
+			world[nextId] = { WALL, { { a_x, a_y, 0.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f }, { WorkshopCells::Grid(a_x), WorkshopCells::Grid(a_y) } };
+			own[a_ref] = nextId++;
+		}
 
 		std::optional<WorkshopApply::Standing> StandingOf(Copy a_copy) const
 		{
@@ -841,6 +872,121 @@ TEST("workshop session: a friend's container that comes stocked is never copied 
 	CHECK(!bob.copies.contains({ alice, vendor.refId }));
 	CHECK(bob.inventory == 4);  // what he had in the old copy came to him
 	CHECK(bob.counts.refused == 2);
+}
+
+TEST("workshop session: a piece of the world a friend moves moves in your world, with no copy of it left beside the original")
+{
+	constexpr std::uint32_t BED = 0x0001ABCD;  // a bed the settlement came with: the same reference in every game
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Own(BED, 100.0f);
+	bob.Receive(Received(f, 2));
+
+	f.fake->Deliver(1, Report(Wall(BED, 150.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.At(100.0f) == 0);
+	CHECK(bob.At(150.0f) == 1);
+	CHECK(bob.world.size() == 1);
+	CHECK(bob.copies.empty());
+	CHECK(bob.counts.movedOwn == 1);
+	CHECK(bob.counts.placed == 0);
+
+	// Moved again, then scrapped: ours follows, then goes.
+	f.fake->Deliver(1, Report(Wall(BED, 250.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.At(250.0f) == 1);
+	CHECK(bob.world.size() == 1);
+	f.fake->Deliver(1, Report(Scrapped(Wall(BED, 250.0f))));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.world.empty());
+
+	// Someone joining later is sent the scrap alone: nothing of the bed stands for them.
+	JoinAs(f, 3, "Carol");
+	auto carol = GameAt(100.0f);
+	carol.Own(BED, 100.0f);
+	carol.Receive(Received(f, 3));
+	carol.RunUntilIdle();
+	CHECK(carol.world.empty());
+}
+
+TEST("workshop session: a piece of the world moved where yours isn't loaded yet waits, and one you may not move stays put")
+{
+	constexpr std::uint32_t BED = 0x0001ABCD;
+	constexpr std::uint32_t CROP = 0x0001ABCE;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Own(BED, 4200.0f);  // in the next cell, not loaded yet
+	bob.Own(CROP, 300.0f);
+	bob.unmovable.insert(CROP);  // not that workbench's here, say
+	bob.Receive(Received(f, 2));
+
+	f.fake->Deliver(1, Report(Wall(BED, 4210.0f)));
+	f.fake->Deliver(1, Report(Wall(CROP, 350.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.At(300.0f) == 1);  // the crop stays where it stood
+	CHECK(bob.At(350.0f) == 0);
+	CHECK(bob.counts.ownRefused == 1);
+	CHECK(bob.At(4200.0f) == 1);  // the bed waits for its cell
+	CHECK(bob.copies.empty());
+
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 4200.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.At(4200.0f) == 0);
+	CHECK(bob.At(4210.0f) == 1);
+	CHECK(bob.world.size() == 2);
+	CHECK(bob.copies.empty());
+}
+
+TEST("workshop session: a wire's shape goes to the others with it, and to whoever joins later")
+{
+	constexpr std::uint32_t WIRE = 0x0001D971;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	Received(f, 2);
+
+	auto wire = Wall(0xFF000FCA, 150.0f);
+	wire.base = WIRE;
+	wire.wire = Protocol::WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
+	f.fake->Deliver(1, Report(wire));
+	auto moved = wire;  // one of its ends moved: the game strung it again, its middle and shape changed
+	moved.position[0] = 170.0f;
+	moved.wire->halfExtents[0] = 96.8f;
+	f.fake->Deliver(1, Report(moved));
+
+	const auto heard = [](const Packets& a_packets) {
+		std::vector<Protocol::WorkshopItem> items;
+		for (const auto& packet : a_packets) {
+			if (!packet.empty() && packet[0] == Type(MT::kWorkshopItem)) {
+				items.push_back(*Protocol::DecodeWorkshopItem(packet));
+			} else if (!packet.empty() && packet[0] == Type(MT::kWorkshopItems)) {
+				const auto batch = Protocol::DecodeWorkshopItems(packet);
+				items.insert(items.end(), batch->begin(), batch->end());
+			}
+		}
+		return items;
+	};
+	const auto bob = heard(Received(f, 2));
+	REQUIRE(bob.size() == 2);
+	CHECK(bob[0].wire == wire.wire);
+	CHECK(bob[1].wire == moved.wire);
+
+	JoinAs(f, 3, "Carol");
+	const auto carol = heard(Received(f, 3));
+	REQUIRE(carol.size() == 1);
+	CHECK(carol[0].wire == moved.wire);
+	CHECK(carol[0].position[0] == 170.0f);
 }
 
 TEST("workshop apply: only a container's contents are handed over when its copy goes, never an actor's")

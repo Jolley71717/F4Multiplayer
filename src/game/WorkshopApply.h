@@ -28,6 +28,8 @@
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot
 //   std::optional<Copy> Create(item)
 //   bool ScrapWorldRef(item)                             false until the reference is loaded here
+//   bool OwnLoaded(item)                                 a piece of the world itself (item.refId): ours is in memory
+//   std::optional<Copy> OwnPiece(item)                   ours, if a friend may move it (none: refused)
 namespace WorkshopApply
 {
 	struct Counts
@@ -39,6 +41,8 @@ namespace WorkshopApply
 		std::uint32_t refused = 0;       // outside their workbench's reach, or a container that comes stocked
 		std::uint32_t recreated = 0;     // copies made again where their piece was moved (to another cell)
 		std::uint32_t baseMismatch = 0;  // copies replaced by another object under the same ID (their builder loaded a save)
+		std::uint32_t movedOwn = 0;      // pieces of the world itself another player moved: ours moved
+		std::uint32_t ownRefused = 0;    // ... but not one a friend may move (see OwnPiece)
 	};
 
 	// Where a copy stands here, for following its piece.
@@ -101,6 +105,31 @@ namespace WorkshopApply
 		if (!a_world.InReach(a_item)) {
 			++a_counts.refused;
 			return true;  // dropped, and a copy already standing is left where it was
+		}
+		if (Protocol::IsShareableRef(a_item.refId)) {
+			// A piece of the world itself (a bed or a crop the settlement came with), moved: every game has it,
+			// so ours moves. A copy at the new spot would leave ours standing at the old one.
+			if (!a_world.OwnLoaded(a_item)) {
+				return false;  // waits for its cell
+			}
+			const auto own = a_world.OwnPiece(a_item);
+			const auto now = own ? a_world.StandingOf(*own) : std::nullopt;
+			if (!now || now->base != a_item.base) {
+				++a_counts.ownRefused;
+				return true;
+			}
+			switch (WorkshopMove::HowToMove(now->at, WorkshopMove::Of(a_item), now->cell)) {
+			case WorkshopMove::How::kStay:
+				break;
+			case WorkshopMove::How::kInPlace:
+				a_world.MoveTo(*own, a_item);
+				++a_counts.movedOwn;
+				break;
+			case WorkshopMove::How::kRecreate:
+				++a_counts.ownRefused;  // the engine moves a reference only within its cell, and ours can't be made again
+				break;
+			}
+			return true;
 		}
 		if (const auto it = a_copies.find(a_key); it != a_copies.end()) {
 			const auto now = a_world.StandingOf(it->second);

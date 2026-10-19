@@ -49,9 +49,8 @@ public:
 			return { .relay = built.erase(key) > 0 };  // something they built, or nothing anyone knew about
 		}
 		// A piece of the world itself: it's in every game, so it goes from everyone's world, theirs who
-		// join later too. One its player had moved first was kept as built (the others have a copy
-		// where it was moved to): the scrap replaces it, or a joiner would get the copy back and keep
-		// the original too.
+		// join later too. One its player had moved first was kept as built (the others moved theirs
+		// there): the scrap replaces it, or a joiner would get the move and not the scrap.
 		const bool wasMoved = built.erase(key) > 0;
 		if (scraps.size() >= maxScraps) {
 			return { .relay = wasMoved, .full = true };  // not kept, but the copy of a moved one still goes

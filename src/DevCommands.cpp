@@ -1404,6 +1404,13 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
+		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
+		std::string WsInfo(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::DescribeRef(ref) : "error: usage: wsinfo <refHex>";
+		}
+
 		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this one), and
 		// whether you stand in each one's build area; for any other reference, what the walk makes of it.
 		std::string WsBenches(std::string_view a_args)
@@ -2573,7 +2580,13 @@ namespace DevCommands
 				if (!MenuWatch::IsOpen("WorkshopMenu"sv)) {
 					return "error: not in workshop mode";
 				}
-				RE::Workshop::SetSelectedEditItem(ref->GetHandle());
+				// The game takes the handle by value, which for a class with its own copy the compiler hands over as
+				// a pointer to a copy: the library's by-value declaration put the handle itself where the pointer
+				// goes, and the game read memory at the handle's value (it crashed selecting a generator).
+				using SelectFn = void (*)(const RE::ObjectRefHandle*);
+				static REL::Relocation<SelectFn> select{ RE::ID::Workshop::SetSelectedEditItem };
+				const auto handle = ref->GetHandle();
+				select(&handle);
 				if (args[0] == "select") {
 					return std::format("selected {:08X}", ref->GetFormID());
 				}
@@ -2866,6 +2879,7 @@ namespace DevCommands
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "wsbenches", WsBenches },
+			Entry{ "wsinfo", WsInfo },
 			Entry{ "menus", Menus },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
