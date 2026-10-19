@@ -86,4 +86,6 @@ jobs:
             build/windows/x64/releasedbg/F4Multiplayer.dll
             build/windows/x64/releasedbg/F4Multiplayer.pdb
             build/windows/x64/releasedbg/F4MPServer.exe
+            build/windows/x64/releasedbg/F4MPBot.exe
+            build/windows/x64/releasedbg/F4MPTests.exe
             tests.log
