@@ -43,6 +43,11 @@ namespace Protocol
 	// minute. (Only the text: older clients show it and retry as for any refusal.)
 	inline constexpr std::string_view REJECT_HOST_NOT_READY = "The host isn't in the game yet";
 
+	// A Reject's reason for a player the host banned (Server's ban list), and for anyone new while the host has locked
+	// the session. The joining game knows both: a banned one stops trying, a locked-out one tries again in a minute.
+	inline constexpr std::string_view REJECT_BANNED = "The host has banned you from this session";
+	inline constexpr std::string_view REJECT_LOCKED = "The session is locked: the host isn't letting anyone new in";
+
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
@@ -124,6 +129,8 @@ namespace Protocol
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
+		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
+		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 		kReportDamage = 51,       // the sender took this much (ActorHealth: a fraction of the maximum) off an NPC another game runs
 		kReportDrop = 40,         // the sender dropped an item for the others to take (protocol 37)
@@ -162,6 +169,8 @@ namespace Protocol
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
+		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -281,6 +290,87 @@ namespace Protocol
 	// kRequestLoadOrder: the type alone.
 	struct LoadOrderRequest
 	{};
+
+	// Host controls (protocol 42). Only the host's own game may send kHostCommand and kRequestHostInfo (the server
+	// refuses and logs anyone else's); a dedicated server takes the same from its console.
+	enum class HostAction : std::uint8_t
+	{
+		kKick = 1,         // playerId: dropped, told they were removed by the host; may join again
+		kBan = 2,          // playerId: kicked, and refused at every later join (kept on the host's disk)
+		kUnban = 3,        // ban: the ban's id (HostInfo::Ban::id), 0 = every ban
+		kLock = 4,         // nobody new may join (those in the session stay)
+		kUnlock = 5,
+		kSetPassword = 6,  // password; "" = none
+	};
+	[[nodiscard]] constexpr bool IsHostAction(std::uint8_t a_value)
+	{
+		return a_value >= static_cast<std::uint8_t>(HostAction::kKick) && a_value <= static_cast<std::uint8_t>(HostAction::kSetPassword);
+	}
+
+	struct HostCommand
+	{
+		HostAction    action = HostAction::kKick;
+		std::uint32_t playerId = 0;
+		std::uint64_t ban = 0;
+		std::string   password;  // at most MAX_PASSWORD_LENGTH
+
+		bool operator==(const HostCommand&) const = default;
+	};
+
+	// kRequestHostInfo: the type alone.
+	struct HostInfoRequest
+	{};
+
+	// What the last host command did, for the host's menu to say.
+	enum class HostResult : std::uint8_t
+	{
+		kNone = 0,          // no command (asked for the state, or a change from the console)
+		kDone = 1,
+		kNoSuchPlayer = 2,  // nobody of that number is in the session
+		kNotTheHost = 3,    // the host can't kick or ban themselves
+		kNoSuchBan = 4,
+		kNoIdentity = 5,    // banned by nothing: their game and transport name no account (kicked all the same)
+		kNotSaved = 6,      // done, but the ban list could not be written (it holds until the server stops)
+	};
+
+	// kRemoved: why the host removed you.
+	enum class RemovedReason : std::uint8_t
+	{
+		kKicked = 1,
+		kBanned = 2,
+	};
+	struct Removed
+	{
+		RemovedReason reason = RemovedReason::kKicked;
+
+		bool operator==(const Removed&) const = default;
+	};
+
+	// Bans kHostInfo carries (the list on disk may hold more; the menu pages through these).
+	inline constexpr std::size_t MAX_BANS_SENT = 64;
+	inline constexpr std::size_t MAX_ALIAS_LENGTH = 16;
+
+	// kHostInfo: the host controls' state, sent to the host's own game when it joins, after each change and when asked.
+	struct HostInfo
+	{
+		struct Ban
+		{
+			std::uint64_t id = 0;        // what kUnban names
+			std::string   alias;         // "~3fa2c1": stands for the account, as the log's lines about the ban name it
+			std::string   name;          // as they were called when banned in this server run; "" after a restart (never saved)
+			std::uint64_t bannedAt = 0;  // seconds since 1970 (UTC)
+
+			bool operator==(const Ban&) const = default;
+		};
+		bool             locked = false;
+		bool             password = false;  // a password is set (not which: the host's game has it)
+		HostResult       result = HostResult::kNone;
+		HostAction       action = HostAction::kKick;  // the command result answers (when it isn't kNone)
+		std::uint32_t    bans = 0;  // how many there are (at most MAX_BANS_SENT of them in list)
+		std::vector<Ban> list;
+
+		bool operator==(const HostInfo&) const = default;
+	};
 
 	struct Welcome
 	{
@@ -1320,6 +1410,115 @@ namespace Protocol
 			return std::nullopt;
 		}
 		return LoadOrderRequest{};
+	}
+
+	inline std::vector<std::uint8_t> Encode(const HostCommand& a_msg)
+	{
+		Writer w{ MessageType::kHostCommand };
+		w.U8(static_cast<std::uint8_t>(a_msg.action));
+		w.U32(a_msg.playerId);
+		w.U64(a_msg.ban);
+		w.Str(a_msg.password, MAX_PASSWORD_LENGTH);
+		return w.Data();
+	}
+
+	inline std::optional<HostCommand> DecodeHostCommand(std::span<const std::uint8_t> a_data)
+	{
+		Reader      r{ a_data };
+		HostCommand msg;
+		r.U8();
+		const auto action = r.U8();
+		msg.playerId = r.U32();
+		msg.ban = r.U64();
+		msg.password = r.Str(MAX_PASSWORD_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || !IsHostAction(action)) {
+			return std::nullopt;
+		}
+		msg.action = static_cast<HostAction>(action);
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(HostInfoRequest)
+	{
+		return Writer{ MessageType::kRequestHostInfo }.Data();
+	}
+
+	inline std::optional<HostInfoRequest> DecodeHostInfoRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return HostInfoRequest{};
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Removed& a_msg)
+	{
+		Writer w{ MessageType::kRemoved };
+		w.U8(static_cast<std::uint8_t>(a_msg.reason));
+		return w.Data();
+	}
+
+	inline std::optional<Removed> DecodeRemoved(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto reason = r.U8();
+		if (!r.Ok() || !r.AtEnd() || (reason != static_cast<std::uint8_t>(RemovedReason::kKicked) && reason != static_cast<std::uint8_t>(RemovedReason::kBanned))) {
+			return std::nullopt;
+		}
+		return Removed{ static_cast<RemovedReason>(reason) };
+	}
+
+	inline std::vector<std::uint8_t> Encode(const HostInfo& a_msg)
+	{
+		Writer w{ MessageType::kHostInfo };
+		w.U8(static_cast<std::uint8_t>((a_msg.locked ? 1 : 0) | (a_msg.password ? 2 : 0)));
+		w.U8(static_cast<std::uint8_t>(a_msg.result));
+		w.U8(static_cast<std::uint8_t>(a_msg.action));
+		const auto count = (std::min)(a_msg.list.size(), MAX_BANS_SENT);
+		w.U32((std::max)(a_msg.bans, static_cast<std::uint32_t>(count)));
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& ban = a_msg.list[i];
+			w.U64(ban.id);
+			w.Str(ban.alias, MAX_ALIAS_LENGTH);
+			w.Str(ban.name, MAX_NAME_LENGTH);
+			w.U64(ban.bannedAt);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<HostInfo> DecodeHostInfo(std::span<const std::uint8_t> a_data)
+	{
+		Reader   r{ a_data };
+		HostInfo msg;
+		r.U8();
+		const auto flags = r.U8();
+		const auto result = r.U8();
+		const auto action = r.U8();
+		msg.bans = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || flags > 3 || result > static_cast<std::uint8_t>(HostResult::kNotSaved) || !IsHostAction(action) || count > MAX_BANS_SENT || count > msg.bans) {
+			return std::nullopt;
+		}
+		msg.locked = (flags & 1) != 0;
+		msg.password = (flags & 2) != 0;
+		msg.result = static_cast<HostResult>(result);
+		msg.action = static_cast<HostAction>(action);
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			HostInfo::Ban ban;
+			ban.id = r.U64();
+			ban.alias = r.Str(MAX_ALIAS_LENGTH);
+			ban.name = r.Str(MAX_NAME_LENGTH);
+			ban.bannedAt = r.U64();
+			msg.list.push_back(std::move(ban));
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const WorldRequest& a_msg)

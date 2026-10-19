@@ -2261,6 +2261,12 @@ namespace DevCommands
 			return Session::DescribeMods();
 		}
 
+		// hostctl: the host controls' state as our server last told it (lock, password set, bans by alias).
+		std::string HostCtl(std::string_view)
+		{
+			return Session::DescribeHostControls();
+		}
+
 		// hotkeys: why a hotkey may do nothing (focus, menu mode, chords, each key's state).
 		std::string HotkeysCommand(std::string_view)
 		{
@@ -3019,6 +3025,7 @@ namespace DevCommands
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
 			Entry{ "mods", Mods },
+			Entry{ "hostctl", HostCtl },
 			Entry{ "god", God },
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },

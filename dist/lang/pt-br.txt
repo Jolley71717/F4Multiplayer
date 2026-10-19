@@ -10,6 +10,8 @@ session.player_joined = {player} entrou
 session.player_left = {player} saiu
 session.player_renamed = {player} agora é {name}
 session.someone_left = Um jogador saiu
+session.kicked = Multijogador: o anfitrião removeu você da sessão
+session.banned = Multijogador: o anfitrião baniu você da sessão
 session.disconnected = Multijogador: desconectado
 session.hosting_cant_join = Multijogador: hospedando. Defina bHost = false para entrar no jogo de amigos.
 session.host_waits_for_world = Multijogador: este jogo hospeda assim que você entrar no mundo (bHost). Pare de hospedar no menu para entrar no jogo de amigos.
@@ -27,6 +29,8 @@ reject.version = Versões diferentes: o servidor usa o protocolo {server}, você
 reject.password = Senha incorreta
 reject.host_not_ready = O anfitrião ainda não está no jogo
 reject.full = O servidor está cheio
+reject.banned = O anfitrião baniu você desta sessão
+reject.locked = A sessão está trancada: o anfitrião não está deixando ninguém novo entrar
 reject.order = Sua ordem de carregamento é diferente da dos outros jogadores.
 reject.order_all = Todos precisam dos mesmos mods na mesma ordem.
 reject.texture = Plugins de textura só podem diferir se carregarem por último.
@@ -152,6 +156,38 @@ menu.fast_loading_what = vsync desligado nas telas de carregamento
 
 menu.mods = Comparar mods ({n})
 menu.mods_ask = Perguntar de novo
+menu.host_controls = Controles do anfitrião
+menu.hc_waiting = Esperando a resposta do seu servidor. Tente de novo daqui a pouco.
+menu.hc_open = A sessão está aberta: amigos podem entrar.
+menu.hc_locked = A sessão está trancada: ninguém novo pode entrar (quem já está fica).
+menu.hc_no_password = Sem senha: qualquer um que alcance a sessão pode entrar.
+menu.hc_password = Senha: {password} (os amigos colocam sPassword = {password} no F4Multiplayer.ini deles)
+menu.hc_banned = Jogadores banidos: {n}
+menu.hc_players = Expulsar ou banir ({n})
+menu.hc_lock = Trancar a sessão
+menu.hc_unlock = Destrancar a sessão
+menu.hc_password_button = Senha
+menu.hc_bans = Banidos ({n})
+menu.hc_pick_player = Escolha um jogador para expulsar ou banir:
+menu.hc_nobody = Não há mais ninguém na sessão.
+menu.hc_player = {player}\nExpulsar: sai da sessão e é avisado de que o anfitrião o removeu; pode entrar de novo.\nBanir: expulso, e recusado toda vez que tentar entrar de novo. Guardado neste PC pela conta Steam dele; desfaça o banimento em Banidos.
+menu.hc_kick = Expulsar {player}
+menu.hc_ban = Banir {player}
+menu.hc_password_page = O menu não permite digitar, então uma senha nova é criada para você. Quem já está na sessão fica.
+menu.hc_new_password = Senha nova
+menu.hc_remove_password = Remover a senha
+menu.hc_bans_page = Jogadores banidos ({n}). Escolha um para desfazer o banimento:
+menu.hc_no_bans = Ninguém está banido.
+menu.hc_unban = Desbanir {who}
+menu.hc_ban_named = {player} ({alias})
+menu.hc_ban_unnamed = {alias}, banido em {date}
+menu.hc_unban_all = Desbanir todos
+menu.hc_kicked = Multijogador: {player} foi expulso
+menu.hc_banned_hud = Multijogador: {player} foi banido
+menu.hc_unbanned = Multijogador: {who} foi desbanido
+menu.hc_not_saved = Multijogador: não foi possível salvar a lista de banidos; ela vale até você parar de hospedar
+menu.hc_no_identity = Multijogador: não foi possível banir {player} (nenhuma conta conhecida), então foi expulso
+menu.hc_gone = Multijogador: esse jogador não está mais na sessão
 
 # --- Seus mods comparados com os do anfitrião ---
 mods.differ = Multijogador: seus mods são diferentes dos do anfitrião ({n}): pressione {key}

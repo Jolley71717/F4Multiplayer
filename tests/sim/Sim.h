@@ -1545,6 +1545,12 @@ namespace Sim
 		case MT::kHeartbeatAck:
 			unless(Protocol::DecodeHeartbeat(a_data).has_value());
 			break;
+		case MT::kHostInfo:  // the host controls' state, to the host's game
+			unless(Protocol::DecodeHostInfo(a_data).has_value());
+			break;
+		case MT::kRemoved:
+			unless(Protocol::DecodeRemoved(a_data).has_value());
+			break;
 		default:
 			unless(false);  // nothing a player's game knows
 			break;

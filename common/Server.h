@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // The session server: relays player state and keeps the shared world state (kills, loot, doors,
@@ -85,6 +87,10 @@ public:
 
 		// How often the session file is checked for changes to write. Tests shorten it.
 		std::chrono::milliseconds saveInterval{ 15000 };
+
+		// Where the host's bans are kept (common/BanList.h), read at start and written at each change, so a ban outlives
+		// the server. Empty = bans last until the server stops.
+		std::string banFile;
 	};
 
 	using LogFn = std::function<void(std::string_view)>;
@@ -105,10 +111,27 @@ public:
 	// the file is then never older than the host's save). Any thread.
 	void RequestSave() { saveRequested = true; }
 
+	// A line typed at the dedicated server's console (help, players, kick <n>, ban <n>, bans, unban <n|alias|all>,
+	// password [<text> | -], lock, unlock): carried out on the server thread's next tick, the answer in the log. The
+	// console is the server's owner, as the host's own game is in a hosted one. Any thread.
+	void Console(std::string a_line)
+	{
+		std::lock_guard lock{ consoleMutex };
+		if (consoleLines.size() < 64) {
+			consoleLines.push_back(std::move(a_line));
+		}
+	}
+
 	[[nodiscard]] bool Running() const { return running; }
 
 private:
 	void Run();
+
+	std::vector<std::string> TakeConsole()
+	{
+		std::lock_guard lock{ consoleMutex };
+		return std::exchange(consoleLines, {});
+	}
 
 	LogFn                                         log;
 	Options                                       options;
@@ -117,4 +140,6 @@ private:
 	std::atomic<bool>                             running{ false };
 	std::atomic<bool>                             stopRequested{ false };
 	std::atomic<bool>                             saveRequested{ false };
+	std::mutex                                    consoleMutex;
+	std::vector<std::string>                      consoleLines;
 };

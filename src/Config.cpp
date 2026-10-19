@@ -203,13 +203,15 @@ namespace Config
 		if (std::ifstream in{ std::string{ PATH }, std::ios::binary }) {
 			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
 		}
+		// The password never goes in the log (players share their logs): only whether one is set.
+		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
 		const auto    updated = IniFile::SetValue(text, a_key, a_value);
 		std::ofstream out{ std::string{ PATH }, std::ios::binary | std::ios::trunc };
 		if (!out || !out.write(updated.data(), static_cast<std::streamsize>(updated.size()))) {
-			REX::WARN("Config: could not write {} = {} to {}", a_key, a_value, PATH);
+			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
 			return false;
 		}
-		REX::INFO("Config: wrote {} = {}", a_key, a_value);
+		REX::INFO("Config: wrote {} = {}", a_key, shown);
 		return true;
 	}
 }

@@ -1,8 +1,12 @@
-// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH]
+// Standalone dedicated server: F4MPServer.exe [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH]
 //                                              [--max-world-entries N] [--max-share N] [--loopback-only]
 // --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
 // --max-share: how much one player other than the host may add to each table this run (kills, pickups,
 // doors, quest stages, loot and building alike). Both are for trying the limits (tools\soak.ps1 -Abuse).
+// --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
+// While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
+// unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
+// which names no player.
 
 #include "Protocol.h"
 #include "Server.h"
@@ -18,6 +22,7 @@
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <thread>
 
@@ -75,6 +80,8 @@ int main(int argc, char* argv[])
 			options.sharedStory = false;
 		} else if (arg == "--shared-story") {  // the default since 0.8.7, still accepted
 			options.sharedStory = true;
+		} else if (arg == "--ban-file" && hasValue) {
+			options.banFile = argv[++i];
 		} else if (arg == "--session-file" && hasValue) {
 			options.sessionFile = argv[++i];
 		} else if (arg == "--loopback-only") {
@@ -86,7 +93,7 @@ int main(int argc, char* argv[])
 			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
 			++i;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
 			return 2;
 		}
 	}
@@ -105,7 +112,15 @@ int main(int argc, char* argv[])
 	std::signal(SIGINT, OnSignal);
 	std::signal(SIGTERM, OnSignal);
 #endif
-	std::cout << "Press Ctrl+C to stop." << std::endl;
+	std::cout << "Press Ctrl+C to stop. Type help for the host controls (kick, ban, unban, password, lock)." << std::endl;
+
+	// The console's lines go to the server thread. Detached: getline blocks until a line or the end of the input (none
+	// when started without a console), and the process ends without waiting for it.
+	std::thread{ [&server] {
+		for (std::string line; !quit && std::getline(std::cin, line) && !quit;) {
+			server.Console(line);
+		}
+	} }.detach();
 
 	while (!quit) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));

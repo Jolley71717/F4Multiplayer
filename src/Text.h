@@ -303,6 +303,8 @@ namespace Text
 			{ "Wrong password", "reject.password" },
 			{ "The host isn't in the game yet", "reject.host_not_ready" },
 			{ "Server is full", "reject.full" },
+			{ "The host has banned you from this session", "reject.banned" },               // Protocol::REJECT_BANNED
+			{ "The session is locked: the host isn't letting anyone new in", "reject.locked" },  // Protocol::REJECT_LOCKED
 		};
 		for (const auto& [english, key] : WHOLE) {
 			if (a_reason == english) {

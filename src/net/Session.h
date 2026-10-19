@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Protocol.h"
 #include "net/ModDiff.h"
 
 // Ties the network client, optional hosted server and remote players together.
@@ -38,6 +39,18 @@ namespace Session
 	// Dev only (`net drop`): as the link to the server dropping: the session ends here and the connection is tried again
 	// (the server sees us go). Whether we were connected.
 	bool DropConnection();
+
+	// Host controls, while we host: the server's last word on its lock, password and bans (none before it came), and a
+	// count that grows with each (the menu waits for the answer to a command by it).
+	[[nodiscard]] std::optional<Protocol::HostInfo> HostControls();
+	[[nodiscard]] std::uint32_t                     HostControlsSerial();
+	// Kick, ban, unban, lock, unlock or a new password, to our own server (it takes them from the host's game only).
+	// False when we aren't hosting and in our own session.
+	bool SendHostCommand(const Protocol::HostCommand& a_command);
+	// Asks our server for the state again (the answer comes as HostControls).
+	void AskHostControls();
+	// Dev: the host controls' state on one line, bans by alias.
+	[[nodiscard]] std::string DescribeHostControls();
 
 	struct Status
 	{

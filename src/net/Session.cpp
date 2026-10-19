@@ -86,6 +86,11 @@ namespace Session
 		Refusals          refusals;  // why the server last turned us away, and when to try again
 		ModDiff::Tracker  hostMods;  // our mods compared with the host's, once its list came (kLoadOrder)
 		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
+		// Host controls: the server's last word on its lock, password and bans (kHostInfo, to our own game only while we
+		// host), counted so the menu sees a new one; and the host removed us, or refused us for a ban (Leave after the poll).
+		std::optional<Protocol::HostInfo> hostInfo;
+		std::uint32_t                     hostInfoSerial = 0;
+		bool                              removedAfterPoll = false;
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
 
@@ -343,6 +348,25 @@ namespace Session
 							Text::FormatEnglish("session.notice", { { "text", msg->reason } }));
 					}
 					nextConnectAttempt = Clock::now() + answer.retryIn;
+					// Banned: trying again would be refused every time (and fill the host's log); the player joins again
+					// from the menu once the host has unbanned them.
+					if (msg->reason == Protocol::REJECT_BANNED) {
+						removedAfterPoll = true;
+					}
+				}
+				break;
+			case MessageType::kRemoved:
+				// The host kicked or banned us: said in our language, and we stop reconnecting (the connection closes next).
+				if (const auto msg = Protocol::DecodeRemoved(a_data)) {
+					Notify(msg->reason == Protocol::RemovedReason::kBanned ? "session.banned" : "session.kicked");
+					removedAfterPoll = true;
+				}
+				break;
+			case MessageType::kHostInfo:
+				// Only our own server sends it, to the host's game.
+				if (const auto msg = Protocol::DecodeHostInfo(a_data); msg && hostedServer) {
+					hostInfo = *msg;
+					++hostInfoSerial;
 				}
 				break;
 			case MessageType::kPlayerJoined:
@@ -667,6 +691,7 @@ namespace Session
 			}
 			welcomed = false;
 			hostMods.OnDisconnected();  // an ask out on this connection gets no answer
+			hostInfo.reset();
 			localId = 0;
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
 			RemotePlayers::RemoveAll();
@@ -812,6 +837,10 @@ namespace Session
 				REX::INFO("Session: hosting character {:016X}; its session is kept in {}", character, path.filename().string());
 			}
 		}
+		// The host's bans, beside the sessions: one list for every character this PC hosts (the rig's own, apart).
+		if (const auto folder = Identity::DataFolder()) {
+			options.banFile = (*folder / (settings.devChannel ? "F4Multiplayer.dev.bans" : "F4Multiplayer.bans")).string();
+		}
 		std::vector<std::unique_ptr<ServerTransport>> extra;
 		if (steamMode) {
 			extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
@@ -865,6 +894,48 @@ namespace Session
 		OnDisconnected();
 		nextConnectAttempt = {};
 		return true;
+	}
+
+	std::optional<Protocol::HostInfo> HostControls()
+	{
+		return hostedServer ? hostInfo : std::nullopt;
+	}
+
+	std::uint32_t HostControlsSerial()
+	{
+		return hostInfoSerial;
+	}
+
+	bool SendHostCommand(const Protocol::HostCommand& a_command)
+	{
+		if (!hostedServer || !welcomed) {
+			return false;
+		}
+		client->Send(Protocol::Encode(a_command), true);
+		return true;
+	}
+
+	void AskHostControls()
+	{
+		if (hostedServer && welcomed) {
+			client->Send(Protocol::Encode(Protocol::HostInfoRequest{}), true);
+		}
+	}
+
+	std::string DescribeHostControls()
+	{
+		if (!hostedServer) {
+			return "hostctl: not hosting";
+		}
+		if (!hostInfo) {
+			return std::format("hostctl: hosting, no state from the server yet (welcomed={})", welcomed);
+		}
+		std::string bans;
+		for (const auto& ban : hostInfo->list) {
+			bans += (bans.empty() ? "" : ",") + ban.alias;  // aliases only: the dev channel's reply may be pasted anywhere
+		}
+		return std::format("hostctl: locked={} password={} bans={} [{}] result={} action={} serial={}", hostInfo->locked, hostInfo->password, hostInfo->bans, bans,
+			static_cast<int>(hostInfo->result), static_cast<int>(hostInfo->action), hostInfoSerial);
 	}
 
 	Status GetStatus()
@@ -943,6 +1014,10 @@ namespace Session
 		if (std::exchange(leaveAfterPoll, false)) {
 			Leave();
 			Notify("session.host_other_session");
+		}
+		if (std::exchange(removedAfterPoll, false)) {
+			REX::INFO("Session: the host removed us or refused us for a ban; not reconnecting");
+			Leave();
 		}
 
 		PERF_NEXT(perf, "Hosting");
