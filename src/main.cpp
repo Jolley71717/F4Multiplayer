@@ -1,6 +1,7 @@
 #include "Config.h"
 #include "DevChannel.h"
 #include "DevCommands.h"
+#include "game/Drops.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -200,9 +201,17 @@ namespace
 	// save or load, on its thread, and touch only the plugin's own records; the hold keeps frames out then.
 	constexpr std::uint32_t SERIALIZATION_ID = 'F4MP';
 
+	constexpr std::uint32_t DROP_RECORD = 'DROP';
+	constexpr std::uint32_t DROP_VERSION = 1;
+	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
 		WorldSync::SaveResyncPoint(a_intfc);
+		// What our world holds of the items given between players (Drops): read back with the save.
+		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
+			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
+		}
 	}
 
 	void OnGameLoaded(const F4SE::SerializationInterface* a_intfc)
@@ -213,6 +222,11 @@ namespace
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (type == 'CONT') {
 				WorldSync::LoadResyncPoint(a_intfc, version, length);
+			} else if (type == DROP_RECORD && version == DROP_VERSION && length <= DROP_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Drops::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -220,6 +234,7 @@ namespace
 	void OnRevert(const F4SE::SerializationInterface*)
 	{
 		WorldSync::RevertResyncPoint();
+		Drops::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),

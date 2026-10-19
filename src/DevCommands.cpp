@@ -9,6 +9,7 @@
 
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
+#include "game/Drops.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
 #include "game/Equipment.h"
@@ -810,6 +811,47 @@ namespace DevCommands
 				return "error: no such actor";
 			}
 			return Equipment::DescribeInventory(actor);
+		}
+
+		// drops: what lies in the session to be taken, our copies of it and our world's record (Drops).
+		std::string DropsList(std::string_view)
+		{
+			return Drops::List();
+		}
+
+		// dropitem <baseHex> [count]: our player drops that item, as from the Pip-Boy (the console's drop, which the
+		// engine runs with no menu open, so Drops is told to take the next item lost as dropped).
+		std::string DropItem(std::string_view a_args)
+		{
+			const auto space = a_args.find(' ');
+			const auto base = ParseHex(a_args.substr(0, space));
+			const auto count = space == std::string_view::npos ? std::optional<float>{ 1.0f } : ParseFloat(a_args.substr(space + 1));
+			if (!base || !count || *count < 1.0f || !RE::TESForm::GetFormByID(*base)) {
+				return "error: usage: dropitem <baseHex> [count]";
+			}
+			Drops::DevDropNext();
+			RE::Console::ExecuteCommand(std::format("player.drop {:08X} {}", *base, static_cast<int>(*count)).c_str());
+			return "ok";
+		}
+
+		// itemmods <baseHex>: every stack of that item our player carries, with its mods (to compare a given item with the
+		// giver's).
+		std::string ItemModsCommand(std::string_view a_args)
+		{
+			const auto base = ParseHex(a_args);
+			return base ? Drops::ItemMods(*base) : "error: usage: itemmods <baseHex>";
+		}
+
+		// activate <refHex>: our player activates the reference, as pressing E on it (its script's block, if any, holds).
+		std::string ActivateCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!ref || !player) {
+				return "error: usage: activate <refHex>";
+			}
+			const bool done = ref->ActivateRef(player, nullptr, 1, false, false, false);
+			return std::format("activated={}", done);
 		}
 
 		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
@@ -2809,6 +2851,10 @@ namespace DevCommands
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "inventory", Inventory },
+			Entry{ "drops", DropsList },
+			Entry{ "dropitem", DropItem },
+			Entry{ "activate", ActivateCommand },
+			Entry{ "itemmods", ItemModsCommand },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },

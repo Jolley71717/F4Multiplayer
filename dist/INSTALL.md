@@ -123,6 +123,11 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+- **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
+  your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
+  Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,
+  holotapes, bobbleheads, magazines and quest items can't be given (each player collects their own).
+  Items left lying about are kept with the host's session.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
   backwards), once they have started that quest themselves (it's in their Pip-Boy). A step that
   would move you (a teleport, a fade to black, your controls taken away) only happens while you're

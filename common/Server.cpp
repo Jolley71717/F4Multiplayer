@@ -1,5 +1,6 @@
 #include "Server.h"
 
+#include "DropStore.h"
 #include "EnetTransport.h"
 #include "Name.h"
 #include "Protocol.h"
@@ -32,6 +33,10 @@ namespace
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
 	constexpr auto RENAME_INTERVAL = std::chrono::milliseconds(500);
+	// A game says what its world holds of the items given (kDropRecord) after its welcome and each load; one sooner than
+	// this after the last waits (the latest kept) for the tick, so a game sending it over and over doesn't have the server
+	// send it the whole list each time.
+	constexpr auto DROP_RECORD_INTERVAL = std::chrono::milliseconds(250);
 	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
@@ -225,6 +230,8 @@ namespace
 		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
 		// a world state is sent to it.
 		bool                       worldStale = false;
+		Clock::time_point          dropRecordAt{};  // when their last kDropRecord was answered
+		std::optional<Protocol::DropRecord> heldDropRecord;  // one that came sooner than DROP_RECORD_INTERVAL after
 	};
 
 	struct Ownership
@@ -327,6 +334,10 @@ void Server::Run()
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
+	// Items players dropped for each other, which the server hands to one taker each (common/DropStore.h). Saved with the
+	// session: a drop lies in nobody's save but the session file.
+	DropStore                                             drops;
+	bool                                                  dropsFullLogged = false;
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -407,8 +418,11 @@ void Server::Run()
 			for (const auto& item : saved->workshopItems) {
 				workshop.Restore(item);
 			}
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped)", deadActors.size(), containerChanges.size(), workshop.Built().size(),
-				workshop.Scraps().size()));
+			for (const auto& drop : saved->drops) {
+				drops.Restore(drop);
+			}
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
+				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -447,6 +461,7 @@ void Server::Run()
 			snapshot.markers.emplace_back(ref, flags);
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
+		snapshot.drops = drops.All();
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
 			if (!std::exchange(saveFailing, true)) {
@@ -474,6 +489,7 @@ void Server::Run()
 		spawns.clear();
 		npcEquipment.clear();
 		workshop.Clear();
+		drops.Clear();
 		questStages.clear();
 		questStageKeys.clear();
 		worldTime.reset();
@@ -1406,6 +1422,124 @@ void Server::Run()
 		}
 	};
 
+	// Items given between players (common/DropStore.h). A drop is told to every game, its dropper's too: that game swaps
+	// the item it dropped for a copy like everyone's on hearing it. Each change to the book is saved right away: an item
+	// given lies in no game's save, only in the session file.
+	const auto dropsChanged = [&] {
+		touched();
+		saveRequested = true;
+	};
+
+	const auto handleReportDrop = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto item = Protocol::DecodeDroppedItem(a_data);
+		if (!item) {
+			return;
+		}
+		const auto added = drops.Add(a_player.id, *item);
+		switch (added.outcome) {
+		case DropStore::Outcome::kAdded:
+			dropsChanged();
+			broadcast(Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true, 0);
+			break;
+		case DropStore::Outcome::kRepeat:
+			if (added.drop) {
+				send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);
+			}
+			break;
+		case DropStore::Outcome::kFull:
+		case DropStore::Outcome::kOwnerFull:
+			{
+				// Not kept: their game keeps the item it dropped as it is (an ordinary item on its ground). Said by a
+				// kDropPlaced with no drop ID.
+				auto refused = *item;
+				refused.dropId = 0;
+				refused.ownerId = a_player.id;
+				refused.takerId = 0;
+				send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+				if (!std::exchange(dropsFullLogged, true)) {
+					log(std::format("server: {} items dropped for others lie in the session ({} of player {}); not keeping more", drops.LyingCount(), drops.LyingOf(a_player.id),
+						a_player.id));
+				}
+				break;
+			}
+		case DropStore::Outcome::kInvalid:
+			break;
+		}
+	};
+
+	const auto handleClaimDrop = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto claim = Protocol::DecodeClaimDrop(a_data);
+		if (!claim) {
+			return;
+		}
+		if (claim->op == Protocol::DropClaim::kGiveBack) {
+			if (const auto back = drops.GiveBack(a_player.id, claim->dropId)) {
+				dropsChanged();
+				broadcast(Protocol::Encode(*back, Protocol::MessageType::kDropPlaced), true, 0);
+			}
+			return;
+		}
+		if (const auto gone = drops.Take(a_player.id, claim->dropId)) {
+			dropsChanged();
+			broadcast(Protocol::Encode(*gone), true, 0);
+			return;
+		}
+		// Someone else's already, or gone: their copy goes (naming who has it, as everyone heard).
+		send(a_player.key, Protocol::Encode(Protocol::DropGone{ claim->dropId, drops.TakerOf(claim->dropId) }), true);
+	};
+
+	const auto answerDropRecord = [&](Player& a_player, const Protocol::DropRecord& a_record, Clock::time_point a_now) {
+		a_player.dropRecordAt = a_now;
+		const auto out = drops.Reconcile(a_player.id, a_record, sessionId);
+		for (const auto& gone : out.withdrawn) {
+			broadcast(Protocol::Encode(gone), true, 0);
+		}
+		for (const auto& drop : out.returned) {
+			broadcast(Protocol::Encode(drop, Protocol::MessageType::kDropPlaced), true, 0);
+		}
+		if (out.changed) {
+			dropsChanged();
+		}
+		if (!out.withdrawn.empty() || !out.returned.empty()) {
+			log(std::format("server: player {}'s world holds {} items that lay in the session (now theirs) and lacks {} it was said to hold (lying there again)", a_player.id,
+				out.withdrawn.size(), out.returned.size()));
+		}
+		if (out.dupRisk != 0) {
+			log(std::format("server: player {}'s world holds {} items someone else holds too (a save from before they dropped them)", a_player.id, out.dupRisk));
+		}
+		const auto  lying = drops.Lying();
+		std::size_t i = 0;
+		do {
+			const auto end = (std::min)(lying.size(), i + Protocol::MAX_DROPS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(Protocol::DropList{ end == lying.size(), { lying.begin() + static_cast<std::ptrdiff_t>(i), lying.begin() + static_cast<std::ptrdiff_t>(end) } }), true);
+			i = end;
+		} while (i < lying.size());
+	};
+
+	// Not counted against the event budget (sent once after a welcome or a load, and a dropped one would leave their game
+	// with stale copies); held instead when it comes too often.
+	const auto handleDropRecord = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		auto record = Protocol::DecodeDropRecord(a_data);
+		if (!record) {
+			return;
+		}
+		if (const auto now = Clock::now(); now - a_player.dropRecordAt >= DROP_RECORD_INTERVAL) {
+			a_player.heldDropRecord.reset();
+			answerDropRecord(a_player, *record, now);
+		} else {
+			a_player.heldDropRecord = std::move(*record);
+		}
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -1954,6 +2088,15 @@ void Server::Run()
 		case MessageType::kReportWorkshopItem:
 			handleWorkshopItem(a_player, a_data);
 			break;
+		case MessageType::kReportDrop:
+			handleReportDrop(a_player, a_data);
+			break;
+		case MessageType::kClaimDrop:
+			handleClaimDrop(a_player, a_data);
+			break;
+		case MessageType::kDropRecord:
+			handleDropRecord(a_player, a_data);
+			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
 			break;
@@ -2123,6 +2266,10 @@ void Server::Run()
 				broadcast(Protocol::Encode(*player.face, Protocol::MessageType::kPlayerFace), true, key);
 			}
 			flushRename(player, now);
+			if (player.welcomed && player.heldDropRecord && now - player.dropRecordAt >= DROP_RECORD_INTERVAL) {
+				const auto record = std::exchange(player.heldDropRecord, std::nullopt);
+				answerDropRecord(player, *record, now);
+			}
 		}
 
 		// Relay changed player states to everyone else.

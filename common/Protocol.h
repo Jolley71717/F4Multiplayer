@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 37;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -124,6 +124,9 @@ namespace Protocol
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
+		kReportDrop = 40,         // the sender dropped an item for the others to take (protocol 37)
+		kClaimDrop = 41,          // the sender wants to take a dropped item, or gives back one it couldn't take
+		kDropRecord = 42,         // the drops the sender's world holds (after its welcome and each load)
 
 		// server -> client
 		kWelcome = 101,
@@ -162,6 +165,9 @@ namespace Protocol
 		kVoiceRelay = 125,        // a piece of another player's voice
 		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
 		kLineSpoken = 127,        // another player (or an NPC they run) said something
+		kDropPlaced = 140,        // an item lies in the session for anyone to take (to every game, the dropper's too)
+		kDropGone = 141,          // a dropped item was taken (by takerId: that game takes it) or went back to its owner
+		kDropList = 142,          // every item lying in the session now (the answer to kDropRecord)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -402,6 +408,94 @@ namespace Protocol
 		std::vector<ItemMod> mods;
 
 		bool operator==(const ItemMods&) const = default;
+	};
+
+	// ---- items given between players (protocol 37) ---------------------------------------------------
+
+	// A player gives an item by dropping it: it then lies in the session, in every game at the same spot, until one
+	// player takes it, and the server grants each one to a single taker (common/DropStore.h): it moves once, never into two
+	// inventories and never into none. A dropped stack is one reference: its count is the engine's 16-bit one.
+	inline constexpr std::int32_t MAX_DROP_COUNT = 32767;
+	// A name the player gave the item (a renamed gun), in bytes of UTF-8.
+	inline constexpr std::size_t  MAX_ITEM_NAME_LENGTH = 128;
+	// What a kDropRecord lists at most of each kind.
+	inline constexpr std::size_t  MAX_DROP_RECORD = 4096;
+	// Drops in one kDropList packet.
+	inline constexpr std::size_t  MAX_DROPS_PER_PACKET = 64;
+
+	// One dropped item. In a report (kReportDrop) dropId, ownerId and takerId are 0; the server sets the first two. The
+	// item is carried as the dropper's game had it: its mods (OMODs: barrel, receiver, a legendary effect) with the
+	// template combination they were built from, a power armor piece's condition and a name the player gave it, so the
+	// taker's copy is that item, not a fresh roll of its base. takerId is only ever set in the server's own book and its
+	// session file: an item someone took no longer lies anywhere.
+	struct DroppedItem
+	{
+		std::uint32_t        dropId = 0;
+		std::uint32_t        ownerId = 0;
+		std::uint64_t        nonce = 0;          // the dropper's game's own number for it (DropRecord::made)
+		std::uint32_t        base = 0;           // a base form every game has (a weapon, armor, ammo, aid, junk)
+		std::int32_t         count = 0;          // 1 .. MAX_DROP_COUNT
+		std::uint16_t        templateIndex = 0;  // the instance's template combination (0xFFFF: none named)
+		std::vector<ItemMod> mods;               // none: a plain item with no instance data of its own
+		float                health = -1.0f;     // 0..1 for an item with a condition (a power armor piece); -1: none
+		std::string          name;               // a name the player gave it; empty: the game's own
+		std::uint32_t        cell = 0;           // interior cell form ID, or 0 when outside
+		std::uint32_t        worldspace = 0;     // worldspace form ID, or 0 when inside
+		float                x = 0, y = 0, z = 0;
+		std::uint32_t        takerId = 0;
+
+		bool operator==(const DroppedItem&) const = default;
+	};
+
+	// kClaimDrop. kTake: the sender's player pressed Take on its copy; the server grants it to the first who asks (kDropGone
+	// naming them). kGiveBack: a grant the sender's game could not finish (its copy was gone, a load came first): it lies
+	// there again for anyone.
+	enum class DropClaim : std::uint8_t
+	{
+		kTake = 0,
+		kGiveBack = 1,
+	};
+
+	struct ClaimDrop
+	{
+		std::uint32_t dropId = 0;
+		DropClaim     op = DropClaim::kTake;
+
+		bool operator==(const ClaimDrop&) const = default;
+	};
+
+	// kDropGone: the item no longer lies anywhere. takerId: the player it was granted to (their game takes it now; every
+	// other game removes its copy), or 0: it went back to its owner (their save from before they dropped it has it again).
+	struct DropGone
+	{
+		std::uint32_t dropId = 0;
+		std::uint32_t takerId = 0;
+
+		bool operator==(const DropGone&) const = default;
+	};
+
+	// kDropRecord: what the sender's world holds of the session's transfers, as its save had it (the F4SE co-save) and its
+	// play since: the drops it made (by nonce) and the ones it took (by drop ID), in sessionId (0: its save has no record of
+	// this session, so is from before any of it). The server makes the session agree: a drop of theirs not listed is back in
+	// their inventory (a save from before they dropped it), so it is withdrawn; one they took and don't list isn't in their
+	// inventory (a save from before they took it), so it lies there again. Answered with kDropList.
+	struct DropRecord
+	{
+		std::uint64_t              sessionId = 0;
+		std::vector<std::uint64_t> made;
+		std::vector<std::uint32_t> taken;
+
+		bool operator==(const DropRecord&) const = default;
+	};
+
+	// kDropList: the items lying in the session, in packets; the last has last set. A game removes its copies of any not
+	// listed by then.
+	struct DropList
+	{
+		bool                     last = true;
+		std::vector<DroppedItem> drops;
+
+		bool operator==(const DropList&) const = default;
 	};
 
 	// Base forms of a player's equipped armor and weapons, and the mods on those that carry any (an item without an
@@ -2556,6 +2650,218 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.quest = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// ---- items given between players ------------------------------------------------------------------
+
+	namespace detail
+	{
+		inline void WriteDrop(Writer& w, const DroppedItem& a_drop)
+		{
+			w.U32(a_drop.dropId);
+			w.U32(a_drop.ownerId);
+			w.U64(a_drop.nonce);
+			w.U32(a_drop.base);
+			w.U32(static_cast<std::uint32_t>(a_drop.count));
+			w.U16(a_drop.templateIndex);
+			const auto modCount = (std::min)(a_drop.mods.size(), MAX_ITEM_MODS);
+			w.U8(static_cast<std::uint8_t>(modCount));
+			for (std::size_t i = 0; i < modCount; ++i) {
+				w.U32(a_drop.mods[i].mod);
+				w.U8(a_drop.mods[i].index);
+				w.U8(a_drop.mods[i].rank);
+			}
+			w.F32(a_drop.health);
+			w.Str(a_drop.name, MAX_ITEM_NAME_LENGTH);
+			w.U32(a_drop.cell);
+			w.U32(a_drop.worldspace);
+			w.F32(a_drop.x);
+			w.F32(a_drop.y);
+			w.F32(a_drop.z);
+			w.U32(a_drop.takerId);
+		}
+
+		// An item every game has, a count a dropped reference can hold, mods from plugin files, a condition in 0..1 (or
+		// none), and one place: an interior or a worldspace, at a coordinate the world holds.
+		inline std::optional<DroppedItem> ReadDrop(Reader& r)
+		{
+			DroppedItem drop;
+			drop.dropId = r.U32();
+			drop.ownerId = r.U32();
+			drop.nonce = r.U64();
+			drop.base = r.U32();
+			drop.count = static_cast<std::int32_t>(r.U32());
+			drop.templateIndex = r.U16();
+			const auto modCount = r.U8();
+			if (modCount > MAX_ITEM_MODS) {
+				return std::nullopt;
+			}
+			for (std::uint8_t i = 0; i < modCount && r.Ok(); ++i) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				if (!IsShareableRef(mod.mod)) {
+					return std::nullopt;
+				}
+				drop.mods.push_back(mod);
+			}
+			drop.health = r.F32();
+			drop.name = r.Str(MAX_ITEM_NAME_LENGTH);
+			drop.cell = r.U32();
+			drop.worldspace = r.U32();
+			drop.x = r.F32();
+			drop.y = r.F32();
+			drop.z = r.F32();
+			drop.takerId = r.U32();
+			const bool healthOk = drop.health == -1.0f || (std::isfinite(drop.health) && drop.health >= 0.0f && drop.health <= 1.0f);
+			if (!r.Ok() || !IsShareableRef(drop.base) || drop.count < 1 || drop.count > MAX_DROP_COUNT || !healthOk || (drop.cell == 0) == (drop.worldspace == 0) ||
+				!InWorld(drop.x) || !InWorld(drop.y) || !InWorld(drop.z)) {
+				return std::nullopt;
+			}
+			return drop;
+		}
+	}
+
+	// kReportDrop, kDropPlaced
+	inline std::vector<std::uint8_t> Encode(const DroppedItem& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		detail::WriteDrop(w, a_msg);
+		return w.Data();
+	}
+
+	inline std::optional<DroppedItem> DecodeDroppedItem(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		auto drop = detail::ReadDrop(r);
+		if (!drop || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return drop;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ClaimDrop& a_msg)
+	{
+		Writer w{ MessageType::kClaimDrop };
+		w.U32(a_msg.dropId);
+		w.U8(static_cast<std::uint8_t>(a_msg.op));
+		return w.Data();
+	}
+
+	inline std::optional<ClaimDrop> DecodeClaimDrop(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ClaimDrop msg;
+		msg.dropId = r.U32();
+		const auto op = r.U8();
+		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0 || op > static_cast<std::uint8_t>(DropClaim::kGiveBack)) {
+			return std::nullopt;
+		}
+		msg.op = static_cast<DropClaim>(op);
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropGone& a_msg)
+	{
+		Writer w{ MessageType::kDropGone };
+		w.U32(a_msg.dropId);
+		w.U32(a_msg.takerId);
+		return w.Data();
+	}
+
+	inline std::optional<DropGone> DecodeDropGone(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropGone msg;
+		msg.dropId = r.U32();
+		msg.takerId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropRecord& a_msg)
+	{
+		Writer w{ MessageType::kDropRecord };
+		w.U64(a_msg.sessionId);
+		const auto made = (std::min)(a_msg.made.size(), MAX_DROP_RECORD);
+		w.U16(static_cast<std::uint16_t>(made));
+		for (std::size_t i = 0; i < made; ++i) {
+			w.U64(a_msg.made[i]);
+		}
+		const auto taken = (std::min)(a_msg.taken.size(), MAX_DROP_RECORD);
+		w.U16(static_cast<std::uint16_t>(taken));
+		for (std::size_t i = 0; i < taken; ++i) {
+			w.U32(a_msg.taken[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<DropRecord> DecodeDropRecord(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropRecord msg;
+		msg.sessionId = r.U64();
+		const auto made = r.U16();
+		if (made > MAX_DROP_RECORD) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < made && r.Ok(); ++i) {
+			msg.made.push_back(r.U64());
+		}
+		const auto taken = r.U16();
+		if (taken > MAX_DROP_RECORD) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < taken && r.Ok(); ++i) {
+			msg.taken.push_back(r.U32());
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropList& a_msg)
+	{
+		Writer w{ MessageType::kDropList };
+		w.U8(a_msg.last ? 1 : 0);
+		const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteDrop(w, a_msg.drops[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropList msg;
+		const auto last = r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || last > 1 || count > MAX_DROPS_PER_PACKET) {
+			return std::nullopt;
+		}
+		msg.last = last == 1;
+		for (std::uint8_t i = 0; i < count; ++i) {
+			auto drop = detail::ReadDrop(r);
+			if (!drop) {
+				return std::nullopt;
+			}
+			msg.drops.push_back(std::move(*drop));
+		}
+		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

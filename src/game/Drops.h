@@ -1,0 +1,77 @@
+#pragma once
+
+#include "Protocol.h"
+
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+// Giving items to friends by dropping them. Our player drops an item; once it has come to rest it is reported
+// (kReportDrop), and the server tells every game (kDropPlaced): each places its own copy where it lies, ours too, in place
+// of the item we dropped. A copy can't be picked up as it is (its activation is blocked): pressing Take on one asks the
+// server (kClaimDrop), which grants each item to whoever asks first (common/DropStore.h), and only then does our player
+// pick it up, as their own take. Every other game removes its copy. So an item moves once: never into two inventories,
+// never into none.
+//
+// Copies are never saved; they go before every save and load and are placed again while our player is near. What our
+// world holds of the transfers (the drops whose item left it, the items it took in) goes into the co-save (record 'DROP')
+// and to the server after every welcome and load (kDropRecord), so a reload on either side neither copies an item nor
+// loses one.
+//
+// Not given: keys, notes, holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, and an item
+// whose base or mods exist in our game only. Those stay on our ground, in our game only. Main thread only, but for the
+// two event hooks.
+namespace Drops
+{
+	// The engine's events (any thread): our player's inventory lost an item to nothing (a drop, or an item used up), with
+	// the reference it became if the event names one; and our player activated a reference made at runtime.
+	void OnLeftInventory(std::uint32_t a_base, std::int32_t a_count, std::uint32_t a_ref);
+	void OnActivated(std::uint32_t a_ref);
+
+	// Dev only (the dropitem command): the next item our player loses to nothing is taken as dropped, as from the Pip-Boy
+	// (the console's drop runs with no menu open).
+	void DevDropNext();
+
+	// Our player put something in a container that a friend's game won't see there (a weapon or armor, or anything in a
+	// workbench): said once a session, with how to give it instead.
+	void OnKeptInContainer();
+
+	// Messages from the server.
+	void OnPlaced(const Protocol::DroppedItem& a_drop);
+	void OnGone(const Protocol::DropGone& a_gone);
+	void OnList(const Protocol::DropList& a_list);
+
+	// Every frame while welcomed.
+	void Frame();
+
+	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
+
+	// We were welcomed into a_session as a_playerId: the record of that session goes to the server.
+	void OnWelcome(std::uint64_t a_session, std::uint32_t a_playerId);
+
+	// A save loaded while we stay in the session: our world is the save's, and its record goes to the server.
+	void SendRecord();
+
+	// Before a save or a load: our copies go (never saved).
+	void DiscardCopies();
+
+	// A save was loaded (or a new game started): what we knew of our world described the one before it.
+	void OnGameLoaded();
+
+	// The co-save (on the save's or load's thread): our record, written with the save and read back with it.
+	std::vector<std::uint8_t> SaveRecord();
+	void                      LoadRecord(std::span<const std::uint8_t> a_bytes);
+	void                      RevertRecord();
+
+	// The session ended: copies deleted, everything but the record forgotten (it describes our world).
+	void Reset();
+
+	// For the dev commands: what lies in the session and our copies, in one line ("; " between entries).
+	std::string List();
+
+	// For the dev commands: each stack of a_base our player carries, with its mods, condition and name.
+	std::string ItemMods(std::uint32_t a_base);
+
+	std::string Describe();
+}

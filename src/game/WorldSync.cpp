@@ -4,6 +4,7 @@
 #include "game/CopyWatch.h"
 #include "game/DeathReports.h"
 #include "game/DoorShare.h"
+#include "game/Drops.h"
 #include "game/Equipment.h"
 #include "game/FoundDead.h"
 #include "game/Hud.h"
@@ -627,6 +628,11 @@ namespace WorldSync
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				if (a_event.oldContainerFormID == PLAYER_REF_ID && a_event.newContainerFormID == 0) {
+					// Dropped (or used up: Drops tells them apart): an item that may be given to a friend.
+					Drops::OnLeftInventory(a_event.baseObjectFormID, count, a_event.referenceFormID);
+					return RE::BSEventNotifyControl::kContinue;
+				}
 				if (count <= 0 || count > Protocol::MAX_ITEM_COUNT) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -678,6 +684,9 @@ namespace WorldSync
 			{
 				const auto& target = a_event.objectActivated;
 				const auto& by = a_event.actionRef;
+				if (target && by && by->IsPlayerRef() && target->IsCreated()) {
+					Drops::OnActivated(target->GetFormID());  // perhaps a copy of an item a friend dropped: Take asks the server
+				}
 				if (!target || !by || !by->IsPlayerRef() || !IsShareableRef(target->GetFormID())) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -884,6 +893,14 @@ namespace WorldSync
 		// The player's own moves: those that are the session's are reported.
 		void ReportMoves(const std::vector<Move>& a_moves)
 		{
+			for (const auto& move : a_moves) {
+				// A weapon or armor put in a container: a friend's game would get a plain copy, so it isn't shared there.
+				// Our player is told once a session how to give it instead.
+				if (move.count > 0 && LootScope::Of(ReadHolderFacts(move.holder), ReadItemFacts(RE::TESForm::GetFormByID(move.item)), LootScope::Direction::kPut) ==
+										  LootScope::Scope::kWeaponArmor) {
+					Drops::OnKeptInContainer();
+				}
+			}
 			for (auto& packet : loot.Report(a_moves, engine)) {
 				Queue(std::move(packet));
 			}
