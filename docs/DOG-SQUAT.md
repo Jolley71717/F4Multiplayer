@@ -23,6 +23,30 @@ squat. So the squat comes from one of these:
 
 These cannot be told apart from the code alone. The capture below takes about a minute.
 
+## What the dog's graph itself says (read from the game's files, 2026-10-18)
+
+DogmeatRoot.hkx and DogmeatDefault.hkx, read for their state machines, bindings and starting values, show two
+things the code took for granted and the model in `tests/CreatureGaitTests.cpp` had wrong:
+
+- **Nothing in the graph writes `iSyncLocomotionRangeID`.** The state machines that keep a sync variable name one
+  (CombatNonCombatBehavior keeps `iSyncCombatState`, the head and walk-pose machines theirs); MovingStateMachine
+  names none. Its start state is only read from the variable, as "moveStart" enters it, and the gait changes while
+  moving by the "To...Forward" events alone. So the host's reading is whatever its engine last put there: the gait
+  the dog set off in, and the gait he plays now only if the engine writes it again on every change. A dog following
+  his player sets off at a walk and runs to catch up, so the host may well report a walk (`ownerGait=0`) while he
+  runs, and his copy walks while carried along at five times the walk's pace: reading 4 below. The walking test of
+  2026-10-14 could not show this, since a walk is also the gait a dog sets off in.
+- **The root graph starts `fTrotFastClipMult` at 0** (the other rates start at 1). A copy whose graph is in the fast
+  trot without having been given that rate holds the clip's first pose while it is carried along.
+- The graph's `ComputePlaybackMultipliers` expression computes only the body's roll into a turn, despite its name:
+  nothing in the graph computes a clip's rate from Speed.
+
+What the copy does about it now (`CreatureGait::Fits`, `CreatureGait::Rates`): a gait whose clip would have to play
+at more than twice its pace to carry the dog at the speed reported is not believed, and the copy goes by the speed
+(the nearest pace) at the speed's rate; and every clip's rate is written each frame, the planned one at its rate and
+the others at the speed over their pace, so no state the graph is in plays frozen. `mirror 0001D162` shows the gait
+the copy was told as `played=` next to `ownerGait=`, and all four rates.
+
 ## The capture
 
 Dogmeat is 0001D162. The host has him following, and runs for a few seconds, first with his weapon away, then
@@ -67,8 +91,9 @@ Each finding below gives what the capture shows, then the fix it points to. They
    event on a resent "moveStart".
 4. **The gait the host sends is not the one his dog plays.** `ownerGait=` on the joiner is 0 or 10 (walk, or
    walk backwards) while the host's own `iSyncLocomotionRangeID` reads 3 and his dog runs. Or the host's value
-   stays stale after a back-up. Fix: in `CreatureGait::Choose`, go by the speed when the owner's gait's pace is far
-   from the speed (a walk-back at 458 units/s cannot be right). Add a CreatureGait test for it.
+   stays stale after a back-up. Fixed as the graph's data above suggests: `CreatureGait::Choose` goes by the speed
+   when the owner's gait's pace is far below it (a walk-back at 458 units/s cannot be right), tested in
+   `tests/CreatureGaitTests.cpp`. With the fix the joiner shows `played=3` while `ownerGait=0`.
 5. **The speed is in other units for a dog.** `speed=` on the joiner is under 25 while the host's dog runs, and
    the host's `motion` shows an `animationSpeed` near 1 rather than hundreds. The copy is never started, so it
    stands, then sits. Fix: in `Gait::Reported`, use the ground covered for a creature. (Less likely than it
