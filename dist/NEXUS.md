@@ -1,6 +1,8 @@
 # Nexus Mods page
 
-What to paste into the Nexus upload form. The file to upload is `dist\out\F4Multiplayer-<version>.zip`.
+What to paste into the Nexus mod page. New versions are uploaded by the `nexus-upload.yml` workflow, which sends
+`F4Multiplayer-<version>-nexus.zip` (the zip without `F4MPServer.exe`) from the GitHub release: see
+docs/RELEASING.md.
 
 ## Create draft
 
@@ -19,10 +21,10 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]What you share[/b][/size]
 [list]
-[*][b]NPCs and combat:[/b] one game runs each NPC and the others copy it, so everyone fights the same raider in the same place. Enemies attack any player; kills and damage count for everyone.
+[*][b]NPCs and combat:[/b] one game runs each NPC and the others copy it, so everyone fights the same raider in the same place. Enemies attack any player; kills and damage count for everyone, on enemies a friend's game spawned (random encounters, ambushes) too.
 [*][b]The world:[/b] loot taken or stored, items picked up, doors and locks, deaths.
-[*][b]Side quests:[/b] progress in one game moves the others forward once they have started the quest too, whichever story setting the host picks. A step that would teleport you only happens while you are with the friend who did it, and nobody pays for a friend's bribe.
-[*][b]The story moves together:[/b] by default, when any player moves the main story or a faction quest forward, everyone else is fast-forwarded to the same point (whoever is furthest along leads, and their choices become everyone's). Each step runs in every game in order, achievements included (the game only awards them without mods), and is written into each player's save. A step that has to move you (the Institute's teleporter) comes after a warning, never mid-fight. The host can instead set [b]sStory = own[/b]: then each player plays the main quest and the factions in their own game, at their own pace, with their own choices. If you blew up the Institute and your friend has not, it stands in their game and is a crater in yours; you can still walk around their Boston with them, and their quest NPCs are shared like any others. Nothing resets or reverts.
+[*][b]Side quests:[/b] progress in one game moves the others forward, whichever story setting the host picks. A friend who hasn't started the quest has it started for them, and a joiner is caught up on the host's side quests. A quest you failed is never started over. A step that would teleport you only happens while you are with the friend who did it, and nobody pays for a friend's bribe.
+[*][b]The story moves together:[/b] by default, when any player moves the main story or a faction quest forward, everyone else is fast-forwarded to the same point (a joiner is first brought to the host's point; after that whoever moves the story on leads, and their choices become everyone's). Each step runs in every game in order, achievements included (the game only awards them without mods), and is written into each player's save. A step that has to move you (the Institute's teleporter) comes after a warning, never mid-fight. The host can instead set [b]sStory = own[/b]: then each player plays the main quest and the factions in their own game, at their own pace, with their own choices. If you blew up the Institute and your friend has not, it stands in their game and is a crater in yours; you can still walk around their Boston with them, and their quest NPCs are shared like any others. Nothing resets or reverts.
 [*][b]Map:[/b] a location one player finds shows up on everyone's map, ready for fast travel.
 [*][b]Settlements:[/b] what a friend builds, moves or scraps appears in your game.
 [*][b]The session is saved:[/b] the host's PC keeps the shared world, so dead NPCs stay dead and walls stand next time you play.
@@ -32,14 +34,14 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 
 [size=4][b]Playing together[/b][/size]
 [list]
-[*][b]How friends appear:[/b] a friend is a character standing next to you, wherever you both are in the world (not in a settlement). They have their own body shape and sex (their face and hair aren't copied yet), wear the armor and weapons from their own save, and carry their name and health over their head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F2 point, F3 cheer, F4 clap), and their Pip-Boy light at night.
+[*][b]How friends appear:[/b] each friend is a stand-in in your game: a character your game places where your friend is, whenever you are in the same interior or near each other outside. It isn't a settler and joins no settlement. It has their own face, hair, sculpting, sex and body shape, wears the armor and weapons from their own save (with their mods), and carries their name and health over its head. You see them aim, fire, reload, swing, throw grenades, climb into power armor and emote (F2 point, F3 cheer, F4 clap), and their Pip-Boy light at night. Enemies fight them, and a hit on the stand-in reaches your friend. You can't loot, trade with or talk to a stand-in: their inventory, caps and perks stay in their own game.
 [*][b]Voice chat[/b] through Steam, with volume that fades with distance. Hold the mouse back button to talk.
 [*][b]Going down:[/b] a lethal hit knocks you down instead; a friend next to you for 2 seconds gets you up. 45 seconds alone and you die as usual.
 [*][b]F6[/b] player list (where everyone is, health, level), [b]F7[/b] teleport to a friend, [b]F8[/b] "over here!" ping.
 [*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
-[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods should behave the same way (you join once your character is in the open world) but are untested.
-[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
-[*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). Different mod collections per player do not work.
+[*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods are untried. The mod only knows the opening by the pre-war Sanctuary and Vault 111, so a start anywhere else is shared from its first moment: play the mod's start through, name your character and save before you host or join. Everyone needs the alternate-start mod installed, since the load orders must match. Details in INSTALL.md.
+[*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. The mod never changes your own gear for a friend, and a friend paying in a conversation doesn't charge you. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
+[*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). If yours differ, the F1 menu's Compare mods page names the mods only the host has, the ones only you have and the ones out of place. Different mod collections per player do not work.
 [/list]
 
 [size=4][b]Requirements[/b][/size]
@@ -55,7 +57,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
 
 [size=4][b]Early alpha[/b][/size]
-Back up your saves or use a separate one for co-op. Known gaps: no muzzle flash on friends' shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. Every upload here is checked by hand because the mod is compiled code, so updates reach Nexus in batches; the newest builds are always on GitHub (link below). If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (F4Multiplayer.1.log if you restarted the game since); please attach it to a bug report. It names other players only as "player N" and leaves Steam ids and IP addresses out; crash logs and screenshots can still hold names.
+Back up your saves or use a separate one for co-op. Known gaps: no muzzle flash on friends' shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. You can't give a friend an item yet: that is coming in a later version. Friends' faces haven't been tried with LooksMenu yet. Every upload here is checked by hand because the mod is compiled code, so updates reach Nexus in batches; the newest builds are always on GitHub (link below). If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (F4Multiplayer.1.log if you restarted the game since); please attach it to a bug report. It names other players only as "player N" and leaves Steam ids and IP addresses out; crash logs and screenshots can still hold names.
 
 [size=4][b]Open source[/b][/size]
 GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]github.com/Jolley71717/F4Multiplayer[/url].
@@ -69,6 +71,9 @@ GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]
 - Conversion permission: no.
 - Asset use permission: yes, with credit, under GPL-3.0.
 - Credits: F4SE and CommonLibF4 (libxse), ENet, Address Library.
+
+The changelog for each upload since 0.8.7 is `dist/NEXUS-<version>.txt` (one line per entry, what the upload
+workflow sends).
 
 ## Changelog for 0.7.1
 
