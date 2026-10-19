@@ -27,6 +27,15 @@ game's own code can:
   here, so ask that game). An enemy made at runtime (`made=true`: a random encounter, a spawned enemy)
   has another form ID in each game: `enemies like <base|any> <x> <y> [within]` finds this game's actor
   of that base at that spot. Made for a test script playing a co-op follower.
+- **Play as a companion:** `companion on <ref>` puts the player under the game's own AI (Papyrus
+  `Game.SetPlayerAIDriven`, as scenes do) with a vanilla follow package, Fallout4.esm's REFollowBrahmin, aimed at
+  `<ref>` through the RELinkFollow linked ref: the engine walks the character after a friend's stand-in at 350 to
+  500 units, round obstacles, with its real locomotion. `companion off` gives it back, `companion path <ref>` is one
+  trip close to a reference (Papyrus `PathToReference` through the console), and `companion` alone says whether it
+  is on and how far the target is. An AI-driven player walks (about 90 units a second, whatever speed is asked):
+  `console player.setav speedmult 230` gives a run. It turns itself off when the stand-in goes away, loses its full
+  AI process or is in another cell (following one on that crashed the game, as its friend took a load door).
+  Nothing is added to the load order. Made for the test rig's co-op follower.
 - **Start a fight:** `spawnenemies <base> <n> <radius>` sets n NPCs of an NPC base form (`findnpc`
   finds one) evenly round the player at that radius (256 to 4000 units; 128 indoors), the first straight
   ahead, all facing the player and a little above the ground where each stands (outdoors, found with the
