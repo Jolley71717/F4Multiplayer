@@ -136,7 +136,7 @@ TEST("server session: a hello with the wrong magic is rejected")
 	const auto reject = JoinRejected(f, 1, Protocol::Encode(hello));
 	REQUIRE(reject);
 	CHECK(Contains(reject->reason, "Not an F4Multiplayer client"));
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 	CHECK(OfType(f.fake->Take(1), MT::kWelcome).empty());
 }
 
@@ -147,7 +147,7 @@ TEST("server session: a truncated hello is rejected")
 	const auto reject = JoinRejected(f, 1, std::vector<std::uint8_t>(full.begin(), full.begin() + 5));
 	REQUIRE(reject);
 	CHECK(Contains(reject->reason, "Not an F4Multiplayer client"));
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 }
 
 TEST("server session: a different protocol version is rejected, naming both versions")
@@ -160,7 +160,7 @@ TEST("server session: a different protocol version is rejected, naming both vers
 	CHECK(Contains(reject->reason, "Version mismatch"));
 	CHECK(Contains(reject->reason, std::format("protocol {}", Protocol::VERSION)));
 	CHECK(Contains(reject->reason, std::format("you have {}", Protocol::VERSION + 7)));
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 }
 
 TEST("server session: the wrong password is rejected, the right one gets in")
@@ -174,7 +174,7 @@ TEST("server session: the wrong password is rejected, the right one gets in")
 	const auto reject = JoinRejected(f, 1, Protocol::Encode(wrong));
 	REQUIRE(reject);
 	CHECK(reject->reason == "Wrong password");
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 	CHECK(f.Logged("wrong password from fake 1"));
 
 	const auto none = JoinRejected(f, 2, Protocol::Encode(Fixture::MakeHello("Nobody")));
@@ -207,7 +207,7 @@ TEST("server session: a full server rejects the next player and has room again a
 	const auto reject = JoinRejected(f, 3, Protocol::Encode(Fixture::MakeHello("Carol", 0xCA201)));
 	REQUIRE(reject);
 	CHECK(reject->reason == "Server is full");
-	CHECK(f.fake->Disconnected(3));
+	CHECK(f.fake->WaitDisconnected(3));
 	// Nobody heard about Carol, and nobody was dropped for her.
 	CHECK(OfType(Settle(f, 1), MT::kPlayerJoined).empty());
 	CHECK(!f.fake->Disconnected(1));
@@ -228,7 +228,7 @@ TEST("server session: a different load order is rejected while others are in")
 	const auto reject = JoinRejected(f, 2, Protocol::Encode(hello));
 	REQUIRE(reject);
 	CHECK(Contains(reject->reason, "load order"));
-	CHECK(f.fake->Disconnected(2));
+	CHECK(f.fake->WaitDisconnected(2));
 	CHECK(OfType(Settle(f, 1), MT::kPlayerJoined).empty());
 }
 
@@ -347,7 +347,7 @@ TEST("server session: a connection that never says hello is dropped")
 	while (!f.fake->Disconnected(1) && std::chrono::steady_clock::now() < deadline) {
 		std::this_thread::sleep_for(50ms);
 	}
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 	CHECK(f.Logged("dropping fake 1 (no hello)"));
 }
 
@@ -833,7 +833,7 @@ TEST("server session: a rejected hello on a player's own connection makes them l
 	wrong.password = "nope";
 	f.fake->Deliver(1, Protocol::Encode(wrong));
 	REQUIRE(WaitReject(f, 1));
-	CHECK(f.fake->Disconnected(1));
+	CHECK(f.fake->WaitDisconnected(1));
 	const auto left = f.fake->WaitFor(2, Type(MT::kPlayerLeft));
 	REQUIRE(left);
 	CHECK(Protocol::DecodePlayerLeft(*left)->playerId == alice->playerId);
@@ -1482,7 +1482,7 @@ TEST("server session: a joiner whose load order differs is sent the session's, b
 	REQUIRE(orders.size() == 1u);
 	CHECK(orders[0].plugins == host.plugins);
 	CHECK(orders[0].ignored == options.ignoredPlugins);  // so their game leaves them out as the server does
-	CHECK(f.fake->Disconnected(2));
+	CHECK(f.fake->WaitDisconnected(2));
 
 	// Let in with only the host's ignored plugin different: the list comes with the welcome.
 	auto carol = Fixture::MakeHello("Carol");

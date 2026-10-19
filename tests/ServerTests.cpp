@@ -46,7 +46,7 @@ TEST("server: rejoining while the old connection is still open replaces it")
 	const auto again = f.Join(3, Fixture::MakeHello("Alice", 0xA11CE));
 	REQUIRE(again);
 	CHECK(again->playerId == alice->playerId);
-	CHECK(f.fake->Disconnected(2));
+	CHECK(f.fake->WaitDisconnected(2));
 	// Bob saw Alice leave and come back under the same ID.
 	const auto left = f.fake->WaitFor(1, Type(MT::kPlayerLeft));
 	REQUIRE(left);

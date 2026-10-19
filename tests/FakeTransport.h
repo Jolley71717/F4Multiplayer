@@ -128,6 +128,14 @@ public:
 		return disconnected.contains(a_peer);
 	}
 
+	// Waits up to a_timeout for the server to drop a_peer: it sends a refusal before it disconnects, from its own
+	// thread, so a test that saw the refusal can get there first (on a slow machine such as a CI runner).
+	bool WaitDisconnected(PeerId a_peer, std::chrono::milliseconds a_timeout = std::chrono::milliseconds(2000))
+	{
+		std::unique_lock lock{ mutex };
+		return changed.wait_for(lock, a_timeout, [&] { return disconnected.contains(a_peer); });
+	}
+
 	void SetLocal(PeerId a_peer) { std::lock_guard lock{ mutex }; local[a_peer] = true; }
 
 	// What Describe says about a_peer in the server's log, e.g. a real transport's "udp 1.2.3.4:5678".
