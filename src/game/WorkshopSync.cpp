@@ -607,8 +607,8 @@ namespace WorkshopSync
 		constexpr REL::ID IS_POWERED{ 2194916 };
 		// PowerUtils::ItemGeneratesPower(TESObjectREFR&): its power generated (an actor value) is above 0.
 		constexpr REL::ID ITEM_GENERATES_POWER{ 2195079 };
-		// TESObjectLIGH::SwitchLight(TESObjectREFR&, bool off): a light (LIGH) reference's light on or off, as the game's
-		// own powering does (Workshop's power handler, 2195089, passes the same "off" it fires PowerOffEvent for).
+		// TESObjectLIGH::SwitchLight(TESObjectREFR&, bool off): the lights of a reference's 3D on or off (a LIGH's own, or one in a
+		// model), as the game's own powering does for every piece (the power handler, 2195089, passes the "off" it fires PowerOffEvent for).
 		constexpr REL::ID SWITCH_LIGHT{ 2198253 };
 
 		bool                     blockCopies = true;  // dev (wspower block off): copies can be picked, to try the repair
@@ -1759,26 +1759,26 @@ namespace WorkshopSync
 			}
 		}
 
-		// A friend's piece shown powered or not: its graph told, as the game's own powering tells it ("Powered",
-		// "Unpowered": a light's glow, a machine's running), and a light (LIGH) switched. Not through the game's own
-		// powering (Workshop's power handler): that fires the power events, and the scripts on a copy (a workshop
-		// object's, a radio beacon's) would act on them as if it were ours.
+		// A friend's piece shown powered or not, as the game's own powering shows one (Workshop's power handler, 2195089):
+		// the lights in its 3D switched (SwitchLight, which the handler calls for every piece, not only a LIGH: a
+		// construction light is an activator with a light in its model) and its graph told ("Powered", "Unpowered": a
+		// machine's running). Not through the handler itself: that fires the power events, and the scripts on a copy (a
+		// workshop object's, a radio beacon's) would act on them as if it were ours. False while it has no 3D.
 		bool ShowPowered(RE::TESObjectREFR& a_copy, bool a_on)
 		{
 			static const RE::BSFixedString        powered{ "Powered" };
 			static const RE::BSFixedString        unpowered{ "Unpowered" };
 			using switch_t = void (*)(RE::TESObjectREFR&, bool);
 			static REL::Relocation<switch_t>      switchLight{ SWITCH_LIGHT };
-			const auto                            base = a_copy.GetObjectReference();
-			const bool                            light = base && base->Is(RE::ENUM_FORM_ID::kLIGH);
-			if (light) {
-				switchLight(a_copy, !a_on);
+			if (!a_copy.Get3D()) {
+				return false;
 			}
+			switchLight(a_copy, !a_on);
 			RE::BSTSmartPointer<RE::BSAnimationGraphManager> graph;
 			if (a_copy.GetAnimationGraphManagerImpl(graph) && graph) {
-				return a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered) || light;
+				a_copy.NotifyAnimationGraphImpl(a_on ? powered : unpowered);
 			}
-			return light;
+			return true;
 		}
 
 		struct MirrorEngine

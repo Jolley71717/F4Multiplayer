@@ -717,8 +717,9 @@ pieces, and both games show the result.
   packet). It sends all of them when someone joins, after a load, and every 30 s (a late or lost packet heals).
 - The server relays it as the sender's (`kWorkshopPower`, the event budget, sender stamped) and keeps nothing.
 - A friend's game keeps what each builder says per (builder, piece) and shows it on the copy: the graph event the
-  game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and for a light (LIGH) its
-  light switched (`TESObjectLIGH::SwitchLight`). Shown again whenever the copy is drawn anew (its cell loaded
+  game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and the lights in its 3D
+  switched (`TESObjectLIGH::SwitchLight`, which the game calls for every piece: a construction light is an activator
+  with a light in its model). Shown again whenever the copy is drawn anew (its cell loaded
   again, the copy made again), tried 8 times if the game doesn't take it. Not through the game's own power
   handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
   beacon's) would act on them as if the piece were ours.
