@@ -19,7 +19,9 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 38;  // 38: a workshop item can carry a power wire's shape (WorkshopItem::wire)
+	// 46: whether a player's workshop pieces are powered (kReportWorkshopPower, kWorkshopPower). 38: a workshop item can
+	// carry a power wire's shape (WorkshopItem::wire).
+	inline constexpr std::uint16_t VERSION = 46;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -123,6 +125,7 @@ namespace Protocol
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
+		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 
 		// server -> client
@@ -156,6 +159,7 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -511,6 +515,28 @@ namespace Protocol
 
 		bool operator==(const WorkshopItem&) const = default;
 	};
+
+	// One of the sender's own workshop pieces (a reference their game made: something they built), and whether their
+	// game powers it now.
+	struct PowerState
+	{
+		std::uint32_t refId = 0;
+		bool          powered = false;
+
+		bool operator==(const PowerState&) const = default;
+	};
+
+	// kReportWorkshopPower / kWorkshopPower: what changed, or all of them (a snapshot), MAX_POWER_ENTRIES at most a
+	// packet.
+	struct PowerStates
+	{
+		std::uint32_t                   playerId = 0;  // stamped by the server
+		std::vector<PowerState> entries;
+
+		bool operator==(const PowerStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
 
 	struct FaceBone
 	{
@@ -1934,6 +1960,52 @@ namespace Protocol
 	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItemsBeforeWires(std::span<const std::uint8_t> a_data)
 	{
 		return detail::DecodeWorkshopItems(a_data, false);
+	}
+
+	// Up to MAX_POWER_ENTRIES entries (any more are left off: the sender splits them, WorkshopPower::Chunks).
+	inline std::vector<std::uint8_t> Encode(const PowerStates& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_POWER_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.entries[i].refId);
+			w.U8(a_msg.entries[i].powered ? 1 : 0);
+		}
+		return w.Data();
+	}
+
+	// A reference a game made at runtime (what a player builds): the only pieces whose power is reported.
+	[[nodiscard]] constexpr bool IsRuntimeRef(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF && a_id != 0xFF000000;
+	}
+
+	// None if it names no piece, or one no game made at runtime.
+	inline std::optional<PowerStates> DecodePowerStates(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PowerStates msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			const auto powered = r.U8();
+			if (!r.Ok() || powered > 1 || !IsRuntimeRef(entry.refId)) {
+				return std::nullopt;
+			}
+			entry.powered = powered == 1;
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)

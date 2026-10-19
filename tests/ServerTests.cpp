@@ -200,3 +200,25 @@ TEST("server: a player's first gear report is passed on even when they wear noth
 	f.fake->Deliver(2, GearReport({}));
 	CHECK(!GearPassedOn(f, 1, std::chrono::milliseconds(300)));
 }
+
+TEST("server: which of a player's workshop pieces are powered goes to the others as theirs, not back to them, and is not kept")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Bob", 0xB0B)));
+	const auto alice = f.Join(2, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	TakeAliceJoined(f);
+
+	const Protocol::PowerStates power{ 99, { { 0xFF000042, true }, { 0xFF000043, false } } };  // claims to be someone else's
+	f.fake->Deliver(2, Protocol::Encode(power, MT::kReportWorkshopPower));
+	const auto packet = f.fake->WaitFor(1, Type(MT::kWorkshopPower));
+	REQUIRE(packet);
+	const auto relayed = Protocol::DecodePowerStates(*packet);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);
+	CHECK(relayed->entries == power.entries);
+	CHECK(Count(Received(f, 2), MT::kWorkshopPower) == 0u);
+
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol", 0xCA201)));
+	CHECK(Count(Received(f, 3), MT::kWorkshopPower) == 0u);  // Alice's game sends it all again for her
+}

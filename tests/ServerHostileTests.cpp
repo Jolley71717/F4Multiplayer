@@ -151,6 +151,9 @@ namespace
 				}
 			}
 			break;
+		case MT::kWorkshopPower:
+			add(DecodePowerStates(a_packet));
+			break;
 		case MT::kExplosion:
 			add(DecodeExplosion(a_packet));
 			break;
@@ -258,7 +261,7 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		CheckAllNamed(aliceDuring, mallory->playerId, "Alice, during Mallory's packets");
 		// Not by passing nothing on: some of each kind that names a player got through.
 		const auto relayed = TypesNaming(bobDuring, mallory->playerId);
-		for (const auto type : { MT::kVoiceRelay, MT::kWorkshopItem, MT::kActivation, MT::kLineSpoken, MT::kPinged, MT::kPlayerFace,
+		for (const auto type : { MT::kVoiceRelay, MT::kWorkshopItem, MT::kWorkshopPower, MT::kActivation, MT::kLineSpoken, MT::kPinged, MT::kPlayerFace,
 				 MT::kPlayerEquipment, MT::kPlayerStatus, MT::kShotFired, MT::kQuestDone }) {
 			if (!relayed.contains(Type(type))) {
 				Test::Fail(__FILE__, __LINE__, std::format("Bob was sent no type {} packet from Mallory", Type(type)));

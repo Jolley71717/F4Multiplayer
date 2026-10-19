@@ -349,6 +349,7 @@ namespace Session
 					// fields with markup or bytes that aren't UTF-8 in it (common/Name.h).
 					const auto name = Name::Shown(msg->name, msg->playerId);
 					RemotePlayers::Add(msg->playerId, name, msg->appearance);
+					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
@@ -489,6 +490,11 @@ namespace Session
 					for (const auto& item : *msg) {
 						WorkshopSync::Apply(item);
 					}
+				}
+				break;
+			case MessageType::kWorkshopPower:
+				if (const auto msg = Protocol::DecodePowerStates(a_data)) {
+					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
 			case MessageType::kVoiceRelay:

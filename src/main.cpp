@@ -22,6 +22,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/HavokGuard.h"
 #include "game/TextureWait.h"
+#include "game/WorkshopSync.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -303,6 +304,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
+					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},
 				"save");
 			break;

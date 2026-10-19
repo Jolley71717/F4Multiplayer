@@ -1422,6 +1422,43 @@ namespace DevCommands
 			return WorkshopSync::DescribeBenches(ref);
 		}
 
+		// wsgrid [benchHex]: the power grids of this workbench (or every one seen), and any friend's copy or deleted
+		// reference they name.
+		std::string WsGrid(std::string_view a_args)
+		{
+			const auto ref = a_args.empty() ? nullptr : LookupRef(a_args);
+			if (!a_args.empty() && !ref) {
+				return "error: no such reference";
+			}
+			return WorkshopSync::DescribeGrids(ref);
+		}
+
+		// wspower: settlement power across games. wspower block on|off: whether friends' copies are kept out of workshop
+		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower show <refHex>
+		// on|off: show the reference powered or not, as a friend's copy is shown.
+		std::string WsPower(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return WorkshopSync::DescribePower();
+			}
+			if (args[0] == "block" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetBlockCopies(args[1] == "on");
+				return WorkshopSync::DescribePower();
+			}
+			if (args[0] == "audit" && args.size() == 1) {
+				return WorkshopSync::AuditNow();
+			}
+			if (args[0] == "show" && args.size() == 3 && (args[2] == "on" || args[2] == "off")) {
+				const auto ref = LookupRef(args[1]);
+				if (!ref) {
+					return "error: no such reference";
+				}
+				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
+			}
+			return "error: usage: wspower [block on|off | audit | show <refHex> on|off]";
+		}
+
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
 		std::string Mirror(std::string_view a_args)
 		{
@@ -2880,6 +2917,8 @@ namespace DevCommands
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "wsinfo", WsInfo },
+			Entry{ "wsgrid", WsGrid },
+			Entry{ "wspower", WsPower },
 			Entry{ "menus", Menus },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
