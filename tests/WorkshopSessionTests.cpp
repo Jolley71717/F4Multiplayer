@@ -181,10 +181,12 @@ namespace
 		{
 			const auto to = WorkshopMove::Of(a_item);
 			world[nextId] = { a_item.base, to, { WorkshopCells::Grid(to.position[0]), WorkshopCells::Grid(to.position[1]) } };
-			// A turret or a robot gets its gear from its record as it loads.
-			world[nextId].held = KindOf(a_item.base) == WorkshopApply::Kind::kActor ? 3 : 0;
+			// A turret or a robot gets its gear from its record as it loads, and a container whose base comes stocked its things.
+			world[nextId].held = KindOf(a_item.base) == WorkshopApply::Kind::kActor ? 3 : stocked.contains(a_item.base) ? 5 : 0;
 			return nextId++;
 		}
+
+		void Empty(Copy a_copy) { world[a_copy].held = 0; }
 
 		// ---- what WorkshopSync and Session do around it ----
 
@@ -845,7 +847,7 @@ TEST("workshop session: what you keep in a friend's container comes to you when 
 	CHECK(bob.inventory == 7);
 }
 
-TEST("workshop session: a friend's container that comes stocked is never copied for you, and one an older version left in your save is cleared away")
+TEST("workshop session: a friend's container that comes stocked is copied empty, as the workshop builds it, and a full one an older version left in your save is replaced")
 {
 	constexpr std::uint32_t VENDOR = 0x0010C3D0;  // a container whose base holds things of its own
 	Fixture                 f;
@@ -868,10 +870,21 @@ TEST("workshop session: a friend's container that comes stocked is never copied 
 	bob.Receive(Received(f, 2));
 	bob.RunUntilIdle();
 
-	CHECK(bob.world.empty());
-	CHECK(!bob.copies.contains({ alice, vendor.refId }));
+	REQUIRE(bob.copies.contains({ alice, vendor.refId }));
+	REQUIRE(bob.copies.contains({ alice, fresh.refId }));
+	CHECK(bob.world.size() == 2);  // the old copy went: a new one stands at its spot
+	CHECK(!bob.world.contains(99));
+	CHECK(bob.world.at(bob.copies.at({ alice, vendor.refId })).held == 0);  // none of what the base comes with: no loot
+	CHECK(bob.world.at(bob.copies.at({ alice, fresh.refId })).held == 0);
 	CHECK(bob.inventory == 4);  // what he had in the old copy came to him
-	CHECK(bob.counts.refused == 2);
+	CHECK(bob.counts.emptied == 2);
+	CHECK(bob.counts.refused == 0);
+
+	// What he keeps in the new one comes to him when it goes; nothing of the base's does.
+	bob.world[bob.copies.at({ alice, fresh.refId })].held += 2;
+	bob.Leave();
+	CHECK(bob.world.empty());
+	CHECK(bob.inventory == 6);
 }
 
 TEST("workshop session: a piece of the world a friend moves moves in your world, with no copy of it left beside the original")

@@ -14,6 +14,7 @@
 
 #include "game/DeferredDelete.h"
 #include "game/Hud.h"
+#include "game/MenuWatch.h"
 #include "Text.h"
 
 namespace WorkshopSync
@@ -235,6 +236,7 @@ namespace WorkshopSync
 		std::mutex            settleLock;
 		WorkshopSettle::Watch settle;  // under settleLock
 		std::uint32_t         settledAgain = 0;
+		std::uint32_t         putBack = 0;  // pieces drawn where they stand again (WorkshopSettle::PutBack)
 
 		WorkshopMove::Transform TransformOf(const RE::TESObjectREFR& a_ref)
 		{
@@ -260,9 +262,16 @@ namespace WorkshopSync
 				if (!ref || ref->IsDisabled() || ref->IsDeleted()) {
 					return std::nullopt;
 				}
-				if (const auto root = ref->Get3D(); root && root->world.translate.GetDistance(ref->data.location) > 1.0f) {
-					REX::DEBUG("WorkshopSync: {:08X} is drawn at {:.0f} {:.0f} {:.0f} but stands at {:.0f} {:.0f} {:.0f}", a_ref, root->world.translate.x, root->world.translate.y,
-						root->world.translate.z, ref->data.location.x, ref->data.location.y, ref->data.location.z);
+				if (const auto root = ref->Get3D()) {
+					const auto base = ref->GetObjectReference();
+					const bool loose = ref->As<RE::Actor>() || !base || base->Is(RE::ENUM_FORM_ID::kMISC) || IsWire(base);
+					const auto drawn = root->world.translate;
+					if (WorkshopSettle::PutBack(drawn.GetDistance(ref->data.location), MenuWatch::IsOpen("WorkshopMenu"sv), loose)) {
+						REX::INFO("WorkshopSync: {:08X} was left drawn at {:.0f} {:.0f} {:.0f} (workshop mode closed while it was being moved), but stands at {:.0f} {:.0f} {:.0f}: drawn there again",
+							a_ref, drawn.x, drawn.y, drawn.z, ref->data.location.x, ref->data.location.y, ref->data.location.z);
+						ref->Update3DPosition(true);
+						++putBack;
+					}
 				}
 				return WorkshopSync::TransformOf(*ref);
 			}
@@ -702,11 +711,11 @@ namespace WorkshopSync
 				}
 				return WorkshopApply::Placeable::kNo;
 			}
-			// A container the workshop builds starts empty; one whose base holds things of its own is loot,
-			// ours on opening the copy (and again on every rescue from it).
+			// A container the workshop builds starts empty; one whose base holds things of its own (a bureau) would
+			// be loot, ours on opening the copy (and again on every rescue from it): its copy is emptied (Empty).
 			if (const auto container = base->As<RE::TESObjectCONT>(); container && container->numContainerObjects != 0) {
 				if (stockedBases.insert(base->GetFormID()).second) {
-					REX::INFO("WorkshopSync: not placing copies of container {:08X}: it comes with things in it", base->GetFormID());
+					REX::INFO("WorkshopSync: container {:08X} comes with things in it: its copies are emptied", base->GetFormID());
 				}
 				return WorkshopApply::Placeable::kStocked;
 			}
@@ -839,6 +848,13 @@ namespace WorkshopSync
 			void                     Keep(const Copy& a_copy) { NoteCopy(a_copy.ref); }
 			WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) { return WorkshopSync::CanPlace(a_item); }
 			std::optional<Copy>      Create(const Protocol::WorkshopItem& a_item) { return WorkshopSync::Create(a_item); }
+			// Destroys what the copy holds (its base's things: it was just made), as the workshop's own build does.
+			void Empty(const Copy& a_copy)
+			{
+				if (const auto ref = a_copy.ref.get()) {
+					RE::Console::ExecuteCommand(std::format("{:08X}.removeallitems", ref->GetFormID()).c_str());
+				}
+			}
 			bool                     ScrapWorldRef(const Protocol::WorkshopItem& a_item) { return WorkshopSync::ScrapWorldRef(a_item); }
 
 			void Discard(const Copy& a_copy)
@@ -1503,12 +1519,12 @@ namespace WorkshopSync
 			droppedNow = dropped;
 			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
-			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
-		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain);
+		       std::format(" builtBefore={} (queued={}) wiresDrawn={} movedOwn={} ownRefused={} settledAgain={} putBack={}", builtWalk.Reported(), builtWalk.Queued(), wiresDrawn, counts.movedOwn, counts.ownRefused, settledAgain, putBack);
 	}
 
 	std::string DescribeRef(RE::TESObjectREFR* a_ref)
@@ -1519,6 +1535,10 @@ namespace WorkshopSync
 		std::string out = std::format("{:08X} base={:08X} type={} copy={} bench={} disabled={} deleted={} cell={:08X} at {:.0f} {:.0f} {:.0f}", a_ref->GetFormID(),
 			base ? base->GetFormID() : 0, base ? base->GetFormTypeString() : "none", IsCopy(a_ref), IsBench(a_ref), a_ref->IsDisabled(), a_ref->IsDeleted(),
 			cell ? cell->GetFormID() : 0, at.x, at.y, at.z);
+		if (const auto list = a_ref->inventoryList) {
+			RE::BSAutoReadLock l{ list->rwLock };
+			out += std::format(" items={}", list->data.size());
+		}
 		const auto extra = a_ref->extraList.get();
 		if (!extra) {
 			return out;

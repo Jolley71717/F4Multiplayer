@@ -79,3 +79,22 @@ after 0.6.1, with everyone updating once.
   settlement is shared.
 - Settlers assigned by the builder (to a copy of a crop, a guard post) stay the builder's: NPC
   assignment is per game and would need a separate message. Leave for later.
+
+## Found in play (protocol 38)
+
+Tried on the rig, host and client in Sanctuary, after wires were shared:
+
+- A friend's copy is not as plain as step 2 assumed: workshop mode highlights it and offers Store, Scrap
+  and Attach Wire, like any object the workshop builds. Scrapping or storing it works in that game only
+  (nothing is reported: it is a copy), and the scrap pays out its components.
+- Wiring your light to a friend's generator works in your game: the game links the copy to your
+  workbench as one of its items, the light comes on, and the generator adds to your settlement's power
+  (it counts in both games). The friend sees the wire drawn, but in their game the wire is only drawn:
+  their generator powers nothing of yours, and your light's copy stays dark.
+- A copy of anything powered stays dark in the friend's game whatever its builder's grid does: copies
+  are on no grid. Mirroring the builder's powered state still needs the engine call noted above.
+- A copy wired into your grid is deleted like any copy when the session ends (or its builder scraps
+  it). The game is not told: the wire stays, the light stays lit, and the grid keeps the deleted
+  reference, whose ID the game later gives to something else. Nothing crashed in a save and reload, but
+  this is how power grids get corrupted. Until copies are real workshop items (step 2), the safe course
+  is to keep players from wiring to copies, or to unwire a copy through the game before deleting it.

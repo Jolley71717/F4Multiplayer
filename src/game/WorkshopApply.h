@@ -27,6 +27,7 @@
 //   Placeable CanPlace(item)
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot
 //   std::optional<Copy> Create(item)
+//   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
 //   bool ScrapWorldRef(item)                             false until the reference is loaded here
 //   bool OwnLoaded(item)                                 a piece of the world itself (item.refId): ours is in memory
 //   std::optional<Copy> OwnPiece(item)                   ours, if a friend may move it (none: refused)
@@ -38,7 +39,8 @@ namespace WorkshopApply
 		std::uint32_t moved = 0;
 		std::uint32_t scrapped = 0;
 		std::uint32_t adopted = 0;
-		std::uint32_t refused = 0;       // outside their workbench's reach, or a container that comes stocked
+		std::uint32_t refused = 0;       // outside their workbench's reach
+		std::uint32_t emptied = 0;       // copies of containers that come stocked, emptied as the workshop builds them
 		std::uint32_t recreated = 0;     // copies made again where their piece was moved (to another cell)
 		std::uint32_t baseMismatch = 0;  // copies replaced by another object under the same ID (their builder loaded a save)
 		std::uint32_t movedOwn = 0;      // pieces of the world itself another player moved: ours moved
@@ -57,7 +59,7 @@ namespace WorkshopApply
 	{
 		kYes,
 		kNo,       // nothing we can show (a mod we don't have), or nothing we would (not something workshop mode builds)
-		kStocked,  // a container whose base holds things of its own: loot, ours on opening the copy
+		kStocked,  // a container whose base holds things of its own: its copy is emptied (World::Empty), or it would be loot
 	};
 
 	// What a copy is, as far as what it holds goes.
@@ -144,21 +146,17 @@ namespace WorkshopApply
 			a_world.Discard(it->second);
 			a_copies.erase(it);  // (or the game dropped it)
 		}
-		switch (a_world.CanPlace(a_item)) {
-		case Placeable::kYes:
-			break;
-		case Placeable::kNo:
+		const auto placeable = a_world.CanPlace(a_item);
+		if (placeable == Placeable::kNo) {
 			return true;
-		case Placeable::kStocked:
-			++a_counts.refused;
-			// A copy an older version placed is left in the save with nobody to remove it: it goes now
-			// (what the player kept in it comes to them first).
+		}
+		if (placeable == Placeable::kStocked) {
+			// A copy a save kept (an older version made them full) may hold what its base came with: it goes
+			// (what the player kept in it comes to them first), and an empty one is made below.
 			if (const auto existing = a_world.FindExisting(a_item)) {
 				a_world.Discard(*existing);
 			}
-			return true;
-		}
-		if (const auto existing = a_world.FindExisting(a_item)) {
+		} else if (const auto existing = a_world.FindExisting(a_item)) {
 			const auto now = a_world.StandingOf(*existing);
 			if (now && Follow(a_world, *existing, *now, a_item, a_counts)) {
 				a_copies.emplace(a_key, *existing);
@@ -170,6 +168,10 @@ namespace WorkshopApply
 			++a_counts.recreated;
 		}
 		if (const auto made = a_world.Create(a_item)) {
+			if (placeable == Placeable::kStocked) {
+				a_world.Empty(*made);  // as the workshop builds it: empty
+				++a_counts.emptied;
+			}
 			a_copies.emplace(a_key, *made);
 			a_world.Keep(*made);
 			++a_counts.placed;

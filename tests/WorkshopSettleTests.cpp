@@ -116,3 +116,12 @@ TEST("settle: a report the send queue had no room for is tried at the next look,
 	}
 	CHECK(watch.Watched() == WorkshopSettle::MAX_WATCHED);
 }
+
+TEST("settle: a piece left drawn where it was held when workshop mode closed is drawn where it stands again, and only then")
+{
+	CHECK(WorkshopSettle::PutBack(145.0f, false, false));   // a bed the player was moving: back where the game keeps it
+	CHECK(!WorkshopSettle::PutBack(145.0f, true, false));   // workshop mode open: it may be in the player's hands
+	CHECK(!WorkshopSettle::PutBack(145.0f, false, true));   // a loose object the physics moves
+	CHECK(!WorkshopSettle::PutBack(0.0f, false, false));    // drawn where it stands
+	CHECK(!WorkshopSettle::PutBack(WorkshopSettle::DRAWN_ELSEWHERE, false, false));
+}

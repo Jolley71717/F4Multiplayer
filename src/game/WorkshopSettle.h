@@ -28,6 +28,18 @@ namespace WorkshopSettle
 	inline constexpr std::array<Clock::duration, 4> AFTER{ 500ms, 2s, 5s, 15s };
 	inline constexpr std::size_t                    MAX_WATCHED = 512;  // a blueprint placed at once: the oldest go unwatched
 
+	// Workshop mode closed while the player held a piece they were moving: the game puts the piece back where it
+	// stood (its place, saved, and what a friend's copy follows) but leaves it drawn where it was held, until the
+	// cell loads again. The player saw it stay where they let go, and their friend saw it back where it was. It is
+	// drawn where it stands again, so both games show where it is, as a load would. Not while workshop mode is open
+	// (it may be in the player's hands), nor for a loose object the physics moves (its place catches up on its own).
+	inline constexpr float DRAWN_ELSEWHERE = 1.0f;  // game units between where it is drawn and where it stands
+
+	inline bool PutBack(float a_drawnFromPlace, bool a_workshopOpen, bool a_loose)
+	{
+		return a_drawnFromPlace > DRAWN_ELSEWHERE && !a_workshopOpen && !a_loose;
+	}
+
 	class Watch
 	{
 	public:
