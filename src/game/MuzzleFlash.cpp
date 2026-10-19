@@ -13,6 +13,7 @@ namespace MuzzleFlash
 		Mode mode = Mode::kArt;
 
 		MuzzleFlashBook::Book book;
+		float                 holdSeconds = 0.0f;  // dev `muzzle hold`: every flash shows this long (0: its own time)
 
 		// What shows for one shooter, held by us while it shows. For a hung model: the model (the database's own node,
 		// never a copy), the muzzle it hangs under and the actor's 3D root, so the skeleton the muzzle is in stays alive
@@ -228,7 +229,7 @@ namespace MuzzleFlash
 			if (!ReadObject(a_object, name, sizeof(name), &kind)) {
 				return "?";
 			}
-			return std::format("{}'{}'{}", kind, name, a_object->GetAppCulled() ? "(culled)" : "");
+			return std::format("{}'{}'{}{}", kind, name, a_object->GetAppCulled() ? "(culled)" : "", a_object->controllers ? "(animated)" : "");
 		}
 
 		void Tree(const RE::NiAVObject* a_object, int a_depth, std::string& a_out, int& a_budget)
@@ -295,7 +296,7 @@ namespace MuzzleFlash
 			++noFlash;
 			return;
 		}
-		const float seconds = MuzzleFlashBook::FlashSeconds(projectile->data.muzzleFlashDuration);
+		const float seconds = holdSeconds > 0.0f ? holdSeconds : MuzzleFlashBook::FlashSeconds(projectile->data.muzzleFlashDuration);
 		if (kind == MuzzleFlashBook::Kind::kExtend) {
 			// One flash per shooter at a time: an automatic gun's next shot keeps it up. A shooter whose flash is no
 			// longer where it was put (a new 3D, the gun changed) gets a new one.
@@ -362,6 +363,12 @@ namespace MuzzleFlash
 		return mode;
 	}
 
+	void SetHold(float a_seconds)
+	{
+		holdSeconds = a_seconds > 0.0f && a_seconds <= 10.0f ? a_seconds : 0.0f;
+		book.SetHold(MuzzleFlashBook::ToDuration(holdSeconds));
+	}
+
 	std::string DescribeActor(RE::Actor* a_actor, bool a_tree)
 	{
 		if (!a_actor) {
@@ -402,6 +409,10 @@ namespace MuzzleFlash
 			if (gun.data && gun.data->fireNode && gun.data->fireNode != muzzle) {
 				out += " fireTree=";
 				Tree(gun.data->fireNode, 6, out, budget);
+			}
+			if (const auto model = path ? Model(path) : nullptr) {
+				out += " modelTree=";
+				Tree(model, 6, out, budget);
 			}
 		}
 		if (const auto it = showing.find(a_actor->GetFormID()); it != showing.end()) {

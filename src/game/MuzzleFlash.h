@@ -29,6 +29,9 @@ namespace MuzzleFlash
 	void               SetMode(Mode a_mode);
 	[[nodiscard]] Mode GetMode();
 
+	// A test aid (dev `muzzle hold <seconds>`, 0 to end it): every flash shows this long, to be caught in a screenshot.
+	void SetHold(float a_seconds);
+
 	// What the actor's gun flashes and where (dev `muzzle <actor>`); a_tree adds the muzzle's nodes.
 	[[nodiscard]] std::string DescribeActor(RE::Actor* a_actor, bool a_tree);
 

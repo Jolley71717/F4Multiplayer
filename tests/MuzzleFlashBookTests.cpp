@@ -132,3 +132,15 @@ TEST("MuzzleFlashBook: many shooters over a long fight leave nothing behind")
 	(void)book.TakeDue(at + 1s);
 	CHECK(book.Showing() == 0);
 }
+
+TEST("MuzzleFlashBook: a hold (a test aid) keeps every flash up that long, and ends")
+{
+	Book book;
+	book.SetHold(2s);
+	book.Shown(STAND_IN, START, 0.1f);
+	CHECK(book.TakeDue(START + 1s).empty());
+	CHECK(book.TakeDue(START + 2s).size() == 1);
+	book.SetHold(Clock::duration::zero());
+	book.Shown(STAND_IN, START + 3s, 0.1f);
+	CHECK(book.TakeDue(START + 3s + 101ms).size() == 1);
+}

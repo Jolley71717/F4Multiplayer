@@ -1901,6 +1901,12 @@ namespace DevCommands
 				MuzzleFlash::SetMode(mode);
 				return MuzzleFlash::Describe();
 			}
+			if (args.size() == 2 && args[0] == "hold") {
+				float seconds = 0.0f;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), seconds);
+				MuzzleFlash::SetHold(seconds);
+				return std::format("hold={:.2f} ", seconds) + MuzzleFlash::Describe();
+			}
 			if (args.size() == 2 && args[0] == "show") {
 				const auto ref = LookupRef(args[1]);
 				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
@@ -1913,7 +1919,7 @@ namespace DevCommands
 			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
 			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
 			if (!actor) {
-				return "error: usage: muzzle mode off|art|db | muzzle <actorHex> [tree] | muzzle show <actorHex>";
+				return "error: usage: muzzle mode off|art|db | muzzle hold <seconds> | muzzle <actorHex> [tree] | muzzle show <actorHex>";
 			}
 			return MuzzleFlash::DescribeActor(actor, args.size() > 1 && args[1] == "tree");
 		}

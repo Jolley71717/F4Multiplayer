@@ -84,10 +84,13 @@ namespace MuzzleFlashBook
 			return showing.size() >= MAX_SHOWING ? Kind::kTooMany : Kind::kShow;
 		}
 
+		// A test aid (dev `muzzle hold`): every flash shows this long, whatever its own time (zero: its own time).
+		void SetHold(Clock::duration a_hold) { hold = a_hold; }
+
 		// The flash Ask said to show is up, until a_now + a_seconds.
 		void Shown(std::uint32_t a_shooter, Clock::time_point a_now, float a_seconds)
 		{
-			showing[a_shooter] = a_now + ToDuration(FlashSeconds(a_seconds));
+			showing[a_shooter] = a_now + Length(a_seconds);
 			lastShown[a_shooter] = a_now;
 			if (lastShown.size() > 4 * MAX_SHOWING) {  // shooters long gone are forgotten
 				std::erase_if(lastShown, [&](const auto& a_entry) { return a_now - a_entry.second >= MIN_GAP && !showing.contains(a_entry.first); });
@@ -101,7 +104,7 @@ namespace MuzzleFlashBook
 			if (it == showing.end()) {
 				return;
 			}
-			const auto until = a_now + ToDuration(FlashSeconds(a_seconds));
+			const auto until = a_now + Length(a_seconds);
 			if (until > it->second) {
 				it->second = until;
 			}
@@ -147,6 +150,9 @@ namespace MuzzleFlashBook
 		[[nodiscard]] bool        Shows(std::uint32_t a_shooter) const { return showing.contains(a_shooter); }
 
 	private:
+		Clock::duration Length(float a_seconds) const { return hold > Clock::duration::zero() ? hold : ToDuration(FlashSeconds(a_seconds)); }
+
+		Clock::duration                                      hold{};
 		std::unordered_map<std::uint32_t, Clock::time_point> showing;    // shooter -> when its flash comes off
 		std::unordered_map<std::uint32_t, Clock::time_point> lastShown;  // shooter -> its last flash shown or kept up
 	};
