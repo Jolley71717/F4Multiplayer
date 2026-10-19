@@ -12,6 +12,7 @@
 #include "game/LinkedRefs.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
+#include "game/MovedObjects.h"
 #include "game/SessionDeaths.h"
 #include "game/NpcHold.h"
 #include "game/NpcSync.h"
@@ -629,6 +630,10 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
+				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects).
+				if (byPlayer && !target->As<RE::Actor>()) {
+					MovedObjects::OnHit(target->GetFormID());
+				}
 				const auto victim = target->As<RE::Actor>();
 				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker) || Protocol::IsSpawnRef(attacker))) {
 					if ((!byPlayer || friendlyFire) && a_event.usesHitData) {

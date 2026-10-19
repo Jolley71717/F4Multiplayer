@@ -564,6 +564,47 @@ markers, and reports nothing. They can't teleport, and nobody can teleport to th
 `opening`). They still see friends who are in the same place. A mod that starts the game somewhere
 else skips this: the player is never in those places. Untried with any such mod (dist/INSTALL.md, Alternate-start mods): a start in a cell of its own is shared from its first frame, scenes and all, and a character named there gets its ID (`BGSSaveLoadManager::currentPlayerID`) outside the opening, so a host may start hosting under the unnamed ID and restart once named (CharacterBinding: kStopHosting), and a joiner who connected first stays bound to the old ID until a load makes it leave (Tracker::Check rebinds only in the opening).
 
+## Moved objects (src/game/MovedObjects.cpp, ObjectShare.h, common/ObjectMovers.h)
+
+A loose object a player grabs with the use key (a broom, a bottle, a tire: a plugin's reference of a junk, moveable
+static, aid, ammo, book, weapon, armor, note, key or ingredient form, loaded with a body physics moves) is shared while
+held, when let go of or thrown, and where it comes to rest. Never: actors and corpses, quest items (in a quest alias),
+references made at runtime (dropped items, spawns, workshop builds: all 0xFF......), what SaveGuard keeps out of saves,
+power armor frames, and nothing in workshop mode (WorkshopSync's).
+
+- Held: our game polls `PlayerCharacter::grabbedObject` each frame. While it moves in the player's hands, its pose goes
+  15 a second (twice a second while still) as `kReportObjectHold`, unreliable, **in the holder's frame**: an offset to
+  their right, ahead and up, and its rotation turned back by the holder's heading (as a whole: a reference's angles are
+  R = Rz(z) Ry(y) Rx(x), rows its axes, and carried round by a heading d it is R Rz(d), so a tilted object's x and y
+  angles change as it turns; its angles are read from its 3D, which the reference lags behind while held). The
+  friend's game makes its copy keyframed and collide with nothing (gravity and its own physics leave it alone, and it
+  can't shove the stand-in) and draws it each frame in front of its own stand-in of the
+  holder (the stand-in's smoothed place and heading), eased towards the newest hold (time constant 60 ms). So it stays
+  in the stand-in's hands as they walk and turn, however far the stand-in is drawn from the holder's own place.
+- Let go (dropped, or let go of while turning or walking, which flings it: the game has no throw button for a
+  held object): 80 ms after the release the holder's game sends `kReportObjectRest` kLetGo, reliable, with where it left
+  their hands (world place, cell or worldspace) and its launch velocity measured over those 80 ms. The friend's copy is
+  physics again, put there and given that velocity, so it flies as it did. Once it lay still for 600 ms (or after
+  10 s), the holder's game sends kRest with where it lies; the friend's copy is put there if its own physics settled it
+  more than 1 unit or 0.02 rad away.
+- One mover at a time (`ObjectMovers::Book`): the first grab wins. A friend's hold of an object someone else holds is
+  refused and answered with the holder's last hold; that game turns its copy off and on again (the engine drops a grab
+  whose 3D goes) and says nothing of it until its player lets go. After a let-go the rest is the thrower's to report
+  for 12 s of flight and 3 s after it rested, but a friend may grab it meanwhile (handing it over). A holder who stops
+  sending for 2 s, or leaves, holds it no more.
+- Knocked about: four times a second our game looks at up to 256 loose objects within 1500 units. One that moved with no
+  hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
+  the last 3 s: TESHitEvent) and a friend is within 6000 units, 8 at once and 3 a second at most. What a friend's move
+  put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+- Bandwidth: holds 15 a second of one object while a player holds it (about 40 bytes each); rests a few a second.
+  Server: 20 holds a second a player, and a rest budget of 24, 6 a second, kept across rejoining.
+- HavokGuard's rules hold: every pose written is finite and in the world (`ObjectShare::Writable`), velocities are
+  capped at 5000 units a second, and physics is only touched on the main thread. Before a save or a load, and when the
+  session ends, every copy held still for a friend is physics again.
+- `net status` has an `objects:` part (holds sent/applied, let-gos, rests, knocks, refused grabs, bad poses); the dev
+  channel's `objects` prints it, `objects grab` what our player holds, `objects probe <ref>` a reference's place,
+  angles, 3D transform and bodies.
+
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
 - Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor):
@@ -865,6 +906,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
 | `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
+| `kReportObjectHold`, `kReportObjectRest` | the player moving the object (the first to grab it; after a let-go the thrower until it rests, or whoever grabs it next) | a plugin's reference only; a hold within 512 units of the holder, angles within 8 rad, finite; a rest in the world, in one cell or worldspace, at under 5000 units a second (none at rest); refused while another player holds it (`ObjectMovers`); 20 holds a second a player, a rest budget of 24 and 6 a second (kept across rejoining) | a loose object of ours (`Movable`: loose form type, physics body, no quest alias, nothing SaveGuard, Spawns or WorkshopSync places, not in workshop mode), within 8000 units of us in the same space; a hold drawn only within 2500 units of the holder's stand-in, a rest only within 4096 units of where our copy is; never one in our player's hands; every pose finite and in the world before it is written, velocities capped | no: a move is over in seconds, and each game's save keeps where its own copy lies |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 
 A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our

@@ -262,6 +262,13 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
 		}
+		for (const auto type : { MT::kReportObjectHold, MT::kObjectHeld }) {
+			s.push_back({ "ObjectHold", Encode(ObjectHold{ 2, 0x000A1B2C, 77, { 4.5f, 95.0f, 110.25f }, { 0.1f, -0.2f, 1.5f } }, type), D(DecodeObjectHold) });
+		}
+		for (const auto type : { MT::kReportObjectRest, MT::kObjectRested }) {
+			s.push_back({ "ObjectLetGo", Encode(ObjectRest{ 2, 0x000A1B2C, ObjectRestKind::kLetGo, 77, 0, 0x0000003C, { -59420.5f, 72560.25f, 6174.0f }, { 0.0f, 0.5f, 3.0f }, { 120.0f, 300.5f, 80.0f } }, type), D(DecodeObjectRest) });
+			s.push_back({ "ObjectRest", Encode(ObjectRest{ 2, 0x000A1B2C, ObjectRestKind::kRest, 0, 0x0001F2A3, 0, { 120.0f, -40.5f, 6.0f }, { 1.5f, 0.0f, -2.0f }, {} }, type), D(DecodeObjectRest) });
+		}
 		for (const auto type : { MT::kReportSpawn, MT::kSpawned }) {
 			s.push_back({ "Spawn", Encode(Spawn{ 2, RUNTIME_REF, 0x0001D4D2, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f, 1.5f }, type), D(DecodeSpawn) });
 		}
@@ -347,6 +354,8 @@ namespace ProtocolSamples
 		case MT::kReportWorkshopPower:
 		case MT::kHostCommand:
 		case MT::kRequestHostInfo:
+		case MT::kReportObjectHold:
+		case MT::kReportObjectRest:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -390,6 +399,8 @@ namespace ProtocolSamples
 		case MT::kWorkshopPower:
 		case MT::kRemoved:
 		case MT::kHostInfo:
+		case MT::kObjectHeld:
+		case MT::kObjectRested:
 			return true;
 		}
 		return false;

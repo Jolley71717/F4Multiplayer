@@ -4,6 +4,7 @@
 #include "DropStore.h"
 #include "EnetTransport.h"
 #include "Name.h"
+#include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "SessionFile.h"
@@ -115,13 +116,14 @@ namespace
 		int               shots = 0;
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
+		int               objectHolds = 0;  // kReportObjectHold (Protocol::HOLDS_PER_SECOND)
 		float             hitDamage = 0.0f;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = objectHolds = 0;
 				hitDamage = 0.0f;
 			}
 		}
@@ -185,6 +187,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		Clock::time_point spawnsLogged{};
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
@@ -364,6 +367,7 @@ void Server::Run()
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
+	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
@@ -864,6 +868,7 @@ void Server::Run()
 		releaseAll(a_player.id);
 		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
 		drops.DropOffers(a_player.id);
+		objectMovers.Leave(a_player.id);
 	};
 
 	// a_again: a hello on a connection already in the session (their game restarted; see welcome).
@@ -1932,6 +1937,53 @@ void Server::Run()
 		broadcast(Protocol::Encode(*activation, Protocol::MessageType::kActivation), true, a_player.key);
 	};
 
+	// A loose object in the player's hands (ObjectMovers: the first grab wins). Refused, they are told who holds it, so
+	// their game lets go of its copy. Unreliable, on a budget of its own: a game sends 15 a second while holding.
+	const auto handleObjectHold = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto now = Clock::now();
+		a_player.rate.Roll(now);
+		if (++a_player.rate.objectHolds > Protocol::HOLDS_PER_SECOND) {
+			return;
+		}
+		auto hold = Protocol::DecodeObjectHold(a_data);
+		if (!hold) {
+			return;
+		}
+		hold->playerId = a_player.id;
+		switch (objectMovers.Hold(*hold, a_player.id, now)) {
+		case ObjectMovers::Verdict::kRelay:
+			broadcast(Protocol::Encode(*hold, Protocol::MessageType::kObjectHeld), false, a_player.key);
+			break;
+		case ObjectMovers::Verdict::kRefused:
+			if (const auto holder = objectMovers.Holder(hold->refId, now)) {
+				send(a_player.key, Protocol::Encode(*holder, Protocol::MessageType::kObjectHeld), true);
+			}
+			break;
+		case ObjectMovers::Verdict::kDropped:
+			break;
+		}
+	};
+
+	// An object the player let go of, or that came to rest after they moved it: to the others, unless another player
+	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones.
+	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto rest = Protocol::DecodeObjectRest(a_data);
+		const auto now = Clock::now();
+		if (!rest || !budgetOf(a_player).objectRests.Take(now)) {
+			return;
+		}
+		rest->playerId = a_player.id;
+		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
+			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
+		}
+	};
+
 	const auto handleExplosion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2496,6 +2548,12 @@ void Server::Run()
 		case MessageType::kReportActivation:
 			handleActivation(a_player, a_data);
 			break;
+		case MessageType::kReportObjectHold:
+			handleObjectHold(a_player, a_data);
+			break;
+		case MessageType::kReportObjectRest:
+			handleObjectRest(a_player, a_data);
+			break;
 		case MessageType::kReportSpawn:
 			handleSpawn(a_player, a_data);
 			break;
@@ -2606,6 +2664,9 @@ void Server::Run()
 		}
 		nextTick = now + TICK_INTERVAL;
 		++tick;
+		if (tick % 64 == 0) {
+			objectMovers.Prune(now);  // moves over (about once a second)
+		}
 
 		for (const auto& line : TakeConsole()) {
 			console(line);

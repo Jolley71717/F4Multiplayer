@@ -21,6 +21,7 @@
 #include "game/Hud.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
+#include "game/MovedObjects.h"
 #include "game/WorkshopSync.h"
 #include "game/Voice.h"
 #include "game/Party.h"
@@ -397,6 +398,7 @@ namespace Session
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
+					MovedObjects::OnPlayerLeft(msg->playerId);
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -404,6 +406,16 @@ namespace Session
 			case MessageType::kExplosion:
 				if (const auto msg = Protocol::DecodeExplosion(a_data)) {
 					WeaponFire::ApplyExplosion(*msg);
+				}
+				break;
+			case MessageType::kObjectHeld:
+				if (const auto msg = Protocol::DecodeObjectHold(a_data)) {
+					MovedObjects::OnHeld(*msg);
+				}
+				break;
+			case MessageType::kObjectRested:
+				if (const auto msg = Protocol::DecodeObjectRest(a_data)) {
+					MovedObjects::OnRested(*msg);
 				}
 				break;
 			case MessageType::kActivation:
@@ -707,6 +719,7 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			MovedObjects::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
@@ -1248,6 +1261,13 @@ namespace Session
 				client->Send(std::move(packet), true);
 			}
 		}
+		PERF_NEXT(perf, "MovedObjects");
+		MovedObjects::Frame(welcomed && !Story::InOpening());
+		for (auto& packet : MovedObjects::TakeOutgoing()) {
+			if (welcomed) {
+				client->Send(std::move(packet.data), packet.reliable);
+			}
+		}
 		PERF_NEXT(perf, "Voice");
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
@@ -1287,6 +1307,7 @@ namespace Session
 		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
 		WeaponFire::DropHandThrowables();
 		Downed::OnBeforeSave();
+		MovedObjects::BeforeSaveOrLoad();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {
 			hostedServer->RequestSave();
@@ -1324,6 +1345,7 @@ namespace Session
 		Spawns::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
+		MovedObjects::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
@@ -1364,7 +1386,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
