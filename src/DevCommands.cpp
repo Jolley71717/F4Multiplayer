@@ -11,7 +11,10 @@
 #include "game/Dialogue.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
+#include "game/Downed.h"
 #include "game/Equipment.h"
+#include "game/HostRules.h"
+#include "game/RealTime.h"
 #include "game/Face.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
@@ -2265,6 +2268,19 @@ namespace DevCommands
 		}
 
 		// paused: whether the game is paused, and by what.
+		// timescale: the game's time multiplier and timer, VATS's state, what stops the game, and the menus made in real
+		// time so far (game/RealTime.h). For VATS in real time (bRealTimeVats).
+		std::string TimeScale(std::string_view)
+		{
+			return RealTime::Describe();
+		}
+
+		// rules: the session's rules this game plays by (the host's, from the welcome), and the down state they limit.
+		std::string Rules(std::string_view)
+		{
+			return std::format("inSession={} {} | {}", HostRules::InSession(), HostRules::Describe(HostRules::Get()), Downed::Describe());
+		}
+
 		std::string Paused(std::string_view)
 		{
 			const auto main = RE::Main::GetSingleton();
@@ -2834,6 +2850,8 @@ namespace DevCommands
 			Entry{ "god", God },
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
+			Entry{ "timescale", TimeScale },
+			Entry{ "rules", Rules },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
 			Entry{ "animlog", AnimLog },

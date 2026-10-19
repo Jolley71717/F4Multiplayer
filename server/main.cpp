@@ -3,6 +3,11 @@
 // --max-world-entries: how much each of the session's tables may hold (at most the default, 60000).
 // --max-share: how much one player other than the host may add to each table this run (kills, pickups,
 // doors, quest stages, loot and building alike). Both are for trying the limits (tools\soak.ps1 -Abuse).
+// The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
+// --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
+// (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
+// (bReviveOutOfCombat), --slow-vats (bRealTimeVats = false), --pausing-pipboy and --pausing-menus (bRealTimePipboy,
+// bRealTimeMenus = false).
 
 #include "Protocol.h"
 #include "Server.h"
@@ -75,6 +80,31 @@ int main(int argc, char* argv[])
 			options.sharedStory = false;
 		} else if (arg == "--shared-story") {  // the default since 0.8.7, still accepted
 			options.sharedStory = true;
+		} else if (arg == "--no-revive") {
+			options.rules.revive = false;
+		} else if (arg == "--bleed-out" && hasValue && ParseNumber(argv[i + 1], options.rules.bleedOutSeconds)) {
+			++i;
+		} else if (float seconds = 0.0f; arg == "--revive-seconds" && hasValue && ParseNumber(argv[i + 1], seconds) && seconds > 0.0f && seconds < 1000.0f) {
+			options.rules.helpTenths = static_cast<std::uint16_t>(seconds * 10.0f + 0.5f);
+			++i;
+		} else if (unsigned health = 0; arg == "--revive-health" && hasValue && ParseNumber(argv[i + 1], health) && health <= 100) {
+			options.rules.reviveHealth = static_cast<std::uint8_t>(health);
+			++i;
+		} else if (unsigned revives = 0; arg == "--max-revives" && hasValue && ParseNumber(argv[i + 1], revives) && revives <= 255) {
+			options.rules.maxRevives = static_cast<std::uint8_t>(revives);
+			++i;
+		} else if (arg == "--revive-window" && hasValue && ParseNumber(argv[i + 1], options.rules.reviveWindowMinutes)) {
+			++i;
+		} else if (arg == "--revive-cooldown" && hasValue && ParseNumber(argv[i + 1], options.rules.downCooldownSeconds)) {
+			++i;
+		} else if (arg == "--revive-out-of-combat") {
+			options.rules.reviveOutsideCombat = true;
+		} else if (arg == "--slow-vats") {
+			options.rules.realTimeVats = false;
+		} else if (arg == "--pausing-pipboy") {
+			options.rules.realTimePipboy = false;
+		} else if (arg == "--pausing-menus") {
+			options.rules.realTimeMenus = false;
 		} else if (arg == "--session-file" && hasValue) {
 			options.sessionFile = argv[++i];
 		} else if (arg == "--loopback-only") {
@@ -86,7 +116,9 @@ int main(int argc, char* argv[])
 			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
 			++i;
 		} else {
-			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n";
+			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
+						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
+						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--slow-vats] [--pausing-pipboy] [--pausing-menus]\n";
 			return 2;
 		}
 	}

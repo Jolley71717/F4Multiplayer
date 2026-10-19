@@ -15,7 +15,6 @@ namespace Downed
 		using Clock = std::chrono::steady_clock;
 		using BoolFlag = RE::Actor::BOOL_FLAGS;
 
-		constexpr float REVIVE_HEALTH = 0.3f;    // of maximum
 		constexpr auto  GIVE_UP_HOLD = 1s;
 		constexpr std::uint32_t DEFAULT_GIVE_UP_KEY = 0x76;  // F7, when the teleport key is off
 
@@ -105,7 +104,7 @@ namespace Downed
 			SetStayDown(a_player, false);
 			if (values && values->health) {
 				auto&       owner = static_cast<RE::ActorValueOwner&>(*a_player);
-				const float target = owner.GetPermanentActorValue(*values->health) * REVIVE_HEALTH;
+				const float target = owner.GetPermanentActorValue(*values->health) * self.GetRules().reviveHealth;
 				const float current = owner.GetActorValue(*values->health);
 				if (target > current) {
 					owner.RestoreActorValue(*values->health, target - current);
@@ -118,7 +117,7 @@ namespace Downed
 		{
 			if (const auto values = RE::ActorValue::GetSingleton(); values && values->health) {
 				auto&       owner = static_cast<RE::ActorValueOwner&>(*a_player);
-				const float excess = owner.GetActorValue(*values->health) - owner.GetPermanentActorValue(*values->health) * REVIVE_HEALTH;
+				const float excess = owner.GetActorValue(*values->health) - owner.GetPermanentActorValue(*values->health) * self.GetRules().reviveHealth;
 				if (excess > 0.0f) {
 					owner.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -excess);
 				}
@@ -143,6 +142,10 @@ namespace Downed
 			if (a_step.secondsLeft >= 0) {
 				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
 			}
+			if (a_step.revivesBack) {
+				REX::INFO("Downed: revives back (the window or the fight is over)");
+				Hud::Notify(Text::Get("down.revives_back"));
+			}
 			if (a_step.kill) {
 				// The character can carry its own copy of the essential flag, which a kill may read instead of the base
 				// form's: one left on would put the player down again instead of killing them. Not one another mod made
@@ -160,7 +163,7 @@ namespace Downed
 		}
 
 		// Stay next to a downed friend's stand-in for a moment to help them up.
-		void HelpFriends(RE::PlayerCharacter* a_player, bool a_able, Clock::time_point a_now)
+		void HelpFriends(RE::PlayerCharacter* a_player, bool a_able, bool a_fighting, Clock::time_point a_now)
 		{
 			std::vector<DownRules::Helper::Near> near;
 			std::vector<RemotePlayers::Info>     friends;
@@ -172,11 +175,14 @@ namespace Downed
 					}
 				}
 			}
-			const auto step = helper.Frame(a_able, near, a_now);
+			const auto step = helper.Frame(a_able, near, a_now, a_fighting);
 			const auto nameOf = [&](std::uint32_t a_id) {
 				const auto it = std::ranges::find(friends, a_id, &RemotePlayers::Info::id);
 				return it != friends.end() ? it->name : std::string{};
 			};
+			if (step.blocked) {
+				Hud::Notify(Text::Format("down.cant_help_fighting", { { "player", nameOf(step.blocked) } }));
+			}
 			if (step.started) {
 				Hud::Notify(Text::Format("down.helping", { { "player", nameOf(step.started) } }));
 			}
@@ -194,10 +200,16 @@ namespace Downed
 		if (!player) {
 			return;
 		}
-		const bool enabled = Config::Get().revive && a_withFriends && WorldSync::InWorld();
+		const bool enabled = self.GetRules().revive && a_withFriends && WorldSync::InWorld();
 		const auto now = Clock::now();
+		const bool fighting = player->IsInCombat();
 
-		const DownRules::Facts facts{ .enabled = enabled, .essential = essential, .down = InEssentialDown(player), .dead = Dying(player), .paused = GamePaused() };
+		const DownRules::Facts facts{ .enabled = enabled,
+			.essential = essential,
+			.down = InEssentialDown(player),
+			.dead = Dying(player),
+			.paused = GamePaused(),
+			.inCombat = fighting };
 		Apply(player, self.Frame(facts, now));
 
 		// With the teleport key off, Party doesn't see the hold: watch the fallback key here.
@@ -212,7 +224,14 @@ namespace Downed
 		}
 
 		// Only while up: helping is reset meanwhile, so being down for a moment does not count toward it.
-		HelpFriends(player, enabled && self.Now() == DownRules::Self::Phase::kUp && !facts.dead, now);
+		HelpFriends(player, enabled && self.Now() == DownRules::Self::Phase::kUp && !facts.dead, fighting, now);
+	}
+
+	void SetRules(const Protocol::SessionRules& a_rules)
+	{
+		const auto rules = DownRules::Rules::From(a_rules);
+		self.SetRules(rules);
+		helper.SetRules(rules);
 	}
 
 	bool IsDown()
@@ -233,13 +252,25 @@ namespace Downed
 	void ApplyRevive(const Protocol::Revive& a_revive)
 	{
 		const auto player = Player();
-		if (!player || !self.Revive(Clock::now())) {
+		const auto now = Clock::now();
+		if (!player || !self.Revive(now)) {
 			return;
 		}
 		GetUp(player);
 		const auto name = RemotePlayers::NameOf(a_revive.playerId);
 		REX::INFO("Downed: helped up by player {}", a_revive.playerId);
 		Hud::Notify(Text::Format("down.helped_you", { { "player", name.empty() ? Text::Get("party.a_friend") : name } }));
+		// The host's limits, so the next lethal hit is no surprise.
+		const auto after = self.AfterRevive(now);
+		if (after.lastRevive) {
+			REX::INFO("Downed: that was the last revive for now");
+			Hud::Notify(Text::Get("down.last_revive"));
+		} else if (const int left = self.RevivesLeft(now); left > 0) {
+			Hud::Notify(Text::Format("down.revives_left", { { "n", left } }));
+		}
+		if (after.cooldownSeconds > 0) {
+			Hud::Notify(Text::Format("down.cooldown", { { "n", after.cooldownSeconds } }));
+		}
 	}
 
 	void SetFriendDown(std::uint32_t a_id, bool a_down)
@@ -288,7 +319,9 @@ namespace Downed
 
 	std::string Describe()
 	{
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} helped={} friendsDown={}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, helper.helped, helper.FriendsDown());
+		const auto now = Clock::now();
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} helped={} friendsDown={} revivesLeft={} cooldown={}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, helper.helped, helper.FriendsDown(),
+			self.RevivesLeft(now), self.InCooldown(now));
 	}
 }

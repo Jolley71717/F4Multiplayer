@@ -217,6 +217,61 @@ TEST("protocol: Welcome round trips, including sharedStory")
 	}
 }
 
+TEST("protocol: the welcome carries the session's rules, each field its own, and brings them within their limits")
+{
+	SessionRules rules;
+	rules.revive = false;
+	rules.bleedOutSeconds = 90;
+	rules.helpTenths = 45;
+	rules.reviveHealth = 75;
+	rules.maxRevives = 3;
+	rules.reviveWindowMinutes = 15;
+	rules.downCooldownSeconds = 120;
+	rules.reviveOutsideCombat = true;
+	rules.realTimeVats = false;
+	rules.realTimePipboy = true;
+	rules.realTimeMenus = false;
+	const auto out = DecodeWelcome(Encode(Welcome{ 7, 8, false, true, rules }));
+	REQUIRE(out);
+	CHECK(out->rules == rules);
+	CHECK(out->sharedStory);
+
+	// Each flag alone, so none is read from another's bit.
+	for (int bit = 0; bit < 5; ++bit) {
+		SessionRules one;
+		one.revive = bit == 0;
+		one.reviveOutsideCombat = bit == 1;
+		one.realTimeVats = bit == 2;
+		one.realTimePipboy = bit == 3;
+		one.realTimeMenus = bit == 4;
+		const auto decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
+		REQUIRE(decoded);
+		CHECK(decoded->rules == one);
+	}
+
+	// Out of the limits (another build's server, or a hand-made packet): brought within them, never used as they came.
+	SessionRules wild;
+	wild.bleedOutSeconds = 0;
+	wild.helpTenths = 60000;
+	wild.reviveHealth = 0;
+	wild.reviveWindowMinutes = 65535;
+	wild.downCooldownSeconds = 65535;
+	const auto clamped = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, wild }));
+	REQUIRE(clamped);
+	CHECK(clamped->rules.bleedOutSeconds == SessionRules::MIN_BLEED_OUT);
+	CHECK(clamped->rules.helpTenths == SessionRules::MAX_HELP_TENTHS);
+	CHECK(clamped->rules.reviveHealth == SessionRules::MIN_REVIVE_HEALTH);
+	CHECK(clamped->rules.reviveWindowMinutes == SessionRules::MAX_REVIVE_WINDOW);
+	CHECK(clamped->rules.downCooldownSeconds == SessionRules::MAX_DOWN_COOLDOWN);
+	wild.reviveHealth = 250;
+	CHECK(DecodeWelcome(Encode(Welcome{ 1, 2, false, false, wild }))->rules.reviveHealth == 100);
+
+	// A welcome cut off in its rules is no welcome.
+	auto cut = Encode(Welcome{ 1, 2, false, false, rules });
+	cut.pop_back();
+	CHECK(!DecodeWelcome(cut));
+}
+
 TEST("protocol: Reject, PlayerJoined and PlayerLeft round trip")
 {
 	const auto reject = DecodeReject(Encode(Reject{ "Wrong password" }));

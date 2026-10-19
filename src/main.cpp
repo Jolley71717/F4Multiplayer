@@ -13,6 +13,7 @@
 #include "game/Menu.h"
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
+#include "game/RealTime.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -243,14 +244,20 @@ namespace
 		return found;
 	}
 
+	// Hosting, or joined to someone's.
+	bool InSession()
+	{
+		const auto status = Session::GetStatus();
+		return status.hosting || status.link == Session::Status::Link::kJoined;
+	}
+
 	void RunInBackground()
 	{
 		const auto setting = AlwaysActive();
 		if (!setting) {
 			return;
 		}
-		const auto status = Session::GetStatus();
-		const bool session = status.hosting || status.link == Session::Status::Link::kJoined;
+		const bool session = InSession();
 		if (const auto value = background.Update(Config::Get().runInBackground, session, setting->GetBinary())) {
 			setting->SetBinary(*value);
 			REX::INFO("Config: {}", *value ? "in a session, the game runs on while it is not focused (bRunInBackground)" : "out of the session, the game's bAlwaysActive is back off");
@@ -263,6 +270,7 @@ namespace
 		case F4SE::MessagingInterface::kGameDataReady:
 			FastLoad::Install();  // checks bFastLoading itself, per loading screen
 			OpenMenus::Install();  // which menus are open, for everything that asks: the UI itself is never asked
+			RealTime::Install();   // menus made in real time in a session (the host's bRealTimePipboy, bRealTimeMenus)
 			if (Config::Get().devChannel) {
 				MenuWatch::Install();  // for the stress loop's menu checks (the menus dev command)
 			}
@@ -411,6 +419,10 @@ namespace
 			{
 				PERF_SCOPE("Background");
 				RunInBackground();
+			}
+			{
+				PERF_SCOPE("RealTime");
+				RealTime::Frame(InSession());
 			}
 			{
 				PERF_SCOPE("HavokGuard");

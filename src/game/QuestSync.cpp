@@ -7,6 +7,7 @@
 #include "game/OpenMenus.h"
 #include "game/QuestFilter.h"
 #include "game/QuestStageLayout.h"
+#include "game/RealTimeMenus.h"
 #include "game/RemotePlayers.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
@@ -220,11 +221,13 @@ namespace QuestSync
 			return a_now - lastCombat < AFTER_COMBAT;
 		}
 
-		// The game is paused (the Pip-Boy, the pause menu, a container, a terminal): scripts don't run.
+		// The game is paused (the Pip-Boy, the pause menu, a container, a terminal): scripts don't run. In a session those
+		// menus may run in real time (game/RealTimeMenus.h): still nothing is set while one is up, as before, so a stage
+		// that moves the player never does it from inside a container or the Pip-Boy.
 		bool Paused()
 		{
 			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0;
+			return !ui || ui->menuMode != 0 || RealTimeMenus::AnyOpen(OpenMenus::Open);
 		}
 
 		// Whether this friend (the one who did a stage) is close by. Not any friend: with three players,

@@ -583,6 +583,26 @@ else skips this: the player is never in those places.
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
   the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
   replaced, so it never sits on the ground while its friend is up.
+- Session rules (`Protocol::SessionRules`, protocol 47): the host's ini (src/game/HostRules.h; F4MPServer's
+  options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
+  game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help
+  0.5-30 s, health 1-100 %, window up to 600 min, cooldown up to 3600 s). The downed ones (bleed-out and help
+  times, health, revives per fight or per window, the cooldown after getting up, helping only out of combat)
+  are kept by DownRules::Self on the downed player's side: out of revives, or in the cooldown, the player is
+  not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
+  frame in combat (on the ground counts as in combat). The helper checks its own combat state for
+  `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
+- Real time (src/game/RealTime.cpp, src/game/RealTimeMenus.h): the menus in RealTimeMenus::MENUS are made
+  without `kPausesGame` and `kFreezeFramePause` in a session whose rules say so: their `UIMenuEntry::create`
+  is wrapped once (the menu map's write lock, at the game's data being ready) and the flags are changed as
+  each menu is made, never later, so the UI's `menuMode` count is the same at open and close. The pause
+  menu, the console, waiting, the looks menu and the loading and main menus are never in the list. With them
+  in real time `menuMode` stays 0, so the hotkeys and the quest stages ask OpenMenus for them by name too.
+  VATS (`bRealTimeVats`): while VATS is up (its menu or a shot playing out), a global time multiplier under 1
+  is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier`), unless Jet's slow motion
+  (`VATS::magicTimeSlowdown`) is on. Tutorial hints: the game's `bShowTutorials:Interface`, which its help
+  messages read each time, is held off in a session (Background::Switch) and put back after; its tutorial
+  message boxes are not gated by it.
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within

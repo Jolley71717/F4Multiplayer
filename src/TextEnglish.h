@@ -109,6 +109,11 @@ namespace Text
 		{ "down.helping", "Helping {player} up..." },
 		{ "down.helped", "You helped {player} up" },
 		{ "down.helped_you", "{player} helped you up" },
+		{ "down.revives_left", "Revives left: {n}" },
+		{ "down.last_revive", "That was your last revive for now: the next lethal hit kills you" },
+		{ "down.revives_back", "Your revives are back: a friend can help you up again" },
+		{ "down.cooldown", "Just helped up: for {n} seconds a lethal hit kills you" },
+		{ "down.cant_help_fighting", "Can't help {player} up during a fight" },
 
 		// --- The shared map, quests and workshop ---
 		{ "map.discovered", "{player} discovered {place}" },

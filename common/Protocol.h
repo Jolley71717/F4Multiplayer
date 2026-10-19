@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 47;  // 47: the welcome carries the host's session rules (SessionRules)
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -272,12 +272,54 @@ namespace Protocol
 	struct LoadOrderRequest
 	{};
 
+	// The host's rules for everyone in the session (protocol 47): the host's ini (F4MPServer: its options), sent with the
+	// welcome, so every game, the host's own included, plays by the same ones. The defaults are the mod's behaviour before
+	// there were rules (and real time in VATS and the menus, which is new).
+	struct SessionRules
+	{
+		// Downed and revive (src/game/DownRules.h).
+		bool          revive = true;              // a lethal hit knocks a player down for friends to help up (bRevive)
+		std::uint16_t bleedOutSeconds = 45;       // down this long without help: dead (iBleedOutSeconds)
+		std::uint16_t helpTenths = 20;            // staying next to a downed friend this long (tenths of a second) helps them up (fReviveSeconds)
+		std::uint8_t  reviveHealth = 30;          // percent of their health a player gets up with (iReviveHealth)
+		std::uint8_t  maxRevives = 0;             // times a player can be helped up within the window; 0 = no limit (iMaxRevives)
+		std::uint16_t reviveWindowMinutes = 0;    // that window; 0 = per fight (iReviveWindowMinutes)
+		std::uint16_t downCooldownSeconds = 0;    // helped up, a lethal hit within this long kills (iReviveCooldownSeconds)
+		bool          reviveOutsideCombat = false;  // friends can only help while they are not in a fight (bReviveOutOfCombat)
+
+		// Time (src/game/RealTime.h): in a session, these run in real time instead of slowing or stopping the game.
+		bool realTimeVats = true;    // VATS (bRealTimeVats)
+		bool realTimePipboy = true;  // the Pip-Boy and the perk chart (bRealTimePipboy)
+		bool realTimeMenus = true;   // containers, trading, workbenches, terminals, lockpicking, books, message boxes (bRealTimeMenus)
+
+		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
+		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
+		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
+		static constexpr std::uint8_t  MIN_REVIVE_HEALTH = 1, MAX_REVIVE_HEALTH = 100;
+		static constexpr std::uint16_t MAX_REVIVE_WINDOW = 600;
+		static constexpr std::uint16_t MAX_DOWN_COOLDOWN = 3600;
+
+		[[nodiscard]] SessionRules Clamped() const
+		{
+			auto out = *this;
+			out.bleedOutSeconds = std::clamp(bleedOutSeconds, MIN_BLEED_OUT, MAX_BLEED_OUT);
+			out.helpTenths = std::clamp(helpTenths, MIN_HELP_TENTHS, MAX_HELP_TENTHS);
+			out.reviveHealth = std::clamp(reviveHealth, MIN_REVIVE_HEALTH, MAX_REVIVE_HEALTH);
+			out.reviveWindowMinutes = (std::min)(reviveWindowMinutes, MAX_REVIVE_WINDOW);
+			out.downCooldownSeconds = (std::min)(downCooldownSeconds, MAX_DOWN_COOLDOWN);
+			return out;
+		}
+
+		bool operator==(const SessionRules&) const = default;
+	};
+
 	struct Welcome
 	{
 		std::uint32_t playerId = 0;
 		std::uint64_t sessionId = 0;  // random per server run
 		bool          friendlyFire = false;  // players can hurt each other
 		bool          sharedStory = false;   // main story and faction quests are shared too, not just side quests
+		SessionRules  rules;
 	};
 
 	struct Reject
@@ -1193,6 +1235,16 @@ namespace Protocol
 		w.U64(a_msg.sessionId);
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
+		const auto& rules = a_msg.rules;
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.realTimePipboy ? 8 : 0) |
+		                           (rules.realTimeMenus ? 16 : 0);
+		w.U8(flags);
+		w.U16(rules.bleedOutSeconds);
+		w.U16(rules.helpTenths);
+		w.U8(rules.reviveHealth);
+		w.U8(rules.maxRevives);
+		w.U16(rules.reviveWindowMinutes);
+		w.U16(rules.downCooldownSeconds);
 		return w.Data();
 	}
 
@@ -1205,8 +1257,26 @@ namespace Protocol
 		msg.sessionId = r.U64();
 		msg.friendlyFire = r.U8() != 0;
 		msg.sharedStory = r.U8() != 0;
-		if (!r.Ok()) {
-			return std::nullopt;
+		// The rules (protocol 47; a welcome only answers a hello of the same version). Trailing bytes after them are
+		// left for a later version, as for the rest of the handshake.
+		{
+			SessionRules rules;
+			const auto   flags = r.U8();
+			rules.revive = (flags & 1) != 0;
+			rules.reviveOutsideCombat = (flags & 2) != 0;
+			rules.realTimeVats = (flags & 4) != 0;
+			rules.realTimePipboy = (flags & 8) != 0;
+			rules.realTimeMenus = (flags & 16) != 0;
+			rules.bleedOutSeconds = r.U16();
+			rules.helpTenths = r.U16();
+			rules.reviveHealth = r.U8();
+			rules.maxRevives = r.U8();
+			rules.reviveWindowMinutes = r.U16();
+			rules.downCooldownSeconds = r.U16();
+			if (!r.Ok()) {
+				return std::nullopt;
+			}
+			msg.rules = rules.Clamped();
 		}
 		return msg;
 	}

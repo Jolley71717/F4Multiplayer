@@ -103,6 +103,26 @@ next to you for 2 seconds helps you up (with 30% health). When a friend goes dow
 you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
 `bRevive = false`.
 
+The host can make it harder (their ini sets it for everyone; a joiner's own settings aren't used):
+the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the health you get up with
+(`iReviveHealth`), how many times each player can be helped up per fight or per so many minutes
+(`iMaxRevives`, `iReviveWindowMinutes`), a time after getting up when a lethal hit kills
+(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). The HUD tells you
+how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
+`--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
+`--revive-out-of-combat`, `--no-revive`).
+
+### Nothing stops the game for one player
+
+In a session the game no longer stops or slows down while friends play on, as in Fallout 76. VATS runs
+at full speed (Jet still slows time), and the Pip-Boy, the perk chart, containers, trading, workbenches,
+cooking, terminals, lockpicking, books and message boxes leave the world running: enemies can hit you
+while you look, so find a quiet spot first. The pause menu (Esc), the console, waiting and sleeping, and
+the looks menu still stop your own game (the session goes on for your friends). The host can keep the
+game's own slow motion or pause with `bRealTimeVats`, `bRealTimePipboy` and `bRealTimeMenus = false`
+(server: `--slow-vats`, `--pausing-pipboy`, `--pausing-menus`). The game's tutorial hints stay hidden in a
+session (`bHideTutorials`, your own setting); its tutorial message boxes still show, in real time.
+
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or

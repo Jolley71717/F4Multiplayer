@@ -174,8 +174,9 @@ TEST("open menus: the plugin looks no menu up through the UI, but for the HUD on
 	// Compass's lookup is on the main thread, between frames, of the HUD (which the UI keeps for the whole game),
 	// and only until its update is hooked. The gfx commands (dev channel) look up what a developer names, and
 	// "dialogue menu" the dialogue menu and the menu stack: on the main thread, between frames, when a developer
-	// asks, and the reference is let go before the command returns.
-	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 } };
+	// asks, and the reference is let go before the command returns. RealTime's is of the menu map's creation functions,
+	// once, on the main thread at the game's data being ready: it looks at no menu and takes no reference to one.
+	const std::map<std::string, int> allowed{ { "src/game/Compass.cpp", 1 }, { "src/DevCommands.cpp", 4 }, { "src/game/RealTime.cpp", 1 } };
 	for (const auto& [file, code] : SourceTree::PluginCode(*root)) {
 		const auto lookups = MenuLookups(code);
 		const auto it = allowed.find(file);

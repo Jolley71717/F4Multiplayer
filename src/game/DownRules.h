@@ -4,9 +4,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <set>
 #include <span>
+
+#include "Protocol.h"
 
 // Downed and revive, kept free of the game so it can be tested: what our own game does as the player is
 // knocked down, helped up or left to bleed out (Self), and when we stand next to a downed friend (Helper).
@@ -22,6 +25,36 @@ namespace DownRules
 	inline constexpr auto  HELP_TIME = 2s;      // standing next to a downed friend this long helps them up
 	inline constexpr auto  HELP_RETRY = 3s;     // before helping the same friend again
 	inline constexpr float HELP_RANGE = 300.0f; // game units (about 4 m): "right here" in the down notice is 5 m
+	inline constexpr auto  FIGHT_OVER = 30s;    // out of a fight this long, it is over (revives "per fight")
+
+	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
+	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
+	struct Rules
+	{
+		bool            revive = true;
+		Clock::duration bleedOut = BLEEDOUT_TIME;
+		Clock::duration helpTime = HELP_TIME;
+		float           reviveHealth = 0.3f;    // of the maximum
+		std::uint32_t   maxRevives = 0;         // per window (or fight); 0 = no limit
+		Clock::duration window{};               // 0 = per fight
+		Clock::duration cooldown{};             // helped up, a lethal hit within this long kills
+		bool            outsideCombat = false;  // a helper in a fight cannot help
+
+		static Rules From(const Protocol::SessionRules& a_session)
+		{
+			const auto session = a_session.Clamped();
+			Rules      rules;
+			rules.revive = session.revive;
+			rules.bleedOut = std::chrono::seconds{ session.bleedOutSeconds };
+			rules.helpTime = std::chrono::milliseconds{ session.helpTenths * 100 };
+			rules.reviveHealth = session.reviveHealth / 100.0f;
+			rules.maxRevives = session.maxRevives;
+			rules.window = std::chrono::minutes{ session.reviveWindowMinutes };
+			rules.cooldown = std::chrono::seconds{ session.downCooldownSeconds };
+			rules.outsideCombat = session.reviveOutsideCombat;
+			return rules;
+		}
+	};
 
 	// The engine's ACTOR_LIFE_STATE values for an essential character that is down: kEssentialDown and kBleedout.
 	inline constexpr std::int32_t LIFE_ESSENTIAL_DOWN = 7;
@@ -98,6 +131,7 @@ namespace DownRules
 		bool down = false;       // the game has them down (IsDownState)
 		bool dead = false;       // dead or dying
 		bool paused = false;     // a menu has the game stopped (the pause menu, the Pip-Boy)
+		bool inCombat = false;   // the player is in a fight (revives per fight)
 	};
 
 	// What to do about it this frame.
@@ -109,12 +143,18 @@ namespace DownRules
 		bool                wentDown = false;    // "You're down!"
 		bool                trimHealth = false;  // up after being helped: the game gave full health, cut it back
 		int                 secondsLeft = -1;    // a reminder of the time left to be helped up
+		bool                lastRevive = false;    // (AfterRevive) helped up for the last time this window or fight
+		bool                revivesBack = false;   // the window or the fight is over: a lethal hit knocks down again
+		int                 cooldownSeconds = -1;  // (AfterRevive) for this long a lethal hit kills
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
 	// off and killed, waiting to be dead). A bled-out player is not made essential again while still alive: the
 	// kill had not taken by the next frame, essential went back on, and the player was "down!" again instead of
 	// dead, every 45 s for as long as they waited.
+	//
+	// The session's rules can limit it: out of revives for the window (or the fight), or within the cooldown after
+	// being helped up, the player is not made essential, and a lethal hit kills as it would alone.
 	class Self
 	{
 	public:
@@ -126,20 +166,47 @@ namespace DownRules
 			kBledOut,
 		};
 
+		// The session's rules; a new session starts the count over.
+		void SetRules(const Rules& a_rules)
+		{
+			rules = a_rules;
+			helpedUpAt.clear();
+			fightRevives = 0;
+			upAt.reset();
+			outOfRevives = false;
+		}
+
+		[[nodiscard]] const Rules& GetRules() const { return rules; }
+
 		Step Frame(const Facts& a_facts, Clock::time_point a_now)
 		{
 			Step step;
+			// A fight goes on while the player is on the ground: enemies may well leave a downed player alone.
+			if (a_facts.inCombat || IsDown()) {
+				lastFight = a_now;
+			}
+			if (rules.window.count() == 0 && fightRevives > 0 && a_now - lastFight >= FIGHT_OVER) {
+				fightRevives = 0;
+			}
+			while (rules.window.count() > 0 && !helpedUpAt.empty() && a_now - helpedUpAt.front() >= rules.window) {
+				helpedUpAt.pop_front();
+			}
+			const bool out = RevivesLeft(a_now) == 0;
+			step.revivesBack = outOfRevives && !out && a_facts.enabled;
+			outOfRevives = out;
+			const bool mayGoDown = a_facts.enabled && !out && !InCooldown(a_now);
 			switch (phase) {
 			case Phase::kUp:
 				// Not while dying: making a dying character essential again could stop the death.
-				if (!a_facts.dead || !a_facts.enabled) {
-					step.essential = a_facts.enabled;
+				if (!a_facts.dead || !mayGoDown) {
+					step.essential = mayGoDown;
 				}
 				if (a_facts.essential && a_facts.down && !a_facts.dead) {
 					phase = Phase::kDown;
 					giveUp = false;
 					downSince = a_now;
-					reminders = 0;
+					// A reminder needs time before it: no "30 seconds left" when there were only 30 to start with.
+					reminders = rules.bleedOut <= 15s ? 2 : rules.bleedOut <= 35s ? 1 : 0;
 					++downs;
 					// The game would stand the player up again by itself after a while.
 					step.stayDown = true;
@@ -150,14 +217,14 @@ namespace DownRules
 				if (!a_facts.down) {
 					phase = Phase::kUp;  // up again by itself (a save and load, a console command)
 					step.stayDown = false;
-				} else if (giveUp || !a_facts.enabled || a_now - downSince >= BLEEDOUT_TIME) {
+				} else if (giveUp || !a_facts.enabled || a_now - downSince >= rules.bleedOut) {
 					// Bleeding out counts real time, paused or not: friends' games go on while ours is stopped.
 					BleedOut(step, a_now);
 				} else {
 					// A save clears both flags (Downed::OnBeforeSave); still down, so set them again.
 					step.essential = true;
 					step.stayDown = true;
-					const auto left = std::chrono::duration_cast<std::chrono::seconds>(BLEEDOUT_TIME - (a_now - downSince)).count();
+					const auto left = std::chrono::duration_cast<std::chrono::seconds>(rules.bleedOut - (a_now - downSince)).count();
 					if ((reminders == 0 && left <= 30) || (reminders == 1 && left <= 10)) {
 						++reminders;
 						step.secondsLeft = static_cast<int>(left);
@@ -174,6 +241,7 @@ namespace DownRules
 					phase = Phase::kUp;
 					step.stayDown = false;
 					step.trimHealth = true;
+					upAt = a_now;
 				} else if (a_now - revivedAt - pausedGettingUp >= GET_UP_TIME) {
 					// Helped up: the game stands the player up on its own. If it somehow doesn't, they die.
 					BleedOut(step, a_now);
@@ -211,7 +279,39 @@ namespace DownRules
 			revivedAt = a_now;
 			pausedGettingUp = {};
 			++revives;
+			helpedUpAt.push_back(a_now);
+			++fightRevives;
 			return true;
+		}
+
+		// After a Revive that stood us up: what the player is told of the rules (the last revive, the cooldown).
+		[[nodiscard]] Step AfterRevive(Clock::time_point a_now) const
+		{
+			Step step;
+			step.lastRevive = RevivesLeft(a_now) == 0;
+			if (rules.cooldown.count() > 0) {
+				step.cooldownSeconds = static_cast<int>(std::chrono::duration_cast<std::chrono::seconds>(rules.cooldown).count());
+			}
+			return step;
+		}
+
+		// How many more times the player can be helped up now; -1 = no limit.
+		[[nodiscard]] int RevivesLeft(Clock::time_point a_now) const
+		{
+			if (rules.maxRevives == 0) {
+				return -1;
+			}
+			auto used = fightRevives;
+			if (rules.window.count() > 0) {
+				used = static_cast<std::uint32_t>(std::ranges::count_if(helpedUpAt, [&](Clock::time_point a_at) { return a_now - a_at < rules.window; }));
+			}
+			return used >= rules.maxRevives ? 0 : static_cast<int>(rules.maxRevives - used);
+		}
+
+		// Stood up after a help-up a moment ago: a lethal hit kills.
+		[[nodiscard]] bool InCooldown(Clock::time_point a_now) const
+		{
+			return rules.cooldown.count() > 0 && upAt && a_now - *upAt < rules.cooldown;
 		}
 
 		void GiveUp() { giveUp = phase == Phase::kDown; }
@@ -254,6 +354,13 @@ namespace DownRules
 			++bleedOuts;
 		}
 
+		Rules                            rules;
+		std::deque<Clock::time_point>    helpedUpAt;  // help-ups within the window (revives per window)
+		std::uint32_t                    fightRevives = 0;
+		Clock::time_point                lastFight{};
+		std::optional<Clock::time_point> upAt;  // stood up after the last help-up (the cooldown)
+		bool                             outOfRevives = false;
+
 		Phase             phase = Phase::kUp;
 		bool              giveUp = false;
 		Clock::time_point downSince{};
@@ -264,10 +371,13 @@ namespace DownRules
 		int               reminders = 0;
 	};
 
-	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for HELP_TIME.
+	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,
+	// when the rules say so, not while in a fight.
 	class Helper
 	{
 	public:
+		void SetRules(const Rules& a_rules) { rules = a_rules; }
+
 		// A friend's stand-in in our world, and how far it is from us.
 		struct Near
 		{
@@ -279,6 +389,7 @@ namespace DownRules
 		{
 			std::uint32_t started = 0;  // began helping this friend ("Helping ... up")
 			std::uint32_t helped = 0;   // send them a Revive
+			std::uint32_t blocked = 0;  // next to this friend, but in a fight ("Can't help ... up during a fight")
 		};
 
 		void SetFriendDown(std::uint32_t a_id, bool a_down)
@@ -296,10 +407,12 @@ namespace DownRules
 		{
 			friendsDown.clear();
 			helping = 0;
+			blockedFor = 0;
 		}
 
 		// a_able: we are up, alive and in a session with revive on. a_near: friends' stand-ins in our world.
-		HelpStep Frame(bool a_able, std::span<const Near> a_near, Clock::time_point a_now)
+		// a_fighting: we are in a fight (helping waits for its end when the rules say so).
+		HelpStep Frame(bool a_able, std::span<const Near> a_near, Clock::time_point a_now, bool a_fighting = false)
 		{
 			HelpStep      step;
 			std::uint32_t near = 0;
@@ -311,11 +424,20 @@ namespace DownRules
 					}
 				}
 			}
+			if (near && rules.outsideCombat && a_fighting) {
+				if (near != blockedFor) {
+					step.blocked = near;
+				}
+				blockedFor = near;
+				near = 0;
+			} else {
+				blockedFor = 0;
+			}
 			if (near != helping) {
 				helping = near;
 				helpSince = a_now;
 				step.started = near;
-			} else if (near && a_now - helpSince >= HELP_TIME) {
+			} else if (near && a_now - helpSince >= rules.helpTime) {
 				step.helped = near;
 				++helped;
 				helping = 0;
@@ -329,8 +451,10 @@ namespace DownRules
 		std::uint32_t helped = 0;
 
 	private:
+		Rules                   rules;
 		std::set<std::uint32_t> friendsDown;
 		std::uint32_t           helping = 0;
+		std::uint32_t           blockedFor = 0;  // told we can't help this friend during the fight (once, not every frame)
 		Clock::time_point       helpSince{};
 		Clock::time_point       helpAgain{};
 	};

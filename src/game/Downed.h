@@ -5,9 +5,13 @@
 // Downed and revive: in a session with friends, a lethal hit knocks the player down instead of
 // killing them (the game's "essential" state, held down until helped). A friend who stays next
 // to them for 2 s helps them up; after 45 s, when they give up, or when the last friend leaves,
-// they die as usual. Main thread only.
+// they die as usual. The host's session rules can change those times and limit it (SetRules).
+// Main thread only.
 namespace Downed
 {
+	// The session's rules (HostRules): out of a session, the defaults.
+	void SetRules(const Protocol::SessionRules& a_rules);
+
 	// Call every frame. a_withFriends: in a session with at least one other player.
 	void Frame(bool a_withFriends);
 

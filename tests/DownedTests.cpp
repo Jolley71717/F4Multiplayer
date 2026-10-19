@@ -59,8 +59,11 @@ namespace
 		Body              body;
 		bool              withFriends = true;
 		bool              paused = false;  // the pause menu is open
+		bool              fighting = false;  // in combat
 		int               downNotices = 0;
 		int               kills = 0;
+		int               lastRevives = 0;
+		int               revivesBack = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -93,7 +96,7 @@ namespace
 
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
-			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused };
+			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -109,6 +112,7 @@ namespace
 				++body.trims;
 			}
 			downNotices += step.wentDown;
+			revivesBack += step.revivesBack;
 			if (step.secondsLeft >= 0) {
 				reminders.push_back(step.secondsLeft);
 			}
@@ -128,6 +132,7 @@ namespace
 				return false;
 			}
 			body.stayDown = false;
+			lastRevives += self.AfterRevive(a_now).lastRevive;
 			return true;
 		}
 
@@ -710,4 +715,254 @@ TEST("downed: a character down is not dead, though the game's IsDead says so; dy
 	CHECK(DownRules::Dead(DownRules::LIFE_DEAD, false));
 	CHECK(DownRules::Dead(0, true));
 	CHECK(!DownRules::Dead(0, false));
+}
+
+// ---- the host's rules ----------------------------------------------------------------------------------
+
+namespace
+{
+	// Down, helped up after a moment, and standing again.
+	void DownAndUp(Game& a_game, Clock::time_point& a_now)
+	{
+		a_game.body.LethalHit();
+		a_game.Run(a_now, 1s);
+		REQUIRE(a_game.self.Now() == Phase::kDown);
+		REQUIRE(a_game.Revived(a_now));
+		a_game.Run(a_now, 5s);
+		REQUIRE(a_game.self.Now() == Phase::kUp);
+	}
+}
+
+TEST("downed rules: the session's defaults are the times and health every session had before there were rules")
+{
+	const auto rules = DownRules::Rules::From(Protocol::SessionRules{});
+	CHECK(rules.revive);
+	CHECK(rules.bleedOut == DownRules::BLEEDOUT_TIME);
+	CHECK(rules.helpTime == DownRules::HELP_TIME);
+	CHECK(rules.reviveHealth == 0.3f);
+	CHECK(rules.maxRevives == 0);
+	CHECK(rules.cooldown == Clock::duration{});
+	CHECK(!rules.outsideCombat);
+
+	// And with them nothing is limited: ten downs in a fight, each helped up.
+	Game game;
+	auto now = Start();
+	game.self.SetRules(rules);
+	game.fighting = true;
+	game.Run(now, 1s);
+	for (int i = 0; i < 10; ++i) {
+		DownAndUp(game, now);
+		CHECK(game.body.essential);
+	}
+	CHECK(game.self.RevivesLeft(now) == -1);
+	CHECK(game.lastRevives == 0);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed rules: the bleed-out time is the host's, and a reminder comes only with time before it")
+{
+	const std::vector<std::pair<int, std::vector<int>>> cases{ { 90, { 30, 10 } }, { 45, { 30, 10 } }, { 20, { 10 } }, { 10, {} } };
+	for (const auto& [seconds, expected] : cases) {
+		Protocol::SessionRules session;
+		session.bleedOutSeconds = static_cast<std::uint16_t>(seconds);
+		Game game;
+		auto now = Start();
+		game.self.SetRules(DownRules::Rules::From(session));
+		game.Run(now, 1s);
+		game.body.LethalHit();
+		game.Run(now, std::chrono::seconds{ seconds } - 1s);
+		CHECK(!game.body.dead);
+		CHECK(game.self.Now() == Phase::kDown);
+		game.Run(now, 2s);
+		CHECK(game.body.dead);
+		CHECK(game.reminders == expected);
+	}
+}
+
+TEST("downed rules: out of revives for the fight, a lethal hit kills; after the fight they are back")
+{
+	Protocol::SessionRules session;
+	session.maxRevives = 2;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.fighting = true;
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	CHECK(game.self.RevivesLeft(now) == 1);
+	CHECK(game.lastRevives == 0);
+	CHECK(game.body.essential);
+	DownAndUp(game, now);
+	CHECK(game.self.RevivesLeft(now) == 0);
+	CHECK(game.lastRevives == 1);  // "that was your last revive"
+	CHECK(!game.body.essential);   // the next lethal hit kills
+
+	// Still fighting a minute on: still none.
+	game.Run(now, 60s);
+	CHECK(!game.body.essential);
+	CHECK(game.revivesBack == 0);
+
+	// The fight is over: back once it has been for a while.
+	game.fighting = false;
+	game.Run(now, DownRules::FIGHT_OVER - 2s);
+	CHECK(!game.body.essential);
+	game.Run(now, 3s);
+	CHECK(game.body.essential);
+	CHECK(game.revivesBack == 1);
+	CHECK(game.self.RevivesLeft(now) == 2);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+}
+
+TEST("downed rules: out of revives, a lethal hit kills as it would alone")
+{
+	Protocol::SessionRules session;
+	session.maxRevives = 1;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.fighting = true;
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.body.dead);
+	CHECK(game.downNotices == 1);
+}
+
+TEST("downed rules: a long down with no fight around does not end the fight: the revive still counts once up")
+{
+	Protocol::SessionRules session;
+	session.maxRevives = 1;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 40s);  // down longer than FIGHT_OVER, nobody fighting
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.essential);
+	CHECK(game.self.RevivesLeft(now) == 0);
+	game.Run(now, DownRules::FIGHT_OVER);
+	CHECK(game.body.essential);
+}
+
+TEST("downed rules: revives per window come back as each help-up leaves the window, fight or not")
+{
+	Protocol::SessionRules session;
+	session.maxRevives = 2;
+	session.reviveWindowMinutes = 10;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	const auto first = now - 5s;  // helped up as DownAndUp began its last 5 s
+	game.Run(now, 2min);  // no fight: a window does not care
+	DownAndUp(game, now);
+	CHECK(!game.body.essential);
+	CHECK(game.lastRevives == 1);
+	// Ten minutes after the first help-up, one is back.
+	game.Run(now, first + 10min - now - 1s);
+	CHECK(!game.body.essential);
+	game.Run(now, 2s);
+	CHECK(game.body.essential);
+	CHECK(game.self.RevivesLeft(now) == 1);
+	CHECK(game.revivesBack == 1);
+}
+
+TEST("downed rules: just helped up, a lethal hit kills until the cooldown is over")
+{
+	Protocol::SessionRules session;
+	session.downCooldownSeconds = 30;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.Revived(now));
+	CHECK(game.self.AfterRevive(now).cooldownSeconds == 30);
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.essential);
+	CHECK(game.self.InCooldown(now));
+	game.Run(now, 29s);
+	CHECK(game.body.essential);
+	CHECK(!game.self.InCooldown(now));
+
+	// Within it, a lethal hit is the end.
+	Game again;
+	now = Start();
+	again.self.SetRules(DownRules::Rules::From(session));
+	again.Run(now, 1s);
+	DownAndUp(again, now);
+	again.Run(now, 10s);
+	again.body.LethalHit();
+	again.Run(now, 1s);
+	CHECK(again.body.dead);
+}
+
+TEST("downed rules: a new session's rules start the count over")
+{
+	Protocol::SessionRules session;
+	session.maxRevives = 1;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.fighting = true;
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	CHECK(!game.body.essential);
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	CHECK(game.body.essential);
+}
+
+TEST("downed rules: helping takes the host's time")
+{
+	Protocol::SessionRules session;
+	session.helpTenths = 50;
+	DownRules::Helper helper;
+	helper.SetRules(DownRules::Rules::From(session));
+	auto now = Start();
+	helper.SetFriendDown(7, true);
+	const std::vector<DownRules::Helper::Near> close{ { 7, 100.0f } };
+	CHECK(helper.Frame(true, close, now).started == 7);
+	now += 4900ms;
+	CHECK(helper.Frame(true, close, now).helped == 0);
+	now += 100ms;
+	CHECK(helper.Frame(true, close, now).helped == 7);
+}
+
+TEST("downed rules: out of combat only, a helper in a fight is told once and helps after it")
+{
+	Protocol::SessionRules session;
+	session.reviveOutsideCombat = true;
+	DownRules::Helper helper;
+	helper.SetRules(DownRules::Rules::From(session));
+	auto now = Start();
+	helper.SetFriendDown(7, true);
+	const std::vector<DownRules::Helper::Near> close{ { 7, 100.0f } };
+	CHECK(helper.Frame(true, close, now, true).blocked == 7);
+	for (int i = 0; i < 50; ++i) {
+		now += FRAME;
+		const auto step = helper.Frame(true, close, now, true);
+		CHECK(step.blocked == 0);  // once, not every frame
+		CHECK(step.started == 0);
+		CHECK(step.helped == 0);
+	}
+	CHECK(helper.Frame(true, close, now, false).started == 7);  // the fight is over
+	now += DownRules::HELP_TIME;
+	CHECK(helper.Frame(true, close, now, false).helped == 7);
+
+	// Without the rule a fight changes nothing.
+	DownRules::Helper anyTime;
+	anyTime.SetFriendDown(7, true);
+	CHECK(anyTime.Frame(true, close, now, true).started == 7);
+	now += DownRules::HELP_TIME;
+	CHECK(anyTime.Frame(true, close, now, true).helped == 7);
 }
