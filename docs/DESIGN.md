@@ -485,11 +485,15 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
 
 - Held: our game polls `PlayerCharacter::grabbedObject` each frame. While it moves in the player's hands, its pose goes
   15 a second (twice a second while still) as `kReportObjectHold`, unreliable, **in the holder's frame**: an offset to
-  their right, ahead and up, and its angles with the holder's heading taken off z. The friend's game makes its copy
-  keyframed (gravity and its own physics leave it alone) and draws it each frame in front of its own stand-in of the
+  their right, ahead and up, and its rotation turned back by the holder's heading (as a whole: a reference's angles are
+  R = Rz(z) Ry(y) Rx(x), rows its axes, and carried round by a heading d it is R Rz(d), so a tilted object's x and y
+  angles change as it turns; its angles are read from its 3D, which the reference lags behind while held). The
+  friend's game makes its copy keyframed and collide with nothing (gravity and its own physics leave it alone, and it
+  can't shove the stand-in) and draws it each frame in front of its own stand-in of the
   holder (the stand-in's smoothed place and heading), eased towards the newest hold (time constant 60 ms). So it stays
   in the stand-in's hands as they walk and turn, however far the stand-in is drawn from the holder's own place.
-- Let go: 80 ms after the release the holder's game sends `kReportObjectRest` kLetGo, reliable, with where it left
+- Let go (dropped, or let go of while turning or walking, which flings it: the game has no throw button for a
+  held object): 80 ms after the release the holder's game sends `kReportObjectRest` kLetGo, reliable, with where it left
   their hands (world place, cell or worldspace) and its launch velocity measured over those 80 ms. The friend's copy is
   physics again, put there and given that velocity, so it flies as it did. Once it lay still for 600 ms (or after
   10 s), the holder's game sends kRest with where it lies; the friend's copy is put there if its own physics settled it
