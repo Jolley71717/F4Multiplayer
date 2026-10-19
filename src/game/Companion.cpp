@@ -112,7 +112,9 @@ namespace Companion
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto self = player ? Papyrus::BoundObject(static_cast<RE::Actor*>(player), "Actor", false) : RE::BSTSmartPointer<RE::BSScript::Object>{};
 		// Created only for a reference that has none yet (a stand-in made at runtime): one object, not one per frame.
-		const auto target = a_target ? Papyrus::BoundObject(a_target, "ObjectReference", true) : RE::BSTSmartPointer<RE::BSScript::Object>{};
+		// Its handle's type must be its real script type: Actor for a stand-in.
+		const auto actor = a_target ? a_target->As<RE::Actor>() : nullptr;
+		const auto target = actor ? Papyrus::BoundObject(actor, "Actor", true) : a_target ? Papyrus::BoundObject(a_target, "ObjectReference", true) : RE::BSTSmartPointer<RE::BSScript::Object>{};
 		if (!self || !target) {
 			return "error: no script object for the player or the target";
 		}
