@@ -1,0 +1,4 @@
+Your hits on an enemy a friend's game spawned now stick (they kept healing back for the player who didn't spawn them)
+A friend's shot no longer heals an enemy you were fighting
+Still protocol 35 (plays with 0.8.9), but the fix only works in games that have it: everyone should update
+Full notes on GitHub
