@@ -812,16 +812,17 @@ namespace DevCommands
 			return Equipment::DescribeInventory(actor);
 		}
 
-		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
-		// its release: the engine's own culled WeaponLeft is drawn, or failing one the model database's own node is hung
-		// there (HandThrowable.h, docs/GRENADE-IN-HAND.md round 4). Off at every start; off takes every one out at once.
+		// handthrowable on|off|model: shows the grenade in the hand of a stand-in replaying a friend's throw, from its
+		// wind-up to its release, by drawing the engine's own culled WeaponLeft (HandThrowable.h, docs/GRENADE-IN-HAND.md).
+		// Each start follows bGrenadeInHand (on by default); off takes every one out at once. model also hangs the model
+		// database's own node on a hand the engine gave no WeaponLeft (an experiment: the rig never showed one).
 		std::string HandThrowableCommand(std::string_view a_args)
 		{
-			if (a_args != "on" && a_args != "off") {
-				return "error: usage: handthrowable on|off";
+			if (a_args != "on" && a_args != "off" && a_args != "model") {
+				return "error: usage: handthrowable on|off|model";
 			}
-			WeaponFire::SetHandThrowables(a_args == "on");
-			return std::format("handthrowable={}", WeaponFire::HandThrowables() ? "on" : "off");
+			WeaponFire::SetHandThrowables(a_args != "off", a_args == "model");
+			return std::format("handthrowable={}", !WeaponFire::HandThrowables() ? "off" : WeaponFire::HandModelFallback() ? "model" : "on");
 		}
 
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's

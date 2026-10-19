@@ -190,7 +190,7 @@ namespace WeaponFire
 			const auto id = actor->GetFormID();
 			const std::string_view npcTag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
 			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
-			// The wind-up and the release, for the model hung in a stand-in's hand (off unless turned on).
+			// The wind-up and the release, for the grenade shown in a stand-in's hand (bGrenadeInHand).
 			if (HandThrowables()) {
 				if (const auto cue = HandThrowable::CueOf(npcTag, npcPayload); cue != HandThrowable::Cue::kNone) {
 					QueueHandCue(id, cue);
@@ -770,10 +770,11 @@ namespace WeaponFire
 		}
 	}
 
-	// --- The grenade in a stand-in's hand (HandThrowable.h; a dev toggle, off by default) -------------
+	// --- The grenade in a stand-in's hand (HandThrowable.h; bGrenadeInHand, on by default) -------------
 	namespace
 	{
-		std::atomic<bool> handThrowablesOn{ false };
+		std::atomic<bool> handThrowablesOn{ false };   // set from bGrenadeInHand at load (main.cpp)
+		std::atomic<bool> handModelFallback{ false };  // the dev's handthrowable model only
 
 		std::mutex                                                handCueLock;
 		std::vector<std::pair<std::uint32_t, HandThrowable::Cue>> handCues;  // from the NPC animation hook, drained in Frame
@@ -872,6 +873,7 @@ namespace WeaponFire
 			}();
 			const auto weapon = seen.loaded ? Equipment::HeldThrowable(actor) : nullptr;
 			seen.throwable = weapon ? weapon->GetFormID() : 0;
+			seen.modelFallback = handModelFallback;
 			const auto skip = handBook.ShouldHang(a_actorId, seen);
 			if (skip != HandThrowable::Skip::kNone) {
 				if (skip != HandThrowable::Skip::kNotReplayed) {  // an NPC's own throw is no news
@@ -950,18 +952,29 @@ namespace WeaponFire
 		return handThrowablesOn.load(std::memory_order_relaxed);
 	}
 
-	void SetHandThrowables(bool a_on)
+	bool HandModelFallback()
 	{
+		return handModelFallback.load(std::memory_order_relaxed);
+	}
+
+	void SetHandThrowables(bool a_on, bool a_modelFallback)
+	{
+		const bool fallback = a_on && a_modelFallback;
 		handThrowablesOn = a_on;
-		if (a_on) {
+		const bool hadFallback = handModelFallback.exchange(fallback);
+		// Turned on, or kept with the database's node allowed as before (or never): nothing hangs that has to come off.
+		if (a_on && (fallback || !hadFallback)) {
 			return;
 		}
+		// Off, or the database's node no longer allowed: every grenade comes out of every hand.
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kOff);
 		}
 		handModels.clear();  // the database's own nodes, held for the next throw
-		std::scoped_lock l{ handCueLock };
-		handCues.clear();
+		if (!a_on) {
+			std::scoped_lock l{ handCueLock };
+			handCues.clear();
+		}
 	}
 
 	void DropHandThrowable(std::uint32_t a_actorFormId)
@@ -993,7 +1006,7 @@ namespace WeaponFire
 
 	std::string DescribeHandThrowables()
 	{
-		return HandThrowables() ? std::format("{}/{}", handsHung, handsDropped) : "off";
+		return HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : "off";
 	}
 
 	void UpdateHandThrowables()
