@@ -74,8 +74,11 @@ party.friend_down_far = {player} повержен! Удерживайте {key},
 party.friend_down_near = {player} повержен! Подойдите и помогите подняться ({where})
 party.friend_died = {player} погиб
 party.friend_back_up = {player} снова на ногах
-party.ping = {player}: сюда! ({where})
-party.called = Вы позвали группу к себе
+party.ping = {player}: {what} ({where})
+party.called = Метка: {what} ({where})
+party.ping_here = сюда!
+party.ping_you = вас
+party.ping_something = что-то
 party.killed = {killer} убил: {victim}
 party.xp = +{xp} опыта за убийства вашей группы
 

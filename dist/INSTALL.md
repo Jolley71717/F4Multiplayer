@@ -84,7 +84,7 @@ Each player keeps their own save, character and inventory.
 | F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
-| F8 | "Over here!": tells everyone where you are, with distance and direction |
+| F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
 | F2, F3, F4 | Emotes: point, cheer, clap. Your friends see your stand-in do it |
 
 Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`). They don't
