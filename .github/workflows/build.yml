@@ -8,7 +8,7 @@ run-name: Build ${{ inputs.ref || github.head_ref || github.ref_name }}
 
 on:
   push:
-    branches-ignore: [main]
+    branches-ignore: [main, "ci-tmp/**"]  # ci-tmp: snapshots that tools build by hand (F4MP-VM agents/ci-build.sh)
   pull_request:
   workflow_dispatch:
     inputs:
