@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -19,7 +20,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 41;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -124,6 +125,8 @@ namespace Protocol
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
+		kReportObjectHold = 52,   // the sender holds a loose object in their hands: where it is, in their own frame (unreliable)
+		kReportObjectRest = 53,   // an object the sender moved: let go of (dropped or thrown), or come to rest
 
 		// server -> client
 		kWelcome = 101,
@@ -156,6 +159,8 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kObjectHeld = 152,        // another player holds this object (unreliable); to a player refused it, who holds it
+		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -465,6 +470,55 @@ namespace Protocol
 		std::uint32_t refId = 0;
 
 		bool operator==(const Activation&) const = default;
+	};
+
+	// Loose objects a player moves by hand (grabbed with the use key: a broom, a bottle, a tire; carried, dropped or
+	// thrown) or knocks about (walking into it, shooting it). Only references a plugin placed (IsShareableRef): the same
+	// reference in every game. One player at a time moves an object (the server's ObjectMovers::Book: the first grab
+	// wins); src/game/MovedObjects.h says what each game does with them.
+	//
+	// kReportObjectHold / kObjectHeld, unreliable, at most HOLDS_PER_SECOND while held: where the object is in the
+	// holder's hands, in the holder's own frame (the offset from their feet: to their right, ahead, up; its angles with
+	// the holder's heading taken off z), so each game draws it in front of its stand-in of the holder however that is
+	// drawn. sequence counts the holder's holds of all objects, so one that comes late (after their let-go) is dropped.
+	inline constexpr float MAX_HOLD_OFFSET = 512.0f;    // the game holds an object about a body's length away at most
+	inline constexpr float MAX_OBJECT_ANGLE = 8.0f;     // radians either way: a little over a full turn
+	inline constexpr float MAX_OBJECT_SPEED = 5000.0f;  // units a second (a throw is a few hundred)
+	inline constexpr int   HOLDS_PER_SECOND = 20;       // the server's budget per player; games send 15
+
+	struct ObjectHold
+	{
+		std::uint32_t        playerId = 0;  // the holder (set by the server)
+		std::uint32_t        refId = 0;
+		std::uint32_t        sequence = 0;
+		std::array<float, 3> offset{};    // right, ahead, up from the holder's feet
+		std::array<float, 3> rotation{};  // the object's angles (radians), z less the holder's heading
+
+		bool operator==(const ObjectHold&) const = default;
+	};
+
+	// kReportObjectRest / kObjectRested, reliable: an object the sender moved, in the world. kLetGo: the sender's player
+	// let go of it (dropped it, or threw it: velocity is how it left their hands, units a second), and sequence is the
+	// last hold they sent of it; kRest: where it came to rest (after a let-go, or knocked about), velocity zero.
+	namespace ObjectRestKind
+	{
+		inline constexpr std::uint8_t kLetGo = 0;
+		inline constexpr std::uint8_t kRest = 1;
+	}
+
+	struct ObjectRest
+	{
+		std::uint32_t        playerId = 0;  // who moved it (set by the server)
+		std::uint32_t        refId = 0;
+		std::uint8_t         kind = ObjectRestKind::kRest;
+		std::uint32_t        sequence = 0;
+		std::uint32_t        cell = 0;  // interior cell, or 0 outside
+		std::uint32_t        worldspace = 0;
+		std::array<float, 3> position{};
+		std::array<float, 3> rotation{};
+		std::array<float, 3> velocity{};
+
+		bool operator==(const ObjectRest&) const = default;
 	};
 
 	struct WorkshopItem
@@ -1537,6 +1591,101 @@ namespace Protocol
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
 			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// An object's angles: finite and within a little over a turn either way.
+	[[nodiscard]] inline bool ObjectAngles(const std::array<float, 3>& a_angles)
+	{
+		return std::ranges::all_of(a_angles, [](float a_v) { return std::isfinite(a_v) && a_v >= -MAX_OBJECT_ANGLE && a_v <= MAX_OBJECT_ANGLE; });
+	}
+
+	// Finite, and no longer than a_max.
+	[[nodiscard]] inline bool WithinLength(const std::array<float, 3>& a_v, float a_max)
+	{
+		return std::ranges::all_of(a_v, [](float a_x) { return std::isfinite(a_x); }) && a_v[0] * a_v[0] + a_v[1] * a_v[1] + a_v[2] * a_v[2] <= a_max * a_max;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ObjectHold& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.sequence);
+		for (const auto v : a_msg.offset) {
+			w.F32(v);
+		}
+		for (const auto v : a_msg.rotation) {
+			w.F32(v);
+		}
+		return w.Data();
+	}
+
+	// A plugin's reference, held within MAX_HOLD_OFFSET of the holder, at angles ObjectAngles takes.
+	inline std::optional<ObjectHold> DecodeObjectHold(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ObjectHold msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.sequence = r.U32();
+		for (auto& v : msg.offset) {
+			v = r.F32();
+		}
+		for (auto& v : msg.rotation) {
+			v = r.F32();
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId) || !ObjectAngles(msg.rotation) || !WithinLength(msg.offset, MAX_HOLD_OFFSET)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ObjectRest& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U8(a_msg.kind);
+		w.U32(a_msg.sequence);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		for (const auto* values : { &a_msg.position, &a_msg.rotation, &a_msg.velocity }) {
+			for (const auto v : *values) {
+				w.F32(v);
+			}
+		}
+		return w.Data();
+	}
+
+	// A plugin's reference, a known kind, in one space (an interior or a worldspace), a place in the world, angles
+	// ObjectAngles takes, and a speed under MAX_OBJECT_SPEED (none at rest).
+	inline std::optional<ObjectRest> DecodeObjectRest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ObjectRest msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.kind = r.U8();
+		msg.sequence = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		for (auto* values : { &msg.position, &msg.rotation, &msg.velocity }) {
+			for (auto& v : *values) {
+				v = r.F32();
+			}
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId) || msg.kind > ObjectRestKind::kRest || (msg.cell == 0) == (msg.worldspace == 0)) {
+			return std::nullopt;
+		}
+		if (!std::ranges::all_of(msg.position, InWorld) || !ObjectAngles(msg.rotation) || !WithinLength(msg.velocity, MAX_OBJECT_SPEED)) {
+			return std::nullopt;
+		}
+		if (msg.kind == ObjectRestKind::kRest && msg.velocity != std::array<float, 3>{}) {
+			return std::nullopt;  // at rest is still
 		}
 		return msg;
 	}

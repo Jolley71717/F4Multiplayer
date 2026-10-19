@@ -17,6 +17,7 @@
 #include "game/Menu.h"
 #include "game/MenuMessages.h"
 #include "game/MenuWatch.h"
+#include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
 #include "game/Perf.h"
@@ -2719,6 +2720,16 @@ namespace DevCommands
 		// poison deletes a created reference and saves at once, the way a stand-in reached saves: the first
 		// call disables it, a call a second or more later deletes it and saves. (Disabling and deleting in
 		// one frame crashed a physics job still handling its collision; see RemotePlayers' graveyard.)
+		std::string ObjectsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return MovedObjects::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -2870,6 +2881,7 @@ namespace DevCommands
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },
+			Entry{ "objects", ObjectsCommand },
 		};
 	}
 
