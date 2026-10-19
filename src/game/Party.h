@@ -2,7 +2,7 @@
 
 #include "Protocol.h"
 
-// Playing together: the player list, teleporting to friends, pings, shared kill XP, the kill feed
+// Playing together: the player list, teleporting to friends, pings (PingRules.h), shared kill XP, the kill feed
 // and connection warnings. Main thread only.
 namespace Party
 {
@@ -32,6 +32,18 @@ namespace Party
 	void PickTeleportTarget();
 	void TeleportToTarget();
 	void SendPing();
+
+	// The pings shown on the compass: who pinged (their marker color) and where the target is now, in our player's cell
+	// or worldspace or elsewhere.
+	struct PingMarker
+	{
+		std::uint32_t pinger = 0;
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		float         x = 0.0f;
+		float         y = 0.0f;
+	};
+	[[nodiscard]] std::vector<PingMarker> PingMarkers();
 
 	// Round trip to the server in milliseconds (0 = not measured yet).
 	[[nodiscard]] std::uint32_t RoundTripMs();

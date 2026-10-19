@@ -211,6 +211,9 @@ namespace ProtocolSamples
 		}
 		for (const auto type : { MT::kPing, MT::kPinged }) {
 			s.push_back({ "Ping", Encode(Ping{ 1, 0, 0x3C, 100.0f, -200.0f, 300.5f }, type), D(DecodePing) });
+			s.push_back({ "Ping(actor)", Encode(Ping{ 1, 0, 0x3C, 100.0f, -200.0f, 300.5f, PingKind::kActor, REF_A, 0x0001B56D, "Raider" }, type), D(DecodePing) });
+			s.push_back({ "Ping(item)", Encode(Ping{ 1, 0x0001A2B3, 0, 1.0f, 2.0f, 3.0f, PingKind::kItem, REF_B, 0x00023736, "Stimpak" }, type), D(DecodePing) });
+			s.push_back({ "Ping(player)", Encode(Ping{ 1, 0, 0x3C, 5.0f, 6.0f, 7.0f, PingKind::kPlayer, 2, 0, "" }, type), D(DecodePing) });
 		}
 		for (const auto type : { MT::kReportLine, MT::kLineSpoken }) {
 			s.push_back({ "Line", Encode(Line{ 1, REF_A, "Welcome to Diamond City!" }, type), D(DecodeLine) });

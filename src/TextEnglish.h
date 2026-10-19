@@ -86,8 +86,11 @@ namespace Text
 		{ "party.friend_down_near", "{player} is down! Get to them to help them up ({where})" },
 		{ "party.friend_died", "{player} died" },
 		{ "party.friend_back_up", "{player} is back up" },
-		{ "party.ping", "{player}: over here! ({where})" },
-		{ "party.called", "You called your party over" },
+		{ "party.ping", "{player}: {what} ({where})" },
+		{ "party.called", "Ping: {what} ({where})" },
+		{ "party.ping_here", "over here!" },
+		{ "party.ping_you", "you" },
+		{ "party.ping_something", "something" },
 		{ "party.killed", "{killer} killed {victim}" },
 		{ "party.xp", "+{xp} XP from your party's kills" },
 

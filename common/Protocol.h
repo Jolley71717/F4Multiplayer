@@ -113,7 +113,6 @@ namespace Protocol
 		kReportShot = 15,         // the sender (or an NPC it runs) fired a weapon
 		kReportStatus = 16,       // the sender's location, health and level, for the player list
 		kReportTime = 17,         // the sender's time of day and weather (only the first player's are used)
-		kPing = 18,               // "over here": the sender wants the others to come to them
 		kReportXp = 19,           // the sender got XP for a kill; the others get a share
 		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
 		kReportQuestDone = 21,    // the sender completed a quest themselves
@@ -131,6 +130,8 @@ namespace Protocol
 		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
 		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
 		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
+		// 18 and 120 were the ping before version 43, which named only where the sender stood.
+		kPing = 56,                // the sender pinged what is under their crosshair: a spot, an NPC, an item or a friend
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
 		kReportDamage = 51,       // the sender took this much (ActorHealth: a fraction of the maximum) off an NPC another game runs
 		kReportDrop = 40,         // the sender dropped an item for the others to take (protocol 37)
@@ -157,7 +158,6 @@ namespace Protocol
 		kShotFired = 117,         // another player (or an NPC they run) fired a weapon
 		kPlayerStatus = 118,      // another player's location, health and level
 		kWorldTime = 119,         // the session's time of day and weather
-		kPinged = 120,            // another player pinged their position
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kPlayerFace = 129,        // another player's face and body shape
@@ -171,6 +171,7 @@ namespace Protocol
 		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
+		kPinged = 156,            // another player pinged something
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -997,12 +998,34 @@ namespace Protocol
 		std::uint32_t weather = 0;        // TESWeather form ID, or 0
 	};
 
+	// What a ping points at (Ping::kind).
+	enum class PingKind : std::uint8_t
+	{
+		kSpot = 0,    // a place: the surface under the crosshair, or where the sender stands ("over here")
+		kActor = 1,   // an NPC or a creature
+		kItem = 2,    // something lying in the world (a weapon, a Stimpak, ammo, junk)
+		kPlayer = 3,  // a friend (their stand-in in the sender's game)
+	};
+
+	// A ping's name on the wire: what the sender's game calls the target ("Raider"), for a game with no copy of it.
+	inline constexpr std::size_t MAX_PING_NAME_LENGTH = 64;
+
+	// A ping: "look at this". playerId: who pinged (ignored client -> server). The spot is where the target was in the
+	// sender's game, inside (cell) or outside (worldspace). target: for kActor the id the session knows the NPC by
+	// (NpcSync::SessionId: a plugin's reference, or a spawn id; 0 for one the session does not share), for kItem its
+	// reference (0 for one made at runtime, which is another reference in every game), for kPlayer the friend's player
+	// id, 0 for a spot. base: the target's base form (0 for a spot or a friend). name: what the sender's game called it
+	// ("" for a spot).
 	struct Ping
 	{
 		std::uint32_t playerId = 0;
 		std::uint32_t cell = 0;
 		std::uint32_t worldspace = 0;
 		float         x = 0, y = 0, z = 0;
+		PingKind      kind = PingKind::kSpot;
+		std::uint32_t target = 0;
+		std::uint32_t base = 0;
+		std::string   name;
 	};
 
 	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
@@ -2828,7 +2851,28 @@ namespace Protocol
 		w.F32(a_msg.x);
 		w.F32(a_msg.y);
 		w.F32(a_msg.z);
+		w.U8(static_cast<std::uint8_t>(a_msg.kind));
+		w.U32(a_msg.target);
+		w.U32(a_msg.base);
+		w.Str(a_msg.name, MAX_PING_NAME_LENGTH);
 		return w.Data();
+	}
+
+	// Whether a ping's target fits its kind: a spot names nothing; an NPC or an item names, if anything, a base form and
+	// a reference the session can name (one made at runtime goes as 0); a friend is a player id.
+	[[nodiscard]] inline bool PingTargetOk(const Ping& a_msg)
+	{
+		switch (a_msg.kind) {
+		case PingKind::kSpot:
+			return a_msg.target == 0 && a_msg.base == 0 && a_msg.name.empty();
+		case PingKind::kActor:
+			return (a_msg.base == 0 || IsShareableRef(a_msg.base)) && (a_msg.target == 0 || IsActorRef(a_msg.target));
+		case PingKind::kItem:
+			return (a_msg.base == 0 || IsShareableRef(a_msg.base)) && (a_msg.target == 0 || IsShareableRef(a_msg.target));
+		case PingKind::kPlayer:
+			return a_msg.target != 0 && a_msg.base == 0;
+		}
+		return false;
 	}
 
 	inline std::optional<Ping> DecodePing(std::span<const std::uint8_t> a_data)
@@ -2842,7 +2886,16 @@ namespace Protocol
 		msg.x = r.F32();
 		msg.y = r.F32();
 		msg.z = r.F32();
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+		const auto kind = r.U8();
+		msg.target = r.U32();
+		msg.base = r.U32();
+		msg.name = r.Str(MAX_PING_NAME_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) || kind > static_cast<std::uint8_t>(PingKind::kPlayer)) {
+			return std::nullopt;
+		}
+		msg.kind = static_cast<PingKind>(kind);
+		// Inside (a cell) or outside (a worldspace): one of the two.
+		if ((msg.cell == 0) == (msg.worldspace == 0) || !PingTargetOk(msg)) {
 			return std::nullopt;
 		}
 		return msg;

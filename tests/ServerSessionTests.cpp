@@ -1303,6 +1303,31 @@ TEST("server session: pings are passed on at most once a second")
 	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 }
 
+TEST("server session: a ping reaches the others with what it names, as the sender's, and a malformed one goes nowhere")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Take(1);
+
+	// A spot with an NPC's id is no ping: dropped, and it does not spend the second's ping.
+	Protocol::Ping bad{ 77, 0, 0x3C, 1.0f, 2.0f, 3.0f, Protocol::PingKind::kSpot, 0x0001F3A2, 0, "" };
+	f.fake->Deliver(1, Protocol::Encode(bad, MT::kPing));
+	Protocol::Ping raider{ 77, 0, 0x3C, 1.0f, 2.0f, 3.0f, Protocol::PingKind::kActor, 0xFF000123, 0x0001B56D, "Raider" };
+	f.fake->Deliver(1, Protocol::Encode(raider, MT::kPing));
+	const auto pinged = OfType(Settle(f, 2), MT::kPinged);
+	REQUIRE(pinged.size() == 1);
+	const auto relayed = Protocol::DecodePing(pinged[0]);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);  // not the 77 it claimed
+	CHECK(relayed->kind == Protocol::PingKind::kActor);
+	CHECK(relayed->target == 0xFF000123);  // the spawn id: every game finds its own copy of the NPC by it
+	CHECK(relayed->base == 0x0001B56D);
+	CHECK(relayed->name == "Raider");
+	CHECK(OfType(f.fake->Take(1), MT::kPinged).empty());
+}
+
 TEST("server session: spoken lines are passed on at most four times a second")
 {
 	Fixture f;
