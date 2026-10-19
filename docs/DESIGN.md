@@ -415,9 +415,9 @@ numbering** instead, and each game translates at its edge.
   extra); a plugin in another place is listed as nothing to change. A hello without a plugin list (a
   bot, a test tool), or a session whose first player sent none, still needs the session's hash: with
   no lists there is nothing to translate by.
-- **The saved session** (SessionFile layout 31) keeps the table as its first packet, so its IDs keep
+- **The saved session** (SessionFile layout 33, 32 in the plugin table's own test builds) keeps the table as its first packet, so its IDs keep
   their meaning whatever the host loads next: a host who reorders or adds mods carries on with the same
-  world (the new plugins are added to the table). A file of layout 29 or older has no table: its IDs
+  world (the new plugins are added to the table). A file of layout 29 or older, or of 30 or 31 (drops or wires alone), has no table: its IDs
   are the load order its hash names, and only a host with that one carries on (or the one older
   versions hashed without the texture pack); another starts fresh, as before.
 - **What it does not do.** It cannot share what one game lacks: a mod's NPC only the host has is
@@ -551,7 +551,7 @@ So players give each other items by dropping them, and the server decides who ha
   loading the wrong save first and the right one after leaves the book as the right one says.
   A loaded save without an entry for the session it is played in gets a fresh one, so the transfers
   made after the load are recorded. The answer is the list of what lies about (`kDropList`). A record of another session counts as
-  empty. What lies about and who took what is kept in the session file (layout 30), so it survives the
+  empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
   host's server restarting.
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
   and to drop it near them instead.
@@ -973,7 +973,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 37 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder, 37 items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList; 36 is taken by the 0.9.0 branch). The sections below record each review as it was written.
+Protocol VERSION 47 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46)). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 

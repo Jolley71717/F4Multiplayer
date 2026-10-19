@@ -929,7 +929,7 @@ void Server::Run()
 				reject(a_player, Protocol::REJECT_HOST_NOT_READY);
 				return;
 			}
-			// A saved session keeps the plugin table its form IDs are numbered by (session layout 31): it carries on
+			// A saved session keeps the plugin table its form IDs are numbered by (session layouts 32 and 33): it carries on
 			// whatever the first arrival's mods and their order, translated to it as anyone's are. One saved before
 			// (or a hello without a list, which nothing translates) is the load order its hash names: a different
 			// one makes the stored form IDs meaningless, so a fresh session starts. (On a dedicated server, which has

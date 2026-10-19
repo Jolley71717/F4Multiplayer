@@ -20,7 +20,13 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 40;
+	// 47: the next release's branches together, each of which took a number of its own for its test builds: 36 the
+	// session's plugin table (load-order-ids), 37 items given by dropping them (give-items), 38 power wires on workshop
+	// items (settlement-sync), 39 LooksMenu skins and overlays on the face (looksmenu-faces), 40 damage over time
+	// (dot-damage-sync), 41 moved objects (moved-objects), 42 host controls (host-controls), 43 pings of what is under
+	// the crosshair (better-pings), 45 the Minutemen's shared settlement requests (shared-radiants), 46 whether
+	// workshop pieces are powered (settlement-power). 44 was a trial bundle's. The next change takes 48.
+	inline constexpr std::uint16_t VERSION = 47;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;

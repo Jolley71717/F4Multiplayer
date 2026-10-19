@@ -27,25 +27,36 @@ namespace SessionFile
 	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
 	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
 	// the layout did not change from the file's first (protocol 23) until 29, which added the deaths an
-	// older build saved (Snapshot::healable) after the identities. 31 gives each workshop item a byte for a power
-	// wire's shape (protocol 38's WorkshopItem::wire); a file of 29 or before is read as one whose items have none.
-	inline constexpr std::uint16_t FORMAT = 31;
-	inline constexpr std::uint16_t BEFORE_WIRES = 29;  // the layout before wires
+	// older build saved (Snapshot::healable) after the identities. Three changes each added to 29 on their own,
+	// under a number of their own (their test builds wrote it):
+	// - 30, the items players dropped for each other (Snapshot::drops, as kDropList packets);
+	// - 31, a byte on each workshop item for a power wire's shape (WorkshopItem::wire);
+	// - 32, the session's plugin table (Snapshot::plugins, a kPluginTable packet first among the packets), which
+	//   numbers the file's form IDs.
+	// 33 has all three. A file of any layout from 29 on reads as one without what its layout lacks (no drops, items
+	// without wires, no plugin table: its IDs are the load order its hash names); what its layout lacks is damage.
+	inline constexpr std::uint16_t FORMAT = 33;
+	inline constexpr std::uint16_t BEFORE_WIRES = 29;         // the releases' layout: before drops, wires and the plugin table
+	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
+	inline constexpr std::uint16_t DROPS_ONLY = 30;
+	inline constexpr std::uint16_t WIRES_ONLY = 31;
+	inline constexpr std::uint16_t PLUGIN_TABLE_ONLY = 32;
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 32 (30 is another change's).
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 34.
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
 	}
 
-	// The layout of 29: 31's, without a plugin table (its form IDs are the load order its hash names).
-	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
+	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format == FORMAT; }
+	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format == FORMAT; }
+	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format == FORMAT; }
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || a_format == 29 || a_format == FORMAT;
+		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT);
 	}
 
 	struct Snapshot
@@ -201,7 +212,7 @@ namespace SessionFile
 			}
 			switch (*type) {
 			case Protocol::MessageType::kPluginTable: {
-				auto table = version == FORMAT ? Protocol::DecodePluginTable(packet) : std::nullopt;
+				auto table = HasPluginTable(version) ? Protocol::DecodePluginTable(packet) : std::nullopt;
 				if (!table || !snapshot.plugins.empty()) {
 					return std::nullopt;  // one, in the layout that has it
 				}
@@ -239,7 +250,7 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorkshopItems: {
-				const auto items = version == FORMAT ? Protocol::DecodeWorkshopItems(packet) : Protocol::DecodeWorkshopItemsBeforeWires(packet);
+				const auto items = HasWires(version) ? Protocol::DecodeWorkshopItems(packet) : Protocol::DecodeWorkshopItemsBeforeWires(packet);
 				if (!items) {
 					return std::nullopt;
 				}
@@ -247,7 +258,7 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kDropList: {
-				const auto list = version == FORMAT ? Protocol::DecodeDropList(packet) : std::nullopt;
+				const auto list = HasDrops(version) ? Protocol::DecodeDropList(packet) : std::nullopt;
 				if (!list) {
 					return std::nullopt;
 				}

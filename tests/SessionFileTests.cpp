@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), another change's layout (30), one to come (32), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 32 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), a layout to come (34), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 34 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -458,7 +458,10 @@ TEST("session file: the session's plugin table is kept, so the file's form IDs a
 	CHECK(out->workshopItems.size() == 1);
 
 	// The layout before it (29) had none, and its file still loads, with none: its IDs are its hash's load order's.
-	auto old = SessionFile::Encode(MakeSnapshot());
+	// (Without workshop items: 29 had no wire byte on them.)
+	auto withoutItems = MakeSnapshot();
+	withoutItems.workshopItems.clear();
+	auto old = SessionFile::Encode(withoutItems);
 	const std::uint16_t before = SessionFile::BEFORE_PLUGIN_TABLE;
 	std::memcpy(old.data() + 4, &before, sizeof(before));
 	const auto oldOut = SessionFile::Decode(old);
@@ -477,4 +480,52 @@ TEST("session file: the session's plugin table is kept, so the file's form IDs a
 	twice.insert(twice.end(), sizeBytes, sizeBytes + sizeof(size));
 	twice.insert(twice.end(), table.begin(), table.end());
 	CHECK(!SessionFile::Decode(twice));
+}
+
+// Drops (30), wires (31) and the plugin table (32) were each added to 29 on a branch of their own, under its own number,
+// and this layout (33) has all three: a file of each of those still loads, and what its layout lacks is damage in it.
+TEST("session file: the layouts of drops, wires and the plugin table each load, and hold only their own")
+{
+	Protocol::DroppedItem drop{ .dropId = 1, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3 };
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+
+	auto bare = MakeSnapshot();
+	bare.workshopItems.clear();
+	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
+		const auto out = as(SessionFile::Encode(bare), layout);
+		REQUIRE(out);
+		CHECK(out->deadActors == bare.deadActors);
+		CHECK(out->drops.empty());
+		CHECK(out->plugins.empty());
+	}
+
+	auto withDrop = bare;
+	withDrop.drops = { drop };
+	REQUIRE(as(SessionFile::Encode(withDrop), SessionFile::FORMAT));
+	const auto drops = as(SessionFile::Encode(withDrop), SessionFile::DROPS_ONLY);
+	REQUIRE(drops);
+	CHECK(drops->drops == withDrop.drops);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_WIRES, SessionFile::WIRES_ONLY, SessionFile::PLUGIN_TABLE_ONLY }) {
+		CHECK(!as(SessionFile::Encode(withDrop), layout));
+	}
+
+	// This layout's items carry the wire byte: they read under 31 only, of the others.
+	const auto items = as(SessionFile::Encode(MakeSnapshot()), SessionFile::WIRES_ONLY);
+	REQUIRE(items);
+	CHECK(items->workshopItems == MakeSnapshot().workshopItems);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_WIRES, SessionFile::DROPS_ONLY, SessionFile::PLUGIN_TABLE_ONLY }) {
+		CHECK(!as(SessionFile::Encode(MakeSnapshot()), layout));
+	}
+
+	auto withTable = bare;
+	withTable.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "Mod.esp" }, {});
+	const auto table = as(SessionFile::Encode(withTable), SessionFile::PLUGIN_TABLE_ONLY);
+	REQUIRE(table);
+	CHECK(table->plugins == withTable.plugins);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_PLUGIN_TABLE, SessionFile::DROPS_ONLY, SessionFile::WIRES_ONLY }) {
+		CHECK(!as(SessionFile::Encode(withTable), layout));
+	}
 }
