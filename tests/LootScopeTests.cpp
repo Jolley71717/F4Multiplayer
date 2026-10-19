@@ -294,3 +294,172 @@ TEST("loot sync: a paper note taken from a chest stays in the friend's chest for
 	CHECK(bob.In(CHEST_REF, PAPER_NOTE) == 1);
 	CHECK(alice.Carried(PAPER_NOTE) == 1);
 }
+
+// ---- emptied: each game rolls a chest's and an NPC's leveled loot on its own -------------------------
+
+namespace
+{
+	constexpr std::uint32_t STIMPAK_ID = 0x0004A007;
+	constexpr std::uint32_t CHEST_2 = 0x0002C002;
+
+	std::vector<std::uint8_t> EmptiedOf(std::uint32_t a_holder)
+	{
+		return Protocol::Encode(Protocol::ContainerChange{ a_holder, Protocol::CONTAINER_EMPTIED, -1 }, TestServer::MT::kReportContainer);
+	}
+}
+
+TEST("loot sync: a chest emptied of the session's things is emptied for the friend too, whatever their game rolled; a weapon, a note and a quest's stack stay")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->items[STIMPAK_ID] = { .kind = Item::kAid };
+		game->Join(f, "P");
+	}
+	// Two rolls of the same chest.
+	alice.holders[CHEST_REF] = { { AMMO_38, 20 }, { STEEL, 3 }, { PIPE_PISTOL, 1 }, { PAPER_NOTE, 1 } };
+	bob.holders[CHEST_REF] = { { AMMO_38, 7 }, { CAPS, 12 }, { STIMPAK_ID, 2 }, { PIPE_PISTOL, 1 }, { PAPER_NOTE, 1 }, { CORE, 1 } };
+	bob.questStacks.insert({ CHEST_REF, CORE });
+
+	alice.Take(f, CHEST_REF, AMMO_38, 20);
+	CHECK(alice.loot.Stats().emptiedSent == 0);  // the steel is still there
+	alice.Take(f, CHEST_REF, STEEL, 3);
+	CHECK(alice.loot.Stats().sent == 2);
+	CHECK(alice.loot.Stats().emptiedSent == 1);  // only the gun and the note are left, hers alone
+	bob.Receive(f);
+
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 0);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.In(CHEST_REF, STIMPAK_ID) == 0);
+	CHECK(bob.In(CHEST_REF, PIPE_PISTOL) == 1);
+	CHECK(bob.In(CHEST_REF, PAPER_NOTE) == 1);
+	CHECK(bob.In(CHEST_REF, CORE) == 1);
+	CHECK(bob.loot.Stats().emptiedApplied == 1);
+	CHECK(bob.loot.Stats().emptiedStacks == 2);  // the caps and the stimpaks (the ammo went with Alice's take)
+
+	// Alice's own game doesn't get its emptying back.
+	alice.Receive(f);
+	CHECK(alice.applied == 0);
+	CHECK(alice.loot.Stats().emptiedApplied == 0);
+}
+
+TEST("loot sync: a corpse looted bare by the joiner is bare for the host, both ways; a partial loot sends no emptying")
+{
+	Fixture f;
+	Game    host{ 1, 0xA11CE }, joiner{ 2, 0xB0B };
+	for (auto* game : { &host, &joiner }) {
+		Describe(*game);
+		game->items[STIMPAK_ID] = { .kind = Item::kAid };
+		game->Join(f, "P");
+	}
+	host.holders[RAIDER] = { { AMMO_38, 5 }, { STIMPAK_ID, 2 }, { PIPE_PISTOL, 1 }, { LEATHER_ARM, 1 } };
+	joiner.holders[RAIDER] = { { AMMO_38, 14 }, { CAPS, 9 }, { PIPE_PISTOL, 1 } };
+	host.holders[SETTLER] = { { CAPS, 30 }, { STEEL, 2 } };
+	joiner.holders[SETTLER] = { { CAPS, 4 }, { STIMPAK_ID, 1 } };
+
+	// The joiner kills the raider and takes both stacks it sees in one frame: the corpse goes out emptied.
+	joiner.Kill(f, RAIDER);
+	joiner.Take(f, RAIDER, AMMO_38, 14, false);
+	joiner.Take(f, RAIDER, CAPS, 9, false);
+	joiner.Frame(f);
+	CHECK(joiner.loot.Stats().emptiedSent == 1);
+	host.Receive(f);
+	CHECK(host.In(RAIDER, AMMO_38) == 0);
+	CHECK(host.In(RAIDER, STIMPAK_ID) == 0);
+	CHECK(host.In(RAIDER, PIPE_PISTOL) == 1);
+	CHECK(host.In(RAIDER, LEATHER_ARM) == 1);
+
+	// The host kills the settler and takes only the caps: the steel is still there, nothing more goes out.
+	host.Kill(f, SETTLER);
+	host.Take(f, SETTLER, CAPS, 30);
+	CHECK(host.loot.Stats().emptiedSent == 0);
+	joiner.Receive(f);
+	CHECK(joiner.In(SETTLER, CAPS) == 0);
+	CHECK(joiner.In(SETTLER, STIMPAK_ID) == 1);
+	// Then the steel: now it is bare, and so is the joiner's.
+	host.Take(f, SETTLER, STEEL, 2);
+	CHECK(host.loot.Stats().emptiedSent == 1);
+	joiner.Receive(f);
+	CHECK(joiner.In(SETTLER, STIMPAK_ID) == 0);
+	CHECK(joiner.loot.Stats().emptiedApplied == 1);
+}
+
+TEST("loot sync: an emptying waits for a holder the friend's game hasn't stocked yet, and for an NPC still alive there; a vendor's chest and a workbench keep theirs")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
+	for (auto* game : { &alice, &bob, &carol }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+	// A chest Bob's game has never loaded: its loot is rolled when it first loads, and the emptying waits for that.
+	bob.unstocked.insert(CHEST_2);
+	alice.holders[CHEST_2] = { { AMMO_38, 10 } };
+	alice.Take(f, CHEST_2, AMMO_38, 10);
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().size() == 1);
+	bob.unstocked.erase(CHEST_2);
+	bob.holders[CHEST_2] = { { CAPS, 25 }, { PIPE_PISTOL, 1 } };
+	bob.Wait(f, std::chrono::seconds{ 1 });
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(CHEST_2, CAPS) == 0);
+	CHECK(bob.In(CHEST_2, PIPE_PISTOL) == 1);
+
+	// An emptying of a living NPC (a changed build's) waits for its death.
+	bob.holders[SETTLER] = { { CAPS, 30 } };
+	f.fake->Deliver(carol.peer, EmptiedOf(SETTLER));
+	bob.Receive(f);
+	CHECK(bob.In(SETTLER, CAPS) == 30);
+	CHECK(bob.loot.Waiting().size() == 1);
+	f.fake->Deliver(carol.peer, DeathOf(SETTLER));
+	bob.Receive(f);
+	CHECK(bob.loot.Waiting().empty());
+	CHECK(bob.In(SETTLER, CAPS) == 0);
+
+	// A vendor's chest and workbench storage are each player's: nothing leaves them.
+	bob.holders[VENDOR_REF] = { { CAPS, 500 } };
+	bob.holders[WORKBENCH_REF] = { { STEEL, 40 } };
+	f.fake->Deliver(carol.peer, EmptiedOf(VENDOR_REF));
+	f.fake->Deliver(carol.peer, EmptiedOf(WORKBENCH_REF));
+	bob.Receive(f);
+	CHECK(bob.In(VENDOR_REF, CAPS) == 500);
+	CHECK(bob.In(WORKBENCH_REF, STEEL) == 40);
+	CHECK(bob.LeftOut() == 2);
+}
+
+TEST("loot sync: a friend who reloads a save from before the emptying, or joins after it, finds the chest bare; what was put back after it is there")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+	alice.holders[CHEST_REF] = { { AMMO_38, 20 } };
+	bob.holders[CHEST_REF] = { { CAPS, 12 }, { STEEL, 4 } };
+	const auto before = bob.SaveGame(f);
+
+	alice.Take(f, CHEST_REF, AMMO_38, 20);
+	alice.Put(f, CHEST_REF, AMMO_38, 5);  // she leaves some back
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 5);
+
+	bob.LoadGame(f, before);
+	CHECK(bob.In(CHEST_REF, CAPS) == 12);  // the old save's chest
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.In(CHEST_REF, STEEL) == 0);
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 5);
+
+	// A third game joining later, with its own roll.
+	Game carol{ 3, 0xCA401 };
+	Describe(carol);
+	carol.holders[CHEST_REF] = { { CAPS, 3 }, { STEEL, 1 } };
+	carol.Join(f, "P");
+	carol.Receive(f);
+	CHECK(carol.In(CHEST_REF, CAPS) == 0);
+	CHECK(carol.In(CHEST_REF, STEEL) == 0);
+	CHECK(carol.In(CHEST_REF, AMMO_38) == 5);
+}

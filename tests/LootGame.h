@@ -261,6 +261,24 @@ namespace LootTest
 			++applied;
 		}
 
+		std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
+		{
+			std::vector<LootSync::Stack> stacks;
+			if (const auto h = holders.find(a_holder); h != holders.end()) {
+				for (const auto& [item, count] : h->second) {
+					if (count > 0) {
+						stacks.push_back({ item, static_cast<std::int32_t>(count), questStacks.contains({ a_holder, item }) });
+					}
+				}
+			}
+			return stacks;
+		}
+
+		// A holder whose inventory this game hasn't made yet (never loaded here).
+		std::set<std::uint32_t> unstocked;
+
+		bool Stocked(std::uint32_t a_holder) override { return !unstocked.contains(a_holder); }
+
 	private:
 		void Moved(Fixture& a_f, const LootSync::Move& a_move, bool a_frame)
 		{

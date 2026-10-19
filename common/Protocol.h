@@ -59,6 +59,12 @@ namespace Protocol
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
+	// A ContainerChange whose item is this (count -1) says its container or corpse was emptied of everything the
+	// session shares: each game rolls a chest's and an NPC's leveled loot on its own, so the receiver gives up every
+	// shared stack its own copy holds (LootSync). The player's reference is never an inventory item, so an older
+	// build takes it for something it can't share and leaves it, and an older server keeps and numbers it like any.
+	inline constexpr std::uint32_t CONTAINER_EMPTIED = PLAYER_REF_ID;
+
 	// References are shared by form ID. Since protocol 36 every form ID on the wire is the session's (its plugin table,
 	// kPluginTable): each game translates its own to it and back by plugin name (common/FormIds.h, FormTranslate.h), so
 	// players with other mods, or the same mods in another order, play together. Before, the load order had to match.

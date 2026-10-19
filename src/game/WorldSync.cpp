@@ -6,6 +6,7 @@
 #include "game/DoorShare.h"
 #include "game/Drops.h"
 #include "game/Equipment.h"
+#include "game/FloraShare.h"
 #include "game/FoundDead.h"
 #include "game/HealthShare.h"
 #include "game/Hud.h"
@@ -91,6 +92,11 @@ namespace WorldSync
 		std::atomic<Clock::rep> barterClosedAt{ 0 };
 		std::atomic<std::uint32_t> barterMoves{ 0 };
 		std::vector<std::uint32_t>             pickupInbox;  // base forms picked up from the world
+		// Plants our player picked (FloraShare), by reference: reported as pickups in Frame().
+		constexpr std::size_t      MAX_HARVEST_INBOX = 64;
+		std::vector<std::uint32_t> harvestInbox;
+		std::uint32_t              harvestsSent = 0;
+		std::uint32_t              harvestsApplied = 0;
 		struct StandInHit
 		{
 			std::uint32_t actor;
@@ -773,6 +779,28 @@ namespace WorldSync
 
 		ActivateWatcher activateWatcher;
 
+		// A plant picked: only the reference is taken here (the event's thread); see FloraShare.
+		class HarvestWatcher :
+			public RE::BSTEventSink<RE::TESHarvestEvent::ItemHarvested>
+		{
+		public:
+			RE::BSEventNotifyControl ProcessEvent(const RE::TESHarvestEvent::ItemHarvested& a_event, RE::BSTEventSource<RE::TESHarvestEvent::ItemHarvested>*) override
+			{
+				const auto ref = a_event.referenceHarvested;
+				const auto by = a_event.harvestedBy;
+				const auto id = ref ? ref->GetFormID() : 0;
+				if (FloraShare::Reports(by && by->IsPlayerRef(), IsShareableRef(id))) {
+					std::scoped_lock l{ inboxLock };
+					if (harvestInbox.size() < MAX_HARVEST_INBOX) {
+						harvestInbox.push_back(id);
+					}
+				}
+				return RE::BSEventNotifyControl::kContinue;
+			}
+		};
+
+		HarvestWatcher harvestWatcher;
+
 		// Our player equipping something: using up food or a stim is one too, which Drops tells from a drop by it.
 		class EquipWatcher :
 			public RE::BSTEventSink<RE::TESEquipEvent>
@@ -945,6 +973,35 @@ namespace WorldSync
 			}
 
 			LootScope::HolderFacts Holder(std::uint32_t a_holder) override { return ReadHolderFacts(a_holder); }
+
+			std::vector<LootSync::Stack> Stacks(std::uint32_t a_holder) override
+			{
+				std::vector<LootSync::Stack> stacks;
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				const auto list = ref && !ref->IsDeleted() ? ref->inventoryList : nullptr;
+				if (!list) {
+					return stacks;
+				}
+				RE::BSAutoReadLock l{ list->rwLock };
+				for (auto& entry : list->data) {
+					if (!entry.object) {
+						continue;
+					}
+					bool alias = false;
+					for (auto stack = entry.stackData.get(); stack && !alias; stack = stack->nextStack.get()) {
+						alias = stack->extra && stack->extra->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+					}
+					const auto count = entry.GetCount();
+					stacks.push_back({ entry.object->GetFormID(), static_cast<std::int32_t>((std::min)(count, static_cast<std::uint32_t>(Protocol::MAX_ITEM_COUNT))), alias });
+				}
+				return stacks;
+			}
+
+			bool Stocked(std::uint32_t a_holder) override
+			{
+				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_holder);
+				return ref && !ref->IsDeleted() && ref->inventoryList != nullptr;
+			}
 
 			LootScope::ItemFacts Item(std::uint32_t a_item) override { return ReadItemFacts(RE::TESForm::GetFormByID(a_item)); }
 
@@ -1461,7 +1518,19 @@ namespace WorldSync
 			if (ref->As<RE::Actor>()) {
 				return true;
 			}
-			auto facts = ReadItemFacts(ref->GetObjectReference());
+			// A plant a friend picked is picked here too: marked harvested, nothing given (FloraShare).
+			const auto base = ref->GetObjectReference();
+			switch (FloraShare::OnPickup(base && base->Is(RE::ENUM_FORM_ID::kFLOR), FloraShare::Harvested(ref->formFlags))) {
+			case FloraShare::Pickup::kHarvest:
+				RE::Console::ExecuteCommand(std::format("{:08X}.setharvested 1", a_refId).c_str());
+				++harvestsApplied;
+				return true;
+			case FloraShare::Pickup::kHarvested:
+				return true;
+			case FloraShare::Pickup::kItem:
+				break;
+			}
+			auto facts = ReadItemFacts(base);
 			facts.questAlias = InQuestAlias(ref);
 			switch (LootScope::OfPickup(facts)) {
 			case LootScope::Scope::kShared:
@@ -1653,6 +1722,11 @@ namespace WorldSync
 		}
 		if (const auto source = RE::TESActivateEvent::GetEventSource()) {
 			source->RegisterSink(&activateWatcher);
+		}
+		if (const auto source = RE::TESHarvestEvent::ItemHarvested::GetEventSource()) {
+			source->RegisterSink(&harvestWatcher);
+		} else {
+			REX::ERROR("WorldSync: harvest event source unavailable; picked plants are not shared");
 		}
 		if (const auto source = RE::TESEquipEvent::GetEventSource()) {
 			source->RegisterSink(&equipWatcher);
@@ -1946,6 +2020,7 @@ namespace WorldSync
 		Killers                    killers;
 		std::vector<Hit>           newHits;
 		std::vector<std::uint32_t> newPickups;
+		std::vector<std::uint32_t> newHarvests;
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
 		std::vector<Move>          newMoves;
@@ -1960,6 +2035,7 @@ namespace WorldSync
 			killInbox.clear();
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
+			newHarvests.swap(harvestInbox);
 			newStandInHits.swap(standInHits);
 			newActivations.swap(activateInbox);
 			newMoves.swap(lootInbox);
@@ -2050,6 +2126,10 @@ namespace WorldSync
 
 		const auto now = Clock::now();
 		MatchPickups(now, newActivations, newPickups);
+		for (const auto id : newHarvests) {
+			Queue(Protocol::Encode(Protocol::RefPickedUp{ id }, Protocol::MessageType::kReportPickup));
+			++harvestsSent;
+		}
 		WatchRefStates(now, newActivations);
 		LookAtScriptDoors(now, a_hosting);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
@@ -2169,6 +2249,7 @@ namespace WorldSync
 		CopyWatch::Reset();
 		std::scoped_lock l{ inboxLock };
 		pickupInbox.clear();
+		harvestInbox.clear();
 		standInHits.clear();
 		activateInbox.clear();
 		deathInbox.clear();
@@ -2246,10 +2327,10 @@ namespace WorldSync
 		// personal= means what it did in 0.8.5: other players' personal items left alone (pickups and loot).
 		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
 		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={} flora={}/{} emptied={}/{}/{}",
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
-			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size()) +
+			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks) +
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size());
