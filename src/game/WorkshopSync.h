@@ -59,4 +59,30 @@ namespace WorkshopSync
 	// Dev: the workbenches the walk found (or this one), with whether the player stands in each one's
 	// build area; for any other reference, what the walk makes of it.
 	[[nodiscard]] std::string DescribeBenches(RE::TESObjectREFR* a_ref = nullptr);
+
+	// ---- Power (see WorkshopPower.h) -----------------------------------------------------------------
+	//
+	// Our copies of friends' pieces can't be picked in workshop mode (so no wire reaches one), and none is ever left on
+	// one of our power grids: one found there is taken off (every few seconds, before every save, and before it is
+	// deleted). Our own pieces' power is sent to the others, and their copies here show what their builder's game says.
+
+	// Which of another player's pieces their game powers.
+	void ApplyPower(const Protocol::PowerStates& a_power);
+
+	// Someone joined: all our pieces' power goes to them.
+	void OnPlayerJoined();
+
+	// A save is about to be written: no grid of ours may name a copy (main thread).
+	void BeforeSave();
+
+	// Dev: whether copies are kept out of workshop mode's reach (off: to try the repair), and the audit run now.
+	void                      SetBlockCopies(bool a_block);
+	[[nodiscard]] std::string AuditNow();
+	// Dev: the reference shown powered (or not) as a friend's copy is; false if the game didn't take it.
+	bool                      ShowPoweredForDev(RE::TESObjectREFR* a_ref, bool a_on);
+	[[nodiscard]] std::string DescribePower();
+	// Dev: each copy here, and whose piece it is: "copy=builder:theirRef".
+	[[nodiscard]] std::string DescribeCopies();
+	// Dev: the power grids of this workbench (or of every one seen), with any copy or deleted reference they name.
+	[[nodiscard]] std::string DescribeGrids(RE::TESObjectREFR* a_bench = nullptr);
 }

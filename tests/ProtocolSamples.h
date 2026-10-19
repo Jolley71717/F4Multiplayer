@@ -250,6 +250,9 @@ namespace ProtocolSamples
 		wire.wire = WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
 		s.push_back({ "WorkshopItem (wire)", Encode(wire, MT::kWorkshopItem), D(DecodeWorkshopItem) });
 		s.push_back({ "WorkshopItems", Encode(std::vector<WorkshopItem>{ MakeWorkshopItem(), wire }), D(DecodeWorkshopItems) });
+		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
+			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
+		}
 		for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
 			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C }, type), D(DecodeExplosion) });
 		}
@@ -333,6 +336,7 @@ namespace ProtocolSamples
 		case MT::kReportDrop:
 		case MT::kClaimDrop:
 		case MT::kDropRecord:
+		case MT::kReportWorkshopPower:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -373,6 +377,7 @@ namespace ProtocolSamples
 		case MT::kDropPlaced:
 		case MT::kDropGone:
 		case MT::kDropList:
+		case MT::kWorkshopPower:
 			return true;
 		}
 		return false;
