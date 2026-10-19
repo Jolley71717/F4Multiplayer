@@ -26,6 +26,7 @@
 #include "game/WorldClock.h"
 #include "game/NpcSync.h"
 #include "game/Perf.h"
+#include "game/PlayerMotion.h"
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
 #include "game/Puppets.h"
@@ -557,10 +558,16 @@ namespace Session
 				return std::nullopt;
 			}
 
-			const auto& pos = player->data.location;
+			// The place the player's last update left them in, at that update's time on the engine's pace (PlayerMotion.h,
+			// EngineClock.h): their run as their game moved them, evenly, rather than read at this moment of the frame and
+			// stamped with it, which a game that skips frames unevenly sent as a stand and a leap (F4Multiplayer-ktmu).
+			PlayerMotion::Install();
+			const auto moved = PlayerMotion::EngineTime() ? PlayerMotion::Last(a_now, cell, 250ms) : std::nullopt;
+			const auto  at = moved ? moved->at : a_now;
+			const auto& pos = moved ? moved->position : player->data.location;
 			float       speed = 0.0f;
 			if (lastPositionTime != Clock::time_point{}) {
-				const float dt = std::chrono::duration<float>(a_now - lastPositionTime).count();
+				const float dt = std::chrono::duration<float>(at - lastPositionTime).count();
 				if (dt > 0.0f) {
 					const float dx = pos.x - lastPosition.x;
 					const float dy = pos.y - lastPosition.y;
@@ -568,7 +575,7 @@ namespace Session
 				}
 			}
 			lastPosition = pos;
-			lastPositionTime = a_now;
+			lastPositionTime = at;
 
 			Protocol::PlayerState state;
 			state.sequence = ++sequence;
@@ -577,11 +584,11 @@ namespace Session
 			state.x = pos.x;
 			state.y = pos.y;
 			state.z = pos.z;
-			state.heading = player->data.angle.z;
+			state.heading = moved ? moved->heading : player->data.angle.z;
 			const auto process = player->currentProcess;
 			state.speed = Gait::Reported(process && process->middleHigh ? process->middleHigh->animationSpeed : 0.0f, speed);
 			state.moveMode = static_cast<std::uint16_t>(static_cast<const RE::ActorState&>(*player).moveMode);
-			state.sentMs = Protocol::SentMs(a_now);
+			state.sentMs = Protocol::SentMs(at);
 			// Where the player's own graph has them go, rather than guessed from their path by friends, and where they
 			// look: their angle x, which their own game aims their arms by (AimPoint.h). The graph's Pitch only read
 			// +-25.5 looking all the way up and down.

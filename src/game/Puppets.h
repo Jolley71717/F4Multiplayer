@@ -62,6 +62,7 @@ namespace Puppets
 	{
 		std::chrono::steady_clock::time_point at;
 		RE::NiPoint3                          position;
+		std::chrono::steady_clock::time_point engineAt;  // the update's time on the engine's pace (EngineClock.h)
 	};
 	[[nodiscard]] std::optional<Put> LastPut(const RE::Actor* a_actor);
 
