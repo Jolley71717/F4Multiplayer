@@ -844,6 +844,18 @@ namespace Session
 		SwitchServer({});
 	}
 
+	bool DropConnection()
+	{
+		if (hostedServer || client->GetStatus() != ClientConnection::Status::kConnected) {
+			return false;
+		}
+		client->Disconnect();
+		client->Poll();
+		OnDisconnected();
+		nextConnectAttempt = {};
+		return true;
+	}
+
 	Status GetStatus()
 	{
 		Status status;

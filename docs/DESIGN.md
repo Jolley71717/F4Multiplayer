@@ -432,7 +432,11 @@ So players give each other items by dropping them, and the server decides who ha
   session's share (1024 lying about or offered, 256 a player): then the giver alone hears it with no
   number, and keeps the item as an ordinary one. On the offer the giver's game swaps its item for a copy
   like everyone's, records the swap (the nonce: `made`) and says so (`kClaimDrop` kPlaced); only then does
-  the server tell the other games, so nobody can take an item still in the giver's world. A giver who
+  the server tell the other games, so nobody can take an item still in the giver's world. It tells the
+  giver's game too: until that comes the drop is unconfirmed (`DropBook::Unconfirmed`, `unconfirmed=`), and
+  a giver who leaves the session first (the link dropped with their kPlaced, whose offer the server forgets
+  as they leave) gets the item back in their world as an ordinary one, where it lay or else in their
+  inventory, and their record no longer says it left (`restored=`). A giver who
   picked the item up again before the offer came says kKept, and it never lay anywhere. An offer is never
   taken, listed or saved; one not answered goes when the giver leaves, and the giver's next record
   settles one a load overtook (its nonce in `made`: laid down; not: gone). Each game places its copy where the item
@@ -446,7 +450,9 @@ So players give each other items by dropping them, and the server decides who ha
   (`kClaimDrop` kTake; one claim per item until answered, again after 5 s). The server grants the first
   claim and tells everyone who took it (`kDropGone`): the taker's game picks its copy up as the player's
   own take (`ActivateRef` with the default processing only, which a block doesn't stop) and checks that
-  the copy left the world and the count of its base rose by the drop's count (`DropBook::JudgeTake`);
+  the copy left the world and the count of its base rose by the drop's count (`DropBook::JudgeTake`),
+  and SaveGuard lets go of the copy's id at once (`SaveGuard::Release`: the game hands it out again, often to
+  the next item of that base the player drops, which would otherwise read as another system's and not be given);
   every other game removes its copy. A later claim is answered with who has it. A take the game couldn't
   finish in four tries is given back (`kGiveBack`) and lies there again for everyone; its copy goes and
   a fresh one is placed. Taking your own item back is the same claim. Nothing is ever added to the local
@@ -475,8 +481,9 @@ So players give each other items by dropping them, and the server decides who ha
 
 Left open, counted in the log and `net status` (`drops:`): a giver who reloads a save from before a drop
 a friend already took has the item again (the server can't take it back from the friend's inventory:
-`dupRisk` on the server's log); a giver whose kPlaced is lost with their connection loses the item (its
-offer goes with them); items lying
+`dupRisk` on the server's log); a giver whose kPlaced reached the server but who left before hearing it
+laid down gets the item back too, and has it twice only if a friend took it in that moment, before the
+giver's next record withdraws it (`dupRisk` again); items lying
 about are the host's session's, so they are gone if the host starts another session or loses the session
 file; a host crash between a drop and the session file's next write (it is written at once after every
 change) loses it. A world that never played the session (a new game in the same character's slot, as the

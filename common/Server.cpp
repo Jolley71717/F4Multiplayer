@@ -1497,10 +1497,11 @@ void Server::Run()
 			}
 			return;
 		case Protocol::DropClaim::kPlaced:
-			// Their game swapped its item for a copy: it lies there for the others now (their game has it already).
+			// Their game swapped its item for a copy: it lies there for the others now. Their game hears it too: until it does,
+			// it gives the item back to its world if it leaves (its kPlaced may have gone with the link, and the offer with it).
 			if (const auto laid = drops.Confirm(a_player.id, claim->dropId)) {
 				dropsChanged();
-				broadcast(Protocol::Encode(*laid, Protocol::MessageType::kDropPlaced), true, a_player.key);
+				broadcast(Protocol::Encode(*laid, Protocol::MessageType::kDropPlaced), true, 0);
 			}
 			return;
 		case Protocol::DropClaim::kKept:

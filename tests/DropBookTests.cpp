@@ -220,6 +220,56 @@ TEST("drop book: a loaded save with no entry for the session we are in, or a rev
 	CHECK(alone.Empty());
 }
 
+// Our game swapped a dropped item for a copy and sent kPlaced, and the link went before the server had it: the server
+// forgot the offer with us, so the item must come back to our world, and our record must say it never left.
+TEST("drop book: our drops the server never said lie there are given back as we leave, and the record says they never left")
+{
+	Protocol::DroppedItem gun;
+	gun.dropId = 4;
+	gun.nonce = 0x77;
+	gun.base = 0x00004822;
+	gun.count = 1;
+	Protocol::DroppedItem stims = gun;
+	stims.dropId = 5;
+	stims.nonce = 0x78;
+	stims.base = 0x00023736;
+	stims.count = 3;
+	Protocol::DroppedItem cola = gun;
+	cola.dropId = 6;
+	cola.nonce = 0x79;
+
+	DropBook::Record    record;
+	DropBook::Unconfirmed unconfirmed;
+	record.Bind(0xA);
+	for (const auto& drop : { gun, stims, cola }) {
+		record.Made(drop.nonce);
+		unconfirmed.Swapped(drop);
+	}
+	CHECK(unconfirmed.Size() == 3);
+	unconfirmed.Heard(5);  // the server says the stimpaks lie there (its kDropPlaced to every game, ours too)
+	unconfirmed.Heard(6);  // someone took the Nuka-Cola: it lay there
+	unconfirmed.Heard(9);  // not ours
+	CHECK(!unconfirmed.Waiting(5));
+	CHECK(unconfirmed.Waiting(4));
+
+	// The link goes: the gun is given back, and only it.
+	const auto back = unconfirmed.TakeAll();
+	REQUIRE(back.size() == 1);
+	CHECK(back[0] == gun);
+	CHECK(unconfirmed.Size() == 0);
+	record.Unmade(back[0].nonce);
+	CHECK(!record.HasMade(0x77));
+	CHECK(record.HasMade(0x78));
+	CHECK((record.ForServer().made == std::vector<std::uint64_t>{ 0x78, 0x79 }));  // the server lays nothing of the gun down
+	CHECK(unconfirmed.TakeAll().empty());
+
+	// No drop ID (a refused drop) is never waited for.
+	Protocol::DroppedItem refused = gun;
+	refused.dropId = 0;
+	unconfirmed.Swapped(refused);
+	CHECK(unconfirmed.Size() == 0);
+}
+
 TEST("drop book: a take is done only once our copy left the world and our player's count rose by the drop's count")
 {
 	using DropBook::TakeState;

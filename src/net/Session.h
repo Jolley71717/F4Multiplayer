@@ -35,6 +35,9 @@ namespace Session
 	void StopHosting();
 	// Leaves the session we joined (and its Steam lobby) and stops reconnecting.
 	void Leave();
+	// Dev only (`net drop`): as the link to the server dropping: the session ends here and the connection is tried again
+	// (the server sees us go). Whether we were connected.
+	bool DropConnection();
 
 	struct Status
 	{

@@ -37,6 +37,10 @@ namespace Drops
 	// (the console's drop runs with no menu open).
 	void DevDropNext();
 
+	// Dev only (`drops loseplaced`): our next swap's kPlaced isn't sent, as one lost with the link (then `net drop`: the item
+	// must come back to our world as we leave).
+	void DevLoseNextPlaced();
+
 	// Our player put something in a container that a friend's game won't see there (a weapon or armor, or anything in a
 	// workbench): said once a session, with how to give it instead.
 	void OnKeptInContainer();

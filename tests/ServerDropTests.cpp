@@ -64,7 +64,7 @@ namespace
 	{
 		const auto offer = Offer(a_f, a_peer, a_item);
 		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::ClaimDrop{ offer.dropId, Protocol::DropClaim::kPlaced }));
-		CHECK(Placed(Received(a_f, a_peer)).empty());  // their game has it already
+		CHECK(Placed(Received(a_f, a_peer)).size() == 1);  // their game hears it lies there (it has its copy already)
 		return offer;
 	}
 
@@ -98,7 +98,11 @@ TEST("server drops: a drop is offered to its dropper alone, and goes to every ot
 	const auto bob = Placed(Received(f, 2));
 	REQUIRE(bob.size() == 1);
 	CHECK(bob[0] == drop);
-	CHECK(Placed(Received(f, 1)).empty());
+	// Alice's game hears it too: until then it would give the item back to her world if she left (her kPlaced may
+	// have gone with the link).
+	const auto alice2 = Placed(Received(f, 1));
+	REQUIRE(alice2.size() == 1);
+	CHECK(alice2[0] == drop);
 }
 
 // The dropper's game hasn't swapped its item for a copy yet (or never will: it left first): nobody else can have it.

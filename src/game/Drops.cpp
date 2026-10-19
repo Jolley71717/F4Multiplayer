@@ -111,6 +111,9 @@ namespace Drops
 		std::unordered_set<std::uint32_t>       unplaceable;  // an item with a base or a mod this game lacks
 
 		DropBook::Claims claims;
+		// Our drops swapped for a copy that the server hasn't said lie there yet: given back to our world if we leave first.
+		DropBook::Unconfirmed unconfirmed;
+		bool                  devLosePlaced = false;  // dev only: the next kPlaced isn't sent (as one lost with the link)
 		// Copies our player picked up although their activation should have been blocked: claimed as any take, and taken
 		// out of their inventory again if someone else gets it.
 		std::unordered_set<std::uint32_t> pickedUnblocked;
@@ -146,7 +149,7 @@ namespace Drops
 
 		std::uint32_t dropped = 0, notGiven = 0, reported = 0, refused = 0, swapped = 0, received = 0, placed = 0, placeFailed = 0, removed = 0;
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
-		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0;
+		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0, restored = 0, restoreFailed = 0;
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -544,6 +547,7 @@ namespace Drops
 				const auto ref = it->second.ref.get();
 				if (!ref) {
 					++lost;  // the game took it from under us (its cell went)
+					SaveGuard::Forget(it->second.refId);
 					it = copies.erase(it);
 					continue;
 				}
@@ -616,6 +620,54 @@ namespace Drops
 					REX::WARN("Drops: copy of drop {} wasn't blocked in time; placed again", id);
 				}
 				RemoveCopy(id);
+			}
+		}
+
+		// Our own drop the server may never have heard we swapped out (DropBook::Unconfirmed), as we leave the session: the
+		// item goes back into our world as the ordinary item it was, lying where it lay if our player is near it (no block,
+		// never removed), else into their inventory.
+		bool GiveBackOwn(const Protocol::DroppedItem& a_drop)
+		{
+			const auto player = Player();
+			const auto cell = player ? player->GetParentCell() : nullptr;
+			const auto form = RE::TESForm::GetFormByID(a_drop.base);
+			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+			if (!player || !object) {
+				return false;
+			}
+			if (cell && Near(a_drop, cell, player->data.location, REMOVE_RANGE)) {
+				RE::NEW_REFR_DATA data;
+				data.location = { a_drop.x, a_drop.y, a_drop.z };
+				data.object = object;
+				data.interior = cell->IsInterior() ? cell : nullptr;
+				data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+				data.extra = ExtraFor(a_drop, object);
+				data.clearStillLoadingFlag = true;
+				if (EngineRefs::CreateReferenceAtLocation(data).get()) {
+					return true;
+				}
+			}
+			auto inInventory = a_drop;
+			inInventory.count = 1;  // the stack's count is the container's, not its extra data's
+			player->AddObjectToContainer(object, ExtraFor(inInventory, object), a_drop.count, nullptr, RE::ITEM_REMOVE_REASON::kNone);
+			return true;
+		}
+
+		// We are leaving the session: each of our drops the server never said lies there is given back to our world.
+		void GiveBackUnconfirmed()
+		{
+			for (const auto& drop : unconfirmed.TakeAll()) {
+				if (!GiveBackOwn(drop)) {
+					++restoreFailed;
+					REX::WARN("Drops: drop {} may not have reached the server before we left, and couldn't be given back", drop.dropId);
+					continue;
+				}
+				{
+					std::scoped_lock l{ recordLock };
+					record.Unmade(drop.nonce);
+				}
+				++restored;
+				REX::INFO("Drops: drop {} ({:08X} x{}) may not have reached the server before we left; it is ours again", drop.dropId, drop.base, drop.count);
 			}
 		}
 
@@ -756,6 +808,7 @@ namespace Drops
 
 		void RecordTake(const Take& a_take)
 		{
+			SaveGuard::Release(a_take.refId);  // in our player's inventory: its id may name the next item they drop
 			{
 				std::scoped_lock l{ recordLock };
 				record.Took(a_take.dropId);
@@ -880,6 +933,7 @@ namespace Drops
 				if (const auto ref = it->second.ref.get(); !ref || !Loose(ref.get())) {
 					// Picked up all the same: its block hadn't taken. Claimed like any take; counted if someone else gets it.
 					pickedUnblocked.insert(dropId);
+					SaveGuard::Release(refId);
 					copies.erase(it);
 					++unblocked;
 					REX::WARN("Drops: our player picked up copy {:08X} of drop {} although its activation was blocked", refId, dropId);
@@ -940,6 +994,11 @@ namespace Drops
 		devDrop = true;
 	}
 
+	void DevLoseNextPlaced()
+	{
+		devLosePlaced = true;
+	}
+
 	void OnKeptInContainer()
 	{
 		if (listening) {
@@ -964,6 +1023,7 @@ namespace Drops
 		if (it == pending.end()) {
 			lying[a_drop.dropId] = a_drop;
 			unplaceable.erase(a_drop.dropId);
+			unconfirmed.Heard(a_drop.dropId);  // one of ours: the server has our kPlaced
 			return;
 		}
 		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
@@ -975,7 +1035,10 @@ namespace Drops
 				std::scoped_lock l{ recordLock };
 				record.Made(a_drop.nonce);
 			}
-			Claim(a_drop.dropId, Protocol::DropClaim::kPlaced);
+			if (!std::exchange(devLosePlaced, false)) {
+				Claim(a_drop.dropId, Protocol::DropClaim::kPlaced);
+			}
+			unconfirmed.Swapped(a_drop);
 			lying[a_drop.dropId] = a_drop;
 			unplaceable.erase(a_drop.dropId);
 			++swapped;
@@ -995,6 +1058,7 @@ namespace Drops
 
 	void OnGone(const Protocol::DropGone& a_gone)
 	{
+		unconfirmed.Heard(a_gone.dropId);
 		const auto drop = lying.find(a_gone.dropId);
 		std::optional<Protocol::DroppedItem> item;
 		if (drop != lying.end()) {
@@ -1055,6 +1119,7 @@ namespace Drops
 		}
 		std::map<std::uint32_t, Protocol::DroppedItem> now;
 		for (auto& drop : listing) {
+			unconfirmed.Heard(drop.dropId);
 			now[drop.dropId] = std::move(drop);
 		}
 		listing.clear();
@@ -1144,6 +1209,7 @@ namespace Drops
 		taking.reset();
 		pickedUnblocked.clear();
 		claims.Clear();
+		unconfirmed.Clear();  // the loaded world's record says whether they left it
 		seenLoose.clear();
 		unplaceable.clear();
 		carriedBefore.reset();
@@ -1180,6 +1246,7 @@ namespace Drops
 	void Reset()
 	{
 		listening = false;
+		GiveBackUnconfirmed();  // before our copies go: the session may never have heard those left our world
 		DiscardCopies();
 		OnGameLoaded();
 		lying.clear();
@@ -1247,8 +1314,8 @@ namespace Drops
 	std::string Describe()
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
-		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={}",
+		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed);
 	}
 }

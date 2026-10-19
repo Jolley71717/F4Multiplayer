@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -140,6 +141,46 @@ namespace DropBook
 		std::unordered_map<std::uint32_t, Clock::time_point> out;
 	};
 
+	// ---- our drops the server hasn't confirmed ---------------------------------------------------------------
+
+	// Our drops our game swapped for a copy (kPlaced sent) that the server hasn't yet said lie there. The server forgets
+	// an offer whose dropper leaves before their kPlaced reaches it, so if we leave first the item would be in no world:
+	// our game gives each one left here back to our world instead (and our record no longer says it left). The server
+	// tells us once it lies there (kDropPlaced, as everyone), or by its list or someone's take of it.
+	class Unconfirmed
+	{
+	public:
+		static constexpr std::size_t MAX = 64;
+
+		void Swapped(const Protocol::DroppedItem& a_drop)
+		{
+			if (a_drop.dropId != 0 && (out.size() < MAX || out.contains(a_drop.dropId))) {
+				out[a_drop.dropId] = a_drop;
+			}
+		}
+
+		// The server says it lies there (or lay there: someone took it).
+		void Heard(std::uint32_t a_dropId) { out.erase(a_dropId); }
+
+		// We left: the ones never heard of, in the order they were dropped, to be given back to our world.
+		std::vector<Protocol::DroppedItem> TakeAll()
+		{
+			std::vector<Protocol::DroppedItem> all;
+			for (auto& [id, drop] : out) {
+				all.push_back(std::move(drop));
+			}
+			out.clear();
+			return all;
+		}
+
+		[[nodiscard]] bool Waiting(std::uint32_t a_dropId) const { return out.contains(a_dropId); }
+		[[nodiscard]] std::size_t Size() const { return out.size(); }
+		void Clear() { out.clear(); }
+
+	private:
+		std::map<std::uint32_t, Protocol::DroppedItem> out;
+	};
+
 	// ---- what our world holds of the session's transfers ------------------------------------------------------
 
 	// Per session (a save may have played in more than one: a host's and a friend's), what the transfers did to our world:
@@ -177,6 +218,14 @@ namespace DropBook
 			if (auto* session = Find(current); session && !std::ranges::contains(session->made, a_nonce)) {
 				Trim(session->made);
 				session->made.push_back(a_nonce);
+			}
+		}
+
+		// An item we dropped is back in our world after all (the server may never have heard we swapped it out: Unconfirmed).
+		void Unmade(std::uint64_t a_nonce)
+		{
+			if (auto* session = Find(current)) {
+				std::erase(session->made, a_nonce);
 			}
 		}
 

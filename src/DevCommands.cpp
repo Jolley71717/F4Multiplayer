@@ -813,9 +813,14 @@ namespace DevCommands
 			return Equipment::DescribeInventory(actor);
 		}
 
-		// drops: what lies in the session to be taken, our copies of it and our world's record (Drops).
-		std::string DropsList(std::string_view)
+		// drops [loseplaced]: what lies in the session to be taken, our copies of it and our world's record (Drops).
+		// loseplaced: our next drop's kPlaced isn't sent (as one lost with the link; then `net drop`).
+		std::string DropsList(std::string_view a_args)
 		{
+			if (a_args == "loseplaced") {
+				Drops::DevLoseNextPlaced();
+				return "ok";
+			}
 			return Drops::List();
 		}
 
@@ -2104,6 +2109,10 @@ namespace DevCommands
 			if (args.size() == 2 && args[0] == "connect") {
 				Session::ConnectTo(std::string(args[1]));
 				return "ok";
+			}
+			if (args.size() == 1 && args[0] == "drop") {
+				// As the link dropping: the session ends here, and the connection is tried again (in ~5 s).
+				return Session::DropConnection() ? "dropped" : "error: not connected";
 			}
 			return Session::Describe();
 		}
