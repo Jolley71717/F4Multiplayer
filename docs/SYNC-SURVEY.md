@@ -18,7 +18,7 @@ Candidates, by how often a player would notice the gap in a normal session:
 | 6 | Emotes (wave, point, sit) | Only if we add keys for them | small | later |
 | 7 | Facial expression, head tracking (looking at who talks) | Conversations feel flat | small-medium | later |
 | 8 | Workshop building | Any settlement work: a friend's walls are missing | placed, moved and scrapped objects are copied (protocol 22) | partly |
-| 9 | Misc/radiant quests | Settlement requests differ per game | large, by design | no |
+| 9 | Misc/radiant quests | Settlement requests differ per game | the Minutemen's settlement requests (MinRecruit00/01/02/04/07, MinRadiantOwned02/03) are shared by their run (protocol 45, src/game/RadiantSync.cpp): the friends' games start the same quest with the same settlement and place, forced into its aliases, then take its stages under that run's name, each once, so the reward is paid once in each game; a fill a game can't match leaves that run each player's own (logged). Settlement attacks, companions, tutorials, the other factions' radiants and misc entries stay per game | partly |
 | 10 | Pip-Boy light | Night play: the friend's light is invisible | done (protocol 22): a light follows the stand-in while their light is on | done |
 | 11 | Crouch-sneak attack crits, VATS slow-mo for others | Rare; VATS can't be shared sensibly | n/a | no |
 | 12 | Grenades and mines | A friend's thrown grenade doesn't exist in your game | done (protocol 25, 2026-10-09): the throw plays on the stand-in, and every explosion the thrower's game sees in the next 8 s is set off at the same spot in the others (a projectile cannot be launched for a stand-in) | done |
@@ -71,7 +71,7 @@ both games). The main story and the faction quests are per player unless the hos
 - Power armor on the stand-in (first pass #3): done 2026-10-09; the stand-in shows the full piece set (verified 2026-10-10 with T-45). A Nexus report of it "displayed incorrectly" is open (needs a screenshot).
 - Companions: each follows its owner; the friend's game runs it as a mirror. To verify on video.
 - Vertibird signal grenades and the Vertibird itself: the rider is on their own; the friend sees the stand-in in the sky.
-- Settlement attacks and radiant settlement quests: per game (first pass #9).
+- Settlement attacks: per game (first pass #9); the Minutemen's settlement requests are shared by their run (`bSharedRadiants`).
 - Trading with vendors, caps, crafting: per player, by design. A vendor's chest, moves while the barter menu is open, settlement workbench storage and power armor frames are never shared (`LootScope`), so selling to a vendor leaves the friend's vendor with the same caps and stock.
 - Sleeping and waiting: the world clock is shared (clock owner), so one player sleeping moves time for both.
 - Faction hostility after story choices: with `own` stories, one player can be an Institute ally while the other is at war with it; their NPCs are shared, so the friend's enemies attack you in their cell. Say so in INSTALL.md.

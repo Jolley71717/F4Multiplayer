@@ -7,6 +7,8 @@
 #include "game/OpenMenus.h"
 #include "game/QuestFilter.h"
 #include "game/QuestStageLayout.h"
+#include "game/RadiantRules.h"
+#include "game/RadiantSync.h"
 #include "game/RemotePlayers.h"
 #include "game/StageLog.h"
 #include "game/StageRules.h"
@@ -251,15 +253,17 @@ namespace QuestSync
 
 		// Quests a session can share: the shared types, the factions' finales and the dialogue quests of the
 		// game's own files. Quests from other mods are never shared (see Official.h).
+		// The radiants aren't: one is shared by its run, not by its quest (RadiantSync).
 		bool Shareable(const RE::TESQuest* a_quest)
 		{
-			return Official::IsOfficialForm(a_quest) && Watched(a_quest);
+			return Official::IsOfficialForm(a_quest) && Watched(a_quest) && !RadiantRules::IsRadiant(a_quest->GetFormID());
 		}
 
-		// Quests this session shares now: the story's only if the host chose a shared story.
+		// Quests this session shares now: the story's only if the host chose a shared story. A radiant's while its run here
+		// is shared (RadiantSync).
 		bool Shared(const RE::TESQuest* a_quest)
 		{
-			return Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest));
+			return (Shareable(a_quest) && (Story::Shared() || !IsStory(a_quest))) || RadiantSync::Shares(a_quest->GetFormID());
 		}
 
 		std::optional<StageRules::File> FileOf(const RE::TESQuest* a_quest)
@@ -339,7 +343,7 @@ namespace QuestSync
 			here.busy = busy;
 			here.inSession = inSession && Shared(quest);
 			here.ranBefore = !here.running && RanBefore(quest);
-			here.startedHere = startedHere.contains(a_quest);
+			here.startedHere = startedHere.contains(a_quest) || RadiantSync::Shares(a_quest);  // a shared run: started here for the session
 			const auto wait = StageLog::WaitsFor(here);
 			if (wait == StageLog::Wait::kNone) {
 				waitLogged.erase(a_quest);
@@ -448,7 +452,7 @@ namespace QuestSync
 			const auto  local = a_quest & 0x00FFFFFF;
 			// Not started here: this stage starts it for the session (StateOf), and if it isn't running, the
 			// game runs its start-up stage too.
-			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest));
+			const bool  starting = !(quest->data.flags & QUEST_RUNNING) || (!SessionStarted(quest) && !startedHere.contains(a_quest) && !RadiantSync::Shares(a_quest));
 			const auto  startRule = file && !(quest->data.flags & QUEST_RUNNING) ? StageRules::Find(*file, local, 0) : nullptr;
 			const auto  judged = StageRules::Starting(startRule, file ? StageRules::Find(*file, local, a_stage) : nullptr);
 			const auto  rule = judged ? &*judged : nullptr;
@@ -669,6 +673,12 @@ namespace QuestSync
 
 	const char* Kind(const RE::TESQuest* a_quest)
 	{
+		if (a_quest && RadiantRules::ShareOf(a_quest->GetFormID()) != RadiantRules::Share::kNotRadiant) {
+			if (RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kLeftAlone) {
+				return "radiant (each player's own)";
+			}
+			return RadiantSync::Shares(a_quest->GetFormID()) ? "radiant (this run shared)" : "radiant (by its run)";
+		}
 		if (!a_quest || !Shareable(a_quest)) {
 			return "no";
 		}
@@ -681,7 +691,25 @@ namespace QuestSync
 		return Story::IsStoryType(a_quest->data.questType) ? "story" : "side";
 	}
 
+	// Queues a friend's stage to set here (Frame).
+	static void Queue(const Protocol::QuestStage& a_stage, bool a_live);
+
 	void Apply(const Protocol::QuestStage& a_stage, bool a_live)
+	{
+		// A radiant's stages come by its run (ApplyRadiant): one that comes as the quest's (an older game's, or the
+		// session file's from before) is of some run with other targets.
+		if (RadiantRules::IsRadiant(a_stage.quest)) {
+			return;
+		}
+		Queue(a_stage, a_live);
+	}
+
+	void ApplyRadiant(std::uint32_t a_quest, std::uint16_t a_stage, std::uint32_t a_playerId, bool a_live)
+	{
+		Queue(Protocol::QuestStage{ a_quest, a_stage, a_playerId }, a_live);
+	}
+
+	static void Queue(const Protocol::QuestStage& a_stage, bool a_live)
 	{
 		if (!Config::Get().syncQuests) {
 			return;
@@ -818,6 +846,12 @@ namespace QuestSync
 			RepairStory(now);
 		}
 
+		// Radiants' runs: ours begun, friends' started here, ended ones closed (before the stages done here are looked at,
+		// so a run begun now takes the stages done so far with its start).
+		if (report) {
+			RadiantSync::Frame(a_inSession);
+		}
+
 		unstarted.Expire(now);
 		for (const auto quest : AllQuests()) {
 			if (!quest || !Watched(quest)) {
@@ -870,6 +904,14 @@ namespace QuestSync
 			// player's own then (Story::SetShared(false)), and these stages are seen done only now. The outbox
 			// sends them only if the welcome says the session shares the story (StageLog::Outbox).
 			const bool story = IsStory(quest);
+			// A radiant's stages go by its run, if it is shared (RadiantSync); a stage of it set here from a friend is
+			// never seen fresh, and one its script sets in reply goes too (each game takes each stage of a run once).
+			if (RadiantRules::IsRadiant(id)) {
+				if (report && !Story::InOpening()) {
+					RadiantSync::OnDone(quest, fresh);
+				}
+				continue;
+			}
 			if (!report || reaction || (id >> 24) == 0xFF || !Shareable(quest) || (story && a_inSession && !Story::Shared()) || Story::InOpening()) {
 				continue;
 			}
@@ -883,6 +925,10 @@ namespace QuestSync
 				++reported;
 			}
 		}
+		// A radiant's run is the story's: a session that doesn't share the story doesn't get it (StageLog::Outbox).
+		for (auto& packet : RadiantSync::TakeOutgoing()) {
+			outgoing.Add(std::move(packet), true);
+		}
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing(bool a_sending, bool a_inSession)
@@ -894,6 +940,7 @@ namespace QuestSync
 	void OnServerChanged()
 	{
 		outgoing.NewSession();
+		RadiantSync::OnServerChanged();
 	}
 
 	void OnSessionEnded()
@@ -918,6 +965,7 @@ namespace QuestSync
 		startedHere.clear();
 		catchingUp.clear();
 		startHolds.clear();
+		RadiantSync::OnSessionEnded();  // the radiants go on, each player's own
 		// A host's game reports its progress again once its server welcomes it back (QueueBaseline).
 		baseline.clear();
 		baselineQueued = false;
@@ -949,6 +997,7 @@ namespace QuestSync
 		startHolds.clear();
 		baseline.clear();  // a host's game reports the loaded save's progress instead
 		baselineQueued = false;
+		RadiantSync::Rebaseline();
 	}
 
 	Clock::time_point LastStageChange()
@@ -960,6 +1009,6 @@ namespace QuestSync
 	{
 		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
 			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(),
-			unstarted.Size(), locked ? " locked" : "");
+			unstarted.Size(), locked ? " locked" : "") + " " + RadiantSync::Describe();
 	}
 }

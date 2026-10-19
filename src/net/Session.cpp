@@ -28,6 +28,7 @@
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
+#include "game/RadiantSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
@@ -310,6 +311,7 @@ namespace Session
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
+					RadiantSync::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
@@ -350,6 +352,7 @@ namespace Session
 					const auto name = Name::Shown(msg->name, msg->playerId);
 					RemotePlayers::Add(msg->playerId, name, msg->appearance);
 					REX::INFO("Session: player {} joined", msg->playerId);
+					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -415,6 +418,16 @@ namespace Session
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
 					QuestSync::Apply(*msg, true);
+				}
+				break;
+			case MessageType::kRadiantStarted:
+				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
+					RadiantSync::OnStart(*msg);
+				}
+				break;
+			case MessageType::kRadiantStage:
+				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
+					RadiantSync::OnStage(*msg);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -640,6 +653,7 @@ namespace Session
 			welcomed = false;
 			hostMods.OnDisconnected();  // an ask out on this connection gets no answer
 			localId = 0;
+			RadiantSync::SetLocalPlayer(0);
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());

@@ -137,6 +137,12 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   (the Institute's teleporter) comes after a 10-second warning, and not during a fight; once it has
   begun it finishes even if the connection drops, so you are never left without your controls.
   Nothing else of a session's story reaches your game once you have left it.
+- **Minutemen settlement requests:** with the shared story, when one of you gets a request from a
+  settlement (raiders, kidnappers, ghouls, a place to clear), everyone's game starts the same request
+  for the same settlement and the same place. Clearing it finishes it for everyone, and each of you
+  gets the reward once. A request your game can't match (it needs someone your game doesn't have)
+  stays the other player's own, and the log says why. Settlement attacks, companion quests and the
+  other factions' radiant quests stay each player's own. Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
   it side by side: kills count for everyone, and each of you talks to the characters yourself. A
@@ -199,7 +205,8 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
   weapon and armor mods: their face and hair aren't copied yet.
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
-- Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- Misc quests (holotapes, notes, "talk to" errands) and radiant quests other than the Minutemen's
+  settlement requests are not shared, nor are settlement attacks: each game runs its own.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).

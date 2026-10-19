@@ -10,13 +10,17 @@
 // session starts from the host's story: the host's game reports its progress so far when its server
 // welcomes it, so a friend joining mid-quest is caught up to where the host is. A stage that would move
 // the player away, take their caps or move their own story on is left out (see StageRules). Misc quests
-// (radiant, ambient) are not shared because their targets differ per game. Which quests are shared is
-// QuestFilter's. Main thread only.
+// (ambient ones) are not shared because their targets differ per game; the Minutemen's radiants are shared by
+// their run instead (RadiantSync), and the other radiants not at all. Which quests are shared is QuestFilter's.
+// Main thread only.
 namespace QuestSync
 {
 	// A stage from another player: live (they just did it), or from the session after joining or
 	// loading. Waits its turn; some aren't set at all (see StageRules).
 	void Apply(const Protocol::QuestStage& a_stage, bool a_live);
+
+	// A friend's stage of a radiant's run shared here (RadiantSync), to set like theirs of any quest.
+	void ApplyRadiant(std::uint32_t a_quest, std::uint16_t a_stage, std::uint32_t a_playerId, bool a_live);
 
 	// The stages from other players still waiting for this quest, ascending.
 	[[nodiscard]] std::vector<std::uint16_t> Waiting(std::uint32_t a_quest);
