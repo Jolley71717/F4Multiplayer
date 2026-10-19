@@ -24,8 +24,11 @@ namespace RadiantSync
 		using RadiantRules::Run;
 		using StageLog::QUEST_RUNNING;
 
-		// A friend's run started here is running by then, or it isn't shared here.
+		// A friend's run started here is running by then, or it isn't shared here (and this game's own run, stopped for
+		// theirs, has stopped by then).
 		constexpr auto START_TIMEOUT = 10s;
+		// TESQuest::data.flags: a quest that can't be started again once it stops.
+		constexpr std::uint16_t QUEST_RUN_ONCE = 0x0100;
 		constexpr std::size_t MAX_PENDING = 16;
 		constexpr std::uint16_t REF_FORCED = static_cast<std::uint16_t>(RE::BGSRefAlias::FILL_TYPE::kForced);
 		// BGSBaseAlias::aliasID of an alias that has none.
@@ -354,6 +357,7 @@ namespace RadiantSync
 			std::vector<Saved>         saved;  // the definitions forced for it, put back once it runs
 			std::vector<std::uint16_t> stages;  // the friend's stages that came meanwhile
 			Clock::time_point          since{};
+			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
 		};
 		std::optional<Starting> starting;
 
@@ -448,6 +452,9 @@ namespace RadiantSync
 		{
 			std::ranges::sort(a_stages);
 			for (const auto stage : a_stages) {
+				if (!RadiantRules::Takes(a_quest, stage)) {
+					continue;
+				}
 				if (book.Accept(a_quest, a_run, stage)) {
 					QuestSync::ApplyRadiant(a_quest, stage, a_from, a_live);
 					++taken;
@@ -510,7 +517,70 @@ namespace RadiantSync
 			return !ui || ui->menuMode != 0;
 		}
 
-		// A friend's run, its turn come: started here with its fills, compared with this game's run of it, or declined.
+		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
+		// game's own run of it stopped.
+		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages)
+		{
+			if (!Calibrated()) {
+				Decline(a_start.quest, a_run, "this game's aliases can't be read");
+				return;
+			}
+			const auto aliases = AliasesOf(a_quest);
+			const auto rules = Rules(aliases);
+			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
+			if (!plan.Ok()) {
+				Decline(a_start.quest, a_run, plan.fallback);
+				return;
+			}
+			Starting next{ a_start.quest, a_run, a_start };
+			next.stages = std::move(a_stages);
+			if (!Force(a_quest, plan, next.saved)) {
+				Decline(a_start.quest, a_run, "an alias of theirs couldn't be forced here");
+				return;
+			}
+			next.since = Clock::now();
+			book.Starting(a_start.quest, a_run);
+			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
+				plan.forces.size());
+			starting = std::move(next);
+			RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_start.quest).c_str());
+			if (a_quest->data.flags & QUEST_RUNNING) {
+				FinishStart(false);
+			}
+		}
+
+		// This game's own run (not given to the player) stopped: theirs is started in its place.
+		void StoppedForThem()
+		{
+			auto       start = std::move(*starting);
+			starting.reset();
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(start.quest);
+			if (!quest) {
+				book.Refuse(start.quest, start.run);
+				return;
+			}
+			StartHere(quest, start.start, start.run, std::move(start.stages));
+		}
+
+		// A friend's run of a quest that runs here with other targets, its run here not given to this player: that run is
+		// stopped (nothing of it was the player's yet) and theirs started once it has.
+		void Replace(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::string_view a_why)
+		{
+			Starting next{ a_start.quest, a_run, a_start };
+			next.since = Clock::now();
+			next.stopping = true;
+			book.Starting(a_start.quest, a_run);
+			REX::INFO("RadiantSync: {:08X} '{}' runs here with other targets ({}) and this player hasn't been given it: stopping it for player {}'s run {}", a_start.quest,
+				QuestName(a_quest), a_why, a_run.origin, a_run.serial);
+			starting = std::move(next);
+			RE::Console::ExecuteCommand(std::format("stopquest {:08X}", a_start.quest).c_str());
+			if (!(a_quest->data.flags & QUEST_RUNNING)) {
+				StoppedForThem();
+			}
+		}
+
+		// A friend's run, its turn come: started here with its fills, compared with this game's run of it (that run
+		// replaced by theirs where it may be), or declined.
 		void Process(const Protocol::RadiantStart& a_start)
 		{
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_start.quest);
@@ -527,6 +597,8 @@ namespace RadiantSync
 					const auto mismatches = CompareHere(quest, AliasesOf(quest), a_start.fills);
 					if (RadiantRules::SameTargets(mismatches)) {
 						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets");
+					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
+						Replace(quest, a_start, run, FirstDecisive(mismatches));
 					} else {
 						Decline(a_start.quest, run, std::format("it runs here already with other targets ({})", FirstDecisive(mismatches)));
 					}
@@ -535,31 +607,7 @@ namespace RadiantSync
 			case Answer::kStart:
 				break;
 			}
-			if (!Calibrated()) {
-				Decline(a_start.quest, run, "this game's aliases can't be read");
-				return;
-			}
-			const auto aliases = AliasesOf(quest);
-			const auto rules = Rules(aliases);
-			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
-			if (!plan.Ok()) {
-				Decline(a_start.quest, run, plan.fallback);
-				return;
-			}
-			Starting next{ a_start.quest, run, a_start };
-			if (!Force(quest, plan, next.saved)) {
-				Decline(a_start.quest, run, "an alias of theirs couldn't be forced here");
-				return;
-			}
-			next.since = Clock::now();
-			book.Starting(a_start.quest, run);
-			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", run.origin, run.serial, a_start.quest, QuestName(quest),
-				plan.forces.size());
-			starting = std::move(next);
-			RE::Console::ExecuteCommand(std::format("startquest {:08X}", a_start.quest).c_str());
-			if (quest->data.flags & QUEST_RUNNING) {
-				FinishStart(false);
-			}
+			StartHere(quest, a_start, run, {});
 		}
 
 		// A run of ours: the quest handed out here, in a session, the player told of it.
@@ -684,10 +732,20 @@ namespace RadiantSync
 			return;
 		}
 
-		// A friend's run being started here: done once it runs (or not, in time).
+		// A friend's run being started here: done once it runs (or not, in time). One that replaces this game's own run:
+		// started once that has stopped.
 		if (starting) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
-			if (quest && (quest->data.flags & QUEST_RUNNING)) {
+			const bool running = quest && (quest->data.flags & QUEST_RUNNING);
+			if (starting->stopping) {
+				if (!running) {
+					StoppedForThem();
+				} else if (now - starting->since >= START_TIMEOUT) {
+					const auto stuck = std::move(*starting);
+					starting.reset();
+					Decline(stuck.quest, stuck.run, "this game's own run of it didn't stop");
+				}
+			} else if (running) {
 				FinishStart(false);
 			} else if (now - starting->since >= START_TIMEOUT) {
 				FinishStart(true);

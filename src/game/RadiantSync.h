@@ -2,12 +2,14 @@
 
 #include "Protocol.h"
 
-// The Minutemen's radiant quests, shared by their run (RadiantRules has the rules and why): when this player's
-// game hands one out in a session that shares the story, the friends' games start the same quest with the same
-// settlement and place, and from then on its stages go between them under that run's name (not as QuestSync's
-// stages, which name only the quest: a second run of it would be the first's). Each game sets each stage of a run
-// once, so the reward (the quest's own stage) is paid once in each. A run whose fills a game can't match stays each
-// player's own there, said in the log. Main thread only; QuestSync calls it.
+// Radiant quests (the Minutemen's, the Brotherhood's, the Institute's and some of the Railroad's), shared by their run
+// (RadiantRules has which and why): when this player's game hands one out in a session that shares the story, the
+// friends' games start the same quest with the same settlement or dungeon, and from then on its stages go between them
+// under that run's name (not as QuestSync's stages, which name only the quest: a second run of it would be the
+// first's). A friend's game that runs the quest with other targets, not yet given to its player, stops that run for
+// this one where it may (RadiantRules::Replaces). Each game sets each stage of a run once, so the reward (the quest's
+// own stage) is paid once in each. A run whose fills a game can't match stays each player's own there, said in the
+// log. Main thread only; QuestSync calls it.
 namespace RadiantSync
 {
 	// Whether the session can share radiants now: bSharedRadiants and bSyncQuests on, and the story shared.

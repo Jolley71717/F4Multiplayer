@@ -25,13 +25,17 @@
 //
 // Which radiants are shared (RADIANTS, all from Fallout4.esm): the Minutemen's "a settlement needs our help"
 // (MinRecruit: raiders, kidnappers, ghouls, a place to clear) and Preston's requests from settlements the
-// player has (MinRadiantOwned: raiders, kidnapping): a settlement, a place and its people, all of them the
-// game's own references. Left alone, each player's own: settlement attacks (the attackers are made where the
-// settlement stands, and each game runs its own attack), quests whose targets are made at runtime (a synth
-// boss, refugees, couriers, Brotherhood squires), the factions' radiants that move their story on or move
-// the player (BoSR01 starts the Brotherhood's own story at its 0 and pays there), and the Railroad's and
-// Institute's. Those stay unshared even when the story is (before, a friend's stage started them here with
-// this game's own targets). Kept free of the game so it can be tested; RadiantSync reads the quests.
+// player has (MinRadiantOwned: raiders, kidnapping); the Brotherhood's dungeon jobs (Cleansing the Commonwealth,
+// Quartermastery), the Institute's (Pest Control, Hypothesis, Political Leanings) and two of the Railroad's
+// (Butcher's Bill, Concierge): a settlement or a dungeon, the place's people and its map marker, all of them the
+// game's own references and locations. Left alone, each player's own: settlement attacks and the Castle's (the
+// attackers are made where the settlement stands, and each game runs its own attack and its workshop's defense),
+// quests whose targets are made at runtime (a synth boss, refugees, a courser, Brotherhood squires and scribes, a
+// patrol, a vertibird, an assault's defenders: each game would make its own, and the session would share both),
+// quests that work on a settlement's workshop (Feeding the Troops, Mercer Safehouse), and the Railroad jobs whose
+// start counts the job as on offer at HQ or hides a place's enemies (RADIANTS says which). Those stay unshared even
+// when the story is (before, a friend's stage started them here with this game's own targets). Kept free of the
+// game so it can be tested; RadiantSync reads the quests.
 namespace RadiantRules
 {
 	enum class Share : std::uint8_t
@@ -46,6 +50,12 @@ namespace RadiantRules
 		std::uint32_t    formId;  // Fallout4.esm (load index 00)
 		std::string_view editorId;
 		Share            share;
+		// A run of it here that this player hasn't been given (no objective shown) may be stopped for a friend's with
+		// other targets: the faction's own scripts start these whenever they can (the Institute's when the player joins,
+		// the Railroad's at HQ, the Brotherhood's as their giver speaks), so a friend's game nearly always holds one of
+		// its own. Only where stopping it before it is given changes nothing else: nothing counted, enabled or hidden
+		// by its start, no stage run as it stops, and a quest that can run again (not "run once").
+		bool replace = false;
 	};
 
 	// Fallout4.esm's radiants (tools/questscan.cs reads them; their aliases were read the same way).
@@ -78,35 +88,40 @@ namespace RadiantRules
 		Entry{ 0x000BDB04, "MinDefendCastle", Share::kLeftAlone },                 // the Castle attacked
 		Entry{ 0x00176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
 		Entry{ 0x0022FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
-		// The Brotherhood's.
-		Entry{ 0x00064EC7, "BoSR01", Share::kLeftAlone },  // its 0 moves the player and starts BoS200; its 50 pays and moves BoS200 on
-		Entry{ 0x0009A687, "BoSR01PostHello", Share::kLeftAlone },
-		Entry{ 0x000C30DC, "BosR02", Share::kLeftAlone },
-		Entry{ 0x000C8675, "BoSR03", Share::kLeftAlone },
-		Entry{ 0x000CF3E2, "BoSR04", Share::kLeftAlone },
+		// The Brotherhood's. Their giver's line sets their 10 (it starts them), the player taking the job their 20, and
+		// the reward is their 50: an item, and BoS200's stage for the job done (shared with the story too, set once). The
+		// 0 is the developers' shortcut (it makes the player a member and moves them to the giver): never taken (UNTAKEN).
+		Entry{ 0x00064EC7, "BoSR01", Share::kShared, true },  // Cleansing the Commonwealth: a dungeon by the player's level, its bosses
+		Entry{ 0x000C30DC, "BosR02", Share::kShared, true },  // Quartermastery: a dungeon, the tech in its boss's container (made in each game)
+		Entry{ 0x0009A687, "BoSR01PostHello", Share::kLeftAlone },  // dialogue only
+		Entry{ 0x000C8675, "BoSR03", Share::kLeftAlone },  // Leading by Example: a squire made at runtime follows the player
+		Entry{ 0x000CF3E2, "BoSR04", Share::kLeftAlone },  // Learning Curve: a scribe made at runtime follows the player
 		Entry{ 0x000CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },
-		Entry{ 0x000D1EB2, "BoSR05", Share::kLeftAlone },
-		// The Institute's.
-		Entry{ 0x000F7933, "InstR01", Share::kLeftAlone },
-		Entry{ 0x000E8D19, "InstR01_OLD", Share::kLeftAlone },
-		Entry{ 0x000EB268, "InstR02", Share::kLeftAlone },
+		Entry{ 0x000D1EB2, "BoSR05", Share::kLeftAlone },  // Feeding the Troops: a settlement's food, its happiness changed by the job
+		// The Institute's: all five start when the player joins (Inst301) and wait at their 5 until their giver hands one
+		// out (its 100); each pays at its turn-in (10 or 20, and 1000).
+		Entry{ 0x000F7933, "InstR01", Share::kShared, true },  // Pest Control: a dungeon and its bosses
+		Entry{ 0x000EB268, "InstR02", Share::kShared, true },  // Hypothesis: a dungeon, its boss, the data on it (made in each game)
+		Entry{ 0x000F0D8C, "InstR05", Share::kShared, true },  // Political Leanings: the same NPC and marker in every game
+		Entry{ 0x000E8D19, "InstR01_OLD", Share::kLeftAlone },  // not used by the game
 		Entry{ 0x000EC1E9, "InstR03_OLD", Share::kLeftAlone },
-		Entry{ 0x000EDCEF, "InstR03NEW", Share::kLeftAlone },
-		Entry{ 0x000EDE28, "InstR04", Share::kLeftAlone },
-		Entry{ 0x000F0D8C, "InstR05", Share::kLeftAlone },
-		// The Railroad's.
-		Entry{ 0x000B1F1D, "RRR01a", Share::kLeftAlone },
-		Entry{ 0x000B1F1C, "RRR01b", Share::kLeftAlone },
-		Entry{ 0x000B3E82, "RRR02a", Share::kLeftAlone },
-		Entry{ 0x000B926B, "RRR03", Share::kLeftAlone },
-		Entry{ 0x000B26C2, "RRR04", Share::kLeftAlone },
-		Entry{ 0x000B926A, "RRR05", Share::kLeftAlone },
-		Entry{ 0x001845F7, "RRR06", Share::kLeftAlone },
-		Entry{ 0x00186C79, "RRR07", Share::kLeftAlone },
-		Entry{ 0x0013A33D, "RRR08", Share::kLeftAlone },
-		Entry{ 0x00145F1A, "RRR09", Share::kLeftAlone },
-		Entry{ 0x0014A34A, "RRR10", Share::kLeftAlone },
-		Entry{ 0x00150577, "RRR11", Share::kLeftAlone },
+		Entry{ 0x000EDCEF, "InstR03NEW", Share::kLeftAlone },  // Appropriation: an assault, its defenders made at runtime
+		Entry{ 0x000EDE28, "InstR04", Share::kLeftAlone },     // Reclamation: the synth to bring back is made at runtime
+		// The Railroad's. Their HQ starts most of them whenever the player walks in, and their start counts the job as on
+		// offer (RRQuestsAvailable, which the job taken counts off again): one stopped before it is taken would leave
+		// that count one too high, and the Drummer Boy telling the player of work that isn't there.
+		Entry{ 0x000B1F1D, "RRR01a", Share::kShared },  // Butcher's Bill: a dead drop by its conditions; runs once, never replaced
+		Entry{ 0x000B3E82, "RRR02a", Share::kShared, true },  // Concierge: a place, its people (nothing counted at its start)
+		Entry{ 0x000B1F1C, "RRR01b", Share::kLeftAlone },  // Butcher's Bill 2: a dead captive made at runtime
+		Entry{ 0x000B926B, "RRR03", Share::kLeftAlone },   // Jackpot: counted on offer; the tracker it gives is made at runtime
+		Entry{ 0x000B26C2, "RRR04", Share::kLeftAlone },   // Mercer Safehouse: builds up a settlement's workshop
+		Entry{ 0x000B926A, "RRR05", Share::kLeftAlone },   // Weathervane: counted on offer, and starts again by itself when done
+		Entry{ 0x001845F7, "RRR06", Share::kLeftAlone },   // Randolph Safehouse: counted on offer, and hides the place's enemies until taken
+		Entry{ 0x00186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
+		Entry{ 0x0013A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
+		Entry{ 0x00145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
+		Entry{ 0x0014A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
+		Entry{ 0x00150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
 	};
 
 	inline const Entry* Find(std::uint32_t a_formId)
@@ -124,6 +139,33 @@ namespace RadiantRules
 	inline bool IsRadiant(std::uint32_t a_formId)
 	{
 		return ShareOf(a_formId) != Share::kNotRadiant;
+	}
+
+	// Stages of a shared radiant never taken from a friend: the developers' shortcuts, which a player never reaches
+	// (BoSR01's and BosR02's 0 make the player a member of the Brotherhood, set its story's stages and move them to
+	// their giver). Their startup stage is another; StageRules lists them as moving the player.
+	struct Untaken
+	{
+		std::uint32_t quest;
+		std::uint16_t stage;
+	};
+	inline constexpr std::array UNTAKEN{
+		Untaken{ 0x00064EC7, 0 },  // BoSR01
+		Untaken{ 0x000C30DC, 0 },  // BosR02
+	};
+
+	inline bool Takes(std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		return std::ranges::none_of(UNTAKEN, [&](const Untaken& a_untaken) { return a_untaken.quest == a_quest && a_untaken.stage == a_stage; });
+	}
+
+	// A friend's run of a quest that runs here with other targets: whether this game's run is stopped for theirs. Only one
+	// the book doesn't know (no run shared here, ours or a friend's), that this player hasn't been given (a_given: an
+	// objective shown), of a quest that may be (Entry::replace) and can run again (a_runOnce: the quest's own flag).
+	inline bool Replaces(std::uint32_t a_quest, bool a_known, bool a_given, bool a_runOnce)
+	{
+		const auto entry = Find(a_quest);
+		return entry && entry->share == Share::kShared && entry->replace && !a_known && !a_given && !a_runOnce;
 	}
 
 	// ---- Fills ------------------------------------------------------------------------------------
@@ -425,6 +467,12 @@ namespace RadiantRules
 		{
 			const auto it = quests.find(a_quest);
 			return it != quests.end() && it->second.state == State::kShared;
+		}
+
+		// Whether a run of the quest is known here (shared, or starting).
+		[[nodiscard]] bool Knows(std::uint32_t a_quest) const
+		{
+			return quests.contains(a_quest);
 		}
 
 		[[nodiscard]] bool IsStarting(std::uint32_t a_quest) const
