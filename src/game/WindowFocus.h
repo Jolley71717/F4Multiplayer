@@ -10,7 +10,7 @@
 // hands a key to whichever window is in front, so a press sent while something else is (a scheduled task's
 // console on the VM, a screenshot helper, or the window the person at the PC is using) never reaches the
 // game and lands in that window instead. The commands used to answer "pressing" either way, and a harness
-// read a press that never arrived as a menu that ignored it (F4Multiplayer-sz2: a dialogue option "not
+// read a press that never arrived as a menu that ignored it (2026-10-11: a dialogue option "not
 // taken" after a screenshot task had taken the front). Now a press goes out only with the game in front
 // (brought there first if need be), one that can't is dropped, and the tally says which happened. Pure (a
 // lock for the input threads), so it is unit tested.
