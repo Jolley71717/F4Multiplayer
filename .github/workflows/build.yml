@@ -1,0 +1,87 @@
+# Builds the plugin, the server, the bot and the unit tests on GitHub's Windows machines and runs the tests, so
+# branches don't all compile on the maintainer's PC. Runs on every push to a branch other than main, on pull
+# requests, and by hand for any branch (Actions > Build > Run workflow, or `gh workflow run build.yml -f ref=<branch>`),
+# which also builds branches made before this file existed. The built plugin and the test log are kept for 7 days as
+# the run's artifact "build-<branch>" (`gh run download <run id>`). Release zips are still made by tools/package.ps1.
+name: Build
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.ref || github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      REF: ${{ inputs.ref || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: '3.1.1'
+          actions-cache-folder: .xmake-cache
+
+      - name: Cache xmake packages (ENet)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/xmake-packages
+          key: xmake-packages-${{ hashFiles('xmake.lua') }}
+
+      - name: Configure
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake f -y -m releasedbg -a x64 -p windows --vs=2022
+
+      - name: Build
+        shell: pwsh
+        env:
+          XMAKE_PKG_INSTALLDIR: ${{ runner.temp }}/xmake-packages
+        run: xmake build -y
+
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          & build/windows/x64/releasedbg/F4MPTests.exe | Tee-Object -FilePath tests.log
+          exit $LASTEXITCODE
+
+      - name: Name the artifact
+        if: always()
+        shell: pwsh
+        env:
+          NAME: ${{ inputs.ref || github.head_ref || github.ref_name }}
+        run: |
+          $safe = $env:NAME -replace '[^A-Za-z0-9._-]', '-'
+          "ARTIFACT=build-$safe" >> $env:GITHUB_ENV
+
+      - name: Keep the plugin and the test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            build/windows/x64/releasedbg/F4Multiplayer.dll
+            build/windows/x64/releasedbg/F4Multiplayer.pdb
+            build/windows/x64/releasedbg/F4MPServer.exe
+            tests.log
