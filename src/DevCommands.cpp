@@ -7,6 +7,7 @@
 
 #include <random>
 
+#include "game/Companion.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/EnemyList.h"
@@ -1300,6 +1301,59 @@ namespace DevCommands
 			const auto actor = ref->As<RE::Actor>();
 			const bool ok = actor ? call(actor) : call(ref);
 			return ok ? "dispatched" : "error: dispatch failed";
+		}
+
+		// companion [on <refHex> [pack <packHex>] [kw <keywordHex>|nokw] | off | drive 0|1 [native] | path <refHex> [speed] | kw <keywordHex>]:
+		// companion mode for testing (game/Companion.h): our player follows a reference under the game's own AI, by
+		// default with REFollowBrahmin and the RELinkFollow link. `kw` alone sets the keyword later `on`s use. No
+		// arguments: whether it is on, the target and the distance.
+		std::uint32_t companionKeyword = Companion::FOLLOW_LINK_KEYWORD;
+		std::string CompanionCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return Companion::Describe();
+			}
+			if (args[0] == "off") {
+				return Companion::Off();
+			}
+			if (args[0] == "kw" && args.size() > 1) {
+				companionKeyword = ParseHex(args[1]).value_or(0);
+				return "ok";
+			}
+			if (args[0] == "drive" && args.size() > 1) {
+				return Companion::Drive(args[1] == "1" || args[1] == "on", args.size() > 2 && args[2] == "native");
+			}
+			if (args[0] == "path" && args.size() > 1) {
+				const auto target = LookupRef(args[1]);
+				if (!target) {
+					return "error: no such reference";
+				}
+				return Companion::PathTo(target, args.size() > 2 ? ParseFloat(args[2]).value_or(1.0f) : 1.0f);
+			}
+			if (args[0] == "on" && args.size() > 1) {
+				const auto target = LookupRef(args[1]);
+				if (!target) {
+					return "error: no such reference";
+				}
+				std::uint32_t packageId = Companion::FOLLOW_PACKAGE;
+				std::uint32_t keyword = companionKeyword;
+				for (std::size_t i = 2; i < args.size(); ++i) {
+					if (args[i] == "pack" && i + 1 < args.size()) {
+						packageId = ParseHex(args[++i]).value_or(0);
+					} else if (args[i] == "kw" && i + 1 < args.size()) {
+						keyword = ParseHex(args[++i]).value_or(0);
+					} else if (args[i] == "nokw") {
+						keyword = 0;
+					}
+				}
+				const auto package = RE::TESForm::GetFormByID<RE::TESPackage>(packageId);
+				if (!package) {
+					return "error: no such package";
+				}
+				return Companion::On(target, package, keyword);
+			}
+			return "error: usage: companion [on <refHex> [pack <packHex>] [kw <keywordHex>|nokw] | off | drive 0|1 [native] | path <refHex> [speed] | kw <keywordHex>]";
 		}
 
 		// flags <refHex> [ni|bool|more] [set|clear] [maskHex]: reads or edits actor flag words.
@@ -2817,6 +2871,7 @@ namespace DevCommands
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
 			Entry{ "papyrus", CallPapyrus },
+			Entry{ "companion", CompanionCommand },
 			Entry{ "flags", Flags },
 			Entry{ "net", Net },
 			Entry{ "log", LogCommand },

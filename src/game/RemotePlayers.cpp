@@ -1,5 +1,6 @@
 ﻿#include "game/RemotePlayers.h"
 #include "game/ArmorFrames.h"
+#include "game/Companion.h"
 #include "game/DeferredDelete.h"
 #include "game/DownRules.h"
 #include "game/Dialogue.h"
@@ -185,6 +186,7 @@ namespace RemotePlayers
 		// puppets, and a conversation it leaves open as its speaker is ours to end (Dialogue::Removed).
 		void Release(Grave& a_grave, RE::TESObjectREFR* a_ref)
 		{
+			Companion::Released(a_grave.id);  // our player, AI-driven after this stand-in (test rig), let go first
 			if (a_grave.puppet) {
 				Dialogue::Removed(a_grave.id, a_ref);
 				Puppets::Unregister(a_grave.puppet, a_grave.puppetId);
