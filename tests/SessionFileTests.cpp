@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (30), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), another branch's layout (30), a layout to come (32), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 32 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -398,4 +398,37 @@ TEST("session file: a damaged file that another program holds open is read past,
 	REQUIRE(SessionFile::Save(files.path, Sitting(3)));
 	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
 	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
+}
+
+TEST("session file: the session's plugin table is kept, so the file's form IDs are known whatever the host loads next")
+{
+	auto in = MakeSnapshot();
+	in.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm", "Mod.esp" }, { "Light.esl" });
+	const auto bytes = SessionFile::Encode(in);
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->plugins == in.plugins);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->workshopItems.size() == 1);
+
+	// The layout before it (29) had none, and its file still loads, with none: its IDs are its hash's load order's.
+	auto old = SessionFile::Encode(MakeSnapshot());
+	const std::uint16_t before = SessionFile::BEFORE_PLUGIN_TABLE;
+	std::memcpy(old.data() + 4, &before, sizeof(before));
+	const auto oldOut = SessionFile::Decode(old);
+	REQUIRE(oldOut);
+	CHECK(oldOut->plugins.empty());
+	CHECK(oldOut->deadActors == MakeSnapshot().deadActors);
+
+	// A table in a file of that layout, or two in one, is damage.
+	auto tableIn29 = bytes;
+	std::memcpy(tableIn29.data() + 4, &before, sizeof(before));
+	CHECK(!SessionFile::Decode(tableIn29));
+	const auto table = Protocol::Encode(Protocol::PluginTable{ in.plugins });
+	auto twice = bytes;
+	const std::uint32_t size = static_cast<std::uint32_t>(table.size());
+	const auto* sizeBytes = reinterpret_cast<const std::uint8_t*>(&size);
+	twice.insert(twice.end(), sizeBytes, sizeBytes + sizeof(size));
+	twice.insert(twice.end(), table.begin(), table.end());
+	CHECK(!SessionFile::Decode(twice));
 }

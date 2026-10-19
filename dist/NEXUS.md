@@ -39,7 +39,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*]Reconnecting, reloading a save or dying keeps the shared world consistent: your game catches up on what happened.
 [*][b]Starting out:[/b] a new character plays the Vault 111 opening on their own, untouched by the session, and joins the shared world when they leave the vault. Alternate-start mods should behave the same way (you join once your character is in the open world) but are untested.
 [*][b]Per player, not shared:[/b] companions and romance (each game keeps its own affinity), what companions, settlers and any living NPC carry, perks, SPECIAL, caps, crafting and vendors, radio, survival needs, addiction and radiation. Keys, paper notes, holotapes, bobbleheads, magazines, all weapons and armor, settlement workbench storage and power armor frames are each player's too: a gun your friend loots stays on your copy of the corpse. [b]Shared:[/b] NPCs, loot (ammo, chems, food, junk and other loot in containers and on corpses), doors and locks, buttons and terminals, deaths, side quests, map, settlements, time and weather.
-[*][b]Mods:[/b] everyone needs the same mods in the same load order (the join check refuses a different load order). Different mod collections per player do not work.
+[*][b]Mods:[/b] friends may have other mods, or the same ones in another order: what comes from a mod only one player has (its NPCs, items, quests) is left out in the other games, and a joiner is told which mods differ. To share a mod's content, everyone needs that mod.
 [/list]
 
 [size=4][b]Requirements[/b][/size]
@@ -48,7 +48,7 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 [*]Windows. Linux through Proton should work (F4SE runs there and Steam networking goes through the game's own Steam library), but it is untested: reports welcome.
 [*][url=https://www.nexusmods.com/fallout4/mods/42147]F4SE[/url] 0.7.9
 [*][url=https://www.nexusmods.com/fallout4/mods/47327]Address Library for F4SE Plugins[/url]
-[*]Everyone needs the same version of this mod and [b]the same mods in the same load order[/b].
+[*]Everyone needs the same version of this mod, and ideally [b]the same mods[/b] (in any order).
 [/list]
 
 [size=4][b]Install[/b][/size]

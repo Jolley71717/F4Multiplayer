@@ -15,11 +15,12 @@
 #include <unordered_set>
 #include <vector>
 
-// A joiner's mods compared with the host's, by name. Whether a joiner is let in is the hello's load order hash (the
-// server's check, unchanged); this only tells the player what differs, since the mod can't download mods for them:
-// the game loads plugins only at startup, and Nexus files can't be passed on. The server sends the session's load
-// order (Protocol::LoadOrder) before refusing a joiner for theirs, before letting in one whose list differs only in
-// plugins the host lets differ, and when a player asks (kRequestLoadOrder). Session.cpp compares it with its own and
+// A joiner's mods compared with the host's, by name. Since protocol 36 any load order is let in (form IDs are translated
+// by plugin name: common/FormIds.h), and what comes from a plugin only one game has is left out in the other; this tells
+// the player which plugins those are, and which are only in another place (no matter now), since the mod can't
+// download mods for them: the game loads plugins only at startup, and Nexus files can't be passed on. The server sends
+// the session's load order (Protocol::LoadOrder) before the welcome (or the refusal) of a joiner whose list differs,
+// and when a player asks (kRequestLoadOrder). Session.cpp compares it with its own and
 // tells the player (a HUD notice, the F1 menu's Mods page, every name in the log). Free of the game, so it is unit
 // tested (tests/ModDiffTests.cpp).
 namespace ModDiff
@@ -52,6 +53,9 @@ namespace ModDiff
 		bool                     cut = false;  // the host's list was cut at Protocol::MAX_PLUGINS: ours was compared as far
 
 		[[nodiscard]] std::size_t Count() const { return missing.size() + extra.size() + moved.size(); }
+		// The plugins only one of the two games has: what comes from them is left out in the other (common/FormIds.h). A
+		// moved plugin is no matter since protocol 36: its forms are translated by name.
+		[[nodiscard]] std::size_t Matters() const { return missing.size() + extra.size(); }
 		[[nodiscard]] bool        Empty() const { return Count() == 0; }
 
 		bool operator==(const Difference&) const = default;
@@ -276,7 +280,7 @@ namespace ModDiff
 	[[nodiscard]] inline std::vector<std::string> Pages(const Difference& a_diff, std::size_t a_perPage = NAMES_PER_PAGE)
 	{
 		a_perPage = (std::max<std::size_t>)(a_perPage, 1);
-		const auto intro = a_diff.Empty() ? Text::Get("mods.same") : Text::Format("mods.page_intro", { { "n", a_diff.Count() } });
+		const auto intro = a_diff.Matters() == 0 ? Text::Get("mods.same") : Text::Format("mods.page_intro", { { "n", a_diff.Matters() } });
 		struct Line
 		{
 			std::string_view heading;
@@ -373,7 +377,7 @@ namespace ModDiff
 			Expire(a_now);
 			listThisConnection = true;
 			lastList = a_now;
-			const bool tell = std::exchange(asked, false) || (!a_diff.Empty() && told != a_diff);
+			const bool tell = std::exchange(asked, false) || (a_diff.Matters() != 0 && told != a_diff);
 			if (tell) {
 				told = a_diff;
 			}
@@ -399,19 +403,21 @@ namespace ModDiff
 		}
 
 		// Refused for our load order (Protocol::REJECT_LOAD_ORDER): whether the refusal is told as the difference the
-		// list just before it names (Differing()), in place of the refusal's own text.
+		// list just before it names (Differing(true)), in place of the refusal's own text.
 		bool OnRefused()
 		{
 			pending = false;
-			return listThisConnection && Differing() > 0;
+			return listThisConnection && known && !known->Empty();
 		}
 
 		// Set to reach another server (or none): what we knew was the last host's.
 		void Reset() { *this = Tracker{}; }
 
 		[[nodiscard]] const std::optional<Difference>& Known() const { return known; }
-		// Mods that differ from the host's, as far as known (0: none, or nothing known).
-		[[nodiscard]] std::size_t Differing() const { return known ? known->Count() : 0; }
+		// Mods only one of us has, as far as known (0: none, or nothing known); with a_moved, the moved ones too (what a
+		// refusal for the load order is about: a session one of whose games sent no plugin list, a bot or a test tool, still
+		// needs the same load order).
+		[[nodiscard]] std::size_t Differing(bool a_moved = false) const { return known ? (a_moved ? known->Count() : known->Matters()) : 0; }
 		// An ask is out, sent less than ASK_TIMEOUT ago.
 		[[nodiscard]] bool Asking(Clock::time_point a_now) const { return asked && lastAsk && a_now - *lastAsk < ASK_TIMEOUT; }
 

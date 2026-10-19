@@ -19,7 +19,7 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 35;
+	inline constexpr std::uint16_t VERSION = 36;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -46,7 +46,9 @@ namespace Protocol
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
-	// References are shared by form ID, which matches for everyone because the load order must.
+	// References are shared by form ID. Since protocol 36 every form ID on the wire is the session's (its plugin table,
+	// kPluginTable): each game translates its own to it and back by plugin name (common/FormIds.h, FormTranslate.h), so
+	// players with other mods, or the same mods in another order, play together. Before, the load order had to match.
 	// A coordinate the game world can hold: finite and well inside the engine's limits (the Commonwealth
 	// spans about 150,000 units; a value like 1e38 from a bad client would break cell lookup).
 	inline constexpr float MAX_COORDINATE = 1.0e6f;
@@ -156,6 +158,7 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kPluginTable = 145,       // the session's plugin table, which numbers every form ID on the wire: before the welcome, and when it grows
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
@@ -272,6 +275,18 @@ namespace Protocol
 	struct LoadOrderRequest
 	{};
 
+	// The session's plugin table (protocol 36): the plugins that number every form ID on the wire, as Hello::plugins
+	// lays a load order out (the full ones, LIGHT_PLUGINS, the light ones). It is the host's load order (a dedicated
+	// server's first arrival's, or the saved session's) with each later joiner's other plugins added after the rest of
+	// their kind, so an ID it gave stays what it was. Every game translates its own form IDs to it and back by plugin
+	// name (common/FormIds.h). Sent before the welcome, and to everyone when a joiner's plugins make it grow.
+	struct PluginTable
+	{
+		std::vector<std::string> plugins;
+
+		bool operator==(const PluginTable&) const = default;
+	};
+
 	struct Welcome
 	{
 		std::uint32_t playerId = 0;
@@ -308,9 +323,8 @@ namespace Protocol
 		bool operator==(const Rename&) const = default;
 	};
 
-	// Actors are identified by reference form ID, which is the same for everyone because the
-	// load order must match. Only references from plugin files (not runtime-created ones,
-	// whose IDs start with 0xFF and differ per game) are synced.
+	// Actors are identified by reference form ID, in the session's numbering (common/FormIds.h). Only references
+	// from plugin files (not runtime-created ones, whose IDs start with 0xFF and differ per game) are synced.
 	struct ActorDeath
 	{
 		std::uint32_t refId = 0;
@@ -1132,6 +1146,24 @@ namespace Protocol
 		return LoadOrder{ std::move(*plugins), std::move(*ignored) };
 	}
 
+	inline std::vector<std::uint8_t> Encode(const PluginTable& a_msg)
+	{
+		Writer w{ MessageType::kPluginTable };
+		WritePlugins(w, a_msg.plugins);
+		return w.Data();
+	}
+
+	inline std::optional<PluginTable> DecodePluginTable(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		auto plugins = ReadPlugins(r);
+		if (!plugins || !r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return PluginTable{ std::move(*plugins) };
+	}
+
 	inline std::vector<std::uint8_t> Encode(LoadOrderRequest)
 	{
 		return Writer{ MessageType::kRequestLoadOrder }.Data();
@@ -1628,6 +1660,14 @@ namespace Protocol
 		       a_change.count >= -MAX_ITEM_COUNT && a_change.count <= MAX_ITEM_COUNT;
 	}
 
+	// A numbered change our game can't hold (protocol 36): its container or its item is of a plugin we don't have, so
+	// FormTranslate empties it rather than drop it, and the session's count of changes stays ours (ContainerLedger
+	// numbers it and applies nothing: it isn't IsValid). Never on the wire from the server.
+	[[nodiscard]] inline bool IsEmpty(const ContainerChange& a_change)
+	{
+		return a_change.container == 0 && a_change.item == 0 && a_change.count == 0;
+	}
+
 	// kContainerChanged
 	inline std::vector<std::uint8_t> Encode(const IndexedContainerChange& a_msg)
 	{
@@ -1650,7 +1690,7 @@ namespace Protocol
 		msg.change.container = r.U32();
 		msg.change.item = r.U32();
 		msg.change.count = static_cast<std::int32_t>(r.U32());
-		if (!r.Ok() || !r.AtEnd() || !IsValid(msg.change)) {
+		if (!r.Ok() || !r.AtEnd() || (!IsValid(msg.change) && !IsEmpty(msg.change))) {
 			return std::nullopt;
 		}
 		return msg;

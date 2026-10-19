@@ -241,6 +241,7 @@ namespace ProtocolSamples
 		}
 		s.push_back({ "LoadOrderRequest", Encode(LoadOrderRequest{}), D(DecodeLoadOrderRequest) });
 		s.push_back({ "LoadOrder", Encode(LoadOrder{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" }, { "HDTextures.esm" } }), D(DecodeLoadOrder) });
+		s.push_back({ "PluginTable", Encode(PluginTable{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" } }), D(DecodePluginTable) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
 		return s;
 	}
@@ -328,6 +329,7 @@ namespace ProtocolSamples
 		case MT::kSpawned:
 		case MT::kRenamed:
 		case MT::kLoadOrder:
+		case MT::kPluginTable:
 			return true;
 		}
 		return false;

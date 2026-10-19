@@ -75,8 +75,9 @@ public:
 		// from a save older than the kill, or not have heard of the kill yet. Tests shorten it.
 		std::chrono::milliseconds aliveAgainGrace{ 10000 };
 
-		// Plugins that may differ between players (texture, sound or UI mods): a load order that
-		// matches once these are left out is accepted.
+		// Plugins that may differ between players (texture, sound or UI mods): left out of what a joiner is
+		// told differs. (Since protocol 36 any load order is let in and translated; a hello without a plugin
+		// list still needs the session's, once these are left out.)
 		std::vector<std::string> ignoredPlugins;
 
 		// Where the session's world is saved (and loaded from at start), so it survives the host

@@ -34,7 +34,8 @@
   are registered with `SteamAPI_RegisterCallback` and dispatched by the game's own
   `SteamAPI_RunCallbacks`.
 - **Server:** `common/Server.cpp`, one thread. Joining is checked for protocol version, max players
-  (default 4), an optional password and a load-order hash that must match the players already in.
+  (default 4), an optional password and, for a hello without a plugin list, a load-order hash that must match the
+  session's (with lists, any load order gets in: see Form IDs across load orders).
   Connections that don't say Hello within 5 s are dropped. Each player has rate budgets (60 states/s,
   60 NPC state batches/s, 500 events/s).
   What a player may cost the others over a whole run is kept apart from their connection, by Steam ID
@@ -354,9 +355,69 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 - Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
   the player.
 
+## Form IDs across load orders (common/FormIds.h, common/FormTranslate.h)
+
+Everything shared is named by form ID, and a form ID's top byte is its plugin's place in the load
+order of the game that loaded it: among the full plugins (`00` to `FD`), or, after `FE`, among the
+light ones (12 bits of place, 12 of form). Two games with other mods, or the same mods in another
+order, give one mod's NPC two IDs. Until protocol 35 the server let in only a joiner whose load
+order hashed like the session's. Since protocol 36 every form ID on the wire is in **the session's
+numbering** instead, and each game translates at its edge.
+
+- **The session's plugin table** (`kPluginTable`, `Protocol::PluginTable`) is the host's load order
+  (a dedicated server's first arrival's), as hellos lay one out: the full plugins,
+  `Protocol::LIGHT_PLUGINS`, the light ones. A joiner's plugins the table lacks are added after the
+  rest of their kind (`FormIds::Extend`), so an ID the table gave stays what it was for everyone
+  already in, and for the saved session. The server sends the table to each joiner before its
+  welcome (after the `kLoadOrder` list a differing joiner is sent), and to everyone when a joiner
+  makes it grow. It is capped by what IDs can name (254 full, 4096 light) and by the wire's list
+  (`MAX_PLUGINS`): past that a joiner's plugin has no ID in the session.
+- **The mapper** (`FormIds::Mapper`) pairs our load order (the list our hello sent) with the table,
+  by plugin file name in any case. It works per plugin, so a reorder, a light plugin in another
+  light place, and a plugin light in one game and full in the other (its forms past `FFF` have no
+  light ID) all map. 0 and runtime forms (`FF`, which includes spawn ids) are nobody's plugin's
+  and pass as they are. With the same plugins in the same places, or before the table has come, it
+  is the identity, and nothing is decoded at all.
+- **The edge** is `Session::SendOut` and `Session::Receive` (src/net/Session.cpp): every packet we
+  send goes through `FormTranslate::Translate(kToSession)` and every packet we get through
+  `kToLocal`, before `HandlePacket` reads it. So the rest of the game, the stand-ins, NpcSync,
+  WorldSync, the ledgers, the dev commands, sees only its own IDs, and the server only the
+  session's: the server translates nothing. The one exception is the hello, which goes out before
+  the table is known: the server maps its one form ID (the appearance) from the hello's own list.
+  The dev channel's `fuzz` (`InjectPacket`) is read in our own numbering, untranslated.
+- **Every message type is in `Translate`'s switch**, and a type added to the enum without a case
+  stops the build (C4062 made an error there; gcc's `-Wswitch`), so a new message cannot carry raw
+  IDs by mistake. A test sends one of every message to the session's numbering through a mapper that
+  moves every plugin, and back, and gets the same bytes (tests/FormTranslateTests.cpp).
+- **What has no ID on the other side is skipped, never guessed.** A message about such a form is
+  dropped (a death, a door, a shot by a mod's NPC, a friend standing in a mod's cell); an entry of a
+  list is left out (one NPC of a batch of states, an item someone wears, a head part); a detail
+  becomes 0, which every message reads as none (a gun's sound, the weather, a hair colour, a line's
+  recording, which leaves it text only); a numbered container change keeps its number and is
+  emptied (`Protocol::IsEmpty`), so the ledger's count stays the server's while it applies nothing.
+  The log names each plugin once ("Session: forms: X is not in our game; what comes from it is
+  skipped here"), the session line counts what was skipped either way (`skippedOut`, `skippedIn`),
+  and `mods forms [formHex]` on the dev channel shows the table and an ID in both numberings.
+- **Joining.** A joiner whose load order differs is let in, sent the session's list first so its
+  game can name what differs (src/net/ModDiff.h): only the plugins one game has matter now (missing,
+  extra); a plugin in another place is listed as nothing to change. A hello without a plugin list (a
+  bot, a test tool), or a session whose first player sent none, still needs the session's hash: with
+  no lists there is nothing to translate by.
+- **The saved session** (SessionFile layout 31) keeps the table as its first packet, so its IDs keep
+  their meaning whatever the host loads next: a host who reorders or adds mods carries on with the same
+  world (the new plugins are added to the table). A file of layout 29 or older has no table: its IDs
+  are the load order its hash names, and only a host with that one carries on (or the one older
+  versions hashed without the texture pack); another starts fresh, as before.
+- **What it does not do.** It cannot share what one game lacks: a mod's NPC only the host has is
+  not there for a friend without the mod, and its fights, loot and quest stages are skipped for
+  them. It compares names, not versions: two versions of one plugin share IDs as one plugin. Records a
+  plugin *changes* in another plugin (an override of a vanilla NPC's gear) translate as that vanilla
+  form, so they are shared as each game has it. Messages added by branches built before protocol 36
+  need their case in `Translate` (the build says which).
+
 ## Shared world (src/game/WorldSync.cpp)
 
-References are identified by form ID, which matches across players because the load order must match.
+References are identified by form ID, in the session's numbering (see Form IDs across load orders above).
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (runtime NPCs are shared as spawns under ids of their own: see Spawns)
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check

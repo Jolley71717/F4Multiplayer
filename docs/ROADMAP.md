@@ -19,7 +19,7 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 | 10 | Connection warnings | "Connection to the host is unstable" instead of silent rubber-banding | done (protocol 14) |
 | 11 | Friendly fire setting | Host chooses whether players can hurt each other (off by default) | done (protocol 15) |
 | 12 | Emotes | Point, cheer, clap on F2/F3/F4 (F9/F10/F11 before 0.8.5: F9 is the game's quickload), played on your stand-in for others | done (protocol 23): the idle is played on the stand-in the way the console does; it takes while the stand-in stands still |
-| 13 | Session saved on the host's disk | The shared world state survives the host quitting | done (protocol 23): the host's server saves the world when it changes (checked every 15 s), when the host's game saves, and on exit, and loads it next time; one file per character (F4Multiplayer.<character>.session), and another character or a different load order starts fresh (`bSaveSession`) |
+| 13 | Session saved on the host's disk | The shared world state survives the host quitting | done (protocol 23): the host's server saves the world when it changes (checked every 15 s), when the host's game saves, and on exit, and loads it next time; one file per character (F4Multiplayer.<character>.session), and another character starts fresh, or, for a file saved before protocol 36 (which has no plugin table), a different load order (`bSaveSession`) |
 | 14 | Shared map discoveries | A location one player finds shows up on everyone's map | done (protocol 18) |
 | 15 | Waiting and sleeping together | Waiting moves time for everyone | partly: the host's waiting moves everyone's clock; others snap back |
 | 16 | Quest completion messages | "Sam completed Out of Time" | done (protocol 15) |

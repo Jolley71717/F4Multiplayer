@@ -15,8 +15,8 @@
 #include <vector>
 
 // The session's shared world, saved on the host's disk so it survives the host quitting: the next
-// time the host plays with the same load order, the session carries on (dead NPCs stay dead, loot
-// stays taken, built walls stand). The file is a header followed by ordinary protocol packets
+// time the host plays, the session carries on (dead NPCs stay dead, loot stays taken, built walls
+// stand), with their mods in any order (the file keeps the plugin table its form IDs are numbered by). The file is a header followed by ordinary protocol packets
 // (the same ones a joiner gets), each length-prefixed, so nothing here has its own wire format.
 namespace SessionFile
 {
@@ -27,20 +27,24 @@ namespace SessionFile
 	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
 	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
 	// the layout did not change from the file's first (protocol 23) until 29, which added the deaths an
-	// older build saved (Snapshot::healable) after the identities.
-	inline constexpr std::uint16_t FORMAT = 29;
+	// older build saved (Snapshot::healable) after the identities. 31 added the session's plugin table
+	// (Snapshot::plugins, a kPluginTable packet first among the packets), which numbers the file's form IDs.
+	inline constexpr std::uint16_t FORMAT = 31;
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 30.
+	// protocol 28 wrote 28), and 26 once it had. (30 is another branch's layout.)
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
 	}
 
+	// The layout of 29: 31's, without a plugin table (its form IDs are the load order its hash names).
+	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
+
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || a_format == FORMAT;
+		return Legacy(a_format) || a_format == BEFORE_PLUGIN_TABLE || a_format == FORMAT;
 	}
 
 	struct Snapshot
@@ -63,6 +67,10 @@ namespace SessionFile
 		std::optional<Protocol::WorldTime>                  worldTime;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> markers;
 		std::vector<Protocol::WorkshopItem>                 workshopItems;
+		// The plugins that number every form ID above (Protocol::PluginTable): kept, so a host who changes their mods,
+		// or their order, carries on with the same world. Empty in a file of an older layout: its IDs are the load order
+		// contentHash names, and only a host with that one carries on.
+		std::vector<std::string>                            plugins;
 
 		[[nodiscard]] bool Empty() const
 		{
@@ -96,6 +104,9 @@ namespace SessionFile
 			put(id);
 		}
 
+		if (!a_snapshot.plugins.empty()) {
+			packet(Protocol::Encode(Protocol::PluginTable{ a_snapshot.plugins }));
+		}
 		// World state in the same chunks a joiner gets.
 		const auto slice = [](const auto& a_list, std::size_t a_offset) {
 			using T = typename std::decay_t<decltype(a_list)>::value_type;
@@ -181,6 +192,14 @@ namespace SessionFile
 				return std::nullopt;
 			}
 			switch (*type) {
+			case Protocol::MessageType::kPluginTable: {
+				auto table = version == FORMAT ? Protocol::DecodePluginTable(packet) : std::nullopt;
+				if (!table || !snapshot.plugins.empty()) {
+					return std::nullopt;  // one, in the layout that has it
+				}
+				snapshot.plugins = std::move(table->plugins);
+				break;
+			}
 			case Protocol::MessageType::kWorldState: {
 				const auto world = Protocol::DecodeWorldState(packet);
 				if (!world) {

@@ -1,6 +1,7 @@
 #include "Server.h"
 
 #include "EnetTransport.h"
+#include "FormIds.h"
 #include "Name.h"
 #include "Protocol.h"
 #include "Redact.h"
@@ -308,6 +309,9 @@ void Server::Run()
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
 	std::vector<std::string>                  sessionPlugins;          // their load order, to name the difference
+	// The plugins that number every form ID the session holds and relays (Protocol::PluginTable, common/FormIds.h): the
+	// saved session's, or the first player's load order, with every later joiner's other plugins added after it.
+	std::vector<std::string>                  sessionTable;
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length).
 	const auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
@@ -375,6 +379,7 @@ void Server::Run()
 	if (!options.sessionFile.empty()) {
 		if (const auto saved = SessionFile::Recover(sessionPath, [&](const std::string& a_line) { log("server: " + a_line); })) {
 			sessionContentHash = saved->contentHash;
+			sessionTable = saved->plugins;
 			sessionId = saved->sessionId;
 			nextId = (std::max)(nextId, saved->nextId);
 			for (const auto& [identity, id] : saved->identities) {
@@ -447,6 +452,7 @@ void Server::Run()
 			snapshot.markers.emplace_back(ref, flags);
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
+		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
 			if (!std::exchange(saveFailing, true)) {
@@ -487,6 +493,7 @@ void Server::Run()
 			budget.shareLogged = {};
 		}
 		sessionId = NewSessionId();
+		sessionTable.clear();  // the next arrival's load order numbers the new session
 		touched();
 	};
 
@@ -816,11 +823,13 @@ void Server::Run()
 				reject(a_player, Protocol::REJECT_HOST_NOT_READY);
 				return;
 			}
-			// A different mod list makes the stored form IDs meaningless: start a fresh session. (On a
-			// dedicated server, which has no local player, the first arrival decides.)
-			// A session saved by an older version, before the texture pack counted, is the same load order's when
-			// its hash matches the old way.
-			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
+			// A saved session keeps the plugin table its form IDs are numbered by (session layout 31): it carries on
+			// whatever the first arrival's mods and their order, translated to it as anyone's are. One saved before
+			// (or a hello without a list, which nothing translates) is the load order its hash names: a different
+			// one makes the stored form IDs meaningless, so a fresh session starts. (On a dedicated server, which has
+			// no local player, the first arrival decides.) A session saved by an older version, before the texture
+			// pack counted, is the same load order's when its hash matches the old way.
+			if (sessionContentHash != 0 && (sessionTable.empty() || hello->plugins.empty()) && hello->contentHash != sessionContentHash) {
 				if (Protocol::LoadOrderHashBeforeTexturePack(hello->plugins) == sessionContentHash) {
 					log("server: the saved session has this load order (hashed as older versions did, without the HD texture pack); it carries on");
 				} else {
@@ -835,14 +844,20 @@ void Server::Run()
 			// host's ignored ones left out where they move no other plugin (the refusal names none). Before the refusal, on
 			// the same channel, so it is there by then.
 			sendLoadOrder(a_player, Clock::now());
-			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
-			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
+			// Not their name, and they have no player number yet: where they come from (masked) says which
+			// joiner it was. A difference only in plugins the host allows to differ (texture packs and the like) is
+			// fine as before.
+			if (Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
+				log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
+			} else if (hello->plugins.empty() || sessionTable.empty()) {
+				// Without both lists nothing translates their form IDs (a tool's hello, or a session started by one).
 				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins, options.ignoredPlugins));
 				return;
+			} else {
+				// Since protocol 36 any other mods, in any order: their game translates by plugin name (FormIds.h), and
+				// what comes from a plugin a game lacks is skipped there. Their game says which plugins differ.
+				log(std::format("server: a joiner's load order differs ({}); their form IDs are translated by plugin name", describe(a_player.key)));
 			}
-			// Not their name, and they have no player number yet: where they come from (masked) says which
-			// joiner it was.
-			log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
 		}
 
 		// Someone coming back gets their old ID. If their old connection is still here, their game
@@ -876,6 +891,23 @@ void Server::Run()
 		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
 		a_player.name = Name::Shown(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
+		// The session's plugin table: their plugins it lacks get places after the rest of their kind (an ID it gave
+		// stays what it was), and the players already in hear the new table on the reliable channel, ahead of anything
+		// numbered by it. Then the newcomer's, before the welcome. Their hello's one form ID, sent before they knew
+		// the table, is translated here.
+		if (const auto added = FormIds::Extend(sessionTable, hello->plugins); added != 0) {
+			touched();
+			log(std::format("server: the session's plugin table has {} plugins ({} new)", FormIds::Table::Of(sessionTable).Size(), added));
+			if (welcomedCount() != 0) {
+				broadcast(Protocol::Encode(Protocol::PluginTable{ sessionTable }), true, a_player.key);
+			}
+		}
+		if (!sessionTable.empty()) {
+			send(a_player.key, Protocol::Encode(Protocol::PluginTable{ sessionTable }), true);
+			if (!hello->plugins.empty()) {
+				a_player.appearance = FormIds::Mapper(hello->plugins, sessionTable).ToSession(hello->appearance).value_or(0);
+			}
+		}
 		a_player.welcomed = true;
 		a_player.local = local;
 		a_player.worldAskedAt = Clock::now();
