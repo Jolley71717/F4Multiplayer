@@ -1404,24 +1404,47 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
-		// wswire <fromHex> <toHex>: a wire strung from one reference to the other by F4SE's ObjectReference.CreateWire
-		// (from must be one of a workbench's items; the call runs a frame or so later, and wsinfo <fromHex> shows the
-		// wire among its power links). For the rig, whose scripts can't aim workshop mode's wiring.
+		// wswire <fromHex> <toHex>: a wire strung from one reference to the other as the game strings one: a wire
+		// reference made at the first, its ends connected (SplineUtils::ConnectSpline), the connection added to the
+		// first one's workbench's power grid (Workshop::ExtraData::AddConnection, 2194998, as F4SE's AttachWire
+		// does), and the wire made one of the workbench's items. For the rig, whose scripts can't aim workshop
+		// mode's wiring; the wire is reported like a placed one with wsreport.
 		std::string WsWire(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			const auto from = args.size() == 2 ? LookupRef(args[0]) : nullptr;
 			const auto to = args.size() == 2 ? LookupRef(args[1]) : nullptr;
-			if (!from || !to) {
+			if (!from || !to || from == to) {
 				return "error: usage: wswire <fromHex> <toHex>";
 			}
-			const auto self = Papyrus::BoundObject(from, "ObjectReference", true);
-			const auto target = Papyrus::BoundObject(to, "ObjectReference", true);
-			const bool asked = self && target && Papyrus::CallOn(self, "CreateWire", [&](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
-				a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 2 };
-				a_out[0] = target;
-			});
-			return asked ? "asked" : "error: the call could not be queued";
+			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
+			const auto bench = keyword ? from->GetLinkedRef(keyword) : nullptr;
+			const auto data = bench && bench->extraList ? bench->extraList->GetByType<RE::Workshop::ExtraData>() : nullptr;
+			const auto spline = RE::TESForm::GetFormByID<RE::TESBoundObject>(0x0001D971);  // the workshop's power wire
+			if (!data || !spline) {
+				return "error: the first reference isn't one of a workbench's items (with its workshop data)";
+			}
+			RE::NEW_REFR_DATA place;
+			place.location = from->data.location;
+			place.direction = from->data.angle;
+			place.object = spline;
+			const auto cell = from->GetParentCell();
+			place.interior = cell && cell->IsInterior() ? cell : nullptr;
+			place.world = cell && !cell->IsInterior() ? cell->worldSpace : nullptr;
+			place.clearStillLoadingFlag = true;
+			const auto wire = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(place).get();
+			if (!wire) {
+				return "error: no wire made";
+			}
+			using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
+			static REL::Relocation<add_t> addConnection{ REL::ID{ 2194998 } };
+			RE::SplineUtils::ConnectSpline(from, 0, to, 0, wire.get());
+			addConnection(data, *from, *to, wire.get());
+			wire->SetLinkedRef(bench, keyword);
+			if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
+				tasks->QueueRebuildBendableSpline(*wire, false, nullptr);
+			}
+			return std::format("wire {:08X}", wire->GetFormID());
 		}
 
 		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
