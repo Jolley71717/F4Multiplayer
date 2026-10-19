@@ -15,8 +15,8 @@ What changed:
   Brazilian Portuguese, Russian, Japanese, Simplified and Traditional Chinese. Each translation was reviewed line by
   line against the game's own terms in that language (its first line says so); where a Pip-Boy abbreviation could not
   be confirmed, the word is spelt out. Corrections are welcome as pull requests or Nexus comments: the files are in
-  `Data\F4SE\Plugins\F4Multiplayer\lang\`, one `key = text` line each. Cyrillic or CJK text needs the game itself to be
-  in that language (an English-language game has no font for it). Arabic is not shipped: the game has no Arabic font
+  `Data\F4SE\Plugins\F4Multiplayer\lang\`, one `key = text` line each. Japanese and Chinese text needs the game itself
+  to be in that language (an English-language game has no font for it); Russian shows on any game. Arabic is not shipped: the game has no Arabic font
   and does not shape right-to-left text; a reviewed file waits for a font mod to be proven.
 - A friend's parked power armor stands where they left it. Frames the game placed (the museum's, the ones at
   settlements) are shared like NPCs: whoever last used or moved one runs it, everyone else's copy follows. A suit parked

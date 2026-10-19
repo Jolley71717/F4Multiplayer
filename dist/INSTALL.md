@@ -38,7 +38,9 @@ German, French, Italian, Polish, Brazilian Portuguese, Japanese, Simplified and 
 `F4Multiplayer.ini` to pick another (`en-gb` is English with UK spelling). The texts are in
 `Data\F4SE\Plugins\F4Multiplayer\lang`, one file per language; each file's first line says whether it is a first machine
 translation or has been reviewed against the game's own terminology. To correct one or add a language, edit the text
-after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
+after each `=` (keep the `{placeholders}`) and send the file to the mod's page. Russian shows on a game in any
+language: the game's fonts have Cyrillic letters. Japanese and Chinese need the game itself in that language: an
+English game has no font for them and shows boxes instead (a friend's name written in them shows as boxes too). Arabic is not shipped: the game has no Arabic font and does not shape right-to-left text, so it waits for a font mod to be proven (a reviewed file is ready in the repository).
 
 Friends join through Steam: no ports, IP addresses or VPNs. Traffic goes through Steam's relays,
 so nobody sees anyone's IP address. Only Steam friends of the host (or players the host invites)
@@ -63,7 +65,8 @@ If your Steam status hides what you play ("private" game details), friends can't
    Or the friend joins on their own: in the Steam overlay or friends list, right-click the host
    and pick **Join Game**.
 3. You'll see "Multiplayer: connected" and "<name> joined" messages.
-4. Players appear to each other when they are in the same interior, or near each other outside.
+4. Players appear to each other when they are in the same interior, or near each other outside
+   (within about 100 meters). See [How friends appear](#how-friends-appear).
 
 Accept invites and use Join Game **while the game is already running with F4SE**. If Steam starts
 Fallout 4 for you from an invite, it starts without F4SE and the mod doesn't load: close it, start
@@ -103,6 +106,32 @@ next to you for 2 seconds helps you up (with 30% health). When a friend goes dow
 you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
 `bRevive = false`.
 
+## How friends appear
+
+Each of you plays in your own game, with your own save. A friend is shown in your game by a stand-in: a
+character your game places where your friend is, and moves as they move.
+
+- **Where:** wherever they are, once you are in the same interior or near each other outside. They are not a
+  settler and don't join a settlement. Walk away and the stand-in goes; come back and it is there again. The F6
+  list says where every friend is, and your compass marks friends in the same interior as you, or outside in the
+  same land (the Commonwealth, Far Harbor, Nuka-World), however far.
+- **How they look:** their own face, hair, skin, face paint and sculpting, their sex and body shape (and their
+  LooksMenu body sliders if you both have LooksMenu). If another mod has changed the part of the game that builds
+  faces, friends keep a settler's face instead (the log says so).
+- **What they wear:** the armor and weapons from their own save, with the mods on each one. Nothing of it is in
+  your game: you can't loot it, and their inventory, caps and perks stay theirs.
+- **What you see them do:** walk, run, sneak and jump, aim, shoot (with the gun's sound, no muzzle flash yet),
+  reload, swing, punch, throw grenades, climb into power armor and park it, emote (F2, F3, F4), and turn on their
+  Pip-Boy light. Their name is over their head when you look at them, with their health when they're hurt.
+- **What they can do in your world:** enemies see them and fight them, and a hit on their stand-in reaches the real
+  friend. Their kills, loot, doors and quest steps reach your game as described below. Pressing E on them does
+  nothing: you can't talk to, trade with or give things to a stand-in (giving items is coming in a later version).
+- **Their companion:** it walks with them in your game too, but it stays their companion: its affinity, its romance
+  and what it carries are kept in each game apart. If you both travel with Dogmeat, each game keeps its own.
+
+The session never changes your own character for a friend: nothing it does on a friend's behalf gives you, takes
+from you or puts on you any item, and a friend paying for something in a conversation doesn't charge you.
+
 ## What is shared
 
 - **Players:** position, walking/running/sneaking/jumping, your armor and weapon (drawn or
@@ -115,7 +144,8 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
 - **XP:** you get half the XP for your friends' kills (`fXpShare`).
 - **NPCs and combat:** each NPC is run by one player's game and the others copy it, so everyone sees
   the same raider in the same place. Its weapon and armor are copied from that game too, so a
-  raider carries the same gun on every screen. Enemies can attack any player, and the damage reaches that
+  raider carries the same gun on every screen. Enemies a friend's game spawned (random encounters,
+  ambushes) are there in your game too, and your hits on them stick. Enemies can attack any player, and the damage reaches that
   player. Killing or hurting an NPC counts for everyone. Players can't hurt each other unless the
   host sets `bFriendlyFire = true`, with one exception: a friend's grenade or Fat Man shell that lands
   at your feet hurts you, because in your game it is what kills the enemies beside you.
@@ -124,7 +154,10 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
 - **Quests:** when a side quest moves forward in one game, it moves forward in the others (never
-  backwards), once they have started that quest themselves (it's in their Pip-Boy). A step that
+  backwards). A friend who hasn't started that quest has it started for them, so everyone sees the
+  same gates open and the same people move on. When you join, your game is caught up on the host's
+  side quests the same way (what you did before joining stays yours and isn't sent). A quest you
+  failed or that stopped in your game is never started over. A step that
   would move you (a teleport, a fade to black, your controls taken away) only happens while you're
   with the friend who did it, and you never pay a friend's bribe or payment (caps, a Stimpak) out of
   your own pockets. Catching up waits while you're in a fight. Turn this off with
@@ -155,6 +188,7 @@ you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual
   together.
 - **A new character:** play the opening up to leaving Vault 111 on your own; you can be connected
   meanwhile. Nothing from the session touches it, and what your friends did is applied once you're out.
+  Using an alternate-start mod: see [Alternate-start mods](#alternate-start-mods).
 - Players who join later catch up on everything that already happened this session. So does anyone
   who loads a save or dies and reloads.
 
@@ -187,6 +221,74 @@ character (`F4Multiplayer.log`: "this character starts its own in F4Multiplayer.
 replacing that character's file if it has one. Going back to an older version starts that
 version's session afresh.
 
+## How your stories can differ
+
+You play in one shared world, but each of you keeps your own save. What the session shares is the same in every
+game while you play together. The rest stays as each save has it.
+
+The same for everyone:
+
+- The NPCs and enemies around you, and who is dead.
+- Loot in containers and on bodies (ammo, chems, food, junk), doors and locks, buttons and terminals.
+- Side quests: whoever moves one on moves everyone along, and a joiner is caught up on the host's.
+- The map, what is built in settlements, the time of day and the weather.
+
+Each player's own, always:
+
+- Your character: level, SPECIAL, perks, caps, inventory, weapons and armor.
+- Companions and romance: each game keeps its own affinity.
+- Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
+- A settlement's workbench storage, vendors, the radio, survival needs.
+- Misc and radiant quests (Minutemen settlement requests, for example).
+
+The main story and the factions follow the host's `sStory` setting:
+
+- **Shared (the default):** one story for everyone, starting from the host's. When you join, your game is brought
+  to the host's point, one step after another. From then on, whoever moves the story on moves everyone along, with
+  that player's choices. Nothing goes backwards: where you were already further than the host, you stay there, and
+  what you did before joining isn't sent to the others. Make the big choices together: if two of you side with
+  rival factions, both games get both results.
+- **Own (`sStory = own`):** each of you plays the main story and the factions in your own game, at your own pace,
+  with your own choices. Say you blew up the Institute and your friend hasn't: it is a crater in your game and still
+  stands in theirs. You can still walk round their Boston with them, and story characters you meet there are shared
+  like any NPC. But a story character a friend killed while you weren't there stays alive in your game, and doors
+  that a story step opens open for each of you at your own step. If you are at war with a faction your friend has
+  joined, its people are hostile to you both where you stand together.
+
+What carries over:
+
+- What happens in a session goes into your save when you save. Nothing resets or goes back: progress only moves
+  forward.
+- The host's PC keeps the shared world between sessions, so dead NPCs stay dead next time.
+- Whatever was already different between your saves before the session stays different. For the closest world,
+  start from saves at a similar point in the story, or each make a new character.
+
+## New characters and alternate starts
+
+A new character plays the opening on their own, up to leaving Vault 111. While a player is in the pre-war Sanctuary
+or in Vault 111 and has not yet done "Exit Vault 111", the session leaves their game alone: no shared NPCs, quests,
+time, weather or damage, and no teleports to or from them. What friends did meanwhile is applied once they are out.
+A host's game starts hosting only once it is out.
+
+### Alternate-start mods
+
+No alternate-start mod has been tried with this mod yet. This is what its code says should happen; reports are
+welcome.
+
+- The mod knows the opening only by those two places, the pre-war Sanctuary and Vault 111. A start that wakes you in
+  Vault 111 counts as the opening until you leave the vault (or the start marks "Exit Vault 111" done). A start anywhere else (a room of the mod's own, or out
+  in the Commonwealth) doesn't: the session shares your world from the first moment, with time, weather and NPCs.
+  If the start has scenes of its own, a friend's game could run their NPCs or change the time under them. So play
+  the mod's start through before you host or join.
+- A host's session is filed under the character, and the game gives a character its ID when its name is confirmed.
+  If your start has you make your character somewhere else than the pre-war Sanctuary, name your character and save
+  before you host or join. Otherwise hosting may start over with a fresh session once you have your name, and a
+  friend who joined before naming theirs may be told "you loaded another character" the next time they load a save.
+- With the shared story, the host's and your friends' main-story progress may be brought into your game even if
+  your start skipped the main quest (the session starts a quest you haven't, unless your start stopped it). If your character is meant to have a story of their own, ask the host for `sStory = own`.
+- Everyone needs the alternate-start mod installed, even players who don't use its start, because the load orders
+  must match.
+
 ## Dedicated server (optional)
 
 `F4Multiplayer\F4MPServer.exe [--port 7779] [--max-players 4] [--password X] [--friendly-fire] [--own-story]` runs a server
@@ -195,11 +297,14 @@ without playing (over UDP only). Everyone, including you, then joins with `sTran
 
 ## Known limitations (early version)
 
-- Other players appear as a settler of their sex and body shape wearing their gear, with their
-  weapon and armor mods: their face and hair aren't copied yet.
+- Friends' faces haven't been tried with LooksMenu or with a heavily sculpted character yet; reports welcome.
+- You can't give a friend an item yet: what you drop stays in your game. Giving items is coming in a later version.
+- If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
 - Other players' and NPCs' shots show the firing animation and play the gun's sound, but without a
   muzzle flash yet.
 - Misc and radiant quests (e.g. Minutemen settlement requests) are not shared.
+- Doors, gates and vault doors that a quest script opens (the Vault 114 door, for one) don't open for friends yet.
+  That's being fixed.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server
   there is no host's game, so they stay dead for that session.
 - Workshop building is shared one way per object: what a friend builds appears in your game as a plain copy you can't scrap, wire or assign settlers to (they can, on their side). Power and snapping to a friend's pieces don't cross games yet. Only things the workshop can build are copied, and no container that comes with things in it. What you keep in a copy of a friend's container comes to your inventory when the copy goes (they scrap it, or the session ends).

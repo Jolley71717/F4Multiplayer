@@ -58,5 +58,6 @@ they add for the effort. Status: done, next, later, or no (with the reason).
 
 ## Next
 
+- Giving items: drop an item near a friend and it moves from your game to theirs, mods and all.
 - Muzzle flash (#17).
 - Donation links (Ko-fi, Patreon, Nexus Donation Points): last, before the release.
