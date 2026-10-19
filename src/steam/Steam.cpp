@@ -100,6 +100,38 @@ namespace Steam
 
 		const SteamApi::Api* api = nullptr;
 		bool                 setUp = false;
+		std::string          lastUnavailable;  // why Steam isn't up, as last logged
+
+		// A friend's invite or Join Game came while we host: refused (see JoinLobby), and the session tells the player.
+		bool refusedWhileHosting = false;
+
+		// Whether Steam's overlay is in the game (nullopt: this Steam library can't say).
+		std::optional<bool> Overlay()
+		{
+			if (!api || !api->steamUtils || !api->IsOverlayEnabled) {
+				return std::nullopt;
+			}
+			return api->IsOverlayEnabled(api->steamUtils);
+		}
+
+		// The overlay's state for the log, once it matters: hosting has begun, or an invite dialog is asked for. Each
+		// state is said once.
+		void LogOverlay(std::string_view a_when)
+		{
+			static std::optional<bool> told;
+			const auto                 overlay = Overlay();
+			if (!overlay || told == overlay) {
+				return;
+			}
+			told = overlay;
+			if (*overlay) {
+				REX::INFO("Steam: the overlay is in the game ({})", a_when);
+			} else {
+				REX::WARN("Steam: the overlay is not in the game ({}): Shift+Tab, Invite to Game and the F1 menu's invite won't open. Friends can still "
+						  "right-click you in their Steam friends list and pick Join Game. On Linux, start the game through Steam (INSTALL.md)",
+					a_when);
+			}
+		}
 
 		bool              hosting = false;
 		int               maxMembers = 4;
@@ -158,6 +190,7 @@ namespace Steam
 			}
 			if (hosting) {
 				Note("can't join another game while hosting (set bHost = false to join friends)");
+				refusedWhileHosting = true;  // the player is told (Session), not only the log
 				return;
 			}
 			joiningLobby = a_lobby;
@@ -187,6 +220,7 @@ namespace Steam
 				api->SetLobbyData(api->matchmaking, lobby, LOBBY_KEY, "1");
 				AdvertiseLobby();
 				Note(std::format("hosting lobby {}", lobby));
+				LogOverlay("hosting");
 				return;
 			}
 
@@ -304,6 +338,16 @@ namespace Steam
 			}
 			api = SteamApi::Get();
 			if (!api) {
+				// Said each time the reason changes: no library, the game not starting Steam... Looked at every few seconds
+				// at most (finding out asks Steam's library whether Steam runs; this is asked many times a frame).
+				static Clock::time_point nextWhy{};
+				if (const auto now = Clock::now(); now >= nextWhy) {
+					nextWhy = now + 10s;
+					if (auto why = SteamApi::Unavailable(); why != lastUnavailable) {
+						REX::INFO("Steam: not available yet: {}", why);
+						lastUnavailable = std::move(why);
+					}
+				}
 				return false;
 			}
 			api->RegisterCallback(&lobbyEnterCallback, SteamApi::kLobbyEnter);
@@ -313,7 +357,10 @@ namespace Steam
 			api->RegisterCallback(&presenceCallback, SteamApi::kFriendRichPresenceUpdate);
 			api->InitRelayNetworkAccess(api->utils);
 			setUp = true;
-			REX::INFO("Steam: ready ({})", Redact::Alias(LocalId()));
+			const auto overlay = Overlay();
+			REX::INFO("Steam: ready ({}); app {}, overlay {}{}", Redact::Alias(LocalId()), api->steamUtils ? api->GetAppID(api->steamUtils) : 0,
+				!overlay ? "unknown" : *overlay ? "in the game" : "not in the game yet",
+				api->steamUtils && api->IsSteamRunningOnSteamDeck && api->IsSteamRunningOnSteamDeck(api->steamUtils) ? ", on a Steam Deck" : "");
 			return true;
 		}
 	}
@@ -343,6 +390,16 @@ namespace Steam
 	bool Available()
 	{
 		return SetUp();
+	}
+
+	std::string Unavailable()
+	{
+		return Available() ? std::string{} : SteamApi::Unavailable();
+	}
+
+	bool TakeRefusedJoin()
+	{
+		return std::exchange(refusedWhileHosting, false);
 	}
 
 	SteamApi::SteamId LocalId()
@@ -391,6 +448,7 @@ namespace Steam
 		if (!Available() || !lobby) {
 			return false;
 		}
+		LogOverlay("an invite dialog was asked for");
 		api->ActivateGameOverlayInviteDialog(api->friends, lobby);
 		return true;
 	}

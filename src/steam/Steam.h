@@ -12,6 +12,12 @@ namespace Steam
 	// Steam is running in this game and has everything we need.
 	[[nodiscard]] bool Available();
 
+	// Why not, for the log ("" when it is).
+	[[nodiscard]] std::string Unavailable();
+
+	// A friend's invite or Join Game came while we host, and was turned down (we can't be in two sessions). Once.
+	[[nodiscard]] bool TakeRefusedJoin();
+
 	[[nodiscard]] SteamApi::SteamId LocalId();
 	[[nodiscard]] std::string       PersonaName();
 	// A friend's Steam name ("" when Steam doesn't know them).

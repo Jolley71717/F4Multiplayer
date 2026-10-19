@@ -17,6 +17,7 @@
 #include "Background.h"
 #include "Log.h"
 #include "MainThread.h"
+#include "Platform.h"
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
@@ -796,6 +797,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	if constexpr (sizeof(F4MP_BUILD_LABEL) > 1) {
 		REX::INFO("F4Multiplayer build {}", F4MP_BUILD_LABEL);  // a release candidate names itself
 	}
+	Platform::LogStartup();  // Windows or Wine, and how the game was started (Steam, its overlay)
 
 	Config::Load();
 	Text::Load();

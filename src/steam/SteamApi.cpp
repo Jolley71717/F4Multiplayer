@@ -8,6 +8,18 @@ namespace SteamApi
 		std::atomic<const Api*> loaded{ nullptr };
 		bool                    reportedMissing = false;
 
+		// Where the last Get() stopped (see Unavailable).
+		enum class Stop
+		{
+			kNotTried,
+			kNoLibrary,     // steam_api64.dll is not in the game
+			kMissing,       // it lacks a function we need
+			kNoInterface,   // an interface accessor returned nullptr
+		};
+		Stop        stop = Stop::kNotTried;
+		std::string missingInterface;
+		REX::W32::HMODULE library = nullptr;
+
 		template <class T>
 		bool Resolve(REX::W32::HMODULE a_module, const char* a_name, T& a_out)
 		{
@@ -26,7 +38,9 @@ namespace SteamApi
 		}
 
 		const auto module = REX::W32::GetModuleHandleW(L"steam_api64.dll");
+		library = module;
 		if (!module) {
+			stop = Stop::kNoLibrary;
 			return nullptr;
 		}
 
@@ -93,8 +107,14 @@ namespace SteamApi
 		const bool achievements = Resolve(module, "SteamAPI_SteamUserStats_v012", userStats) &&
 		                          Resolve(module, "SteamAPI_ISteamUserStats_GetAchievementAndUnlockTime", api.GetAchievementAndUnlockTime);
 
+		Accessor steamUtils{};
+		const bool diagnostics = Resolve(module, "SteamAPI_SteamUtils_v010", steamUtils) && Resolve(module, "SteamAPI_ISteamUtils_GetAppID", api.GetAppID) &&
+		                         Resolve(module, "SteamAPI_ISteamUtils_IsOverlayEnabled", api.IsOverlayEnabled);
+		Resolve(module, "SteamAPI_ISteamUtils_IsSteamRunningOnSteamDeck", api.IsSteamRunningOnSteamDeck);
+
 		reportedMissing = true;
 		if (!ok) {
+			stop = Stop::kMissing;
 			return nullptr;
 		}
 
@@ -105,9 +125,14 @@ namespace SteamApi
 		api.messages = messages();
 		api.utils = utils();
 		if (!api.user || !api.friends || !api.matchmaking || !api.messages || !api.utils) {
+			stop = Stop::kNoInterface;
+			missingInterface = !api.user ? "SteamUser021" : !api.friends ? "SteamFriends017" : !api.matchmaking ? "SteamMatchMaking009" :
+			                   !api.messages                                                         ? "SteamNetworkingMessages002" :
+			                                                                                          "SteamNetworkingUtils004";
 			return nullptr;
 		}
 		api.userStats = achievements ? userStats() : nullptr;
+		api.steamUtils = diagnostics ? steamUtils() : nullptr;
 
 		loaded = &api;
 		return &api;
@@ -116,5 +141,35 @@ namespace SteamApi
 	const Api* Loaded()
 	{
 		return loaded.load();
+	}
+
+	std::string Unavailable()
+	{
+		if (loaded.load()) {
+			return {};
+		}
+		switch (stop) {
+		case Stop::kNotTried:
+			return "not looked for yet";
+		case Stop::kNoLibrary:
+			return "the game has no steam_api64.dll loaded (not the Steam version of Fallout 4?)";
+		case Stop::kMissing:
+			return "the game's steam_api64.dll lacks functions the mod needs (the log names them above; another game version?)";
+		default:
+			break;
+		}
+		// The game's own SteamAPI_Init failed (or hasn't run yet): no Steam client it could reach, or no app id.
+		using Running = bool (*)();
+		using User = std::int32_t (*)();
+		const auto running = reinterpret_cast<Running>(REX::W32::GetProcAddress(library, "SteamAPI_IsSteamRunning"));
+		const auto user = reinterpret_cast<User>(REX::W32::GetProcAddress(library, "SteamAPI_GetHSteamUser"));
+		if (running && !running()) {
+			return "Steam is not running, as far as the game's Steam library can see (start Steam, then the game through it)";
+		}
+		if (user && user() == 0) {
+			return "the game did not start Steam (its SteamAPI_Init failed: the game was not started through Steam and got no app id, or "
+			       "Steam was not running yet)";
+		}
+		return std::format("Steam is up but gives the game no {} (a Steam client, or on Linux a Proton, too old for it)", missingInterface);
 	}
 }

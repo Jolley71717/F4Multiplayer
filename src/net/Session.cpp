@@ -689,6 +689,10 @@ namespace Session
 		// A Steam invite or "Join Game" was accepted.
 		void HandleSteamJoin()
 		{
+			// A friend's invite accepted (or Join Game) while we host: Steam turned it down, and only the log said so.
+			if (Steam::TakeRefusedJoin()) {
+				Notify("session.hosting_cant_join");
+			}
 			const auto target = Steam::TakeJoinTarget();
 			if (!target) {
 				return;
@@ -736,6 +740,11 @@ namespace Session
 			Notify("session.no_steam");
 		}
 		REX::INFO("Session: transport '{}' -> {}", settings.transport, steamMode ? "steam" : "udp");
+		if (wantSteam && !steamMode) {
+			// Decided once, here: the line a "my invites and Join Game do nothing" report needs first.
+			REX::WARN("Session: Steam is not available to the mod: {}. Steam invites, Join Game and Steam's relays are off this run{}", Steam::Unavailable(),
+				settings.transport == "auto" ? " (only direct UDP, sTransport = enet, can work)" : "");
+		}
 
 		// With bHost, hosting starts once our own world is there (see Frame), and StartHosting points us at it.
 		serverAddress = settings.host ? std::string{} : settings.serverAddress;
