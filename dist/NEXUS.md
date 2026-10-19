@@ -57,7 +57,20 @@ One player hosts, the others join through Steam: Shift+Tab, right-click a friend
 Install with Vortex or Mod Organizer 2, or extract the zip into Fallout 4\Data. The host sets [b]bHost = true[/b] in Data\F4SE\Plugins\F4Multiplayer.ini; friends change nothing. Always start the game with F4SE. The full guide is in the zip: F4Multiplayer\INSTALL.md.
 
 [size=4][b]Early alpha[/b][/size]
-Back up your saves or use a separate one for co-op. Known gaps: no muzzle flash on friends' shots, misc/radiant quests are not shared; a friend's settlement pieces appear in your game but can't be scrapped or powered by you. You can't give a friend an item yet: that is coming in a later version. Friends' faces haven't been tried with LooksMenu yet. Updates reach Nexus in batches; the newest builds are always on GitHub (link below). If something breaks, the log is Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (F4Multiplayer.1.log if you restarted the game since); please attach it to a bug report. It names other players only as "player N" and leaves Steam ids and IP addresses out; crash logs and screenshots can still hold names.
+Back up your saves first, or keep a separate save for co-op.
+
+[b]Known gaps[/b]
+[list]
+[*]No muzzle flash on a friend's shots. You still see them fire and hear the gun.
+[*]Radiant quests (Preston's "a settlement needs our help" and the like) aren't shared.
+[*]You can't scrap or power a friend's settlement pieces.
+[*]You can't hand a friend an item yet.
+[/list]
+
+[b]Something broke?[/b]
+Attach your log to a bug report: Documents\My Games\Fallout4\F4SE\F4Multiplayer.log (or F4Multiplayer.1.log if you've restarted the game since). It calls other players "player N" and leaves out Steam IDs and IP addresses. Crash logs and screenshots can still show names, so check those first.
+
+Updates come to Nexus in batches. The newest build is always on GitHub.
 
 [size=4][b]Open source[/b][/size]
 GPL-3.0. Source and releases: [url=https://github.com/Jolley71717/F4Multiplayer]github.com/Jolley71717/F4Multiplayer[/url].
