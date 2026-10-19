@@ -1043,14 +1043,14 @@ namespace Session
 		if (!hostedServer || !welcomed) {
 			return false;
 		}
-		client->Send(Protocol::Encode(a_command), true);
+		SendOut(Protocol::Encode(a_command), true);
 		return true;
 	}
 
 	void AskHostControls()
 	{
 		if (hostedServer && welcomed) {
-			client->Send(Protocol::Encode(Protocol::HostInfoRequest{}), true);
+			SendOut(Protocol::Encode(Protocol::HostInfoRequest{}), true);
 		}
 	}
 
@@ -1371,7 +1371,7 @@ namespace Session
 		}
 		for (auto& packet : Drops::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);
+				SendOut(std::move(packet), true);
 			}
 		}
 		PERF_NEXT(perf, "Conversations");
@@ -1385,7 +1385,7 @@ namespace Session
 		MovedObjects::Frame(welcomed && !Story::InOpening());
 		for (auto& packet : MovedObjects::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet.data), packet.reliable);
+				SendOut(std::move(packet.data), packet.reliable);
 			}
 		}
 		PERF_NEXT(perf, "Voice");
@@ -1421,7 +1421,7 @@ namespace Session
 		Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
 		for (auto& packet : Drops::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);  // a take given back: before the save, as the moves
+				SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
 			}
 		}
 		Spawns::DiscardCopies();  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved

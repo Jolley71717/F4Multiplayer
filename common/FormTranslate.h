@@ -216,6 +216,54 @@ namespace FormTranslate
 			a_ctx.Detail(a_msg.hairColor);
 			a_ctx.Detail(a_msg.facialHairColor);
 			a_ctx.Detail(a_msg.faceDetails);
+			a_ctx.Detail(a_msg.skin);  // the race's skin, as without a skin of their own (LooksMenu's overlays name no form)
+			return true;
+		}
+
+		// An item given by dropping it: its base, every mod and its place, or not at all. A copy without one of its mods
+		// would be another item (the giver's legendary, say, as a plain gun), and the receiving game makes a copy only of
+		// an item whose base and every mod it has anyway (Drops).
+		inline bool MapDrop(Context& a_ctx, Protocol::DroppedItem& a_item)
+		{
+			if (!a_ctx.Key(a_item.base) || !a_ctx.Place(a_item.cell, a_item.worldspace)) {
+				return false;
+			}
+			return std::ranges::all_of(a_item.mods, [&](Protocol::ItemMod& a_mod) { return a_ctx.Key(a_mod.mod); });
+		}
+
+		// A ping: its place, or not at all. For an NPC or an item, the target and its base are details (a ping of one the
+		// other game can't name shows as its name at the spot); a friend's target is a player id, no form.
+		inline bool MapPing(Context& a_ctx, Protocol::Ping& a_msg)
+		{
+			if (!a_ctx.Place(a_msg.cell, a_msg.worldspace)) {
+				return false;
+			}
+			if (a_msg.kind == Protocol::PingKind::kActor || a_msg.kind == Protocol::PingKind::kItem) {
+				a_ctx.Detail(a_msg.target);
+				a_ctx.Detail(a_msg.base);
+			}
+			return true;
+		}
+
+		// A radiant's start: its quest, or not at all. A fill the other side can't name becomes RADIANT_UNSHARED_REF, which
+		// no game resolves (a location included): the receiver treats it as one it doesn't have (RadiantRules::MakePlan
+		// falls back for an alias each game picks, and leaves the others), never as an empty alias, which a left-out fill or
+		// 0 would read as.
+		inline bool MapRadiantStart(Context& a_ctx, Protocol::RadiantStart& a_msg)
+		{
+			if (!a_ctx.Key(a_msg.quest)) {
+				return false;
+			}
+			for (auto& fill : a_msg.fills) {
+				if (fill.form == 0 || fill.form == Protocol::RADIANT_UNSHARED_REF) {
+					continue;
+				}
+				if (!a_ctx.Key(fill.form)) {
+					fill.form = Protocol::RADIANT_UNSHARED_REF;
+					++a_ctx.out.fields;
+					a_ctx.changed = true;
+				}
+			}
 			return true;
 		}
 
@@ -284,6 +332,14 @@ namespace FormTranslate
 		case MessageType::kRenamed:
 		case MessageType::kLoadOrder:
 		case MessageType::kPluginTable:
+		// Drops by drop ID and nonce, and the host controls: player ids, ban ids and a password.
+		case MessageType::kClaimDrop:
+		case MessageType::kDropRecord:
+		case MessageType::kDropGone:
+		case MessageType::kHostCommand:
+		case MessageType::kRequestHostInfo:
+		case MessageType::kRemoved:
+		case MessageType::kHostInfo:
 			break;
 
 		case MessageType::kPlayerState:
@@ -304,6 +360,8 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportHealth:
 		case MessageType::kActorHealth:
+		case MessageType::kReportDamage:
+		case MessageType::kActorDamaged:
 			Apply<ActorHealth>(a_packet, ctx, DecodeActorHealth, [&](ActorHealth& m) { return ctx.Key(m.refId); }, typed);
 			break;
 		case MessageType::kReportContainer:
@@ -378,7 +436,7 @@ namespace FormTranslate
 			break;
 		case MessageType::kPing:
 		case MessageType::kPinged:
-			Apply<Ping>(a_packet, ctx, DecodePing, [&](Ping& m) { return ctx.Place(m.cell, m.worldspace); }, typed);
+			Apply<Ping>(a_packet, ctx, DecodePing, [&](Ping& m) { return detail::MapPing(ctx, m); }, typed);
 			break;
 		case MessageType::kReportQuestDone:
 		case MessageType::kQuestDone:
@@ -431,6 +489,41 @@ namespace FormTranslate
 		case MessageType::kSpawned:
 			// The spawn id is the session's own (runtime range): only what to place, and where.
 			Apply<Spawn>(a_packet, ctx, DecodeSpawn, [&](Spawn& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace); }, typed);
+			break;
+		case MessageType::kReportDrop:
+		case MessageType::kDropPlaced:
+			Apply<DroppedItem>(a_packet, ctx, DecodeDroppedItem, [&](DroppedItem& m) { return detail::MapDrop(ctx, m); }, typed);
+			break;
+		case MessageType::kDropList:
+			// Its `last` stays: the list still ends where the server's does.
+			Apply<DropList>(a_packet, ctx, DecodeDropList, [&](DropList& m) {
+				ctx.Entries(m.drops, [&](DroppedItem& a_item) { return detail::MapDrop(ctx, a_item); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kReportObjectHold:
+		case MessageType::kObjectHeld:
+			Apply<ObjectHold>(a_packet, ctx, DecodeObjectHold, [&](ObjectHold& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kReportObjectRest:
+		case MessageType::kObjectRested:
+			Apply<ObjectRest>(a_packet, ctx, DecodeObjectRest, [&](ObjectRest& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, typed);
+			break;
+		case MessageType::kReportWorkshopPower:
+		case MessageType::kWorkshopPower:
+			Apply<PowerStates>(a_packet, ctx, DecodePowerStates, [&](PowerStates& m) {
+				ctx.Entries(m.entries, [&](PowerState& a_entry) { return ctx.Key(a_entry.refId); });
+				return true;
+			}, typed);
+			break;
+		case MessageType::kReportRadiantStart:
+		case MessageType::kRadiantStarted:
+			Apply<RadiantStart>(a_packet, ctx, DecodeRadiantStart, [&](RadiantStart& m) { return detail::MapRadiantStart(ctx, m); }, typed);
+			break;
+		case MessageType::kReportRadiantStage:
+		case MessageType::kRadiantStage:
+			// origin is a player id, serial that game's own number.
+			Apply<RadiantStage>(a_packet, ctx, DecodeRadiantStage, [&](RadiantStage& m) { return ctx.Key(m.quest); }, typed);
 			break;
 		case MessageType::kWorldState:
 			Apply<WorldState>(a_packet, ctx, DecodeWorldState, [&](WorldState& m) { return detail::MapWorldState(ctx, m); }, plain);
