@@ -147,6 +147,15 @@ The commands it uses:
   control map's input contexts and their user events and keys.
 - `dialogue menu`: the dialogue menu's own state: on the menu stack and uppermost, handling input,
   its option buttons shown, the input context it put up.
+- `key`, `mouse` and `click` send through Windows, which hands input to whatever window is in front. They
+  send only with the game in front (bringing it there first, a few tries) and drop the input otherwise,
+  rather than typing it into a console or the window someone at the PC is using. Their answer ends in
+  `front=yes`, or `front=no (<window> is in front)` as the command came in; `focus` asks for the front and
+  answers the same, with the tally of what became of the input so far (`input: sent= broughtFront=
+  dropped=` and the last one dropped). The loop checks `focus` before each pick: a pick that can't reach
+  the game is logged as such, not as an option the menu ignored. On the VM a scheduled task (a screenshot,
+  `input.ps1`) takes the front for a moment; a press sent then went nowhere, and on 2026-10-11 that was
+  read as a dialogue that no longer took input.
 
 `tools/hangcatch.ps1` can also run beside it on its own, as on the VM (which needs WinDbg too). When the game's window hasn't
 answered Windows for 10 s, it attaches the console debugger without taking the game over (`cdb -pv`),
