@@ -24,6 +24,9 @@ namespace Party
 
 	void OnPlayerLeft(std::uint32_t a_id);
 
+	// A friend in the session is still in the opening, as their last status said (Story::InOpening there).
+	[[nodiscard]] bool FriendInOpening();
+
 	// One line per other player (name, marker, health, level, where), as the player list shows them.
 	[[nodiscard]] std::vector<std::string> PlayerLines();
 

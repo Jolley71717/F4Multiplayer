@@ -3,8 +3,10 @@
 
 #include "Config.h"
 #include "game/Achievements.h"
+#include "game/FadeWatch.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
+#include "game/Party.h"
 #include "game/QuestFilter.h"
 #include "game/QuestStageLayout.h"
 #include "game/RemotePlayers.h"
@@ -146,6 +148,7 @@ namespace QuestSync
 		};
 		std::optional<Locked>                            locked;
 		std::unordered_set<std::uint64_t>                lockWaitLogged;  // lock stages logged as waiting for their release
+		std::unordered_set<std::uint64_t>                openingWaitLogged;  // stages logged as waiting for the opening to end
 		std::optional<Clock::time_point>                 reportFrom;  // set on the first in-game poll
 		StageLog::Outbox<std::vector<std::uint8_t>>      outgoing;  // reports, kept or dropped while not connected
 		Clock::time_point                                nextPoll{};
@@ -165,6 +168,7 @@ namespace QuestSync
 		std::uint32_t                                    refused = 0;   // more than the queue holds
 		std::uint32_t                                    unknown = 0;   // stages the quest doesn't have
 		std::uint32_t                                    skipped = 0;   // not for this player (StageRules)
+		std::uint32_t                                    openingDropped = 0;  // the opening's, never shared (StageRules::IsOpening)
 		std::uint32_t                                    completed = 0;
 		std::uint32_t                                    repaired = 0;
 		std::uint32_t                                    released = 0;  // controls given back by the timeout
@@ -272,6 +276,19 @@ namespace QuestSync
 		{
 			const auto file = FileOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest));
 			return file ? StageRules::Find(*file, a_quest & 0x00FFFFFF, a_stage) : nullptr;
+		}
+
+		// A stage of the opening (Vault 111; StageRules::IsOpening): every player's own, never shared.
+		bool IsOpeningStage(const RE::TESQuest* a_quest, std::uint16_t a_stage)
+		{
+			const auto file = Official::IsOfficialForm(a_quest) ? FileOf(a_quest) : std::nullopt;
+			return file && StageRules::IsOpening(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
+		}
+
+		// This game or a friend's is still in the opening: nothing that moves the player is set (StageRules::Judge).
+		bool AnyoneInOpening()
+		{
+			return Story::InOpening() || Party::FriendInOpening();
 		}
 
 		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
@@ -424,6 +441,7 @@ namespace QuestSync
 		{
 			const auto id = a_quest->GetFormID();
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", id, a_stage).c_str());
+			FadeWatch::Arm(std::format("set {:08X} stage {}", id, a_stage));
 			knownStages[id] = std::max(a_quest->currentStage, a_stage);
 			if (const auto known = doneStages.find(id); known != doneStages.end()) {
 				StageLog::Insert(known->second, a_stage);
@@ -473,6 +491,7 @@ namespace QuestSync
 			if (rule && (rule->flags & StageRules::kMoves) && now.live) {
 				now.nearFriend = NearFriend(live->second.playerId);
 			}
+			now.opening = AnyoneInOpening();
 			switch (StageRules::Judge(rule, now)) {
 			case StageRules::Verdict::kSkip:
 				++skipped;
@@ -489,6 +508,12 @@ namespace QuestSync
 				if (lockWaitLogged.insert(Key(a_quest, a_stage)).second) {
 					REX::INFO("QuestSync: {:08X} '{}' stage {} takes the player's controls away; waiting for {:08X} stage {}, which gives them back",
 						a_quest, name ? name : "", a_stage, releaseId, lock ? lock->releaseStage : 0);
+				}
+				return StageLog::Set::kQuestWaits;
+			case StageRules::Verdict::kOpeningWaits:
+				if (openingWaitLogged.insert(Key(a_quest, a_stage)).second) {
+					REX::INFO("QuestSync: {:08X} '{}' stage {} moves the player; waiting while {} in the opening", a_quest, name ? name : "", a_stage,
+						Story::InOpening() ? "this game is" : "a friend's game is");
 				}
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
@@ -605,10 +630,13 @@ namespace QuestSync
 			StageRules::Situation now;
 			now.sharedStory = true;
 			now.held = combatHold;
+			now.opening = AnyoneInOpening();
 			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}
 			switch (StageRules::Judge(RuleFor(MQ105, 0), now)) {
+			case StageRules::Verdict::kOpeningWaits:
+				return;
 			case StageRules::Verdict::kWarn:
 				warnedAt = a_now;
 				Hud::Notify(Text::Format("quest.stuck_in", { { "quest", shown }, { "n", std::chrono::duration_cast<std::chrono::seconds>(StageRules::WARNING).count() } }));
@@ -620,6 +648,7 @@ namespace QuestSync
 			}
 			REX::WARN("QuestSync: MQ104 is at {} without its stage {}, and MQ105 never started; starting it", mq104->currentStage, MQ104_STARTS_MQ105);
 			RE::Console::ExecuteCommand(std::format("setstage {:08X} {}", MQ105, MQ105_FIRST).c_str());
+			FadeWatch::Arm(std::format("set {:08X} stage {}", MQ105, MQ105_FIRST));
 			++repaired;
 			Hud::Notify(Text::Format("quest.stuck", { { "quest", shown } }));
 		}
@@ -648,6 +677,9 @@ namespace QuestSync
 				}
 				++quests;
 				for (const auto stage : done) {
+					if (IsOpeningStage(quest, stage)) {
+						continue;  // every player's own
+					}
 					if (baseline.size() < MAX_BASELINE) {
 						baseline.push_back({ quest->GetFormID(), stage, IsStory(quest) });
 					} else {
@@ -688,6 +720,15 @@ namespace QuestSync
 		}
 		const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_stage.quest);
 		if (!quest || !Shared(quest) || StageLog::Finished(quest->data.flags) || IsSettled(a_stage.quest, a_stage.stage)) {
+			return;
+		}
+		// The opening is every player's own (Vault 111): a friend's stage of it, from an older version's report or a
+		// session file that has one, would pull the player back into the vault's cryopod or start its scenes.
+		if (IsOpeningStage(quest, a_stage.stage)) {
+			if (openingDropped++ == 0) {
+				REX::INFO("QuestSync: not setting {:08X} stage {}: it is the opening's, which every player plays in their own game (and any more like it)",
+					a_stage.quest, a_stage.stage);
+			}
 			return;
 		}
 		// A stage this quest doesn't have would only be set, never read done, and hold up the real ones.
@@ -879,6 +920,9 @@ namespace QuestSync
 			}
 			fresh = unstarted.Take(id, std::move(fresh), now);
 			for (const auto stage : fresh) {
+				if (IsOpeningStage(quest, stage)) {
+					continue;  // the opening is every player's own: a stage of it done here (the vault's 110 outside) isn't reported
+				}
 				outgoing.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), story);
 				++reported;
 			}
@@ -913,6 +957,7 @@ namespace QuestSync
 		warnedAt.reset();
 		sceneSince.reset();
 		lockWaitLogged.clear();
+		openingWaitLogged.clear();
 		waitLogged.clear();
 		remoteStageAt.clear();
 		startedHere.clear();
@@ -940,6 +985,7 @@ namespace QuestSync
 		warnedAt.reset();
 		sceneSince.reset();
 		lockWaitLogged.clear();
+		openingWaitLogged.clear();
 		waitLogged.clear();
 		unstarted.Clear();
 		locked.reset();  // the save says whether the player has their controls (waiting.Clear drops the queue's)
@@ -958,8 +1004,8 @@ namespace QuestSync
 
 	std::string Describe()
 	{
-		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
-			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, unknown, refused, completed, repaired, released, outgoing.Size(),
+		return std::format("quests: reported={} baseline={} applied={} caughtUp={} startedHere={} waiting={} setting={} gaveUp={} skipped={} openingStages={} unknown={} refused={} completed={} repaired={} released={} unsent={} unstarted={}{}",
+			reported, baselined, applied, caughtUp, startedHere.size(), waiting.Size(), waiting.Setting(), gaveUp, skipped, openingDropped, unknown, refused, completed, repaired, released, outgoing.Size(),
 			unstarted.Size(), locked ? " locked" : "");
 	}
 }

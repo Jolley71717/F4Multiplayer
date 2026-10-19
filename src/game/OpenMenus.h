@@ -20,6 +20,7 @@ namespace OpenMenus
 	{
 		kConsole,
 		kDialogue,
+		kFader,  // FaderMenu: the screen fading to or from black (Game.FadeOutGame, a loading screen), or held black
 		kLooks,
 		kPause,
 		kPipboy,
@@ -30,7 +31,7 @@ namespace OpenMenus
 	};
 
 	// The game's names for them (MenuOpenCloseEvent::menuName), in Menu's order.
-	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "LooksMenu", "PauseMenu", "PipboyMenu",
+	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "FaderMenu", "LooksMenu", "PauseMenu", "PipboyMenu",
 		"PowerArmorModMenu", "VATSMenu", "WorkshopMenu" };
 
 	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):

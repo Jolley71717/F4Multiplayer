@@ -13,6 +13,7 @@
 #include "game/EnemySpawn.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/FadeWatch.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
 #include "game/MenuMessages.h"
@@ -2713,6 +2714,24 @@ namespace DevCommands
 		std::uint32_t                         poisonId = 0;
 		std::chrono::steady_clock::time_point poisonDisabledAt{};
 
+		// The fade guard (FadeWatch): its state; "in" fades the screen back in; "stuck" fades it out to stay, as the
+		// session's doing, for the guard to fade back in after FadeGuard::STUCK_AFTER of play.
+		std::string FadeCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return std::format("{} faderMenu={}", FadeWatch::Describe(), OpenMenus::Open(OpenMenus::Menu::kFader));
+			}
+			if (args[0] == "in") {
+				return FadeWatch::FadeIn() ? "queued" : "error: no script VM";
+			}
+			if (args[0] == "stuck") {
+				FadeWatch::Arm("faded the screen out to stay (dev command)");
+				return FadeWatch::FadeOutAndStay() ? "queued" : "error: no script VM";
+			}
+			return "error: fade [in | stuck]";
+		}
+
 		// saveguard [strays | rtti <global offset> | exclude <ref> | poison <ref> <save name>]
 		// strays lists each stray with whose it is and what a save and a load would do with it.
 		// rtti names the class of the object a global of the game's points to (checks an address).
@@ -2865,6 +2884,7 @@ namespace DevCommands
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
+			Entry{ "fade", FadeCommand },
 			Entry{ "wsbenches", WsBenches },
 			Entry{ "menus", Menus },
 			Entry{ "input", Input },

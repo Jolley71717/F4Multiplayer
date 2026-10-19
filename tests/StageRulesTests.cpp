@@ -165,3 +165,62 @@ TEST("stage rules: a friend's stage that starts its quest here is judged and hel
 	CHECK(StageRules::Judge(&*vault, { .live = true }) == Verdict::kSkip);  // Vault 81's 400 takes the player's fusion cores
 	CHECK((FlagsOf(0x0B8464, 400) & StageRules::kPays) != 0);
 }
+
+TEST("stage rules: the opening's stages (Vault 111) are every player's own, never shared")
+{
+	using StageRules::IsOpening;
+	// MQ102 until the player first steps out of the vault (its 10, set by the trigger at the top of the lift).
+	for (std::uint16_t stage = 0; stage < 10; ++stage) {
+		CHECK(IsOpening(File::kFallout4, 0x01CC2A, stage));
+	}
+	CHECK(!IsOpening(File::kFallout4, 0x01CC2A, 10));
+	CHECK(!IsOpening(File::kFallout4, 0x01CC2A, 65));  // MQ102 goes on outside, with Codsworth and Concord
+	// The vault's dialogue quest, all of it: the cryopod (40), the vault door (95), the mirror (98), the lift (100),
+	// outside (110). Its stages aren't in order, so each game has a different set; a friend's would be set here.
+	for (const std::uint16_t stage : { 40, 55, 56, 57, 58, 60, 65, 70, 72, 74, 95, 97, 98, 100, 110 }) {
+		CHECK(IsOpening(File::kFallout4, 0x01ED62, stage));
+	}
+	// Only Fallout4.esm's: Far Harbor's form IDs are another file's.
+	CHECK(!IsOpening(File::kCoast, 0x01CC2A, 0));
+	CHECK(!IsOpening(File::kCoast, 0x01ED62, 40));
+	CHECK(!IsOpening(File::kFallout4, 0x01F25E, 0));  // MQ104
+}
+
+TEST("stage rules: the fades and the endings' slides move the player")
+{
+	using namespace StageRules;
+	CHECK(FlagsOf(0x01ED62, 40) == kMoves);  // DialogueVault111: CryoPod.Activate(player), into the vault's pod
+	CHECK(FlagsOf(0x01CC2A, 4) == kMoves);   // MQ102: the Pip-Boy's image-space effect
+	// The endings: they fade to black and play the slides, needed all the same (they finish the story).
+	CHECK(FlagsOf(0x0229EE, 850) == (kMoves | kBridge));  // MQ302: FadetoBlackImod
+	CHECK(FlagsOf(0x0229EE, 855) == (kMoves | kBridge));  // MQ302: EndGameBinks
+	CHECK(FlagsOf(0x0C9B0B, 50) == (kMoves | kBridge));   // MQ00
+	CHECK(FlagsOf(0x0C9B0B, 60) == (kMoves | kBridge));
+	CHECK(FlagsOf(0x0BAD00, 30) == (kMoves | kBridge));   // Inst308
+	// The waits were kept.
+	CHECK(Hold(Find(0x0229EE, 850)) == 26s);
+}
+
+TEST("stage rules: nothing that moves the player is set while a game in the session is in the opening")
+{
+	using namespace StageRules;
+	const Rule plain{ 0, 0x1, 10, 0, 0 };
+	const Rule pays{ 0, 0x1, 10, kPays, 0 };
+	const Rule moves{ 0, 0x1, 10, kMoves, 0 };
+	const Rule bridge{ 0, 0x1, 10, kMoves | kBridge, 0 };
+
+	// Live and beside the friend who did it, warned, in no fight: it waits, its quest only.
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = true }) == Verdict::kOpeningWaits);
+	CHECK(Judge(&bridge, { .live = true, .nearFriend = true, .opening = true }) == Verdict::kOpeningWaits);
+	CHECK(Judge(&bridge, { .live = false, .opening = true, .warned = WARNING }) == Verdict::kOpeningWaits);
+	CHECK(Judge(&bridge, { .live = false, .opening = true }) == Verdict::kOpeningWaits);  // no warning while it can't come
+	// ... and once the opening is over, as before.
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = false }) == Verdict::kSet);
+	CHECK(Judge(&bridge, { .live = false, .opening = false }) == Verdict::kWarn);
+	// What doesn't move the player goes on; a payment is never made.
+	CHECK(Judge(&plain, { .live = true, .opening = true }) == Verdict::kSet);
+	CHECK(Judge(nullptr, { .live = false, .opening = true }) == Verdict::kSet);
+	CHECK(Judge(&pays, { .live = true, .nearFriend = true, .opening = true }) == Verdict::kSkip);
+	// A stuck story's MQ105 (QuestSync::RepairStory) waits too: its start moves the player.
+	CHECK(Judge(Find(0x0229E6, 0), { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+}
