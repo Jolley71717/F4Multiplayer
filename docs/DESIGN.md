@@ -737,9 +737,12 @@ Trade-offs:
 Message: `kReportWorkshopPower` 62, `kWorkshopPower` 162: playerId (u32, stamped), a count (u8, at least 1), then
 per entry a reference (u32, runtime range only) and its state (u8, 0 or 1). Protocol 46.
 
-Dev: `wsgrid [bench]` (each grid's nodes, links and powered pieces, with any copy or deleted reference it names),
-`wspower` (counters), `wspower block on|off` (copies pickable again, to try the repair), `wspower audit`, `wspower
-show <ref> on|off`, and `wsinfo <ref>` (now with `blocked=`, `powerPiece=` and `powered=`).
+Dev: `wsgrid [bench]` (each grid's nodes, links and powered pieces, with any copy or deleted reference it names; for
+one workbench, the pieces too), `wspower` (counters), `wspower block on|off` (copies pickable again, to try the
+repair), `wspower audit`, `wspower copies` (each copy and whose piece it is), `wspower show <ref> on|off`,
+`wswire <from> <to>` (a wire strung as the game strings one, for the rig), `net leave` / `net stophost` (end the
+session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, and for a copy
+`builder=`, `theirRef=` and `theirPower=`).
 
 ## Status (2026-10-09)
 

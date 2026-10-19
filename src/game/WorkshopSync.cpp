@@ -2097,6 +2097,14 @@ namespace WorkshopSync
 			for (const auto& grid : grids) {
 				const auto named = WorkshopPower::Named(grid);
 				out += std::format(" [nodes={} links={} powered={}", grid.nodes.size(), grid.edges.size(), grid.powered.size());
+				if (a_bench) {  // one workbench asked for: its grids' pieces too
+					for (std::size_t i = 0; i < grid.nodes.size() && i < 8; ++i) {
+						out += std::format(" n{:08X}", grid.nodes[i]);
+					}
+					for (std::size_t i = 0; i < grid.edges.size() && i < 8; ++i) {
+						out += std::format(" e{:08X}>{:08X}/{:08X}", grid.edges[i].node, grid.edges[i].connection, grid.edges[i].connector);
+					}
+				}
 				for (const auto id : named) {
 					const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
 					if (engine.IsCopy(id) || (ref && Blocked(*ref))) {
