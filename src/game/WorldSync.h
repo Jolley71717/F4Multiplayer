@@ -11,8 +11,8 @@ namespace LootSync
 
 // Shared world state: things that happen in one player's world are replayed in everyone's.
 // Actor deaths and health, container contents, picked-up items, doors and locks (and the stages that open the doors
-// only a quest's script opens: ScriptDoors), and (through QuestSync) quest stages. Also forwards NPC hits on remote
-// players' stand-ins. Main thread only.
+// only a quest's script opens: ScriptDoors; and the security gates run by the game's two-state script: SharedGates),
+// and (through QuestSync) quest stages. Also forwards NPC hits on remote players' stand-ins. Main thread only.
 //
 // Remote changes are applied only while the player is in the world (not during loading screens
 // or at the main menu) and to loaded references; anything else waits until it can be applied.

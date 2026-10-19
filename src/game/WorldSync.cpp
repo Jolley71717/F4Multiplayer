@@ -18,7 +18,9 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/Papyrus.h"
 #include "game/ScriptDoors.h"
+#include "game/SharedGates.h"
 #include "game/Spawns.h"
 #include "game/Story.h"
 #include "game/WeaponFire.h"
@@ -129,6 +131,16 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 		DoorShare::Book                                        refBook;      // what the session last said of each door: a world state's repeats aren't applied again
 		std::unordered_map<std::uint32_t, bool>                opensShared;  // per reference with an open state: whether a player's opening it is shared
+
+		// Security gates and the like, run by the game's two-state script (SharedGates): their open state is shared as a
+		// door's is, and applied here through the script.
+		std::unordered_map<std::uint32_t, bool>              gates;         // per loaded activator: whether it is a shared gate
+		std::unordered_map<std::uint32_t, Clock::time_point> gateLoads;     // activators the game loaded in the last moments (SharedGates::LOAD_SETTLE)
+		SharedGates::Applied                                 gatesApplied;  // gates we set from another player's state, until they get there
+		std::unordered_set<std::uint32_t>                    gateBasesOut, gateRefsOut;  // SharedGates::NOT_A_WAY and NEVER, by this game's IDs
+		Clock::time_point                                    applyingSince{};            // since when remote changes could be applied, without a break
+		bool                                                 wasApplying = false;
+		std::uint32_t                                        gatesSet = 0, gateReportsHeld = 0, gatePressesLeft = 0;
 
 		// Doors only a quest stage opens (ScriptDoors: Vault 114's gear door): the stage is shared, and set here once
 		// its door is loaded.
@@ -1053,8 +1065,106 @@ namespace WorldSync
 			return shared;
 		}
 
+		// SharedGates::NOT_A_WAY and NEVER by the IDs this game has them under, once its data is loaded.
+		void ResolveGateLists()
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler || !gateBasesOut.empty() || !gateRefsOut.empty()) {
+				return;
+			}
+			for (const auto& base : SharedGates::NOT_A_WAY) {
+				if (const auto id = handler->LookupFormID(base.id, base.file)) {
+					gateBasesOut.insert(id);
+				}
+			}
+			for (const auto& ref : SharedGates::NEVER) {
+				if (const auto id = handler->LookupFormID(ref.id, ref.file)) {
+					gateRefsOut.insert(id);
+				}
+			}
+		}
+
+		// Whether a loaded reference is a gate whose open state is shared (SharedGates::Shares): an activator that runs
+		// the game's two-state script and no other. Worked out once per reference, while it is loaded (its scripts are
+		// bound to it then); false, and asked again later, while it isn't.
+		bool IsSharedGate(RE::TESObjectREFR* a_ref)
+		{
+			if (!a_ref) {
+				return false;
+			}
+			if (const auto it = gates.find(a_ref->GetFormID()); it != gates.end()) {
+				return it->second;
+			}
+			const auto base = a_ref->GetObjectReference();
+			if (!base || !base->Is(RE::ENUM_FORM_ID::kACTI)) {
+				gates.emplace(a_ref->GetFormID(), false);
+				return false;
+			}
+			if (!a_ref->Get3D() || a_ref->IsDeleted()) {
+				return false;
+			}
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!vm) {
+				return false;
+			}
+			SharedGates::Facts facts;
+			facts.activator = true;
+			facts.listedOut = gateBasesOut.contains(base->GetFormID()) || gateRefsOut.contains(a_ref->GetFormID());
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), a_ref);
+			if (handle != handles.EmptyHandle()) {
+				const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+					const auto type = a_object ? a_object->type.get() : nullptr;
+					const char* name = type ? type->GetName() : nullptr;
+					if (name && *name && _stricmp(name, "ObjectReference") != 0) {
+						++facts.scripts;
+						if (SharedGates::IsGateScript(name)) {
+							++facts.gateScripts;
+						}
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				} };
+				vm->ForEachBoundObject(handle, visit);
+			}
+			const bool shared = SharedGates::Shares(facts);
+			if (shared) {
+				REX::INFO("WorldSync: {:08X} (base {:08X}) is a two-state gate; its open state is shared", a_ref->GetFormID(), base->GetFormID());
+			} else if (facts.gateScripts > 0) {
+				REX::INFO("WorldSync: {:08X} (base {:08X}) runs the two-state script {}; its open state isn't shared", a_ref->GetFormID(), base->GetFormID(),
+					facts.listedOut ? "but is listed out (not a way through, or the story's)" : std::format("with {} other script(s)", facts.scripts - facts.gateScripts));
+			}
+			gates.emplace(a_ref->GetFormID(), shared);
+			return shared;
+		}
+
+		// What a shared gate's script says of it, or nullopt if there is no script object to read (yet).
+		std::optional<SharedGates::ScriptState> ReadGate(RE::TESObjectREFR* a_ref)
+		{
+			const auto object = Papyrus::BoundObject(a_ref, SharedGates::SCRIPT, false);
+			if (!object) {
+				return std::nullopt;
+			}
+			const auto isOpen = object->GetProperty(RE::BSFixedString{ "isOpen" });
+			if (!isOpen || !isOpen->is<bool>()) {
+				return std::nullopt;
+			}
+			SharedGates::ScriptState state;
+			state.open = RE::BSScript::get<bool>(*isOpen);
+			const auto current = object->currentState.c_str();
+			state.busy = current && _stricmp(current, "busy") == 0;
+			return state;
+		}
+
+		// When the game last loaded this activator, if it was a moment ago (SharedGates::Settled).
+		std::optional<Clock::time_point> GateLoadedAt(std::uint32_t a_ref)
+		{
+			const auto it = gateLoads.find(a_ref);
+			return it != gateLoads.end() ? std::optional{ it->second } : std::nullopt;
+		}
+
 		// The shared open/lock state of a loaded reference (see DoorShare::Shared; either part may be
-		// unknown), or nullopt if it isn't loaded.
+		// unknown), or nullopt if it isn't loaded. A shared gate's open state is where its script is taking it.
 		std::optional<Protocol::RefState> ReadRefState(RE::TESObjectREFR* a_ref)
 		{
 			if (!a_ref || a_ref->IsDeleted() || !a_ref->Get3D() || a_ref->As<RE::Actor>()) {
@@ -1062,6 +1172,15 @@ namespace WorldSync
 			}
 			using Open = RE::BGSOpenCloseForm::OPEN_STATE;
 			Protocol::RefState state{ a_ref->GetFormID() };
+			if (IsSharedGate(a_ref)) {
+				if (const auto gate = ReadGate(a_ref)) {
+					state.open = SharedGates::Target(*gate) ? Protocol::RefState::kYes : Protocol::RefState::kNo;
+				}
+				if (const auto lock = a_ref->GetLock()) {
+					state.locked = (lock->flags & std::to_underlying(RE::REFR_LOCK::Flags::kLocked)) ? Protocol::RefState::kYes : Protocol::RefState::kNo;
+				}
+				return state;
+			}
 			switch (RE::BGSOpenCloseForm::GetOpenState(a_ref)) {
 			case Open::kOpen:
 			case Open::kOpening:
@@ -1097,6 +1216,17 @@ namespace WorldSync
 			if (!current) {
 				return ref && ref->IsDeleted();  // gone for good: drop it
 			}
+			// A shared gate is opened or closed through its script, once it has settled after loading (SharedGates).
+			const bool gate = a_state.open != Protocol::RefState::kUnknown && IsSharedGate(ref);
+			std::optional<SharedGates::Apply> gateApply;
+			if (gate) {
+				const auto now = Clock::now();
+				const bool open = a_state.open == Protocol::RefState::kYes;
+				gateApply = SharedGates::Decide(open, ReadGate(ref), SharedGates::Settled(GateLoadedAt(a_state.refId), applyingSince, now));
+				if (*gateApply == SharedGates::Apply::kWait) {
+					return false;
+				}
+			}
 			if (!DoorShare::Says(*current)) {
 				return true;  // here, and nothing of it is shared (an elevator's open state is its script's)
 			}
@@ -1105,6 +1235,20 @@ namespace WorldSync
 				ref->AddLockChange();
 				++refStatesApplied;
 				REX::INFO("WorldSync: {:08X} {} (changed in another player's world)", a_state.refId, a_state.locked == Protocol::RefState::kYes ? "locked" : "unlocked");
+			}
+			if (gate) {
+				if (*gateApply == SharedGates::Apply::kSet) {
+					const bool open = a_state.open == Protocol::RefState::kYes;
+					// As a terminal does: the script plays the animation and turns the gate's collision off or on.
+					if (!Papyrus::CallMethod(ref, SharedGates::SCRIPT, "SetOpenNoWait", false, open)) {
+						return false;
+					}
+					gatesApplied.Set(a_state.refId, open, Clock::now());
+					++gatesSet;
+					++refStatesApplied;
+					REX::INFO("WorldSync: {} gate {:08X} (changed in another player's world)", open ? "opening" : "closing", a_state.refId);
+				}
+				return true;
 			}
 			if (a_state.open != Protocol::RefState::kUnknown && current->open != Protocol::RefState::kUnknown && a_state.open != current->open) {
 				RE::BGSOpenCloseForm::SetOpenState(ref, a_state.open == Protocol::RefState::kYes, false);
@@ -1128,6 +1272,21 @@ namespace WorldSync
 			return a_link.REFR;
 		}
 
+		// The references a reference links to (any keyword), as far as they can be had.
+		template <class F>
+		void ForEachLinked(RE::TESObjectREFR* a_ref, F&& a_visit)
+		{
+			const auto links = a_ref && a_ref->extraList ? a_ref->extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+			if (!links) {
+				return;
+			}
+			for (const auto& link : links->linkedRefs) {
+				if (const auto target = LinkedTarget(*links, link)) {
+					a_visit(target);
+				}
+			}
+		}
+
 		// Starts watching references the player activated, and reports changes to watched ones.
 		void WatchRefStates(Clock::time_point a_now, const std::vector<Activation>& a_activations)
 		{
@@ -1135,17 +1294,34 @@ namespace WorldSync
 				auto& entry = watched[activation.ref];
 				entry.until = a_now + WATCH_TIME;
 				// What the thing is linked to is watched as well: a terminal's door opens without anyone
-				// activating the door, and the friend would otherwise stay locked out.
-				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(activation.ref);
-				const auto links = ref && ref->extraList ? ref->extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
-				if (links) {
-					for (const auto& link : links->linkedRefs) {
-						const auto target = LinkedTarget(*links, link);
-						if (target && Protocol::IsShareableRef(target->GetFormID())) {
-							watched[target->GetFormID()].until = a_now + WATCH_TIME;
-							++linkedWatched;
+				// activating the door, and the friend would otherwise stay locked out. A terminal opens a chain of
+				// gates, each linking the next: the gates linked from a gate are followed too (SharedGates::CHAIN_DEPTH).
+				std::vector<RE::TESObjectREFR*> chain;
+				ForEachLinked(RE::TESForm::GetFormByID<RE::TESObjectREFR>(activation.ref), [&](RE::TESObjectREFR* a_target) {
+					if (Protocol::IsShareableRef(a_target->GetFormID())) {
+						watched[a_target->GetFormID()].until = a_now + WATCH_TIME;
+						++linkedWatched;
+						if (IsSharedGate(a_target)) {
+							chain.push_back(a_target);
 						}
 					}
+				});
+				std::unordered_set<std::uint32_t> seen{ activation.ref };
+				for (std::size_t depth = 0; depth < SharedGates::CHAIN_DEPTH && !chain.empty(); ++depth) {
+					std::vector<RE::TESObjectREFR*> next;
+					for (const auto gate : chain) {
+						seen.insert(gate->GetFormID());
+						ForEachLinked(gate, [&](RE::TESObjectREFR* a_target) {
+							const auto id = a_target->GetFormID();
+							if (Protocol::IsShareableRef(id) && !seen.contains(id) && IsSharedGate(a_target)) {
+								seen.insert(id);
+								watched[id].until = a_now + WATCH_TIME;
+								++linkedWatched;
+								next.push_back(a_target);
+							}
+						});
+					}
+					chain = std::move(next);
 				}
 			}
 			for (auto it = watched.begin(); it != watched.end();) {
@@ -1153,6 +1329,14 @@ namespace WorldSync
 				const auto state = ReadRefState(ref);
 				if (!state || !DoorShare::Says(*state) || a_now > it->second.until) {
 					it = watched.erase(it);
+					continue;
+				}
+				// A gate we set from a friend's state reads as it was until its script gets round to it: not sent back.
+				if (state->open != Protocol::RefState::kUnknown && gatesApplied.Holds(it->first, state->open == Protocol::RefState::kYes, a_now)) {
+					if (!state->SameState(it->second.lastSent)) {
+						++gateReportsHeld;
+					}
+					++it;
 					continue;
 				}
 				// The same state is no news whoever said it: one we took from a friend names them, ours doesn't.
@@ -1379,6 +1563,7 @@ namespace WorldSync
 		}
 		FindVendorChests();
 		ResolveScriptDoors();
+		ResolveGateLists();
 	}
 
 	void OnWelcome(bool a_friendlyFire)
@@ -1418,7 +1603,8 @@ namespace WorldSync
 				const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_state.refId);
 				if (ref && ref->Get3D()) {
 					const auto senderAt = RemotePlayers::PositionOf(a_state.playerId);
-					if (!senderAt || senderAt->GetDistance(ref->data.location) > ACTIVATION_REACH) {
+					const auto reach = IsSharedGate(ref) ? SharedGates::REACH : ACTIVATION_REACH;  // a gate's terminal can be down the corridor
+					if (!senderAt || senderAt->GetDistance(ref->data.location) > reach) {
 						++refStatesRefused;
 						REX::INFO("WorldSync: {:08X} state from player {} refused: they are {} away", a_state.refId, a_state.playerId, senderAt ? std::format("{:.0f}", senderAt->GetDistance(ref->data.location)) : "nowhere known");
 						return;
@@ -1466,6 +1652,12 @@ namespace WorldSync
 		}
 		const auto base = ref->GetObjectReference();
 		if (!base || !base->Is(RE::ENUM_FORM_ID::kACTI)) {
+			return;
+		}
+		// A shared gate pressed by hand: its state follows (SharedGates), where a replayed press would toggle it, the
+		// wrong way if ours and theirs disagree.
+		if (IsSharedGate(ref)) {
+			++gatePressesLeft;
 			return;
 		}
 		// Only a press by someone standing at the thing: a report naming a far-away activator (or
@@ -1747,6 +1939,19 @@ namespace WorldSync
 			const auto parent = player ? player->GetParentCell() : nullptr;
 			cell = parent ? parent->GetFormID() : 0;
 		}
+		// A gate just loaded, or just come back to after a loading screen, runs its OnLoad first (SharedGates::Settled).
+		if (inWorld && !wasApplying) {
+			applyingSince = now;
+		}
+		wasApplying = inWorld;
+		std::erase_if(gateLoads, [&](const auto& a_entry) { return now - a_entry.second > SharedGates::LOAD_SETTLE; });
+		for (const auto id : newRefLoads) {
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(id);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
+				gateLoads[id] = now;
+			}
+		}
 		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty();
 		const auto started = Clock::now();
 		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
@@ -1813,6 +2018,8 @@ namespace WorldSync
 		pendingRefStates.clear();
 		refBook.Clear();
 		opensShared.clear();
+		gates.clear();
+		gatesApplied.Clear();
 		scriptDoors.Clear();
 		scriptDoorsReported = false;
 		nextDoorLook = {};
@@ -1905,8 +2112,8 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size()) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} scriptDoors={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
-			   scriptDoors.PendingCount());
+			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size());
 	}
 }
