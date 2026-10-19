@@ -7,6 +7,7 @@
 #include "game/FrameWatch.h"
 #include "game/GpuWatch.h"
 #include "game/Hud.h"
+#include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
 #include "game/Perf.h"
@@ -809,6 +810,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
+	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {

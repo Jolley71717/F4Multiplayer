@@ -70,11 +70,13 @@ namespace WeaponFire
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
 
-	// Dev (handthrowable on|off, off at every start): the grenade is shown in the hand of a stand-in replaying a
-	// friend's throw, from its wind-up to its release (HandThrowable.h). Main thread, but for HandThrowables(), which
-	// the animation hook reads.
-	void               SetHandThrowables(bool a_on);
+	// The grenade is shown in the hand of a stand-in replaying a friend's throw, from its wind-up to its release
+	// (HandThrowable.h): set from bGrenadeInHand at load, and by the dev's handthrowable on|off|model (a_modelFallback:
+	// the model database's own node too, on a hand the engine gave no WeaponLeft). Main thread, but for
+	// HandThrowables(), which the animation hook reads.
+	void               SetHandThrowables(bool a_on, bool a_modelFallback = false);
 	[[nodiscard]] bool HandThrowables();
+	[[nodiscard]] bool HandModelFallback();
 
 	// Takes the model out of this actor's hand: called before the actor is deleted.
 	void DropHandThrowable(std::uint32_t a_actorFormId);

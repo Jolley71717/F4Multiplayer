@@ -11,11 +11,14 @@
 // grenade as equipped and hangs its model under the stand-in's LArm_Hand in a child named WeaponLeft, as on its own
 // throws, but keeps that node (and the model in it) culled: on a throw it did not start itself it never draws them
 // (seen on the rig, 2026-10-18). So at the replayed throw's weaponAttach(2) that culled WeaponLeft is drawn, and culled
-// again at the release and on every other way out (WeaponFire.cpp does the scene graph work). A hand with no WeaponLeft
-// gets the model the engine's model database keeps for the grenade, hung there itself (never a clone: round 3 cloned
-// it and crashed in BSGeometry::ProcessClone); a node has one parent, so that model hangs on one stand-in at a time.
-// A dev-channel experiment, off until `handthrowable on`. This is the bookkeeping, pure so it can be tested without
-// the game.
+// again at the release and on every other way out (WeaponFire.cpp does the scene graph work). These are the stand-in's
+// own nodes, made for it by the engine: nothing is hung, cloned or shared. On by default (bGrenadeInHand); the dev's
+// `handthrowable off` turns it off for the session.
+// Only with the dev's `handthrowable model` does a hand with no WeaponLeft get the model the engine's model database
+// keeps for the grenade, hung there itself (never a clone: round 3 cloned it and crashed in BSGeometry::ProcessClone);
+// a node has one parent, so that model hangs on one stand-in at a time. The rig never showed a hand without a
+// WeaponLeft, and the engine never draws the database's own node itself, so that stays an experiment. This is the
+// bookkeeping, pure so it can be tested without the game.
 namespace HandThrowable
 {
 	using Clock = std::chrono::steady_clock;
@@ -53,13 +56,14 @@ namespace HandThrowable
 	enum class Skip : std::uint8_t
 	{
 		kNone,
-		kOff,           // the dev toggle is off
-		kNotReplayed,   // not a friend's throw replayed here (an NPC's own throw, or one already let go of)
+		kOff,           // turned off (bGrenadeInHand = false, or the dev's handthrowable off)
+		kNotReplayed,  // not a friend's throw replayed here (an NPC's own throw, or one already let go of)
 		kNotLoaded,     // the actor is gone, dead or has no 3D
 		kNoHand,        // its 3D has no LArm_Hand node
 		kEngineShows,   // the engine hung its own WeaponLeft there: nothing of ours is needed
 		kNoThrowable,   // the engine lists no grenade or mine as equipped on it
 		kHolding,       // it holds ours already
+		kNoEngineNode,  // no culled WeaponLeft holding the grenade to draw, and the database's node is not allowed
 		kModelBusy,     // that model hangs on another stand-in (one parent per node)
 		kFull,          // MAX_HOLDS stand-ins hold one already
 	};
@@ -83,6 +87,8 @@ namespace HandThrowable
 			return "no throwable equipped";
 		case Skip::kHolding:
 			return "holds ours already";
+		case Skip::kNoEngineNode:
+			return "no WeaponLeft of the engine's to draw";
 		case Skip::kModelBusy:
 			return "the model hangs elsewhere";
 		case Skip::kFull:
@@ -95,7 +101,7 @@ namespace HandThrowable
 	enum class Drop : std::uint8_t
 	{
 		kKeep,
-		kOff,          // the dev toggle was turned off
+		kOff,          // turned off (the dev's handthrowable off), or the database's node no longer allowed
 		kGone,         // the actor is gone or dead, or its 3D was rebuilt (a cell change, a face or power armor rebuild)
 		kMoved,        // the model is no longer under the hand it was hung under
 		kEngineShows,  // the engine hung its own WeaponLeft meanwhile
@@ -140,6 +146,7 @@ namespace HandThrowable
 		bool          engineShows = false;  // ... which has a child named WeaponLeft that is drawn
 		bool          engineHides = false;  // ... or one holding the grenade's model, culled (a stand-in's: seen on the rig)
 		std::uint32_t throwable = 0;        // the grenade or mine the engine lists as equipped on it (0: none)
+		bool          modelFallback = false;  // the dev's handthrowable model: the database's node, for a hand with no WeaponLeft
 	};
 
 	// What the game shows of an actor holding our model, each frame.
@@ -186,6 +193,9 @@ namespace HandThrowable
 			}
 			if (holds.contains(a_actor)) {
 				return Skip::kHolding;
+			}
+			if (!a_seen.engineHides && !a_seen.modelFallback) {
+				return Skip::kNoEngineNode;
 			}
 			// Drawing a stand-in's own WeaponLeft shares nothing: only the database's node is one for every stand-in.
 			if (!a_seen.engineHides && ModelBusy(a_seen.throwable)) {

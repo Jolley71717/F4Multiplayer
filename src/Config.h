@@ -54,6 +54,11 @@ namespace Config
 		// (and what a stand-in falls back to when the engine builds no head, or when the engine could not be patched).
 		bool friendFaces = true;
 
+		// A friend's grenade, mine or Molotov is seen in their stand-in's hand through the throw's wind-up: the engine
+		// hangs it there but never draws it on a throw it did not start itself, so it is drawn for it (game/HandThrowable.h).
+		// Off: the stand-in throws from an empty fist, as 0.8.10 and earlier showed it.
+		bool grenadeInHand = true;
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
