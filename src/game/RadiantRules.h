@@ -140,7 +140,8 @@ namespace RadiantRules
 		kSource,    // by its conditions or the start's event: each game picks its own, so it is forced to the friend's
 		kByOthers,  // pushed in by other aliases as they fill ("forced by aliases": the quest's Workshop); forced too where it can be
 		kFixed,     // the same in every game: a forced reference or location, a unique actor, another quest's alias
-		kDerived,   // from another alias (its location's boss, map marker), near one, or made at runtime: follows the rest
+		kDerived,   // from another alias (its location's boss, map marker), near one, or made at runtime: follows the rest; forced
+		            // too where it can be (MakePlan), never a reason to fall back
 	};
 
 	// An alias as the game files it.
@@ -238,9 +239,10 @@ namespace RadiantRules
 
 	// The fills the friend's game picked for the aliases that each game picks for itself, as this game's: a_resolve(kind,
 	// form) gives this game's form for theirs (the same plugin reference or location if it is here, our NPC under a
-	// spawn id) or nothing. The ones pushed in by other aliases are forced where they can be and otherwise left to the
-	// aliases that push them, as in the friend's game. Every fill they sent must be one of this quest's aliases (their
-	// game's files and ours are the same).
+	// spawn id) or nothing. The ones pushed in by other aliases, or that follow from others, are forced too where they can
+	// be (a settlement has two settlers with its boss's location reference type, and each game may take either; the boss is
+	// then pushed into the spokesman), and otherwise left to the aliases they follow, as in the friend's game. Every fill
+	// they sent must be one of this quest's aliases (their game's files and ours are the same).
 	template <class Resolve>
 	Plan MakePlan(std::span<const Alias> a_aliases, std::span<const Protocol::RadiantFill> a_fills, Resolve&& a_resolve)
 	{
@@ -253,13 +255,13 @@ namespace RadiantRules
 			}
 		}
 		for (const auto& alias : a_aliases) {
-			if (alias.fill != Fill::kSource && alias.fill != Fill::kByOthers) {
+			if (alias.fill == Fill::kFixed) {
 				continue;
 			}
 			const auto          fill = FillFor(a_fills, alias);
 			const std::uint32_t form = fill ? fill->form : 0;
 			if (form == 0) {
-				if (alias.fill == Fill::kByOthers) {
+				if (alias.fill != Fill::kSource) {
 					continue;
 				}
 				if (!alias.optional) {
@@ -271,7 +273,7 @@ namespace RadiantRules
 			}
 			const std::optional<std::uint32_t> local = a_resolve(alias.kind, form);
 			if (!local || *local == 0) {
-				if (alias.fill == Fill::kByOthers) {
+				if (alias.fill != Fill::kSource) {
 					continue;
 				}
 				plan.fallback = Why(alias, form);

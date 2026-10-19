@@ -100,7 +100,7 @@ TEST("radiants: an alias is forced when each game picks it itself (conditions, t
 	CHECK(LocFill(0, ALIAS_BY_OTHERS | ALIAS_OPTIONAL) == Fill::kByOthers);
 }
 
-TEST("radiants: a friend's run is started here with their settlement and place; what follows from them isn't forced")
+TEST("radiants: a friend's run is started here with their settlement and place; what follows from them is forced where this game has it too")
 {
 	const std::vector<RadiantFill> fills{
 		{ 19, 0, TENPINES_WORKSHOP }, { 17, 0, 0 }, { 20, 0, TENPINES_WORKSHOP }, { 9, 0, TENPINES_WORKSHOP },
@@ -113,8 +113,11 @@ TEST("radiants: a friend's run is started here with their settlement and place; 
 		{ 17, REF, 0 },  // empty in their game, optional: left empty here too
 		{ 20, REF, TENPINES_WORKSHOP },
 		{ 9, REF, TENPINES_WORKSHOP },  // pushed in by the others there; forced here as well
+		{ 2, LOC, LEXINGTON },  // follows from the workshop: forced too, so a pick between two can't differ
 		{ 4, LOC, CORVEGA },
-		// The spokesman, a settler their game made, is left to the aliases that push it in (as there).
+		{ 8, REF, 0x0001A2B3 },
+		// The spokesman, a settler their game made, is left to the aliases that push it in (as there); Preston is the
+		// same everywhere.
 	};
 	CHECK(plan.forces == want);
 }
