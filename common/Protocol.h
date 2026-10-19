@@ -46,6 +46,12 @@ namespace Protocol
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
+	// A ContainerChange whose item is this (count -1) says its container or corpse was emptied of everything the
+	// session shares: each game rolls a chest's and an NPC's leveled loot on its own, so the receiver gives up every
+	// shared stack its own copy holds (LootSync). The player's reference is never an inventory item, so an older
+	// build takes it for something it can't share and leaves it, and an older server keeps and numbers it like any.
+	inline constexpr std::uint32_t CONTAINER_EMPTIED = PLAYER_REF_ID;
+
 	// References are shared by form ID, which matches for everyone because the load order must.
 	// A coordinate the game world can hold: finite and well inside the engine's limits (the Commonwealth
 	// spans about 150,000 units; a value like 1e38 from a bad client would break cell lookup).

@@ -7,6 +7,7 @@
 
 #include <random>
 
+#include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/EnemyList.h"
@@ -812,6 +813,29 @@ namespace DevCommands
 			return Equipment::DescribeInventory(actor);
 		}
 
+		// contents <refHex>: every stack a container, a corpse or any reference holds ("<form> x<count>"), or "no inventory" when
+		// the engine has made none for it yet (a container never loaded in this game). Read only.
+		std::string Contents(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: usage: contents <refHex>";
+			}
+			const auto list = ref->inventoryList;
+			if (!list) {
+				return std::format("{:08X}: no inventory", ref->GetFormID());
+			}
+			std::string out = std::format("{:08X}:", ref->GetFormID());
+			std::size_t stacks = 0;
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (entry.object && stacks++ < 60) {
+					out += std::format(" {:08X}x{}", entry.object->GetFormID(), entry.GetCount());
+				}
+			}
+			return stacks ? out + std::format(" ({} stacks)", stacks) : out + " empty";
+		}
+
 		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
 		// its release: the engine's own culled WeaponLeft is drawn, or failing one the model database's own node is hung
 		// there (HandThrowable.h, docs/GRENADE-IN-HAND.md round 4). Off at every start; off takes every one out at once.
@@ -1182,7 +1206,11 @@ namespace DevCommands
 		std::string RefInfo(std::string_view a_args)
 		{
 			const auto ref = LookupRef(a_args);
-			return ref ? DescribeRef(ref) : "error: no such reference";
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto actor = ref->As<RE::Actor>();
+			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
 		}
 
 		// setpos <refHex> <x> <y> <z> [rz degrees]
@@ -2809,6 +2837,7 @@ namespace DevCommands
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "inventory", Inventory },
+			Entry{ "contents", Contents },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },

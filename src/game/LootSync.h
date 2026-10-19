@@ -31,11 +31,25 @@ namespace LootSync
 		std::int32_t  count = 0;  // < 0: taken from the holder
 	};
 
+	// One stack a holder has, as the game reads it.
+	struct Stack
+	{
+		std::uint32_t item = 0;  // base form
+		std::int32_t  count = 0;
+		bool          questAlias = false;  // it fills a quest alias
+	};
+
 	// What the game says about the references and forms involved, and how a change goes into it.
 	class World
 	{
 	public:
 		virtual ~World() = default;
+
+		// What the holder has now (for an emptied holder: Protocol::CONTAINER_EMPTIED). Nothing, by default.
+		virtual std::vector<Stack> Stacks(std::uint32_t) { return {}; }
+		// The game has made the holder's inventory (a container rolls its leveled loot as it first loads): an emptied
+		// holder waits until then, or its first load would fill it after all.
+		virtual bool               Stocked(std::uint32_t) { return true; }
 
 		// The holder can be changed now: we are in the world (out of the opening) and its reference is here.
 		virtual bool                   Loaded(std::uint32_t a_holder) = 0;
@@ -74,19 +88,27 @@ namespace LootSync
 			std::uint32_t sent = 0;            // the player's moves reported
 			std::uint32_t pendingDropped = 0;  // waiting changes given up (a living NPC that never died, or no room)
 			std::uint32_t pendingFull = 0;     // of those, for want of room
+			std::uint32_t emptiedSent = 0;     // holders the player took the last shared stack from (CONTAINER_EMPTIED)
+			std::uint32_t emptiedApplied = 0;  // other players' emptied holders emptied here
+			std::uint32_t emptiedStacks = 0;   // stacks those took out of our world
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
 
 		// The player's moves since the last frame (or, before a save or a load, the frame that didn't come):
-		// those that are the session's, encoded to go to the server in order.
+		// those that are the session's, encoded to go to the server in order. A holder the player took the
+		// session's things from and that has none of them left goes out emptied after them (CONTAINER_EMPTIED):
+		// each game rolls a chest's and an NPC's leveled loot on its own, so taking the same items leaves a friend's
+		// copy holding its own roll.
 		std::vector<std::vector<std::uint8_t>> Report(std::span<const Move> a_moves, World& a_world)
 		{
 			std::vector<std::vector<std::uint8_t>> packets;
+			std::vector<std::uint32_t>             takenFrom;
 			for (const auto& move : a_moves) {
 				const auto direction = move.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
 				// Here a living NPC is pickpocketing or a companion's trade: never the session's.
-				const auto scope = LootScope::Of(a_world.Holder(move.holder), a_world.Item(move.item), direction);
+				const auto holder = a_world.Holder(move.holder);
+				const auto scope = LootScope::Of(holder, a_world.Item(move.item), direction);
 				if (scope != LootScope::Scope::kShared) {
 					++counts.keptSent[static_cast<std::size_t>(scope)];
 					continue;
@@ -95,6 +117,18 @@ namespace LootSync
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
+				if (direction == LootScope::Direction::kTake && std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
+					takenFrom.push_back(move.holder);
+				}
+			}
+			for (const auto holder : takenFrom) {
+				if (HoldsShared(holder, a_world)) {
+					continue;
+				}
+				const Protocol::ContainerChange change{ holder, Protocol::CONTAINER_EMPTIED, -1 };
+				receiver.Reported(change);
+				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
+				++counts.emptiedSent;
 			}
 			return packets;
 		}
@@ -288,10 +322,53 @@ namespace LootSync
 
 		// Another player's change, judged by the same rule the sender's game used (a joiner's build from
 		// before the rule, or a changed one, may report what isn't the session's).
+		// Whether the holder still has a stack the session shares (taking it would be reported).
+		bool HoldsShared(std::uint32_t a_holder, World& a_world)
+		{
+			const auto holder = a_world.Holder(a_holder);
+			return std::ranges::any_of(a_world.Stacks(a_holder), [&](const Stack& a_stack) {
+				auto item = a_world.Item(a_stack.item);
+				item.questAlias = a_stack.questAlias;
+				return a_stack.count > 0 && LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared;
+			});
+		}
+
+		// Another player emptied a holder of what the session shares: ours gives up every such stack it has, whatever
+		// its own roll put there. Weapons, armor, keys, notes, quest items stay, as they would for a take of each.
+		Applied TryEmpty(const Protocol::ContainerChange& a_change, World& a_world)
+		{
+			if (!a_world.Stocked(a_change.container)) {
+				return Applied::kNotLoaded;
+			}
+			const auto holder = a_world.Holder(a_change.container);
+			// The holder as a whole, by an item that is always the session's when its holder is (junk).
+			const auto scope = LootScope::Of(holder, { .kind = LootScope::Item::kMisc }, LootScope::Direction::kTake);
+			if (scope == LootScope::Scope::kNotYetDead) {
+				return Applied::kNotYetDead;
+			}
+			if (scope != LootScope::Scope::kShared) {
+				++counts.keptApplied[static_cast<std::size_t>(scope)];
+				return Applied::kDone;
+			}
+			for (const auto& stack : a_world.Stacks(a_change.container)) {
+				auto item = a_world.Item(stack.item);
+				item.questAlias = stack.questAlias;
+				if (stack.count > 0 && LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
+					a_world.Apply({ a_change.container, stack.item, -stack.count });
+					++counts.emptiedStacks;
+				}
+			}
+			++counts.emptiedApplied;
+			return Applied::kDone;
+		}
+
 		Applied TryApply(const Protocol::ContainerChange& a_change, World& a_world)
 		{
 			if (!a_world.Loaded(a_change.container)) {
 				return Applied::kNotLoaded;
+			}
+			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+				return TryEmpty(a_change, a_world);
 			}
 			const auto direction = a_change.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
 			auto       item = a_world.Item(a_change.item);

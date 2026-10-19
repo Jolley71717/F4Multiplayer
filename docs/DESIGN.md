@@ -388,6 +388,23 @@ kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupp
 `personal=` (other players' personal items left alone, pickups included, as in 0.8.5), and on the
 sender `personalSent=`, `holderDropped=` and `lootSent=`.
 
+Each game rolls a chest's and an NPC's leveled loot on its own (the same corpse and the same chest held
+different things in the two games of the rig), so a friend taking what their copy held left ours
+holding its own roll. A take that leaves a holder with nothing the session shares is followed by an
+emptied marker (`Protocol::CONTAINER_EMPTIED`: the player's ref as the item, count -1, an ordinary
+numbered change, so it is caught up on after a load or a join like any other): every receiver takes out
+each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
+items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
+yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
+workbench or a frame is left alone. An older build sees the player's ref as no item and leaves it.
+`net status` counts `emptied=` sent/applied/stacks taken.
+
+Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
+shareable ref, goes out as a pickup (kReportPickup, no new message). A receiver whose ref is flora runs
+`<ref>.setharvested 1` (once: one harvested already is left), never disabling it, so it grows back on its
+own schedule; a joiner or a reloaded game gets it through the world state's pickups. `flora=`
+sent/applied.
+
 Activators (buttons, switches, levers, a sink) a friend presses are pressed in our game by their
 stand-in, not our player, so a script that acts on whoever pressed it (rads from a sink, a teleport)
 acts on the stand-in. Without the stand-in here the press is refused (`acts=` sent/applied/refused);
