@@ -742,7 +742,14 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
   10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
   nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
-  to them. Out of power armor, the status also carries the frame they got out of last
+  to them. The stand-in is switched into the copy (`ArmorFrames::ChooseSwitch`), and the engine rebuilds
+  it on the power armor skeleton with a fresh animation graph. Rebuilt before the power armor subgraphs
+  are loaded, that graph is set up only later by the tail of the engine's own `Actor::Update`
+  (`AIProcess::GetQueuedModifyInitialAnimationPose`, the subgraphs loaded, then the actor's
+  `ModifyInitialAnimationStateImpl`), which a stand-in's no-AI update skipped: it glided after its friend
+  with its legs still. `Puppets` does the same after the no-AI update. A stand-in whose legs still stay
+  still while they walk is replaced (a try), but with no try left it is kept in its frame, never shown
+  out of its armor for it. Out of power armor, the status also carries the frame they got out of last
   (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
   A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference
@@ -851,7 +858,13 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   kill is repeated every 2 s while they are still alive and down. The rules are in
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
   the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
-  replaced, so it never sits on the ground while its friend is up.
+  replaced, so it never sits on the ground while its friend is up. A friend who is down is shown down
+  (`DownRules::StandInDown`, tested; `Puppets::SetDown`): their stand-in's life state goes to
+  `kEssentialDown` with `kNoBleedoutRecovery`, which plays its own graph's downed pose (in a power armor
+  frame too, once its switch into the frame is done), and it is still put at their spot each update but
+  told no locomotion, aim or draw, so the revive range is measured where they lie. Up again, its life
+  state goes back to alive (the engine's get-up); still down 4 s later it is replaced, standing. Found up
+  again while they are down, it is laid down again 2 s on. Laid down by us, it is not replaced as broken.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help

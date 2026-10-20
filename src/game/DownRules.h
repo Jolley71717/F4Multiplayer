@@ -80,8 +80,8 @@ namespace DownRules
 	// A friend's stand-in that is dead, switched off, or down is replaced by a fresh one. It is essential and
 	// kept at full health every update, but one hit bigger than its whole health (a grenade, a shotgun at
 	// close range) still put it down here; with its AI off nothing stands it up again, so it sat on the
-	// ground aiming its gun while its friend stood and fought. A friend who is down themselves shows it by
-	// crouching, not by this.
+	// ground aiming its gun while its friend stood and fought. A friend who is down themselves is shown down by
+	// StandInDown, which lays the stand-in down itself; that one is not broken (see StandInDown::Laid).
 	constexpr bool StandInBroken(std::int32_t a_lifeState, bool a_dead, bool a_disabled)
 	{
 		return a_dead || a_disabled || IsDownState(a_lifeState);
@@ -457,5 +457,84 @@ namespace DownRules
 		std::uint32_t           blockedFor = 0;  // told we can't help this friend during the fight (once, not every frame)
 		Clock::time_point       helpSince{};
 		Clock::time_point       helpAgain{};
+	};
+
+	// A friend who is down is shown down: their stand-in lies where they are, in the engine's own downed pose (its life
+	// state put to essential-down, which plays its graph's bleedout, in a power armor frame too), held there until they
+	// are up again, and then it gets up (alive again, which plays the get-up). It stood or walked about before, crouched,
+	// while the friend lay elsewhere in their own game, and in a frame not even that. Once a frame per stand-in:
+	// a_friendDown, their status says they are down; a_ready, it can lie down now (its 3D in, no furniture or frame switch
+	// under way); a_lying, its life state is a down one.
+	class StandInDown
+	{
+	public:
+		static constexpr auto LIE_RETRY = 2s;       // laid down and found up again while its friend is down: laid down again then
+		static constexpr auto GET_UP_LIMIT = 4s;    // told to get up and still down this long after: placed again
+
+		enum class Do
+		{
+			kNone,
+			kLieDown,  // put its life state down and hold it there
+			kGetUp,    // put its life state back to alive and drive it again
+			kReplace,  // it would not get up: a fresh stand-in, standing
+		};
+
+		Do Frame(bool a_friendDown, bool a_ready, bool a_lying, Clock::time_point a_now)
+		{
+			switch (phase) {
+			case Phase::kUp:
+			case Phase::kGettingUp:
+				if (a_friendDown) {
+					if (!a_ready || (triedAt && a_now - *triedAt < LIE_RETRY)) {
+						return Do::kNone;
+					}
+					phase = Phase::kLying;
+					triedAt = a_now;
+					++lieDowns;
+					return Do::kLieDown;
+				}
+				if (phase == Phase::kGettingUp) {
+					if (!a_lying) {
+						phase = Phase::kUp;
+					} else if (a_now - gotUpAt >= GET_UP_LIMIT) {
+						phase = Phase::kUp;
+						return Do::kReplace;
+					}
+				}
+				return Do::kNone;
+			case Phase::kLying:
+				if (!a_friendDown) {
+					phase = Phase::kGettingUp;
+					gotUpAt = a_now;
+					triedAt.reset();
+					return Do::kGetUp;
+				}
+				if (!a_lying) {
+					// Something here stood it up (the engine's own recovery): laid down again after LIE_RETRY.
+					phase = Phase::kUp;
+					++stoodUp;
+				}
+				return Do::kNone;
+			}
+			return Do::kNone;
+		}
+
+		// Its down life state is ours (laid down, or told to get up and not up yet): it is not broken for it (StandInBroken).
+		[[nodiscard]] bool Laid() const { return phase != Phase::kUp; }
+		[[nodiscard]] bool Lying() const { return phase == Phase::kLying; }
+
+		std::uint32_t lieDowns = 0;  // times laid down
+		std::uint32_t stoodUp = 0;   // of those, found up again while its friend was still down
+
+	private:
+		enum class Phase
+		{
+			kUp,
+			kLying,
+			kGettingUp,
+		};
+		Phase                            phase = Phase::kUp;
+		std::optional<Clock::time_point> triedAt;
+		Clock::time_point                gotUpAt{};
 	};
 }

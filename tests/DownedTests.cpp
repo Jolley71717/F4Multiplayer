@@ -966,3 +966,81 @@ TEST("downed rules: out of combat only, a helper in a fight is told once and hel
 	now += DownRules::HELP_TIME;
 	CHECK(anyTime.Frame(true, close, now, true).helped == 7);
 }
+
+// ---- a downed friend's stand-in ------------------------------------------------------------------------
+
+TEST("downed rules: a downed friend's stand-in lies down once it can, and gets up when they do")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	// Up: nothing.
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+	// Down, but the stand-in can't lie yet (its 3D, a frame switch on its way): it waits.
+	CHECK(down.Frame(true, false, false, now) == Do::kNone);
+	now += FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	CHECK(down.Laid());
+	CHECK(down.Lying());
+	// Lying: nothing more while they are down.
+	for (int i = 0; i < 50; ++i) {
+		now += FRAME;
+		CHECK(down.Frame(true, true, true, now) == Do::kNone);
+	}
+	CHECK(down.lieDowns == 1);
+	// Up again: it gets up, and is ours until its life state says so.
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	CHECK(down.Laid());
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kNone);
+	CHECK(down.Laid());
+	now += FRAME;
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+}
+
+TEST("downed rules: a downed friend's stand-in stood up by something here is laid down again a while later")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	// The engine's own recovery stood it up: not ours any more, and laid down again only after LIE_RETRY.
+	CHECK(down.Frame(true, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+	CHECK(down.stoodUp == 1);
+	now += DownRules::StandInDown::LIE_RETRY - 2 * FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kNone);
+	now += 2 * FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	CHECK(down.lieDowns == 2);
+}
+
+TEST("downed rules: a downed friend's stand-in that will not get up is placed again; one down again lies again")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	// Still down for GET_UP_LIMIT: replaced, standing.
+	now += DownRules::StandInDown::GET_UP_LIMIT - FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kNone);
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kReplace);
+	CHECK(!down.Laid());
+	// Down again while getting up: lies down again at once.
+	DownRules::StandInDown again;
+	CHECK(again.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	CHECK(again.Frame(false, true, true, now) == Do::kGetUp);
+	now += FRAME;
+	CHECK(again.Frame(true, true, true, now) == Do::kLieDown);
+	CHECK(again.Lying());
+	// A stand-in it laid down is not broken for it; any other down one still is.
+	CHECK(DownRules::StandInBroken(DownRules::LIFE_ESSENTIAL_DOWN, false, false));
+}

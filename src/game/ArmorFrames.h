@@ -150,7 +150,10 @@ namespace ArmorFrames
 	// idle, but refused "moveStart" and "moveStop" both (see Puppets::ReleaseIdle, which now frees a stand-in's graph as
 	// it frees a mirror's). Every one of them had been dressed, or given an item, 40 to 80 ms before the switch-in: the
 	// biped the engine was still building for that overlapped the rebuild of its skeleton (see DRESS_SETTLE). A fresh
-	// stand-in stays the cure of last resort.
+	// stand-in stays the cure of last resort. The cause (2026-10-19): a graph rebuilt before its power armor subgraphs are
+	// loaded is left uninitialised, and only the engine's own actor update set it up once they were; a stand-in's update
+	// did not (Puppets.cpp, SetUpRebuiltGraph, now does). Nor is the last try spent on a replacement shown out of its
+	// armor beside an empty frame while its friend is in theirs: that one is kept in its frame as it is (Switch::kKept).
 	constexpr auto STILL_LIMIT = std::chrono::seconds(2);
 	// The switch-in waits this long after anything was last put on the stand-in (its clothes, the item that steers the
 	// engine's pick): what is equipped goes on its body a frame or more later (equipped 30 ms before a switch-in, a vault
@@ -180,6 +183,7 @@ namespace ArmorFrames
 		kStuck,   // in, but still on its own skeleton too long (see SKELETON_LIMIT): replaced, counted as a try
 		kStill,   // in and on the power armor skeleton, but its legs stay still while they walk (see STILL_LIMIT): replaced, counted as a try
 		kGaveUp,  // the switch-in never took: shown out of its armor (see MAX_SWITCH_TRIES)
+		kKept,    // as kStill, but with no try left after it: kept in its frame as it is, never shown out of its armor for it
 	};
 
 	constexpr Switch ChooseSwitch(const SwitchFacts& a_facts)
@@ -191,7 +195,10 @@ namespace ArmorFrames
 			if (!a_facts.rebuilt) {
 				return a_facts.sinceIn > SKELETON_LIMIT ? Switch::kStuck : Switch::kNone;
 			}
-			return a_facts.still >= STILL_LIMIT ? Switch::kStill : Switch::kNone;
+			if (a_facts.still < STILL_LIMIT) {
+				return Switch::kNone;
+			}
+			return a_facts.tries + 1 >= MAX_SWITCH_TRIES ? Switch::kKept : Switch::kStill;
 		}
 		if (!a_facts.worn) {
 			return Switch::kNone;

@@ -51,6 +51,7 @@ namespace Puppets
 			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
+			bool                                  down = false;      // lying down for its downed friend: placed, not driven (see SetDown)
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
 		};
 
@@ -455,6 +456,61 @@ namespace Puppets
 			}
 		}
 
+		// AIProcess::GetQueuedModifyInitialAnimationPose (+D343A0): set by AIProcess::DoUpdate3dModel when it rebuilt an
+		// actor's 3D (and so its animation graph) before the graph's subgraphs were loaded, so it could not set the graph up.
+		constexpr REL::ID QUEUED_INITIAL_POSE{ 2232337 };
+		// (+CFDD10) whether the actor's subgraph sets (its middle-high process's three) are loaded, asked at a priority;
+		// Actor::Update asks at 7.
+		constexpr REL::ID SUBGRAPHS_LOADED{ 2231748 };
+		constexpr std::uint32_t SUBGRAPH_PRIORITY = 7;
+
+		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
+		std::atomic<std::uint64_t> graphsSetUp{ 0 };
+
+		// What the tail of the engine's own Actor::Update does and its no-AI update does not: a graph rebuilt before its
+		// subgraphs were loaded (DoUpdate3dModel queued its setup) is set up once they are, through the actor's
+		// ModifyInitialAnimationStateImpl (BGSAnimationSystemUtils::InitializeActorInstant, then its initial pose). Left
+		// alone, such a graph answers its variables and plays its base pose, but takes no "moveStart": a stand-in switched
+		// into its frame copy before the power armor subgraphs were cached glided after its friend with its legs still
+		// (0.8.7-rc1 soak, 2026-10-15 to 18), while one whose subgraphs were already loaded walked. True if it was set up.
+		bool SetUpRebuiltGraph(RE::Actor* a_actor, Puppet& a_puppet)
+		{
+			const auto process = a_actor->currentProcess;
+			if (!process || !process->middleHigh) {
+				return false;
+			}
+			static REL::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
+			if (!queued(process)) {
+				return false;
+			}
+			static REL::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
+			if (!loaded(process, a_actor, SUBGRAPH_PRIORITY)) {
+				return false;  // asked again next update, as the engine does
+			}
+			static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->ModifyInitialAnimationStateImpl(false);
+			// The graph is in its base state now, whatever it was told before (as for GraphRebuilt).
+			a_puppet.moving = false;
+			a_puppet.appliedFlags = 0;
+			a_puppet.nextResync = {};
+			a_puppet.idleRelease = {};
+			{
+				std::scoped_lock l{ lock };
+				if (const auto entry = Find(a_actor)) {
+					entry->moving = false;
+					entry->appliedFlags = 0;
+					entry->nextResync = {};
+					entry->idleRelease = {};
+				}
+			}
+			if (a_puppet.kind == Kind::kPlayer) {
+				const auto count = graphsSetUp.fetch_add(1, std::memory_order_relaxed) + 1;
+				if (MoveSync::Loggable(static_cast<std::uint32_t>(count))) {
+					REX::INFO("Puppets: {:08X}'s rebuilt graph set up once its subgraphs loaded ({} so far)", a_actor->GetFormID(), count);
+				}
+			}
+			return true;
+		}
+
 		void UpdateHook(RE::Actor* a_this, float a_delta)
 		{
 			if (puppetCount.load(std::memory_order_relaxed) == 0) {
@@ -506,6 +562,7 @@ namespace Puppets
 					}
 				}
 				a_this->UpdateNoAI(a_delta);
+				SetUpRebuiltGraph(a_this, *puppet);
 				if (!OccupiedFurniture(a_this)) {
 					auto still = *puppet;
 					still.target.speed = 0.0f;
@@ -514,7 +571,9 @@ namespace Puppets
 				}
 				return;
 			}
-			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
+			// Lying down for its downed friend (SetDown): put where they lie, with no movement, locomotion, aim or draw; the
+			// engine's downed pose plays in its graph.
+			const float speed = puppet->moving && !puppet->down ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
 				// Where its path (MotionPath.h) is at the time of the frame the engine moves all else by (FrameClock.h): not where
 				// it was when our frame's work last ran, nor at the moment this update runs, which comes up to a frame off that
@@ -533,7 +592,9 @@ namespace Puppets
 					}
 				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
-				MatchWeaponDrawn(a_this, *puppet);
+				if (!puppet->down) {
+					MatchWeaponDrawn(a_this, *puppet);
+				}
 				// The engine feeds its locomotion graph from the actor's desired movement, which for an
 				// actor with no AI is a stale walk; tell it what the stand-in really does so the run
 				// cycle matches the ground covered.
@@ -551,7 +612,8 @@ namespace Puppets
 			// The no-AI update only places the actor's 3D (Actor::UpdateActor3DPosition): it writes neither
 			// the desired speed above nor the graph's variables, which DriveAnimation sets below.
 			a_this->UpdateNoAI(a_delta);
-			if (puppet->hasTarget) {
+			SetUpRebuiltGraph(a_this, *puppet);
+			if (puppet->hasTarget && !puppet->down) {
 				DriveAnimation(a_this, *puppet);
 				Aim(a_this, *puppet);
 				// It has just asked a standing graph to move; a refusal means an idle holds it.
@@ -742,6 +804,38 @@ namespace Puppets
 				entry->nextResync = {};
 			}
 			entry->held = a_hold;
+		}
+	}
+
+	void SetDown(RE::Actor* a_actor, bool a_down)
+	{
+		{
+			std::scoped_lock l{ lock };
+			const auto entry = Find(a_actor);
+			if (!entry) {
+				return;
+			}
+			if (entry->down && !a_down) {
+				// Up from the engine's downed pose into its base state: told again whether it moves, its sneak and its draw.
+				entry->moving = false;
+				entry->appliedFlags = 0;
+				entry->nextResync = {};
+				entry->idleRelease = {};
+				entry->redraw = true;
+				entry->nextDrawAttempt = std::chrono::steady_clock::now() + 1s;  // the get-up plays first
+			}
+			entry->down = a_down;
+		}
+		// As the engine downs an essential character: its life state, which plays the graph's bleedout start or stop through
+		// the default bleedout actions (Actor::SetLifeState), and, as our own player's while down (Downed.cpp), no recovery
+		// of its own.
+		using BoolFlag = RE::Actor::BOOL_FLAGS;
+		if (a_down) {
+			a_actor->boolFlags.set(BoolFlag::kNoBleedoutRecovery);
+			a_actor->SetLifeState(RE::ACTOR_LIFE_STATE::kEssentialDown);
+		} else {
+			a_actor->boolFlags.reset(BoolFlag::kNoBleedoutRecovery);
+			a_actor->SetLifeState(RE::ACTOR_LIFE_STATE::kAlive);
 		}
 	}
 
@@ -1011,10 +1105,15 @@ namespace Puppets
 	std::string Describe()
 	{
 		const auto resyncs = standInResyncs.load(std::memory_order_relaxed);
-		if (resyncs == 0) {
-			return {};
+		const auto setUp = graphsSetUp.load(std::memory_order_relaxed);
+		std::string out;
+		if (resyncs != 0) {
+			out = std::format("graphResyncs={}", resyncs);
 		}
-		return std::format("graphResyncs={}", resyncs);
+		if (setUp != 0) {
+			out += std::format("{}graphsSetUp={}", out.empty() ? "" : " ", setUp);
+		}
+		return out;
 	}
 
 	void Tick()

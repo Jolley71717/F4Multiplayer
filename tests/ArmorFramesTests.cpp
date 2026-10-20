@@ -632,8 +632,15 @@ TEST("armor frames: a stand-in in its frame that glides after a friend who walks
 	// they walk: placed again, as a stand-in whose skeleton never came is.
 	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s };
 	CHECK(ChooseSwitch(facts) == Switch::kStill);
-	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;  // in it already: replaced, and the fresh one is given up on
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES - 2;  // a try left after this one: replaced
 	CHECK(ChooseSwitch(facts) == Switch::kStill);
+	// None left after it (live 2026-10-18: the third replacement was shown out of its armor beside an empty frame, while its
+	// friend walked in theirs): kept in its frame as it is.
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES - 1;
+	CHECK(ChooseSwitch(facts) == Switch::kKept);
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;
+	CHECK(ChooseSwitch(facts) == Switch::kKept);
+	// A switch-in that never took is still given up on.
 	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = ArmorFrames::MAX_SWITCH_TRIES, .sinceTried = 1h }) == Switch::kGaveUp);
 	// Not yet that long: left as it is.
 	facts = { .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT - 1ms, .sinceIn = 10s };

@@ -114,6 +114,12 @@ namespace Puppets
 	// and a refused start counts as a new spell for the idle stops (ReleaseIdle).
 	void GraphRebuilt(RE::Actor* a_actor);
 
+	// A stand-in whose friend is down lies where they are (DownRules::StandInDown): down, its life state goes to
+	// essential-down, which plays its graph's own downed pose (in a power armor frame too), and it is held there with no
+	// recovery of its own; it is still put at its target each update, but told no locomotion, aim or draw. Up again, it is
+	// alive again (the engine's get-up) and driven as before. Main thread.
+	void SetDown(RE::Actor* a_actor, bool a_down);
+
 	// Furniture (StandInSeat.h). A held puppet is neither placed nor animated by its target: furniture it is in places and
 	// animates it, and one waiting to get in, or left beside it, stands where it is. Nor is its do-nothing package renewed
 	// meanwhile (a new package can make the engine walk an actor out of its furniture). Its target is still kept.
@@ -140,6 +146,7 @@ namespace Puppets
 	void Tick();
 
 	// For the dev status line: how often a stand-in's graph was found walking while it should stand, or
-	// the other way round, and put back. Empty until one has been.
+	// the other way round, and put back, and how many stand-ins' rebuilt graphs were set up once their subgraphs loaded (a
+	// power armor skeleton's: see Puppets.cpp, SetUpRebuiltGraph). Empty until either happened.
 	[[nodiscard]] std::string Describe();
 }
