@@ -161,6 +161,24 @@ namespace ArmorFrames
 	// had in common.
 	constexpr auto DRESS_SETTLE = std::chrono::milliseconds(400);
 
+	// Before a stand-in whose legs stay still is replaced, it is tried in place, each try given STILL_LIMIT again (live
+	// 2026-10-19: 12 of 13 switch-ins played no walk, each of the three replacements of a wear exactly like the last):
+	// first its graph is set up afresh whatever the engine says of its subgraphs (Remedy::kSetUp: the actor's own
+	// ModifyInitialAnimationStateImpl, then told again whether it moves); then the engine runs its own update, AI and
+	// all, for OWN_UPDATE (Remedy::kOwnUpdate), as it did around every switch-in before 0.8.10, when the stand-ins in
+	// their frames walked. Only then is it replaced.
+	enum class Remedy
+	{
+		kSetUp,
+		kOwnUpdate,
+	};
+	constexpr int  MAX_REMEDIES = 2;
+	constexpr auto OWN_UPDATE = std::chrono::milliseconds(1000);
+	constexpr Remedy RemedyOf(int a_tried)
+	{
+		return a_tried == 0 ? Remedy::kSetUp : Remedy::kOwnUpdate;
+	}
+
 	struct SwitchFacts
 	{
 		bool     worn = false;     // they are in power armor, and the frame they sent is a frame here
@@ -173,6 +191,7 @@ namespace ArmorFrames
 		Duration sinceDressed = Duration::max();  // since anything was last put on it (see DRESS_SETTLE)
 		int      tries = 0;        // switch-ins tried for this wear that did not take
 		Duration sinceTried{};     // since the last of them
+		int      remedies = 0;     // remedies tried on this stand-in in its frame (see Remedy)
 	};
 
 	enum class Switch
@@ -184,6 +203,7 @@ namespace ArmorFrames
 		kStill,   // in and on the power armor skeleton, but its legs stay still while they walk (see STILL_LIMIT): replaced, counted as a try
 		kGaveUp,  // the switch-in never took: shown out of its armor (see MAX_SWITCH_TRIES)
 		kKept,    // as kStill, but with no try left after it: kept in its frame as it is, never shown out of its armor for it
+		kRemedy,  // as kStill, with a remedy left for this stand-in: tried in place (see Remedy), not counted as a try
 	};
 
 	constexpr Switch ChooseSwitch(const SwitchFacts& a_facts)
@@ -197,6 +217,9 @@ namespace ArmorFrames
 			}
 			if (a_facts.still < STILL_LIMIT) {
 				return Switch::kNone;
+			}
+			if (a_facts.remedies < MAX_REMEDIES) {
+				return Switch::kRemedy;
 			}
 			return a_facts.tries + 1 >= MAX_SWITCH_TRIES ? Switch::kKept : Switch::kStill;
 		}

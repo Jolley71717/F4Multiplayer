@@ -52,6 +52,8 @@ namespace Puppets
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
 			bool                                  down = false;      // lying down for its downed friend: placed, not driven (see SetDown)
+			bool                                  forceSetUp = false;  // its graph set up on its next update whatever the engine says (ForceGraphSetUp)
+			std::uint32_t                         setUps = 0;        // its graph set up by us (SetUpRebuiltGraph): dev
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
 		};
 
@@ -480,19 +482,27 @@ namespace Puppets
 				return false;
 			}
 			static REL::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
-			if (!queued(process)) {
-				return false;
-			}
 			static REL::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
-			if (!loaded(process, a_actor, SUBGRAPH_PRIORITY)) {
-				return false;  // asked again next update, as the engine does
+			// Asked for (ForceGraphSetUp): set up whatever the engine says, once, as a remedy for a graph that plays nothing.
+			const bool forced = a_puppet.forceSetUp;
+			const bool wasQueued = queued(process);
+			if (!forced) {
+				if (!wasQueued) {
+					return false;
+				}
+				if (!loaded(process, a_actor, SUBGRAPH_PRIORITY)) {
+					return false;  // asked again next update, as the engine does
+				}
 			}
+			const bool wereLoaded = !forced || loaded(process, a_actor, SUBGRAPH_PRIORITY);
 			static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->ModifyInitialAnimationStateImpl(false);
 			// The graph is in its base state now, whatever it was told before (as for GraphRebuilt).
 			a_puppet.moving = false;
 			a_puppet.appliedFlags = 0;
 			a_puppet.nextResync = {};
 			a_puppet.idleRelease = {};
+			a_puppet.forceSetUp = false;
+			std::uint32_t setUps = 0;
 			{
 				std::scoped_lock l{ lock };
 				if (const auto entry = Find(a_actor)) {
@@ -500,12 +510,15 @@ namespace Puppets
 					entry->appliedFlags = 0;
 					entry->nextResync = {};
 					entry->idleRelease = {};
+					entry->forceSetUp = false;
+					setUps = ++entry->setUps;
 				}
 			}
 			if (a_puppet.kind == Kind::kPlayer) {
 				const auto count = graphsSetUp.fetch_add(1, std::memory_order_relaxed) + 1;
-				if (MoveSync::Loggable(static_cast<std::uint32_t>(count))) {
-					REX::INFO("Puppets: {:08X}'s rebuilt graph set up once its subgraphs loaded ({} so far)", a_actor->GetFormID(), count);
+				if (forced || MoveSync::Loggable(static_cast<std::uint32_t>(count))) {
+					REX::INFO("Puppets: {:08X}'s graph set up {} (queued={} subgraphs loaded={}; {} for it, {} in all)", a_actor->GetFormID(),
+						forced ? "as asked" : "once its subgraphs loaded", wasQueued, wereLoaded, setUps, count);
 				}
 			}
 			return true;
@@ -805,6 +818,32 @@ namespace Puppets
 			}
 			entry->held = a_hold;
 		}
+	}
+
+	void ForceGraphSetUp(RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		if (const auto entry = Find(a_actor)) {
+			entry->forceSetUp = true;
+		}
+	}
+
+	std::string DescribeGraphSetUp(RE::Actor* a_actor)
+	{
+		const auto process = a_actor ? a_actor->currentProcess : nullptr;
+		if (!process || !process->middleHigh) {
+			return "setup=no process";
+		}
+		static REL::Relocation<bool (*)(RE::AIProcess*)> queued{ QUEUED_INITIAL_POSE };
+		static REL::Relocation<bool (*)(RE::AIProcess*, RE::Actor*, std::uint32_t)> loaded{ SUBGRAPHS_LOADED };
+		std::uint32_t setUps = 0;
+		{
+			std::scoped_lock l{ lock };
+			if (const auto entry = Find(a_actor)) {
+				setUps = entry->setUps;
+			}
+		}
+		return std::format("setup queued={} subgraphs loaded={} setUps={}", queued(process), loaded(process, a_actor, SUBGRAPH_PRIORITY), setUps);
 	}
 
 	void SetDown(RE::Actor* a_actor, bool a_down)

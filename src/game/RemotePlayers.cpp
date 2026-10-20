@@ -96,6 +96,8 @@ namespace RemotePlayers
 			ArmorFrames::Stride  stride;                  // how long the stand-in's legs stayed still in its frame while they walked (see ArmorFrames::STILL_LIMIT)
 			bool                 switchGaveUp = false;   // logged
 			bool                 stillKept = false;      // kept in its frame with still legs, no try left (ArmorFrames::Switch::kKept): logged
+			int                  remedies = 0;           // remedies tried in place on this stand-in for still legs (ArmorFrames::Remedy)
+			Clock::time_point    ownUpdateUntil{};       // its own update runs till then (ArmorFrames::Remedy::kOwnUpdate): its legs are not looked at
 			std::optional<ArmorFrames::PlayTime> pickSince;  // when the switch-in was first due for this stand-in in this wear (see ArmorFrames::ChoosePick)
 			std::optional<ArmorFrames::PlayTime> keyPutAt;   // when the item that makes the engine pick their frame item was put on it
 			int                  pickLogged = -1;        // the last ArmorFrames::Pick logged for this stand-in
@@ -909,6 +911,7 @@ namespace RemotePlayers
 		std::uint32_t   switchFails = 0;   // switch-ins that did not take
 		std::uint32_t   stillStandIns = 0; // of those, stand-ins in their frame placed again for legs that stayed still (ArmorFrames::Switch::kStill)
 		std::uint32_t   keptStill = 0;     // stand-ins kept in their frame with still legs, no try left (ArmorFrames::Switch::kKept)
+		std::uint32_t   remediesTried = 0; // remedies tried in place on stand-ins in their frame with still legs (ArmorFrames::Switch::kRemedy)
 		ArmorFrames::Played played;        // the time the game ran, which the power armor limits go by
 
 		// The frame copy until the stand-in is in it: not drawn (a drawn one trailed it as a second, empty suit), without
@@ -1087,8 +1090,8 @@ namespace RemotePlayers
 			a_player.armorSkeleton = root;
 			// The rebuilt 3D carries a fresh animation graph, in its base state whatever the old one was told.
 			Puppets::GraphRebuilt(a_actor);
-			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.id, a_actor->GetFormID(),
-				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
+			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on ({})", a_player.id, a_actor->GetFormID(),
+				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count(), Puppets::DescribeGraphSetUp(a_actor));
 			return true;
 		}
 
@@ -1107,6 +1110,7 @@ namespace RemotePlayers
 				.sinceDressed = a_player.gear.wornAt == Clock::time_point{} ? ArmorFrames::Duration::max() : ArmorFrames::Duration{ a_now - a_player.gear.wornAt },
 				.tries = a_player.switchTries,
 				.sinceTried = a_played - a_player.switchTriedAt,
+				.remedies = a_player.remedies,
 			};
 		}
 
@@ -1123,7 +1127,8 @@ namespace RemotePlayers
 			}
 			const auto& at = a_actor->data.location;
 			const bool  seen = a_us && ArmorFrames::InSight(at.x - a_us->data.location.x, at.y - a_us->data.location.y, a_us->data.angle.z);
-			const bool  walks = seen && ArmorFrames::Walks(a_state.moveMode, a_state.flags, a_state.speed) && !Dialogue::Holds(a_actor) && !a_player.downed;
+			const bool  walks = seen && ArmorFrames::Walks(a_state.moveMode, a_state.flags, a_state.speed) && !Dialogue::Holds(a_actor) && !a_player.downed &&
+			                    Clock::now() >= a_player.ownUpdateUntil;
 			a_player.stride.Update(a_actor->Get3D(), pose, walks, a_now);
 		}
 
@@ -1219,6 +1224,7 @@ namespace RemotePlayers
 			case ArmorFrames::Switch::kStuck:  // replaced before this too (see Update)
 			case ArmorFrames::Switch::kStill:  // and so is this one
 			case ArmorFrames::Switch::kKept:   // kept as it is (see Update)
+			case ArmorFrames::Switch::kRemedy: // tried in place (see Update)
 				break;
 			}
 		}
@@ -2513,6 +2519,28 @@ namespace RemotePlayers
 					DeleteActor(remote);
 					actor = nullptr;
 					break;
+				case ArmorFrames::Switch::kRemedy:
+					{
+						// Tried in place first, a different way each time (ArmorFrames::Remedy), each with STILL_LIMIT again.
+						const auto remedy = ArmorFrames::RemedyOf(remote.remedies);
+						++remote.remedies;
+						++remediesTried;
+						REX::WARN("RemotePlayers: player {} stand-in {:08X} in its frame plays no walk: its legs stayed still {} ms while they walked; {} (remedy {} of {}; {}; {})", remote.id,
+							actor->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(remote.stride.Still()).count(),
+							remedy == ArmorFrames::Remedy::kSetUp ? "its graph is set up afresh" : "the engine runs its own update a moment", remote.remedies, ArmorFrames::MAX_REMEDIES,
+							Puppets::DescribeGraphSetUp(actor), GraphInfo::Describe(actor));
+						if (remedy == ArmorFrames::Remedy::kSetUp) {
+							Puppets::ForceGraphSetUp(actor);
+						} else {
+							// As around every switch-in before 0.8.10, when the stand-ins in their frames walked: its own update,
+							// AI and all, whose tail sets up a graph the rebuild left waiting; then it is driven again from its base state.
+							Puppets::AllowAI(actor, std::chrono::duration_cast<std::chrono::milliseconds>(ArmorFrames::OWN_UPDATE));
+							remote.ownUpdateUntil = now + ArmorFrames::OWN_UPDATE;
+							Puppets::GraphRebuilt(actor);
+						}
+						remote.stride = {};
+					}
+					break;
 				case ArmorFrames::Switch::kKept:
 					// No try left: in its frame it stays, as its friend is in theirs. Placed again, it was shown out of its armor
 					// beside an empty frame (live 2026-10-18).
@@ -2561,6 +2589,7 @@ namespace RemotePlayers
 				remote.stride = {};
 				remote.switchGaveUp = false;
 				remote.stillKept = false;
+				remote.remedies = 0;
 				remote.standInDown = {};  // a fresh stand-in stands: laid down again if they are down
 				remote.pickSince.reset();
 				remote.keyPutAt = {};
@@ -2797,7 +2826,7 @@ namespace RemotePlayers
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);
 		}
 		if (switchesIn || switchesOut || switchFails) {
-			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={} armorKept={}", switchesIn, switchesOut, switchFails, stillStandIns, keptStill);
+			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={} armorKept={} armorRemedies={}", switchesIn, switchesOut, switchFails, stillStandIns, keptStill, remediesTried);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);

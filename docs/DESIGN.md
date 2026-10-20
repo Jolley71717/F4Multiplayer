@@ -747,9 +747,13 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   are loaded, that graph is set up only later by the tail of the engine's own `Actor::Update`
   (`AIProcess::GetQueuedModifyInitialAnimationPose`, the subgraphs loaded, then the actor's
   `ModifyInitialAnimationStateImpl`), which a stand-in's no-AI update skipped: it glided after its friend
-  with its legs still. `Puppets` does the same after the no-AI update. A stand-in whose legs still stay
-  still while they walk is replaced (a try), but with no try left it is kept in its frame, never shown
-  out of its armor for it. Out of power armor, the status also carries the frame they got out of last
+  with its legs still (every switch-in of a two-hour session, 2026-10-19; before 0.8.10 the switch-in ran
+  the stand-in's own AI update, and they walked). `Puppets` does the same after the no-AI update. A
+  stand-in whose legs still stay still while they walk is first tried in place, each way given 2 s
+  (`ArmorFrames::Remedy`): its graph set up afresh whatever the engine says of its subgraphs, then the
+  engine's own update for 1 s. Only then is it replaced (a try); with no try left it is kept in its frame,
+  never shown out of its armor for it. The log says at each step whether the engine had the setup queued
+  and the subgraphs loaded. Out of power armor, the status also carries the frame they got out of last
   (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
   A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference

@@ -114,6 +114,13 @@ namespace Puppets
 	// and a refused start counts as a new spell for the idle stops (ReleaseIdle).
 	void GraphRebuilt(RE::Actor* a_actor);
 
+	// A remedy for a graph that plays nothing (ArmorFrames::Remedy::kSetUp): on its next update the puppet's graph is set up
+	// afresh (the actor's ModifyInitialAnimationStateImpl) whatever the engine says of its subgraphs, and told again whether
+	// it moves. Normally that is done only for a rebuild the engine queued it for, once its subgraphs are loaded.
+	void ForceGraphSetUp(RE::Actor* a_actor);
+	// Dev: whether the engine has the actor's graph setup queued, whether its subgraphs read loaded, and how often we set it up.
+	[[nodiscard]] std::string DescribeGraphSetUp(RE::Actor* a_actor);
+
 	// A stand-in whose friend is down lies where they are (DownRules::StandInDown): down, its life state goes to
 	// essential-down, which plays its graph's own downed pose (in a power armor frame too), and it is held there with no
 	// recovery of its own; it is still put at its target each update, but told no locomotion, aim or draw. Up again, it is
