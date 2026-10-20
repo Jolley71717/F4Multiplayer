@@ -185,6 +185,8 @@ namespace Config
 				ParseInt(value, settings.keyTeleport, 16);
 			} else if (key == "iKeyPing") {
 				ParseInt(value, settings.keyPing, 16);
+			} else if (key == "iKeyWhere") {
+				ParseInt(value, settings.keyWhere, 16);
 			} else if (key == "iKeyEmotePoint") {
 				ParseInt(value, settings.keyEmotePoint, 16);
 			} else if (key == "iKeyEmoteCheer") {

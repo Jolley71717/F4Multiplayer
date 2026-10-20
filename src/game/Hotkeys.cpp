@@ -39,6 +39,7 @@ namespace Hotkeys
 		Key list;
 		Key teleport;
 		Key ping;
+		Key where;
 		Key emotePoint;
 		Key emoteCheer;
 		Key emoteClap;
@@ -198,6 +199,7 @@ namespace Hotkeys
 		press(menu, settings.keyMenu, Action::kMenu, "menu");
 		press(list, settings.keyPlayerList, Action::kPlayerList, "player list");
 		press(ping, settings.keyPing, Action::kPing, "ping");
+		press(where, settings.keyWhere, Action::kWhere, "where");
 		press(emotePoint, settings.keyEmotePoint, Action::kEmotePoint, "emote point");
 		press(emoteCheer, settings.keyEmoteCheer, Action::kEmoteCheer, "emote cheer");
 		press(emoteClap, settings.keyEmoteClap, Action::kEmoteClap, "emote clap");
@@ -236,6 +238,6 @@ namespace Hotkeys
 		return std::format("hotkeys: focus={} ({}) menuMode={} console={} chord: alt={} ctrl={} win={} polls={} fired={} blocked={} keysSeen={} keys:",
 				   GameHasFocus(), FocusName(GameFocus()), ui ? static_cast<int>(ui->menuMode) : -1, OpenMenus::Open(OpenMenus::Menu::kConsole), IsDown(0x12),
 				   IsDown(0x11), IsDown(0x5B) || IsDown(0x5C), polls, actionsFired, blockedPresses, keyWatch.Seen()) +
-		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("voice", settings.keyVoice);
+		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("where", settings.keyWhere) + key("voice", settings.keyVoice);
 	}
 }

@@ -11,6 +11,7 @@ namespace Hotkeys
 		kTeleportPick,  // tapped (released within HOLD_TIME)
 		kTeleportGo,    // held for HOLD_TIME
 		kPing,          // pressed
+		kWhere,         // pressed: each friend's distance and direction
 		kEmotePoint,    // pressed: emotes, played on your stand-in for others
 		kEmoteCheer,
 		kEmoteClap,
