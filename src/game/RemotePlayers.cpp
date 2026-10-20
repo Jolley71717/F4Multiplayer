@@ -95,6 +95,9 @@ namespace RemotePlayers
 			const RE::NiAVObject* armorSkeleton = nullptr;  // the stand-in's 3D found built on the power armor skeleton; only compared
 			ArmorFrames::Stride  stride;                  // how long the stand-in's legs stayed still in its frame while they walked (see ArmorFrames::STILL_LIMIT)
 			bool                 switchGaveUp = false;   // logged
+			bool                 stillKept = false;      // kept in its frame with still legs, no try left (ArmorFrames::Switch::kKept): logged
+			int                  remedies = 0;           // remedies tried in place on this stand-in for still legs (ArmorFrames::Remedy)
+			Clock::time_point    ownUpdateUntil{};       // its own update runs till then (ArmorFrames::Remedy::kOwnUpdate): its legs are not looked at
 			std::optional<ArmorFrames::PlayTime> pickSince;  // when the switch-in was first due for this stand-in in this wear (see ArmorFrames::ChoosePick)
 			std::optional<ArmorFrames::PlayTime> keyPutAt;   // when the item that makes the engine pick their frame item was put on it
 			int                  pickLogged = -1;        // the last ArmorFrames::Pick logged for this stand-in
@@ -131,6 +134,7 @@ namespace RemotePlayers
 			bool                 seatLogged = false;     // whether it got in, or did not, was logged for this seat
 			std::uint8_t         menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
 			StandInPipboy::Track pipboy;                 // the Pip-Boy raised on their stand-in while they are in theirs
+			DownRules::StandInDown standInDown;         // the stand-in lying down while they are down (Puppets::SetDown)
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -293,6 +297,9 @@ namespace RemotePlayers
 		std::uint32_t   framesFollowed = 0;  // frames moved back under their stand-in
 		std::uint32_t   leftBehind = 0;      // stand-ins replaced because they were left in another cell
 		std::uint32_t   downedStandIns = 0;  // stand-ins replaced because something here put them down (DownRules::StandInBroken)
+		std::uint32_t   laidDown = 0;        // stand-ins laid down for their downed friend (DownRules::StandInDown)
+		std::uint32_t   stoodUpDown = 0;     // of those, found up again while their friend was still down
+		std::uint32_t   wouldNotGetUp = 0;   // stand-ins placed again because they stayed down once their friend was up
 		std::uint32_t   spawns = 0;          // stand-ins placed
 		std::uint32_t   respawnWaits = 0;    // of those left behind, never drawn where they were placed: none placed for a moment
 		std::uint32_t   originalsHidden = 0; // our copies of pre-placed frames hidden while a friend wore theirs (once a wear)
@@ -903,6 +910,8 @@ namespace RemotePlayers
 		std::uint32_t   switchesOut = 0;   // stand-ins replaced as their friend got out
 		std::uint32_t   switchFails = 0;   // switch-ins that did not take
 		std::uint32_t   stillStandIns = 0; // of those, stand-ins in their frame placed again for legs that stayed still (ArmorFrames::Switch::kStill)
+		std::uint32_t   keptStill = 0;     // stand-ins kept in their frame with still legs, no try left (ArmorFrames::Switch::kKept)
+		std::uint32_t   remediesTried = 0; // remedies tried in place on stand-ins in their frame with still legs (ArmorFrames::Switch::kRemedy)
 		ArmorFrames::Played played;        // the time the game ran, which the power armor limits go by
 
 		// The frame copy until the stand-in is in it: not drawn (a drawn one trailed it as a second, empty suit), without
@@ -1081,8 +1090,8 @@ namespace RemotePlayers
 			a_player.armorSkeleton = root;
 			// The rebuilt 3D carries a fresh animation graph, in its base state whatever the old one was told.
 			Puppets::GraphRebuilt(a_actor);
-			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on", a_player.id, a_actor->GetFormID(),
-				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count());
+			REX::INFO("RemotePlayers: player {} stand-in {:08X} has its power armor skeleton, {} ms after the switch-in; their pieces go on ({})", a_player.id, a_actor->GetFormID(),
+				std::chrono::duration_cast<std::chrono::milliseconds>(a_now - a_player.switchedAt).count(), Puppets::DescribeGraphSetUp(a_actor));
 			return true;
 		}
 
@@ -1101,6 +1110,7 @@ namespace RemotePlayers
 				.sinceDressed = a_player.gear.wornAt == Clock::time_point{} ? ArmorFrames::Duration::max() : ArmorFrames::Duration{ a_now - a_player.gear.wornAt },
 				.tries = a_player.switchTries,
 				.sinceTried = a_played - a_player.switchTriedAt,
+				.remedies = a_player.remedies,
 			};
 		}
 
@@ -1117,7 +1127,8 @@ namespace RemotePlayers
 			}
 			const auto& at = a_actor->data.location;
 			const bool  seen = a_us && ArmorFrames::InSight(at.x - a_us->data.location.x, at.y - a_us->data.location.y, a_us->data.angle.z);
-			const bool  walks = seen && ArmorFrames::Walks(a_state.moveMode, a_state.flags, a_state.speed) && !Dialogue::Holds(a_actor);
+			const bool  walks = seen && ArmorFrames::Walks(a_state.moveMode, a_state.flags, a_state.speed) && !Dialogue::Holds(a_actor) && !a_player.downed &&
+			                    Clock::now() >= a_player.ownUpdateUntil;
 			a_player.stride.Update(a_actor->Get3D(), pose, walks, a_now);
 		}
 
@@ -1193,7 +1204,8 @@ namespace RemotePlayers
 
 			const auto process = a_actor->currentProcess;
 			auto       switchFacts = SwitchFactsOf(a_player, a_actor, a_now, a_played);
-			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false);
+			// Not while it lies down for its downed friend (DownRules::StandInDown): it is switched in once it is up.
+			switchFacts.ready = has3D && process && process->processLevel <= 1 && !a_actor->IsDead(false) && !a_player.standInDown.Laid();
 			switchFacts.held = copy == ArmorFrames::Copy::kHold;
 			switch (ArmorFrames::ChooseSwitch(switchFacts)) {
 			case ArmorFrames::Switch::kIn:
@@ -1211,6 +1223,8 @@ namespace RemotePlayers
 			case ArmorFrames::Switch::kOut:    // replaced before this (see LeaveArmor)
 			case ArmorFrames::Switch::kStuck:  // replaced before this too (see Update)
 			case ArmorFrames::Switch::kStill:  // and so is this one
+			case ArmorFrames::Switch::kKept:   // kept as it is (see Update)
+			case ArmorFrames::Switch::kRemedy: // tried in place (see Update)
 				break;
 			}
 		}
@@ -2201,6 +2215,7 @@ namespace RemotePlayers
 			player.parkedTaken.reset();
 			player.switchTries = 0;
 			player.switchGaveUp = false;
+			player.stillKept = false;
 			player.pickSince.reset();
 			player.keyPutAt = {};
 			ForgetSeat(player);  // our copy of their furniture is looked for again in the loaded world
@@ -2262,6 +2277,7 @@ namespace RemotePlayers
 				StandInGear::Redress(player.gear);  // dressed again (see Outfit)
 				player.switchTries = 0;             // a new wear: the stand-in is tried afresh
 				player.switchGaveUp = false;
+				player.stillKept = false;
 				player.pickSince.reset();
 				player.keyPutAt = {};
 				player.pickLogged = -1;
@@ -2430,7 +2446,9 @@ namespace RemotePlayers
 				SaveGuard::Forget(remote.registeredId);
 				DeleteActor(remote);
 			}
-			if (actor && IsBroken(actor)) {
+			// Down because we laid it down for its downed friend (DownRules::StandInDown) is not broken.
+			const bool laid = actor && remote.standInDown.Laid() && DownRules::IsDownState(LifeState(actor)) && !actor->IsDisabled();
+			if (actor && !laid && IsBroken(actor)) {
 				if (DownRules::IsDownState(LifeState(actor))) {  // the game says dead too while down: only the life state tells
 					++downedStandIns;
 					REX::INFO("RemotePlayers: player {} stand-in {:08X} was put down here while its friend is {}; placed again", remote.id, actor->GetFormID(), remote.downed ? "down too" : "up");
@@ -2501,6 +2519,38 @@ namespace RemotePlayers
 					DeleteActor(remote);
 					actor = nullptr;
 					break;
+				case ArmorFrames::Switch::kRemedy:
+					{
+						// Tried in place first, a different way each time (ArmorFrames::Remedy), each with STILL_LIMIT again.
+						const auto remedy = ArmorFrames::RemedyOf(remote.remedies);
+						++remote.remedies;
+						++remediesTried;
+						REX::WARN("RemotePlayers: player {} stand-in {:08X} in its frame plays no walk: its legs stayed still {} ms while they walked; {} (remedy {} of {}; {}; {})", remote.id,
+							actor->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(remote.stride.Still()).count(),
+							remedy == ArmorFrames::Remedy::kSetUp ? "its graph is set up afresh" : "the engine runs its own update a moment", remote.remedies, ArmorFrames::MAX_REMEDIES,
+							Puppets::DescribeGraphSetUp(actor), GraphInfo::Describe(actor));
+						if (remedy == ArmorFrames::Remedy::kSetUp) {
+							Puppets::ForceGraphSetUp(actor);
+						} else {
+							// As around every switch-in before 0.8.10, when the stand-ins in their frames walked: its own update,
+							// AI and all, whose tail sets up a graph the rebuild left waiting; then it is driven again from its base state.
+							Puppets::AllowAI(actor, std::chrono::duration_cast<std::chrono::milliseconds>(ArmorFrames::OWN_UPDATE));
+							remote.ownUpdateUntil = now + ArmorFrames::OWN_UPDATE;
+							Puppets::GraphRebuilt(actor);
+						}
+						remote.stride = {};
+					}
+					break;
+				case ArmorFrames::Switch::kKept:
+					// No try left: in its frame it stays, as its friend is in theirs. Placed again, it was shown out of its armor
+					// beside an empty frame (live 2026-10-18).
+					if (!remote.stillKept) {
+						remote.stillKept = true;
+						++keptStill;
+						REX::WARN("RemotePlayers: player {} stand-in {:08X} in its frame plays no walk: its legs stayed still {} ms while they walked; no try left, kept in its frame ({})", remote.id,
+							actor->GetFormID(), std::chrono::duration_cast<std::chrono::milliseconds>(remote.stride.Still()).count(), GraphInfo::Describe(actor));
+					}
+					break;
 				default:
 					break;
 				}
@@ -2538,6 +2588,9 @@ namespace RemotePlayers
 				remote.armorSkeleton = nullptr;
 				remote.stride = {};
 				remote.switchGaveUp = false;
+				remote.stillKept = false;
+				remote.remedies = 0;
+				remote.standInDown = {};  // a fresh stand-in stands: laid down again if they are down
 				remote.pickSince.reset();
 				remote.keyPutAt = {};
 				remote.pickLogged = -1;
@@ -2587,6 +2640,42 @@ namespace RemotePlayers
 				remote.lastTarget.reset();
 			} else {
 				CheckHold(remote, actor, spot, sampled->OwnSpeed(), now);
+			}
+
+			// Down in their game: lying where they lie here too, in or out of its frame, and up again when they are
+			// (DownRules::StandInDown). Not while its frame switch is still under way (it would lie down beside the empty
+			// frame, then be switched in lying), nor in furniture.
+			{
+				const bool switching = remote.inPowerArmor && !(Equipment::InPowerArmor(actor) && OnArmorSkeleton(remote, actor, playedNow)) &&
+				                       remote.switchTries < ArmorFrames::MAX_SWITCH_TRIES;
+				const bool ready = actor->Get3D() != nullptr && !switching && !remote.seatHeld && !Puppets::FurnitureOf(actor);
+				const bool lying = DownRules::IsDownState(LifeState(actor));
+				const auto& down = remote.standInDown;
+				const auto  stoodUp = down.stoodUp;
+				switch (remote.standInDown.Frame(remote.downed, ready, lying, now)) {
+				case DownRules::StandInDown::Do::kLieDown:
+					Puppets::SetDown(actor, true);
+					++laidDown;
+					REX::INFO("RemotePlayers: player {} is down; stand-in {:08X} lies down where they are (in power armor={}, life state {})", remote.id, actor->GetFormID(), Equipment::InPowerArmor(actor),
+						LifeState(actor));
+					break;
+				case DownRules::StandInDown::Do::kGetUp:
+					Puppets::SetDown(actor, false);
+					REX::INFO("RemotePlayers: player {} is up; stand-in {:08X} gets up (life state {})", remote.id, actor->GetFormID(), LifeState(actor));
+					break;
+				case DownRules::StandInDown::Do::kReplace:
+					++wouldNotGetUp;
+					REX::WARN("RemotePlayers: player {} is up, but stand-in {:08X} stayed down (life state {}); placed again", remote.id, actor->GetFormID(), LifeState(actor));
+					DeleteActor(remote);
+					continue;
+				case DownRules::StandInDown::Do::kNone:
+					break;
+				}
+				if (down.stoodUp != stoodUp) {
+					++stoodUpDown;
+					Puppets::SetDown(actor, false);  // driven again until it is laid down again
+					REX::WARN("RemotePlayers: player {} is down, but stand-in {:08X} got up here (life state {}); laid down again in a moment", remote.id, actor->GetFormID(), LifeState(actor));
+				}
 			}
 
 			// Shown when looking at them, instead of the NPC's name, with their health when hurt.
@@ -2741,12 +2830,15 @@ namespace RemotePlayers
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);
 		}
 		if (switchesIn || switchesOut || switchFails) {
-			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={}", switchesIn, switchesOut, switchFails, stillStandIns);
+			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={} armorKept={} armorRemedies={}", switchesIn, switchesOut, switchFails, stillStandIns, keptStill, remediesTried);
 		}
 		if (movingFrames) {
 			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
+		}
+		if (laidDown || wouldNotGetUp) {
+			out += std::format(" laidDown={} stoodUpDown={} wouldNotGetUp={}", laidDown, stoodUpDown, wouldNotGetUp);
 		}
 		if (spacedFrames) {
 			out += std::format(" spaced={}", spacedFrames);

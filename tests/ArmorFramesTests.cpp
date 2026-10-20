@@ -630,10 +630,18 @@ TEST("armor frames: a stand-in in its frame that glides after a friend who walks
 	// Live 2026-10-15: in its frame, on the power armor skeleton, all six pieces on, and it glided along standing while the
 	// friend walked: its graph played nothing. A fresh stand-in in the next wear walked. Still legs for STILL_LIMIT while
 	// they walk: placed again, as a stand-in whose skeleton never came is.
-	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s };
+	// Its remedies in place spent (see the test after this one).
+	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s, .remedies = ArmorFrames::MAX_REMEDIES };
 	CHECK(ChooseSwitch(facts) == Switch::kStill);
-	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;  // in it already: replaced, and the fresh one is given up on
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES - 2;  // a try left after this one: replaced
 	CHECK(ChooseSwitch(facts) == Switch::kStill);
+	// None left after it (live 2026-10-18: the third replacement was shown out of its armor beside an empty frame, while its
+	// friend walked in theirs): kept in its frame as it is.
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES - 1;
+	CHECK(ChooseSwitch(facts) == Switch::kKept);
+	facts.tries = ArmorFrames::MAX_SWITCH_TRIES;
+	CHECK(ChooseSwitch(facts) == Switch::kKept);
+	// A switch-in that never took is still given up on.
 	CHECK(ChooseSwitch({ .worn = true, .ready = true, .held = true, .tries = ArmorFrames::MAX_SWITCH_TRIES, .sinceTried = 1h }) == Switch::kGaveUp);
 	// Not yet that long: left as it is.
 	facts = { .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT - 1ms, .sinceIn = 10s };
@@ -647,6 +655,37 @@ TEST("armor frames: a stand-in in its frame that glides after a friend who walks
 	CHECK(ChooseSwitch(facts) == Switch::kNone);
 	facts.sinceIn = ArmorFrames::SKELETON_LIMIT + 1ms;
 	CHECK(ChooseSwitch(facts) == Switch::kStuck);
+}
+
+TEST("armor frames: a stand-in in its frame with still legs is tried in place before it is replaced, a different remedy each time")
+{
+	using ArmorFrames::ChooseSwitch;
+	using ArmorFrames::Remedy;
+	using ArmorFrames::Switch;
+	using ArmorFrames::SwitchFacts;
+	// Live 2026-10-19: 12 of 13 switch-ins played no walk, and each wear's three replacements went exactly as the first.
+	// Every stand-in is first tried in place, once with each remedy, in this order; a try is counted only after.
+	SwitchFacts facts{ .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s };
+	CHECK(ChooseSwitch(facts) == Switch::kRemedy);
+	CHECK(ArmorFrames::RemedyOf(facts.remedies) == Remedy::kSetUp);
+	facts.remedies = 1;
+	CHECK(ChooseSwitch(facts) == Switch::kRemedy);
+	CHECK(ArmorFrames::RemedyOf(facts.remedies) == Remedy::kOwnUpdate);
+	facts.remedies = ArmorFrames::MAX_REMEDIES;
+	CHECK(ChooseSwitch(facts) == Switch::kStill);
+	// Each remedy has the whole STILL_LIMIT again: not before.
+	facts = { .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT - 1ms, .sinceIn = 10s, .remedies = 1 };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
+	// On the last try too, before it is kept as it is.
+	facts = { .worn = true, .in = true, .rebuilt = true, .still = ArmorFrames::STILL_LIMIT, .sinceIn = 10s, .tries = ArmorFrames::MAX_SWITCH_TRIES - 1 };
+	CHECK(ChooseSwitch(facts) == Switch::kRemedy);
+	facts.remedies = ArmorFrames::MAX_REMEDIES;
+	CHECK(ChooseSwitch(facts) == Switch::kKept);
+	// Out of their armor, or still on its own skeleton: no remedy.
+	facts = { .worn = false, .in = true, .rebuilt = true, .still = 1h, .sinceIn = 10s };
+	CHECK(ChooseSwitch(facts) == Switch::kOut);
+	facts = { .worn = true, .in = true, .rebuilt = false, .still = 1h, .sinceIn = 1s };
+	CHECK(ChooseSwitch(facts) == Switch::kNone);
 }
 
 TEST("armor frames: a stand-in's legs count as still only while its friend walks and nothing in its graph moves them")
