@@ -27,8 +27,9 @@ namespace DoorShare
 	};
 
 	// Whether a reference's open state is a player's to share. An activator's open state is always a
-	// script's (an elevator, its car, a gear door, a two-state switch); so is a door's with a script on
-	// it, and an automatic door's is the game's.
+	// script's (an elevator, its car, a gear door, a two-state switch: the security gates among those, run by the
+	// game's standard two-state script alone, are shared through that script instead, SharedGates); so is a door's
+	// with a script on it, and an automatic door's is the game's.
 	constexpr bool SharesOpen(const Facts& a_facts)
 	{
 		return a_facts.door && (a_facts.doorFlags & DOOR_AUTOMATIC) == 0 && !a_facts.scripted;

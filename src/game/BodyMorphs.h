@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/LooksOverlays.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,7 +17,8 @@
 // LooksMenu keeps a character's sliders in its own store, by reference (not on the base NPC that Face reads), and other
 // plugins reach them only through its Papyrus script BodyGen. Calls to it are queued to the script VM and answered a frame
 // or so later on the VM's own threads. So the player's sliders are read in two rounds (their names, then each one's value),
-// and a stand-in's are set first and its body rebuilt only once every set has been answered.
+// and a stand-in's are set first and its body rebuilt only once every set has been answered. Its overlays go the same way
+// (game/LooksOverlays.h): read in the same round as the slider names, added to a stand-in with its sliders.
 namespace BodyMorphs
 {
 	using Clock = std::chrono::steady_clock;
@@ -87,13 +89,18 @@ namespace BodyMorphs
 		[[nodiscard]] std::uint32_t Generation() const { return generation; }
 
 		// The read is answered: what it found is what the face carries from now on. An answer to a read given up, or
-		// to one before the last load, changes nothing.
-		bool Finish(std::uint32_t a_generation, std::vector<Protocol::BodyMorph> a_found, Clock::time_point a_now)
+		// to one before the last load, changes nothing. a_overlays: the overlays it found, or none if that call was not
+		// answered (an older LooksMenu, say), when the ones read before stay.
+		bool Finish(std::uint32_t a_generation, std::vector<Protocol::BodyMorph> a_found, Clock::time_point a_now,
+			const std::optional<std::vector<LooksOverlays::Entry>>& a_overlays = std::nullopt)
 		{
 			if (!pending || a_generation != generation) {
 				return false;
 			}
 			morphs = Collect(std::move(a_found));
+			if (a_overlays) {
+				overlays = LooksOverlays::Collect(*a_overlays);
+			}
 			pending = false;
 			lastDone = a_now;
 			return true;
@@ -125,6 +132,7 @@ namespace BodyMorphs
 		[[nodiscard]] bool Settled() const { return lastDone.has_value(); }
 
 		[[nodiscard]] const std::vector<Protocol::BodyMorph>& Morphs() const { return morphs; }
+		[[nodiscard]] const std::vector<Protocol::Overlay>& Overlays() const { return overlays; }
 
 		// A save was loaded: it may be another character, read afresh (a read under way answers for the old world).
 		void Reset()
@@ -132,6 +140,7 @@ namespace BodyMorphs
 			pending = false;
 			lastDone.reset();
 			morphs.clear();
+			overlays.clear();
 			++generation;
 		}
 
@@ -141,6 +150,7 @@ namespace BodyMorphs
 		std::optional<Clock::time_point>  lastDone;
 		std::uint32_t                     generation = 0;
 		std::vector<Protocol::BodyMorph>  morphs;
+		std::vector<Protocol::Overlay>    overlays;
 	};
 
 	// Whether our face may go out: at once without LooksMenu, else once the first read is done (see Reading::Settled).
@@ -149,18 +159,18 @@ namespace BodyMorphs
 		return !a_installed || a_reading.Settled();
 	}
 
-	// What becomes of a stand-in's sliders once every set on it has been answered.
+	// What becomes of a stand-in's sliders (and overlays) once every set on it has been answered.
 	enum class Then
 	{
 		kNothing,  // not one we set any on (or answered already)
-		kUpdate,   // rebuild its body with them
+		kUpdate,   // rebuild its body with them, and lay the overlays on it
 		kClear,    // it went meanwhile: take them out of LooksMenu's store again
 	};
 
-	// The stand-ins we set sliders on, by form ID. LooksMenu keeps a reference's sliders by form ID until told to forget
-	// them (into the save, too), and the game hands a deleted stand-in's form ID to the next reference it makes: a raider
-	// spawned later would have a friend's body. So a stand-in's sliders are taken out when it goes, but never while its
-	// sets are still queued, since a set answered after the removal would put them back.
+	// The stand-ins we set sliders or overlays on, by form ID. LooksMenu keeps a reference's sliders and overlays by form
+	// ID until told to forget them (into the save, too), and the game hands a deleted stand-in's form ID to the next
+	// reference it makes: a raider spawned later would have a friend's body and tattoos. So a stand-in's are taken out when
+	// it goes, but never while its sets are still queued, since a set answered after the removal would put them back.
 	class StandIns
 	{
 	public:

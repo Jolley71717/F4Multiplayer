@@ -5,6 +5,7 @@
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/HandThrowable.h"
+#include "game/MuzzleFlash.h"
 #include "game/AttackKind.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -190,7 +191,7 @@ namespace WeaponFire
 			const auto id = actor->GetFormID();
 			const std::string_view npcTag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
 			const std::string_view npcPayload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
-			// The wind-up and the release, for the model hung in a stand-in's hand (off unless turned on).
+			// The wind-up and the release, for the grenade shown in a stand-in's hand (bGrenadeInHand).
 			if (HandThrowables()) {
 				if (const auto cue = HandThrowable::CueOf(npcTag, npcPayload); cue != HandThrowable::Cue::kNone) {
 					QueueHandCue(id, cue);
@@ -396,6 +397,7 @@ namespace WeaponFire
 		RemoveGhostGrenades();
 		UpdateHandThrowables();
 		EndDueShields();
+		MuzzleFlash::Frame();
 	}
 
 	namespace
@@ -473,10 +475,17 @@ namespace WeaponFire
 		}
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
+		bool animated = false;
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
 		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
+			animated = true;
+		}
+		// The engine shows the gun's flash and light with the firing animation; a shot whose animation the graph
+		// refused gets the flash from MuzzleFlash instead (nothing is fired: ROADMAP #17).
+		if (replay == AttackKind::Replay::kFire) {
+			MuzzleFlash::OnShot(a_actor, animated);
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
 		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one
@@ -559,7 +568,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables());
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -770,10 +779,11 @@ namespace WeaponFire
 		}
 	}
 
-	// --- The grenade in a stand-in's hand (HandThrowable.h; a dev toggle, off by default) -------------
+	// --- The grenade in a stand-in's hand (HandThrowable.h; bGrenadeInHand, on by default) -------------
 	namespace
 	{
-		std::atomic<bool> handThrowablesOn{ false };
+		std::atomic<bool> handThrowablesOn{ false };   // set from bGrenadeInHand at load (main.cpp)
+		std::atomic<bool> handModelFallback{ false };  // the dev's handthrowable model only
 
 		std::mutex                                                handCueLock;
 		std::vector<std::pair<std::uint32_t, HandThrowable::Cue>> handCues;  // from the NPC animation hook, drained in Frame
@@ -872,6 +882,7 @@ namespace WeaponFire
 			}();
 			const auto weapon = seen.loaded ? Equipment::HeldThrowable(actor) : nullptr;
 			seen.throwable = weapon ? weapon->GetFormID() : 0;
+			seen.modelFallback = handModelFallback;
 			const auto skip = handBook.ShouldHang(a_actorId, seen);
 			if (skip != HandThrowable::Skip::kNone) {
 				if (skip != HandThrowable::Skip::kNotReplayed) {  // an NPC's own throw is no news
@@ -950,27 +961,40 @@ namespace WeaponFire
 		return handThrowablesOn.load(std::memory_order_relaxed);
 	}
 
-	void SetHandThrowables(bool a_on)
+	bool HandModelFallback()
 	{
+		return handModelFallback.load(std::memory_order_relaxed);
+	}
+
+	void SetHandThrowables(bool a_on, bool a_modelFallback)
+	{
+		const bool fallback = a_on && a_modelFallback;
 		handThrowablesOn = a_on;
-		if (a_on) {
+		const bool hadFallback = handModelFallback.exchange(fallback);
+		// Turned on, or kept with the database's node allowed as before (or never): nothing hangs that has to come off.
+		if (a_on && (fallback || !hadFallback)) {
 			return;
 		}
+		// Off, or the database's node no longer allowed: every grenade comes out of every hand.
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kOff);
 		}
 		handModels.clear();  // the database's own nodes, held for the next throw
-		std::scoped_lock l{ handCueLock };
-		handCues.clear();
+		if (!a_on) {
+			std::scoped_lock l{ handCueLock };
+			handCues.clear();
+		}
 	}
 
 	void DropHandThrowable(std::uint32_t a_actorFormId)
 	{
+		MuzzleFlash::Drop(a_actorFormId);  // called before the actor is deleted, like this
 		TakeOff(a_actorFormId, HandThrowable::Drop::kDeleted);
 	}
 
 	void DropHandThrowables()
 	{
+		MuzzleFlash::DropAll();  // before a save or a load, and when the session ends, like this
 		for (const auto actorId : handBook.Actors()) {
 			TakeOff(actorId, HandThrowable::Drop::kDeleted);
 		}
@@ -993,7 +1017,7 @@ namespace WeaponFire
 
 	std::string DescribeHandThrowables()
 	{
-		return HandThrowables() ? std::format("{}/{}", handsHung, handsDropped) : "off";
+		return HandThrowables() ? std::format("{}/{}{}", handsHung, handsDropped, HandModelFallback() ? "+model" : "") : "off";
 	}
 
 	void UpdateHandThrowables()

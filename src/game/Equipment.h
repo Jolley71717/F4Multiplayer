@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/FrameUse.h"
 #include "game/OwnGear.h"
 
 // Equipped armor and weapons: read from the local player, copied onto puppets. Main thread only.
@@ -149,4 +150,21 @@ namespace Equipment
 	// What hangs under the actor's hand and weapon nodes (the children's names; the engine's WeaponLeft with
 	// where it sits and what it holds): where a throwable's model is during a throw, for the log.
 	std::string DescribeHands(RE::Actor* a_actor);
+
+	// What the engine looks at as our player tries to get into a frame (see FrameUse.h): its tilt, its markers' users,
+	// and the engine's own two answers. Main thread.
+	[[nodiscard]] FrameUse::Facts FrameUseOf(RE::TESObjectREFR* a_frame);
+
+	// That, for the log and the paframes dev command.
+	std::string DescribeFrameUse(RE::TESObjectREFR* a_frame);
+
+	// Patches TESFurniture::Activate's call into the player's furniture use (FrameUse::USE_CALL): as our player gets into
+	// a frame, what would have the engine say "You cannot use this at this time." is mended first (FrameUse::ChooseMend),
+	// and a refusal is logged with what the engine found (DescribeFrameUse). The player's furniture enter's message, the
+	// other place the game says it, is logged too (FrameUse::ENTER_MESSAGE_CALL). Each call is patched only where
+	// 1.11.240 has it. Once, at load.
+	void InstallFrameUse();
+
+	// What that hook mended and logged, for the paframes dev command.
+	std::string DescribeFrameMends();
 }

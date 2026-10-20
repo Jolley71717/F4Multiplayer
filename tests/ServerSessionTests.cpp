@@ -2,6 +2,7 @@
 // other, and the per-player relays (state, status, clock, XP, pings, heartbeats, rate limits).
 
 #include "ServerFixture.h"
+#include "FormIds.h"
 #include "SessionFile.h"
 #include "net/ModDiff.h"
 
@@ -1334,6 +1335,31 @@ TEST("server session: pings are passed on at most once a second")
 	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 }
 
+TEST("server session: a ping reaches the others with what it names, as the sender's, and a malformed one goes nowhere")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice"));
+	REQUIRE(alice);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Take(1);
+
+	// A spot with an NPC's id is no ping: dropped, and it does not spend the second's ping.
+	Protocol::Ping bad{ 77, 0, 0x3C, 1.0f, 2.0f, 3.0f, Protocol::PingKind::kSpot, 0x0001F3A2, 0, "" };
+	f.fake->Deliver(1, Protocol::Encode(bad, MT::kPing));
+	Protocol::Ping raider{ 77, 0, 0x3C, 1.0f, 2.0f, 3.0f, Protocol::PingKind::kActor, 0xFF000123, 0x0001B56D, "Raider" };
+	f.fake->Deliver(1, Protocol::Encode(raider, MT::kPing));
+	const auto pinged = OfType(Settle(f, 2), MT::kPinged);
+	REQUIRE(pinged.size() == 1);
+	const auto relayed = Protocol::DecodePing(pinged[0]);
+	REQUIRE(relayed);
+	CHECK(relayed->playerId == alice->playerId);  // not the 77 it claimed
+	CHECK(relayed->kind == Protocol::PingKind::kActor);
+	CHECK(relayed->target == 0xFF000123);  // the spawn id: every game finds its own copy of the NPC by it
+	CHECK(relayed->base == 0x0001B56D);
+	CHECK(relayed->name == "Raider");
+	CHECK(OfType(f.fake->Take(1), MT::kPinged).empty());
+}
+
 TEST("server session: spoken lines are passed on at most four times a second")
 {
 	Fixture f;
@@ -1438,7 +1464,7 @@ TEST("server session: a player flooding states loses the excess")
 	CHECK(states.back().sequence < 200);
 }
 
-TEST("server session: a load-order refusal says so, and the list before it names the plugins that differ")
+TEST("server session: a joiner with other mods is let in, and the list before the welcome names the plugins that differ")
 {
 	Fixture f;
 	auto    alice = Fixture::MakeHello("Alice");
@@ -1449,13 +1475,89 @@ TEST("server session: a load-order refusal says so, and the list before it names
 	auto bob = Fixture::MakeHello("Bob");
 	bob.contentHash = 0x9999;
 	bob.plugins = { "Fallout4.esm", "DLCCoast.esm", "Extra.esp" };
-	const auto reject = JoinRejected(f, 2, Protocol::Encode(bob));
-	REQUIRE(reject);
-	CHECK(reject->reason == Protocol::REJECT_LOAD_ORDER);
+	REQUIRE(f.Join(2, bob));
+	CHECK(f.Logged("their form IDs are translated by plugin name"));
 	const auto told = ModsTold(f, 2, bob.plugins);
 	REQUIRE(told);
 	CHECK(told->extra == std::vector<std::string>{ "Extra.esp" });
 	CHECK(told->Count() == 1u);
+}
+
+TEST("server session: a hello without a plugin list (a bot, a test tool) still needs the session's load order")
+{
+	Fixture f;
+	auto    alice = Fixture::MakeHello("Alice");
+	alice.plugins = { "Fallout4.esm", "DLCCoast.esm" };
+	REQUIRE(f.Join(1, alice));
+
+	auto bot = Fixture::MakeHello("Bot");
+	bot.contentHash = 0x9999;
+	bot.plugins.clear();
+	const auto reject = JoinRejected(f, 2, Protocol::Encode(bot));
+	REQUIRE(reject);
+	CHECK(reject->reason.starts_with(Protocol::REJECT_LOAD_ORDER));
+
+	// One with the session's hash and no list gets in on the hash, as before: nothing to translate for it.
+	auto same = Fixture::MakeHello("Same");
+	same.contentHash = alice.contentHash;
+	same.plugins.clear();
+	REQUIRE(f.Join(3, same));
+}
+
+TEST("server session: the session's plugin table comes before the welcome, grows by a joiner's other plugins, and goes to everyone")
+{
+	Fixture f;
+	auto    host = Fixture::MakeHello("Host");
+	host.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm", "Story.esp" }, { "Light.esl" });
+	f.fake->Connect(1);
+	f.fake->Deliver(1, Protocol::Encode(host));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kWelcome)));
+	auto tables = Decoded(f.fake->Take(1), MT::kPluginTable, [](auto a_data) { return Protocol::DecodePluginTable(a_data); });
+	REQUIRE(tables.size() == 1u);
+	CHECK(tables[0].plugins == host.plugins);
+
+	// Bob has the host's mods in another order, and two of his own: the table grows by those, after the rest of their kind.
+	auto bob = Fixture::MakeHello("Bob");
+	bob.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "Story.esp", "Mine.esp", "DLCCoast.esm" }, { "MyLight.esl", "Light.esl" });
+	bob.contentHash = Protocol::LoadOrderHash(bob.plugins);
+	f.fake->Connect(2);
+	f.fake->Deliver(2, Protocol::Encode(bob));
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kWelcome)));
+	const auto grown = Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm", "Story.esp", "Mine.esp" }, { "Light.esl", "MyLight.esl" });
+	tables = Decoded(f.fake->Take(2), MT::kPluginTable, [](auto a_data) { return Protocol::DecodePluginTable(a_data); });
+	REQUIRE(tables.size() == 1u);
+	CHECK(tables[0].plugins == grown);
+	CHECK(f.Logged("the session's plugin table has 6 plugins (2 new)"));
+	// The host hears of it too: Bob's forms are numbered by it from now on.
+	tables = Decoded(Settle(f, 1), MT::kPluginTable, [](auto a_data) { return Protocol::DecodePluginTable(a_data); });
+	REQUIRE(tables.size() == 1u);
+	CHECK(tables[0].plugins == grown);
+
+	// Carol brings nothing new: only she is sent the table.
+	auto carol = Fixture::MakeHello("Carol");
+	carol.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm" }, {});
+	carol.contentHash = Protocol::LoadOrderHash(carol.plugins);
+	REQUIRE(f.Join(3, carol));
+	CHECK(Count(Settle(f, 1), MT::kPluginTable) == 0u);
+}
+
+TEST("server session: a joiner's appearance is the session's form, translated from their own numbering")
+{
+	Fixture f;
+	auto    host = Fixture::MakeHello("Host");
+	host.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "A.esp", "B.esp" }, {});
+	host.contentHash = Protocol::LoadOrderHash(host.plugins);
+	REQUIRE(f.Join(1, host));
+	f.fake->Take(1);
+
+	auto bob = Fixture::MakeHello("Bob");
+	bob.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "B.esp", "A.esp" }, {});
+	bob.contentHash = Protocol::LoadOrderHash(bob.plugins);
+	bob.appearance = 0x01000ABC;  // B.esp's NPC in his game: the host's 02000ABC
+	REQUIRE(f.Join(2, bob));
+	const auto joined = Decoded(Settle(f, 1), MT::kPlayerJoined, [](auto a_data) { return Protocol::DecodePlayerJoined(a_data); });
+	REQUIRE(joined.size() == 1u);
+	CHECK(joined[0].appearance == 0x02000ABCu);
 }
 
 TEST("server session: a load order that differs only in the host's ignored plugins is accepted")
@@ -1481,9 +1583,7 @@ TEST("server session: a load order that differs only in the host's ignored plugi
 	auto carol = Fixture::MakeHello("Carol");
 	carol.contentHash = 0x7777;
 	carol.plugins = { "Fallout4.esm", "Other.esp" };
-	const auto reject = JoinRejected(f, 3, Protocol::Encode(carol));
-	REQUIRE(reject);
-	CHECK(reject->reason.starts_with(Protocol::REJECT_LOAD_ORDER));
+	REQUIRE(f.Join(3, carol));  // in too (their form IDs are translated), and told what differs
 	const auto told = ModsTold(f, 3, carol.plugins);
 	REQUIRE(told);
 	CHECK(told->extra == std::vector<std::string>{ "Other.esp" });
@@ -1491,7 +1591,7 @@ TEST("server session: a load order that differs only in the host's ignored plugi
 	CHECK(told->Count() == 1u);
 }
 
-TEST("server session: a joiner whose load order differs is sent the session's, before the refusal, and one whose matches is not")
+TEST("server session: a joiner whose load order differs is sent the session's, and its plugin table, before the welcome, and one whose matches only the table")
 {
 	Server::Options options;
 	options.ignoredPlugins = { "Textures.esp" };
@@ -1501,19 +1601,24 @@ TEST("server session: a joiner whose load order differs is sent the session's, b
 	REQUIRE(f.Join(1, host));
 	CHECK(Count(Received(f, 1), MT::kLoadOrder) == 0u);  // the first decides: nothing to compare
 
-	// Refused: the list first, then the refusal, both reliable on the same channel.
+	// In: the list first, then the plugin table, then the welcome, all reliable on the same channel.
 	auto bob = Fixture::MakeHello("Bob");
 	bob.contentHash = 0x9999;
 	bob.plugins = { "Fallout4.esm", "DLCCoast.esm", "Extra.esp" };
 	f.fake->Connect(2);
 	f.fake->Deliver(2, Protocol::Encode(bob));
-	REQUIRE(WaitReject(f, 2));
-	const auto toBob = f.fake->Take(2);
+	std::vector<std::vector<std::uint8_t>> toBob;
+	REQUIRE(Await(f, 2, MT::kWelcome, toBob));
+	const auto at = [&](MT a_type) {
+		return std::ranges::find_if(toBob, [&](const auto& a_packet) { return !a_packet.empty() && a_packet[0] == Type(a_type); }) - toBob.begin();
+	};
+	CHECK(at(MT::kLoadOrder) < at(MT::kPluginTable));
+	CHECK(at(MT::kPluginTable) < at(MT::kWelcome));
 	const auto orders = Decoded(toBob, MT::kLoadOrder, [](auto a_data) { return Protocol::DecodeLoadOrder(a_data); });
 	REQUIRE(orders.size() == 1u);
 	CHECK(orders[0].plugins == host.plugins);
 	CHECK(orders[0].ignored == options.ignoredPlugins);  // so their game leaves them out as the server does
-	CHECK(f.fake->WaitDisconnected(2));
+	CHECK(!f.fake->Disconnected(2));
 
 	// Let in with only the host's ignored plugin different: the list comes with the welcome.
 	auto carol = Fixture::MakeHello("Carol");
@@ -1527,7 +1632,9 @@ TEST("server session: a joiner whose load order differs is sent the session's, b
 	auto dave = Fixture::MakeHello("Dave");
 	dave.plugins = host.plugins;
 	REQUIRE(f.Join(4, dave));
-	CHECK(Count(Received(f, 4), MT::kLoadOrder) == 0u);
+	const auto toDave = Received(f, 4);
+	CHECK(Count(toDave, MT::kLoadOrder) == 0u);
+	CHECK(Count(toDave, MT::kPluginTable) == 1u);
 }
 
 TEST("server session: a player in the session gets the session's load order when they ask, once in a while")
@@ -1615,7 +1722,7 @@ namespace
 	}
 }
 
-TEST("server session: with a story mod, a friend without the host's HD texture pack is refused, naming it: the mod's NPC would be another form in each game")
+TEST("server session: with a story mod, a friend without the host's HD texture pack gets in, told it is missing, and the mod's NPC is translated")
 {
 	// The report: a story mod and its companion mod after the game's own files. With the texture pack the mod's NPC
 	// is 09000004, without it 08000004.
@@ -1628,13 +1735,16 @@ TEST("server session: with a story mod, a friend without the host's HD texture p
 	Fixture f;
 	REQUIRE(f.Join(1, HelloWith("Host", host)));
 	f.fake->Take(1);
-	const auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Friend", withoutPack)));
-	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+	REQUIRE(f.Join(2, HelloWith("Friend", withoutPack)));
 	const auto told = ModsTold(f, 2, HelloWith("Friend", withoutPack).plugins);
 	REQUIRE(told);
 	CHECK(told->missing == std::vector<std::string>{ "DLCUltraHighResolution.esm" });
 	CHECK(told->Count() == 1u);
+	// The NPC their game numbers 08000004 is the session's (the host's) 09000004, and back.
+	const FormIds::Mapper friendForms(HelloWith("Friend", withoutPack).plugins, HelloWith("Host", host).plugins);
+	CHECK(friendForms.ToSession(0x08000004) == 0x09000004u);
+	CHECK(friendForms.ToLocal(0x09000004) == 0x08000004u);
+	CHECK(!friendForms.ToLocal(0x07000001));  // the pack holds no records, but nothing of it is theirs anyway
 
 	// A friend with the pack too has the host's load order.
 	CHECK(SameFormIds(host, host));
@@ -1653,9 +1763,10 @@ TEST("server session: without mods after it, the HD texture pack still makes no 
 	REQUIRE(f.Join(2, HelloWith("Friend", withoutPack)));
 }
 
-TEST("server session: a plugin the host lets differ gets a friend in only where it moves no other plugin's form IDs")
+TEST("server session: a plugin the host lets differ that moves other plugins' form IDs is named to the friend, who still gets in")
 {
 	Server::Options options;
+	options.maxPlayers = 8;
 	options.ignoredPlugins = { "Textures.esp", "LightTextures.esl" };
 	Fixture f{ options };
 	// The host's texture plugin loads before the story mod: the story mod's forms are 09 in the host's game.
@@ -1663,22 +1774,19 @@ TEST("server session: a plugin the host lets differ gets a friend in only where 
 	REQUIRE(f.Join(1, HelloWith("Host", host)));
 	f.fake->Take(1);
 
-	// Without the texture plugin, the story mod's forms are 08: refused, and told why.
+	// Without the texture plugin, the story mod's forms are 08: in (they are translated), and told it is missing.
 	const LoadOrder without{ Official({ "Story.esp" }), host.light };
 	CHECK(!SameFormIds(host, without));
-	auto reject = JoinRejected(f, 2, Protocol::Encode(HelloWith("Bob", without)));
-	REQUIRE(reject);
-	CHECK(Contains(reject->reason, "Texture plugins may differ only when they load last"));
+	REQUIRE(f.Join(2, HelloWith("Bob", without)));
 	auto told = ModsTold(f, 2, HelloWith("Bob", without).plugins);
 	REQUIRE(told);
 	CHECK(told->missing == std::vector<std::string>{ "Textures.esp" });
 	CHECK(told->Count() == 1u);
 
-	// With it, but after the story mod: refused too.
+	// With it, but after the story mod: in too, told it moved.
 	const LoadOrder after{ Official({ "Story.esp", "Textures.esp" }), host.light };
 	CHECK(!SameFormIds(host, after));
-	reject = JoinRejected(f, 3, Protocol::Encode(HelloWith("Carol", after)));
-	REQUIRE(reject);
+	REQUIRE(f.Join(3, HelloWith("Carol", after)));
 	told = ModsTold(f, 3, HelloWith("Carol", after).plugins);
 	REQUIRE(told);
 	REQUIRE(told->moved.size() == 1u);
@@ -1688,8 +1796,7 @@ TEST("server session: a plugin the host lets differ gets a friend in only where 
 	// A light texture plugin missing before a light weapons plugin moves that one's form IDs the same way.
 	const LoadOrder withoutLight{ host.full, { "Weapons.esl" } };
 	CHECK(!SameFormIds(host, withoutLight));
-	reject = JoinRejected(f, 4, Protocol::Encode(HelloWith("Dave", withoutLight)));
-	REQUIRE(reject);
+	REQUIRE(f.Join(4, HelloWith("Dave", withoutLight)));
 	told = ModsTold(f, 4, HelloWith("Dave", withoutLight).plugins);
 	REQUIRE(told);
 	CHECK(told->missing == std::vector<std::string>{ "LightTextures.esl" });
@@ -1758,9 +1865,9 @@ TEST("server session file: a host whose HD texture pack now counts keeps the wor
 		REQUIRE(world.size() == 1);
 		CHECK(std::ranges::contains(world[0].deadActors, STORY_NPC));
 
-		// A friend on the new version with the host's load order joins on the hash; one without the pack is refused.
+		// A friend on the new version with the host's load order joins on the hash; one without the pack is let in too, translated.
 		REQUIRE(f.Join(2, HelloWith("Friend", host)));
-		CHECK(JoinRejected(f, 3, Protocol::Encode(HelloWith("Other", { Official({ "Story.esp" }), host.light }))));
+		REQUIRE(f.Join(3, HelloWith("Other", { Official({ "Story.esp" }), host.light })));
 	}
 	{
 		// A load order whose old hash is not the saved one is another load order: a fresh session.
@@ -1774,4 +1881,41 @@ TEST("server session file: a host whose HD texture pack now counts keeps the wor
 		CHECK(welcome->sessionId != 0x5E55);
 		CHECK(f.Logged("load order changed"));
 	}
+}
+
+TEST("server session file: a session saved with its plugin table carries on when the host's mods change order, numbered as saved")
+{
+	const LoadOrder before{ Official({ "A.esp", "B.esp" }), { "Weapons.esl" } };
+	const LoadOrder after{ Official({ "B.esp", "New.esp", "A.esp" }), { "Weapons.esl" } };
+	constexpr std::uint32_t B_NPC = 0x08000801;  // B.esp's, as the saved table numbers it
+	const TempSessionFile   file;
+	{
+		SessionFile::Snapshot saved;
+		saved.contentHash = HelloWith("Host", before).contentHash;
+		saved.sessionId = 0x5E55;
+		saved.deadActors = { B_NPC };
+		saved.plugins = HelloWith("Host", before).plugins;
+		REQUIRE(SessionFile::Save(file.path, saved));
+	}
+	Server::Options options;
+	options.sessionFile = file.path.string();
+	Fixture f{ options };
+	f.fake->Connect(1);
+	f.fake->Deliver(1, Protocol::Encode(HelloWith("Host", after)));
+	std::vector<std::vector<std::uint8_t>> got;
+	REQUIRE(Await(f, 1, MT::kWelcome, got));
+	const auto welcome = Decoded(got, MT::kWelcome, [](auto a_data) { return Protocol::DecodeWelcome(a_data); });
+	REQUIRE(welcome.size() == 1u);
+	CHECK(welcome[0].sessionId == 0x5E55);
+	CHECK(!f.Logged("load order changed"));
+	// The table is the saved one with the new plugin added after the rest: the saved IDs mean what they meant.
+	const auto tables = Decoded(got, MT::kPluginTable, [](auto a_data) { return Protocol::DecodePluginTable(a_data); });
+	REQUIRE(tables.size() == 1u);
+	CHECK(tables[0].plugins == HelloWith("Host", { Official({ "A.esp", "B.esp", "New.esp" }), { "Weapons.esl" } }).plugins);
+	std::ranges::move(Received(f, 1), std::back_inserter(got));
+	const auto world = WorldStates(got);
+	REQUIRE(world.size() == 1);
+	CHECK(std::ranges::contains(world[0].deadActors, B_NPC));
+	// In the host's game now, that NPC is 07000801.
+	CHECK(FormIds::Mapper(HelloWith("Host", after).plugins, tables[0].plugins).ToLocal(B_NPC) == 0x07000801u);
 }

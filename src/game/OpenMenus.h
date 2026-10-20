@@ -20,18 +20,34 @@ namespace OpenMenus
 	{
 		kConsole,
 		kDialogue,
+		kFader,  // FaderMenu: the screen fading to or from black (Game.FadeOutGame, a loading screen), or held black
 		kLooks,
 		kPause,
 		kPipboy,
 		kPowerArmorMod,
 		kVats,
 		kWorkshop,
+		// The rest only say what kind of menu friends see us in (MenuKinds).
+		kBarter,
+		kBook,
+		kContainer,
+		kCooking,
+		kExamine,
+		kHolotape,
+		kLevelUp,
+		kLockpicking,
+		kMessageBox,
+		kSitWait,
+		kSleepWait,
+		kTerminal,
+		kTerminalHolotape,
 		kCount
 	};
 
 	// The game's names for them (MenuOpenCloseEvent::menuName), in Menu's order.
-	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "LooksMenu", "PauseMenu", "PipboyMenu",
-		"PowerArmorModMenu", "VATSMenu", "WorkshopMenu" };
+	constexpr std::array<std::string_view, static_cast<std::size_t>(Menu::kCount)> NAMES{ "Console", "DialogueMenu", "FaderMenu", "LooksMenu", "PauseMenu",
+		"PipboyMenu", "PowerArmorModMenu", "VATSMenu", "WorkshopMenu", "BarterMenu", "BookMenu", "ContainerMenu", "CookingMenu", "ExamineMenu", "HolotapeMenu",
+		"LevelUpMenu", "LockpickingMenu", "MessageBoxMenu", "SitWaitMenu", "SleepWaitMenu", "TerminalMenu", "TerminalHolotapeMenu" };
 
 	// Whether two menu names are the same. The game's strings are case-blind (BSFixedString, and the UI's own lookup):
 	// its string pool keeps a name in the case it was first made in, which need not be the menu's own.

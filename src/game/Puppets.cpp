@@ -2,6 +2,7 @@
 
 #include "game/AimPoint.h"
 #include "game/CreatureGait.h"
+#include "game/FrameClock.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
@@ -50,6 +51,7 @@ namespace Puppets
 			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
+			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
 		};
 
 		std::mutex                                    lock;
@@ -388,7 +390,11 @@ namespace Puppets
 				}
 			}
 			if (dog) {
-				graph->SetGraphVariableFloat(VariableName(dogGait.range->rateVariable), dogGait.rate);
+				// Every clip's rate, not only the one it is told to play: a state it is in by some other way keeps a
+				// sane one (the root graph starts the fast trot's at 0, a frozen pose).
+				for (const auto& write : CreatureGait::Rates(dogGait, motion.speed)) {
+					graph->SetGraphVariableFloat(VariableName(write.variable), write.rate);
+				}
 				if (CreatureGait::Send(moving, a_puppet.moving, dogGait.range->id, a_puppet.range, step.resent != nullptr)) {
 					graph->NotifyAnimationGraphImpl(VariableName(dogGait.range->event));
 				}
@@ -510,14 +516,22 @@ namespace Puppets
 			}
 			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
-				// Where its path is now (MotionPath.h), not where it was when our frame's work last ran, which comes at
-				// another moment of each frame than this update does.
-				if (const auto at = puppet->target.path.At(now)) {
+				// Where its path (MotionPath.h) is at the time of the frame the engine moves all else by (FrameClock.h): not where
+				// it was when our frame's work last ran, nor at the moment this update runs, which comes up to a frame off that
+				// pace in a game that skips frames unevenly. So it steps as far each frame as everything else drawn with it.
+				const auto placeAt = FrameClock::PlaceAt(now);
+				if (const auto at = puppet->target.path.At(placeAt)) {
 					puppet->target.position = { at->x, at->y, at->z };
 					puppet->target.heading = at->heading;
 				}
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
+				{
+					std::scoped_lock l{ lock };
+					if (const auto entry = Find(a_this)) {
+						entry->put = Put{ now, puppet->target.position, placeAt };
+					}
+				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
 				MatchWeaponDrawn(a_this, *puppet);
 				// The engine feeds its locomotion graph from the actor's desired movement, which for an
@@ -807,6 +821,13 @@ namespace Puppets
 		}
 	}
 
+	std::optional<Put> LastPut(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		const auto entry = Find(a_actor);
+		return entry ? entry->put : std::nullopt;
+	}
+
 	const RE::BSFixedString& VariableName(const char* a_name)
 	{
 		// Every name a gait sends: made once, the first time any is asked for (the language guards a function-local
@@ -898,16 +919,17 @@ namespace Puppets
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
 		constexpr const char* FAMILIES[] = { "none", "person", "dog", "creature" };
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} played={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
 			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
-			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" },
+			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" }, puppet.range,
 			FAMILIES[std::to_underlying(GaitGraphOf(a_actor).family)]);
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
-		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate its
-		// walk and run play at; a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and iSyncIdleLocomotion is 1
-		// while a graph moves.
+		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate
+		// each clip plays at (played= is the gait a dog's copy was last told, -1 standing: not ownerGait's when the speed
+		// rules that one out, CreatureGait::Fits); a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and
+		// iSyncIdleLocomotion is 1 while a graph moves.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;

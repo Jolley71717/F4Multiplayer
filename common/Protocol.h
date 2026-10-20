@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -19,7 +20,15 @@
 namespace Protocol
 {
 	inline constexpr std::uint32_t MAGIC = 0x504D3446;  // "F4MP"
-	inline constexpr std::uint16_t VERSION = 47;  // 47: the welcome carries the host's session rules (SessionRules)
+	// 47: the next release's branches together, each of which took a number of its own for its test builds: 36 the
+	// session's plugin table (load-order-ids), 37 items given by dropping them (give-items), 38 power wires on workshop
+	// items (settlement-sync), 39 LooksMenu skins and overlays on the face (looksmenu-faces), 40 damage over time
+	// (dot-damage-sync), 41 moved objects (moved-objects), 42 host controls (host-controls), 43 pings of what is under
+	// the crosshair (better-pings), 45 the Minutemen's shared settlement requests (shared-radiants), 46 whether
+	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
+	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
+	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
+	inline constexpr std::uint16_t VERSION = 49;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -43,10 +52,17 @@ namespace Protocol
 	// minute. (Only the text: older clients show it and retry as for any refusal.)
 	inline constexpr std::string_view REJECT_HOST_NOT_READY = "The host isn't in the game yet";
 
+	// A Reject's reason for a player the host banned (Server's ban list), and for anyone new while the host has locked
+	// the session. The joining game knows both: a banned one stops trying, a locked-out one tries again in a minute.
+	inline constexpr std::string_view REJECT_BANNED = "The host has banned you from this session";
+	inline constexpr std::string_view REJECT_LOCKED = "The session is locked: the host isn't letting anyone new in";
+
 	// The local player's reference. Never shared: each game has its own.
 	inline constexpr std::uint32_t PLAYER_REF_ID = 0x14;
 
-	// References are shared by form ID, which matches for everyone because the load order must.
+	// References are shared by form ID. Since protocol 36 every form ID on the wire is the session's (its plugin table,
+	// kPluginTable): each game translates its own to it and back by plugin name (common/FormIds.h, FormTranslate.h), so
+	// players with other mods, or the same mods in another order, play together. Before, the load order had to match.
 	// A coordinate the game world can hold: finite and well inside the engine's limits (the Commonwealth
 	// spans about 150,000 units; a value like 1e38 from a bad client would break cell lookup).
 	inline constexpr float MAX_COORDINATE = 1.0e6f;
@@ -108,7 +124,6 @@ namespace Protocol
 		kReportShot = 15,         // the sender (or an NPC it runs) fired a weapon
 		kReportStatus = 16,       // the sender's location, health and level, for the player list
 		kReportTime = 17,         // the sender's time of day and weather (only the first player's are used)
-		kPing = 18,               // "over here": the sender wants the others to come to them
 		kReportXp = 19,           // the sender got XP for a kill; the others get a share
 		kHeartbeat = 20,          // answered right away with kHeartbeatAck, to measure the connection
 		kReportQuestDone = 21,    // the sender completed a quest themselves
@@ -123,7 +138,20 @@ namespace Protocol
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
+		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
+		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
+		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
+		// 18 and 120 were the ping before version 43, which named only where the sender stood.
+		kPing = 56,                // the sender pinged what is under their crosshair: a spot, an NPC, an item or a friend
+		kReportRadiantStart = 58,  // a radiant quest started in the sender's game: who and where it sends them to (RadiantRules)
+		kReportRadiantStage = 59,  // a shared radiant quest reached a new stage in the sender's game
 		kReportLine = 25,         // the sender (or an NPC it runs) said something
+		kReportDamage = 51,       // the sender took this much (ActorHealth: a fraction of the maximum) off an NPC another game runs
+		kReportDrop = 40,         // the sender dropped an item for the others to take (protocol 37)
+		kClaimDrop = 41,          // the sender wants to take a dropped item, or gives back one it couldn't take
+		kDropRecord = 42,         // the drops the sender's world holds (after its welcome and each load)
+		kReportObjectHold = 52,   // the sender holds a loose object in their hands: where it is, in their own frame (unreliable)
+		kReportObjectRest = 53,   // an object the sender moved: let go of (dropped or thrown), or come to rest
 
 		// server -> client
 		kWelcome = 101,
@@ -145,7 +173,6 @@ namespace Protocol
 		kShotFired = 117,         // another player (or an NPC they run) fired a weapon
 		kPlayerStatus = 118,      // another player's location, health and level
 		kWorldTime = 119,         // the session's time of day and weather
-		kPinged = 120,            // another player pinged their position
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kPlayerFace = 129,        // another player's face and body shape
@@ -156,12 +183,25 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
+		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
+		kPinged = 156,            // another player pinged something
+		kObjectHeld = 152,        // another player holds this object (unreliable); to a player refused it, who holds it
+		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
+		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
+		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
+		kPluginTable = 145,       // the session's plugin table, which numbers every form ID on the wire: before the welcome, and when it grows
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
 		kRevived = 124,           // another player helped you up
 		kVoiceRelay = 125,        // a piece of another player's voice
 		kMarkersFound = 126,      // map markers another player discovered (playerId 0: catching up)
 		kLineSpoken = 127,        // another player (or an NPC they run) said something
+		kActorDamaged = 151,      // another player took this much off an NPC: the game that runs it takes it off too
+		kDropPlaced = 140,        // an item lies in the session for anyone to take (offered to its dropper alone first: DropClaim)
+		kDropGone = 141,          // a dropped item was taken (by takerId: that game takes it) or went back to its owner
+		kDropList = 142,          // every item lying in the session now (the answer to kDropRecord)
 	};
 
 	enum StateFlags : std::uint8_t
@@ -272,7 +312,7 @@ namespace Protocol
 	struct LoadOrderRequest
 	{};
 
-	// The host's rules for everyone in the session (protocol 47): the host's ini (F4MPServer: its options), sent with the
+	// The host's rules for everyone in the session (protocol 49): the host's ini (F4MPServer: its options), sent with the
 	// welcome, so every game, the host's own included, plays by the same ones. The defaults are the mod's behaviour before
 	// there were rules (and VATS in real time, which is new).
 	struct SessionRules
@@ -309,6 +349,99 @@ namespace Protocol
 		}
 
 		bool operator==(const SessionRules&) const = default;
+	};
+
+	// Host controls (protocol 42). Only the host's own game may send kHostCommand and kRequestHostInfo (the server
+	// refuses and logs anyone else's); a dedicated server takes the same from its console.
+	enum class HostAction : std::uint8_t
+	{
+		kKick = 1,         // playerId: dropped, told they were removed by the host; may join again
+		kBan = 2,          // playerId: kicked, and refused at every later join (kept on the host's disk)
+		kUnban = 3,        // ban: the ban's id (HostInfo::Ban::id), 0 = every ban
+		kLock = 4,         // nobody new may join (those in the session stay)
+		kUnlock = 5,
+		kSetPassword = 6,  // password; "" = none
+	};
+	[[nodiscard]] constexpr bool IsHostAction(std::uint8_t a_value)
+	{
+		return a_value >= static_cast<std::uint8_t>(HostAction::kKick) && a_value <= static_cast<std::uint8_t>(HostAction::kSetPassword);
+	}
+
+	struct HostCommand
+	{
+		HostAction    action = HostAction::kKick;
+		std::uint32_t playerId = 0;
+		std::uint64_t ban = 0;
+		std::string   password;  // at most MAX_PASSWORD_LENGTH
+
+		bool operator==(const HostCommand&) const = default;
+	};
+
+	// kRequestHostInfo: the type alone.
+	struct HostInfoRequest
+	{};
+
+	// What the last host command did, for the host's menu to say.
+	enum class HostResult : std::uint8_t
+	{
+		kNone = 0,          // no command (asked for the state, or a change from the console)
+		kDone = 1,
+		kNoSuchPlayer = 2,  // nobody of that number is in the session
+		kNotTheHost = 3,    // the host can't kick or ban themselves
+		kNoSuchBan = 4,
+		kNoIdentity = 5,    // banned by nothing: their game and transport name no account (kicked all the same)
+		kNotSaved = 6,      // done, but the ban list could not be written (it holds until the server stops)
+	};
+
+	// kRemoved: why the host removed you.
+	enum class RemovedReason : std::uint8_t
+	{
+		kKicked = 1,
+		kBanned = 2,
+	};
+	struct Removed
+	{
+		RemovedReason reason = RemovedReason::kKicked;
+
+		bool operator==(const Removed&) const = default;
+	};
+
+	// Bans kHostInfo carries (the list on disk may hold more; the menu pages through these).
+	inline constexpr std::size_t MAX_BANS_SENT = 64;
+	inline constexpr std::size_t MAX_ALIAS_LENGTH = 16;
+
+	// kHostInfo: the host controls' state, sent to the host's own game when it joins, after each change and when asked.
+	struct HostInfo
+	{
+		struct Ban
+		{
+			std::uint64_t id = 0;        // what kUnban names
+			std::string   alias;         // "~3fa2c1": stands for the account, as the log's lines about the ban name it
+			std::string   name;          // as they were called when banned in this server run; "" after a restart (never saved)
+			std::uint64_t bannedAt = 0;  // seconds since 1970 (UTC)
+
+			bool operator==(const Ban&) const = default;
+		};
+		bool             locked = false;
+		bool             password = false;  // a password is set (not which: the host's game has it)
+		HostResult       result = HostResult::kNone;
+		HostAction       action = HostAction::kKick;  // the command result answers (when it isn't kNone)
+		std::uint32_t    bans = 0;  // how many there are (at most MAX_BANS_SENT of them in list)
+		std::vector<Ban> list;
+
+		bool operator==(const HostInfo&) const = default;
+	};
+
+	// The session's plugin table (protocol 36): the plugins that number every form ID on the wire, as Hello::plugins
+	// lays a load order out (the full ones, LIGHT_PLUGINS, the light ones). It is the host's load order (a dedicated
+	// server's first arrival's, or the saved session's) with each later joiner's other plugins added after the rest of
+	// their kind, so an ID it gave stays what it was. Every game translates its own form IDs to it and back by plugin
+	// name (common/FormIds.h). Sent before the welcome, and to everyone when a joiner's plugins make it grow.
+	struct PluginTable
+	{
+		std::vector<std::string> plugins;
+
+		bool operator==(const PluginTable&) const = default;
 	};
 
 	struct Welcome
@@ -348,9 +481,8 @@ namespace Protocol
 		bool operator==(const Rename&) const = default;
 	};
 
-	// Actors are identified by reference form ID, which is the same for everyone because the
-	// load order must match. Only references from plugin files (not runtime-created ones,
-	// whose IDs start with 0xFF and differ per game) are synced.
+	// Actors are identified by reference form ID, in the session's numbering (common/FormIds.h). Only references
+	// from plugin files (not runtime-created ones, whose IDs start with 0xFF and differ per game) are synced.
 	struct ActorDeath
 	{
 		std::uint32_t refId = 0;
@@ -366,7 +498,8 @@ namespace Protocol
 	};
 
 	// Health as a fraction of maximum: leveled actors can have different max health in each
-	// player's world, so absolute values don't transfer.
+	// player's world, so absolute values don't transfer. kReportDamage and kActorDamaged carry the damage dealt the same
+	// way (a fraction of the maximum taken off).
 	struct ActorHealth
 	{
 		std::uint32_t refId = 0;
@@ -444,6 +577,101 @@ namespace Protocol
 		bool operator==(const ItemMods&) const = default;
 	};
 
+	// ---- items given between players (protocol 37) ---------------------------------------------------
+
+	// A player gives an item by dropping it: it then lies in the session, in every game at the same spot, until one
+	// player takes it, and the server grants each one to a single taker (common/DropStore.h): it moves once, never into two
+	// inventories and never into none. A dropped stack is one reference: its count is the engine's 16-bit one.
+	inline constexpr std::int32_t MAX_DROP_COUNT = 32767;
+	// A name the player gave the item (a renamed gun), in bytes of UTF-8.
+	inline constexpr std::size_t  MAX_ITEM_NAME_LENGTH = 128;
+	// What a kDropRecord lists at most of each kind.
+	inline constexpr std::size_t  MAX_DROP_RECORD = 4096;
+	// Drops in one kDropList packet.
+	inline constexpr std::size_t  MAX_DROPS_PER_PACKET = 64;
+
+	// One dropped item. In a report (kReportDrop) dropId, ownerId and takerId are 0; the server sets the first two. The
+	// item is carried as the dropper's game had it: its mods (OMODs: barrel, receiver, a legendary effect) with the
+	// template combination they were built from, a power armor piece's condition and a name the player gave it, so the
+	// taker's copy is that item, not a fresh roll of its base. takerId is only ever set in the server's own book and its
+	// session file: an item someone took no longer lies anywhere.
+	struct DroppedItem
+	{
+		std::uint32_t        dropId = 0;
+		std::uint32_t        ownerId = 0;
+		std::uint64_t        nonce = 0;          // the dropper's game's own number for it (DropRecord::made)
+		std::uint32_t        base = 0;           // a base form every game has (a weapon, armor, ammo, aid, junk)
+		std::int32_t         count = 0;          // 1 .. MAX_DROP_COUNT
+		std::uint16_t        templateIndex = 0;  // the instance's template combination (0xFFFF: none named)
+		std::vector<ItemMod> mods;               // none: a plain item with no instance data of its own
+		float                health = -1.0f;     // 0..1 for an item with a condition (a power armor piece); -1: none
+		std::string          name;               // a name the player gave it; empty: the game's own
+		std::uint32_t        cell = 0;           // interior cell form ID, or 0 when outside
+		std::uint32_t        worldspace = 0;     // worldspace form ID, or 0 when inside
+		float                x = 0, y = 0, z = 0;
+		std::uint32_t        takerId = 0;
+
+		bool operator==(const DroppedItem&) const = default;
+	};
+
+	// kClaimDrop. kTake: the sender's player pressed Take on its copy; the server grants it to the first who asks (kDropGone
+	// naming them). kGiveBack: a grant the sender's game could not finish (its copy was gone, a load came first): it lies
+	// there again for anyone.
+	//
+	// A new drop is offered to its dropper's game alone (kDropPlaced), and goes to the others only once that game has
+	// swapped the item it dropped for a copy: kPlaced says it has. kKept: their player picked the item up again before the
+	// offer came, so it never lay anywhere. An offer that is neither goes when its dropper leaves. So nobody can take an
+	// item that is still in its dropper's world.
+	enum class DropClaim : std::uint8_t
+	{
+		kTake = 0,
+		kGiveBack = 1,
+		kPlaced = 2,
+		kKept = 3,
+	};
+
+	struct ClaimDrop
+	{
+		std::uint32_t dropId = 0;
+		DropClaim     op = DropClaim::kTake;
+
+		bool operator==(const ClaimDrop&) const = default;
+	};
+
+	// kDropGone: the item no longer lies anywhere. takerId: the player it was granted to (their game takes it now; every
+	// other game removes its copy), or 0: it went back to its owner (their save from before they dropped it has it again).
+	struct DropGone
+	{
+		std::uint32_t dropId = 0;
+		std::uint32_t takerId = 0;
+
+		bool operator==(const DropGone&) const = default;
+	};
+
+	// kDropRecord: what the sender's world holds of the session's transfers, as its save had it (the F4SE co-save) and its
+	// play since: the drops it made (by nonce) and the ones it took (by drop ID), in sessionId (0: its save has no record of
+	// this session, so is from before any of it). The server makes the session agree: a drop of theirs not listed is back in
+	// their inventory (a save from before they dropped it), so it is withdrawn; one they took and don't list isn't in their
+	// inventory (a save from before they took it), so it lies there again. Answered with kDropList.
+	struct DropRecord
+	{
+		std::uint64_t              sessionId = 0;
+		std::vector<std::uint64_t> made;
+		std::vector<std::uint32_t> taken;
+
+		bool operator==(const DropRecord&) const = default;
+	};
+
+	// kDropList: the items lying in the session, in packets; the last has last set. A game removes its copies of any not
+	// listed by then.
+	struct DropList
+	{
+		bool                     last = true;
+		std::vector<DroppedItem> drops;
+
+		bool operator==(const DropList&) const = default;
+	};
+
 	// Base forms of a player's equipped armor and weapons, and the mods on those that carry any (an item without an
 	// entry has none on record: the stand-in's copy is given the item's default combination). playerId is ignored
 	// client -> server.
@@ -472,6 +700,12 @@ namespace Protocol
 	inline constexpr std::size_t MAX_BODY_MORPHS = 128;
 	inline constexpr std::size_t MAX_BODY_MORPH_NAME = 64;
 	inline constexpr float       MAX_BODY_MORPH_VALUE = 2.0f;
+	// LooksMenu's overlays (tattoos, face and body paint: F4EE overlays), for players who have it: a template's ID as an
+	// overlay mod's json names it, laid over the skin at a priority with a tint and a placement. Only that many, with IDs
+	// that long, travel; the placement is brought into the range below (LooksMenu's own sliders stay well inside it).
+	inline constexpr std::size_t MAX_OVERLAYS = 64;
+	inline constexpr std::size_t MAX_OVERLAY_TEMPLATE = 128;
+	inline constexpr float       MAX_OVERLAY_UV = 10.0f;
 
 	// A workshop object (a wall, a turret, a crop...) placed, moved or scrapped by a player. refId is
 	// the object's reference ID in the sender's game (runtime IDs differ per game, so receivers map
@@ -507,19 +741,121 @@ namespace Protocol
 		bool operator==(const Activation&) const = default;
 	};
 
+	// A power wire's shape. The game makes a wire (a BGSBendableSpline reference) between two things the
+	// player wired: its reference stands halfway between its ends, each end halfExtents away (one plus, one
+	// minus), and it sags by slack. The game draws it from these alone, so a friend's game draws the same
+	// wire whatever its ends are there.
+	struct WireShape
+	{
+		float halfExtents[3] = { 0.0f, 0.0f, 0.0f };
+		float slack = 0.0f;
+		float thickness = 1.5f;
+
+		bool operator==(const WireShape&) const = default;
+	};
+
+	// How far a wire's ends may be from its middle, and how much it may sag and how thick it may be: a
+	// friend's message can say anything (the game's own wires reach a few thousand units at most).
+	inline constexpr float MAX_WIRE_HALF_LENGTH = 4096.0f;
+	inline constexpr float MAX_WIRE_SLACK = 2.0f;
+	inline constexpr float MAX_WIRE_THICKNESS = 16.0f;
+
+	[[nodiscard]] inline bool Sane(const WireShape& a_wire)
+	{
+		for (const float v : a_wire.halfExtents) {
+			if (!std::isfinite(v) || v < -MAX_WIRE_HALF_LENGTH || v > MAX_WIRE_HALF_LENGTH) {
+				return false;
+			}
+		}
+		return std::isfinite(a_wire.slack) && a_wire.slack >= 0.0f && a_wire.slack <= MAX_WIRE_SLACK && std::isfinite(a_wire.thickness) && a_wire.thickness > 0.0f &&
+		       a_wire.thickness <= MAX_WIRE_THICKNESS;
+	}
+
+	// Loose objects a player moves by hand (grabbed with the use key: a broom, a bottle, a tire; carried, dropped or
+	// thrown) or knocks about (walking into it, shooting it). Only references a plugin placed (IsShareableRef): the same
+	// reference in every game. One player at a time moves an object (the server's ObjectMovers::Book: the first grab
+	// wins); src/game/MovedObjects.h says what each game does with them.
+	//
+	// kReportObjectHold / kObjectHeld, unreliable, at most HOLDS_PER_SECOND while held: where the object is in the
+	// holder's hands, in the holder's own frame (the offset from their feet: to their right, ahead, up; its angles with
+	// the holder's heading taken off z), so each game draws it in front of its stand-in of the holder however that is
+	// drawn. sequence counts the holder's holds of all objects, so one that comes late (after their let-go) is dropped.
+	inline constexpr float MAX_HOLD_OFFSET = 512.0f;    // the game holds an object about a body's length away at most
+	inline constexpr float MAX_OBJECT_ANGLE = 8.0f;     // radians either way: a little over a full turn
+	inline constexpr float MAX_OBJECT_SPEED = 5000.0f;  // units a second (a throw is a few hundred)
+	inline constexpr int   HOLDS_PER_SECOND = 20;       // the server's budget per player; games send 15
+
+	struct ObjectHold
+	{
+		std::uint32_t        playerId = 0;  // the holder (set by the server)
+		std::uint32_t        refId = 0;
+		std::uint32_t        sequence = 0;
+		std::array<float, 3> offset{};    // right, ahead, up from the holder's feet
+		std::array<float, 3> rotation{};  // the object's angles (radians), z less the holder's heading
+
+		bool operator==(const ObjectHold&) const = default;
+	};
+
+	// kReportObjectRest / kObjectRested, reliable: an object the sender moved, in the world. kLetGo: the sender's player
+	// let go of it (dropped it, or threw it: velocity is how it left their hands, units a second), and sequence is the
+	// last hold they sent of it; kRest: where it came to rest (after a let-go, or knocked about), velocity zero.
+	namespace ObjectRestKind
+	{
+		inline constexpr std::uint8_t kLetGo = 0;
+		inline constexpr std::uint8_t kRest = 1;
+	}
+
+	struct ObjectRest
+	{
+		std::uint32_t        playerId = 0;  // who moved it (set by the server)
+		std::uint32_t        refId = 0;
+		std::uint8_t         kind = ObjectRestKind::kRest;
+		std::uint32_t        sequence = 0;
+		std::uint32_t        cell = 0;  // interior cell, or 0 outside
+		std::uint32_t        worldspace = 0;
+		std::array<float, 3> position{};
+		std::array<float, 3> rotation{};
+		std::array<float, 3> velocity{};
+
+		bool operator==(const ObjectRest&) const = default;
+	};
+
 	struct WorkshopItem
 	{
-		std::uint32_t playerId = 0;
-		std::uint32_t refId = 0;
-		std::uint8_t  op = WorkshopOp::kPlaced;
-		std::uint32_t base = 0;
-		std::uint32_t workshop = 0;
-		float         position[3] = { 0.0f, 0.0f, 0.0f };
-		float         rotation[3] = { 0.0f, 0.0f, 0.0f };
-		float         scale = 1.0f;
+		std::uint32_t            playerId = 0;
+		std::uint32_t            refId = 0;
+		std::uint8_t             op = WorkshopOp::kPlaced;
+		std::uint32_t            base = 0;
+		std::uint32_t            workshop = 0;
+		float                    position[3] = { 0.0f, 0.0f, 0.0f };
+		float                    rotation[3] = { 0.0f, 0.0f, 0.0f };
+		float                    scale = 1.0f;
+		std::optional<WireShape> wire;  // a power wire's shape (since protocol 38); none for anything else
 
 		bool operator==(const WorkshopItem&) const = default;
 	};
+
+	// One of the sender's own workshop pieces (a reference their game made: something they built), and whether their
+	// game powers it now.
+	struct PowerState
+	{
+		std::uint32_t refId = 0;
+		bool          powered = false;
+
+		bool operator==(const PowerState&) const = default;
+	};
+
+	// kReportWorkshopPower / kWorkshopPower: what changed, or all of them (a snapshot), MAX_POWER_ENTRIES at most a
+	// packet.
+	struct PowerStates
+	{
+		std::uint32_t                   playerId = 0;  // stamped by the server
+		std::vector<PowerState> entries;
+
+		bool operator==(const PowerStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
 
 	struct FaceBone
 	{
@@ -560,6 +896,20 @@ namespace Protocol
 		bool operator==(const BodyMorph&) const = default;
 	};
 
+	// One of LooksMenu's overlays on a character, as its Papyrus script Overlays keeps it (Overlays#Entry): the template,
+	// its priority (the order overlays are laid in, one per priority), its tint and alpha as LooksMenu saves them (a byte
+	// each), and where it sits on the skin's texture.
+	struct Overlay
+	{
+		std::string  templateId;  // at most MAX_OVERLAY_TEMPLATE long
+		std::int32_t priority = 0;
+		std::uint8_t tint[4] = {};  // RGBA
+		float        offset[2] = {};
+		float        scale[2] = { 1.0f, 1.0f };
+
+		bool operator==(const Overlay&) const = default;
+	};
+
 	struct Face
 	{
 		std::uint32_t              playerId = 0;  // ignored client -> server
@@ -578,6 +928,12 @@ namespace Protocol
 		// LooksMenu's body sliders, sorted by name; empty when the sender has no LooksMenu (or never moved one).
 		// A receiver without LooksMenu leaves them be.
 		std::vector<BodyMorph>     bodyMorphs;
+		// The skin (a TESObjectARMO: the naked body and hands, and their textures) when the base NPC has one of its own
+		// rather than the race's, as a LooksMenu skin override leaves it; 0 = the race's.
+		std::uint32_t              skin = 0;
+		// LooksMenu's overlays, sorted by priority; empty when the sender has no LooksMenu (or wears none). A receiver
+		// without LooksMenu, or without the overlay mod a template comes from, goes without them.
+		std::vector<Overlay>       overlays;
 
 		bool operator==(const Face&) const = default;
 	};
@@ -754,6 +1110,21 @@ namespace Protocol
 		}
 	};
 
+	// The kind of menu a player is in (PlayerStatus::menu, protocol 48), for their stand-in in friends' games: the
+	// Pip-Boy, which it raises, or another menu; either shows an icon over it. Only which kind, never what is in it.
+	namespace MenuKind
+	{
+		inline constexpr std::uint8_t kNone = 0;
+		inline constexpr std::uint8_t kPipboy = 1;
+		inline constexpr std::uint8_t kPaused = 2;     // the pause menu, the console, sleeping or waiting, a level up
+		inline constexpr std::uint8_t kLooting = 3;    // a container, a corpse, or trading
+		inline constexpr std::uint8_t kTerminal = 4;   // a terminal
+		inline constexpr std::uint8_t kCrafting = 5;   // a workbench, cooking, a power armor station, or building (workshop mode)
+		inline constexpr std::uint8_t kTalking = 6;    // a conversation
+		inline constexpr std::uint8_t kOther = 7;      // another menu that holds the player (a lock, a message box, the looks menu)
+		inline constexpr std::uint8_t kMax = kOther;
+	}
+
 	// playerId is ignored client -> server in all of these.
 	struct PlayerStatus
 	{
@@ -774,6 +1145,8 @@ namespace Protocol
 		std::optional<ParkedFrame> parked;
 		// The furniture they are in or getting into (protocol 31); none while they stand, and in power armor.
 		std::optional<Seat> seat;
+		// The menu they are in (MenuKind; protocol 48).
+		std::uint8_t menu = MenuKind::kNone;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -788,12 +1161,34 @@ namespace Protocol
 		std::uint32_t weather = 0;        // TESWeather form ID, or 0
 	};
 
+	// What a ping points at (Ping::kind).
+	enum class PingKind : std::uint8_t
+	{
+		kSpot = 0,    // a place: the surface under the crosshair, or where the sender stands ("over here")
+		kActor = 1,   // an NPC or a creature
+		kItem = 2,    // something lying in the world (a weapon, a Stimpak, ammo, junk)
+		kPlayer = 3,  // a friend (their stand-in in the sender's game)
+	};
+
+	// A ping's name on the wire: what the sender's game calls the target ("Raider"), for a game with no copy of it.
+	inline constexpr std::size_t MAX_PING_NAME_LENGTH = 64;
+
+	// A ping: "look at this". playerId: who pinged (ignored client -> server). The spot is where the target was in the
+	// sender's game, inside (cell) or outside (worldspace). target: for kActor the id the session knows the NPC by
+	// (NpcSync::SessionId: a plugin's reference, or a spawn id; 0 for one the session does not share), for kItem its
+	// reference (0 for one made at runtime, which is another reference in every game), for kPlayer the friend's player
+	// id, 0 for a spot. base: the target's base form (0 for a spot or a friend). name: what the sender's game called it
+	// ("" for a spot).
 	struct Ping
 	{
 		std::uint32_t playerId = 0;
 		std::uint32_t cell = 0;
 		std::uint32_t worldspace = 0;
 		float         x = 0, y = 0, z = 0;
+		PingKind      kind = PingKind::kSpot;
+		std::uint32_t target = 0;
+		std::uint32_t base = 0;
+		std::string   name;
 	};
 
 	// A line of dialogue. speaker: the NPC who said it, or 0 for the player (playerId) themselves.
@@ -870,6 +1265,53 @@ namespace Protocol
 		bool operator==(const QuestStage&) const = default;
 	};
 
+	// A radiant quest's alias and what fills it in the sender's game (RadiantRules): a reference (a plugin's, or a
+	// spawn id for an NPC a game made at runtime that the session shares, RADIANT_UNSHARED_REF for one it doesn't) or a
+	// location; 0 when it is empty.
+	struct RadiantFill
+	{
+		std::uint32_t alias = 0;  // BGSBaseAlias::aliasID
+		std::uint8_t  kind = 0;   // 0 a reference, 1 a location
+		std::uint32_t form = 0;
+
+		bool operator==(const RadiantFill&) const = default;
+	};
+
+	// A radiant's reference that the sender's game made at runtime and the session doesn't share (a settler): the same in
+	// no other game. Not a spawn id (IsSpawnRef).
+	inline constexpr std::uint32_t RADIANT_UNSHARED_REF = 0xFF000000;
+
+	inline constexpr std::size_t MAX_RADIANT_FILLS = 128;  // Fallout4.esm's radiants have at most 60 aliases
+	inline constexpr std::size_t MAX_RADIANT_STAGES = 64;  // and at most 20 stages
+
+	// A radiant quest started in the sender's game (kReportRadiantStart, kRadiantStarted): the friends' games start
+	// the same quest with the same fills. One run of it is told apart by its origin's player id and a serial number
+	// that game picks (a radiant runs again and again). stages: those done already, ascending. playerId is ignored
+	// client -> server (the server stamps the sender, who is the origin).
+	struct RadiantStart
+	{
+		std::uint32_t              playerId = 0;
+		std::uint32_t              quest = 0;
+		std::uint32_t              serial = 0;
+		std::vector<RadiantFill>   fills;
+		std::vector<std::uint16_t> stages;
+
+		bool operator==(const RadiantStart&) const = default;
+	};
+
+	// A stage of a shared radiant's run, whoever's game did it: origin and serial name the run (RadiantStart).
+	// playerId is ignored client -> server.
+	struct RadiantStage
+	{
+		std::uint32_t playerId = 0;
+		std::uint32_t quest = 0;
+		std::uint32_t origin = 0;
+		std::uint32_t serial = 0;
+		std::uint16_t stage = 0;
+
+		bool operator==(const RadiantStage&) const = default;
+	};
+
 	// Everything that happened this session, sent on join and after loading a save. Large states
 	// are split over several packets; each is applied on top of the previous ones.
 	struct WorldState
@@ -900,6 +1342,21 @@ namespace Protocol
 
 	// ---- serialization -------------------------------------------------------------
 
+	// The longest start of a_text that is at most a_maxBytes long and doesn't end inside a UTF-8 character: a cut name
+	// loses its last character whole, never leaving half of one (which the game would show as junk).
+	[[nodiscard]] inline std::string_view Utf8Prefix(std::string_view a_text, std::size_t a_maxBytes)
+	{
+		if (a_text.size() <= a_maxBytes) {
+			return a_text;
+		}
+		std::size_t length = a_maxBytes;
+		// Back off continuation bytes (10xxxxxx) to the start of the character cut through, at most three.
+		for (int i = 0; i < 3 && length > 0 && (static_cast<unsigned char>(a_text[length]) & 0xC0) == 0x80; ++i) {
+			--length;
+		}
+		return a_text.substr(0, length);
+	}
+
 	class Writer
 	{
 	public:
@@ -911,9 +1368,10 @@ namespace Protocol
 		void U64(std::uint64_t a_value) { Raw(&a_value, sizeof(a_value)); }
 		void F32(float a_value) { Raw(&a_value, sizeof(a_value)); }
 
+		// Cut short at a whole character (Utf8Prefix).
 		void Str(std::string_view a_value, std::size_t a_maxLength)
 		{
-			const auto length = (std::min)(a_value.size(), (std::min<std::size_t>)(a_maxLength, 255));
+			const auto length = Utf8Prefix(a_value, (std::min<std::size_t>)(a_maxLength, 255)).size();
 			U8(static_cast<std::uint8_t>(length));
 			Raw(a_value.data(), length);
 		}
@@ -921,7 +1379,7 @@ namespace Protocol
 		// A string longer than Str's 255 bytes may be (a plugin's file name): a U16 length, then the bytes.
 		void LongStr(std::string_view a_value, std::size_t a_maxLength)
 		{
-			const auto length = (std::min)(a_value.size(), (std::min<std::size_t>)(a_maxLength, 0xFFFF));
+			const auto length = Utf8Prefix(a_value, (std::min<std::size_t>)(a_maxLength, 0xFFFF)).size();
 			U16(static_cast<std::uint16_t>(length));
 			Raw(a_value.data(), length);
 		}
@@ -1172,6 +1630,24 @@ namespace Protocol
 		return LoadOrder{ std::move(*plugins), std::move(*ignored) };
 	}
 
+	inline std::vector<std::uint8_t> Encode(const PluginTable& a_msg)
+	{
+		Writer w{ MessageType::kPluginTable };
+		WritePlugins(w, a_msg.plugins);
+		return w.Data();
+	}
+
+	inline std::optional<PluginTable> DecodePluginTable(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		auto plugins = ReadPlugins(r);
+		if (!plugins || !r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return PluginTable{ std::move(*plugins) };
+	}
+
 	inline std::vector<std::uint8_t> Encode(LoadOrderRequest)
 	{
 		return Writer{ MessageType::kRequestLoadOrder }.Data();
@@ -1185,6 +1661,115 @@ namespace Protocol
 			return std::nullopt;
 		}
 		return LoadOrderRequest{};
+	}
+
+	inline std::vector<std::uint8_t> Encode(const HostCommand& a_msg)
+	{
+		Writer w{ MessageType::kHostCommand };
+		w.U8(static_cast<std::uint8_t>(a_msg.action));
+		w.U32(a_msg.playerId);
+		w.U64(a_msg.ban);
+		w.Str(a_msg.password, MAX_PASSWORD_LENGTH);
+		return w.Data();
+	}
+
+	inline std::optional<HostCommand> DecodeHostCommand(std::span<const std::uint8_t> a_data)
+	{
+		Reader      r{ a_data };
+		HostCommand msg;
+		r.U8();
+		const auto action = r.U8();
+		msg.playerId = r.U32();
+		msg.ban = r.U64();
+		msg.password = r.Str(MAX_PASSWORD_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || !IsHostAction(action)) {
+			return std::nullopt;
+		}
+		msg.action = static_cast<HostAction>(action);
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(HostInfoRequest)
+	{
+		return Writer{ MessageType::kRequestHostInfo }.Data();
+	}
+
+	inline std::optional<HostInfoRequest> DecodeHostInfoRequest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return HostInfoRequest{};
+	}
+
+	inline std::vector<std::uint8_t> Encode(const Removed& a_msg)
+	{
+		Writer w{ MessageType::kRemoved };
+		w.U8(static_cast<std::uint8_t>(a_msg.reason));
+		return w.Data();
+	}
+
+	inline std::optional<Removed> DecodeRemoved(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		const auto reason = r.U8();
+		if (!r.Ok() || !r.AtEnd() || (reason != static_cast<std::uint8_t>(RemovedReason::kKicked) && reason != static_cast<std::uint8_t>(RemovedReason::kBanned))) {
+			return std::nullopt;
+		}
+		return Removed{ static_cast<RemovedReason>(reason) };
+	}
+
+	inline std::vector<std::uint8_t> Encode(const HostInfo& a_msg)
+	{
+		Writer w{ MessageType::kHostInfo };
+		w.U8(static_cast<std::uint8_t>((a_msg.locked ? 1 : 0) | (a_msg.password ? 2 : 0)));
+		w.U8(static_cast<std::uint8_t>(a_msg.result));
+		w.U8(static_cast<std::uint8_t>(a_msg.action));
+		const auto count = (std::min)(a_msg.list.size(), MAX_BANS_SENT);
+		w.U32((std::max)(a_msg.bans, static_cast<std::uint32_t>(count)));
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& ban = a_msg.list[i];
+			w.U64(ban.id);
+			w.Str(ban.alias, MAX_ALIAS_LENGTH);
+			w.Str(ban.name, MAX_NAME_LENGTH);
+			w.U64(ban.bannedAt);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<HostInfo> DecodeHostInfo(std::span<const std::uint8_t> a_data)
+	{
+		Reader   r{ a_data };
+		HostInfo msg;
+		r.U8();
+		const auto flags = r.U8();
+		const auto result = r.U8();
+		const auto action = r.U8();
+		msg.bans = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || flags > 3 || result > static_cast<std::uint8_t>(HostResult::kNotSaved) || !IsHostAction(action) || count > MAX_BANS_SENT || count > msg.bans) {
+			return std::nullopt;
+		}
+		msg.locked = (flags & 1) != 0;
+		msg.password = (flags & 2) != 0;
+		msg.result = static_cast<HostResult>(result);
+		msg.action = static_cast<HostAction>(action);
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			HostInfo::Ban ban;
+			ban.id = r.U64();
+			ban.alias = r.Str(MAX_ALIAS_LENGTH);
+			ban.name = r.Str(MAX_NAME_LENGTH);
+			ban.bannedAt = r.U64();
+			msg.list.push_back(std::move(ban));
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const WorldRequest& a_msg)
@@ -1254,7 +1839,7 @@ namespace Protocol
 		msg.sessionId = r.U64();
 		msg.friendlyFire = r.U8() != 0;
 		msg.sharedStory = r.U8() != 0;
-		// The rules (protocol 47; a welcome only answers a hello of the same version). Trailing bytes after them are
+		// The rules (protocol 49; a welcome only answers a hello of the same version). Trailing bytes after them are
 		// left for a later version, as for the rest of the handshake.
 		{
 			SessionRules rules;
@@ -1606,6 +2191,101 @@ namespace Protocol
 		return msg;
 	}
 
+	// An object's angles: finite and within a little over a turn either way.
+	[[nodiscard]] inline bool ObjectAngles(const std::array<float, 3>& a_angles)
+	{
+		return std::ranges::all_of(a_angles, [](float a_v) { return std::isfinite(a_v) && a_v >= -MAX_OBJECT_ANGLE && a_v <= MAX_OBJECT_ANGLE; });
+	}
+
+	// Finite, and no longer than a_max.
+	[[nodiscard]] inline bool WithinLength(const std::array<float, 3>& a_v, float a_max)
+	{
+		return std::ranges::all_of(a_v, [](float a_x) { return std::isfinite(a_x); }) && a_v[0] * a_v[0] + a_v[1] * a_v[1] + a_v[2] * a_v[2] <= a_max * a_max;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ObjectHold& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.sequence);
+		for (const auto v : a_msg.offset) {
+			w.F32(v);
+		}
+		for (const auto v : a_msg.rotation) {
+			w.F32(v);
+		}
+		return w.Data();
+	}
+
+	// A plugin's reference, held within MAX_HOLD_OFFSET of the holder, at angles ObjectAngles takes.
+	inline std::optional<ObjectHold> DecodeObjectHold(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ObjectHold msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.sequence = r.U32();
+		for (auto& v : msg.offset) {
+			v = r.F32();
+		}
+		for (auto& v : msg.rotation) {
+			v = r.F32();
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId) || !ObjectAngles(msg.rotation) || !WithinLength(msg.offset, MAX_HOLD_OFFSET)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ObjectRest& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U8(a_msg.kind);
+		w.U32(a_msg.sequence);
+		w.U32(a_msg.cell);
+		w.U32(a_msg.worldspace);
+		for (const auto* values : { &a_msg.position, &a_msg.rotation, &a_msg.velocity }) {
+			for (const auto v : *values) {
+				w.F32(v);
+			}
+		}
+		return w.Data();
+	}
+
+	// A plugin's reference, a known kind, in one space (an interior or a worldspace), a place in the world, angles
+	// ObjectAngles takes, and a speed under MAX_OBJECT_SPEED (none at rest).
+	inline std::optional<ObjectRest> DecodeObjectRest(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ObjectRest msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.kind = r.U8();
+		msg.sequence = r.U32();
+		msg.cell = r.U32();
+		msg.worldspace = r.U32();
+		for (auto* values : { &msg.position, &msg.rotation, &msg.velocity }) {
+			for (auto& v : *values) {
+				v = r.F32();
+			}
+		}
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId) || msg.kind > ObjectRestKind::kRest || (msg.cell == 0) == (msg.worldspace == 0)) {
+			return std::nullopt;
+		}
+		if (!std::ranges::all_of(msg.position, InWorld) || !ObjectAngles(msg.rotation) || !WithinLength(msg.velocity, MAX_OBJECT_SPEED)) {
+			return std::nullopt;
+		}
+		if (msg.kind == ObjectRestKind::kRest && msg.velocity != std::array<float, 3>{}) {
+			return std::nullopt;  // at rest is still
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const Spawn& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -1693,6 +2373,14 @@ namespace Protocol
 		       a_change.count >= -MAX_ITEM_COUNT && a_change.count <= MAX_ITEM_COUNT;
 	}
 
+	// A numbered change our game can't hold (protocol 36): its container or its item is of a plugin we don't have, so
+	// FormTranslate empties it rather than drop it, and the session's count of changes stays ours (ContainerLedger
+	// numbers it and applies nothing: it isn't IsValid). Never on the wire from the server.
+	[[nodiscard]] inline bool IsEmpty(const ContainerChange& a_change)
+	{
+		return a_change.container == 0 && a_change.item == 0 && a_change.count == 0;
+	}
+
 	// kContainerChanged
 	inline std::vector<std::uint8_t> Encode(const IndexedContainerChange& a_msg)
 	{
@@ -1715,7 +2403,7 @@ namespace Protocol
 		msg.change.container = r.U32();
 		msg.change.item = r.U32();
 		msg.change.count = static_cast<std::int32_t>(r.U32());
-		if (!r.Ok() || !r.AtEnd() || !IsValid(msg.change)) {
+		if (!r.Ok() || !r.AtEnd() || (!IsValid(msg.change) && !IsEmpty(msg.change))) {
 			return std::nullopt;
 		}
 		return msg;
@@ -1856,10 +2544,19 @@ namespace Protocol
 				w.F32(v);
 			}
 			w.F32(a_msg.scale);
+			w.U8(a_msg.wire ? 1 : 0);
+			if (a_msg.wire) {
+				for (const float v : a_msg.wire->halfExtents) {
+					w.F32(v);
+				}
+				w.F32(a_msg.wire->slack);
+				w.F32(a_msg.wire->thickness);
+			}
 		}
 
-		// False if the item is not one we would accept.
-		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg)
+		// False if the item is not one we would accept. a_withWire: the wire's byte is there (written since
+		// protocol 38; a session file of an older layout has none).
+		inline bool ReadWorkshopItem(Reader& r, WorkshopItem& msg, bool a_withWire = true)
 		{
 			msg.playerId = r.U32();
 			msg.refId = r.U32();
@@ -1877,6 +2574,22 @@ namespace Protocol
 			}
 			msg.scale = r.F32();
 			finite = finite && std::isfinite(msg.scale) && msg.scale > 0.0f && msg.scale <= 100.0f;
+			if (a_withWire) {
+				const auto hasWire = r.U8();
+				if (hasWire > 1) {
+					return false;
+				}
+				if (hasWire == 1) {
+					WireShape wire;
+					for (float& v : wire.halfExtents) {
+						v = r.F32();
+					}
+					wire.slack = r.F32();
+					wire.thickness = r.F32();
+					finite = finite && Sane(wire);
+					msg.wire = wire;
+				}
+			}
 			return r.Ok() && finite && msg.refId != 0 && msg.op <= WorkshopOp::kScrapped && (msg.op != WorkshopOp::kPlaced || (msg.base != 0 && (msg.base >> 24) != 0xFF));
 		}
 	}
@@ -1911,24 +2624,84 @@ namespace Protocol
 		return w.Data();
 	}
 
+	namespace detail
+	{
+		inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data, bool a_withWire)
+		{
+			Reader r{ a_data };
+			r.U8();
+			const auto count = r.U8();
+			if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
+				return std::nullopt;
+			}
+			std::vector<WorkshopItem> items(count);
+			for (auto& item : items) {
+				if (!ReadWorkshopItem(r, item, a_withWire)) {
+					return std::nullopt;
+				}
+			}
+			if (!r.AtEnd()) {
+				return std::nullopt;
+			}
+			return items;
+		}
+	}
+
 	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItems(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorkshopItems(a_data, true);
+	}
+
+	// A session file's packet of a layout before protocol 38: its items have no wire byte (SessionFile::Decode).
+	inline std::optional<std::vector<WorkshopItem>> DecodeWorkshopItemsBeforeWires(std::span<const std::uint8_t> a_data)
+	{
+		return detail::DecodeWorkshopItems(a_data, false);
+	}
+
+	// Up to MAX_POWER_ENTRIES entries (any more are left off: the sender splits them, WorkshopPower::Chunks).
+	inline std::vector<std::uint8_t> Encode(const PowerStates& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_POWER_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.entries[i].refId);
+			w.U8(a_msg.entries[i].powered ? 1 : 0);
+		}
+		return w.Data();
+	}
+
+	// A reference a game made at runtime (what a player builds): the only pieces whose power is reported.
+	[[nodiscard]] constexpr bool IsRuntimeRef(std::uint32_t a_id)
+	{
+		return (a_id >> 24) == 0xFF && a_id != 0xFF000000;
+	}
+
+	// None if it names no piece, or one no game made at runtime.
+	inline std::optional<PowerStates> DecodePowerStates(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
 		r.U8();
+		PowerStates msg;
+		msg.playerId = r.U32();
 		const auto count = r.U8();
-		if (!r.Ok() || count > MAX_ACTORS_PER_PACKET) {
+		if (!r.Ok() || count == 0) {
 			return std::nullopt;
 		}
-		std::vector<WorkshopItem> items(count);
-		for (auto& item : items) {
-			if (!detail::ReadWorkshopItem(r, item)) {
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			const auto powered = r.U8();
+			if (!r.Ok() || powered > 1 || !IsRuntimeRef(entry.refId)) {
 				return std::nullopt;
 			}
+			entry.powered = powered == 1;
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
-		return items;
+		return msg;
 	}
 
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)
@@ -1998,6 +2771,28 @@ namespace Protocol
 		for (const auto m : morphs) {
 			w.Str(m->name, MAX_BODY_MORPH_NAME);
 			w.F32(m->value);
+		}
+		w.U32(a_msg.skin);
+		// As the sliders: a template ID too long to travel whole is left out, not cut to another's.
+		std::vector<const Overlay*> overlays;
+		for (const auto& o : a_msg.overlays) {
+			if (overlays.size() < MAX_OVERLAYS && !o.templateId.empty() && o.templateId.size() <= MAX_OVERLAY_TEMPLATE) {
+				overlays.push_back(&o);
+			}
+		}
+		w.U8(static_cast<std::uint8_t>(overlays.size()));
+		for (const auto o : overlays) {
+			w.Str(o->templateId, MAX_OVERLAY_TEMPLATE);
+			w.U32(static_cast<std::uint32_t>(o->priority));
+			for (const auto v : o->tint) {
+				w.U8(v);
+			}
+			for (const float v : o->offset) {
+				w.F32(v);
+			}
+			for (const float v : o->scale) {
+				w.F32(v);
+			}
 		}
 		return w.Data();
 	}
@@ -2090,6 +2885,37 @@ namespace Protocol
 			}
 			m.value = std::clamp(m.value, -MAX_BODY_MORPH_VALUE, MAX_BODY_MORPH_VALUE);
 			msg.bodyMorphs.push_back(std::move(m));
+		}
+		msg.skin = r.U32();
+		const auto overlays = r.U8();
+		if (overlays > MAX_OVERLAYS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < overlays && r.Ok(); ++i) {
+			Overlay o;
+			o.templateId = r.Str(MAX_OVERLAY_TEMPLATE);
+			o.priority = static_cast<std::int32_t>(r.U32());
+			for (auto& v : o.tint) {
+				v = r.U8();
+			}
+			for (float& v : o.offset) {
+				v = r.F32();
+			}
+			for (float& v : o.scale) {
+				v = r.F32();
+			}
+			const auto uv = [](float a_v) { return std::isfinite(a_v); };
+			if (r.Ok() && (o.templateId.empty() || !std::ranges::all_of(o.offset, uv) || !std::ranges::all_of(o.scale, uv))) {
+				return std::nullopt;
+			}
+			// Brought into range, as a slider's value is: a modified game cannot smear a tattoo over a friend's stand-in.
+			for (float& v : o.offset) {
+				v = std::clamp(v, -MAX_OVERLAY_UV, MAX_OVERLAY_UV);
+			}
+			for (float& v : o.scale) {
+				v = std::clamp(v, -MAX_OVERLAY_UV, MAX_OVERLAY_UV);
+			}
+			msg.overlays.push_back(std::move(o));
 		}
 		if (!r.Ok() || !r.AtEnd() || msg.race == 0) {
 			return std::nullopt;
@@ -2347,6 +3173,7 @@ namespace Protocol
 			w.F32(seat.y);
 			w.F32(seat.z);
 		}
+		w.U8(a_msg.menu);
 		return w.Data();
 	}
 
@@ -2388,9 +3215,10 @@ namespace Protocol
 			seat.z = r.F32();
 			msg.seat = seat;
 		}
+		msg.menu = r.U8();
 		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
 		// a frame's own path handles that).
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
 			(msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
 			return std::nullopt;
 		}
@@ -2434,7 +3262,28 @@ namespace Protocol
 		w.F32(a_msg.x);
 		w.F32(a_msg.y);
 		w.F32(a_msg.z);
+		w.U8(static_cast<std::uint8_t>(a_msg.kind));
+		w.U32(a_msg.target);
+		w.U32(a_msg.base);
+		w.Str(a_msg.name, MAX_PING_NAME_LENGTH);
 		return w.Data();
+	}
+
+	// Whether a ping's target fits its kind: a spot names nothing; an NPC or an item names, if anything, a base form and
+	// a reference the session can name (one made at runtime goes as 0); a friend is a player id.
+	[[nodiscard]] inline bool PingTargetOk(const Ping& a_msg)
+	{
+		switch (a_msg.kind) {
+		case PingKind::kSpot:
+			return a_msg.target == 0 && a_msg.base == 0 && a_msg.name.empty();
+		case PingKind::kActor:
+			return (a_msg.base == 0 || IsShareableRef(a_msg.base)) && (a_msg.target == 0 || IsActorRef(a_msg.target));
+		case PingKind::kItem:
+			return (a_msg.base == 0 || IsShareableRef(a_msg.base)) && (a_msg.target == 0 || IsShareableRef(a_msg.target));
+		case PingKind::kPlayer:
+			return a_msg.target != 0 && a_msg.base == 0;
+		}
+		return false;
 	}
 
 	inline std::optional<Ping> DecodePing(std::span<const std::uint8_t> a_data)
@@ -2448,7 +3297,16 @@ namespace Protocol
 		msg.x = r.F32();
 		msg.y = r.F32();
 		msg.z = r.F32();
-		if (!r.Ok() || !r.AtEnd() || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+		const auto kind = r.U8();
+		msg.target = r.U32();
+		msg.base = r.U32();
+		msg.name = r.Str(MAX_PING_NAME_LENGTH);
+		if (!r.Ok() || !r.AtEnd() || !InWorld(msg.x) || !InWorld(msg.y) || !InWorld(msg.z) || kind > static_cast<std::uint8_t>(PingKind::kPlayer)) {
+			return std::nullopt;
+		}
+		msg.kind = static_cast<PingKind>(kind);
+		// Inside (a cell) or outside (a worldspace): one of the two.
+		if ((msg.cell == 0) == (msg.worldspace == 0) || !PingTargetOk(msg)) {
 			return std::nullopt;
 		}
 		return msg;
@@ -2626,6 +3484,218 @@ namespace Protocol
 		return msg;
 	}
 
+	// ---- items given between players ------------------------------------------------------------------
+
+	namespace detail
+	{
+		inline void WriteDrop(Writer& w, const DroppedItem& a_drop)
+		{
+			w.U32(a_drop.dropId);
+			w.U32(a_drop.ownerId);
+			w.U64(a_drop.nonce);
+			w.U32(a_drop.base);
+			w.U32(static_cast<std::uint32_t>(a_drop.count));
+			w.U16(a_drop.templateIndex);
+			const auto modCount = (std::min)(a_drop.mods.size(), MAX_ITEM_MODS);
+			w.U8(static_cast<std::uint8_t>(modCount));
+			for (std::size_t i = 0; i < modCount; ++i) {
+				w.U32(a_drop.mods[i].mod);
+				w.U8(a_drop.mods[i].index);
+				w.U8(a_drop.mods[i].rank);
+			}
+			w.F32(a_drop.health);
+			w.Str(a_drop.name, MAX_ITEM_NAME_LENGTH);
+			w.U32(a_drop.cell);
+			w.U32(a_drop.worldspace);
+			w.F32(a_drop.x);
+			w.F32(a_drop.y);
+			w.F32(a_drop.z);
+			w.U32(a_drop.takerId);
+		}
+
+		// An item every game has, a count a dropped reference can hold, mods from plugin files, a condition in 0..1 (or
+		// none), and one place: an interior or a worldspace, at a coordinate the world holds.
+		inline std::optional<DroppedItem> ReadDrop(Reader& r)
+		{
+			DroppedItem drop;
+			drop.dropId = r.U32();
+			drop.ownerId = r.U32();
+			drop.nonce = r.U64();
+			drop.base = r.U32();
+			drop.count = static_cast<std::int32_t>(r.U32());
+			drop.templateIndex = r.U16();
+			const auto modCount = r.U8();
+			if (modCount > MAX_ITEM_MODS) {
+				return std::nullopt;
+			}
+			for (std::uint8_t i = 0; i < modCount && r.Ok(); ++i) {
+				ItemMod mod;
+				mod.mod = r.U32();
+				mod.index = r.U8();
+				mod.rank = r.U8();
+				if (!IsShareableRef(mod.mod)) {
+					return std::nullopt;
+				}
+				drop.mods.push_back(mod);
+			}
+			drop.health = r.F32();
+			drop.name = r.Str(MAX_ITEM_NAME_LENGTH);
+			drop.cell = r.U32();
+			drop.worldspace = r.U32();
+			drop.x = r.F32();
+			drop.y = r.F32();
+			drop.z = r.F32();
+			drop.takerId = r.U32();
+			const bool healthOk = drop.health == -1.0f || (std::isfinite(drop.health) && drop.health >= 0.0f && drop.health <= 1.0f);
+			if (!r.Ok() || !IsShareableRef(drop.base) || drop.count < 1 || drop.count > MAX_DROP_COUNT || !healthOk || (drop.cell == 0) == (drop.worldspace == 0) ||
+				!InWorld(drop.x) || !InWorld(drop.y) || !InWorld(drop.z)) {
+				return std::nullopt;
+			}
+			return drop;
+		}
+	}
+
+	// kReportDrop, kDropPlaced
+	inline std::vector<std::uint8_t> Encode(const DroppedItem& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		detail::WriteDrop(w, a_msg);
+		return w.Data();
+	}
+
+	inline std::optional<DroppedItem> DecodeDroppedItem(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		auto drop = detail::ReadDrop(r);
+		if (!drop || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return drop;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const ClaimDrop& a_msg)
+	{
+		Writer w{ MessageType::kClaimDrop };
+		w.U32(a_msg.dropId);
+		w.U8(static_cast<std::uint8_t>(a_msg.op));
+		return w.Data();
+	}
+
+	inline std::optional<ClaimDrop> DecodeClaimDrop(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		ClaimDrop msg;
+		msg.dropId = r.U32();
+		const auto op = r.U8();
+		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0 || op > static_cast<std::uint8_t>(DropClaim::kKept)) {
+			return std::nullopt;
+		}
+		msg.op = static_cast<DropClaim>(op);
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropGone& a_msg)
+	{
+		Writer w{ MessageType::kDropGone };
+		w.U32(a_msg.dropId);
+		w.U32(a_msg.takerId);
+		return w.Data();
+	}
+
+	inline std::optional<DropGone> DecodeDropGone(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropGone msg;
+		msg.dropId = r.U32();
+		msg.takerId = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.dropId == 0) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropRecord& a_msg)
+	{
+		Writer w{ MessageType::kDropRecord };
+		w.U64(a_msg.sessionId);
+		const auto made = (std::min)(a_msg.made.size(), MAX_DROP_RECORD);
+		w.U16(static_cast<std::uint16_t>(made));
+		for (std::size_t i = 0; i < made; ++i) {
+			w.U64(a_msg.made[i]);
+		}
+		const auto taken = (std::min)(a_msg.taken.size(), MAX_DROP_RECORD);
+		w.U16(static_cast<std::uint16_t>(taken));
+		for (std::size_t i = 0; i < taken; ++i) {
+			w.U32(a_msg.taken[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<DropRecord> DecodeDropRecord(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropRecord msg;
+		msg.sessionId = r.U64();
+		const auto made = r.U16();
+		if (made > MAX_DROP_RECORD) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < made && r.Ok(); ++i) {
+			msg.made.push_back(r.U64());
+		}
+		const auto taken = r.U16();
+		if (taken > MAX_DROP_RECORD) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < taken && r.Ok(); ++i) {
+			msg.taken.push_back(r.U32());
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const DropList& a_msg)
+	{
+		Writer w{ MessageType::kDropList };
+		w.U8(a_msg.last ? 1 : 0);
+		const auto count = (std::min)(a_msg.drops.size(), MAX_DROPS_PER_PACKET);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteDrop(w, a_msg.drops[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<DropList> DecodeDropList(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		DropList msg;
+		const auto last = r.U8();
+		const auto count = r.U8();
+		if (!r.Ok() || last > 1 || count > MAX_DROPS_PER_PACKET) {
+			return std::nullopt;
+		}
+		msg.last = last == 1;
+		for (std::uint8_t i = 0; i < count; ++i) {
+			auto drop = detail::ReadDrop(r);
+			if (!drop) {
+				return std::nullopt;
+			}
+			msg.drops.push_back(std::move(*drop));
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const QuestStage& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -2644,6 +3714,91 @@ namespace Protocol
 		msg.stage = r.U16();
 		msg.playerId = r.U32();
 		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const RadiantStart& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.serial);
+		const auto fills = (std::min)(a_msg.fills.size(), MAX_RADIANT_FILLS);
+		w.U16(static_cast<std::uint16_t>(fills));
+		for (std::size_t i = 0; i < fills; ++i) {
+			w.U32(a_msg.fills[i].alias);
+			w.U8(a_msg.fills[i].kind);
+			w.U32(a_msg.fills[i].form);
+		}
+		const auto stages = (std::min)(a_msg.stages.size(), MAX_RADIANT_STAGES);
+		w.U16(static_cast<std::uint16_t>(stages));
+		for (std::size_t i = 0; i < stages; ++i) {
+			w.U16(a_msg.stages[i]);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<RadiantStart> DecodeRadiantStart(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RadiantStart msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		msg.serial = r.U32();
+		const auto fills = r.U16();
+		if (fills > MAX_RADIANT_FILLS || !IsShareableRef(msg.quest)) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < fills && r.Ok(); ++i) {
+			RadiantFill fill;
+			fill.alias = r.U32();
+			fill.kind = r.U8();
+			fill.form = r.U32();
+			// A location is a plugin's form; a reference a plugin's or a spawn; nothing else names the same thing in two games.
+			const bool known = fill.form == 0 || (fill.kind == 0 ? IsActorRef(fill.form) || fill.form == RADIANT_UNSHARED_REF : fill.kind == 1 && IsShareableRef(fill.form));
+			if (fill.kind > 1 || !known) {
+				return std::nullopt;
+			}
+			msg.fills.push_back(fill);
+		}
+		const auto stages = r.U16();
+		if (stages > MAX_RADIANT_STAGES) {
+			return std::nullopt;
+		}
+		for (std::uint16_t i = 0; i < stages && r.Ok(); ++i) {
+			msg.stages.push_back(r.U16());
+		}
+		if (!r.Ok() || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const RadiantStage& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.quest);
+		w.U32(a_msg.origin);
+		w.U32(a_msg.serial);
+		w.U16(a_msg.stage);
+		return w.Data();
+	}
+
+	inline std::optional<RadiantStage> DecodeRadiantStage(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		RadiantStage msg;
+		msg.playerId = r.U32();
+		msg.quest = r.U32();
+		msg.origin = r.U32();
+		msg.serial = r.U32();
+		msg.stage = r.U16();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.quest) || msg.origin == 0) {
 			return std::nullopt;
 		}
 		return msg;

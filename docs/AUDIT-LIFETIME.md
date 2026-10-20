@@ -40,7 +40,7 @@ Status: F = fixed (commit), O = open issue (beads id), N = checked, no change ne
 | WorkshopSync.cpp `OnGameLoaded` | copies' and graveyard handles, and the copy ID set, kept across a load: a friend's next move or scrap resolved a handle from before it (another reference now, or nothing) | F 423d527 (let go unread on load; the server sends the building again after the load and the save's copies are adopted at their spots) |
 | NpcSync.cpp:127 | mirrors could target the player, a stand-in or a runtime actor | F 46dd515 |
 | WeaponFire.cpp:251 | sound handle follows a stand-in's 3D root that may be deleted mid-tail | F 72646ce |
-| WorldSync.cpp:537 | `LinkedTarget` returns the engine's pointer branch unverified | N (engine-owned entry; the ID branch handles the transient case) |
+| WorldSync.cpp:537 | `LinkedTarget` returns the engine's pointer branch unverified | F 2026-10-18 (`LinkedRefs::Resolve`: the pointer is read under SEH and kept only if the form its own ID names is that pointer; an entry flagged transient is no longer looked up by the pointer's low half) |
 | RemotePlayers.cpp:265, :348, :453; WorkshopSync.cpp:163 | raw pointer taken from a temporary smart pointer, used in the same frame | N (same frame, cell holds the reference) |
 
 ### Deletes

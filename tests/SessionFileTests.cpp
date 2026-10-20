@@ -119,8 +119,8 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (30), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 30 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), a layout to come (34), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 34 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -151,8 +151,10 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
 	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the
 	// shared-quest test builds, before rc3 gave the file its own, 26): the same, less the list of deaths that may be
-	// mistakes, which are all of them there.
-	auto legacy = bytes;
+	// mistakes, which are all of them there. (Without workshop items: those had no wire byte then, see below.)
+	auto withoutItems = MakeSnapshot();
+	withoutItems.workshopItems.clear();
+	auto legacy = SessionFile::Encode(withoutItems);
 	const std::size_t at = 4 + 2 + 4 + 8 + 4 + 2 + MakeSnapshot().identities.size() * 12;
 	legacy.erase(legacy.begin() + at, legacy.begin() + at + 4);
 	for (std::uint16_t written = 23; written <= 28; ++written) {
@@ -214,6 +216,50 @@ TEST("session file: a file 0.8.5 wrote (protocol 26 in its header) still loads")
 	CHECK(again->healable == out->deadActors);
 	CHECK(again->deadActors == out->deadActors);
 	CHECK(again->workshopItems.size() == 1);
+}
+
+// Layout 29, as the releases before wires wrote it: each workshop item without the byte that says whether a wire's shape follows.
+// Made here from the new layout by taking that byte out of each item (the snapshot's one item is the file's last packet).
+TEST("session file: a layout 29 file loads with its workshop items, and is written again with their wire byte")
+{
+	auto in = MakeSnapshot();
+	auto bytes = SessionFile::Encode(in);
+	REQUIRE(bytes.back() == 0);  // the one item's wire byte: none
+	bytes.pop_back();
+	// The last packet's length, before its type byte, the item count and one item of 45 bytes.
+	constexpr std::size_t PACKET = 1 + 1 + 45;
+	const std::size_t     lengthAt = bytes.size() - PACKET - sizeof(std::uint32_t);
+	std::uint32_t         length = 0;
+	std::memcpy(&length, bytes.data() + lengthAt, sizeof(length));
+	REQUIRE(length == PACKET + 1);
+	length = PACKET;
+	std::memcpy(bytes.data() + lengthAt, &length, sizeof(length));
+	CHECK(!SessionFile::Decode(bytes));  // under the new layout's number it is damage
+	const std::uint16_t layout = SessionFile::BEFORE_WIRES;
+	std::memcpy(bytes.data() + 4, &layout, sizeof(layout));
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	REQUIRE(out->workshopItems.size() == 1);
+	CHECK(out->workshopItems[0] == in.workshopItems[0]);
+	CHECK(!out->workshopItems[0].wire);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->healable.empty());  // a 29 file's deaths are its own kind (see Snapshot::healable)
+	const auto again = SessionFile::Decode(SessionFile::Encode(*out));
+	REQUIRE(again);
+	CHECK(again->workshopItems == out->workshopItems);
+}
+
+TEST("session file: a wire's shape is kept through the file")
+{
+	auto in = MakeSnapshot();
+	auto wire = in.workshopItems[0];
+	wire.refId = 0xFF000FCA;
+	wire.base = 0x0001D971;
+	wire.wire = Protocol::WireShape{ { -62.7f, 24.0f, 37.8f }, 0.05f, 1.5f };
+	in.workshopItems.push_back(wire);
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->workshopItems == in.workshopItems);
 }
 
 TEST("session file: the deaths an older build saved stay marked through the new layout, and a death since is never one")
@@ -398,4 +444,88 @@ TEST("session file: a damaged file that another program holds open is read past,
 	REQUIRE(SessionFile::Save(files.path, Sitting(3)));
 	CHECK(SittingIn(SessionFile::Load(files.path)) == 3);
 	CHECK(SittingIn(SessionFile::Load(files.backup)) == 1);
+}
+
+TEST("session file: the session's plugin table is kept, so the file's form IDs are known whatever the host loads next")
+{
+	auto in = MakeSnapshot();
+	in.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "DLCCoast.esm", "Mod.esp" }, { "Light.esl" });
+	const auto bytes = SessionFile::Encode(in);
+	const auto out = SessionFile::Decode(bytes);
+	REQUIRE(out);
+	CHECK(out->plugins == in.plugins);
+	CHECK(out->deadActors == in.deadActors);
+	CHECK(out->workshopItems.size() == 1);
+
+	// The layout before it (29) had none, and its file still loads, with none: its IDs are its hash's load order's.
+	// (Without workshop items: 29 had no wire byte on them.)
+	auto withoutItems = MakeSnapshot();
+	withoutItems.workshopItems.clear();
+	auto old = SessionFile::Encode(withoutItems);
+	const std::uint16_t before = SessionFile::BEFORE_PLUGIN_TABLE;
+	std::memcpy(old.data() + 4, &before, sizeof(before));
+	const auto oldOut = SessionFile::Decode(old);
+	REQUIRE(oldOut);
+	CHECK(oldOut->plugins.empty());
+	CHECK(oldOut->deadActors == MakeSnapshot().deadActors);
+
+	// A table in a file of that layout, or two in one, is damage.
+	auto tableIn29 = bytes;
+	std::memcpy(tableIn29.data() + 4, &before, sizeof(before));
+	CHECK(!SessionFile::Decode(tableIn29));
+	const auto table = Protocol::Encode(Protocol::PluginTable{ in.plugins });
+	auto twice = bytes;
+	const std::uint32_t size = static_cast<std::uint32_t>(table.size());
+	const auto* sizeBytes = reinterpret_cast<const std::uint8_t*>(&size);
+	twice.insert(twice.end(), sizeBytes, sizeBytes + sizeof(size));
+	twice.insert(twice.end(), table.begin(), table.end());
+	CHECK(!SessionFile::Decode(twice));
+}
+
+// Drops (30), wires (31) and the plugin table (32) were each added to 29 on a branch of their own, under its own number,
+// and this layout (33) has all three: a file of each of those still loads, and what its layout lacks is damage in it.
+TEST("session file: the layouts of drops, wires and the plugin table each load, and hold only their own")
+{
+	Protocol::DroppedItem drop{ .dropId = 1, .ownerId = 2, .nonce = 7, .base = 0x0001F276, .count = 120, .templateIndex = 0xFFFF, .cell = 0x0001A2B3 };
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+
+	auto bare = MakeSnapshot();
+	bare.workshopItems.clear();
+	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
+		const auto out = as(SessionFile::Encode(bare), layout);
+		REQUIRE(out);
+		CHECK(out->deadActors == bare.deadActors);
+		CHECK(out->drops.empty());
+		CHECK(out->plugins.empty());
+	}
+
+	auto withDrop = bare;
+	withDrop.drops = { drop };
+	REQUIRE(as(SessionFile::Encode(withDrop), SessionFile::FORMAT));
+	const auto drops = as(SessionFile::Encode(withDrop), SessionFile::DROPS_ONLY);
+	REQUIRE(drops);
+	CHECK(drops->drops == withDrop.drops);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_WIRES, SessionFile::WIRES_ONLY, SessionFile::PLUGIN_TABLE_ONLY }) {
+		CHECK(!as(SessionFile::Encode(withDrop), layout));
+	}
+
+	// This layout's items carry the wire byte: they read under 31 only, of the others.
+	const auto items = as(SessionFile::Encode(MakeSnapshot()), SessionFile::WIRES_ONLY);
+	REQUIRE(items);
+	CHECK(items->workshopItems == MakeSnapshot().workshopItems);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_WIRES, SessionFile::DROPS_ONLY, SessionFile::PLUGIN_TABLE_ONLY }) {
+		CHECK(!as(SessionFile::Encode(MakeSnapshot()), layout));
+	}
+
+	auto withTable = bare;
+	withTable.plugins = Protocol::ComparedLoadOrder({ "Fallout4.esm", "Mod.esp" }, {});
+	const auto table = as(SessionFile::Encode(withTable), SessionFile::PLUGIN_TABLE_ONLY);
+	REQUIRE(table);
+	CHECK(table->plugins == withTable.plugins);
+	for (const std::uint16_t layout : { SessionFile::BEFORE_PLUGIN_TABLE, SessionFile::DROPS_ONLY, SessionFile::WIRES_ONLY }) {
+		CHECK(!as(SessionFile::Encode(withTable), layout));
+	}
 }
