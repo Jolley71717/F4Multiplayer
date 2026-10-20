@@ -2767,7 +2767,7 @@ namespace DevCommands
 
 		// paused: whether the game is paused, and by what.
 		// timescale: the game's time multiplier and timer, VATS's state, what stops the game, and the menus made in real
-		// time so far (game/RealTime.h). For VATS in real time (bRealTimeVats).
+		// time so far, the VATS mode and the stand-ins' lag (game/RealTime.h; iVatsMode).
 		std::string TimeScale(std::string_view)
 		{
 			return RealTime::Describe();

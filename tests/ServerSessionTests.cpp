@@ -341,7 +341,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules == Protocol::SessionRules{});
 		CHECK(welcome->rules.revive);
 		CHECK(welcome->rules.bleedOutSeconds == 45);
-		CHECK(welcome->rules.realTimeVats);
+		CHECK(welcome->rules.vatsMode == Protocol::SessionRules::VATS_REAL_TIME);
 	}
 	{
 		Server::Options options;
@@ -349,7 +349,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		options.rules.reviveWindowMinutes = 10;
 		options.rules.downCooldownSeconds = 60;
 		options.rules.reviveOutsideCombat = true;
-		options.rules.realTimeVats = false;
+		options.rules.vatsMode = Protocol::SessionRules::VATS_SLOWED_FRIENDS;
 		options.rules.bleedOutSeconds = 9999;  // past the limit: brought within it
 		Fixture    f{ options };
 		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
@@ -358,7 +358,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.reviveWindowMinutes == 10);
 		CHECK(welcome->rules.downCooldownSeconds == 60);
 		CHECK(welcome->rules.reviveOutsideCombat);
-		CHECK(!welcome->rules.realTimeVats);
+		CHECK(welcome->rules.vatsMode == Protocol::SessionRules::VATS_SLOWED_FRIENDS);
 		CHECK(welcome->rules.bleedOutSeconds == Protocol::SessionRules::MAX_BLEED_OUT);
 	}
 }

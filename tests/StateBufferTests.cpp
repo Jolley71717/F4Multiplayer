@@ -743,3 +743,60 @@ TEST("state buffer: a stand-in placed a moment before our frame's work sampled i
 	CHECK(at(-5ms) < at(0ms));
 	CHECK(at(10ms) > at(0ms) + RUN * 0.008f);
 }
+
+TEST("state buffer: played behind by a lag, a friend is drawn where their run was that long ago, with the history kept for it")
+{
+	// Slowed friends in VATS (game/RealTimeVats.h, Playback): 4 seconds of the game's slow motion at 0.04 after a second of
+	// normal play, in 30 fps frames. The states are not bent: the run is drawn at the pace it was run, from further back.
+	StateBuffer::Buffer   buffer;
+	StateBuffer::Buffer   control;  // the same run, never lagging
+	Protocol::PlayerState state;
+	state.worldspace = 0x3C;
+	state.speed = RUN;
+	auto  now = start;
+	float lag = 0.0f;
+	for (std::uint32_t i = 1; i <= 150; ++i) {
+		state.sequence = i;
+		state.x = RUN * 0.033f * static_cast<float>(i);
+		state.sentMs = Protocol::SentMs(now);
+		buffer.Push(state, now);
+		control.Push(state, now);
+		lag = i > 30 ? (std::min)(lag + 0.96f * 0.033f, 4.0f) : 0.0f;
+		buffer.lag = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(lag));
+		buffer.Frame(now);
+		control.Frame(now);
+		now += 33ms;
+	}
+	now -= 33ms;
+	REQUIRE(lag > 3.5f);
+
+	// The history is kept as far back as the lag reaches; the one that never lags keeps its second.
+	CHECK(buffer.snapshots.size() > 120);
+	CHECK(control.snapshots.size() < 40);
+
+	const auto sampled = buffer.Sample(now);
+	const auto present = control.Sample(now);
+	REQUIRE(sampled);
+	REQUIRE(present);
+	// Where it is drawn is the lag behind where the one that does not lag has it (the same delay: they saw the same states).
+	CHECK(present->state.x - sampled->state.x > RUN * (lag - 0.05f));
+	CHECK(present->state.x - sampled->state.x < RUN * (lag + 0.05f));
+	CHECK(sampled->state.speed == RUN);  // it is running there, not held
+
+	// Its path is in the same time: the engine's update, placed that far behind the present, is on it.
+	const auto lagged = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(lag));
+	const auto onPath = sampled->path.At(now - lagged);
+	REQUIRE(onPath);
+	CHECK(std::abs(onPath->x - sampled->state.x) < RUN * 0.01f);
+	// ... and a step later on goes forward at the pace of the run.
+	const auto later = sampled->path.At(now - lagged + 20ms);
+	REQUIRE(later);
+	CHECK(later->x - onPath->x > RUN * 0.015f);
+	CHECK(later->x - onPath->x < RUN * 0.025f);
+
+	// Back to none: drawn as the one that never lagged.
+	buffer.lag = {};
+	const auto back = buffer.Sample(now);
+	REQUIRE(back);
+	CHECK(std::abs(back->state.x - present->state.x) < 1.0f);
+}

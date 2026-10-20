@@ -42,7 +42,9 @@ namespace StateBuffer
 	constexpr auto  LEAD_SLOT = 50ms;
 	constexpr std::size_t LEADS = 64;  // slots: 3.2 seconds
 	constexpr auto  STALE_AFTER = 5s;
-	constexpr std::size_t MAX_SNAPSHOTS = 32;
+	// Held a second and a bit (32 at their 30 Hz), and while the playback is lagging (Buffer::lag, slowed friends in VATS), as
+	// long as that reaches back: 256 is what the five seconds it can lag need, with some to spare.
+	constexpr std::size_t MAX_SNAPSHOTS = 256;
 
 	// Past the newest state (the next is late on the way: a relay route that hiccups), a friend who was moving goes on the
 	// way they were going for up to EXTRAPOLATE, instead of standing until it comes and then going on from there. Stood,
@@ -123,6 +125,9 @@ namespace StateBuffer
 		Clock::time_point        handedTo{};  // the newest state's stamp when the last frame sampled: where the path it handed over ends
 		Clock::time_point        framed{};    // when Frame last ran
 		Correction               correction;  // a jump being eased out (Correct)
+		// How far behind the present the stand-in is played (zero, but for slowed friends in VATS: game/RealTimeVats.h, Playback).
+		// Set by the caller before Frame and Sample; the states are not bent, it is drawn where they put it that long ago.
+		Clock::duration          lag{};
 
 		// Takes a state that came at a_now; false (and nothing kept) when it is no newer than the newest held.
 		bool Push(const Protocol::PlayerState& a_state, Clock::time_point a_now)
@@ -159,14 +164,15 @@ namespace StateBuffer
 		// be seen to jump, and eased it would trail behind for a while after.
 		void Correct(const std::optional<Sampled>& a_before, Clock::time_point a_now)
 		{
+			const auto played = a_now - lag;  // the correction is in the playback's time (lag)
 			const bool drawing = framed != Clock::time_point{} && a_now - framed <= std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(SLEW_FRAME_LIMIT));
 			const auto after = a_before && drawing ? Sample(a_now) : std::nullopt;
 			if (!after || a_before->state.cell != after->state.cell || a_before->state.worldspace != after->state.worldspace) {
 				correction = {};
 				return;
 			}
-			const Correction next{ a_before->state.x - after->state.x + correction.x * correction.Left(a_now), a_before->state.y - after->state.y + correction.y * correction.Left(a_now),
-				a_before->state.z - after->state.z + correction.z * correction.Left(a_now), a_now };
+			const Correction next{ a_before->state.x - after->state.x + correction.x * correction.Left(played), a_before->state.y - after->state.y + correction.y * correction.Left(played),
+				a_before->state.z - after->state.z + correction.z * correction.Left(played), played };
 			const bool none = std::abs(next.x) < 0.01f && std::abs(next.y) < 0.01f && std::abs(next.z) < 0.01f;
 			correction = none || next.x * next.x + next.y * next.y + next.z * next.z > SNAP_DISTANCE * SNAP_DISTANCE ? Correction{} : next;
 		}
@@ -228,7 +234,7 @@ namespace StateBuffer
 		// it had: that is how far past it they went, up to now, when our work comes late in a frame or misses one.
 		void Frame(Clock::time_point a_now)
 		{
-			while (snapshots.size() > 2 && a_now - snapshots[1].stamp > MIN_DELAY + 1s) {
+			while (snapshots.size() > 2 && a_now - snapshots[1].stamp > MIN_DELAY + 1s + lag) {
 				snapshots.pop_front();
 			}
 			if (snapshots.empty()) {
@@ -276,7 +282,9 @@ namespace StateBuffer
 		// way the newest state went, for the engine's updates between our frames.
 		std::optional<Sampled> Sample(Clock::time_point a_now) const
 		{
-			auto out = Raw(a_now);
+			// Where the playback is, not the present (lag): everything below is in its time.
+			const auto played = a_now - lag;
+			auto       out = Raw(played);
 			if (!out) {
 				return out;
 			}
@@ -290,7 +298,7 @@ namespace StateBuffer
 				const float seconds = std::chrono::duration<float>(EXTRAPOLATE).count();
 				out->path.Add({ newest.stamp + behind + EXTRAPOLATE, newest.state.x + (*v)[0] * seconds, newest.state.y + (*v)[1] * seconds, newest.state.z + (*v)[2] * seconds, newest.state.heading });
 			}
-			if (const float left = correction.Left(a_now); left > 0.0f) {
+			if (const float left = correction.Left(played); left > 0.0f) {
 				out->state.x += correction.x * left;
 				out->state.y += correction.y * left;
 				out->state.z += correction.z * left;

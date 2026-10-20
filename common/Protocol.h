@@ -28,7 +28,8 @@ namespace Protocol
 	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
 	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
 	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
-	inline constexpr std::uint16_t VERSION = 49;
+	// 50: the VATS mode (SessionRules::vatsMode: real time, the game's slow motion, or slowed friends) replaces the real-time flag.
+	inline constexpr std::uint16_t VERSION = 50;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -318,7 +319,7 @@ namespace Protocol
 	struct LoadOrderRequest
 	{};
 
-	// The host's rules for everyone in the session (protocol 49): the host's ini (F4MPServer: its options), sent with the
+	// The host's rules for everyone in the session (protocol 50): the host's ini (F4MPServer: its options), sent with the
 	// welcome, so every game, the host's own included, plays by the same ones. The defaults are the mod's behaviour before
 	// there were rules (and VATS in real time, which is new).
 	struct SessionRules
@@ -333,8 +334,14 @@ namespace Protocol
 		std::uint16_t downCooldownSeconds = 0;    // helped up, a lethal hit within this long kills (iReviveCooldownSeconds)
 		bool          reviveOutsideCombat = false;  // friends can only help while they are not in a fight (bReviveOutOfCombat)
 
-		// Time (src/game/RealTime.h): in a session, VATS runs in real time instead of slowing the game.
-		bool realTimeVats = true;  // VATS (bRealTimeVats)
+		// Time (src/game/RealTime.h): what VATS does in a session (iVatsMode; bRealTimeVats is its older form: true is 0, false 1).
+		std::uint8_t vatsMode = VATS_REAL_TIME;
+
+		// The VATS modes, to compare in play: 49 had the first two as a flag.
+		static constexpr std::uint8_t VATS_REAL_TIME = 0;       // VATS runs at full speed, as in Fallout 76
+		static constexpr std::uint8_t VATS_SLOW_MOTION = 1;     // the game's own slow motion for whoever is in VATS; friends in their game move at full speed
+		static constexpr std::uint8_t VATS_SLOWED_FRIENDS = 2;  // the game's slow motion, and friends' stand-ins in the VATS player's game slowed with it
+		static constexpr std::uint8_t MAX_VATS_MODE = VATS_SLOWED_FRIENDS;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -351,6 +358,7 @@ namespace Protocol
 			out.reviveHealth = std::clamp(reviveHealth, MIN_REVIVE_HEALTH, MAX_REVIVE_HEALTH);
 			out.reviveWindowMinutes = (std::min)(reviveWindowMinutes, MAX_REVIVE_WINDOW);
 			out.downCooldownSeconds = (std::min)(downCooldownSeconds, MAX_DOWN_COOLDOWN);
+			out.vatsMode = vatsMode <= MAX_VATS_MODE ? vatsMode : VATS_REAL_TIME;  // a mode this build does not know is the default
 			return out;
 		}
 
@@ -1825,7 +1833,7 @@ namespace Protocol
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
-		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0);
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0);  // bit 4 was realTimeVats in 49
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -1833,6 +1841,7 @@ namespace Protocol
 		w.U8(rules.maxRevives);
 		w.U16(rules.reviveWindowMinutes);
 		w.U16(rules.downCooldownSeconds);
+		w.U8(rules.vatsMode);
 		return w.Data();
 	}
 
@@ -1845,20 +1854,20 @@ namespace Protocol
 		msg.sessionId = r.U64();
 		msg.friendlyFire = r.U8() != 0;
 		msg.sharedStory = r.U8() != 0;
-		// The rules (protocol 49; a welcome only answers a hello of the same version). Trailing bytes after them are
+		// The rules (protocol 50; a welcome only answers a hello of the same version). Trailing bytes after them are
 		// left for a later version, as for the rest of the handshake.
 		{
 			SessionRules rules;
 			const auto   flags = r.U8();
 			rules.revive = (flags & 1) != 0;
 			rules.reviveOutsideCombat = (flags & 2) != 0;
-			rules.realTimeVats = (flags & 4) != 0;
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();
 			rules.maxRevives = r.U8();
 			rules.reviveWindowMinutes = r.U16();
 			rules.downCooldownSeconds = r.U16();
+			rules.vatsMode = r.U8();
 			if (!r.Ok()) {
 				return std::nullopt;
 			}

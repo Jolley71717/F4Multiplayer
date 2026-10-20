@@ -6,7 +6,7 @@
 // The session's rules, as the game's ini sets them when it hosts (dist/F4Multiplayer.ini): --no-revive (bRevive = false),
 // --bleed-out (iBleedOutSeconds), --revive-seconds (fReviveSeconds), --revive-health (iReviveHealth), --max-revives
 // (iMaxRevives), --revive-window (iReviveWindowMinutes), --revive-cooldown (iReviveCooldownSeconds), --revive-out-of-combat
-// (bReviveOutOfCombat), --slow-vats (bRealTimeVats = false).
+// (bReviveOutOfCombat), --vats-mode N (iVatsMode: 0 real time, 1 the game's slow motion, 2 slowed friends), --slow-vats (bRealTimeVats = false: mode 1).
 // --ban-file: where the bans are kept, so they outlive the server; without it they last until it stops.
 // While it runs, the console takes the host controls (Server::Console): help, players, kick <n>, ban <n>, bans,
 // unban <n | ~alias | all>, password <text> (password - removes it), lock and unlock. The answers go to the output,
@@ -104,7 +104,10 @@ int main(int argc, char* argv[])
 		} else if (arg == "--revive-out-of-combat") {
 			options.rules.reviveOutsideCombat = true;
 		} else if (arg == "--slow-vats") {
-			options.rules.realTimeVats = false;
+			options.rules.vatsMode = Protocol::SessionRules::VATS_SLOW_MOTION;
+		} else if (unsigned mode = 0; arg == "--vats-mode" && hasValue && ParseNumber(argv[i + 1], mode) && mode <= Protocol::SessionRules::MAX_VATS_MODE) {
+			options.rules.vatsMode = static_cast<std::uint8_t>(mode);
+			++i;
 		} else if (arg == "--ban-file" && hasValue) {
 			options.banFile = argv[++i];
 		} else if (arg == "--session-file" && hasValue) {
@@ -120,7 +123,7 @@ int main(int argc, char* argv[])
 		} else {
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
 						 "                  [--no-revive] [--bleed-out SECONDS] [--revive-seconds SECONDS] [--revive-health PERCENT] [--max-revives N]\n"
-						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--slow-vats]\n";
+						 "                  [--revive-window MINUTES] [--revive-cooldown SECONDS] [--revive-out-of-combat] [--vats-mode 0|1|2] [--slow-vats]\n";
 			return 2;
 		}
 	}

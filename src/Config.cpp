@@ -3,6 +3,7 @@
 #include "IniFile.h"
 #include "Log.h"
 #include "Platform.h"
+#include "Protocol.h"
 
 namespace Config
 {
@@ -131,8 +132,13 @@ namespace Config
 				ParseInt(value, settings.reviveCooldownSeconds);
 			} else if (key == "bReviveOutOfCombat") {
 				settings.reviveOutOfCombat = ParseBool(value);
+			} else if (key == "iVatsMode") {
+				ParseInt(value, settings.vatsMode);
+				settings.vatsMode = (std::min)(settings.vatsMode, std::uint32_t{ Protocol::SessionRules::MAX_VATS_MODE });
 			} else if (key == "bRealTimeVats") {
-				settings.realTimeVats = ParseBool(value);
+				// The older key, from before there were three modes: an ini kept across updates may have it. Whichever key
+				// comes last in the file wins.
+				settings.vatsMode = ParseBool(value) ? Protocol::SessionRules::VATS_REAL_TIME : Protocol::SessionRules::VATS_SLOW_MOTION;
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {

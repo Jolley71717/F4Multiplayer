@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Protocol.h"
+#include "game/RealTimeVats.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,17 +30,17 @@ namespace HostRules
 		rules.reviveWindowMinutes = u16(a_settings.reviveWindowMinutes);
 		rules.downCooldownSeconds = u16(a_settings.reviveCooldownSeconds);
 		rules.reviveOutsideCombat = a_settings.reviveOutOfCombat;
-		rules.realTimeVats = a_settings.realTimeVats;
+		rules.vatsMode = static_cast<std::uint8_t>((std::min)(a_settings.vatsMode, std::uint32_t{ Protocol::SessionRules::MAX_VATS_MODE }));
 		return rules.Clamped();
 	}
 
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} realTimeVats={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} vatsMode={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.realTimeVats);
+			a_rules.reviveOutsideCombat, RealTimeVats::ModeName(a_rules.vatsMode));
 	}
 
 	// The game's side (HostRules.cpp), main thread.

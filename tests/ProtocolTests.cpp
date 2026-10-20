@@ -228,22 +228,32 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	rules.reviveWindowMinutes = 15;
 	rules.downCooldownSeconds = 120;
 	rules.reviveOutsideCombat = true;
-	rules.realTimeVats = false;
+	rules.vatsMode = SessionRules::VATS_SLOWED_FRIENDS;
 	const auto out = DecodeWelcome(Encode(Welcome{ 7, 8, false, true, rules }));
 	REQUIRE(out);
 	CHECK(out->rules == rules);
 	CHECK(out->sharedStory);
 
 	// Each flag alone, so none is read from another's bit.
-	for (int bit = 0; bit < 3; ++bit) {
+	// (The VATS mode is a byte of its own, with each value on its own just below.)
+	for (int bit = 0; bit < 2; ++bit) {
 		SessionRules one;
 		one.revive = bit == 0;
 		one.reviveOutsideCombat = bit == 1;
-		one.realTimeVats = bit == 2;
 		const auto decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
 		REQUIRE(decoded);
 		CHECK(decoded->rules == one);
 	}
+
+	for (std::uint8_t mode = 0; mode <= SessionRules::MAX_VATS_MODE; ++mode) {
+		SessionRules one;
+		one.vatsMode = mode;
+		const auto   decoded = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, one }));
+		REQUIRE(decoded);
+		CHECK(decoded->rules.vatsMode == mode);
+		CHECK(decoded->rules == one);
+	}
+	CHECK(SessionRules{}.vatsMode == SessionRules::VATS_REAL_TIME);
 
 	// Out of the limits (another build's server, or a hand-made packet): brought within them, never used as they came.
 	SessionRules wild;
@@ -252,6 +262,7 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	wild.reviveHealth = 0;
 	wild.reviveWindowMinutes = 65535;
 	wild.downCooldownSeconds = 65535;
+	wild.vatsMode = 200;
 	const auto clamped = DecodeWelcome(Encode(Welcome{ 1, 2, false, false, wild }));
 	REQUIRE(clamped);
 	CHECK(clamped->rules.bleedOutSeconds == SessionRules::MIN_BLEED_OUT);
@@ -259,6 +270,7 @@ TEST("protocol: the welcome carries the session's rules, each field its own, and
 	CHECK(clamped->rules.reviveHealth == SessionRules::MIN_REVIVE_HEALTH);
 	CHECK(clamped->rules.reviveWindowMinutes == SessionRules::MAX_REVIVE_WINDOW);
 	CHECK(clamped->rules.downCooldownSeconds == SessionRules::MAX_DOWN_COOLDOWN);
+	CHECK(clamped->rules.vatsMode == SessionRules::VATS_REAL_TIME);  // a mode we do not know is the default
 	wild.reviveHealth = 250;
 	CHECK(DecodeWelcome(Encode(Welcome{ 1, 2, false, false, wild }))->rules.reviveHealth == 100);
 

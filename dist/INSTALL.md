@@ -166,12 +166,21 @@ how many revives you have left. The dedicated server takes the same rules as opt
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
 `--revive-out-of-combat`, `--no-revive`).
 
-### VATS in real time
+### VATS in a session
 
-In a session VATS runs at full speed instead of slowing the world almost to a stop, as in Fallout 76,
-so your friends don't see you stand still while they fight. On Jet (or the like) VATS keeps its slow
-motion. The host can keep the game's own slow motion for everyone with `bRealTimeVats = false` (server:
-`--slow-vats`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
+The host picks what VATS does for everyone with `iVatsMode` (server: `--vats-mode`):
+
+- `0`, real time (the default): VATS runs at full speed instead of slowing the world almost to a stop,
+  as in Fallout 76, so your friends don't see you stand still while they fight. On Jet (or the like)
+  VATS keeps its slow motion.
+- `1`, the game's own slow motion: your game slows while you are in VATS, and the friends you see in it
+  keep moving at full speed.
+- `2`, slowed friends: the game's slow motion as in `1`, and the friends you see (and the NPCs from
+  their games) are played back as slowed as your game while you are in VATS, so everyone looks slowed
+  to you. When you leave VATS they catch up. Their own games stay at normal speed.
+
+`bRealTimeVats` still works as the older form (`true` is 0, `false` is 1, server: `--slow-vats`). The
+game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
 The Pip-Boy and the other menus still pause your own game, as before (the session goes on for your
 friends).
 

@@ -28,6 +28,7 @@
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/RealTime.h"
 #include "game/RemoteEdits.h"
 #include "game/Spawns.h"
 #include "game/WeaponFire.h"
@@ -2376,6 +2377,7 @@ namespace RemotePlayers
 		SaveGuard::Frame();
 		UpdatePendingSolid();
 		for (auto& [id, remote] : players) {
+			remote.states.lag = RealTime::StandInLag();  // slowed friends in VATS (game/RealTimeVats.h): played that far behind
 			remote.states.Frame(now);
 			const auto& snaps = remote.states.snapshots;
 			movingFrames += !snaps.empty() && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;

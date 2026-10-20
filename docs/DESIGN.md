@@ -852,7 +852,7 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
   the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
   replaced, so it never sits on the ground while its friend is up.
-- Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
+- Session rules (`Protocol::SessionRules`, protocol 50): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help
   0.5-30 s, health 1-100 %, window up to 600 min, cooldown up to 3600 s). The downed ones (bleed-out and help
@@ -861,7 +861,21 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
   frame in combat (on the ground counts as in combat). The helper checks its own combat state for
   `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
-- VATS in real time (src/game/RealTime.cpp, src/game/RealTimeVats.h; `bRealTimeVats`): the game slows VATS's
+- VATS modes (protocol 50; the host's rule `SessionRules::vatsMode`, `iVatsMode`, `--vats-mode`; `bRealTimeVats` is
+  its older form, true = 0, false = 1): 0 real time, 1 the game's own slow motion, 2 slowed friends. They exist to
+  be compared in play; 1 is what a tester found "completely busted" (the VATS player slows, friends' stand-ins
+  in their game keep running). Mode 2 keeps the game's slow motion and plays every friend's stand-in, and the copies
+  of NPCs mirrored from a friend's game, at the same rate while VATS is up, in the VATS player's game only.
+  Network time is untouched, the states are not bent: `RealTimeVats::Playback` keeps a lag that grows by
+  `(1 - rate) * dt` each frame while VATS is up (rate = the global time multiplier, 0.04 aiming, 0.001 in a shot, as
+  mode 0 reads it; not on Jet, as for mode 0) and closes at 3x real time after, at most 5 s behind. The lag
+  (`RealTime::StandInLag`) is taken off the time friends are drawn at: `StateBuffer::Buffer::lag` (the buffer's
+  sample time, its corrections and its path, with history kept as far back, 256 states), `NpcSync`'s mirrors
+  (sampled at now minus the lag, 128 states) and `FrameClock::PlaceAt` (where the engine's update puts the stand-in on
+  that path). Past the 5 s a longer VATS plays friends at normal speed again; the catch-up after is a visible
+  fast-forward, and their animation plays at the engine's slowed rate while their movement follows the path:
+  what to look at in the two-game rig. Pure logic and tests: tests/SessionRulesTests.cpp, tests/StateBufferTests.cpp.
+- VATS in real time (mode 0; src/game/RealTime.cpp, src/game/RealTimeVats.h): the game slows VATS's
   aiming through `VATS::magicTimeSlowdown` (0.04 while aiming, measured on 1.11.240; the global time multiplier
   and its target follow it; Jet sets the same slowdown to 0.3), and a shot playing out through the VATS
   camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time

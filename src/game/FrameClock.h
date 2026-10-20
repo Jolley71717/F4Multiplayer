@@ -53,6 +53,6 @@ namespace FrameClock
 
 	// The time to stamp our state sampled at a_now with.
 	[[nodiscard]] Clock::time_point StampAt(Clock::time_point a_now);
-	// The time to place a stand-in at, in its update running at a_now.
+	// The time to place a stand-in at, in its update running at a_now: behind by the lag it is played at (slowed friends in VATS).
 	[[nodiscard]] Clock::time_point PlaceAt(Clock::time_point a_now);
 }

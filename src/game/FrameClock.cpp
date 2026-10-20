@@ -1,6 +1,7 @@
 ﻿#include "game/FrameClock.h"
 
 #include "game/EngineClock.h"
+#include "game/RealTime.h"
 
 #include <atomic>
 #include <mutex>
@@ -84,5 +85,7 @@ namespace FrameClock
 		}
 	}
 
-	Clock::time_point PlaceAt(Clock::time_point a_now) { return GetPlace() == Place::kFrame ? Now() : a_now; }
+	// Behind that by the lag friends are played at while VATS has them slowed (RealTime::StandInLag; none otherwise): the path
+	// the stand-in is put on (MotionPath.h) is in the playback's time, as StateBuffer::Buffer::lag keeps it.
+	Clock::time_point PlaceAt(Clock::time_point a_now) { return (GetPlace() == Place::kFrame ? Now() : a_now) - RealTime::StandInLag(); }
 }

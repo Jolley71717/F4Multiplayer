@@ -15,6 +15,7 @@
 #include "game/OpenMenus.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
+#include "game/RealTime.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
@@ -60,7 +61,8 @@ namespace NpcSync
 		constexpr float HANDOFF_TO = 4000.0f;  // the friend must be this close (and at most half as far)
 		constexpr auto  HANDOFF_HOLD = 10s;    // we don't claim it back meanwhile
 		constexpr auto  HANDOFF_RETRY = 30s;   // between hand-offs of the same NPC
-		constexpr std::size_t MAX_SNAPSHOTS = 16;
+		// About a second at their rate, and as many more as the playback can lag behind (RealTimeVats::Playback::MAX_LAG).
+		constexpr std::size_t MAX_SNAPSHOTS = 128;
 
 		constexpr std::uint32_t CURRENT_COMPANION_FACTION = 0x00023C01;
 
@@ -1175,7 +1177,8 @@ namespace NpcSync
 					}
 				}
 				AdjustDelay(mirror);
-				if (const auto motion = Sample(mirror, a_now)) {
+				// Played behind the present while VATS has friends slowed (game/RealTimeVats.h), as the players' stand-ins are.
+				if (const auto motion = Sample(mirror, a_now - RealTime::StandInLag())) {
 					Puppets::SetTarget(actor, *motion);
 				}
 				++it;
