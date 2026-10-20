@@ -3,11 +3,14 @@
 #include "game/Equipment.h"
 #include "game/HavokNan.h"
 #include "game/Hud.h"
+#include "game/NpcSync.h"
 #include "game/ObjectShare.h"
 #include "game/OpenMenus.h"
+#include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
+#include "game/WeaponFire.h"
 
 #include <atomic>
 #include <charconv>
@@ -37,6 +40,7 @@ namespace MovedObjects
 		ObjectShare::Carry      carry;
 		ObjectShare::Carried    carried;
 		ObjectShare::KnockWatch knocks;
+		ObjectShare::BlastBook  blasts;
 		std::vector<Packet>     outgoing;
 		Clock::time_point       lastFrame{};
 		Clock::time_point       nextScan{};
@@ -64,7 +68,7 @@ namespace MovedObjects
 			std::uint64_t holdsSent = 0, holdsApplied = 0, holdsIgnored = 0;
 			std::uint64_t letGosSent = 0, letGosApplied = 0;
 			std::uint64_t restsSent = 0, restsApplied = 0, restsAlready = 0, restsIgnored = 0;
-			std::uint64_t knocksSent = 0, refused = 0, releases = 0, badPoses = 0;
+			std::uint64_t knocksSent = 0, refused = 0, releases = 0, badPoses = 0, blastsSeen = 0;
 		} counts;
 
 		// The base forms whose references are loose objects a player can grab or knock about.
@@ -424,7 +428,53 @@ namespace MovedObjects
 			return false;
 		}
 
-		// The loose objects near our player: what moved with no hand on it, and came to rest, where our player moved it.
+		// Whether our game runs this actor (not our player, not a friend's stand-in): the server made our player its owner
+		// (ObjectShare::Answers), so what it shoves is ours to report.
+		bool RunsHere(RE::Actor* a_actor)
+		{
+			if (!a_actor || a_actor->IsPlayerRef() || Puppets::IsPuppet(a_actor)) {
+				return false;
+			}
+			const auto id = NpcSync::SessionId(a_actor->GetFormID());
+			return ObjectShare::Answers(id, NpcSync::Owner(id), NpcSync::LocalPlayer());
+		}
+
+		// An explosion in our game: whose it is by what caused it (ObjectShare::RoleOf), kept in the blast book for what it
+		// throws about. One our game set off for a friend's throw is theirs; so is one a friend's stand-in or an NPC another
+		// game runs caused. A hazard's is nobody's.
+		void NoteBlast(RE::TESObjectREFR* a_ref, Clock::time_point a_now)
+		{
+			const auto base = a_ref->GetObjectReference();
+			const auto form = base && base->Is(RE::ENUM_FORM_ID::kEXPL) ? base->As<RE::BGSExplosion>() : nullptr;
+			if (!form || a_ref->IsDeleted()) {
+				return;
+			}
+			ObjectShare::Cause cause = ObjectShare::Cause::kNobody;
+			bool               answered = false;
+			if (!WeaponFire::SetOffForFriend(a_ref)) {
+				if (const auto actor = static_cast<RE::Explosion*>(a_ref)->GetActorOwner()) {
+					if (actor->IsPlayerRef()) {
+						cause = ObjectShare::Cause::kPlayer;
+					} else if (Puppets::IsPuppet(actor)) {
+						cause = ObjectShare::Cause::kStandIn;
+					} else {
+						cause = ObjectShare::Cause::kNpc;
+						answered = RunsHere(actor);
+					}
+				}
+			}
+			const auto role = ObjectShare::RoleOf(WeaponFire::SetOffForFriend(a_ref), cause, answered);
+			if (!role) {
+				return;
+			}
+			const auto& at = a_ref->data.location;
+			if (blasts.Note(a_ref->GetHandle().native_handle(), { at.x, at.y, at.z }, form->data.outerRadius, *role, a_now)) {
+				++counts.blastsSeen;
+			}
+		}
+
+		// The loose objects near our player: what moved with no hand on it, and came to rest, where our player, an NPC of
+		// ours or a blast of ours moved it.
 		void ScanKnocks(RE::PlayerCharacter* a_player, std::uint32_t a_ourHeld, Clock::time_point a_now)
 		{
 			const auto tes = RE::TES::GetSingleton();
@@ -432,6 +482,8 @@ namespace MovedObjects
 				return;
 			}
 			std::vector<RE::NiPointer<RE::TESObjectREFR>> found;
+			std::vector<RE::NiPointer<RE::TESObjectREFR>> blastRefs;
+			std::vector<Vec3>                             shovers;  // NPCs our game runs, alive
 			found.reserve(MAX_SCANNED);
 			tes->ForEachReferenceInRange(a_player->data.location, SCAN_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				if (found.size() >= MAX_SCANNED) {
@@ -439,9 +491,18 @@ namespace MovedObjects
 				}
 				if (MaybeLoose(a_ref)) {
 					found.emplace_back(a_ref);
+				} else if (const auto actor = a_ref ? a_ref->As<RE::Actor>() : nullptr) {
+					if (shovers.size() < ObjectShare::MAX_SHOVERS && !actor->IsDead(false) && RunsHere(actor)) {
+						shovers.push_back(Position(actor));
+					}
+				} else if (const auto base = a_ref ? a_ref->GetObjectReference() : nullptr; base && base->Is(RE::ENUM_FORM_ID::kEXPL) && blastRefs.size() < ObjectShare::MAX_BLASTS) {
+					blastRefs.emplace_back(a_ref);
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
+			for (const auto& blast : blastRefs) {
+				NoteBlast(blast.get(), a_now);
+			}
 			const Vec3                                  player = Position(a_player);
 			std::vector<ObjectShare::KnockWatch::Seen> seen;
 			seen.reserve(found.size());
@@ -455,7 +516,10 @@ namespace MovedObjects
 				}
 				const auto id = ref->GetFormID();
 				const bool busy = carried.Find(id) || flying.contains(id) || keyframed.contains(id) || a_ourHeld == id || carry.IsSettling(id) || carry.IsRefused(id);
-				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy });
+				const auto reach = blasts.Reaching(pose->position, a_now);
+				const bool byNpc = std::ranges::any_of(shovers, [&](const Vec3& a_npc) { return ObjectShare::NpcNear(a_npc, pose->position); });
+				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc,
+					.blast = reach.serial, .theirs = reach.theirs });
 			}
 			for (const auto& rest : knocks.Scan(seen, FriendNear(a_player), a_now)) {
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
@@ -614,6 +678,7 @@ namespace MovedObjects
 		carried.Reset();
 		carry.Reset();
 		knocks.Reset();
+		blasts.Reset();
 		flying.clear();
 		outgoing.clear();
 		std::scoped_lock l{ hitLock };
@@ -624,9 +689,9 @@ namespace MovedObjects
 	{
 		const auto& c = counts;
 		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} refused={} releases={} badPoses={} "
-		                   "carried={} flying={} stillForFriends={} watched={} moving={}",
+		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
-			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving());
+			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size());
 	}
 
 	std::string Command(std::string_view a_args)

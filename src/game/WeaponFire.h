@@ -63,6 +63,10 @@ namespace WeaponFire
 	// The copies go by the session's ids (NpcSync::SessionId): our copy of a friend's spawn by its spawn id.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
 
+	// Whether this explosion is one our game set off for a friend's throw (ApplyExplosion): theirs, never ours to report
+	// what it throws about (MovedObjects).
+	[[nodiscard]] bool SetOffForFriend(RE::TESObjectREFR* a_explosion);
+
 	// Our copy of this NPC (the session's id) stops being mirrored: a ghost of ours against a friend's explosion
 	// comes off now.
 	void EndShield(std::uint32_t a_refId);

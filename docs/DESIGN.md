@@ -695,6 +695,15 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
   the last 3 s: TESHitEvent) and a friend is within 6000 units, 8 at once and 3 a second at most. What a friend's move
   put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+- Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
+  stood within 200 units of it (`ObjectShare::Answers`: the session knows the NPC and the server made our player its
+  owner; a copy of a friend's NPC, one nobody runs yet and a stand-in are never ours), or after an explosion of ours
+  reached it (within its radius + 128, for 4 s after our scan first saw it). An explosion is ours when our player or an
+  NPC we run caused it (`Explosion::GetActorOwner`); one our game set off for a friend's throw (WeaponFire's copy), a
+  friend's stand-in's or another game's NPC's is theirs, and an object a blast of theirs reaches is never reported here
+  whatever else moved it, so exactly one game reports each object (a trap's explosion, with no cause, nobody's). Same
+  budget as every knock (8 at once, 3 a second), and a blast reports at most 16 objects; the rests the budget has no room
+  for wait up to 6 s for it. No new message: kReportObjectRest as before (`objects` in `net status` adds `blasts=seen/noted`).
 - Bandwidth: holds 15 a second of one object while a player holds it (about 40 bytes each); rests a few a second.
   Server: 20 holds a second a player, and a rest budget of 24, 6 a second, kept across rejoining.
 - HavokGuard's rules hold: every pose written is finite and in the world (`ObjectShare::Writable`), velocities are
