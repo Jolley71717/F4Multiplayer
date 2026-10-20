@@ -449,17 +449,27 @@ namespace Equipment
 		}
 
 		// Gives the actor its copy of one of their items as StandInGear::ChooseCopy says, and equips it, unless it wears a
-		// copy that will do already.
-		void PutOn(RE::Actor* a_actor, std::uint32_t a_item, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
+		// copy that will do already. True when a gun in its hand was only taken away, its new copy to be given in a later
+		// dressing (StandInGear::TakeAwayFirst).
+		bool PutOn(RE::Actor* a_actor, std::uint32_t a_item, const std::vector<Protocol::ItemMods>& a_mods, bool a_wearing)
 		{
 			const auto theirs = StandInGear::ModsOf(a_mods, a_item);
 			// Checked against the mods its copy is built with here: one of theirs this game hasn't never is on it.
 			const auto buildable = StandInGear::Buildable(theirs, ModHere);
 			const auto copy = StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, CarriedMods(a_actor, a_item));
 			if (a_wearing && copy == StandInGear::Copy::kKeep) {
-				return;
+				return false;
 			}
 			const auto id = a_actor->GetFormID();
+			const auto form = RE::TESForm::GetFormByID(a_item);
+			if (StandInGear::TakeAwayFirst(copy, a_wearing, form && form->GetFormType() == RE::ENUM_FORM_ID::kWEAP && !IsThrowable(form))) {
+				// The same weapon taken off and put back on in one frame came out in pieces (its parts floating apart round
+				// the hand): off now, every copy, and the new one given once the engine has let go of this one's 3D.
+				RE::Console::ExecuteCommand(std::format("{:08X}.unequipitem {:08X}", id, a_item).c_str());
+				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
+				REX::INFO("Equipment: {:08X} on {:08X} carries other mods than theirs; taken away, its new copy given in a moment", a_item, id);
+				return true;
+			}
 			if (copy == StandInGear::Copy::kReplace) {
 				// Every copy it has: equipitem would pick any of them.
 				RE::Console::ExecuteCommand(std::format("{:08X}.removeitem {:08X} {}", id, a_item, Protocol::MAX_ITEM_COUNT).c_str());
@@ -469,22 +479,24 @@ namespace Equipment
 				Give(a_actor, a_item, theirs);
 			}
 			RE::Console::ExecuteCommand(std::format("{:08X}.equipitem {:08X}", id, a_item).c_str());
+			return false;
 		}
 	}
 
-	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
+	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
-			return;
+			return false;
 		}
 		const auto id = a_actor->GetFormID();
 		const auto wearing = Read(a_actor);
+		bool       tookAway = false;
 		for (const auto item : a_items) {
 			const auto form = RE::TESForm::GetFormByID(item);
 			if (!form || !form->Is(RE::ENUM_FORM_ID::kARMO, RE::ENUM_FORM_ID::kWEAP)) {
 				continue;
 			}
-			PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
+			tookAway |= PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
 		}
 		// What it wears that they don't comes off, so the two look the same.
 		for (const auto worn : Read(a_actor)) {
@@ -493,6 +505,7 @@ namespace Equipment
 			}
 		}
 		HoldThrowable(a_actor, a_items);
+		return tookAway;
 	}
 
 	bool InPowerArmor(const RE::Actor* a_actor)
@@ -610,21 +623,22 @@ namespace Equipment
 		}
 	}
 
-	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
+	bool WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods)
 	{
 		if (!a_actor || !MayChange(a_actor, OwnGear::Change::kDressStandIn)) {
-			return;
+			return false;
 		}
 		const auto id = a_actor->GetFormID();
 		const auto pieceOrWeapon = [](const RE::TESForm* a_form) { return a_form && (a_form->Is(RE::ENUM_FORM_ID::kWEAP) || IsPowerArmorPiece(a_form)); };
 		// What it has on already is left alone, as in Wear: its gun is not equipped over again on a change that keeps it
 		// (StandInGear draws it again only when it changed).
 		const auto wearing = Read(a_actor);
+		bool       tookAway = false;
 		for (const auto item : a_items) {
 			if (!pieceOrWeapon(RE::TESForm::GetFormByID(item))) {
 				continue;
 			}
-			PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
+			tookAway |= PutOn(a_actor, item, a_mods, std::ranges::binary_search(wearing, item));
 		}
 		for (const auto worn : Read(a_actor)) {
 			if (pieceOrWeapon(RE::TESForm::GetFormByID(worn)) && !std::ranges::contains(a_items, worn)) {
@@ -632,6 +646,7 @@ namespace Equipment
 			}
 		}
 		HoldThrowable(a_actor, a_items);
+		return tookAway;
 	}
 
 	RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor)

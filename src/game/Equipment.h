@@ -52,7 +52,9 @@ namespace Equipment
 	// wears; the rest of its inventory is left alone. What it has on already is left alone too: two console scripts
 	// fewer for each, and the gun in its hand is not equipped over again; unless its copy carries other mods than theirs
 	// in a_mods (StandInGear::ChooseCopy): then the copy is taken away and one built with their mods is given and equipped.
-	void WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
+	// A gun in its hand is only taken away (StandInGear::TakeAwayFirst): true then, and its new copy is given by a later
+	// call (StandInGear::TookAway).
+	bool WearOnStandIn(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// Whether the engine has the actor in power armor: the ExtraPowerArmor it puts on an actor as the actor gets
 	// into a frame and takes off as it gets out. (The engine's own PlayerInPowerArmor said false on a player
@@ -90,8 +92,8 @@ namespace Equipment
 	// yet, and takes off the pieces and weapons it wears that are not among them. Nothing else is touched, and nothing
 	// leaves its inventory: Apply empties it first, which would take the frame the engine put on it, and clothes put on
 	// would go under the armor at best or into the frame's slots.
-	// Their pieces and weapons are built with their mods as in WearOnStandIn.
-	void WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
+	// Their pieces and weapons are built with their mods as in WearOnStandIn, and true as there.
+	bool WearInArmor(RE::Actor* a_actor, const std::vector<std::uint32_t>& a_items, const std::vector<Protocol::ItemMods>& a_mods);
 
 	// The frame the engine has the actor in (ExtraPowerArmor's frame), or none.
 	[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> PowerArmorFrameOf(RE::Actor* a_actor);

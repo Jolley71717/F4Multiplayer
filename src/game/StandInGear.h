@@ -33,6 +33,11 @@ namespace StandInGear
 	// was dressed in, at most MAX_FIXES times in a row: one the engine keeps undressing is left as it is.
 	constexpr auto CHECK_INTERVAL = std::chrono::seconds(3);
 	constexpr int  MAX_FIXES = 3;
+	// A gun in the stand-in's hand whose copy carries other mods than theirs (they swapped their 10mm for another 10mm) is
+	// taken away in one dressing and its new copy given in another, this long after (TookAway): taken away, given and
+	// equipped in the same frame, the same weapon's 3D was rebuilt half-assembled, its receiver, grip and magazine
+	// floating apart around the hand. Shorter than Puppets::RedrawWeapon's wait, so the new copy is drawn as before.
+	constexpr auto REGIVE_GAP = std::chrono::milliseconds(300);
 
 	struct Gear
 	{
@@ -47,6 +52,7 @@ namespace StandInGear
 		ArmorFrames::Dress         dress = ArmorFrames::Dress::kClothes;  // how the stand-in was dressed last frame
 		Clock::time_point          checkAt{};        // when what it wears is looked at next
 		int                        fixes = 0;        // dressed afresh in a row for wearing something else
+		std::optional<Clock::time_point> regiveAt;   // a gun taken away to be given again (TookAway): put on again then
 	};
 
 	// The mods their copy of the item carries, or nullptr: none on record.
@@ -94,7 +100,7 @@ namespace StandInGear
 	{
 		kKeep,     // the copy it has will do
 		kGive,     // it has none: given one built with their mods (or the item's default combination, none on record)
-		kReplace,  // its copy carries other mods: taken away, and one built with theirs given
+		kReplace,  // its copy carries other mods: taken away, and one built with theirs given (a gun in its hand: later, TakeAwayFirst)
 	};
 
 	// a_theirs: the mods on their copy that go on here (Buildable), or nullptr. a_ours: the mods on the stand-in's copy, or nullopt when it
@@ -106,6 +112,13 @@ namespace StandInGear
 			return Copy::kGive;
 		}
 		return a_theirs && !SameMods(a_theirs->mods, *a_ours) ? Copy::kReplace : Copy::kKeep;
+	}
+
+	// Whether a copy to be replaced is only taken away in this dressing, its new one given in a later one (REGIVE_GAP,
+	// TookAway): a gun the stand-in has on and holds in its hand. Anything else is taken away and given at once.
+	inline bool TakeAwayFirst(Copy a_copy, bool a_wearing, bool a_inHand)
+	{
+		return a_copy == Copy::kReplace && a_wearing && a_inHand;
 	}
 
 	// A report from their game. False when it is what they have on already, in whatever order: nothing to do. Mods of an
@@ -144,6 +157,13 @@ namespace StandInGear
 		a_gear.fixes = 0;
 	}
 
+	// The dressing just done took a gun away to give its new copy later (TakeAwayFirst): what they have on is put on again
+	// REGIVE_GAP from now, whatever else is due.
+	inline void TookAway(Gear& a_gear, Clock::time_point a_now)
+	{
+		a_gear.regiveAt = a_now + REGIVE_GAP;
+	}
+
 	enum class Step
 	{
 		kNone,
@@ -158,6 +178,9 @@ namespace StandInGear
 		}
 		if (!a_gear.dressed) {
 			return Step::kDress;
+		}
+		if (a_gear.regiveAt && a_now >= *a_gear.regiveAt) {
+			return Step::kChange;  // the gun taken away comes back (TookAway)
 		}
 		return a_gear.changed && a_now - a_gear.wornAt >= CHANGE_GAP ? Step::kChange : Step::kNone;
 	}
@@ -195,6 +218,7 @@ namespace StandInGear
 		a_gear.wornAt = a_now;
 		a_gear.dressed = true;
 		a_gear.changed = false;
+		a_gear.regiveAt.reset();
 		return redraw;
 	}
 
@@ -235,7 +259,7 @@ namespace StandInGear
 		}
 		if (const auto step = Next(a_gear, a_now); step != Step::kNone) {
 			out.put = a_dress == ArmorFrames::Dress::kArmor ? Put::kWearInArmor : step == Step::kDress ? Put::kApply : Put::kWear;
-			out.change = step == Step::kChange;
+			out.change = step == Step::kChange && a_gear.changed;  // a gun given back alone (TookAway) is no change of theirs
 			out.redraw = Done(a_gear, step, a_now, a_inHand);
 			a_gear.checkAt = a_now + CHECK_INTERVAL;
 			return out;
