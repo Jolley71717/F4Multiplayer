@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "IniFile.h"
+#include "Platform.h"
 #include "net/Identity.h"
 
 namespace Text
@@ -23,7 +24,7 @@ namespace Text
 		// Fallout4Custom.ini in Documents\My Games\Fallout4, each over the last, so the last that has the key decides.
 		std::string GameLanguage()
 		{
-			std::vector<std::filesystem::path> files{ "Fallout4_Default.ini" };
+			std::vector<std::filesystem::path> files{ Platform::GamePath("Fallout4_Default.ini") };
 			if (const auto folder = Identity::DataFolder()) {
 				files.push_back(folder->parent_path() / "Fallout4.ini");
 				files.push_back(folder->parent_path() / "Fallout4Custom.ini");
@@ -52,7 +53,7 @@ namespace Text
 		}
 
 		Table      table;
-		const auto path = std::filesystem::path{ LANG_FOLDER } / (code + ".txt");
+		const auto path = Platform::GamePath(LANG_FOLDER) / (code + ".txt");
 		if (const auto text = ReadFile(path)) {
 			table = Parse(*text);
 			// A key the English table lacks is a typo in the file (or a text from a newer version): it is never used.

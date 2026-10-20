@@ -2,6 +2,7 @@
 
 #include "IniFile.h"
 #include "Log.h"
+#include "Platform.h"
 
 namespace Config
 {
@@ -42,7 +43,7 @@ namespace Config
 
 	void Load()
 	{
-		std::ifstream file{ std::string{ PATH } };
+		std::ifstream file{ Platform::GamePath(PATH) };
 		if (!file) {
 			REX::INFO("Config: {} not found, using defaults", PATH);
 			return;
@@ -226,13 +227,14 @@ namespace Config
 		// The whole file is read and written back: it's a few kilobytes, and keeping the player's
 		// comments and ordering matters more than speed here (a menu click, not a frame).
 		std::string text;
-		if (std::ifstream in{ std::string{ PATH }, std::ios::binary }) {
+		const auto  path = Platform::GamePath(PATH);  // the one Load read
+		if (std::ifstream in{ path, std::ios::binary }) {
 			text.assign(std::istreambuf_iterator<char>{ in }, std::istreambuf_iterator<char>{});
 		}
 		// The password never goes in the log (players share their logs): only whether one is set.
 		const std::string_view shown = a_key == "sPassword" ? (a_value.empty() ? "(none)" : "(a password)") : a_value;
 		const auto    updated = IniFile::SetValue(text, a_key, a_value);
-		std::ofstream out{ std::string{ PATH }, std::ios::binary | std::ios::trunc };
+		std::ofstream out{ path, std::ios::binary | std::ios::trunc };
 		if (!out || !out.write(updated.data(), static_cast<std::streamsize>(updated.size()))) {
 			REX::WARN("Config: could not write {} = {} to {}", a_key, shown, PATH);
 			return false;

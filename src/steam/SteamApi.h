@@ -185,6 +185,14 @@ namespace SteamApi
 		// lacks them). The game asks Steam for them at startup; until they arrive, every call fails.
 		void* userStats = nullptr;
 		bool (*GetAchievementAndUnlockTime)(void*, const char*, bool*, std::uint32_t*) = nullptr;
+
+		// For the log: the app id Steam runs the game as, whether its overlay is in the game (the overlay's invite
+		// dialog and Shift+Tab need it; a game not started by Steam, on Linux, has none), and the Steam Deck.
+		// Optional: steamUtils is nullptr if this Steam library lacks them.
+		void* steamUtils = nullptr;
+		std::uint32_t (*GetAppID)(void*) = nullptr;
+		bool (*IsOverlayEnabled)(void*) = nullptr;
+		bool (*IsSteamRunningOnSteamDeck)(void*) = nullptr;
 	};
 
 	constexpr int VOICE_OK = 0;
@@ -197,6 +205,9 @@ namespace SteamApi
 
 	// The resolved table, or nullptr if Get() hasn't succeeded yet. Safe from any thread.
 	const Api* Loaded();
+
+	// Why the last Get() returned nullptr, for the log ("" once it has succeeded). Main thread, like Get.
+	[[nodiscard]] std::string Unavailable();
 
 	[[nodiscard]] inline NetworkingIdentity IdentityOf(SteamId a_id)
 	{
