@@ -59,10 +59,11 @@ namespace QuestSync
 			return QuestFilter::IsDialogue(Filed(a_quest));
 		}
 
-		// Quests whose progress is watched here: the shared types, the factions' finales and the dialogue quests.
+		// Quests whose progress is watched here: the shared types, the factions' finales and the dialogue quests, and the
+		// radiants shared by their run whatever their type (Diamond City's wanted posters are misc quests).
 		bool Watched(const RE::TESQuest* a_quest)
 		{
-			return QuestFilter::Watched(Filed(a_quest));
+			return QuestFilter::Watched(Filed(a_quest)) || RadiantRules::ShareOf(a_quest->GetFormID()) == RadiantRules::Share::kShared;
 		}
 
 		// Whether the player has started the quest here, as reporting, setting friends' stages and the

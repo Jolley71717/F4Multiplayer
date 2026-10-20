@@ -1199,6 +1199,17 @@ namespace DevCommands
 				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
 		}
 
+		// global <globalHex>: a global variable's value (read only).
+		std::string Global(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto global = id ? RE::TESForm::GetFormByID<RE::TESGlobal>(*id) : nullptr;
+			if (!global) {
+				return "error: usage: global <globalHex>";
+			}
+			return std::format("{:08X} {}", *id, global->GetValue());
+		}
+
 		// aliases <questHex>: the quest's aliases, how each is filled (its definition as this game holds it) and what fills
 		// it here, and how forced aliases read (RadiantSync); read only.
 		std::string Aliases(std::string_view a_args)
@@ -3210,6 +3221,7 @@ namespace DevCommands
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
 			Entry{ "aliases", Aliases },
+			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },

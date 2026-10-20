@@ -23,15 +23,17 @@
 // A fill one game can't match (an NPC made at runtime that isn't shared, a reference that isn't there)
 // leaves that run each player's own, said in the log, so neither game's quest is broken.
 //
-// Which radiants are shared (RADIANTS, all from Fallout4.esm): the Minutemen's "a settlement needs our help"
-// (MinRecruit: raiders, kidnappers, ghouls, a place to clear) and Preston's requests from settlements the
-// player has (MinRadiantOwned: raiders, kidnapping): a settlement, a place and its people, all of them the
-// game's own references. Left alone, each player's own: settlement attacks (the attackers are made where the
-// settlement stands, and each game runs its own attack), quests whose targets are made at runtime (a synth
-// boss, refugees, couriers, Brotherhood squires), the factions' radiants that move their story on or move
-// the player (BoSR01 starts the Brotherhood's own story at its 0 and pays there), and the Railroad's and
-// Institute's. Those stay unshared even when the story is (before, a friend's stage started them here with
-// this game's own targets). Kept free of the game so it can be tested; RadiantSync reads the quests.
+// Which radiants are shared (RADIANTS, all from Fallout4.esm): every one whose targets are the game's own
+// references and locations (a settlement, a dungeon, its people, bosses and map marker, a container), with items
+// the quest makes (a locket, a holotape, a tracker) made in each game for its own player. The Minutemen's
+// settlement requests, Preston's requests from settlements the player has (but their attacks), the Brotherhood's,
+// the Institute's and the Railroad's jobs, and Diamond City's wanted posters. Left alone, each player's own: the
+// ones whose targets or helpers are NPCs the quest makes at runtime (settlement attacks and the Castle's, a synth
+// boss, refugees, a courser, Brotherhood squires and scribes, a patrol, a vertibird, an assault's defenders). One
+// game's runtime NPCs are in its friends' games already, as copies (Spawns), placed while both players stand near
+// them; a friend's game starting the same quest would make a second set of its own. Those stay unshared even when
+// the story is (before, a friend's stage started them here with this game's own targets). Kept free of the game so
+// it can be tested; RadiantSync reads the quests.
 namespace RadiantRules
 {
 	enum class Share : std::uint8_t
@@ -46,6 +48,12 @@ namespace RadiantRules
 		std::uint32_t    formId;  // Fallout4.esm (load index 00)
 		std::string_view editorId;
 		Share            share;
+		// A run of it here that this player hasn't been given (no objective shown) may be stopped for a friend's with
+		// other targets: the faction's own scripts start these whenever they can (the Institute's when the player joins,
+		// the Railroad's at HQ, the Brotherhood's as their giver speaks), so a friend's game nearly always holds one of
+		// its own. Only where stopping it before it is given changes nothing else: nothing counted, enabled or hidden
+		// by its start, no stage run as it stops, and a quest that can run again (not "run once").
+		bool replace = false;
 	};
 
 	// Fallout4.esm's radiants (tools/questscan.cs reads them; their aliases were read the same way).
@@ -58,55 +66,73 @@ namespace RadiantRules
 		Entry{ 0x00099848, "MinRecruit02", Share::kShared },  // kidnapping (its 90, paying the ransom, is never set from a friend: StageRules)
 		Entry{ 0x00157CA5, "MinRecruit04", Share::kShared },  // clear a place
 		Entry{ 0x00186642, "MinRecruit07", Share::kShared },  // ghoul problem
-		Entry{ 0x00106F05, "MinRecruit03", Share::kLeftAlone },  // a locket made at runtime
-		Entry{ 0x0015F03F, "MinRecruit05", Share::kLeftAlone },  // a hostile settlement
-		Entry{ 0x0015F040, "MinRecruit06", Share::kLeftAlone },
+		Entry{ 0x00106F05, "MinRecruit03", Share::kShared },  // Abernathy Farm's locket: the satellite station's container (the locket made in each game's)
+		Entry{ 0x0015F03F, "MinRecruit05", Share::kShared },  // a hostile settlement to take, and its bosses
+		Entry{ 0x0015F040, "MinRecruit06", Share::kShared },
 		Entry{ 0x00157577, "MinRecruit08", Share::kLeftAlone },  // a synth boss made at runtime
 		Entry{ 0x00164167, "MinRecruit09", Share::kLeftAlone },  // refugees made at runtime
 		// Preston's requests from the player's own settlements.
 		Entry{ 0x0003DF95, "MinRadiantOwned02", Share::kShared },               // raiders
 		Entry{ 0x0003E0C1, "MinRadiantOwned03ChangeLocOnly", Share::kShared },  // kidnapping
-		Entry{ 0x000A1412, "MinRadiantOwned01", Share::kLeftAlone },            // settlement attacks: the attackers are made at the settlement
+		Entry{ 0x00161D1D, "MinRadiantOwned06ChangeLocOnly", Share::kShared },  // building up a settlement (built in every game)
+		Entry{ 0x00162F44, "MinRadiantOwned07ChangeLocOnly", Share::kShared },  // a settlement's generator, a dungeon's part for it
+		Entry{ 0x00109D73, "MinRadiantOwned10ChangeLocOnly", Share::kShared },  // a synth among the settlers (one recruited at runtime: each player's own)
+		// Settlement attacks and the Castle's: the attackers (and the Castle's waves, its defenders and vertibirds) are
+		// made at runtime by the quest, in each game that runs it. One game's attackers are in its friends' games already,
+		// as the copies of any NPC made at runtime (Spawns); a friend's game starting the same attack would send a second
+		// wave of its own.
+		Entry{ 0x000A1412, "MinRadiantOwned01", Share::kLeftAlone },  // raiders
 		Entry{ 0x0005E51F, "MinRadiantOwned09ChangeLocOnly", Share::kLeftAlone },
-		Entry{ 0x00160409, "MinRadiantOwned05", Share::kLeftAlone },
-		Entry{ 0x00186A08, "MinRadiantOwned08", Share::kLeftAlone },
+		Entry{ 0x00160409, "MinRadiantOwned05", Share::kLeftAlone },  // super mutants
+		Entry{ 0x00186A08, "MinRadiantOwned08", Share::kLeftAlone },  // gunners
 		Entry{ 0x000E477F, "MinRadiantOwned04_BOS", Share::kLeftAlone },
-		Entry{ 0x001533A9, "MinRadiantOwned11", Share::kLeftAlone },  // synth attack
-		Entry{ 0x00161D1D, "MinRadiantOwned06ChangeLocOnly", Share::kLeftAlone },  // building defenses: each settlement's own
-		Entry{ 0x00162F44, "MinRadiantOwned07ChangeLocOnly", Share::kLeftAlone },
-		Entry{ 0x00109D73, "MinRadiantOwned10ChangeLocOnly", Share::kLeftAlone },  // a synth among the settlers
-		Entry{ 0x000BDB04, "MinDefendCastle", Share::kLeftAlone },                 // the Castle attacked
+		Entry{ 0x001533A9, "MinRadiantOwned11", Share::kLeftAlone },  // synths
+		Entry{ 0x000BDB04, "MinDefendCastle", Share::kLeftAlone },    // the Castle attacked
 		Entry{ 0x00176328, "MinDefendCastleRadiantStarter", Share::kLeftAlone },
 		Entry{ 0x0022FD6E, "MinDefendCastle_Attackers", Share::kLeftAlone },
-		// The Brotherhood's.
-		Entry{ 0x00064EC7, "BoSR01", Share::kLeftAlone },  // its 0 moves the player and starts BoS200; its 50 pays and moves BoS200 on
-		Entry{ 0x0009A687, "BoSR01PostHello", Share::kLeftAlone },
-		Entry{ 0x000C30DC, "BosR02", Share::kLeftAlone },
-		Entry{ 0x000C8675, "BoSR03", Share::kLeftAlone },
-		Entry{ 0x000CF3E2, "BoSR04", Share::kLeftAlone },
+		// The Brotherhood's. Their giver's line sets their 10 (it starts them), the player taking the job their 20, and
+		// the reward is their 50: an item, and BoS200's stage for the job done (shared with the story too, set once). The
+		// 0 is the developers' shortcut (it makes the player a member and moves them to the giver): never taken (UNTAKEN).
+		// The squire's and the scribe's jobs are left alone: the one who follows the player is made at runtime.
+		Entry{ 0x00064EC7, "BoSR01", Share::kShared, true },  // Cleansing the Commonwealth: a dungeon by the player's level, its bosses
+		Entry{ 0x000C30DC, "BosR02", Share::kShared, true },  // Quartermastery: a dungeon, the tech in its boss's container (made in each game)
+		Entry{ 0x0009A687, "BoSR01PostHello", Share::kLeftAlone },  // dialogue only
+		Entry{ 0x000C8675, "BoSR03", Share::kLeftAlone },  // Leading by Example: a squire made at runtime follows the player
+		Entry{ 0x000CF3E2, "BoSR04", Share::kLeftAlone },  // Learning Curve: a scribe made at runtime follows the player
 		Entry{ 0x000CF3E3, "BoSR04_AO_Scribe", Share::kLeftAlone },
-		Entry{ 0x000D1EB2, "BoSR05", Share::kLeftAlone },
-		// The Institute's.
-		Entry{ 0x000F7933, "InstR01", Share::kLeftAlone },
-		Entry{ 0x000E8D19, "InstR01_OLD", Share::kLeftAlone },
-		Entry{ 0x000EB268, "InstR02", Share::kLeftAlone },
+		Entry{ 0x000D1EB2, "BoSR05", Share::kShared, true },  // Feeding the Troops: a settlement (its happiness changed in every game)
+		// The Institute's: all five start when the player joins (Inst301) and wait at their 5 until their giver hands one
+		// out (its 100); each pays at its turn-in (10 or 20, and 1000).
+		Entry{ 0x000F7933, "InstR01", Share::kShared, true },  // Pest Control: a dungeon and its bosses
+		Entry{ 0x000EB268, "InstR02", Share::kShared, true },  // Hypothesis: a dungeon, its boss, the data on it (made in each game)
+		Entry{ 0x000F0D8C, "InstR05", Share::kShared, true },  // Political Leanings: the same NPC and marker in every game
+		Entry{ 0x000E8D19, "InstR01_OLD", Share::kLeftAlone },  // not used by the game
 		Entry{ 0x000EC1E9, "InstR03_OLD", Share::kLeftAlone },
-		Entry{ 0x000EDCEF, "InstR03NEW", Share::kLeftAlone },
-		Entry{ 0x000EDE28, "InstR04", Share::kLeftAlone },
-		Entry{ 0x000F0D8C, "InstR05", Share::kLeftAlone },
-		// The Railroad's.
-		Entry{ 0x000B1F1D, "RRR01a", Share::kLeftAlone },
-		Entry{ 0x000B1F1C, "RRR01b", Share::kLeftAlone },
-		Entry{ 0x000B3E82, "RRR02a", Share::kLeftAlone },
-		Entry{ 0x000B926B, "RRR03", Share::kLeftAlone },
-		Entry{ 0x000B26C2, "RRR04", Share::kLeftAlone },
-		Entry{ 0x000B926A, "RRR05", Share::kLeftAlone },
-		Entry{ 0x001845F7, "RRR06", Share::kLeftAlone },
-		Entry{ 0x00186C79, "RRR07", Share::kLeftAlone },
-		Entry{ 0x0013A33D, "RRR08", Share::kLeftAlone },
-		Entry{ 0x00145F1A, "RRR09", Share::kLeftAlone },
-		Entry{ 0x0014A34A, "RRR10", Share::kLeftAlone },
-		Entry{ 0x00150577, "RRR11", Share::kLeftAlone },
+		Entry{ 0x000EDCEF, "InstR03NEW", Share::kLeftAlone },  // Appropriation: an assault, its defenders made at runtime
+		Entry{ 0x000EDE28, "InstR04", Share::kLeftAlone },     // Reclamation: the synth to bring back is made at runtime
+		// The Railroad's. Their HQ and each other's stages start them whenever they can (Butcher's Bill's 100 offers Mercer
+		// Safehouse, whose 300 offers Jackpot and Concierge), and most count the job as on offer (RRQuestsAvailable, counted
+		// off as the job is taken): one stopped for a friend's run before it was taken is counted off as it stops (OFFERS).
+		// Butcher's Bill and its second part run once, and Randolph Safehouse's offer hides the place's enemies until it is
+		// taken: those are never stopped (a game holding its own run of one keeps it).
+		Entry{ 0x000B1F1D, "RRR01a", Share::kShared },        // Butcher's Bill: a dead drop by its conditions
+		Entry{ 0x000B1F1C, "RRR01b", Share::kShared },        // Butcher's Bill 2: a place; the dead captive and what is on them made in each game
+		Entry{ 0x000B3E82, "RRR02a", Share::kShared, true },  // Concierge: a place, its people (nothing counted at its start)
+		Entry{ 0x000B926B, "RRR03", Share::kShared, true },   // Jackpot: a place and its door; the tracker made in each game
+		Entry{ 0x000B26C2, "RRR04", Share::kShared, true },   // Mercer Safehouse: a settlement to build up (built in every game)
+		Entry{ 0x000B926A, "RRR05", Share::kShared, true },   // Weathervane: a high point; the MILA made in each game; offered again when done
+		Entry{ 0x001845F7, "RRR06", Share::kShared },         // Randolph Safehouse: a dead drop and a place, its bosses
+		Entry{ 0x00186C79, "RRR07", Share::kLeftAlone },   // Variable Removal: a courser made at runtime
+		Entry{ 0x0013A33D, "RRR08", Share::kLeftAlone },   // To the Mattresses: the bosses are made at runtime
+		Entry{ 0x00145F1A, "RRR09", Share::kLeftAlone },   // Lost Soul: the one to rescue is made at runtime
+		Entry{ 0x0014A34A, "RRR10", Share::kLeftAlone },   // A Clean Equation: a patrol made at runtime
+		Entry{ 0x00150577, "RRR11", Share::kLeftAlone },   // High Ground: a vertibird and its crew made at runtime
+		// Diamond City's wanted posters (misc quests): a dungeon and its bosses, the poster's note made in each game. All
+		// three start with the game and run once, so a game whose own poster names another dungeon keeps its own.
+		Entry{ 0x0014182C, "FFDiamondCityWanted01", Share::kShared },
+		Entry{ 0x0018127D, "FFDiamondCityWanted04", Share::kShared },
+		Entry{ 0x00181280, "FFDiamondCityWanted07", Share::kShared },
+		Entry{ 0x0002C59B, "FFDiamondCity05", Share::kLeftAlone },  // a bloatfly's gland: the bloatfly is made at runtime
 	};
 
 	inline const Entry* Find(std::uint32_t a_formId)
@@ -124,6 +150,89 @@ namespace RadiantRules
 	inline bool IsRadiant(std::uint32_t a_formId)
 	{
 		return ShareOf(a_formId) != Share::kNotRadiant;
+	}
+
+	// Stages of a shared radiant never taken from a friend: the developers' shortcuts, which a player never reaches
+	// (BoSR01's, BosR02's and BoSR05's 0 make the player a member of the Brotherhood, set its story's stages and move
+	// them to their giver). Their startup stage is another; StageRules lists them as moving the player.
+	struct Untaken
+	{
+		std::uint32_t quest;
+		std::uint16_t stage;
+	};
+	inline constexpr std::array UNTAKEN{
+		Untaken{ 0x00064EC7, 0 },  // BoSR01
+		Untaken{ 0x000C30DC, 0 },  // BosR02
+		Untaken{ 0x000D1EB2, 0 },  // BoSR05
+	};
+
+	inline bool Takes(std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		return std::ranges::none_of(UNTAKEN, [&](const Untaken& a_untaken) { return a_untaken.quest == a_quest && a_untaken.stage == a_stage; });
+	}
+
+	// ---- The Railroad's jobs on offer ---------------------------------------------------------------
+
+	// RRQuestsAvailable (Fallout4.esm): the Railroad's jobs on offer at HQ, which the Drummer Boy and the others there
+	// speak of. A job's offer counts one in (Mod +1) and the job taken counts it off (Mod -1), so a run stopped between
+	// the two would leave it one too high for good.
+	inline constexpr std::uint32_t RR_QUESTS_AVAILABLE = 0x0016C2A1;
+
+	// When a job's offer counts it: always, or by another global's value then (one that can't change while it is on offer).
+	enum class Counted : std::uint8_t
+	{
+		kAlways,
+		kIfPositive,  // the global is above 0
+		kIfZero,      // the global is 0
+	};
+
+	struct Offer
+	{
+		std::uint32_t quest;
+		std::uint16_t offered;  // the stage that counts it in
+		std::uint16_t taken;    // the stage that counts it off
+		Counted       counted = Counted::kAlways;
+		std::uint32_t global = 0;  // the global kIfPositive and kIfZero read
+	};
+
+	// Read off their fragments (the offer's Mod +1, the take's Mod -1, under the same condition).
+	inline constexpr std::array OFFERS{
+		Offer{ 0x000B926B, 50, 100, Counted::kIfPositive, 0x000E1685 },  // Jackpot: once done before (RRR03Completed)
+		Offer{ 0x000B26C2, 50, 75 },                                      // Mercer Safehouse (its 100 and its 300 set 75)
+		Offer{ 0x000B926A, 50, 100, Counted::kIfZero, 0x000A59AC },      // Weathervane: while no MILA is placed (RRR05MILAsPlaced)
+	};
+
+	inline const Offer* OfferOf(std::uint32_t a_quest)
+	{
+		const auto it = std::ranges::find(OFFERS, a_quest, &Offer::quest);
+		return it != OFFERS.end() ? &*it : nullptr;
+	}
+
+	// Whether this game's run of a quest, stopped now with a_done its stages done, leaves its offer counted in
+	// RRQuestsAvailable (a_value: the offer's condition global now): counted in, and not off yet.
+	inline bool LeavesCounted(std::uint32_t a_quest, std::span<const std::uint16_t> a_done, float a_value)
+	{
+		const auto offer = OfferOf(a_quest);
+		if (!offer || std::ranges::find(a_done, offer->offered) == a_done.end() || std::ranges::find(a_done, offer->taken) != a_done.end()) {
+			return false;
+		}
+		switch (offer->counted) {
+		case Counted::kIfPositive:
+			return a_value > 0.0f;
+		case Counted::kIfZero:
+			return a_value == 0.0f;
+		default:
+			return true;
+		}
+	}
+
+	// A friend's run of a quest that runs here with other targets: whether this game's run is stopped for theirs. Only one
+	// the book doesn't know (no run shared here, ours or a friend's), that this player hasn't been given (a_given: an
+	// objective shown), of a quest that may be (Entry::replace) and can run again (a_runOnce: the quest's own flag).
+	inline bool Replaces(std::uint32_t a_quest, bool a_known, bool a_given, bool a_runOnce)
+	{
+		const auto entry = Find(a_quest);
+		return entry && entry->share == Share::kShared && entry->replace && !a_known && !a_given && !a_runOnce;
 	}
 
 	// ---- Fills ------------------------------------------------------------------------------------
@@ -154,9 +263,10 @@ namespace RadiantRules
 		std::string_view name;
 	};
 
-	// Aliases' flags (BGSBaseAlias::FLAGS): optional, filled by other aliases.
+	// Aliases' flags (BGSBaseAlias::FLAGS): optional, filled by other aliases, may take a reference another quest reserves.
 	inline constexpr std::uint32_t ALIAS_OPTIONAL = 1u << 1;
 	inline constexpr std::uint32_t ALIAS_BY_OTHERS = 1u << 11;
+	inline constexpr std::uint32_t ALIAS_ALLOW_RESERVED = 1u << 9;
 
 	// How a reference alias is filled, by BGSRefAlias::FILL_TYPE: 0 conditions, 1 forced, 2 from another alias, 3
 	// from the start's event, 4 made at runtime, 5 another quest's alias, 6 a unique actor, 7 near another alias.
@@ -211,8 +321,11 @@ namespace RadiantRules
 	// player's own).
 	struct Plan
 	{
-		std::vector<Force> forces;
-		std::string        fallback;
+		std::vector<Force>         forces;
+		std::string                fallback;
+		// Reference aliases that follow the others whose friend's fill this game didn't have loaded at the start (a settler of a
+		// settlement far away): left to the aliases they follow, and only noted if they differ once it runs (Compare).
+		std::vector<std::uint32_t> unforced;
 
 		[[nodiscard]] bool Ok() const { return fallback.empty(); }
 	};
@@ -274,6 +387,9 @@ namespace RadiantRules
 			const std::optional<std::uint32_t> local = a_resolve(alias.kind, form);
 			if (!local || *local == 0) {
 				if (alias.fill != Fill::kSource) {
+					if (alias.kind == Kind::kRef) {
+						plan.unforced.push_back(alias.id);
+					}
 					continue;
 				}
 				plan.fallback = Why(alias, form);
@@ -296,9 +412,20 @@ namespace RadiantRules
 
 	// After the start, or for a quest that already runs here: the fills of this game (a_here(kind, alias), 0 when empty)
 	// that differ from the friend's. Only those this game can name (a fill made at runtime in each game is each game's).
+	// a_unforced: after a start, the plan's (Plan::unforced): one of them that differs while a place of the run is the
+	// friend's is another settler of the same place, only noted.
 	template <class Resolve, class Here>
-	std::vector<Mismatch> Compare(std::span<const Alias> a_aliases, std::span<const Protocol::RadiantFill> a_fills, Resolve&& a_resolve, Here&& a_here)
+	std::vector<Mismatch> Compare(std::span<const Alias> a_aliases, std::span<const Protocol::RadiantFill> a_fills, Resolve&& a_resolve, Here&& a_here,
+		std::span<const std::uint32_t> a_unforced = {})
 	{
+		const bool samePlace = std::ranges::any_of(a_aliases, [&](const Alias& a_alias) {
+			const auto fill = FillFor(a_fills, a_alias);
+			if (a_alias.kind != Kind::kLoc || !fill || fill->form == 0) {
+				return false;
+			}
+			const std::optional<std::uint32_t> local = a_resolve(a_alias.kind, fill->form);
+			return local && *local != 0 && *local == a_here(a_alias.kind, a_alias.id);
+		});
 		std::vector<Mismatch> out;
 		for (const auto& alias : a_aliases) {
 			const auto fill = FillFor(a_fills, alias);
@@ -306,7 +433,8 @@ namespace RadiantRules
 				continue;
 			}
 			// A place is the run's target whichever way it is filled (a fill type read wrong leaves it checked).
-			const bool picked = alias.fill == Fill::kSource || alias.fill == Fill::kByOthers || alias.kind == Kind::kLoc;
+			const bool unforced = alias.kind == Kind::kRef && alias.fill != Fill::kSource && samePlace && std::ranges::find(a_unforced, alias.id) != a_unforced.end();
+			const bool picked = (alias.fill == Fill::kSource || alias.fill == Fill::kByOthers || alias.kind == Kind::kLoc) && !unforced;
 			std::uint32_t theirs = 0;
 			if (fill->form != 0) {
 				const std::optional<std::uint32_t> local = a_resolve(alias.kind, fill->form);
@@ -425,6 +553,12 @@ namespace RadiantRules
 		{
 			const auto it = quests.find(a_quest);
 			return it != quests.end() && it->second.state == State::kShared;
+		}
+
+		// Whether a run of the quest is known here (shared, or starting).
+		[[nodiscard]] bool Knows(std::uint32_t a_quest) const
+		{
+			return quests.contains(a_quest);
 		}
 
 		[[nodiscard]] bool IsStarting(std::uint32_t a_quest) const

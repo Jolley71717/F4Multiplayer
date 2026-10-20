@@ -15,6 +15,15 @@ namespace
 	constexpr std::uint32_t MIN_OWNED01 = 0x000A1412;        // a settlement attacked
 	constexpr std::uint32_t MIN_DEFEND_CASTLE = 0x000BDB04;  // the Castle attacked
 	constexpr std::uint32_t BOSR01 = 0x00064EC7;             // Cleansing the Commonwealth
+	constexpr std::uint32_t BOSR02 = 0x000C30DC;             // Quartermastery
+	constexpr std::uint32_t INSTR01 = 0x000F7933;            // Pest Control
+	constexpr std::uint32_t RRR01A = 0x000B1F1D;             // Butcher's Bill (runs once)
+	constexpr std::uint32_t RRR02A = 0x000B3E82;             // Concierge
+	constexpr std::uint32_t RRR03 = 0x000B926B;              // Jackpot
+	constexpr std::uint32_t RRR04 = 0x000B26C2;              // Mercer Safehouse
+	constexpr std::uint32_t RRR05 = 0x000B926A;              // Weathervane
+	constexpr std::uint32_t RRR06 = 0x001845F7;              // Randolph Safehouse
+	constexpr std::uint32_t BOSR05 = 0x000D1EB2;             // Feeding the Troops
 	constexpr std::uint32_t MQ104 = 0x0001F25E;              // Unlikely Valentine (the main story)
 	constexpr std::uint32_t MIN01 = 0x0005DEE4;              // When Freedom Calls (a side quest)
 
@@ -22,6 +31,7 @@ namespace
 	constexpr std::uint32_t TENPINES_WORKSHOP = 0x0001F0C9;
 	constexpr std::uint32_t CORVEGA = 0x0001F228;  // a location
 	constexpr std::uint32_t LEXINGTON = 0x0001F22A;
+	constexpr std::uint32_t POLICE_STATION = 0x0001FA4A;  // Cambridge Police Station
 	constexpr std::uint32_t SPAWN = 0xFF000123;       // an NPC shared under a spawn id
 	constexpr std::uint32_t OUR_COPY = 0xFF004567;    // our copy of it
 	constexpr std::uint32_t RUNTIME_NPC = Protocol::RADIANT_UNSHARED_REF;  // a settler a game made, under no spawn id
@@ -46,7 +56,7 @@ namespace
 	std::optional<std::uint32_t> Resolve(Kind a_kind, std::uint32_t a_form)
 	{
 		if (a_kind == LOC) {
-			return a_form == CORVEGA || a_form == LEXINGTON ? std::optional{ a_form } : std::nullopt;
+			return a_form == CORVEGA || a_form == LEXINGTON || a_form == POLICE_STATION ? std::optional{ a_form } : std::nullopt;
 		}
 		if (a_form == SPAWN) {
 			return OUR_COPY;
@@ -67,8 +77,6 @@ TEST("radiants: the Minutemen's settlement requests are shared by their run; att
 	// Each game simulates its own attack: the attackers are made at the settlement.
 	CHECK(ShareOf(MIN_OWNED01) == Share::kLeftAlone);
 	CHECK(ShareOf(MIN_DEFEND_CASTLE) == Share::kLeftAlone);
-	// Moves the player and the Brotherhood's story on, and pays at a stage of its own.
-	CHECK(ShareOf(BOSR01) == Share::kLeftAlone);
 	// Not radiants: QuestFilter decides.
 	CHECK(ShareOf(MQ104) == Share::kNotRadiant);
 	CHECK(ShareOf(MIN01) == Share::kNotRadiant);
@@ -80,7 +88,154 @@ TEST("radiants: the Minutemen's settlement requests are shared by their run; att
 		CHECK(seen.insert(entry.formId).second);
 		CHECK((entry.formId >> 24) == 0);
 		CHECK(!entry.editorId.empty());
+		// Only a shared radiant's run is ever stopped for a friend's.
+		CHECK((!entry.replace || entry.share == Share::kShared));
 	}
+}
+
+TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are shared; those with NPCs made at runtime are not")
+{
+	// The Minutemen's: the locket, the hostile settlements, Preston's building, generator and synth requests.
+	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
+		CHECK(ShareOf(minutemen) == Share::kShared);
+	}
+	CHECK(ShareOf(0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
+	CHECK(ShareOf(0x00164167) == Share::kLeftAlone);  // refugees made at runtime
+	// Every settlement attack: the attackers are made at runtime.
+	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u, 0x000BDB04u }) {
+		CHECK(ShareOf(attack) == Share::kLeftAlone);
+	}
+	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery, Feeding the Troops.
+	CHECK(ShareOf(BOSR01) == Share::kShared);
+	CHECK(ShareOf(BOSR02) == Share::kShared);
+	CHECK(ShareOf(BOSR05) == Share::kShared);
+	CHECK(ShareOf(0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
+	CHECK(ShareOf(0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
+	// The Institute's: Pest Control, Hypothesis, Political Leanings.
+	CHECK(ShareOf(INSTR01) == Share::kShared);
+	CHECK(ShareOf(0x000EB268) == Share::kShared);
+	CHECK(ShareOf(0x000F0D8C) == Share::kShared);
+	CHECK(ShareOf(0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
+	CHECK(ShareOf(0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
+	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
+	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
+		CHECK(ShareOf(railroad) == Share::kShared);
+	}
+	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
+		CHECK(ShareOf(railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+	}
+	// Diamond City's wanted posters (misc quests).
+	CHECK(ShareOf(0x0014182C) == Share::kShared);
+	CHECK(ShareOf(0x0018127D) == Share::kShared);
+	CHECK(ShareOf(0x00181280) == Share::kShared);
+}
+
+TEST("radiants: a run here its player hasn't been given is stopped for a friend's only where that changes nothing else")
+{
+	// The Institute's wait at their start until handed out, the Brotherhood's start as their giver speaks.
+	CHECK(Replaces(INSTR01, false, false, false));
+	CHECK(Replaces(BOSR01, false, false, false));
+	CHECK(Replaces(RRR02A, false, false, false));
+	// Given to this player (an objective shown): theirs is declined, ours goes on.
+	CHECK(!Replaces(INSTR01, false, true, false));
+	// A run known here (shared, ours or a friend's): never stopped for another.
+	CHECK(!Replaces(INSTR01, true, false, false));
+	// A quest that runs once would never run again here.
+	CHECK(!Replaces(INSTR01, false, false, true));
+	CHECK(!Replaces(RRR01A, false, false, false));  // Butcher's Bill: runs once
+	// The Railroad's jobs counted on offer are (OFFERS counts them off); Randolph Safehouse's offer hides the place's
+	// enemies, which a stop would leave hidden.
+	CHECK(Replaces(RRR03, false, false, false));
+	CHECK(Replaces(RRR04, false, false, false));
+	CHECK(Replaces(RRR05, false, false, false));
+	CHECK(!Replaces(RRR06, false, false, false));
+	CHECK(Replaces(BOSR05, false, false, false));
+	// The Minutemen's (their stop runs a stage of its own), and the radiants left alone or not radiants at all.
+	CHECK(!Replaces(MIN_RECRUIT01, false, false, false));
+	CHECK(!Replaces(MIN_OWNED01, false, false, false));
+	CHECK(!Replaces(MIN01, false, false, false));
+}
+
+TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the player a member and moves them) is never taken from a friend")
+{
+	CHECK(!Takes(BOSR01, 0));
+	CHECK(!Takes(BOSR02, 0));
+	CHECK(!Takes(BOSR05, 0));
+	CHECK(Takes(BOSR05, 30));
+	CHECK(Takes(BOSR01, 10));
+	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
+	CHECK(Takes(MIN_RECRUIT01, 0));
+	CHECK(Takes(INSTR01, 0));
+}
+
+TEST("radiants: a Railroad job stopped for a friend's run while on offer is counted off the jobs on offer, as its take would have")
+{
+	// Mercer Safehouse: counted at its 50, off at its 75.
+	CHECK(LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0 }, 0.0f));               // not offered yet
+	CHECK(!LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0, 50, 75 }, 0.0f));       // taken: counted off already
+	// Jackpot counts its offer only once done before (RRR03Completed above 0).
+	CHECK(LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50 }, 1.0f));
+	CHECK(!LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50, 100 }, 1.0f));
+	// Weathervane only while no MILA is placed.
+	CHECK(LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 2.0f));
+	// Concierge counts nothing; nor do the others.
+	CHECK(!LeavesCounted(RRR02A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));
+	// Every quest with an offer is a shared one that may be stopped (and only such a one needs it).
+	for (const auto& offer : OFFERS) {
+		const auto entry = Find(offer.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->replace);
+		CHECK(offer.offered < offer.taken);
+		CHECK(((offer.counted == Counted::kAlways) == (offer.global == 0)));
+	}
+}
+
+TEST("radiants: a friend's Cleansing the Commonwealth is started here at their dungeon, the level picks they left empty left empty")
+{
+	// BoSR01's aliases as the game files them: a dungeon picked by the player's level (each optional, each pushing its
+	// pick into Dungeon), its map marker and bosses from it, the Police Station and the paladin's team the same everywhere.
+	const std::vector<Alias> bosr01{
+		{ 13, LOC, Fill::kFixed, false, "PoliceStation" },
+		{ 16, LOC, Fill::kSource, true, "DungeonLevel50" },
+		{ 21, LOC, Fill::kSource, true, "DungeonLevel30" },
+		{ 20, LOC, Fill::kSource, true, "DungeonPlayerLevel" },
+		{ 1, LOC, Fill::kByOthers, false, "Dungeon" },
+		{ 3, REF, Fill::kDerived, false, "DungeonMapMarker" },
+		{ 4, REF, Fill::kFixed, false, "BoSR01Rhys" },
+	};
+	const std::vector<RadiantFill> fills{
+		{ 13, 1, POLICE_STATION }, { 16, 1, 0 }, { 21, 1, CORVEGA }, { 20, 1, CORVEGA }, { 1, 1, CORVEGA }, { 3, 0, 0x0001A2B3 }, { 4, 0, 0x0005DE40 },
+	};
+	const auto plan = MakePlan(bosr01, fills, Resolve);
+	REQUIRE(plan.Ok());
+	const std::vector<Force> want{
+		{ 16, LOC, 0 },  // no dungeon at their level 50: none here either
+		{ 21, LOC, CORVEGA },
+		{ 20, LOC, CORVEGA },
+		{ 1, LOC, CORVEGA },
+		{ 3, REF, 0x0001A2B3 },
+	};
+	CHECK(plan.forces == want);
+
+	// Running here already (its giver spoke to this player too) with another dungeon: not the same run.
+	std::map<std::pair<Kind, std::uint32_t>, std::uint32_t> here{ { { LOC, 13 }, POLICE_STATION }, { { LOC, 21 }, LEXINGTON }, { { LOC, 20 }, LEXINGTON },
+		{ { LOC, 1 }, LEXINGTON }, { { REF, 3 }, 0x0001A2B4 }, { { REF, 4 }, 0x0005DE40 } };
+	const auto ours = [&](Kind a_kind, std::uint32_t a_alias) {
+		const auto it = here.find({ a_kind, a_alias });
+		return it != here.end() ? it->second : 0u;
+	};
+	CHECK(!SameTargets(Compare(bosr01, fills, Resolve, ours)));
+	// The same dungeon here: shared as it runs.
+	here[{ LOC, 21 }] = CORVEGA;
+	here[{ LOC, 20 }] = CORVEGA;
+	here[{ LOC, 1 }] = CORVEGA;
+	here[{ REF, 3 }] = 0x0001A2B3;
+	CHECK(Compare(bosr01, fills, Resolve, ours).empty());
 }
 
 TEST("radiants: an alias is forced when each game picks it itself (conditions, the start's event), not when it follows the others")
@@ -187,13 +342,55 @@ TEST("radiants: the targets are the same when the fills each game picks are; a s
 	CHECK(!SameTargets(Compare(RECRUIT01, withPlace, Resolve, ours)));
 }
 
+TEST("radiants: a settler of the friend's settlement that isn't loaded here at the start is left to the others, and only noted if it differs")
+{
+	// BoSR05's aliases (some of them): the settlement's workshop, owned or not, pushed into Workshop; its settlers from it.
+	const std::vector<Alias> bosr05{
+		{ 10, REF, Fill::kSource, true, "OwnedWorkshop" },
+		{ 11, REF, Fill::kSource, true, "UnownedWorkshop" },
+		{ 6, REF, Fill::kByOthers, false, "Workshop" },
+		{ 0, LOC, Fill::kDerived, false, "Settlement" },
+		{ 4, REF, Fill::kDerived, false, "SettlementBoss" },
+		{ 5, REF, Fill::kByOthers, false, "SettlementSpokesman" },
+	};
+	constexpr std::uint32_t THEIR_SETTLER = 0x0009B1C6;
+	constexpr std::uint32_t OUR_SETTLER = 0x0009B1C7;  // the settlement's other one, which this game took
+	const std::vector<RadiantFill> fills{ { 10, 0, 0 }, { 11, 0, TENPINES_WORKSHOP }, { 6, 0, TENPINES_WORKSHOP }, { 0, 1, CORVEGA }, { 4, 0, THEIR_SETTLER },
+		{ 5, 0, THEIR_SETTLER } };
+
+	bool       loaded = false;  // their settler: in memory here only once the quest runs with the settlement
+	const auto resolve = [&](Kind a_kind, std::uint32_t a_form) { return a_form == THEIR_SETTLER && !loaded ? std::nullopt : Resolve(a_kind, a_form); };
+	const auto plan = MakePlan(bosr05, fills, resolve);
+	REQUIRE(plan.Ok());
+	CHECK(plan.forces.size() == 4);  // the workshops, Workshop and the settlement
+	CHECK((plan.unforced == std::vector<std::uint32_t>{ 4, 5 }));
+
+	loaded = true;
+	std::map<std::pair<Kind, std::uint32_t>, std::uint32_t> here{ { { REF, 11 }, TENPINES_WORKSHOP }, { { REF, 6 }, TENPINES_WORKSHOP }, { { LOC, 0 }, CORVEGA },
+		{ { REF, 4 }, OUR_SETTLER }, { { REF, 5 }, OUR_SETTLER } };
+	const auto ours = [&](Kind a_kind, std::uint32_t a_alias) {
+		const auto it = here.find({ a_kind, a_alias });
+		return it != here.end() ? it->second : 0u;
+	};
+	auto mismatches = Compare(bosr05, fills, resolve, ours, plan.unforced);
+	CHECK(mismatches.size() == 2);
+	CHECK(SameTargets(mismatches));
+	// Without the plan's word (a run compared as it runs here), the spokesman counts.
+	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours)));
+	// Another settlement: the targets differ whatever the settlers.
+	here[{ LOC, 0 }] = LEXINGTON;
+	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours, plan.unforced)));
+}
+
 TEST("radiants: a friend's run starts here once; its stages are set once and never reported back, so its reward is paid once in each game")
 {
 	Book       book;
 	const Run  theirs{ 3, 7 };
 	CHECK(book.OnStart(MIN_RECRUIT01, theirs, false) == Answer::kStart);
+	CHECK(!book.Knows(MIN_RECRUIT01));
 	book.Starting(MIN_RECRUIT01, theirs);
 	CHECK(book.IsStarting(MIN_RECRUIT01));
+	CHECK(book.Knows(MIN_RECRUIT01));
 	CHECK(!book.Shares(MIN_RECRUIT01));
 	CHECK(book.OnStart(MIN_RECRUIT01, theirs, false) == Answer::kIgnore);  // sent again while it starts
 	book.Join(MIN_RECRUIT01, theirs);

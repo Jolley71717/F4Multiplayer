@@ -186,12 +186,25 @@ from you or puts on you any item, and a friend paying for something in a convers
   (the Institute's teleporter) comes after a 10-second warning, and not during a fight; once it has
   begun it finishes even if the connection drops, so you are never left without your controls.
   Nothing else of a session's story reaches your game once you have left it.
-- **Minutemen settlement requests:** with the shared story, when one of you gets a request from a
-  settlement (raiders, kidnappers, ghouls, a place to clear), everyone's game starts the same request
-  for the same settlement and the same place. Clearing it finishes it for everyone, and each of you
-  gets the reward once. A request your game can't match (it needs someone your game doesn't have)
-  stays the other player's own, and the log says why. Settlement attacks, companion quests and the
-  other factions' radiant quests stay each player's own. Turn this off with `bSharedRadiants = false`.
+- **Radiant quests:** with the shared story, when one of you gets one of these repeatable jobs,
+  everyone's game starts the same job for the same place:
+  - the Minutemen's settlement requests (raiders, kidnappers, ghouls, a place to clear, a hostile
+    settlement to take, Abernathy Farm's locket) and Preston's requests from your settlements
+    (building them up, a generator, a synth among the settlers);
+  - the Brotherhood's Cleansing the Commonwealth, Quartermastery and Feeding the Troops;
+  - the Institute's Pest Control, Hypothesis and Political Leanings;
+  - the Railroad's Butcher's Bill, Concierge, Jackpot, Mercer Safehouse, Weathervane and Randolph
+    Safehouse;
+  - Diamond City's wanted posters.
+
+  Finishing it finishes it for everyone, and each of you gets the reward once. If your game was
+  holding the same job for another place and you hadn't taken it yet, it is swapped for your
+  friend's. A job your game can't match (it needs someone your game doesn't have, or you already took
+  your own) stays the other player's own, and the log says why. The jobs whose enemies or helpers the
+  game makes on the spot stay each player's own: settlement attacks and the Castle's defense (your
+  friend's attackers come to your game anyway, as everyone's enemies do), and the jobs that give you
+  someone to escort, rescue or kill (a squire, a scribe, a courser, a patrol, a synth boss, refugees).
+  Turn this off with `bSharedRadiants = false`.
 - **Your own story instead:** the host can set `sStory = own` so everyone plays the main story and
   the faction quests in their own game, getting a notice when a friend finishes a story quest. Play
   it side by side: kills count for everyone, and each of you talks to the characters yourself. A
@@ -262,7 +275,7 @@ Each player's own, always:
 - Companions and romance: each game keeps its own affinity.
 - Keys, notes, holotapes, bobbleheads and magazines: each of you collects your own.
 - A settlement's workbench storage, vendors, the radio, survival needs.
-- Misc and radiant quests (Minutemen settlement requests, for example).
+- Misc quests, and the radiant quests not listed above (settlement attacks, for example).
 
 The main story and the factions follow the host's `sStory` setting:
 
@@ -330,8 +343,8 @@ without it they last until it stops.
 - Friends' faces haven't been tried with LooksMenu or with a heavily sculpted character yet; reports welcome.
 - You can't give a friend an item yet: what you drop stays in your game. Giving items is coming in a later version.
 - If you and a friend hit the same enemy in the same instant, one of the two hits can be lost.
-- Misc quests (holotapes, notes, "talk to" errands) and radiant quests other than the Minutemen's
-  settlement requests are not shared, nor are settlement attacks: each game runs its own.
+- Misc quests (holotapes, notes, "talk to" errands, but Diamond City's wanted posters) and radiant quests other than those listed under
+  "Radiant quests" are not shared, nor are settlement attacks: each game runs its own.
 - Vault 114's gear door and security gates opened from a terminal or card reader open for everyone. Other doors
   a quest script opens may still open only for the player who opened them.
 - NPCs killed in a session come back when their area resets in the host's game. On a dedicated server

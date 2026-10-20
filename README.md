@@ -61,7 +61,7 @@ build\windows\x64\releasedbg\F4MPTests.exe
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests and radiant quests other than the Minutemen's settlement requests.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Not yet: scrapping across games in settlements, misc quests, and the radiant quests whose enemies or helpers are made on the spot (settlement attacks, escorts and rescues).
 
 ## License
 
