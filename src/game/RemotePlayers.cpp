@@ -8,12 +8,14 @@
 #include "game/GraphInfo.h"
 #include "game/Hud.h"
 #include "game/MoveSync.h"
+#include "game/NetSim.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/StandInCalm.h"
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
+#include "game/StandInPipboy.h"
 #include "game/StandInSeat.h"
 #include "game/StandInSpace.h"
 #include "game/StateBuffer.h"
@@ -22,6 +24,7 @@
 #include "game/FaceWatch.h"
 #include "game/LooksMenu.h"
 #include "Config.h"
+#include "Text.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -126,6 +129,8 @@ namespace RemotePlayers
 			ArmorFrames::PlayTime seatTriedAt{};
 			bool                 seatHeld = false;       // the stand-in is held for it (Puppets::Hold)
 			bool                 seatLogged = false;     // whether it got in, or did not, was logged for this seat
+			std::uint8_t         menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
+			StandInPipboy::Track pipboy;                 // the Pip-Boy raised on their stand-in while they are in theirs
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -301,6 +306,8 @@ namespace RemotePlayers
 		// this is more than a few percent.
 		std::uint32_t                         movingFrames = 0;
 		std::uint32_t                         heldFrames = 0;
+		// ... and how many were carried on past the newest state instead, the way the friend went (StateBuffer::EXTRAPOLATE).
+		std::uint32_t                         aheadFrames = 0;
 		// Frames a stand-in was drawn a body's room away from us instead of at its friend's spot, which was ours (StandInSpace).
 		std::uint32_t                         spacedFrames = 0;
 
@@ -385,7 +392,15 @@ namespace RemotePlayers
 			}
 			// Rounded to tens so the tag doesn't change with every scratch.
 			const int shown = (a_player.health + 9) / 10 * 10;
-			return shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+			auto      tag = shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+			// In their Pip-Boy or another menu (the icon over them says which kind; MenuIcons).
+			if (a_player.menu == Protocol::MenuKind::kPipboy) {
+				return Text::Format("party.tag_pipboy", { { "name", tag } });
+			}
+			if (a_player.menu != Protocol::MenuKind::kNone) {
+				return Text::Format("party.tag_menu", { { "name", tag } });
+			}
+			return tag;
 		}
 
 		RE::Actor* GetActor(const RemotePlayer& a_player)
@@ -1429,7 +1444,7 @@ namespace RemotePlayers
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
 				WeaponFire::DropHandThrowable(actor->GetFormID());
-				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body
+				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body and tattoos
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
 				// moves it any more.
 				Puppets::AllowAI(actor, 0ms);
@@ -1813,10 +1828,10 @@ namespace RemotePlayers
 					owner->SetActorValue(*values->assistance, StandInCalm::ASSISTANCE);
 				}
 			}
-			// Their LooksMenu body sliders, when both games have LooksMenu (LooksMenu keeps them by reference, not on
-			// the base: so on each stand-in).
+			// Their LooksMenu body sliders and overlays, when both games have LooksMenu (LooksMenu keeps them by reference,
+			// not on the base: so on each stand-in).
 			if (a_player.face) {
-				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs);
+				LooksMenu::Apply(actor, a_player.face->female, a_player.face->bodyMorphs, a_player.face->overlays);
 			}
 
 			REX::INFO("RemotePlayers: spawned {:08X} for player {}", actor->GetFormID(), a_player.id);
@@ -1867,18 +1882,51 @@ namespace RemotePlayers
 		players.clear();
 	}
 
+	namespace
+	{
+		void TakeState(std::uint32_t a_id, const Protocol::PlayerState& a_state)
+		{
+			const auto it = players.find(a_id);
+			if (it == players.end()) {
+				return;  // state for a player we haven't been told about yet
+			}
+			if (!it->second.states.Push(a_state, Clock::now())) {
+				return;
+			}
+			if (it->second.wornAtWanted) {
+				TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
+			}
+		}
+
+		// Dev: friends' states held back as a worse connection would (NetSim.h, dev command `netsim`), let in each frame.
+		NetSim::Line<std::pair<std::uint32_t, Protocol::PlayerState>> netSim;
+
+		void ReleaseNetSim(Clock::time_point a_now)
+		{
+			netSim.Release(a_now, [](const auto& a_held) { TakeState(a_held.first, a_held.second); });
+		}
+	}
+
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state)
 	{
-		const auto it = players.find(a_id);
-		if (it == players.end()) {
-			return;  // state for a player we haven't been told about yet
-		}
-		if (!it->second.states.Push(a_state, Clock::now())) {
+		if (netSim.settings.Active()) {
+			netSim.Push({ a_id, a_state }, Clock::now());
 			return;
 		}
-		if (it->second.wornAtWanted) {
-			TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
+		TakeState(a_id, a_state);
+	}
+
+	void SetNetSim(const NetSim::Settings& a_settings)
+	{
+		netSim.settings = a_settings;
+		if (!a_settings.Active()) {
+			netSim.Flush([](const auto& a_held) { TakeState(a_held.first, a_held.second); });
 		}
+	}
+
+	std::string DescribeNetSim()
+	{
+		return std::format("{}; waiting={} lost={} spikes={}", netSim.settings.Describe(), netSim.Waiting(), netSim.lost, netSim.spikes);
 	}
 
 	void SetFace(std::uint32_t a_id, Protocol::Face a_face)
@@ -1914,7 +1962,7 @@ namespace RemotePlayers
 	{
 		std::vector<Info> out;
 		for (const auto& [id, remote] : players) {
-			Info info{ id, remote.name, std::nullopt, GetActor(remote) };
+			Info info{ id, remote.name, std::nullopt, GetActor(remote), remote.menu };
 			if (!remote.states.snapshots.empty()) {
 				info.state = remote.states.snapshots.back().state;
 			}
@@ -2166,6 +2214,13 @@ namespace RemotePlayers
 		}
 	}
 
+	void SetMenu(std::uint32_t a_id, std::uint8_t a_menu)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.menu = a_menu;  // Update() raises their Pip-Boy, and the tag follows (NameTag differs from shownName)
+		}
+	}
+
 	std::uint32_t ActorIdOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);
@@ -2269,6 +2324,7 @@ namespace RemotePlayers
 		const bool loading = Hud::LoadingScreenUp();
 
 		const auto now = Clock::now();
+		ReleaseNetSim(now);
 		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
 		const bool oursGone = player && !loading && player->Get3D() && !Face::HasHead(player);
@@ -2326,6 +2382,7 @@ namespace RemotePlayers
 			const auto sampled = remote.states.Sample(now);
 			// The newest state's own speed, as for movingFrames: Sample stops a long hold's speed, and those are the holds to count.
 			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
+			aheadFrames += sampled && sampled->ahead && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
@@ -2576,6 +2633,27 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 
+			// In their Pip-Boy: the stand-in checks its own wrist, again and again, and lowers it as they close theirs
+			// (StandInPipboy). Only standing on its own feet and still: not in its frame or furniture, not down.
+			StandInPipboy::Facts pipboyFacts;
+			pipboyFacts.inPipboy = remote.menu == Protocol::MenuKind::kPipboy;
+			pipboyFacts.standIn = actor->GetFormID();
+			pipboyFacts.ready = actor->Get3D() && !inArmor && !remote.inPowerArmor && !remote.powerArmorOn && !remote.seat && !remote.seatHeld && !remote.downed &&
+			                    remote.health > 0 && state->speed < 1.0f;
+			switch (StandInPipboy::Frame(remote.pipboy, pipboyFacts, now)) {
+			case StandInPipboy::Do::kRaise:
+				{
+					const auto npc = actor->GetNPC();
+					RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", actor->GetFormID(), StandInPipboy::RaiseFor(npc && npc->IsFemale())).c_str());
+				}
+				break;
+			case StandInPipboy::Do::kLower:
+				RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", actor->GetFormID(), StandInPipboy::LOWER).c_str());
+				break;
+			case StandInPipboy::Do::kNothing:
+				break;
+			}
+
 			KeepCalm(remote.calm, remote.id, actor, player, now);
 
 			// Pushed off our own spot (StandInSpace): its path, which the engine's update goes by, is moved as far.
@@ -2640,6 +2718,10 @@ namespace RemotePlayers
 				const auto seatIn = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
 				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seatIn ? seatIn->GetFormID() : 0, remote.seatTries);
 			}
+			// The menu they are in, and the Pip-Boy raises (and early lowers) played on their stand-ins.
+			if (remote.menu != Protocol::MenuKind::kNone || remote.pipboy.raises) {
+				armor += std::format(" menu={} pipboyRaises={} lowers={} raised={}", remote.menu, remote.pipboy.raises, remote.pipboy.lowers, remote.pipboy.raised);
+			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,
 				last.x, last.y, last.cell, last.worldspace, gap, static_cast<int>(remote.states.delay * 1000.0f), remote.powerArmorOn, remote.inPowerArmor, remote.powerArmorFrame,
@@ -2658,7 +2740,7 @@ namespace RemotePlayers
 			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={}", switchesIn, switchesOut, switchFails, stillStandIns);
 		}
 		if (movingFrames) {
-			out += std::format(" held={}/{}", heldFrames, movingFrames);
+			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 		}

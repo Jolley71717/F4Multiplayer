@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/NetSim.h"
 #include "game/RemoteEdits.h"
 
 #include "Protocol.h"
@@ -17,6 +18,9 @@ namespace RemotePlayers
 
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
+	// Dev: friends' states from now on come as over a worse connection (NetSim.h); off lets in what waits.
+	void SetNetSim(const NetSim::Settings& a_settings);
+	[[nodiscard]] std::string DescribeNetSim();
 
 	// What the player is wearing and holding (base forms), and the mods on those that carry any; copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items, std::vector<Protocol::ItemMods> a_mods);
@@ -29,6 +33,9 @@ namespace RemotePlayers
 
 	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
 	void SetLight(std::uint32_t a_id, bool a_on);
+	// The kind of menu they are in (Protocol::MenuKind, from their status): in the Pip-Boy their stand-in raises its own
+	// (StandInPipboy), and in any menu its name tag says so and an icon hangs over it (MenuIcons).
+	void SetMenu(std::uint32_t a_id, std::uint8_t a_menu);
 	// Their power armor state, the base form of the frame they are in and, when every game has that frame (a
 	// pre-placed one), its reference (else 0); out of it, the frame they got out of last, where it stands in their world
 	// (a copy is shown there).
@@ -52,6 +59,7 @@ namespace RemotePlayers
 		std::string                          name;
 		std::optional<Protocol::PlayerState> state;  // latest received
 		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
+		std::uint8_t                         menu = 0;         // the menu they are in (Protocol::MenuKind), from their status
 	};
 
 	[[nodiscard]] std::vector<Info> List();

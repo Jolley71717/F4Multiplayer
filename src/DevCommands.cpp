@@ -10,14 +10,19 @@
 #include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
+#include "game/Drops.h"
 #include "game/EnemyList.h"
 #include "game/EnemySpawn.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/FadeWatch.h"
+#include "game/FrameClock.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
 #include "game/MenuMessages.h"
+#include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
+#include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
 #include "game/Perf.h"
@@ -25,6 +30,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/InjectInput.h"
+#include "game/MuzzleFlash.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/Papyrus.h"
@@ -33,9 +39,11 @@
 #include "game/SaveGuard.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
+#include "game/RadiantSync.h"
 #include "game/Party.h"
 #include "game/Voice.h"
 #include "game/WeaponFire.h"
+#include "game/WindowFocus.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
 
@@ -46,7 +54,6 @@
 extern "C" {
 __declspec(dllimport) void __stdcall keybd_event(unsigned char a_vk, unsigned char a_scan, unsigned long a_flags, unsigned long long a_extra);
 __declspec(dllimport) unsigned int __stdcall MapVirtualKeyA(unsigned int a_code, unsigned int a_mapType);
-__declspec(dllimport) void* __stdcall FindWindowA(const char* a_class, const char* a_title);
 __declspec(dllimport) int __stdcall ShowWindow(void* a_window, int a_show);
 __declspec(dllimport) int __stdcall SetForegroundWindow(void* a_window);
 __declspec(dllimport) void* __stdcall GetForegroundWindow();
@@ -55,6 +62,11 @@ __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
 __declspec(dllimport) int __stdcall AttachThreadInput(unsigned long a_attach, unsigned long a_to, int a_flag);
 __declspec(dllimport) int __stdcall BringWindowToTop(void* a_window);
 __declspec(dllimport) void __stdcall mouse_event(unsigned long a_flags, unsigned long a_dx, unsigned long a_dy, unsigned long a_data, unsigned long long a_extra);
+__declspec(dllimport) int __stdcall EnumWindows(int(__stdcall* a_callback)(void*, long long), long long a_param);
+__declspec(dllimport) int __stdcall IsWindowVisible(void* a_window);
+__declspec(dllimport) void* __stdcall GetWindow(void* a_window, unsigned int a_command);
+__declspec(dllimport) int __stdcall GetWindowTextA(void* a_window, char* a_text, int a_max);
+__declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
 }
 
 namespace DevCommands
@@ -259,34 +271,122 @@ namespace DevCommands
 		// Frame()), so two games can be driven at the same instant from a script; scheduled tasks on the
 		// VM used to fire seconds late. focus: brings the game window to the front (a tapped Alt lifts
 		// Windows' foreground lock), so a desktop capture shows the game and not whatever popped over it.
+		//
+		// Windows hands injected input to the window in front, whichever it is. So key, mouse and click send
+		// only with the game in front, bringing it there first; input that can't get there is dropped (it
+		// used to go to whatever window was in front: a console, or the window someone at the PC was using).
+		// Their answer says whether the game was in front as the command came in (front=yes|no); focus says
+		// whether it is now, and the tally of what became of the input so far (WindowFocus).
+
+		WindowFocus::Tally inputTally;
 
 		void KeyEvent(std::uint8_t a_vk, bool a_down)
 		{
 			const auto scan = static_cast<std::uint8_t>(MapVirtualKeyA(a_vk, 0));
 			// The arrows, Insert/Delete/Home/End/PageUp/PageDown and the right-hand Ctrl/Alt are extended
-			// keys: without the flag the game's input layer sees the numpad key with the same scan code, and a
-			// dialogue option picked with an arrow never registered.
+			// keys: without the flag the game's input layer sees the numpad key with the same scan code.
 			const bool extended = (a_vk >= 0x21 && a_vk <= 0x28) || a_vk == 0x2D || a_vk == 0x2E || a_vk == 0xA3 || a_vk == 0xA5 || a_vk == 0x6F;
 			keybd_event(a_vk, scan, (a_down ? 0u : 2u) | 8u | (extended ? 1u : 0u), 0);  // KEYEVENTF_SCANCODE (| KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY)
 		}
 
+		// Whether a window of this process (the game's) is the one in front. Sends no window a message, so it
+		// is safe on the game thread.
+		bool GameInFront()
+		{
+			unsigned long pid = 0;
+			const auto    front = GetForegroundWindow();
+			return front && GetWindowThreadProcessId(front, &pid) != 0 && pid == GetCurrentProcessId();
+		}
+
+		// The window in front, for a report: its process and title when it is another process's (reading the
+		// title of one of our own windows would send it a message), else "the game".
+		std::string FrontWindowName()
+		{
+			const auto front = GetForegroundWindow();
+			if (!front) {
+				return "none";
+			}
+			unsigned long pid = 0;
+			GetWindowThreadProcessId(front, &pid);
+			if (pid == GetCurrentProcessId()) {
+				return "the game";
+			}
+			std::array<char, 128> title{};
+			GetWindowTextA(front, title.data(), static_cast<int>(title.size()));
+			return std::format("pid {} '{}'", pid, WindowFocus::Printable(title.data()));
+		}
+
+		// The game's main window: this process's visible top-level window that has no owner (not FindWindow
+		// by the title "Fallout4", which another process's window can have too).
+		void* GameWindow()
+		{
+			struct Search
+			{
+				unsigned long pid;
+				void*         found;
+			} search{ GetCurrentProcessId(), nullptr };
+			EnumWindows(
+				[](void* a_window, long long a_param) -> int {
+					auto&         s = *reinterpret_cast<Search*>(a_param);
+					unsigned long pid = 0;
+					GetWindowThreadProcessId(a_window, &pid);
+					if (pid == s.pid && IsWindowVisible(a_window) && !GetWindow(a_window, 4)) {  // GW_OWNER
+						s.found = a_window;
+						return 0;
+					}
+					return 1;
+				},
+				reinterpret_cast<long long>(&search));
+			return search.found;
+		}
+
 		// A tapped Alt lifts Windows' foreground lock for the next SetForegroundWindow. (AttachThreadInput
-		// would be stronger, but called on the game thread it hung the game.)
+		// would be stronger, but called on the game thread it hung the game.) Off the game thread only: the
+		// window calls send messages to it. Tries a few times; returns whether the game ended up in front.
 		bool BringGameToFront()
 		{
-			const auto window = FindWindowA(nullptr, "Fallout4");
+			if (GameInFront()) {
+				return true;
+			}
+			const auto window = GameWindow();
 			if (!window) {
 				return false;
 			}
-			if (GetForegroundWindow() == window) {
-				return true;
+			for (int i = 0; i < WindowFocus::FRONT_TRIES; ++i) {
+				KeyEvent(0x12, true);
+				KeyEvent(0x12, false);
+				ShowWindow(window, 9);  // SW_RESTORE
+				BringWindowToTop(window);
+				SetForegroundWindow(window);
+				std::this_thread::sleep_for(std::chrono::milliseconds(WindowFocus::FRONT_STEP_MS));
+				if (GameInFront()) {
+					return true;
+				}
 			}
-			KeyEvent(0x12, true);
-			KeyEvent(0x12, false);
-			ShowWindow(window, 9);  // SW_RESTORE
-			BringWindowToTop(window);
-			const bool ok = SetForegroundWindow(window) != 0;
-			return ok && GetForegroundWindow() == window;
+			return false;
+		}
+
+		// Off the game thread: the game to the front if it isn't, then whether the input may go. What became of
+		// it is tallied, and a dropped one logged with the window that was in front instead.
+		bool SendToGame(const std::string& a_what)
+		{
+			const bool before = GameInFront();
+			const bool after = before || BringGameToFront();
+			const auto outcome = WindowFocus::Decide(before, after);
+			if (outcome == WindowFocus::Outcome::kDropped) {
+				const auto front = FrontWindowName();
+				inputTally.Record(outcome, a_what, front);
+				REX::WARN("DevCommands: {} not sent: the game isn't in front ({} is)", a_what, front);
+				return false;
+			}
+			inputTally.Record(outcome, a_what);
+			return true;
+		}
+
+		// For an answer: whether the game is in front as the command runs.
+		std::string FrontNow()
+		{
+			return GameInFront() ? "front=yes" : std::format("front=no ({} is in front)", FrontWindowName());
 		}
 
 		std::string KeyPress(std::string_view a_args)
@@ -301,12 +401,14 @@ namespace DevCommands
 			const auto key = static_cast<std::uint8_t>(*vk);
 			const auto hold = std::stoi(std::string{ args[1] });
 			std::thread([key, hold] {
-				BringGameToFront();
+				if (!SendToGame(std::format("key {:02X}", key))) {
+					return;
+				}
 				KeyEvent(key, true);
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				KeyEvent(key, false);
+				KeyEvent(key, false);  // whatever is in front by now: a key left down would stay down
 			}).detach();
-			return std::format("pressing {:02X} for {} ms", *vk, args[1]);
+			return std::format("pressing {:02X} for {} ms {}", *vk, args[1], FrontNow());
 		}
 
 		// mouse <dx> <dy>: moves the mouse by that much (relative units), to turn the camera; with the
@@ -320,10 +422,11 @@ namespace DevCommands
 			const auto dx = std::stoi(std::string{ args[0] });
 			const auto dy = std::stoi(std::string{ args[1] });
 			std::thread([dx, dy] {
-				BringGameToFront();
-				mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
+				if (SendToGame("mouse")) {
+					mouse_event(1u, static_cast<unsigned long>(dx), static_cast<unsigned long>(dy), 0, 0);  // MOUSEEVENTF_MOVE
+				}
 			}).detach();
-			return "moving";
+			return std::format("moving {}", FrontNow());
 		}
 
 		// click <holdMs>: presses the left mouse button for that long (firing a drawn weapon in a test).
@@ -332,20 +435,27 @@ namespace DevCommands
 			const auto args = SplitArgs(a_args);
 			const int hold = args.empty() ? 60 : std::stoi(std::string{ args[0] });
 			std::thread([hold] {
-				BringGameToFront();
+				if (!SendToGame("click")) {
+					return;
+				}
 				mouse_event(0x0002u, 0, 0, 0, 0);  // left down
 				std::this_thread::sleep_for(std::chrono::milliseconds(hold));
-				mouse_event(0x0004u, 0, 0, 0, 0);  // left up
+				mouse_event(0x0004u, 0, 0, 0, 0);  // left up, whatever is in front by now
 			}).detach();
-			return std::format("clicking for {} ms", hold);
+			return std::format("clicking for {} ms {}", hold, FrontNow());
 		}
 
+		// focus: asks for the game to come to the front if it isn't, and says whether it is in front as the
+		// command runs (ask again a moment later for the request's effect) and what became of the input so far.
 		std::string Focus(std::string_view)
 		{
 			// Never waited for: the window calls send messages to the game thread, which is the thread
 			// running this command (waiting here deadlocked the game on 2026-10-09).
-			std::thread([] { BringGameToFront(); }).detach();
-			return "requested";
+			const auto now = FrontNow();
+			if (!GameInFront()) {
+				std::thread([] { BringGameToFront(); }).detach();
+			}
+			return std::format("{} input: {}", now, inputTally.Describe());
 		}
 
 		// pa: the local player's power armor state as the status reports it.
@@ -360,6 +470,28 @@ namespace DevCommands
 			const auto last = player->lastUsedPowerArmor.get();
 			const auto base = occupied ? occupied->GetObjectReference() : nullptr;
 			return std::format("engineSaysPA={} extraPA={} occupied={:08X} base={:08X} lastFrame={:08X}", RE::PowerArmor::PlayerInPowerArmor(), Equipment::InPowerArmor(player), occupied ? occupied->GetFormID() : 0, base ? base->GetFormID() : 0, last ? last->GetFormID() : 0);
+		}
+
+		// paframes [radius]: the power armor frames near the local player, each with whether the engine would let our player
+		// into it and why not (Equipment::DescribeFrameUse), its distance and which game's it is (NpcSync::Owner).
+		std::string PowerArmorFrames(std::string_view a_args)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!player || !player->GetParentCell()) {
+				return "error: not in game";
+			}
+			const auto  args = SplitArgs(a_args);
+			const float radius = args.empty() ? 3000.0f : ParseFloat(args[0]).value_or(3000.0f);
+			std::string out;
+			int         count = 0;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, radius, [&](RE::TESObjectREFR* a_ref) {
+				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				out += std::format("{}{} at {:.0f} owner={:08X}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()));
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());
 		}
 
 		std::string Console(std::string_view a_args)
@@ -515,7 +647,8 @@ namespace DevCommands
 			if (!args.empty() && args[0] == "start") {
 				const float hz = args.size() > 1 ? ParseFloat(args[1]).value_or(20.0f) : 20.0f;
 				trace = {};
-				trace.gap = std::chrono::milliseconds{ static_cast<int>(1000.0f / std::clamp(hz, 1.0f, 60.0f)) };
+				// Up to every frame (a rate over the frame rate samples each frame once): smoothness is a frame-by-frame thing.
+				trace.gap = std::chrono::milliseconds{ static_cast<int>(1000.0f / std::clamp(hz, 1.0f, 500.0f)) };
 				trace.active = true;
 				trace.rows.push_back("ms,who,x,y,z,rz,speed");
 				return std::format("tracing every {} ms", trace.gap.count());
@@ -535,6 +668,47 @@ namespace DevCommands
 				return std::format("{} rows -> {}", count, path.string());
 			}
 			return "error: usage: trace start [hz] | trace stop";
+		}
+
+		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]: friends' movement states come in
+		// as over a worse connection (NetSim.h): a LAN rig drawn as over Steam's relays, for the trace. No arguments: as it is.
+		// pace: what our states are stamped with and stand-ins placed by (FrameClock.h), to measure one against another.
+		std::string NetSimCmd(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto describe = [] { return std::format("{} pace={}", RemotePlayers::DescribeNetSim(), FrameClock::PaceName(FrameClock::GetPace())); };
+			if (args.size() == 2 && args[0] == "pace") {
+				if (args[1] == "wall") {
+					FrameClock::SetPace(FrameClock::Pace::kWall);
+				} else if (args[1] == "frame") {
+					FrameClock::SetPace(FrameClock::Pace::kFrame);
+				} else if (args[1] == "previous") {
+					FrameClock::SetPace(FrameClock::Pace::kPrevious);
+				} else {
+					return "error: usage: netsim pace wall|frame|previous";
+				}
+				return describe();
+			}
+			if (args.empty()) {
+				return describe();
+			}
+			NetSim::Settings settings;
+			if (args[0] != "off") {
+				const auto number = [&](std::size_t a_index) { return a_index < args.size() ? ParseFloat(args[a_index]) : std::optional<float>{ 0.0f }; };
+				const auto lag = number(0), jitter = number(1), loss = number(2), spike = number(3), spikes = number(4);
+				if (!lag || !jitter || !loss || !spike || !spikes || *lag < 0.0f || *lag > 2000.0f || *jitter < 0.0f || *jitter > 2000.0f || *loss < 0.0f || *loss > 100.0f || *spike < 0.0f ||
+					*spike > 2000.0f || *spikes < 0.0f || *spikes > 100.0f) {
+					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]";
+				}
+				settings.lagMs = static_cast<int>(*lag);
+				settings.jitterMs = static_cast<int>(*jitter);
+				settings.lossPercent = *loss;
+				settings.spikeMs = static_cast<int>(*spike);
+				settings.spikePercent = *spikes;
+				settings.ordered = !(args.size() > 5 && args[5] == "unordered");
+			}
+			RemotePlayers::SetNetSim(settings);
+			return describe();
 		}
 
 		void TraceFrame()
@@ -563,10 +737,38 @@ namespace DevCommands
 				trace.rows.push_back(std::format("{},{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", ms, a_who, p.x, p.y, p.z, a_actor->data.angle.z * 57.29578f, speed));
 			};
 			row("me", player);
+			// Read together, so stamps from the steady clock land on the system clock to a fraction of a millisecond (the whole
+			// one the rows above are stamped with is 5% of a frame at 48 fps).
+			const auto   steadyNow = std::chrono::steady_clock::now();
+			const double msNow = std::chrono::duration<double, std::milli>(std::chrono::system_clock::now().time_since_epoch()).count();
+			// A stand-in as its engine update last put it, stamped with that moment: what was drawn, and when.
 			for (const auto& info : RemotePlayers::List()) {
-				if (info.actor) {
-					row(std::format("p{}", info.id), info.actor);
+				if (!info.actor) {
+					continue;
 				}
+				const auto put = Puppets::LastPut(info.actor);
+				if (!put) {
+					row(std::format("p{}", info.id), info.actor);
+					continue;
+				}
+				const double stamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - put->at).count();
+				trace.rows.push_back(std::format("{:.3f},p{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", stamp, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f, 0.0f));
+				// The same place at the time on its path it was put at (FrameClock.h, the engine's frame): how far it stepped each
+				// frame against how far the engine moved all else in that frame.
+				const double placedStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - put->placedAt).count();
+				trace.rows.push_back(std::format("{:.3f},fp{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", placedStamp, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f, 0.0f));
+			}
+			// The player's place now at the time of the frame the engine's timer last timed (fme) and the one before (qme):
+			// which of the two moved them here shows as the even one. And the timer itself (tim: its frame time, the same
+			// before the time multiplier, both in ms, and its time), to check it is read right.
+			{
+				const auto& p = player->data.location;
+				const double frameStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - FrameClock::Now()).count();
+				const double previousStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - FrameClock::Previous()).count();
+				trace.rows.push_back(std::format("{:.3f},fme,{:.1f},{:.1f},{:.1f},{:.1f},0.0", frameStamp, p.x, p.y, p.z, player->data.angle.z * 57.29578f));
+				trace.rows.push_back(std::format("{:.3f},qme,{:.1f},{:.1f},{:.1f},{:.1f},0.0", previousStamp, p.x, p.y, p.z, player->data.angle.z * 57.29578f));
+				const auto timer = FrameClock::Read();
+				trace.rows.push_back(std::format("{:.3f},tim,{:.3f},{:.3f},{},0.0,0.0", msNow, timer.delta * 1000.0f, timer.realDelta * 1000.0f, timer.lastTime));
 			}
 			// Every other actor nearby (shared NPCs have the same form ID in both games, so the two files
 			// line up by it): a mirrored NPC drifting up or sinking shows as a height error over time.
@@ -835,17 +1037,63 @@ namespace DevCommands
 			}
 			return stacks ? out + std::format(" ({} stacks)", stacks) : out + " empty";
 		}
+		// drops [loseplaced]: what lies in the session to be taken, our copies of it and our world's record (Drops).
+		// loseplaced: our next drop's kPlaced isn't sent (as one lost with the link; then `net drop`).
+		std::string DropsList(std::string_view a_args)
+		{
+			if (a_args == "loseplaced") {
+				Drops::DevLoseNextPlaced();
+				return "ok";
+			}
+			return Drops::List();
+		}
 
-		// handthrowable on|off: shows the grenade in the hand of a stand-in replaying a friend's throw, from its wind-up to
-		// its release: the engine's own culled WeaponLeft is drawn, or failing one the model database's own node is hung
-		// there (HandThrowable.h, docs/GRENADE-IN-HAND.md round 4). Off at every start; off takes every one out at once.
+		// dropitem <baseHex> [count]: our player drops that item, as from the Pip-Boy (the console's drop, which the
+		// engine runs with no menu open, so Drops is told to take the next item lost as dropped).
+		std::string DropItem(std::string_view a_args)
+		{
+			const auto space = a_args.find(' ');
+			const auto base = ParseHex(a_args.substr(0, space));
+			const auto count = space == std::string_view::npos ? std::optional<float>{ 1.0f } : ParseFloat(a_args.substr(space + 1));
+			if (!base || !count || *count < 1.0f || !RE::TESForm::GetFormByID(*base)) {
+				return "error: usage: dropitem <baseHex> [count]";
+			}
+			Drops::DevDropNext();
+			RE::Console::ExecuteCommand(std::format("player.drop {:08X} {}", *base, static_cast<int>(*count)).c_str());
+			return "ok";
+		}
+
+		// itemmods <baseHex>: every stack of that item our player carries, with its mods (to compare a given item with the
+		// giver's).
+		std::string ItemModsCommand(std::string_view a_args)
+		{
+			const auto base = ParseHex(a_args);
+			return base ? Drops::ItemMods(*base) : "error: usage: itemmods <baseHex>";
+		}
+
+		// activate <refHex>: our player activates the reference, as pressing E on it (its script's block, if any, holds).
+		std::string ActivateCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!ref || !player) {
+				return "error: usage: activate <refHex>";
+			}
+			const bool done = ref->ActivateRef(player, nullptr, 1, false, false, false);
+			return std::format("activated={}", done);
+		}
+
+		// handthrowable on|off|model: shows the grenade in the hand of a stand-in replaying a friend's throw, from its
+		// wind-up to its release, by drawing the engine's own culled WeaponLeft (HandThrowable.h, docs/GRENADE-IN-HAND.md).
+		// Each start follows bGrenadeInHand (on by default); off takes every one out at once. model also hangs the model
+		// database's own node on a hand the engine gave no WeaponLeft (an experiment: the rig never showed one).
 		std::string HandThrowableCommand(std::string_view a_args)
 		{
-			if (a_args != "on" && a_args != "off") {
-				return "error: usage: handthrowable on|off";
+			if (a_args != "on" && a_args != "off" && a_args != "model") {
+				return "error: usage: handthrowable on|off|model";
 			}
-			WeaponFire::SetHandThrowables(a_args == "on");
-			return std::format("handthrowable={}", WeaponFire::HandThrowables() ? "on" : "off");
+			WeaponFire::SetHandThrowables(a_args != "off", a_args == "model");
+			return std::format("handthrowable={}", !WeaponFire::HandThrowables() ? "off" : WeaponFire::HandModelFallback() ? "model" : "on");
 		}
 
 		// refresh3d <refHex>: a probe for the throwable's 3D, the fallback if AttachWeapon leaves the biped's
@@ -1046,6 +1294,29 @@ namespace DevCommands
 				QuestSync::Kind(quest), QuestStageLayout::Count(quest), done.size(), list(done), list(QuestSync::Waiting(quest->GetFormID())));
 		}
 
+		// global <globalHex>: a global variable's value (read only).
+		std::string Global(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto global = id ? RE::TESForm::GetFormByID<RE::TESGlobal>(*id) : nullptr;
+			if (!global) {
+				return "error: usage: global <globalHex>";
+			}
+			return std::format("{:08X} {}", *id, global->GetValue());
+		}
+
+		// aliases <questHex>: the quest's aliases, how each is filled (its definition as this game holds it) and what fills
+		// it here, and how forced aliases read (RadiantSync); read only.
+		std::string Aliases(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto quest = id ? RE::TESForm::GetFormByID<RE::TESQuest>(*id) : nullptr;
+			if (!quest) {
+				return "error: usage: aliases <questHex>";
+			}
+			return RadiantSync::DumpAliases(quest);
+		}
+
 		// draw on|off: draws or holsters the player's weapon.
 		std::string Draw(std::string_view a_args)
 		{
@@ -1211,6 +1482,27 @@ namespace DevCommands
 			}
 			const auto actor = ref->As<RE::Actor>();
 			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
+		}
+
+		// gate <refHex>: what a two-state gate's script (Default2StateActivator, SharedGates) says of it.
+		std::string Gate(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto object = Papyrus::BoundObject(ref, "Default2StateActivator", false);
+			if (!object) {
+				return std::format("{:08X} 3d={} no Default2StateActivator object", ref->GetFormID(), ref->Get3D() != nullptr);
+			}
+			const auto flag = [&](const char* a_name) {
+				const auto var = object->GetProperty(RE::BSFixedString{ a_name });
+				return !var ? std::string("?") : var->is<bool>() ? std::string(RE::BSScript::get<bool>(*var) ? "1" : "0") : std::string("-");
+			};
+			const auto type = object->type.get();
+			return std::format("{:08X} 3d={} script={} state={} isOpen={} isAnimating={} doOnce={} setDefault={}", ref->GetFormID(), ref->Get3D() != nullptr,
+				type ? type->GetName() : "?", object->currentState.c_str() ? object->currentState.c_str() : "", flag("isOpen"), flag("isAnimating"), flag("doOnce"),
+				flag("shouldSetDefaultState"));
 		}
 
 		// setpos <refHex> <x> <y> <z> [rz degrees]
@@ -1432,6 +1724,56 @@ namespace DevCommands
 			return std::format("reported {:08X} ({})", ref->GetFormID(), scrap ? "scrapped" : "placed");
 		}
 
+		// wswire <fromHex> <toHex>: a wire strung from one reference to the other as the game strings one: a wire
+		// reference made at the first, its ends connected (SplineUtils::ConnectSpline), the connection added to the
+		// first one's workbench's power grid (Workshop::ExtraData::AddConnection, 2194998, as F4SE's AttachWire
+		// does), and the wire made one of the workbench's items. For the rig, whose scripts can't aim workshop
+		// mode's wiring; the wire is reported like a placed one with wsreport.
+		std::string WsWire(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto from = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto to = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			if (!from || !to || from == to) {
+				return "error: usage: wswire <fromHex> <toHex>";
+			}
+			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
+			const auto bench = keyword ? from->GetLinkedRef(keyword) : nullptr;
+			const auto data = bench && bench->extraList ? bench->extraList->GetByType<RE::Workshop::ExtraData>() : nullptr;
+			const auto spline = RE::TESForm::GetFormByID<RE::TESBoundObject>(0x0001D971);  // the workshop's power wire
+			if (!data || !spline) {
+				return "error: the first reference isn't one of a workbench's items (with its workshop data)";
+			}
+			RE::NEW_REFR_DATA place;
+			place.location = from->data.location;
+			place.direction = from->data.angle;
+			place.object = spline;
+			const auto cell = from->GetParentCell();
+			place.interior = cell && cell->IsInterior() ? cell : nullptr;
+			place.world = cell && !cell->IsInterior() ? cell->worldSpace : nullptr;
+			place.clearStillLoadingFlag = true;
+			const auto wire = RE::TESDataHandler::GetSingleton()->CreateReferenceAtLocation(place).get();
+			if (!wire) {
+				return "error: no wire made";
+			}
+			using add_t = void (*)(RE::Workshop::ExtraData*, RE::TESObjectREFR&, RE::TESObjectREFR&, RE::TESObjectREFR*);
+			static REL::Relocation<add_t> addConnection{ REL::ID{ 2194998 } };
+			RE::SplineUtils::ConnectSpline(from, 0, to, 0, wire.get());
+			addConnection(data, *from, *to, wire.get());
+			wire->SetLinkedRef(bench, keyword);
+			if (const auto tasks = RE::TaskQueueInterface::GetSingleton()) {
+				tasks->QueueRebuildBendableSpline(*wire, false, nullptr);
+			}
+			return std::format("wire {:08X}", wire->GetFormID());
+		}
+
+		// wsinfo <refHex>: what the reference is to the workshop (see WorkshopSync::DescribeRef).
+		std::string WsInfo(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			return ref ? WorkshopSync::DescribeRef(ref) : "error: usage: wsinfo <refHex>";
+		}
+
 		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this one), and
 		// whether you stand in each one's build area; for any other reference, what the walk makes of it.
 		std::string WsBenches(std::string_view a_args)
@@ -1441,6 +1783,46 @@ namespace DevCommands
 				return "error: no such reference";
 			}
 			return WorkshopSync::DescribeBenches(ref);
+		}
+
+		// wsgrid [benchHex]: the power grids of this workbench (or every one seen), and any friend's copy or deleted
+		// reference they name.
+		std::string WsGrid(std::string_view a_args)
+		{
+			const auto ref = a_args.empty() ? nullptr : LookupRef(a_args);
+			if (!a_args.empty() && !ref) {
+				return "error: no such reference";
+			}
+			return WorkshopSync::DescribeGrids(ref);
+		}
+
+		// wspower: settlement power across games. wspower block on|off: whether friends' copies are kept out of workshop
+		// mode's reach (off: to try the repair); wspower audit: look for copies on our grids now; wspower copies: each copy and whose piece it is; wspower show <refHex>
+		// on|off: show the reference powered or not, as a friend's copy is shown.
+		std::string WsPower(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return WorkshopSync::DescribePower();
+			}
+			if (args[0] == "block" && args.size() == 2 && (args[1] == "on" || args[1] == "off")) {
+				WorkshopSync::SetBlockCopies(args[1] == "on");
+				return WorkshopSync::DescribePower();
+			}
+			if (args[0] == "copies" && args.size() == 1) {
+				return WorkshopSync::DescribeCopies();
+			}
+			if (args[0] == "audit" && args.size() == 1) {
+				return WorkshopSync::AuditNow();
+			}
+			if (args[0] == "show" && args.size() == 3 && (args[2] == "on" || args[2] == "off")) {
+				const auto ref = LookupRef(args[1]);
+				if (!ref) {
+					return "error: no such reference";
+				}
+				return WorkshopSync::ShowPoweredForDev(ref, args[2] == "on") ? "ok" : "rejected";
+			}
+			return "error: usage: wspower [block on|off | audit | copies | show <refHex> on|off]";
 		}
 
 		// mirror <refHex>: why an NPC is or isn't mirrored here.
@@ -1915,6 +2297,47 @@ namespace DevCommands
 			return std::format("{}.{} = {} -> {}", path, member, text, set);
 		}
 
+		// muzzle mode off|refused|always | muzzle hold <s> | muzzle watch <actorHex> | muzzle <actorHex> [tree] | muzzle show
+		// <actorHex>: when a replayed shot gets our flash (the engine draws its own for an animated one); what an actor's
+		// gun flashes and where, and the engine's flash object for it; show ours on any actor now.
+		std::string Muzzle(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.size() == 2 && args[0] == "mode") {
+				const auto mode = args[1] == "off" ? MuzzleFlash::Mode::kOff : (args[1] == "always" ? MuzzleFlash::Mode::kAlways : MuzzleFlash::Mode::kRefused);
+				if (args[1] != "off" && args[1] != "always" && args[1] != "refused") {
+					return "error: usage: muzzle mode off|refused|always";
+				}
+				MuzzleFlash::SetMode(mode);
+				return MuzzleFlash::Describe();
+			}
+			if (!args.empty() && args[0] == "watch") {
+				const auto ref = args.size() > 1 ? LookupRef(args[1]) : nullptr;
+				return MuzzleFlash::Watch(ref ? ref->GetFormID() : 0, ref ? 90 : 0);
+			}
+			if (args.size() == 2 && args[0] == "hold") {
+				float seconds = 0.0f;
+				std::from_chars(args[1].data(), args[1].data() + args[1].size(), seconds);
+				MuzzleFlash::SetHold(seconds);
+				return std::format("hold={:.2f} ", seconds) + MuzzleFlash::Describe();
+			}
+			if (args.size() == 2 && args[0] == "show") {
+				const auto ref = LookupRef(args[1]);
+				const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+				if (!actor) {
+					return "error: no such actor";
+				}
+				MuzzleFlash::OnShot(actor, false);
+				return MuzzleFlash::Describe() + " | " + MuzzleFlash::DescribeActor(actor, false);
+			}
+			const auto ref = args.empty() ? nullptr : LookupRef(args[0]);
+			const auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+			if (!actor) {
+				return "error: usage: muzzle mode off|refused|always | muzzle hold <seconds> | muzzle <actorHex> [tree] | muzzle show <actorHex>";
+			}
+			return MuzzleFlash::DescribeActor(actor, args.size() > 1 && args[1] == "tree");
+		}
+
 		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
 		std::string WeapSound(std::string_view a_args)
 		{
@@ -2083,7 +2506,8 @@ namespace DevCommands
 			return "error: log [level info|debug | flush | path]";
 		}
 
-		// net [connect <address>]
+		// net [connect <address> | leave | stophost | host]: leave and stophost are the in-game menu's Leave and Stop
+		// hosting (the session ends here, as a player's would); host starts hosting again.
 		std::string Net(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -2091,10 +2515,27 @@ namespace DevCommands
 				Session::ConnectTo(std::string(args[1]));
 				return "ok";
 			}
+			if (args.size() == 1 && args[0] == "drop") {
+				// As the link dropping: the session ends here, and the connection is tried again (in ~5 s).
+				return Session::DropConnection() ? "dropped" : "error: not connected";
+			}
+			if (args.size() == 1 && args[0] == "leave") {
+				Session::Leave();
+				return "left";
+			}
+			if (args.size() == 1 && args[0] == "stophost") {
+				Session::StopHosting();
+				return "stopped hosting";
+			}
+			if (args.size() == 1 && args[0] == "host") {
+				const auto error = Session::StartHosting();
+				return error.empty() ? "hosting" : "error: " + error;
+			}
 			return Session::Describe();
 		}
 
-		// mods [ask]: our mods compared with the host's, as far as known (ask: asks the host for its list again).
+		// mods [ask | forms [formHex]]: our mods compared with the host's, as far as known (ask: asks the host for its list again;
+		// forms: our form IDs against the session's plugin table).
 		std::string Mods(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -2109,7 +2550,17 @@ namespace DevCommands
 				}
 				return "error: not in a session we joined";
 			}
+			// mods forms [formHex]: our form IDs against the session's plugin table, and one ID both ways.
+			if (!args.empty() && args[0] == "forms") {
+				return Session::DescribeForms(args.size() > 1 ? ParseHex(args[1]) : std::nullopt);
+			}
 			return Session::DescribeMods();
+		}
+
+		// hostctl: the host controls' state as our server last told it (lock, password set, bans by alias).
+		std::string HostCtl(std::string_view)
+		{
+			return Session::DescribeHostControls();
 		}
 
 		// hotkeys: why a hotkey may do nothing (focus, menu mode, chords, each key's state).
@@ -2312,6 +2763,26 @@ namespace DevCommands
 				return "error: the menu watch isn't running (it starts once the game's data is loaded, with the dev channel on)";
 			}
 			return MenuWatch::Describe();
+		}
+
+		// menuicons: each friend's menu (their status), the spot over their stand-in's head, the engine's projection of it
+		// and where its icon goes on the HUD (MenuIcons); read only.
+		std::string MenuIconsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (!args.empty() && args[0] == "layer") {
+				if (args.size() < 3) {
+					return "error: usage: menuicons layer <path> <class>";
+				}
+				return MenuIcons::Layer(std::string(args[1]), std::string(args[2]));
+			}
+			if (!args.empty() && args[0] == "opt") {
+				if (args.size() < 3) {
+					return "error: usage: menuicons opt scale|readd|remake 0|1";
+				}
+				return MenuIcons::Opt(std::string(args[1]), args[2] == "1" || args[2] == "on");
+			}
+			return MenuIcons::Probe() + " " + MenuIcons::Describe();
 		}
 
 		// input <userEvent> [hold=<ms>] [device=key|mouse|pad] [id=<hex>]: hands a button press to the game's
@@ -2601,7 +3072,13 @@ namespace DevCommands
 				if (!MenuWatch::IsOpen("WorkshopMenu"sv)) {
 					return "error: not in workshop mode";
 				}
-				RE::Workshop::SetSelectedEditItem(ref->GetHandle());
+				// The game takes the handle by value, which for a class with its own copy the compiler hands over as
+				// a pointer to a copy: the library's by-value declaration put the handle itself where the pointer
+				// goes, and the game read memory at the handle's value (it crashed selecting a generator).
+				using SelectFn = void (*)(const RE::ObjectRefHandle*);
+				static REL::Relocation<SelectFn> select{ RE::ID::Workshop::SetSelectedEditItem };
+				const auto handle = ref->GetHandle();
+				select(&handle);
 				if (args[0] == "select") {
 					return std::format("selected {:08X}", ref->GetFormID());
 				}
@@ -2741,12 +3218,40 @@ namespace DevCommands
 		std::uint32_t                         poisonId = 0;
 		std::chrono::steady_clock::time_point poisonDisabledAt{};
 
+		// The fade guard (FadeWatch): its state; "in" fades the screen back in; "stuck" fades it out to stay, as the
+		// session's doing, for the guard to fade back in after FadeGuard::STUCK_AFTER of play.
+		std::string FadeCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			if (args.empty()) {
+				return std::format("{} faderMenu={}", FadeWatch::Describe(), OpenMenus::Open(OpenMenus::Menu::kFader));
+			}
+			if (args[0] == "in") {
+				return FadeWatch::FadeIn() ? "queued" : "error: no script VM";
+			}
+			if (args[0] == "stuck") {
+				FadeWatch::Arm("faded the screen out to stay (dev command)");
+				return FadeWatch::FadeOutAndStay() ? "queued" : "error: no script VM";
+			}
+			return "error: fade [in | stuck]";
+		}
+
 		// saveguard [strays | rtti <global offset> | exclude <ref> | poison <ref> <save name>]
 		// strays lists each stray with whose it is and what a save and a load would do with it.
 		// rtti names the class of the object a global of the game's points to (checks an address).
 		// poison deletes a created reference and saves at once, the way a stand-in reached saves: the first
 		// call disables it, a call a second or more later deletes it and saves. (Disabling and deleting in
 		// one frame crashed a physics job still handling its collision; see RemotePlayers' graveyard.)
+		std::string ObjectsCommand(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return MovedObjects::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -2819,6 +3324,7 @@ namespace DevCommands
 			Entry{ "mouse", Mouse },
 			Entry{ "click", Click },
 			Entry{ "pa", PowerArmorInfo },
+			Entry{ "paframes", PowerArmorFrames },
 			Entry{ "findnpc", FindNpc },
 			Entry{ "findref", FindRef },
 			Entry{ "spawn", Spawn },
@@ -2833,15 +3339,22 @@ namespace DevCommands
 			Entry{ "quests", Quests },
 			Entry{ "objectives", Objectives },
 			Entry{ "stages", Stages },
+			Entry{ "aliases", Aliases },
+			Entry{ "global", Global },
 			Entry{ "combat", Combat },
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "inventory", Inventory },
 			Entry{ "contents", Contents },
+			Entry{ "drops", DropsList },
+			Entry{ "dropitem", DropItem },
+			Entry{ "activate", ActivateCommand },
+			Entry{ "itemmods", ItemModsCommand },
 			Entry{ "refresh3d", Refresh3D },
 			Entry{ "handthrowable", HandThrowableCommand },
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
+			Entry{ "gate", Gate },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
@@ -2860,6 +3373,7 @@ namespace DevCommands
 			Entry{ "menu", Menu },
 			Entry{ "mpmenu", MpMenu },
 			Entry{ "mods", Mods },
+			Entry{ "hostctl", HostCtl },
 			Entry{ "god", God },
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
@@ -2871,12 +3385,14 @@ namespace DevCommands
 			Entry{ "forms", Forms },
 			Entry{ "refs", Refs },
 			Entry{ "trace", TraceCmd },
+			Entry{ "netsim", NetSimCmd },
 			Entry{ "fuzz", Fuzz },
 			Entry{ "named", Named },
 			Entry{ "lights", Lights },
 			Entry{ "gfx", Gfx },
 			Entry{ "gfxset", GfxSet },
 			Entry{ "weapsound", WeapSound },
+			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "gs", GameSettings },
 			Entry{ "graph", Graph },
@@ -2894,11 +3410,18 @@ namespace DevCommands
 			Entry{ "mirror", Mirror },
 			Entry{ "wsreport", WsReport },
 			Entry{ "saveguard", SaveGuardCommand },
+			Entry{ "fade", FadeCommand },
 			Entry{ "wsbenches", WsBenches },
+			Entry{ "wsinfo", WsInfo },
+			Entry{ "wswire", WsWire },
+			Entry{ "wsgrid", WsGrid },
+			Entry{ "wspower", WsPower },
 			Entry{ "menus", Menus },
+			Entry{ "menuicons", MenuIconsCommand },
 			Entry{ "input", Input },
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },
+			Entry{ "objects", ObjectsCommand },
 		};
 	}
 

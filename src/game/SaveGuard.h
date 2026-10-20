@@ -38,6 +38,10 @@ namespace SaveGuard
 	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is.
 	void Forget(std::uint32_t a_id);
 
+	// A reference of ours (Track) the player took into their inventory (a copy of a friend's dropped item): not ours any
+	// more, and its id may soon name an item of the game's (SaveStrays::Book::Release).
+	void Release(std::uint32_t a_id);
+
 	// Once a frame.
 	void Frame();
 

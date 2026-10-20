@@ -1,7 +1,8 @@
 #pragma once
 
 // Friends on the compass: a colored shape per player in the same cell or worldspace, drawn into
-// the HUD's compass widget (Scaleform), clamped to the edge when they're behind you.
+// the HUD's compass widget (Scaleform), clamped to the edge when they're behind you; and each player's ping
+// (Party, PingRules), a ring in their color.
 namespace Compass
 {
 	// Works out where each friend is; the markers (and the HUD messages) are written from inside the HUD's

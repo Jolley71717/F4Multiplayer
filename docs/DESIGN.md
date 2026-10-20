@@ -34,7 +34,8 @@
   are registered with `SteamAPI_RegisterCallback` and dispatched by the game's own
   `SteamAPI_RunCallbacks`.
 - **Server:** `common/Server.cpp`, one thread. Joining is checked for protocol version, max players
-  (default 4), an optional password and a load-order hash that must match the players already in.
+  (default 4), an optional password and, for a hello without a plugin list, a load-order hash that must match the
+  session's (with lists, any load order gets in: see Form IDs across load orders).
   Connections that don't say Hello within 5 s are dropped. Each player has rate budgets (60 states/s,
   60 NPC state batches/s, 500 events/s).
   What a player may cost the others over a whole run is kept apart from their connection, by Steam ID
@@ -138,6 +139,18 @@
   answered, if its 3D was built meanwhile) and removes them (RemoveAllMorphs) when the stand-in goes,
   since LooksMenu keeps them by form ID and the next runtime reference may get that ID. Without
   LooksMenu on either side nothing is called (`src/game/BodyMorphs.h` holds the rules, tested).
+  Since protocol 39 the face carries LooksMenu's overlays too (tattoos, face and body paint; at most
+  64, template IDs up to 128 characters, placement within +-10, tint and alpha a byte each as LooksMenu
+  saves them): read in the same round as the slider names with its Papyrus script Overlays (GetAll,
+  each an `Overlays#Entry` struct), added to each new stand-in (Add, one struct per overlay; Add
+  refuses a template from an overlay mod the receiver lacks), laid on with Update once every add is
+  answered, and removed with RemoveAll when the stand-in goes (`src/game/LooksOverlays.h`, tested).
+  A LooksMenu skin override needs no LooksMenu call: LooksMenu writes it onto the base NPC (its skin
+  armor, face texture set and head parts), so `Face::Read` carries the skin armor beside the head
+  parts and complexion it already carried, and the copy gets it (with the body, so with or without
+  the friend's own head). LooksMenu's sculpting is the vanilla face data, carried since protocol 32.
+  Not carried: F4EE's node transforms, which it offers no script or plugin call for. None of this
+  has been tried live: the rig has no LooksMenu (the calls follow F4EE's published source).
 - **Remote players:** `src/game/RemotePlayers.cpp` spawns an NPC actor per remote player when the
   player is in the same interior or within about 9000 units outside. It renders a friend in the past
   and blends between received states. Each state carries the sender's clock (protocol 29), moved onto
@@ -351,12 +364,81 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   `theirs=` counts shots sounded with the shooter's mapping, `kssm=` is the last one played (with
   `(loop)` for a looping, automatic sound); `weapsound <actor>` shows a gun's mapping in either game.
   (Papyrus `Sound.Play` crashed the VM when called from here.)
-- Not yet: muzzle flash. `TaskQueueInterface::QueueWeaponFire` would bring it but only works for
-  the player.
+- Muzzle flash (src/game/MuzzleFlash.cpp): the engine shows it by itself. At the first replayed shot it
+  makes its own flash object on the stand-in's `EquippedWeaponData` (`muzzleFlash`: a clone of the projectile's
+  muzzle flash model under the gun's ProjectileNode, and a point light) and shows it for a few frames whenever
+  the graph takes "attackStart", like a real shot; no projectile is needed (checked on the rig for pistols,
+  shotguns, the laser rifle, the SMG and the minigun, both ways). `muzzle watch <actor>` samples that object
+  every frame. A replay the graph refuses gets no animation and so no flash: for it the flash model is applied
+  at the muzzle as a temporary art effect (`ApplyArtObject` with a runtime art object of form ID 0, so a save
+  that catches one loads it as nothing), forced to full fade every frame (the clone nested in the actor's 3D
+  stays at fade 0 otherwise) and ended at the projectile's flash time. MuzzleFlashBook keeps one flash per
+  shooter (an automatic gun's next shot keeps it up), 50 ms between two, and 12 at once. `muzzle mode always`
+  shows it on every shot, to try it; the status line's `flash=` counts both.
+
+## Form IDs across load orders (common/FormIds.h, common/FormTranslate.h)
+
+Everything shared is named by form ID, and a form ID's top byte is its plugin's place in the load
+order of the game that loaded it: among the full plugins (`00` to `FD`), or, after `FE`, among the
+light ones (12 bits of place, 12 of form). Two games with other mods, or the same mods in another
+order, give one mod's NPC two IDs. Until protocol 35 the server let in only a joiner whose load
+order hashed like the session's. Since protocol 36 every form ID on the wire is in **the session's
+numbering** instead, and each game translates at its edge.
+
+- **The session's plugin table** (`kPluginTable`, `Protocol::PluginTable`) is the host's load order
+  (a dedicated server's first arrival's), as hellos lay one out: the full plugins,
+  `Protocol::LIGHT_PLUGINS`, the light ones. A joiner's plugins the table lacks are added after the
+  rest of their kind (`FormIds::Extend`), so an ID the table gave stays what it was for everyone
+  already in, and for the saved session. The server sends the table to each joiner before its
+  welcome (after the `kLoadOrder` list a differing joiner is sent), and to everyone when a joiner
+  makes it grow. It is capped by what IDs can name (254 full, 4096 light) and by the wire's list
+  (`MAX_PLUGINS`): past that a joiner's plugin has no ID in the session.
+- **The mapper** (`FormIds::Mapper`) pairs our load order (the list our hello sent) with the table,
+  by plugin file name in any case. It works per plugin, so a reorder, a light plugin in another
+  light place, and a plugin light in one game and full in the other (its forms past `FFF` have no
+  light ID) all map. 0 and runtime forms (`FF`, which includes spawn ids) are nobody's plugin's
+  and pass as they are. With the same plugins in the same places, or before the table has come, it
+  is the identity, and nothing is decoded at all.
+- **The edge** is `Session::SendOut` and `Session::Receive` (src/net/Session.cpp): every packet we
+  send goes through `FormTranslate::Translate(kToSession)` and every packet we get through
+  `kToLocal`, before `HandlePacket` reads it. So the rest of the game, the stand-ins, NpcSync,
+  WorldSync, the ledgers, the dev commands, sees only its own IDs, and the server only the
+  session's: the server translates nothing. The one exception is the hello, which goes out before
+  the table is known: the server maps its one form ID (the appearance) from the hello's own list.
+  The dev channel's `fuzz` (`InjectPacket`) is read in our own numbering, untranslated.
+- **Every message type is in `Translate`'s switch**, and a type added to the enum without a case
+  stops the build (C4062 made an error there; gcc's `-Wswitch`), so a new message cannot carry raw
+  IDs by mistake. A test sends one of every message to the session's numbering through a mapper that
+  moves every plugin, and back, and gets the same bytes (tests/FormTranslateTests.cpp).
+- **What has no ID on the other side is skipped, never guessed.** A message about such a form is
+  dropped (a death, a door, a shot by a mod's NPC, a friend standing in a mod's cell); an entry of a
+  list is left out (one NPC of a batch of states, an item someone wears, a head part); a detail
+  becomes 0, which every message reads as none (a gun's sound, the weather, a hair colour, a line's
+  recording, which leaves it text only); a numbered container change keeps its number and is
+  emptied (`Protocol::IsEmpty`), so the ledger's count stays the server's while it applies nothing.
+  The log names each plugin once ("Session: forms: X is not in our game; what comes from it is
+  skipped here"), the session line counts what was skipped either way (`skippedOut`, `skippedIn`),
+  and `mods forms [formHex]` on the dev channel shows the table and an ID in both numberings.
+- **Joining.** A joiner whose load order differs is let in, sent the session's list first so its
+  game can name what differs (src/net/ModDiff.h): only the plugins one game has matter now (missing,
+  extra); a plugin in another place is listed as nothing to change. A hello without a plugin list (a
+  bot, a test tool), or a session whose first player sent none, still needs the session's hash: with
+  no lists there is nothing to translate by.
+- **The saved session** (SessionFile layout 33, 32 in the plugin table's own test builds) keeps the table as its first packet, so its IDs keep
+  their meaning whatever the host loads next: a host who reorders or adds mods carries on with the same
+  world (the new plugins are added to the table). A file of layout 29 or older, or of 30 or 31 (drops or wires alone), has no table: its IDs
+  are the load order its hash names, and only a host with that one carries on (or the one older
+  versions hashed without the texture pack); another starts fresh, as before.
+- **What it does not do.** It cannot share what one game lacks: a mod's NPC only the host has is
+  not there for a friend without the mod, and its fights, loot and quest stages are skipped for
+  them. It compares names, not versions: two versions of one plugin share IDs as one plugin. Records a
+  plugin *changes* in another plugin (an override of a vanilla NPC's gear) translate as that vanilla
+  form, so they are shared as each game has it. Messages added by branches built before protocol 36
+  need their case in `Translate` (the build says which).
 
 ## Shared world (src/game/WorldSync.cpp)
 
-References are identified by form ID, which matches across players because the load order must match.
+References are identified by form ID, in the session's numbering (see Form IDs across load orders above).
 Never shared: runtime-created references (0xFF......) and the player (0x14), which differ per game
 (runtime NPCs are shared as spawns under ids of their own: see Spawns)
 (`Protocol::IsShareableRef`, checked by the server and again by every receiver). Receivers also check
@@ -377,11 +459,15 @@ tests play two and three games through it against a real server (tests/LootGame.
 
 Weapons and armor are per player because a move carries only the base form: another game would get a
 plain copy, and `removeitem` could take a legendary. So a friend's looted gun stays on your copy of the
-corpse. A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
+corpse. (Players give each other weapons and armor by dropping them: see Giving items.) A vendor's chest is any faction's merchant container; moves while the barter menu is open, and
 for a second after, are trades and never reported. A corpse is shared once the session says it died: a
 change for an NPC still alive in this game waits for its kill, up to 10 minutes in the world, counted
 for all of that NPC's changes together (at most 4096 changes wait; when full, one waiting for a living
-NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). Loose
+NPC makes room before a friend's change for a chest not loaded yet is dropped: `pendingFull=`). A chest
+waits too while this game holds it in no cell at all: one of a place we left lately stays in memory that
+way (Red Rocket's desk and cabinets, seen from Diamond City), and its changes go in when we come back. A
+change to a chest our player has open goes in at once: the container menu shows the new contents, and
+taking what a friend took gets nothing (tried both ways at Red Rocket, 2026-10-18). Loose
 items picked up from the world are the same placed reference in every game, so only the personal ones
 stay (a loose weapon is taken from the friend's world as it is). The status line counts what each end
 kept: `weaponArmor=`, `vendor=`, `barter=`, `perPlayer=`, `notYetDead=`, `unsupported=` (both ends),
@@ -416,12 +502,97 @@ menu) and to loaded references; everything else waits and is retried.
 | Feature | How |
 |---|---|
 | Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
-| Health | TESHitEvent (cause = player) -> health as fraction of max; receivers apply via damage modifier |
+| Health | The game that runs an NPC reports its health (a fraction of max) after its hits and whenever it changes by anything else, at most every 250 ms (`HealthShare`: a fire, a burn, poison); receivers set their copy to it. A hit on a copy goes as the damage it did (`kReportDamage`, protocol 40: `CopyHealth::Book::TakeOurs`), which the game that runs the NPC takes off; only it applies it. Before, a copy reported its own health, which healed off the NPC whatever its game had taken since the copy last heard (a Molotov's fire) |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref, only while it is in the world (a persistent item's ref stays itself in the inventory that took it, ours too: OwnGear kTakeLoose). One the engine names an inventory for (ExtraReferenceHandles: the local player's, a container's, an NPC's) is left there and the pickup dropped; one in no cell and no inventory (being loaded or moved) stays pending and is tried again for 30 s (OwnGear::PICKUP_WAIT), then dropped |
 | The player's own gear | every inventory or equipment change the session makes for a friend's game is judged where it is made (src/game/OwnGear.h, Equipment::MayChange): stand-in dressing only on a stand-in, an NPC copy's only on a mirrored NPC, a frame emptied only if this game placed it and our player isn't in it, a pickup only off the world, loot never onto a stand-in, and none of them ever onto the local player (refused, logged, counted in `net status` as ownGear ourPlayer=). The counts start again with each session's welcome; the log takes up to 100 alarming refusals (our player, what they hold, the wrong actor, someone's own frame) and, on a budget of their own, 50 benign ones (gone, in an inventory, in no cell), so a join's catch-up can't hide the first. `inventory` (dev, read only) prints the player's stack and item counts, a checksum of every stack, the Pip-Boy (worn or not), caps and what is equipped, to compare before and after a join |
-| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons). A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm and DLCCoast.esm (following the stages each one sets): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units, else skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; a scene holds them back, but one of a quest with stages waiting only for 30 s. One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
-| Doors and locks | refs the player activated are watched for 60 s; open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
+| Quest stages | poll each quest's done stages (`TESQuest::stages`, a stage's done bit; src/game/QuestStageLayout.h) twice a second for side quests (type 7), and the main story and faction quests (types 1-5, 8+, plus the type-0 faction finales Inst305, BoS302, BoS304, and the game's dialogue quests: type 0, no objectives, named Dialogue<Place> after any DLCnn prefix, src/game/QuestFilter.h; Diamond City's entrance scene opens the gate at DialogueDiamondCityEntrance 32) only with `sStory = shared` (Welcome::sharedStory); never misc, never the other type-0 quests (random encounters, companions, tutorials, dungeons). A dialogue quest has no objective to start it: it counts as started once running or with stages done, only a stage done here is past it (its stages aren't in order: a game at the gate has 400 without 32), and once it ran and stopped it is over (the rest of it from friends is dropped; starting it again would play it over); its name is the editor's, so no "caught up" or "completed" notice names it. Every newly done stage is reported, ascending, not just the current one: a stage whose script moves the quest on at once (MQ104 210) is never current. 5 s settle after load, only of quests the reporter has started. Receivers queue them (src/game/StageLog.h), only while in a session (dropped when it ends, except a lock's quests: those are set after leaving too, with the story the player's own again, so a teleport begun in the session finishes), skipping indexes the quest doesn't have, and `setstage` them in the order they came: per quest the lowest waiting stage above their own, the next once it reads done (5 s timeout), up to 4 per poll, once they have started the quest too: an objective has been shown (`BGSQuestObjective::state` not dormant). Running isn't enough: a new game runs many side quests in the background from the start. Until then the stage waits (another quest's stage may start it: MQ104 210 starts MQ105) without holding up other quests. In a session that wait is only for a quest the session doesn't share: a shared quest not started here is started by the first of its stages, once every stage that came before it is set and START_GRACE after the last one read done, and one that ran here and was stopped is never started (StageLog::Quest::kStart, Wait::kStopped; since 0.8.6). The host's game reports every done stage of the shared quests its player has started when its own server welcomes it, so a joiner is caught up to the host's story; a joiner's own progress from before joining is never reported. A quest is done with once completed and stopped (many complete at a stage and run on: MQ102 65). A stage reads done before Papyrus runs its fragment, so after a stage whose fragment waits (Utility.Wait, moving the player) nothing that came after it is set for that long plus 1 s. src/game/StageRules.h, generated from the QF_ fragments of Fallout4.esm and DLCCoast.esm (following the stages each one sets): stages that move the player (MoveTo, a door they are made to use, FadeOutGame, an InputEnableLayer) are set only when live (came in the last 30 s, not from the session state) and the friend who did it (the server stamps the reporter's id on kQuestStage; a WorldState carries none) is within 6000 units, else skipped, unless they also start another shared quest or award an achievement (MQ206 500 and 1000, the MQ206 faction 1400/1500): then after a 10 s HUD warning, outside combat; MQ206 500 and the 1400s (controls off) only once 1200 (controls on) is waiting too, and until then only their own quest waits (Verdict::kQuestWaits), not what came after it. After a lock stage is set, its quest's stages go first, without a combat hold or another warning and not held up by other quests', are kept if the session ends, and 1200 is set outright once they have done nothing (none being set, no script of theirs running on) for 90 s of unpaused play (StageLog::Queue::Lock). The release is looked for before each poll of the queue: after leaving, once 1200 is done the session's other waiting stages go, so nothing past 1200 is set in the solo game, nor left for the next session. While the game is paused (`UI::menuMode`, a loading screen) nothing is set and holds and timeouts don't run down. Stages that take caps or ordinary items from the player (MQ105 177, FFDiamondCity10 40, ...), and the dialogue quests' payments and sales (DialogueBunkerHill 210, DialogueVault81 5 and 645, DialogueDiamondCity 70, DLC03DialogueFarHarbor 90), are never set (tools/questscan.ps1 lists the stages whose own Fragment_Stage_ function calls RemoveItem, RemoveAllItems, SellItem, RemoveItemByComponent, UnequipItem, UnequipItemSlot or UnequipAll directly on Game.GetPlayer() or a PlayerRef property: of the shared quests only quest items, caps and chems; RemoveAllItems only in MQ101, the opening, and DN019JoinCult, both misc quests and never shared. It does not see such calls made through the quest's script (kmyQuest), a player alias (Alias_Player.GetRef()), a scene, a dialogue line or another script a stage starts, nor a shared stage setting a stage of another quest, so it is no proof that no shared stage takes the player's gear; src/game/StageRules.h); with `sStory = own`, side-quest stages that move a story or faction quest on (Min01 220/1500/2000, FFGoodneighbor01 100) aren't either. Caught-up stages wait during combat and 5 s after (at most 60 s), so Party doesn't take kill XP for quest XP. Never during dialogue; a scene holds them back, but one of a quest with stages waiting only for 30 s. One "Caught up" notice for many quests. Every poll in a shared-story session, a player whose MQ104 is past 210 without 210 done and whose MQ105 never started (left so by the old highest-stage-only sync, or by catching up from its session file) gets `setstage 229E6 10`, judged as MQ105's stage 0 (it moves the player): after the 10 s warning, outside combat, not in a conversation or a menu. Stage reports made while not welcomed (before the welcome, during a reconnect) are kept (the first 1024: what came first starts what came after), the story's and factions' too although Story::Shared is false while the connection is down (Session::OnDisconnected), marked so they go only if the welcome shares the story; they are sent once welcomed, at most 200 a second, oldest first (the server drops a player's events past 500 a second, all kinds together, and a stage is reported only once) (StageLog::Outbox). Ones made in no session (playing alone after leaving or stopping hosting), kept for a server the player then left for another (an invite accepted while the last host was being retried: Session::SwitchServer calls QuestSync::OnServerChanged), or kept through 5 minutes of not being welcomed (the host quit and the player plays on alone) are dropped, so a session joined later doesn't take solo progress for a friend's; loading a save drops them. Reporting doesn't settle again after a reconnect. A reconnect drops the waiting stages and what came live (OnSessionEnded): a friend's step that moves the player and was still waiting (a fight, a conversation) comes back in the WorldState as caught up, not live, and is skipped even beside that friend. Within a quest stages are set in stage order, not in the order they were done: one done after a higher one is already settled here and dropped (MQ104's 17 sets 12: 17's own script sets 12 here too). The opening's stages (MQ102 below 10, all of DialogueVault111) are never reported, baselined or set, and while any game in the session is in the opening no stage that moves the player is set, its quest waiting (see The opening); the endings' fades and slides (MQ302 850/855, MQ00 50/60, Inst308 30) count as moving the player. A fade the session caused that nothing fades back in is faded in after 20 s of play (see Fades). Each load logs whether the game awards achievements (`TESDataHandler::CheckModsLoaded`) and Steam's NEW_ACHIEVEMENT_n_0 list; new unlocks are logged after stages are set (src/game/Achievements.cpp) |
+| Doors and locks | refs the player activated are watched for 60 s, and what they are linked to (a terminal's door: an entry still holding the target's form ID is looked up by it, a pointer is read guarded and taken only if the form its own ID names is itself, `LinkedRefs.h`); open/lock changes -> RefState; receivers `BGSOpenCloseForm::SetOpenState` / `REFR_LOCK::SetLocked` |
+
+### Giving items (src/game/Drops.cpp, src/game/DropBook.h, common/DropStore.h)
+
+Container loot can't hand a friend an item: a weapon or armor put in a chest stays in the giver's game
+(above), workbench storage is each player's, and what is shared there moves by base form and count with
+no one deciding who got it, so two players taking at once both get it. A dropped item is a reference
+the giver's game made at runtime (0xFF......), which no other game has, so it was never reported at all.
+So players give each other items by dropping them, and the server decides who has each one:
+
+- The giver drops an item (the Pip-Boy's Drop). The container event (old = the player, new = nothing)
+  names the reference it became, or, with no reference named and the Pip-Boy or the console open, it is
+  the newest runtime reference of that item near the player not seen before, only when the player's count of
+  that base fell by just what the events said left since the frame before and no equip event of it came
+  (food eaten or a stim used in the Pip-Boy is one: `DropBook::MayScan`, `notScanned=`), and never a reference
+  another system keeps (SaveGuard's, Spawns'). Once it has come to rest
+  (`DropBook::Settled`: at least 1.5 s, then still for 0.5 s, at most 5 s) it is reported (`kReportDrop`)
+  with a random number of the giver's game (the nonce), its mods and template combination (read as
+  Equipment reads worn gear, so a legendary effect travels as the mod it is), a power armor piece's
+  condition, a name the player gave it, and where it lies.
+- Not given, staying on the giver's ground in their game only (said once a session): keys, notes,
+  holotapes, books, bobbleheads, magazines (everyone collects their own), quest items, an item whose base
+  or a mod was made at runtime (no other game has it: `DropBook::Judge`), more than one reference holds.
+  Caps can't be dropped in Fallout 4: they still go through a container (shared as before).
+- The server numbers it and offers it to the giver's game alone (`kDropPlaced`), or refuses it past the
+  session's share (1024 lying about or offered, 256 a player): then the giver alone hears it with no
+  number, and keeps the item as an ordinary one. On the offer the giver's game swaps its item for a copy
+  like everyone's, records the swap (the nonce: `made`) and says so (`kClaimDrop` kPlaced); only then does
+  the server tell the other games, so nobody can take an item still in the giver's world. It tells the
+  giver's game too: until that comes the drop is unconfirmed (`DropBook::Unconfirmed`, `unconfirmed=`), and
+  a giver who leaves the session first (the link dropped with their kPlaced, whose offer the server forgets
+  as they leave) gets the item back in their world as an ordinary one, where it lay or else in their
+  inventory, and their record no longer says it left (`restored=`). A giver who
+  picked the item up again before the offer came says kKept, and it never lay anywhere. An offer is never
+  taken, listed or saved; one not answered goes when the giver leaves, and the giver's next record
+  settles one a load overtook (its nonce in `made`: laid down; not: gone). Each game places its copy where the item
+  lies while its player is within 5000 units (removed past 7000): the same base, built with the item's
+  mods as Equipment builds a stand-in's (or the base's default combination for a plain one), the count,
+  condition and name. A game that lacks the base or one of its mods places none (an item with a mod
+  this game hasn't would be another item).
+- A copy is placed disabled; its activation is blocked by script (`ObjectReference.BlockActivation`) and
+  it is shown once the VM says the call has run (its stack callback); one not blocked within 5 s is
+  removed and placed again (`blockLate=`). Pressing Take on it only asks the server
+  (`kClaimDrop` kTake; one claim per item until answered, again after 5 s). The server grants the first
+  claim and tells everyone who took it (`kDropGone`): the taker's game picks its copy up as the player's
+  own take (`ActivateRef` with the default processing only, which a block doesn't stop) and checks that
+  the copy left the world and the count of its base rose by the drop's count (`DropBook::JudgeTake`),
+  and SaveGuard lets go of the copy's id at once (`SaveGuard::Release`: the game hands it out again, often to
+  the next item of that base the player drops, which would otherwise read as another system's and not be given);
+  every other game removes its copy. A later claim is answered with who has it. A take the game couldn't
+  finish in four tries is given back (`kGiveBack`) and lies there again for everyone; its copy goes and
+  a fresh one is placed. Taking your own item back is the same claim. Nothing is ever added to the local
+  player's inventory on a friend's behalf (OwnGear `kDropCopy`: only references this game made, loose in
+  the world); one thing is taken from it: a copy picked up past its block (`unblocked=`) whose claim
+  someone else won goes out of the player's inventory again (the stack with its mods and name;
+  `takenBack=`, else `dupRisk=`).
+- Reports and claims are not counted against the server's event budget (a dropped one would leave an
+  item in two inventories or none); the list answering a record goes after a welcome and then at most
+  every 10 s (up to ~385 KB).
+- Copies are never saved: they go before every save and load (with the stand-ins) and are placed again.
+  What a world holds of the transfers is the co-save record `DROP` (v1, `DropBook::Record`): per session
+  (the last 8), the nonces of the drops whose item left it and the drop numbers it took in. It goes to
+  the server after every welcome and after a load that stays in the session (`kDropRecord`, answered at
+  most 4 a second), and the server makes the session agree with it (`DropStore::Reconcile`): what the world
+  holds (an item it took, or its own drop whose nonce it lacks: a save from before the drop) is that
+  player's and lies nowhere; what the book had them hold but the world lacks (a save from before the take,
+  or after a drop it had withdrawn) is laid down again for everyone. Each load is judged on its own, so
+  loading the wrong save first and the right one after leaves the book as the right one says.
+  A loaded save without an entry for the session it is played in gets a fresh one, so the transfers
+  made after the load are recorded. The answer is the list of what lies about (`kDropList`). A record of another session counts as
+  empty. What lies about and who took what is kept in the session file (layout 33; 30 in the drops' own test builds), so it survives the
+  host's server restarting.
+- A weapon or armor put in a container tells the player once a session that friends won't see it there
+  and to drop it near them instead.
+
+Left open, counted in the log and `net status` (`drops:`): a giver who reloads a save from before a drop
+a friend already took has the item again (the server can't take it back from the friend's inventory:
+`dupRisk` on the server's log); a giver whose kPlaced reached the server but who left before hearing it
+laid down gets the item back too, and has it twice only if a friend took it in that moment, before the
+giver's next record withdraws it (`dupRisk` again); items lying
+about are the host's session's, so they are gone if the host starts another session or loses the session
+file; a host crash between a drop and the session file's next write (it is written at once after every
+change) loses it. A world that never played the session (a new game in the same character's slot, as the
+rig's `coc` from the main menu makes) has no record of it, so it is taken to hold its player's earlier
+drops: those are withdrawn. The server trusts a game's record of its own world, as it does its container
+record.
 
 ### Catching up (join, reconnect, loading a save)
 
@@ -490,11 +661,76 @@ need their NPCs, doors and time of day as the game set them. Their game claims a
 applied once the player is out), takes no damage from friends' NPCs, gets no shared XP or map
 markers, and reports nothing. They can't teleport, and nobody can teleport to them (status flag
 `opening`). They still see friends who are in the same place. A mod that starts the game somewhere
-else skips this: the player is never in those places.
+else skips this: the player is never in those places. Untried with any such mod (dist/INSTALL.md, Alternate-start mods): a start in a cell of its own is shared from its first frame, scenes and all, and a character named there gets its ID (`BGSSaveLoadManager::currentPlayerID`) outside the opening, so a host may start hosting under the unnamed ID and restart once named (CharacterBinding: kStopHosting), and a joiner who connected first stays bound to the old ID until a load makes it leave (Tracker::Check rebinds only in the opening).
+
+## Moved objects (src/game/MovedObjects.cpp, ObjectShare.h, common/ObjectMovers.h)
+
+A loose object a player grabs with the use key (a broom, a bottle, a tire: a plugin's reference of a junk, moveable
+static, aid, ammo, book, weapon, armor, note, key or ingredient form, loaded with a body physics moves) is shared while
+held, when let go of or thrown, and where it comes to rest. Never: actors and corpses, quest items (in a quest alias),
+references made at runtime (dropped items, spawns, workshop builds: all 0xFF......), what SaveGuard keeps out of saves,
+power armor frames, and nothing in workshop mode (WorkshopSync's).
+
+- Held: our game polls `PlayerCharacter::grabbedObject` each frame. While it moves in the player's hands, its pose goes
+  15 a second (twice a second while still) as `kReportObjectHold`, unreliable, **in the holder's frame**: an offset to
+  their right, ahead and up, and its rotation turned back by the holder's heading (as a whole: a reference's angles are
+  R = Rz(z) Ry(y) Rx(x), rows its axes, and carried round by a heading d it is R Rz(d), so a tilted object's x and y
+  angles change as it turns; its angles are read from its 3D, which the reference lags behind while held). The
+  friend's game makes its copy keyframed and collide with nothing (gravity and its own physics leave it alone, and it
+  can't shove the stand-in) and draws it each frame in front of its own stand-in of the
+  holder (the stand-in's smoothed place and heading), eased towards the newest hold (time constant 60 ms). So it stays
+  in the stand-in's hands as they walk and turn, however far the stand-in is drawn from the holder's own place.
+- Let go (dropped, or let go of while turning or walking, which flings it: the game has no throw button for a
+  held object): 80 ms after the release the holder's game sends `kReportObjectRest` kLetGo, reliable, with where it left
+  their hands (world place, cell or worldspace) and its launch velocity measured over those 80 ms. The friend's copy is
+  physics again, put there and given that velocity, so it flies as it did. Once it lay still for 600 ms (or after
+  10 s), the holder's game sends kRest with where it lies; the friend's copy is put there if its own physics settled it
+  more than 1 unit or 0.02 rad away.
+- One mover at a time (`ObjectMovers::Book`): the first grab wins. A friend's hold of an object someone else holds is
+  refused and answered with the holder's last hold; that game turns its copy off and on again (the engine drops a grab
+  whose 3D goes) and says nothing of it until its player lets go. After a let-go the rest is the thrower's to report
+  for 12 s of flight and 3 s after it rested, but a friend may grab it meanwhile (handing it over). A holder who stops
+  sending for 2 s, or leaves, holds it no more.
+- Knocked about: four times a second our game looks at up to 256 loose objects within 1500 units. One that moved with no
+  hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
+  the last 3 s: TESHitEvent) and a friend is within 6000 units, 8 at once and 3 a second at most. What a friend's move
+  put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+- Bandwidth: holds 15 a second of one object while a player holds it (about 40 bytes each); rests a few a second.
+  Server: 20 holds a second a player, and a rest budget of 24, 6 a second, kept across rejoining.
+- HavokGuard's rules hold: every pose written is finite and in the world (`ObjectShare::Writable`), velocities are
+  capped at 5000 units a second, and physics is only touched on the main thread. Before a save or a load, and when the
+  session ends, every copy held still for a friend is physics again.
+- `net status` has an `objects:` part (holds sent/applied, let-gos, rests, knocks, refused grabs, bad poses); the dev
+  channel's `objects` prints it, `objects grab` what our player holds, `objects probe <ref>` a reference's place,
+  angles, 3D transform and bodies.
+
+The opening's own quest stages are every player's, never shared (StageRules::IsOpening): MQ102 below 10
+(10 is set by the trigger at the top of the vault's lift, 12 s after it fades the screen back in) and
+all of DialogueVault111, a dialogue quest whose stages aren't in order, so each game that went through
+the vault has a different set of them. Set from a friend's game once the player was out, its 40
+activates the vault's cryopod with the player and its 98 and 100 start the mirror and lift scenes, whose
+script fades the screen to black and leaves it so until the trigger at the top fades it in. They are not
+reported, not part of the host's baseline, and dropped if they come anyway (an older version's report,
+a session file). While any game in the session is in the opening (its own, or a friend's status flag),
+no friend's stage that moves the player is set (Verdict::kOpeningWaits): only that quest waits.
+
+### Fades (src/game/FadeWatch.cpp, FadeGuard.h)
+
+The game's quest scripts fade the screen out and leave it so (`Game.FadeOutGame` with `abStayFaded`) until
+a later stage, a trigger or a timer of theirs fades it back in; the plugin itself never fades. A stage
+the session sets from a friend's game, or a teleport to a friend, can start such a fade where nothing will
+end it. So for 15 s of play after the session sets a stage here (`setstage`, MQ105's repair, a lock's
+release) or moves the player, a fade that comes up (FaderMenu open, from OpenMenus) is the session's, as
+is one already up then; one that stays up 20 s of play is faded back in
+(`Game.FadeOutGame(false, true, 0, 1, false)`), once more 20 s later if that didn't take, then left.
+Play leaves out loading screens, the pause menu, the Pip-Boy, the console and the opening (the vault's
+lift holds the screen black on purpose), and a frame counts at most 250 ms. A fade the session had no
+hand in is logged after 30 s of play and left to the game; one up 5 s or more is logged when it goes.
+Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the session's, to test it).
 
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
-- Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor):
+- Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor, menu):
   sent when it changes (at most 4/s) and every 2 s; the server keeps the latest for newcomers.
   Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
   armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
@@ -537,6 +773,22 @@ else skips this: the player is never in those places.
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
+- Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
+  of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
+  another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The
+  receiver adds "[Pip-Boy]" or "[in a menu]" to the friend's name tag. While the friend is in the Pip-Boy, the
+  stand-in checks its wrist (`IdlePipboyExamineMale`/`Female`, the human graph's own idle; NPCs have no third-person
+  "Pip-Boy up" pose to hold), again every 6 s, and `IdleStop` ends it when they close the Pip-Boy mid-way. Not in
+  furniture, power armor, down or moving. The Pip-Boy itself (`Pipboy` 00021B3B) is worn like any other gear the
+  friend's game reports: the rig showed it on the left forearm of both stand-ins.
+  An icon over the stand-in's head (a Pip-Boy, two pause bars, or a bubble with three dots), drawn on the HUD from its
+  own advance like the compass markers, is written but off (`bMenuIcons`, not in the shipped ini): on the rig the HUD
+  showed it only in part, or where it was first drawn, while the values read back from the movie were right. The HUD
+  seems to redraw only what the game itself changed: a shape made and moved from the plugin showed, if at all, only
+  near the middle of the screen, whether it was in a layer of its own, straight in the root, in the
+  center group or the quest markers' base, scaled or drawn at its size, added again or made anew on each move, or
+  drawn into the parent's own graphics. The compass markers likely show because the game redraws the compass every frame.
+  `menuicons layer` and `menuicons opt` (DEV-CHANNEL.md) are there to try the next idea.
 - Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
   it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has
@@ -694,9 +946,76 @@ as НЕЙТ ВОЛКОВ), and a CJK name as one box per character (内特·山�
 Chinese or Japanese game's own font should draw it. Emoji are in no game font. A player who wants CJK in an English
 game can map a font with its glyphs in `fontconfig.txt` (a font mod).
 
+## Settlement power (src/game/WorkshopPower.h, WorkshopSync.cpp)
+
+A friend's piece in our game is a copy (`WorkshopSync`): a plain reference of the same object, deleted when
+the session ends or its builder scraps it. Two things follow for power.
+
+**No saved grid may name a copy.** A settlement's power grids (`Workshop::ExtraData::powerGrid`, saved with the
+workbench) name their pieces by form ID. Workshop mode used to offer Attach Wire on a copy, and wiring our light
+to a friend's generator put the copy on our grid, gave it power links and linked it to our workbench. Deleting
+the copy left the grid naming a deleted reference, whose ID the game later hands to something else: the
+classic corrupt-grid save. Three layers, outermost first:
+
+1. *Out of reach.* Every copy, made or adopted from a save, gets the default object
+   `WorkshopBlockInteractionKeyword`'s keyword (`TESObjectREFR::AddKeyword`, saved with it). Workshop mode's pick
+   test skips a reference with it, so a copy can't be wired, stored, scrapped or moved (which also ends the free
+   components from scrapping a friend's piece).
+2. *Taken off.* An audit (`WorkshopPower::Audit`) looks for copies tied into our power: named by a grid of a
+   workbench we have seen, with power links (`ExtraPowerLinks`), or linked to a workbench as a workshop item. It
+   runs every 2 s in a session and before every save (`kPreSaveGame`, on the main thread before the game writes
+   anything). One it finds is taken off through the game's own scrap path: `Workshop::ExtraData::RemoveItem`
+   (the grid), `SplineUtils::DisconnectSpline` on each wire strung to it (our wires go with it, reported
+   scrapped so the friend's copy of the wire goes too), and its workbench link cleared.
+3. *Never deleted while tied in.* Every copy's removal goes through `WorkshopPower::Remove`: taken off first if
+   it is tied in, and if the game still ties it in after that, it is switched off and kept, never deleted, so
+   the grid's ID still names it and nothing else. Copies waiting in the graveyard count as copies for the
+   audit.
+
+Rejected: stripping copies' links before every save and putting them back after. A save happens at any moment
+(autosaves, quicksaves, the game's own on sleep and fast travel); a put-back would re-run grid code mid-session,
+fire the game's power events into scripts, and would need wires that were never ours. Blocking the wire in the
+first place keeps every grid our game builds made of our own pieces.
+
+**Each builder's game says what is powered.** Cross-player wiring is not done: each player wires their own
+pieces, and both games show the result.
+
+- The builder's game tracks its own pieces with power (runtime-made workshop items of its workbenches,
+  `PowerUtils::ItemIsPowerReceiver`, `ItemIsPowerConnection` or `ItemGeneratesPower`; no wires, turrets or
+  copies), polls `Workshop::IsPowered` every 500 ms and sends what changed (`kReportWorkshopPower`, 255 entries a
+  packet). It sends all of them when someone joins, after a load, and every 30 s (a late or lost packet heals).
+- The server relays it as the sender's (`kWorkshopPower`, the event budget, sender stamped) and keeps nothing.
+- A friend's game keeps what each builder says per (builder, piece) and shows it on the copy: the graph event the
+  game's own powering sends (`Powered` / `Unpowered`: a lamp's glow, a fan turning), and the lights in its 3D
+  switched (`TESObjectLIGH::SwitchLight`, which the game calls for every piece: a construction light is an activator
+  with a light in its model). Shown again whenever the copy is drawn anew (its cell loaded
+  again, the copy made again), tried 8 times if the game doesn't take it. Not through the game's own power
+  handler: that fires `PowerOnEvent`/`PowerOffEvent`, and the scripts on a copy (a workshop object's, a radio
+  beacon's) would act on them as if the piece were ours.
+
+Trade-offs:
+
+- A real shared grid (copies as real workshop items of the receiver's workbench, the game computing power on
+  both sides) would let a friend's generator light our lamp. It needs copies to be our workshop items, which is
+  what made the corruption possible, and two games computing the same grid can disagree (destroyed generators,
+  a piece not loaded in one of them). The mirror shows exactly what the owner's game computed.
+- Pieces the settlement came with keep each game's own power (only runtime-made pieces have copies).
+- A piece whose builder is away shows its last state; nothing powers or unpowers it until they come back.
+- Turrets and other actors are not mirrored (their copies are actors in the player's faction, not powered pieces).
+
+Message: `kReportWorkshopPower` 62, `kWorkshopPower` 162: playerId (u32, stamped), a count (u8, at least 1), then
+per entry a reference (u32, runtime range only) and its state (u8, 0 or 1). Protocol 46.
+
+Dev: `wsgrid [bench]` (each grid's nodes, links and powered pieces, with any copy or deleted reference it names; for
+one workbench, the pieces too), `wspower` (counters), `wspower block on|off` (copies pickable again, to try the
+repair), `wspower audit`, `wspower copies` (each copy and whose piece it is), `wspower show <ref> on|off`,
+`wswire <from> <to>` (a wire strung as the game strings one, for the rig), `net leave` / `net stophost` (end the
+session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece=`, `powered=`, and for a copy
+`builder=`, `theirRef=` and `theirPower=`).
+
 ## Status (2026-10-09)
 
-Protocol VERSION 34 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire). The sections below record each review as it was written.
+Protocol VERSION 47 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46)). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -721,7 +1040,12 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
-| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there) | yes |
+| `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
+| `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take | yes |
+| `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
+| `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
+| `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |
+| `kReportObjectHold`, `kReportObjectRest` | the player moving the object (the first to grab it; after a let-go the thrower until it rests, or whoever grabs it next) | a plugin's reference only; a hold within 512 units of the holder, angles within 8 rad, finite; a rest in the world, in one cell or worldspace, at under 5000 units a second (none at rest); refused while another player holds it (`ObjectMovers`); 20 holds a second a player, a rest budget of 24 and 6 a second (kept across rejoining) | a loose object of ours (`Movable`: loose form type, physics body, no quest alias, nothing SaveGuard, Spawns or WorkshopSync places, not in workshop mode), within 8000 units of us in the same space; a hold drawn only within 2500 units of the holder's stand-in, a rest only within 4096 units of where our copy is; never one in our player's hands; every pose finite and in the world before it is written, velocities capped | no: a move is over in seconds, and each game's save keeps where its own copy lies |
 | `kHello.appearance` | each player, of themselves | passed on as sent | placed only when it is one of the two settlers or our own `iPuppetBaseForm`; otherwise our default | no |
 
 A friend's explosion is set off in our game whoever stands beside it, with friendly fire off too. In our
@@ -765,7 +1089,7 @@ that changes the world cannot ship without a row here.
   of an actor's equipped weapon), `playsound <sound> [flags] [ref]` (play a sound descriptor), `quests started` / `quests running:<type>`
   (quests the player has started; running quests of a type), `objectives <quest>` (stage and
   objectives with their state), `stages <quest>` (the stages done here and those from friends still
-  waiting), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
+  waiting), `aliases <quest>` (its aliases, how each is filled and what fills it here), `global <global>` (a global's value), `enemies [radius]` / `enemies like <base|any> <x> <y>` (hostile actors near the player with
   line of sight, what they fight as a session player and who runs them; this game's actor for a spawned one
   another game listed), `spawnenemies <base> <n> <radius>` (n NPCs of a base round the player, at most 16, facing it,
   each on the ground where it stands; made at runtime, so a session shares the hostile ones as it does an ambush), `status` (cell, worldspace and location), `log level info|debug`

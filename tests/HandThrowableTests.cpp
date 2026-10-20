@@ -22,7 +22,8 @@ namespace
 	constexpr std::uint32_t FRAG = 0x00A00001;     // two throwables with models of their own (made-up form IDs)
 	constexpr std::uint32_t MOLOTOV = 0x00A00002;
 
-	// A stand-in at its replayed throw's weaponAttach(2), holding a frag grenade, with the toggle on.
+	// A stand-in at its replayed throw's weaponAttach(2), holding a frag grenade, with the dev's handthrowable model on
+	// (the database's node allowed: the hand has no WeaponLeft of the engine's in these).
 	AtAttach Attaching(std::uint32_t a_throwable = FRAG)
 	{
 		AtAttach seen;
@@ -31,6 +32,17 @@ namespace
 		seen.loaded = true;
 		seen.handFound = true;
 		seen.throwable = a_throwable;
+		seen.modelFallback = true;
+		return seen;
+	}
+
+	// The same as a player has it by default (bGrenadeInHand on): the engine's own culled WeaponLeft, holding the
+	// grenade, under the hand, and the database's node not allowed.
+	AtAttach AttachingAsShipped(std::uint32_t a_throwable = FRAG)
+	{
+		auto seen = Attaching(a_throwable);
+		seen.engineHides = true;
+		seen.modelFallback = false;
 		return seen;
 	}
 
@@ -58,13 +70,52 @@ TEST("hand throwable: the throwable's attach and its release are read off the gr
 	CHECK(HandThrowable::CueOf("weaponSwing", "2") == Cue::kNone);
 }
 
-TEST("hand throwable: nothing is hung while the dev toggle is off, whatever else holds")
+TEST("hand throwable: nothing is hung while turned off, whatever else holds")
 {
 	Book book;
 	auto seen = Attaching();
 	seen.enabled = false;
 	CHECK(book.ShouldHang(STAND_IN, seen) == Skip::kOff);
 	CHECK(book.ShouldHang(STAND_IN, Attaching()) == Skip::kNone);
+}
+
+TEST("hand throwable: as shipped, the engine's own culled WeaponLeft is drawn and nothing of the database's is hung")
+{
+	Book book;
+	CHECK(book.ShouldHang(STAND_IN, AttachingAsShipped()) == Skip::kNone);
+	// No WeaponLeft to draw (or an empty one): the hand stays empty rather than getting the database's shared node.
+	auto none = AttachingAsShipped();
+	none.engineHides = false;
+	CHECK(book.ShouldHang(STAND_IN, none) == Skip::kNoEngineNode);
+	// Only the dev's handthrowable model lets that node be hung.
+	none.modelFallback = true;
+	CHECK(book.ShouldHang(STAND_IN, none) == Skip::kNone);
+	// Off (bGrenadeInHand = false, or the dev's handthrowable off), nothing is drawn either.
+	auto off = AttachingAsShipped();
+	off.enabled = false;
+	CHECK(book.ShouldHang(STAND_IN, off) == Skip::kOff);
+}
+
+TEST("hand throwable: as shipped, many throws in a row each draw and each come off, two friends at once included")
+{
+	Book book;
+	auto now = START;
+	for (int throwNo = 0; throwNo < 50; ++throwNo) {
+		CHECK(book.ShouldHang(STAND_IN, AttachingAsShipped()) == Skip::kNone);
+		book.Hung(STAND_IN, FRAG, now, false);
+		CHECK(book.ShouldHang(OTHER, AttachingAsShipped()) == Skip::kNone);
+		book.Hung(OTHER, FRAG, now, false);
+		CHECK(!book.ModelBusy(FRAG));
+		CHECK(book.Check(STAND_IN, Holding(), now + 300ms) == Drop::kKeep);
+		book.Released(STAND_IN);
+		book.Released(OTHER);
+		CHECK(book.Check(STAND_IN, Holding(), now + 500ms) == Drop::kReleased);
+		CHECK(book.Check(OTHER, Holding(), now + 500ms) == Drop::kReleased);
+		book.Forget(STAND_IN);
+		book.Forget(OTHER);
+		now += 2s;
+	}
+	CHECK(book.Size() == 0);
 }
 
 TEST("hand throwable: only a friend's throw replayed here gets the model, never an NPC's own")

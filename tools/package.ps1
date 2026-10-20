@@ -65,6 +65,8 @@ if ($problems) {
 # Text that has gone stale in what players read before.
 foreach ($doc in 'dist\INSTALL.md', 'dist\NEXUS.md') {
 	if (Select-String -LiteralPath $doc -Pattern 'F9 point' -SimpleMatch -Quiet) { throw "$doc still says the emotes are on F9 (F9 is the game's quickload)" }
+	if (Select-String -LiteralPath $doc -Pattern "face and hair aren't copied" -SimpleMatch -Quiet) { throw "$doc still says friends' faces aren't copied (they are since 0.8.9)" }
+	if (Select-String -LiteralPath $doc -Pattern 'Cyrillic or CJK' -SimpleMatch -Quiet) { throw "$doc still says Cyrillic needs the game in that language (only Japanese and Chinese do)" }
 }
 
 # The plugin's first log lines name the build: "F4Multiplayer build rc3 1a2b3c4".

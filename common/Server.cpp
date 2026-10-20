@@ -1,7 +1,11 @@
 #include "Server.h"
 
+#include "BanList.h"
+#include "DropStore.h"
 #include "EnetTransport.h"
+#include "FormIds.h"
 #include "Name.h"
+#include "ObjectMovers.h"
 #include "Protocol.h"
 #include "Redact.h"
 #include "SessionFile.h"
@@ -9,6 +13,7 @@
 #include "WorkshopStore.h"
 
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -32,6 +37,13 @@ namespace
 	constexpr int  MAX_SHOTS_PER_SECOND = 60;
 	// A player's name changes at most this often (a game looks at its name once a second; see flushRename).
 	constexpr auto RENAME_INTERVAL = std::chrono::milliseconds(500);
+	// A game says what its world holds of the items given (kDropRecord) after its welcome and each load; one sooner than
+	// this after the last waits (the latest kept) for the tick.
+	constexpr auto DROP_RECORD_INTERVAL = std::chrono::milliseconds(250);
+	// What lies in the session (kDropList, up to ~385 KB) answers the first record after a welcome, and a later one only
+	// this long after the last list: a game that loads a save already knows what lies there (each change is told to every
+	// game), so a game sending records over and over isn't sent the whole list each time.
+	constexpr auto DROP_LIST_INTERVAL = std::chrono::seconds(10);
 	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
@@ -105,13 +117,14 @@ namespace
 		int               shots = 0;
 		int               heartbeats = 0;
 		int               voiceBytes = 0;
+		int               objectHolds = 0;  // kReportObjectHold (Protocol::HOLDS_PER_SECOND)
 		float             hitDamage = 0.0f;
 
 		void Roll(Clock::time_point a_now)
 		{
 			if (a_now - start >= std::chrono::seconds(1)) {
 				start = a_now;
-				states = actorStates = events = shots = heartbeats = voiceBytes = 0;
+				states = actorStates = events = shots = heartbeats = voiceBytes = objectHolds = 0;
 				hitDamage = 0.0f;
 			}
 		}
@@ -175,6 +188,7 @@ namespace
 		Clock::time_point deathsLogged{};
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
+		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
 		Clock::time_point spawnsLogged{};
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
@@ -216,6 +230,13 @@ namespace
 		Clock::time_point          loadOrderSent{};  // when the session's load order last went to them (LOAD_ORDER_INTERVAL)
 		std::optional<std::string> pendingName;   // cleaned; waits for RENAME_INTERVAL to pass (flushRename)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
+		// Who they are, for a ban (BanList): the transport's name for them (a Steam ID; 0 over UDP), and the identity
+		// their game said hello with.
+		std::uint64_t              transportId = 0;
+		std::uint64_t              helloId = 0;
+		// Host commands they sent without being the host: refused, and logged once per BUDGET_LOG_INTERVAL.
+		Clock::time_point          hostRefusedLogged{};
+		std::size_t                hostRefused = 0;
 		// NPCs this player hurt, tried to take over, or ran until another took it over or they let it go, and when
 		// last: a kill of one another player's game runs is believed for a while after (Options::deathGrace). At most
 		// MAX_FIGHTING.
@@ -225,6 +246,9 @@ namespace
 		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
 		// a world state is sent to it.
 		bool                       worldStale = false;
+		Clock::time_point          dropRecordAt{};  // when their last kDropRecord was answered
+		std::optional<Protocol::DropRecord> heldDropRecord;  // one that came sooner than DROP_RECORD_INTERVAL after
+		std::optional<Clock::time_point>    dropListAt;      // when they were last sent what lies there (kDropList), if since their welcome
 	};
 
 	struct Ownership
@@ -308,9 +332,36 @@ void Server::Run()
 	std::uint32_t                             tick = 0;
 	std::uint32_t                             sessionContentHash = 0;  // set by the first player
 	std::vector<std::string>                  sessionPlugins;          // their load order, to name the difference
+	// The plugins that number every form ID the session holds and relays (Protocol::PluginTable, common/FormIds.h): the
+	// saved session's, or the first player's load order, with every later joiner's other plugins added after it.
+	std::vector<std::string>                  sessionTable;
 	std::uint64_t                             sessionId = NewSessionId();
-	// The password as clients can send it (the wire format caps its length).
-	const auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
+	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
+	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
+	// Host controls: nobody new joins while locked (not saved: a restart opens it again), and the host's bans.
+	bool                        locked = false;
+	BanList                     bans;
+	const std::filesystem::path banPath{ options.banFile };
+	if (!options.banFile.empty()) {
+		const auto error = bans.Load(banPath);
+		if (!error.empty()) {
+			log("server: bans: " + error);
+		}
+		if (bans.Size() > 0) {
+			log(std::format("server: {} banned player{} in {}", bans.Size(), bans.Size() == 1 ? "" : "s", banPath.filename().string()));
+		}
+	}
+	// Writes the bans (when there's a file for them); false when it couldn't, which the log says.
+	const auto saveBans = [&] {
+		if (options.banFile.empty()) {
+			return true;
+		}
+		if (!bans.Save(banPath)) {
+			log(std::format("server: could not write the bans to {}; they hold until the server stops", banPath.filename().string()));
+			return false;
+		}
+		return true;
+	};
 	// A world state can't carry more of a table than this.
 	const auto maxWorldEntries = (std::min)(options.maxWorldEntries, Protocol::MAX_WORLD_STATE_ACTORS);
 
@@ -320,6 +371,7 @@ void Server::Run()
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
+	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
@@ -327,6 +379,10 @@ void Server::Run()
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
+	// Items players dropped for each other, which the server hands to one taker each (common/DropStore.h). Saved with the
+	// session: a drop lies in nobody's save but the session file.
+	DropStore                                             drops;
+	bool                                                  dropsFullLogged = false;
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -375,6 +431,7 @@ void Server::Run()
 	if (!options.sessionFile.empty()) {
 		if (const auto saved = SessionFile::Recover(sessionPath, [&](const std::string& a_line) { log("server: " + a_line); })) {
 			sessionContentHash = saved->contentHash;
+			sessionTable = saved->plugins;
 			sessionId = saved->sessionId;
 			nextId = (std::max)(nextId, saved->nextId);
 			for (const auto& [identity, id] : saved->identities) {
@@ -407,8 +464,11 @@ void Server::Run()
 			for (const auto& item : saved->workshopItems) {
 				workshop.Restore(item);
 			}
-			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped)", deadActors.size(), containerChanges.size(), workshop.Built().size(),
-				workshop.Scraps().size()));
+			for (const auto& drop : saved->drops) {
+				drops.Restore(drop);
+			}
+			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
+				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
@@ -447,6 +507,8 @@ void Server::Run()
 			snapshot.markers.emplace_back(ref, flags);
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
+		snapshot.drops = drops.All();
+		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
 			if (!std::exchange(saveFailing, true)) {
@@ -474,6 +536,7 @@ void Server::Run()
 		spawns.clear();
 		npcEquipment.clear();
 		workshop.Clear();
+		drops.Clear();
 		questStages.clear();
 		questStageKeys.clear();
 		worldTime.reset();
@@ -487,6 +550,7 @@ void Server::Run()
 			budget.shareLogged = {};
 		}
 		sessionId = NewSessionId();
+		sessionTable.clear();  // the next arrival's load order numbers the new session
 		touched();
 	};
 
@@ -573,6 +637,29 @@ void Server::Run()
 	const auto reject = [&](Player& a_player, std::string_view a_reason) {
 		send(a_player.key, Protocol::Encode(Protocol::Reject{ std::string{ a_reason } }), true);
 		disconnect(a_player);
+	};
+
+	// The host controls' state for the host's game (kHostInfo): the newest bans first.
+	const auto hostInfo = [&](Protocol::HostResult a_result, Protocol::HostAction a_action) {
+		Protocol::HostInfo info;
+		info.locked = locked;
+		info.password = !password.empty();
+		info.result = a_result;
+		info.action = a_action;
+		info.bans = static_cast<std::uint32_t>(bans.Size());
+		for (auto it = bans.Entries().rbegin(); it != bans.Entries().rend() && info.list.size() < Protocol::MAX_BANS_SENT; ++it) {
+			info.list.push_back({ it->Id(), it->Alias(), it->name, it->bannedAt });
+		}
+		return info;
+	};
+	// To the host's game, if it is in the session: after any change (from its menu or the console).
+	const auto tellHost = [&](Protocol::HostResult a_result, Protocol::HostAction a_action) {
+		const auto packet = Protocol::Encode(hostInfo(a_result, a_action));
+		for (const auto& [key, player] : players) {
+			if (player.local && player.welcomed && !player.kicked) {
+				send(key, packet, true);
+			}
+		}
 	};
 
 	// The session's load order, for the player's game to compare with its own (Protocol::LoadOrder). None before
@@ -786,9 +873,13 @@ void Server::Run()
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
 		releaseAll(a_player.id);
+		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
+		drops.DropOffers(a_player.id);
+		objectMovers.Leave(a_player.id);
 	};
 
-	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+	// a_again: a hello on a connection already in the session (their game restarted; see welcome).
+	const auto handleHello = [&](Player& a_player, std::span<const std::uint8_t> a_data, bool a_again) {
 		const auto hello = Protocol::DecodeHello(a_data);
 		if (!hello || hello->magic != Protocol::MAGIC) {
 			reject(a_player, "Not an F4Multiplayer client");
@@ -798,16 +889,38 @@ void Server::Run()
 			reject(a_player, std::format("Version mismatch: server uses protocol {}, you have {}. Install the same mod version.", Protocol::VERSION, hello->version));
 			return;
 		}
-		if (!password.empty() && hello->password != password) {
-			log(std::format("server: wrong password from {}", describe(a_player.key)));
-			reject(a_player, "Wrong password");
-			return;
-		}
 		// The host's own game: the game this server runs in, by its identity, connecting from this machine.
 		// The identity alone isn't enough (it isn't a secret), and nor is the address: a bot or a tunnel to
 		// another PC connects from this machine too.
 		const bool local = options.hostIdentity != 0 && hello->identity == options.hostIdentity &&
 		                   transports[static_cast<std::size_t>(a_player.key >> 32)]->IsLocal(static_cast<PeerId>(a_player.key));
+		// The host's bans, and the lock, before the password: a banned player isn't told whether theirs is right. The
+		// host's own game is never refused for either.
+		if (!local) {
+			if (const auto ban = bans.Find(a_player.transportId, hello->identity)) {
+				log(std::format("server: refused {}: banned ({})", describe(a_player.key), ban->Alias()));
+				reject(a_player, Protocol::REJECT_BANNED);
+				return;
+			}
+			// Locked: nobody new. Someone in the session whose game restarted (a hello again, or a new connection while
+			// the old one is still here) is not new.
+			const bool inSession = a_again || (hello->identity != 0 && [&] {
+				const auto known = identities.find(hello->identity);
+				return known != identities.end() && std::ranges::any_of(players, [&](const auto& a_entry) {
+					return a_entry.first != a_player.key && a_entry.second.welcomed && !a_entry.second.kicked && a_entry.second.id == known->second;
+				});
+			}());
+			if (locked && !inSession) {
+				log(std::format("server: refused {}: the session is locked", describe(a_player.key)));
+				reject(a_player, Protocol::REJECT_LOCKED);
+				return;
+			}
+		}
+		if (!password.empty() && hello->password != password) {
+			log(std::format("server: wrong password from {}", describe(a_player.key)));
+			reject(a_player, "Wrong password");
+			return;
+		}
 		if (welcomedCount() == 0) {
 			// A server in a host's game waits for that game: the first arrival decides the session's load
 			// order (and a different one wipes the saved session), so a friend whose Join lands while the
@@ -816,11 +929,13 @@ void Server::Run()
 				reject(a_player, Protocol::REJECT_HOST_NOT_READY);
 				return;
 			}
-			// A different mod list makes the stored form IDs meaningless: start a fresh session. (On a
-			// dedicated server, which has no local player, the first arrival decides.)
-			// A session saved by an older version, before the texture pack counted, is the same load order's when
-			// its hash matches the old way.
-			if (sessionContentHash != 0 && hello->contentHash != sessionContentHash) {
+			// A saved session keeps the plugin table its form IDs are numbered by (session layouts 32 and 33): it carries on
+			// whatever the first arrival's mods and their order, translated to it as anyone's are. One saved before
+			// (or a hello without a list, which nothing translates) is the load order its hash names: a different
+			// one makes the stored form IDs meaningless, so a fresh session starts. (On a dedicated server, which has
+			// no local player, the first arrival decides.) A session saved by an older version, before the texture
+			// pack counted, is the same load order's when its hash matches the old way.
+			if (sessionContentHash != 0 && (sessionTable.empty() || hello->plugins.empty()) && hello->contentHash != sessionContentHash) {
 				if (Protocol::LoadOrderHashBeforeTexturePack(hello->plugins) == sessionContentHash) {
 					log("server: the saved session has this load order (hashed as older versions did, without the HD texture pack); it carries on");
 				} else {
@@ -835,14 +950,20 @@ void Server::Run()
 			// host's ignored ones left out where they move no other plugin (the refusal names none). Before the refusal, on
 			// the same channel, so it is there by then.
 			sendLoadOrder(a_player, Clock::now());
-			// A difference only in plugins the host allows to differ (texture packs and the like) is fine.
-			if (!Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
+			// Not their name, and they have no player number yet: where they come from (masked) says which
+			// joiner it was. A difference only in plugins the host allows to differ (texture packs and the like) is
+			// fine as before.
+			if (Protocol::SameLoadOrderIgnoring(hello->plugins, sessionPlugins, options.ignoredPlugins)) {
+				log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
+			} else if (hello->plugins.empty() || sessionTable.empty()) {
+				// Without both lists nothing translates their form IDs (a tool's hello, or a session started by one).
 				reject(a_player, Protocol::LoadOrderDifference(hello->plugins, sessionPlugins, options.ignoredPlugins));
 				return;
+			} else {
+				// Since protocol 36 any other mods, in any order: their game translates by plugin name (FormIds.h), and
+				// what comes from a plugin a game lacks is skipped there. Their game says which plugins differ.
+				log(std::format("server: a joiner's load order differs ({}); their form IDs are translated by plugin name", describe(a_player.key)));
 			}
-			// Not their name, and they have no player number yet: where they come from (masked) says which
-			// joiner it was.
-			log(std::format("server: a joiner's load order differs only in ignored plugins ({})", describe(a_player.key)));
 		}
 
 		// Someone coming back gets their old ID. If their old connection is still here, their game
@@ -876,8 +997,27 @@ void Server::Run()
 		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
 		a_player.name = Name::Shown(hello->name, a_player.id);
 		a_player.appearance = hello->appearance;
+		// The session's plugin table: their plugins it lacks get places after the rest of their kind (an ID it gave
+		// stays what it was), and the players already in hear the new table on the reliable channel, ahead of anything
+		// numbered by it. Then the newcomer's, before the welcome. Their hello's one form ID, sent before they knew
+		// the table, is translated here.
+		if (const auto added = FormIds::Extend(sessionTable, hello->plugins); added != 0) {
+			touched();
+			log(std::format("server: the session's plugin table has {} plugins ({} new)", FormIds::Table::Of(sessionTable).Size(), added));
+			if (welcomedCount() != 0) {
+				broadcast(Protocol::Encode(Protocol::PluginTable{ sessionTable }), true, a_player.key);
+			}
+		}
+		if (!sessionTable.empty()) {
+			send(a_player.key, Protocol::Encode(Protocol::PluginTable{ sessionTable }), true);
+			if (!hello->plugins.empty()) {
+				a_player.appearance = FormIds::Mapper(hello->plugins, sessionTable).ToSession(hello->appearance).value_or(0);
+			}
+		}
 		a_player.welcomed = true;
 		a_player.local = local;
+		a_player.dropListAt.reset();
+		a_player.helloId = hello->identity;
 		a_player.worldAskedAt = Clock::now();
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
@@ -933,6 +1073,10 @@ void Server::Run()
 
 		log(std::format("server: player {} {} from {} ({} online)", a_player.id, returning ? "came back" : "joined", describe(a_player.key),
 			welcomedCount()));
+		// The host's game: the host controls' state, for its menu.
+		if (local) {
+			send(a_player.key, Protocol::Encode(hostInfo(Protocol::HostResult::kNone, Protocol::HostAction::kKick)), true);
+		}
 	};
 
 	const auto handleState = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -1113,7 +1257,10 @@ void Server::Run()
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
 
-	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+	// A health report (kReportHealth: its health now, passed on as kActorHealth), or what the sender took off an NPC
+	// another game runs (kReportDamage, as kActorDamaged: the game that runs it takes it off). Both tell the server the
+	// sender fights it.
+	const auto handleHealth = [&](Player& a_player, std::span<const std::uint8_t> a_data, Protocol::MessageType a_out) {
 		if (!allowEvent(a_player)) {
 			return;
 		}
@@ -1123,11 +1270,14 @@ void Server::Run()
 		if (!health || (!spawn && !Protocol::IsShareableRef(health->refId)) || deadActors.contains(health->refId)) {
 			return;
 		}
+		if (a_out == Protocol::MessageType::kActorDamaged && !(health->health > 0.0f && health->health <= 1.0f)) {
+			return;  // no damage, or more than all of it
+		}
 		if (!spawn) {
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		}
 		noteFighting(a_player, health->refId, Clock::now());
-		broadcast(Protocol::Encode(*health, Protocol::MessageType::kActorHealth), true, a_player.key);
+		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};
 
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
@@ -1406,6 +1556,168 @@ void Server::Run()
 		}
 	};
 
+	// Items given between players (common/DropStore.h). A drop is offered to its dropper's game first: it swaps the item
+	// it dropped for a copy like everyone's, and says so (kPlaced), and only then is the drop told to the others, so nobody
+	// can take an item still in its dropper's world. Each change to what lies there is saved right away: an item given lies
+	// in no game's save, only in the session file.
+	//
+	// Reports and claims are not counted against the event budget (as records aren't): a dropped one would leave an item
+	// in no inventory, or in two. Each game sends a handful at most (its claims wait for their answers), and the book caps
+	// what one player can have lying there.
+	const auto dropsChanged = [&] {
+		touched();
+		saveRequested = true;
+	};
+
+	const auto handleReportDrop = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto item = Protocol::DecodeDroppedItem(a_data);
+		if (!item) {
+			return;
+		}
+		const auto added = drops.Add(a_player.id, *item);
+		switch (added.outcome) {
+		case DropStore::Outcome::kAdded:
+			send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);  // the offer
+			break;
+		case DropStore::Outcome::kRepeat:
+			if (added.drop) {
+				send(a_player.key, Protocol::Encode(*added.drop, Protocol::MessageType::kDropPlaced), true);
+			}
+			break;
+		case DropStore::Outcome::kFull:
+		case DropStore::Outcome::kOwnerFull:
+			{
+				// Not kept: their game keeps the item it dropped as it is (an ordinary item on its ground). Said by a
+				// kDropPlaced with no drop ID.
+				auto refused = *item;
+				refused.dropId = 0;
+				refused.ownerId = a_player.id;
+				refused.takerId = 0;
+				send(a_player.key, Protocol::Encode(refused, Protocol::MessageType::kDropPlaced), true);
+				if (!std::exchange(dropsFullLogged, true)) {
+					log(std::format("server: {} items dropped for others lie in the session ({} of player {}); not keeping more", drops.LyingCount(), drops.LyingOf(a_player.id),
+						a_player.id));
+				}
+				break;
+			}
+		case DropStore::Outcome::kInvalid:
+			break;
+		}
+	};
+
+	const auto handleClaimDrop = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto claim = Protocol::DecodeClaimDrop(a_data);
+		if (!claim) {
+			return;
+		}
+		switch (claim->op) {
+		case Protocol::DropClaim::kGiveBack:
+			if (const auto back = drops.GiveBack(a_player.id, claim->dropId)) {
+				dropsChanged();
+				broadcast(Protocol::Encode(*back, Protocol::MessageType::kDropPlaced), true, 0);
+			}
+			return;
+		case Protocol::DropClaim::kPlaced:
+			// Their game swapped its item for a copy: it lies there for the others now. Their game hears it too: until it does,
+			// it gives the item back to its world if it leaves (its kPlaced may have gone with the link, and the offer with it).
+			if (const auto laid = drops.Confirm(a_player.id, claim->dropId)) {
+				dropsChanged();
+				broadcast(Protocol::Encode(*laid, Protocol::MessageType::kDropPlaced), true, 0);
+			}
+			return;
+		case Protocol::DropClaim::kKept:
+			drops.Keep(a_player.id, claim->dropId);  // nobody else heard of it
+			return;
+		case Protocol::DropClaim::kTake:
+			break;
+		}
+		if (const auto gone = drops.Take(a_player.id, claim->dropId)) {
+			dropsChanged();
+			broadcast(Protocol::Encode(*gone), true, 0);
+			return;
+		}
+		// Someone else's already, or gone: their copy goes (naming who has it, as everyone heard).
+		send(a_player.key, Protocol::Encode(Protocol::DropGone{ claim->dropId, drops.TakerOf(claim->dropId) }), true);
+	};
+
+	const auto answerDropRecord = [&](Player& a_player, const Protocol::DropRecord& a_record, Clock::time_point a_now) {
+		a_player.dropRecordAt = a_now;
+		const auto out = drops.Reconcile(a_player.id, a_record, sessionId);
+		for (const auto& gone : out.withdrawn) {
+			broadcast(Protocol::Encode(gone), true, 0);
+		}
+		for (const auto& drop : out.returned) {
+			broadcast(Protocol::Encode(drop, Protocol::MessageType::kDropPlaced), true, 0);
+		}
+		// Their offers: one their world swapped out lies there for the others now; one it still has never lay anywhere.
+		for (const auto& drop : out.confirmed) {
+			broadcast(Protocol::Encode(drop, Protocol::MessageType::kDropPlaced), true, a_player.key);
+		}
+		for (const auto& gone : out.unoffered) {
+			send(a_player.key, Protocol::Encode(gone), true);
+		}
+		if (out.changed) {
+			dropsChanged();
+		}
+		if (!out.withdrawn.empty() || !out.returned.empty()) {
+			log(std::format("server: player {}'s world holds {} items that lay in the session (now theirs) and lacks {} it was said to hold (lying there again)", a_player.id,
+				out.withdrawn.size(), out.returned.size()));
+		}
+		if (out.dupRisk != 0) {
+			log(std::format("server: player {}'s world holds {} items someone else holds too (a save from before they dropped them)", a_player.id, out.dupRisk));
+		}
+		// What lies there: after their welcome, and then no more often than DROP_LIST_INTERVAL (see there).
+		if (a_player.dropListAt && a_now - *a_player.dropListAt < DROP_LIST_INTERVAL) {
+			return;
+		}
+		a_player.dropListAt = a_now;
+		const auto  lying = drops.Lying();
+		std::size_t i = 0;
+		do {
+			const auto end = (std::min)(lying.size(), i + Protocol::MAX_DROPS_PER_PACKET);
+			send(a_player.key, Protocol::Encode(Protocol::DropList{ end == lying.size(), { lying.begin() + static_cast<std::ptrdiff_t>(i), lying.begin() + static_cast<std::ptrdiff_t>(end) } }), true);
+			i = end;
+		} while (i < lying.size());
+	};
+
+	// Not counted against the event budget (sent once after a welcome or a load, and a dropped one would leave their game
+	// with stale copies); held instead when it comes too often.
+	const auto handleDropRecord = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		auto record = Protocol::DecodeDropRecord(a_data);
+		if (!record) {
+			return;
+		}
+		if (const auto now = Clock::now(); now - a_player.dropRecordAt >= DROP_RECORD_INTERVAL) {
+			a_player.heldDropRecord.reset();
+			answerDropRecord(a_player, *record, now);
+		} else {
+			a_player.heldDropRecord = std::move(*record);
+		}
+	};
+
+	// Which of a player's own workshop pieces their game powers: passed on as theirs, and not kept (the player sends all
+	// of them again when someone joins, and now and then).
+	const auto handleWorkshopPower = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto power = Protocol::DecodePowerStates(a_data);
+		if (!power) {
+			return;
+		}
+		power->playerId = a_player.id;
+		broadcast(Protocol::Encode(*power, Protocol::MessageType::kWorkshopPower), true, a_player.key);
+	};
+
 	// An NPC's gear, from the player whose game runs it (each game rolls NPC gear on its own).
 	const auto handleNpcEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -1657,6 +1969,53 @@ void Server::Run()
 		broadcast(Protocol::Encode(*activation, Protocol::MessageType::kActivation), true, a_player.key);
 	};
 
+	// A loose object in the player's hands (ObjectMovers: the first grab wins). Refused, they are told who holds it, so
+	// their game lets go of its copy. Unreliable, on a budget of its own: a game sends 15 a second while holding.
+	const auto handleObjectHold = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		const auto now = Clock::now();
+		a_player.rate.Roll(now);
+		if (++a_player.rate.objectHolds > Protocol::HOLDS_PER_SECOND) {
+			return;
+		}
+		auto hold = Protocol::DecodeObjectHold(a_data);
+		if (!hold) {
+			return;
+		}
+		hold->playerId = a_player.id;
+		switch (objectMovers.Hold(*hold, a_player.id, now)) {
+		case ObjectMovers::Verdict::kRelay:
+			broadcast(Protocol::Encode(*hold, Protocol::MessageType::kObjectHeld), false, a_player.key);
+			break;
+		case ObjectMovers::Verdict::kRefused:
+			if (const auto holder = objectMovers.Holder(hold->refId, now)) {
+				send(a_player.key, Protocol::Encode(*holder, Protocol::MessageType::kObjectHeld), true);
+			}
+			break;
+		case ObjectMovers::Verdict::kDropped:
+			break;
+		}
+	};
+
+	// An object the player let go of, or that came to rest after they moved it: to the others, unless another player
+	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones.
+	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto rest = Protocol::DecodeObjectRest(a_data);
+		const auto now = Clock::now();
+		if (!rest || !budgetOf(a_player).objectRests.Take(now)) {
+			return;
+		}
+		rest->playerId = a_player.id;
+		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
+			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
+		}
+	};
+
 	const auto handleExplosion = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1829,6 +2188,33 @@ void Server::Run()
 		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kQuestStage), true, a_player.key);
 	};
 
+	// A radiant quest's run (RadiantRules) is relayed as it comes and not kept: each run has its own fills, and a
+	// stage of one run isn't a stage of the next (a radiant runs again and again), so neither goes in the session's
+	// state, whose stages are kept once per quest. A player who joins later doesn't share a run already going.
+	const auto handleRadiantStart = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto start = Protocol::DecodeRadiantStart(a_data);
+		if (!start) {
+			return;
+		}
+		start->playerId = a_player.id;  // the run's origin
+		broadcast(Protocol::Encode(*start, Protocol::MessageType::kRadiantStarted), true, a_player.key);
+	};
+
+	const auto handleRadiantStage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto stage = Protocol::DecodeRadiantStage(a_data);
+		if (!stage) {
+			return;
+		}
+		stage->playerId = a_player.id;
+		broadcast(Protocol::Encode(*stage, Protocol::MessageType::kRadiantStage), true, a_player.key);
+	};
+
 	const auto handleEquipment = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1872,6 +2258,7 @@ void Server::Run()
 	};
 
 	const auto welcome = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const bool again = a_player.welcomed;
 		if (a_player.welcomed) {
 			// Hello again on the same connection: their game restarted before it timed out
 			// (Steam keeps one connection per friend). Start over as a new arrival.
@@ -1882,18 +2269,237 @@ void Server::Run()
 			fresh.budgetKey = a_player.budgetKey;  // saying hello again doesn't refill the budgets
 			fresh.connectedAt = Clock::now();
 			fresh.rate = a_player.rate;
+			fresh.transportId = a_player.transportId;
+			fresh.hostRefusedLogged = a_player.hostRefusedLogged;
+			fresh.hostRefused = a_player.hostRefused;
 			a_player = std::move(fresh);
 		}
-		handleHello(a_player, a_data);
+		handleHello(a_player, a_data, again);
+	};
+
+	// --- Host controls: the host's own game (kHostCommand) or the dedicated server's console. a_by says which, in the
+	// log ("the host", "the console"). Every line names players by number and bans by alias, never by name.
+
+	const auto nowUnix = [] {
+		return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+	};
+
+	// Drops the player of that number with the reason (and, a_ban, bans them first, with every other connection of theirs).
+	const auto removePlayer = [&](std::uint32_t a_id, bool a_ban, std::string_view a_by) {
+		using Protocol::HostResult;
+		const auto it = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && !a_entry.second.kicked && a_entry.second.id == a_id; });
+		if (it == players.end()) {
+			return HostResult::kNoSuchPlayer;
+		}
+		if (it->second.local) {
+			return HostResult::kNotTheHost;
+		}
+		auto& target = it->second;
+		auto  result = HostResult::kDone;
+		if (!a_ban) {
+			log(std::format("server: player {} was kicked by {}", target.id, a_by));
+		} else if (const auto entry = bans.Add(target.transportId, target.helloId, nowUnix(), target.name); !entry) {
+			log(std::format("server: player {} could not be banned (their game and connection name no account{}); kicked instead", target.id,
+				bans.Size() >= BanList::MAX_BANS ? ", or the ban list is full" : ""));
+			result = HostResult::kNoIdentity;
+		} else {
+			log(std::format("server: player {} was banned by {} ({}; {} banned)", target.id, a_by, entry->Alias(), bans.Size()));
+			if (!saveBans()) {
+				result = HostResult::kNotSaved;
+			}
+		}
+		const auto reason = a_ban && result != HostResult::kNoIdentity ? Protocol::RemovedReason::kBanned : Protocol::RemovedReason::kKicked;
+		const auto tell = [&](Player& a_player) {
+			send(a_player.key, Protocol::Encode(Protocol::Removed{ reason }), true);
+			disconnect(a_player);
+		};
+		// Their other connections (the same account, still connected another way) go with a ban.
+		if (reason == Protocol::RemovedReason::kBanned) {
+			for (auto& [key, other] : players) {
+				if (key != target.key && !other.local && !other.kicked && other.welcomed && bans.Find(other.transportId, other.helloId)) {
+					log(std::format("server: player {} is the same account; dropped with the ban", other.id));
+					tell(other);
+				}
+			}
+		}
+		tell(target);
+		return result;
+	};
+
+	const auto unban = [&](std::uint64_t a_id, std::string_view a_by) {
+		if (a_id == 0) {
+			const auto lifted = bans.Clear();
+			log(std::format("server: every ban lifted by {} ({})", a_by, lifted));
+		} else {
+			const auto alias = BanList::AliasOf(a_id);
+			if (!bans.Remove(a_id)) {
+				return Protocol::HostResult::kNoSuchBan;
+			}
+			log(std::format("server: {} unbanned by {} ({} banned)", alias, a_by, bans.Size()));
+		}
+		return saveBans() ? Protocol::HostResult::kDone : Protocol::HostResult::kNotSaved;
+	};
+
+	const auto setLocked = [&](bool a_locked, std::string_view a_by) {
+		if (std::exchange(locked, a_locked) != a_locked) {
+			log(a_locked ? std::format("server: the session was locked by {}: nobody new can join", a_by) : std::format("server: the session was unlocked by {}", a_by));
+		}
+		return Protocol::HostResult::kDone;
+	};
+
+	// Never the password itself in the log.
+	const auto setPassword = [&](std::string_view a_password, std::string_view a_by) {
+		password = std::string{ a_password.substr(0, Protocol::MAX_PASSWORD_LENGTH) };
+		log(password.empty() ? std::format("server: the password was removed by {}", a_by) : std::format("server: the password was changed by {}", a_by));
+		return Protocol::HostResult::kDone;
+	};
+
+	const auto hostCommand = [&](const Protocol::HostCommand& a_command, std::string_view a_by) {
+		using Protocol::HostAction;
+		switch (a_command.action) {
+		case HostAction::kKick:
+			return removePlayer(a_command.playerId, false, a_by);
+		case HostAction::kBan:
+			return removePlayer(a_command.playerId, true, a_by);
+		case HostAction::kUnban:
+			return unban(a_command.ban, a_by);
+		case HostAction::kLock:
+			return setLocked(true, a_by);
+		case HostAction::kUnlock:
+			return setLocked(false, a_by);
+		case HostAction::kSetPassword:
+			return setPassword(a_command.password, a_by);
+		}
+		return Protocol::HostResult::kNone;
+	};
+
+	// A host command or request from someone other than the host: refused, and said in the log (at most once per
+	// BUDGET_LOG_INTERVAL a player, with how many came since).
+	const auto refuseNotHost = [&](Player& a_player) {
+		++a_player.hostRefused;
+		if (const auto now = Clock::now(); a_player.hostRefusedLogged == Clock::time_point{} || now - a_player.hostRefusedLogged >= BUDGET_LOG_INTERVAL) {
+			log(std::format("server: player {} is not the host: their host command{} refused", a_player.id,
+				a_player.hostRefused > 1 ? std::format("s ({} since the last line) were", a_player.hostRefused) : std::string{ " was" }));
+			a_player.hostRefusedLogged = now;
+			a_player.hostRefused = 0;
+		}
+	};
+
+	const auto handleHostCommand = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed) {
+			return;
+		}
+		if (!a_player.local) {
+			refuseNotHost(a_player);
+			return;
+		}
+		if (const auto command = Protocol::DecodeHostCommand(a_data)) {
+			tellHost(hostCommand(*command, "the host"), command->action);
+		}
+	};
+
+	// The dedicated server's console (Server::Console). The answers go to the log, so they name nobody.
+	const auto console = [&](std::string_view a_line) {
+		std::vector<std::string_view> words;
+		for (std::string_view rest = a_line; !rest.empty();) {
+			const auto start = rest.find_first_not_of(" \t\r\n");
+			if (start == std::string_view::npos) {
+				break;
+			}
+			rest.remove_prefix(start);
+			const auto end = rest.find_first_of(" \t\r\n");
+			words.push_back(rest.substr(0, end));
+			rest = end == std::string_view::npos ? std::string_view{} : rest.substr(end);
+		}
+		if (words.empty()) {
+			return;
+		}
+		const auto command = words[0];
+		const auto number = [&](std::uint32_t& a_out) {
+			return words.size() == 2 && std::from_chars(words[1].data(), words[1].data() + words[1].size(), a_out).ec == std::errc{};
+		};
+		const auto said = [&](Protocol::HostResult a_result, std::string_view a_what) {
+			switch (a_result) {
+			case Protocol::HostResult::kNoSuchPlayer:
+				log(std::format("server: console: no player {} in the session (players lists them)", a_what));
+				break;
+			case Protocol::HostResult::kNotTheHost:
+				log("server: console: that is the host's own game");
+				break;
+			case Protocol::HostResult::kNoSuchBan:
+				log(std::format("server: console: no ban {} (bans lists them)", a_what));
+				break;
+			default:
+				break;
+			}
+		};
+		std::uint32_t id = 0;
+		if (command == "help") {
+			log("server: console: players | kick <n> | ban <n> | bans | unban <n | ~alias | all> | password <text> (- removes it) | lock | unlock");
+		} else if (command == "players") {
+			log(std::format("server: console: {} in the session{}{}", welcomedCount(), locked ? ", locked" : "", password.empty() ? ", no password" : ", password set"));
+			const auto now = Clock::now();
+			for (const auto& [key, player] : players) {
+				if (player.welcomed && !player.kicked) {
+					log(std::format("server: console: player {}{}: {}, here {} min", player.id, player.local ? " (the host)" : "", describe(key),
+						std::chrono::duration_cast<std::chrono::minutes>(now - player.connectedAt).count()));
+				}
+			}
+		} else if ((command == "kick" || command == "ban") && number(id)) {
+			const auto result = removePlayer(id, command == "ban", "the console");
+			said(result, words[1]);
+			tellHost(Protocol::HostResult::kNone, command == "ban" ? Protocol::HostAction::kBan : Protocol::HostAction::kKick);
+		} else if (command == "bans" || (command == "unban" && words.size() == 1)) {
+			log(std::format("server: console: {} banned{}", bans.Size(), bans.Size() ? " (unban <n> lifts one)" : ""));
+			for (std::size_t i = 0; i < bans.Entries().size(); ++i) {
+				const auto& entry = bans.Entries()[i];
+				const std::chrono::year_month_day day{ std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{ std::chrono::seconds{ entry.bannedAt } }) };
+				log(std::format("server: console: ban {}: {}, banned {:04}-{:02}-{:02}", i + 1, entry.Alias(), static_cast<int>(day.year()), static_cast<unsigned>(day.month()),
+					static_cast<unsigned>(day.day())));
+			}
+		} else if (command == "unban" && words.size() == 2) {
+			std::uint64_t target = 0;
+			if (words[1] == "all") {
+				target = 0;
+			} else if (const auto entry = bans.FindAlias(words[1])) {
+				target = entry->Id();
+			} else if (std::uint32_t index = 0; std::from_chars(words[1].data(), words[1].data() + words[1].size(), index).ec == std::errc{} && index >= 1 && index <= bans.Size()) {
+				target = bans.Entries()[index - 1].Id();
+			} else {
+				said(Protocol::HostResult::kNoSuchBan, words[1]);
+				return;
+			}
+			unban(target, "the console");
+			tellHost(Protocol::HostResult::kNone, Protocol::HostAction::kUnban);
+		} else if (command == "password") {
+			if (words.size() == 1) {
+				log(password.empty() ? "server: console: no password (password <text> sets one)" : "server: console: a password is set (password - removes it)");
+				return;
+			}
+			// The rest of the line, as typed (spaces and all).
+			auto text = a_line.substr(a_line.find("password") + 8);
+			text.remove_prefix((std::min)(text.size(), text.find_first_not_of(" \t")));
+			while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r' || text.back() == '\n')) {
+				text.remove_suffix(1);
+			}
+			setPassword(text == "-" ? std::string_view{} : text, "the console");
+			tellHost(Protocol::HostResult::kNone, Protocol::HostAction::kSetPassword);
+		} else if ((command == "lock" || command == "unlock") && words.size() == 1) {
+			setLocked(command == "lock", "the console");
+			tellHost(Protocol::HostResult::kNone, command == "lock" ? Protocol::HostAction::kLock : Protocol::HostAction::kUnlock);
+		} else {
+			log("server: console: unknown command (help lists them)");
+		}
 	};
 
 	const auto handlePacket = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		using Protocol::MessageType;
+		// On its way out (refused, kicked or banned): nothing more of theirs is taken.
+		if (a_player.kicked) {
+			return;
+		}
 		switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
 		case MessageType::kHello:
-			if (a_player.kicked) {
-				break;
-			}
 			// Every hello brings a world state and the rest of a welcome. A game saying hello again and again
 			// (rejoining in a loop) gets that no more often than its budget has world states: the latest
 			// hello waits until it refills (the tick). When the transport can't name them (UDP), the budget is the
@@ -1925,7 +2531,10 @@ void Server::Run()
 			handleDeath(a_player, a_data);
 			break;
 		case MessageType::kReportHealth:
-			handleHealth(a_player, a_data);
+			handleHealth(a_player, a_data, MessageType::kActorHealth);
+			break;
+		case MessageType::kReportDamage:
+			handleHealth(a_player, a_data, MessageType::kActorDamaged);
 			break;
 		case MessageType::kReportContainer:
 			handleContainer(a_player, a_data);
@@ -1954,6 +2563,17 @@ void Server::Run()
 		case MessageType::kReportWorkshopItem:
 			handleWorkshopItem(a_player, a_data);
 			break;
+		case MessageType::kReportDrop:
+			handleReportDrop(a_player, a_data);
+			break;
+		case MessageType::kClaimDrop:
+			handleClaimDrop(a_player, a_data);
+			break;
+		case MessageType::kDropRecord:
+			handleDropRecord(a_player, a_data);
+		case MessageType::kReportWorkshopPower:
+			handleWorkshopPower(a_player, a_data);
+			break;
 		case MessageType::kActorStates:
 			handleActorStates(a_player, a_data);
 			break;
@@ -1962,6 +2582,12 @@ void Server::Run()
 			break;
 		case MessageType::kReportQuestStage:
 			handleQuestStage(a_player, a_data);
+			break;
+		case MessageType::kReportRadiantStart:
+			handleRadiantStart(a_player, a_data);
+			break;
+		case MessageType::kReportRadiantStage:
+			handleRadiantStage(a_player, a_data);
 			break;
 		case MessageType::kRequestWorldState:
 			handleWorldRequest(a_player, a_data);
@@ -1987,6 +2613,12 @@ void Server::Run()
 		case MessageType::kReportActivation:
 			handleActivation(a_player, a_data);
 			break;
+		case MessageType::kReportObjectHold:
+			handleObjectHold(a_player, a_data);
+			break;
+		case MessageType::kReportObjectRest:
+			handleObjectRest(a_player, a_data);
+			break;
 		case MessageType::kReportSpawn:
 			handleSpawn(a_player, a_data);
 			break;
@@ -1999,6 +2631,19 @@ void Server::Run()
 			                                   (a_player.loadOrderSent == Clock::time_point{} || now - a_player.loadOrderSent >= LOAD_ORDER_INTERVAL)) {
 				sendLoadOrder(a_player, now);
 			}
+			break;
+		case MessageType::kHostCommand:
+			handleHostCommand(a_player, a_data);
+			break;
+		case MessageType::kRequestHostInfo:
+			if (!a_player.welcomed || !Protocol::DecodeHostInfoRequest(a_data)) {
+				break;
+			}
+			if (!a_player.local) {
+				refuseNotHost(a_player);
+				break;
+			}
+			send(a_player.key, Protocol::Encode(hostInfo(Protocol::HostResult::kNone, Protocol::HostAction::kKick)), true);
 			break;
 		case MessageType::kReportXp:
 			handleXp(a_player, a_data);
@@ -2049,6 +2694,7 @@ void Server::Run()
 						player.id = nextId++;
 						player.connectedAt = Clock::now();
 						const auto identity = transports[t]->Identity(event.peer);
+						player.transportId = identity;
 						bindBudget(player, identity ? BudgetKey{ BudgetKind::kTransport, identity } : BudgetKey{ BudgetKind::kConnection, key });
 						players.insert_or_assign(key, std::move(player));
 					}
@@ -2083,6 +2729,13 @@ void Server::Run()
 		}
 		nextTick = now + TICK_INTERVAL;
 		++tick;
+		if (tick % 64 == 0) {
+			objectMovers.Prune(now);  // moves over (about once a second)
+		}
+
+		for (const auto& line : TakeConsole()) {
+			console(line);
+		}
 
 		for (auto& [key, player] : players) {
 			if (!player.welcomed && !player.kicked && player.waitingHello.empty() && now - player.connectedAt > HELLO_TIMEOUT) {
@@ -2123,6 +2776,10 @@ void Server::Run()
 				broadcast(Protocol::Encode(*player.face, Protocol::MessageType::kPlayerFace), true, key);
 			}
 			flushRename(player, now);
+			if (player.welcomed && player.heldDropRecord && now - player.dropRecordAt >= DROP_RECORD_INTERVAL) {
+				const auto record = std::exchange(player.heldDropRecord, std::nullopt);
+				answerDropRecord(player, *record, now);
+			}
 		}
 
 		// Relay changed player states to everyone else.

@@ -54,6 +54,11 @@ namespace Config
 		// (and what a stand-in falls back to when the engine builds no head, or when the engine could not be patched).
 		bool friendFaces = true;
 
+		// A friend's grenade, mine or Molotov is seen in their stand-in's hand through the throw's wind-up: the engine
+		// hangs it there but never draws it on a throw it did not start itself, so it is drawn for it (game/HandThrowable.h).
+		// Off: the stand-in throws from an empty fist, as 0.8.11 and earlier showed it.
+		bool grenadeInHand = true;
+
 		// Turn vsync off during loading screens so they finish faster.
 		bool fastLoading = true;
 
@@ -70,6 +75,11 @@ namespace Config
 		// Friends' markers on the compass (bCompassMarkers). Off to test whether writing to the HUD
 		// is behind loading-screen crashes.
 		bool compassMarkers = true;
+
+		// An icon over a friend's stand-in while they are in the Pip-Boy or another menu (bMenuIcons; MenuIcons). Off, and
+		// not in the shipped ini: on the rig the HUD showed it only in part, or where it was first drawn (docs/DESIGN.md,
+		// Menus). Their stand-in raises its Pip-Boy and its name tag says so either way.
+		bool menuIcons = false;
 
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
@@ -90,7 +100,7 @@ namespace Config
 		std::uint32_t keyMenu = 0x70;        // F1: the multiplayer menu (host, join, who's here, settings)
 		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
 		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
-		std::uint32_t keyPing = 0x77;        // F8: "over here"
+		std::uint32_t keyPing = 0x77;        // F8: ping what the crosshair is on
 		std::uint32_t keyEmotePoint = 0x71;  // F2: point (F9 is the game's quickload)
 		std::uint32_t keyEmoteCheer = 0x72;  // F3: cheer
 		std::uint32_t keyEmoteClap = 0x73;   // F4: clap
@@ -105,6 +115,11 @@ namespace Config
 
 		// Share story/faction/side quest progress between players.
 		bool syncQuests = true;
+
+		// Share the Minutemen's radiant quests by their run (RadiantSync): a friend's settlement request starts
+		// here with the same settlement and place, and pays its reward once in each game. Needs syncQuests and a
+		// shared story.
+		bool sharedRadiants = true;
 
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
 		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).

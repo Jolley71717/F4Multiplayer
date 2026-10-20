@@ -3,7 +3,9 @@
 #include "game/RemotePlayers.h"
 #include "Config.h"
 #include "game/Hud.h"
+#include "game/MenuIcons.h"
 #include "game/OpenMenus.h"
+#include "game/Party.h"
 #include "MainThread.h"
 
 namespace Compass
@@ -43,9 +45,11 @@ namespace Compass
 			return MARKERS[a_playerId % MARKERS.size()];
 		}
 
+		// A marker on the compass: a friend (their shape) or a ping (a ring in the pinger's color), each player's own.
 		struct Target
 		{
-			std::uint32_t id;
+			std::uint32_t id;       // the player: the friend, or who pinged
+			bool          ping;
 			float         x;        // on the compass
 			bool          pinned;   // off to the side or behind: shown at the edge, dimmer
 		};
@@ -53,7 +57,7 @@ namespace Compass
 		// Players we have made a marker for (UI thread only). The markers themselves are looked up
 		// by name every time: loading a save rebuilds the HUD, maybe at the same address, and a
 		// kept reference would point at a destroyed object.
-		std::set<std::uint32_t> markerIds;
+		std::set<std::uint64_t> markerIds;
 
 		// What each marker was last given (UI thread only): a value that has not changed is not written
 		// again, so a HUD with nobody near shows no writes at all.
@@ -63,7 +67,13 @@ namespace Compass
 			bool  pinned = false;
 			bool  visible = false;
 		};
-		std::map<std::uint32_t, Placed> placed;
+		std::map<std::uint64_t, Placed> placed;
+
+		// A marker's key in markerIds and placed: a friend's and a ping of theirs are two markers.
+		std::uint64_t KeyOf(std::uint32_t a_playerId, bool a_ping)
+		{
+			return (static_cast<std::uint64_t>(a_ping) << 32) | a_playerId;
+		}
 		std::atomic<bool>          updateQueued{ false };
 		// While a loading screen is up (Hud::LoadingScreenUp) the HUD is being torn down or rebuilt; no
 		// marker is touched until it has closed. Crashes in the HUD's render tree on loading screens
@@ -139,15 +149,15 @@ namespace Compass
 			}
 		}
 
-		std::string ChildName(std::uint32_t a_playerId)
+		std::string ChildName(std::uint64_t a_key)
 		{
-			return std::format("f4mpMarker{}", a_playerId);
+			return std::format("{}{}", (a_key >> 32) ? "f4mpPing" : "f4mpMarker", static_cast<std::uint32_t>(a_key));
 		}
 
-		// The player's marker on the compass, if it's there.
-		std::optional<GValue> FindShape(GValue& a_compass, std::uint32_t a_playerId)
+		// The marker on the compass, if it's there.
+		std::optional<GValue> FindShape(GValue& a_compass, std::uint64_t a_key)
 		{
-			const auto name = ChildName(a_playerId);
+			const auto name = ChildName(a_key);
 			GValue arg{ name.c_str() };
 			GValue shape;
 			if (!a_compass.Invoke("getChildByName", &shape, &arg, 1) || !shape.IsDisplayObject()) {
@@ -156,22 +166,34 @@ namespace Compass
 			return shape;
 		}
 
-		// The player's marker, outlined in black so it stands out from the HUD, centered on (0, 0).
-		std::optional<GValue> MakeShape(Scaleform::GFx::Movie* a_movie, GValue& a_compass, std::uint32_t a_playerId)
+		// The marker, outlined in black so it stands out from the HUD, centered on (0, 0): a friend's shape filled in
+		// their color, or a ping, a ring in the pinger's color round a dot (it fits round the pinger's own shape).
+		std::optional<GValue> MakeShape(Scaleform::GFx::Movie* a_movie, GValue& a_compass, std::uint64_t a_key)
 		{
-			const auto& marker = MarkerOf(a_playerId);
+			const auto& marker = MarkerOf(static_cast<std::uint32_t>(a_key));
 			GValue shape;
 			a_movie->CreateObject(&shape, "flash.display.Shape");
 			GValue graphics;
 			if (!shape.IsDisplayObject() || !shape.GetMember("graphics", &graphics)) {
 				return std::nullopt;
 			}
-			const auto name = ChildName(a_playerId);
+			const auto name = ChildName(a_key);
 			shape.SetMember("name", GValue(name.c_str()));
-			Draw(graphics, "lineStyle", { GValue(1.5), GValue(0x101010u), GValue(0.9) });
-			Draw(graphics, "beginFill", { GValue(marker.color), GValue(1.0) });
-			DrawShape(graphics, marker.shape);
-			Draw(graphics, "endFill", {});
+			if (a_key >> 32) {
+				Draw(graphics, "lineStyle", { GValue(4.5), GValue(0x101010u), GValue(0.9) });
+				Draw(graphics, "drawCircle", { GValue(0.0), GValue(0.0), GValue(10.0) });
+				Draw(graphics, "lineStyle", { GValue(2.5), GValue(marker.color), GValue(1.0) });
+				Draw(graphics, "drawCircle", { GValue(0.0), GValue(0.0), GValue(10.0) });
+				Draw(graphics, "lineStyle", { GValue(1.0), GValue(0x101010u), GValue(0.9) });
+				Draw(graphics, "beginFill", { GValue(marker.color), GValue(1.0) });
+				Draw(graphics, "drawCircle", { GValue(0.0), GValue(0.0), GValue(3.0) });
+				Draw(graphics, "endFill", {});
+			} else {
+				Draw(graphics, "lineStyle", { GValue(1.5), GValue(0x101010u), GValue(0.9) });
+				Draw(graphics, "beginFill", { GValue(marker.color), GValue(1.0) });
+				DrawShape(graphics, marker.shape);
+				Draw(graphics, "endFill", {});
+			}
 			if (!a_compass.Invoke("addChild", nullptr, &shape, 1)) {
 				return std::nullopt;
 			}
@@ -198,17 +220,18 @@ namespace Compass
 			}
 			std::uint32_t visible = 0;
 			for (const auto& target : a_targets) {
-				auto shape = FindShape(compass, target.id);
+				const auto key = KeyOf(target.id, target.ping);
+				auto       shape = FindShape(compass, key);
 				if (!shape) {
-					shape = MakeShape(movie, compass, target.id);
+					shape = MakeShape(movie, compass, key);
 					if (!shape) {
 						continue;
 					}
-					markerIds.insert(target.id);
-					placed.erase(target.id);  // a fresh shape: everything below is written once
+					markerIds.insert(key);
+					placed.erase(key);  // a fresh shape: everything below is written once
 					shape->SetMember("y", GValue(0.0));
 				}
-				auto& was = placed[target.id];
+				auto& was = placed[key];
 				if (was.x != target.x) {
 					shape->SetMember("x", GValue(static_cast<double>(target.x)));
 					was.x = target.x;
@@ -224,7 +247,7 @@ namespace Compass
 				++visible;
 			}
 			for (const auto id : markerIds) {
-				if (std::ranges::none_of(a_targets, [&](const Target& a_target) { return a_target.id == id; })) {
+				if (std::ranges::none_of(a_targets, [&](const Target& a_target) { return KeyOf(a_target.id, a_target.ping) == id; })) {
 					auto& was = placed[id];
 					if (!was.visible) {
 						continue;
@@ -263,6 +286,8 @@ namespace Compass
 				return;
 			}
 			Hud::OnHudAdvance();
+			// The icons over friends in a menu (MenuIcons), queued by their own frame.
+			MenuIcons::OnHudAdvance(a_this);
 			if (!updateQueued.exchange(false)) {
 				return;
 			}
@@ -307,18 +332,26 @@ namespace Compass
 			                                       std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 			const auto& position = player->data.location;
 			const float heading = player->data.angle.z * 180.0f / std::numbers::pi_v<float>;
-			for (const auto& info : RemotePlayers::List()) {
-				if (!info.state || std::pair{ info.state->cell, info.state->worldspace } != here) {
-					continue;
-				}
-				const float dx = info.state->x - position.x;
-				const float dy = info.state->y - position.y;
+			const auto  add = [&](std::uint32_t a_id, bool a_ping, float a_x, float a_y) {
+				const float dx = a_x - position.x;
+				const float dy = a_y - position.y;
 				if (dx * dx + dy * dy < 1.0f) {
-					continue;
+					return;
 				}
 				const float bearing = std::atan2(dx, dy) * 180.0f / std::numbers::pi_v<float>;
 				const float x = WrapDegrees(bearing - heading) * PIXELS_PER_DEGREE;
-				targets.push_back({ info.id, std::clamp(x, -HALF_WIDTH, HALF_WIDTH), std::abs(x) > HALF_WIDTH });
+				targets.push_back({ a_id, a_ping, std::clamp(x, -HALF_WIDTH, HALF_WIDTH), std::abs(x) > HALF_WIDTH });
+			};
+			for (const auto& info : RemotePlayers::List()) {
+				if (info.state && std::pair{ info.state->cell, info.state->worldspace } == here) {
+					add(info.id, false, info.state->x, info.state->y);
+				}
+			}
+			// Pings (our own too) in our cell or worldspace, in the pinger's color (Party, PingRules::LIFETIME).
+			for (const auto& ping : Party::PingMarkers()) {
+				if (std::pair{ ping.cell, ping.worldspace } == here) {
+					add(ping.pinger, true, ping.x, ping.y);
+				}
 			}
 			return targets;
 		}

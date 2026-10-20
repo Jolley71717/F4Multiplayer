@@ -5,6 +5,8 @@
 #include "Text.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <regex>
 #include <map>
 #include <set>
 #include <string>
@@ -213,6 +215,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "session.player_left", { { "player", "Sam" } }, "Sam left" },
 		{ "session.player_renamed", { { "player", "Sam" }, { "name", "Nate" } }, "Sam is now Nate" },
 		{ "session.someone_left", {}, "A player left" },
+		{ "session.kicked", {}, "Multiplayer: the host removed you from the session" },
+		{ "session.banned", {}, "Multiplayer: the host banned you from the session" },
 		{ "session.disconnected", {}, "Multiplayer: disconnected" },
 		{ "session.hosting_cant_join", {}, "Multiplayer: you're hosting. Set bHost = false to join friends." },
 		{ "session.host_waits_for_world", {}, "Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends." },
@@ -230,6 +234,8 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "reject.password", {}, "Wrong password" },
 		{ "reject.host_not_ready", {}, "The host isn't in the game yet" },
 		{ "reject.full", {}, "Server is full" },
+		{ "reject.banned", {}, "The host has banned you from this session" },
+		{ "reject.locked", {}, "The session is locked: the host isn't letting anyone new in" },
 		{ "reject.order", {}, "Your load order is different from the other players." },
 		{ "reject.order_all", {}, "Everyone needs the same mods in the same order." },
 		{ "reject.texture", {}, "Texture plugins may differ only when they load last." },
@@ -262,8 +268,13 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.friend_down_near", { { "player", "Sam" }, { "where", "20 m N" } }, "Sam is down! Get to them to help them up (20 m N)" },
 		{ "party.friend_died", { { "player", "Sam" } }, "Sam died" },
 		{ "party.friend_back_up", { { "player", "Sam" } }, "Sam is back up" },
-		{ "party.ping", { { "player", "Sam" }, { "where", "at Sanctuary" } }, "Sam: over here! (at Sanctuary)" },
-		{ "party.called", {}, "You called your party over" },
+		{ "party.ping", { { "player", "Sam" }, { "what", "Raider" }, { "where", "23 m NE" } }, "Sam: Raider (23 m NE)" },
+		{ "party.called", { { "what", "Stimpak" }, { "where", "8 m N" } }, "Ping: Stimpak (8 m N)" },
+		{ "party.ping_here", {}, "over here!" },
+		{ "party.ping_you", {}, "you" },
+		{ "party.ping_something", {}, "something" },
+		{ "party.tag_pipboy", { { "name", "Sam (60%)" } }, "Sam (60%) [Pip-Boy]" },
+		{ "party.tag_menu", { { "name", "Sam" } }, "Sam [in a menu]" },
 		{ "party.killed", { { "killer", "Sam" }, { "victim", "Raider" } }, "Sam killed Raider" },
 		{ "party.xp", { { "xp", "25" } }, "+25 XP from your party's kills" },
 		{ "party.no_teleport_target", {}, "Multiplayer: nobody to teleport to" },
@@ -296,6 +307,9 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "quest.next", {}, "the next quest" },
 		{ "quest.completed", { { "player", "Sam" }, { "quest", "Reunions" } }, "Sam completed Reunions" },
 		{ "workshop.rescued", {}, "What you kept in a friend's container is in your inventory" },
+		{ "drops.container_hint", {}, "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
+		{ "drops.not_given", {}, "Friends can't pick this item up: it stays on the ground in your game only" },
+		{ "drops.taken_first", {}, "A friend picked it up first" },
 		{ "menu.unavailable", {}, "Multiplayer: the menu isn't available" },
 		{ "menu.more", { { "page", 1 }, { "pages", 2 } }, "More (1/2)" },
 		{ "menu.on", {}, "On" },
@@ -352,14 +366,46 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "menu.fast_loading_what", {}, "vsync off during loading screens" },
 		{ "menu.mods", { { "n", 3 } }, "Compare mods (3)" },
 		{ "menu.mods_ask", {}, "Ask the host again" },
+		{ "menu.host_controls", {}, "Host controls" },
+		{ "menu.hc_waiting", {}, "Waiting for your server to answer. Try again in a moment." },
+		{ "menu.hc_open", {}, "The session is open: friends can join." },
+		{ "menu.hc_locked", {}, "The session is locked: nobody new can join (those here stay)." },
+		{ "menu.hc_no_password", {}, "No password: anyone who can reach the session can join." },
+		{ "menu.hc_password", { { "password", "k7m2qp9x" } }, "Password: k7m2qp9x (friends set sPassword = k7m2qp9x in their F4Multiplayer.ini)" },
+		{ "menu.hc_banned", { { "n", 2 } }, "Banned players: 2" },
+		{ "menu.hc_players", { { "n", 2 } }, "Kick or ban (2)" },
+		{ "menu.hc_lock", {}, "Lock the session" },
+		{ "menu.hc_unlock", {}, "Unlock the session" },
+		{ "menu.hc_password_button", {}, "Password" },
+		{ "menu.hc_bans", { { "n", 2 } }, "Banned (2)" },
+		{ "menu.hc_pick_player", {}, "Pick a player to kick or ban:" },
+		{ "menu.hc_nobody", {}, "Nobody else is in the session." },
+		{ "menu.hc_player", { { "player", "Sam" } }, "Sam\nKick: they are dropped from the session and told the host removed them; they can join again.\nBan: kicked, and refused every time they try to join again. Kept on this PC by their Steam account; unban them under Banned." },
+		{ "menu.hc_kick", { { "player", "Sam" } }, "Kick Sam" },
+		{ "menu.hc_ban", { { "player", "Sam" } }, "Ban Sam" },
+		{ "menu.hc_password_page", {}, "The menu can't type, so a new password is made up for you. Players already in the session stay." },
+		{ "menu.hc_new_password", {}, "New password" },
+		{ "menu.hc_remove_password", {}, "Remove the password" },
+		{ "menu.hc_bans_page", { { "n", 2 } }, "Banned players (2). Pick one to unban:" },
+		{ "menu.hc_no_bans", {}, "Nobody is banned." },
+		{ "menu.hc_unban", { { "who", "Sam (~3fa2c1)" } }, "Unban Sam (~3fa2c1)" },
+		{ "menu.hc_ban_named", { { "player", "Sam" }, { "alias", "~3fa2c1" } }, "Sam (~3fa2c1)" },
+		{ "menu.hc_ban_unnamed", { { "alias", "~3fa2c1" }, { "date", "2026-10-18" } }, "~3fa2c1, banned 2026-10-18" },
+		{ "menu.hc_unban_all", {}, "Unban everyone" },
+		{ "menu.hc_kicked", { { "player", "Sam" } }, "Multiplayer: Sam was kicked" },
+		{ "menu.hc_banned_hud", { { "player", "Sam" } }, "Multiplayer: Sam was banned" },
+		{ "menu.hc_unbanned", { { "who", "Sam (~3fa2c1)" } }, "Multiplayer: Sam (~3fa2c1) was unbanned" },
+		{ "menu.hc_not_saved", {}, "Multiplayer: the ban list could not be saved; it holds until you stop hosting" },
+		{ "menu.hc_no_identity", { { "player", "Sam" } }, "Multiplayer: Sam could not be banned (no account known), so was kicked" },
+		{ "menu.hc_gone", {}, "Multiplayer: that player is no longer in the session" },
 		{ "mods.differ", { { "n", 3 }, { "key", "F1" } }, "Multiplayer: your mods differ from the host's (3): see F1" },
 		{ "mods.match", {}, "Multiplayer: your mods match the host's" },
 		{ "mods.ask_wait", {}, "Multiplayer: you just asked the host; try again in a few seconds" },
 		{ "mods.same", {}, "Your mods match the host's." },
-		{ "mods.page_intro", { { "n", 3 } }, "Your mods compared with the host's: 3 to change. The game loads mods only when it starts: change yours to match, then restart it." },
+		{ "mods.page_intro", { { "n", 3 } }, "Your mods compared with the host's: 3 only one of you has. You can still play together: what comes from those (an NPC, an item, a quest) is left out in the other game. To share it, match the host's mods, then restart the game: it loads mods only when it starts." },
 		{ "mods.missing", {}, "Missing in your game (install and enable these):" },
 		{ "mods.extra", {}, "Only in your game (disable these):" },
-		{ "mods.order", {}, "In another place in your load order (sort these like the host's):" },
+		{ "mods.order", {}, "In another place in your load order (no need to change these):" },
 		{ "mods.light_here", { { "name", "A.esp" } }, "A.esp (light in your game, full in the host's)" },
 		{ "mods.full_here", { { "name", "A.esp" } }, "A.esp (full in your game, light in the host's)" },
 	};
@@ -395,6 +441,8 @@ TEST("text: a server's refusals read in the player's language, and a changed ser
 		Protocol::LoadOrderDifference({ "Fallout4.esm", "ccbgsfo4044-hellfirepowerarmor.esl" }, {}),
 		Protocol::LoadOrderDifference({ "Fallout4.esm", "HD.esp", "Other.esp" }, { "Fallout4.esm", "Other.esp" }, { "HD.esp" }),
 		"Some refusal a changed server made up",
+		std::string{ Protocol::REJECT_BANNED },
+		std::string{ Protocol::REJECT_LOCKED },
 	};
 	// In English nothing changes: the text is the server's, byte for byte.
 	for (const auto& reason : sent) {
@@ -568,4 +616,30 @@ TEST("text: no player-facing message is a bare English literal in the code")
 		}
 	}
 	CHECK(found == 0);
+}
+
+TEST("text: every key the plugin asks for by name is in the English table")
+{
+	// A key nobody wrote shows as the key itself (a friend's name tag once read "STANDIN.TAG_PIPBOY").
+	const auto root = SourceTree::Root();
+	REQUIRE(root);
+	const std::regex call{ R"(Text::(?:Format|Get|FormatEnglish|GetEnglish)\("([a-z0-9_.]+)\")" };
+	std::size_t      keys = 0;
+	for (const auto& file : std::filesystem::recursive_directory_iterator(*root / "src")) {
+		const auto extension = file.path().extension();
+		if (!file.is_regular_file() || (extension != ".cpp" && extension != ".h")) {
+			continue;
+		}
+		const auto text = FileOf(file.path());
+		for (auto it = std::sregex_iterator(text.begin(), text.end(), call); it != std::sregex_iterator(); ++it) {
+			const auto key = (*it)[1].str();
+			++keys;
+			const bool known = std::ranges::any_of(Text::English(), [&](const auto& a_entry) { return a_entry.key == key; });
+			if (!known) {
+				std::printf("  unknown text key %s in %s\n", key.c_str(), file.path().filename().string().c_str());
+			}
+			CHECK(known);
+		}
+	}
+	CHECK(keys > 50);
 }

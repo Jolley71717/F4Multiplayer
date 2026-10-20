@@ -312,6 +312,11 @@ namespace SaveGuard
 		book.Forget(a_id);
 	}
 
+	void Release(std::uint32_t a_id)
+	{
+		book.Release(a_id);
+	}
+
 	void KeepUnpromoted(RE::Actor* a_actor)
 	{
 		if (!a_actor || !InstallPromoteHook(a_actor)) {

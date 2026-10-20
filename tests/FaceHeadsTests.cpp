@@ -164,3 +164,25 @@ TEST("face heads: the loader threads read the copies while the main thread adds 
 	CHECK(wrong.load() == 0);
 	CHECK(copies.Size() == N);
 }
+
+TEST("face heads: a friend with no region sliders gives the copy none, never an empty array the engine indexes")
+{
+	// Fresh out of the face editor with a preset: the host's crash (2026-10-18) as the copy's body loaded.
+	CHECK(FaceHeads::RegionSliders({}).empty());
+}
+
+TEST("face heads: region sliders cover every body region the engine can read")
+{
+	const std::vector<float> all{ 0.1f, -0.2f, 0.3f, 0.0f, 1.0f };
+	CHECK(FaceHeads::RegionSliders(all) == all);
+	// Fewer than the regions (an older or hostile sender): filled with 0 up to them, what was sent kept.
+	const std::vector<float> two{ 0.5f, -1.0f };
+	const auto filled = FaceHeads::RegionSliders(two);
+	REQUIRE(filled.size() == FaceHeads::BODY_REGIONS);
+	CHECK(filled[0] == 0.5f);
+	CHECK(filled[1] == -1.0f);
+	CHECK(filled[4] == 0.0f);
+	// More (another race's regions): all kept.
+	const std::vector<float> seven(7, 0.25f);
+	CHECK(FaceHeads::RegionSliders(seven) == seven);
+}

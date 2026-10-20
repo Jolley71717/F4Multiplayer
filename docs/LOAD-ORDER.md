@@ -1,4 +1,4 @@
-# Load order: why it must match, and what could be relaxed
+# Load order: what has to match, and what no longer does
 
 ## Why everything is keyed by form ID
 
@@ -6,46 +6,56 @@ Everything the session shares is named by its form ID: NPCs, items, containers, 
 markers, quests, workshop pieces. A form ID's top byte is the plugin's slot in the load order, so
 "same ID, same thing" only holds when everyone loads the same plugins in the same order. With a
 different order, a friend's "raider 0004B2BA picked up 0001F276" lands on whatever those IDs mean
-in your game, or on nothing.
+in your game, or on nothing. Since protocol 36 the wire does not carry a game's own IDs: it carries
+the session's, and each game translates (DESIGN.md, *Form IDs across load orders*).
 
 ## What is checked today
 
 At startup the plugin hashes the names of the loaded plugins, in order (FNV-1a, 32 bits), skipping
-the free HD texture pack when it is the last full plugin (it holds no records, but it takes a place
-in the load order: with mods after it, a mod's NPC is 09000004 with it and 08000004 without, so it
-counts then). The hash travels in the hello message. The server keeps the first
-player's hash; a later hello with a different one is refused (the plugin list travels with the hello;
-protocol 23). From protocol 23 to 34 the refusal named the plugins only the joiner has and the ones they
-are missing, or said the order differs. Since protocol 35 the server sends the joiner the session's whole
-list instead, with the host's `sIgnoredPlugins` (`kLoadOrder`, up to 512 names of up to 260 bytes; the hello
-carries as many), just before the refusal, which names no plugin; the joining game names every plugin that
-differs on the HUD, on the F1 menu's *Compare mods* page and in the log: missing, extra, and out of order
-(src/net/ModDiff.h), the ignored plugins left out where they move no other plugin, as the server leaves
-them out. That is information only: the hash still decides. Nothing else is compared: not plugin
-versions, not file contents, not F4SE plugins, not INI settings.
+the free HD texture pack when it is the last full plugin, and sends the hash and the list itself
+(full plugins, a mark, light plugins; up to 512 names) in its hello.
+
+- **Since protocol 36 any load order gets in.** The server keeps the session's plugin table (the
+  host's load order, with each later joiner's other plugins added after the rest of their kind),
+  sends it before each welcome and to everyone when it grows, and each game translates every form ID
+  it sends and gets by plugin file name (common/FormIds.h, common/FormTranslate.h). A reorder, a
+  light plugin in another place, or a plugin light in one game and full in the other changes nothing.
+- **A plugin only one game has** cannot be shared: what comes from it is skipped in the other game,
+  never guessed (a message about its form is dropped, a list entry left out, a detail set to none),
+  and each game's log names the plugin once.
+- **The joiner is told.** The server sends a joiner whose list differs the host's list with the
+  host's `sIgnoredPlugins` (`kLoadOrder`, protocol 35) before the welcome; their game names every
+  plugin only one of them has on the HUD, on the F1 menu's *Compare mods* page and in the log
+  (src/net/ModDiff.h), and lists the moved ones as nothing to change.
+- **A hello without a list** (a bot, a test tool), or a session whose first player sent none, still
+  needs the session's hash: with no lists there is nothing to translate by. Such a joiner is refused
+  as before, and their game names what differs.
+- **The saved session** keeps its plugin table (session file layout 33), so the host carries on with any mods. A
+  file saved by 0.8.11 or older has none, and carries on only with the load order its hash names.
+
+Nothing else is compared: not plugin versions, not file contents, not F4SE plugins, not INI settings.
 
 ## Options, from cheapest to hardest
 
-| Option | What players get | Cost | Risk |
-|---|---|---|---|
-| **A. Keep the strict check** (today) | A clear refusal with a reason | none | Friends with one extra texture or sound mod can't play together until they match lists |
-| **B. Ignore plugins that add no records that are shared** | Texture/mesh/sound/UI mods and ESL-flagged "cosmetic" plugins no longer count | small: a list of known-safe plugin names, plus a rule for plugins whose records are only in types we never share (TXST, SNDR, MUSC, INNR...) | A plugin that looks cosmetic but edits an NPC or a leveled list would desync that NPC |
-| **C. Show the difference instead of a hash** | The refusal names the plugins that differ ("you have X, they don't") | small: send the plugin name list (a few KB) with the hello | none; purely better messaging |
-| **D. Host-decided allow list** (`sIgnoredPlugins` in the ini) | The host says which plugins may differ | small | The host is responsible; a wrong entry gives silent desyncs rather than a refusal |
-| **E. Translate form IDs by plugin name** | Different *orders* of the same plugins work | medium: send (plugin name, local ID) pairs instead of raw IDs, or send the plugin list once and remap at both ends | ESL/light plugins and runtime (0xFF) IDs need their own handling; one missed path (there are about 25 message types with IDs) desyncs quietly |
-| **F. One-sided mods: a plugin only one player has** | Anything goes | large: every shared reference would need a fallback when the base form doesn't exist locally ("a mod we don't have" already skips workshop copies; NPC gear, loot, spawned NPCs, quests would all need the same) | Visible holes: a friend fights a raider you can't see, loots an item you can't receive, builds a wall that isn't there. This is the "works on one side but not the other" case, and it can't be made consistent, only tolerated |
+| Option | What players get | Status |
+|---|---|---|
+| **A. Keep the strict check** | A clear refusal with a reason | replaced by E (still the rule for hellos without a list) |
+| **B. Ignore plugins that add no records that are shared** | Texture/mesh/sound/UI mods no longer count | the HD texture pack when last; others through D |
+| **C. Show the difference instead of a hash** | The joining game names the plugins that differ | done (protocols 23 and 35) |
+| **D. Host-decided allow list** (`sIgnoredPlugins` in the ini) | The host says which plugins nobody needs to hear about | done (protocol 23) |
+| **E. Translate form IDs by plugin name** | Different *orders* of the same plugins work | done (protocol 36): a per-session plugin table, translated at each game's edge; every message type has its case (the build fails without one) |
+| **F. One-sided mods: a plugin only one player has** | Anything goes, with holes | the skip half of it (protocol 36): a form the other game lacks is skipped there, not guessed. The holes are real: a friend fights a raider you can't see, or loots an item you can't receive |
 
-## Recommendation
+## What is left
 
-C and D are done (protocol 23; `sIgnoredPlugins` in the host's ini, compared on the plugin lists, full and light plugins apart: an
-ignored plugin may differ only where no kept plugin of its kind loads after it, since it would move that one's form IDs). Next B with a conservative built-in list (the
-official HD pack is already there; add the common texture and audio replacers, and any plugin whose
-record types are all outside what the mod shares) and D so hosts can extend it. Leave E and F out:
-E is a large, silent-failure change for a problem that matching load orders solves, and F cannot
-be made consistent, so it would become the main source of bug reports.
+- A host is not told which plugins a joiner lacks: only the joiner's game compares (the host's log has
+  "a joiner's load order differs").
+- The table holds at most 254 full and 4096 light plugins, and 511 names in all: a joiner's plugin past
+  that has no ID in the session.
+- Versions of the same plugin are not compared (below).
 
 ## Version mismatches of the same plugin
 
-Two players with different versions of the same plugin pass the check. If that becomes a real
-problem, a hash of each plugin's size and modification time (not contents, which would be slow)
-could be added to the hello at the same cost as C.
+Two players with different versions of the same plugin pass the check, and its forms translate as one
+plugin's. If that becomes a real problem, a hash of each plugin's size and modification time (not
+contents, which would be slow) could be added to the hello's list.
