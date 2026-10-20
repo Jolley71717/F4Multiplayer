@@ -1019,7 +1019,7 @@ void Server::Run()
 		a_player.dropListAt.reset();
 		a_player.helloId = hello->identity;
 		a_player.worldAskedAt = Clock::now();
-		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory }), true);
+		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
 		for (auto& [key, other] : players) {

@@ -117,6 +117,24 @@ next to you for 2 seconds helps you up (with 30% health). When a friend goes dow
 you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
 `bRevive = false`.
 
+The host can make it harder (their ini sets it for everyone; a joiner's own settings aren't used):
+the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the health you get up with
+(`iReviveHealth`), how many times each player can be helped up per fight or per so many minutes
+(`iMaxRevives`, `iReviveWindowMinutes`), a time after getting up when a lethal hit kills
+(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). The HUD tells you
+how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
+`--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
+`--revive-out-of-combat`, `--no-revive`).
+
+### VATS in real time
+
+In a session VATS runs at full speed instead of slowing the world almost to a stop, as in Fallout 76,
+so your friends don't see you stand still while they fight. On Jet (or the like) VATS keeps its slow
+motion. The host can keep the game's own slow motion for everyone with `bRealTimeVats = false` (server:
+`--slow-vats`). The game's tutorial hints stay hidden in a session (`bHideTutorials`, your own setting).
+The Pip-Boy and the other menus still pause your own game, as before (the session goes on for your
+friends).
+
 ## How friends appear
 
 Each of you plays in your own game, with your own save. A friend is shown in your game by a stand-in: a

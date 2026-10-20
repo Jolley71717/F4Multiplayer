@@ -112,6 +112,28 @@ namespace Config
 				settings.sharedRadiants = ParseBool(value);
 			} else if (key == "bRevive") {
 				settings.revive = ParseBool(value);
+			} else if (key == "iBleedOutSeconds") {
+				ParseInt(value, settings.bleedOutSeconds);
+			} else if (key == "fReviveSeconds") {
+				float seconds = settings.reviveSeconds;
+				const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), seconds);
+				if (ec == std::errc{} && std::isfinite(seconds)) {
+					settings.reviveSeconds = std::clamp(seconds, 0.5f, 30.0f);
+				}
+			} else if (key == "iReviveHealth") {
+				ParseInt(value, settings.reviveHealth);
+			} else if (key == "iMaxRevives") {
+				ParseInt(value, settings.maxRevives);
+			} else if (key == "iReviveWindowMinutes") {
+				ParseInt(value, settings.reviveWindowMinutes);
+			} else if (key == "iReviveCooldownSeconds") {
+				ParseInt(value, settings.reviveCooldownSeconds);
+			} else if (key == "bReviveOutOfCombat") {
+				settings.reviveOutOfCombat = ParseBool(value);
+			} else if (key == "bRealTimeVats") {
+				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bHideTutorials") {
+				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {
 				settings.shareMap = ParseBool(value);
 			} else if (key == "bFastLoading") {

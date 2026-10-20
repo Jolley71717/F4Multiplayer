@@ -110,6 +110,11 @@ down.seconds_left = Осталось {n} сек., чтобы вас поднял
 down.helping = Поднимаете игрока {player}...
 down.helped = Вы подняли игрока {player}
 down.helped_you = {player} помог вам подняться
+down.revives_left = Осталось подъёмов: {n}
+down.last_revive = Пока это был последний подъём: следующий смертельный удар вас убьёт
+down.revives_back = Друзья снова могут вас поднять
+down.cooldown = Вас только что подняли: ещё {n} сек. смертельный удар вас убьёт
+down.cant_help_fighting = Нельзя поднять игрока {player} во время боя
 
 # --- The shared map, quests and workshop ---
 map.discovered = {player} обнаружил: {place}

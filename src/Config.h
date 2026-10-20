@@ -1,5 +1,11 @@
 ﻿#pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
 // Settings read from Data/F4SE/Plugins/F4Multiplayer.ini (simple "key = value" lines,
 // '#' or ';' start a comment). Missing keys keep their defaults.
 namespace Config
@@ -121,9 +127,23 @@ namespace Config
 		// shared story.
 		bool sharedRadiants = true;
 
+		// When hosting, the session's rules for everyone (Protocol::SessionRules, sent with the welcome; joining, the
+		// host's apply and these are not used).
 		// With friends in the session, a lethal hit knocks you down; a friend who stays next to
-		// you for 2 seconds helps you up. Otherwise you die after 45 seconds (or when you give up).
-		bool revive = true;
+		// you for reviveSeconds helps you up. Otherwise you die after bleedOutSeconds (or when you give up).
+		bool          revive = true;
+		std::uint32_t bleedOutSeconds = 45;
+		float         reviveSeconds = 2.0f;
+		std::uint32_t reviveHealth = 30;           // percent of the maximum a player gets up with
+		std::uint32_t maxRevives = 0;              // times one player can be helped up per window; 0 = no limit
+		std::uint32_t reviveWindowMinutes = 0;     // that window; 0 = per fight
+		std::uint32_t reviveCooldownSeconds = 0;   // helped up, a lethal hit within this long kills instead of downing
+		bool          reviveOutOfCombat = false;   // friends can help only while they are not in a fight
+		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
+		bool realTimeVats = true;
+
+		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
+		bool hideTutorials = true;
 
 		// Locations a friend discovers show up on your map, ready for fast travel.
 		bool shareMap = true;

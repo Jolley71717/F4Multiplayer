@@ -835,6 +835,27 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
   the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
   replaced, so it never sits on the ground while its friend is up.
+- Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
+  options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
+  game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help
+  0.5-30 s, health 1-100 %, window up to 600 min, cooldown up to 3600 s). The downed ones (bleed-out and help
+  times, health, revives per fight or per window, the cooldown after getting up, helping only out of combat)
+  are kept by DownRules::Self on the downed player's side: out of revives, or in the cooldown, the player is
+  not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
+  frame in combat (on the ground counts as in combat). The helper checks its own combat state for
+  `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
+- VATS in real time (src/game/RealTime.cpp, src/game/RealTimeVats.h; `bRealTimeVats`): the game slows VATS's
+  aiming through `VATS::magicTimeSlowdown` (0.04 while aiming, measured on 1.11.240; the global time multiplier
+  and its target follow it; Jet sets the same slowdown to 0.3), and a shot playing out through the VATS
+  camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time
+  multiplier under 1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the
+  slowdown was already on the frame before VATS came up (Jet or the like). Tutorial hints: the game's
+  `bShowTutorials:Interface`, which its help messages read each time, is held off in a session
+  (Background::Switch) and put back after; its tutorial message boxes are not gated by it.
+- Menus still pause: clearing `kPausesGame` as a menu is made (wrapping its `UIMenuEntry::create`) was tried
+  and taken out. The UI counts `menuMode` from the flag after the menu has handled its show message
+  (0x141a811bc) and again at close (0x141a80a49). Made without it, the Pip-Boy came up with a blank screen
+  and would not close, and a container was still counted (`menuMode` 1).
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Protocol.h"
 #include "Transport.h"
 
 #include <atomic>
@@ -42,6 +43,9 @@ public:
 		// Main story and faction quest progress is shared too, not just side quests (each
 		// player's game decides what to apply; this only tells them the host's choice).
 		bool sharedStory = false;
+
+		// The host's rules for everyone (revive, real-time VATS and menus), sent with each welcome.
+		Protocol::SessionRules rules;
 
 		// Container changes one player may author in a session: one client cannot fill the shared table
 		// (60,000) on its own. Held per player ID and, for the server's run, per budget (a reconnect with a

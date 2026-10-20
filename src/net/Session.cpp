@@ -23,6 +23,7 @@
 #include "game/Face.h"
 #include "game/FrameClock.h"
 #include "game/Gait.h"
+#include "game/HostRules.h"
 #include "game/Hud.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
@@ -425,6 +426,7 @@ namespace Session
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
+					HostRules::Set(msg->rules);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -848,6 +850,7 @@ namespace Session
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
+			HostRules::Clear();  // out of a session, nothing of the host's rules applies
 			if (echo) {
 				RemotePlayers::Add(ECHO_ID, "Echo", DefaultAppearance());
 				sentEquipment.reset();
@@ -957,6 +960,7 @@ namespace Session
 		options.hostIdentity = Identity::Get();  // our Hello says this: the server knows our connection as the host's
 		options.friendlyFire = settings.friendlyFire;
 		options.sharedStory = settings.sharedStory;
+		options.rules = HostRules::FromSettings(settings);
 		options.ignoredPlugins = settings.ignoredPlugins;
 		const auto character = CurrentCharacter();
 		binding.OnHostingStarted(character);
