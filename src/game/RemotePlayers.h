@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/NetSim.h"
 #include "game/RemoteEdits.h"
 
 #include "Protocol.h"
@@ -17,6 +18,9 @@ namespace RemotePlayers
 
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
+	// Dev: friends' states from now on come as over a worse connection (NetSim.h); off lets in what waits.
+	void SetNetSim(const NetSim::Settings& a_settings);
+	[[nodiscard]] std::string DescribeNetSim();
 
 	// What the player is wearing and holding (base forms), and the mods on those that carry any; copied onto their puppet.
 	void SetEquipment(std::uint32_t a_id, std::vector<std::uint32_t> a_items, std::vector<Protocol::ItemMods> a_mods);

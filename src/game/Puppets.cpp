@@ -2,6 +2,7 @@
 
 #include "game/AimPoint.h"
 #include "game/CreatureGait.h"
+#include "game/FrameClock.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
@@ -50,6 +51,7 @@ namespace Puppets
 			std::uint32_t                         resyncsTaken = 0;  // of those, taken: the graph was in the other state (dev: mirror)
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
+			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
 		};
 
 		std::mutex                                    lock;
@@ -514,14 +516,22 @@ namespace Puppets
 			}
 			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
-				// Where its path is now (MotionPath.h), not where it was when our frame's work last ran, which comes at
-				// another moment of each frame than this update does.
-				if (const auto at = puppet->target.path.At(now)) {
+				// Where its path (MotionPath.h) is at the time of the frame the engine moves all else by (FrameClock.h): not where
+				// it was when our frame's work last ran, nor at the moment this update runs, which comes up to a frame off that
+				// pace in a game that skips frames unevenly. So it steps as far each frame as everything else drawn with it.
+				const auto placeAt = FrameClock::PlaceAt(now);
+				if (const auto at = puppet->target.path.At(placeAt)) {
 					puppet->target.position = { at->x, at->y, at->z };
 					puppet->target.heading = at->heading;
 				}
 				a_this->SetPosition(puppet->target.position, true);
 				a_this->SetHeading(puppet->target.heading);
+				{
+					std::scoped_lock l{ lock };
+					if (const auto entry = Find(a_this)) {
+						entry->put = Put{ now, puppet->target.position, placeAt };
+					}
+				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
 				MatchWeaponDrawn(a_this, *puppet);
 				// The engine feeds its locomotion graph from the actor's desired movement, which for an
@@ -809,6 +819,13 @@ namespace Puppets
 			entry->target = a_motion;
 			entry->hasTarget = true;
 		}
+	}
+
+	std::optional<Put> LastPut(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		const auto entry = Find(a_actor);
+		return entry ? entry->put : std::nullopt;
 	}
 
 	const RE::BSFixedString& VariableName(const char* a_name)

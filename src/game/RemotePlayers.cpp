@@ -8,6 +8,7 @@
 #include "game/GraphInfo.h"
 #include "game/Hud.h"
 #include "game/MoveSync.h"
+#include "game/NetSim.h"
 #include "game/SaveGuard.h"
 #include "game/SaveStrays.h"
 #include "game/StandInCalm.h"
@@ -301,6 +302,8 @@ namespace RemotePlayers
 		// this is more than a few percent.
 		std::uint32_t                         movingFrames = 0;
 		std::uint32_t                         heldFrames = 0;
+		// ... and how many were carried on past the newest state instead, the way the friend went (StateBuffer::EXTRAPOLATE).
+		std::uint32_t                         aheadFrames = 0;
 		// Frames a stand-in was drawn a body's room away from us instead of at its friend's spot, which was ours (StandInSpace).
 		std::uint32_t                         spacedFrames = 0;
 
@@ -1867,18 +1870,51 @@ namespace RemotePlayers
 		players.clear();
 	}
 
+	namespace
+	{
+		void TakeState(std::uint32_t a_id, const Protocol::PlayerState& a_state)
+		{
+			const auto it = players.find(a_id);
+			if (it == players.end()) {
+				return;  // state for a player we haven't been told about yet
+			}
+			if (!it->second.states.Push(a_state, Clock::now())) {
+				return;
+			}
+			if (it->second.wornAtWanted) {
+				TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
+			}
+		}
+
+		// Dev: friends' states held back as a worse connection would (NetSim.h, dev command `netsim`), let in each frame.
+		NetSim::Line<std::pair<std::uint32_t, Protocol::PlayerState>> netSim;
+
+		void ReleaseNetSim(Clock::time_point a_now)
+		{
+			netSim.Release(a_now, [](const auto& a_held) { TakeState(a_held.first, a_held.second); });
+		}
+	}
+
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state)
 	{
-		const auto it = players.find(a_id);
-		if (it == players.end()) {
-			return;  // state for a player we haven't been told about yet
-		}
-		if (!it->second.states.Push(a_state, Clock::now())) {
+		if (netSim.settings.Active()) {
+			netSim.Push({ a_id, a_state }, Clock::now());
 			return;
 		}
-		if (it->second.wornAtWanted) {
-			TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
+		TakeState(a_id, a_state);
+	}
+
+	void SetNetSim(const NetSim::Settings& a_settings)
+	{
+		netSim.settings = a_settings;
+		if (!a_settings.Active()) {
+			netSim.Flush([](const auto& a_held) { TakeState(a_held.first, a_held.second); });
 		}
+	}
+
+	std::string DescribeNetSim()
+	{
+		return std::format("{}; waiting={} lost={} spikes={}", netSim.settings.Describe(), netSim.Waiting(), netSim.lost, netSim.spikes);
 	}
 
 	void SetFace(std::uint32_t a_id, Protocol::Face a_face)
@@ -2269,6 +2305,7 @@ namespace RemotePlayers
 		const bool loading = Hud::LoadingScreenUp();
 
 		const auto now = Clock::now();
+		ReleaseNetSim(now);
 		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
 		const bool oursGone = player && !loading && player->Get3D() && !Face::HasHead(player);
@@ -2326,6 +2363,7 @@ namespace RemotePlayers
 			const auto sampled = remote.states.Sample(now);
 			// The newest state's own speed, as for movingFrames: Sample stops a long hold's speed, and those are the holds to count.
 			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
+			aheadFrames += sampled && sampled->ahead && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
@@ -2658,7 +2696,7 @@ namespace RemotePlayers
 			out += std::format(" armorIn={} armorOut={} armorFails={} armorStill={}", switchesIn, switchesOut, switchFails, stillStandIns);
 		}
 		if (movingFrames) {
-			out += std::format(" held={}/{}", heldFrames, movingFrames);
+			out += std::format(" held={}/{} ahead={}", heldFrames, movingFrames, aheadFrames);
 			out += std::format(" lights={} frames={}/{} spawns={} leftBehind={} downed={} respawnWaits={} adrift={} graveyard={}/{}", lightsPlaced, framesPlaced, framesFollowed, spawns, leftBehind, downedStandIns, respawnWaits, adrift,
 				graveyard.size(), flushedBeforeSave);
 		}
