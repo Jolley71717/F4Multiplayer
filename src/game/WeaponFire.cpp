@@ -2,6 +2,7 @@
 
 #include "game/BlastShield.h"
 #include "game/CopyWatch.h"
+#include "game/Destructibles.h"
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/HandThrowable.h"
@@ -686,6 +687,7 @@ namespace WeaponFire
 		// across a cell seam went off in the next cell over and was never reported (the thrower's friends
 		// saw the throw and nothing else), while the same throw the other way was.
 		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+		std::vector<RE::TESObjectREFR*> fresh;
 		RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, EXPLOSION_RANGE, [&](RE::TESObjectREFR* a_ref) {
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
 			// One going away has lost its id first: the last throw's, a 00000000 where it went off 6.5 s before, was
@@ -694,16 +696,27 @@ namespace WeaponFire
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 			seenExplosions.Add(a_ref);
-			if (reportsLogged < 20) {
-				++reportsLogged;
-				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) reported", a_ref->GetFormID(), base->GetFormID(), a_ref->data.location.x,
-					a_ref->data.location.y, a_ref->data.location.z);
-			}
-			std::scoped_lock e{ explosionLock };
-			explosions.push_back({ 0, base->GetFormID(), a_ref->data.location.x, a_ref->data.location.y, a_ref->data.location.z, space.first, space.second });
-			++explosionsReported;
+			fresh.push_back(a_ref);
 			return RE::BSContainer::ForEachResult::kContinue;
 		});
+		// After the walk (a claim walks the references around the explosion): one a destructible object's stage set off (a
+		// car we shot) is the object's to share, with its wreck (Destructibles): reported here as well, the others' copies
+		// went off twice, or before they were wrecked.
+		for (const auto ref : fresh) {
+			const auto base = ref->GetObjectReference();
+			const bool claimed = Destructibles::ClaimsExplosion(ref);
+			if (reportsLogged < 20) {
+				++reportsLogged;
+				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) {}", ref->GetFormID(), base->GetFormID(), ref->data.location.x,
+					ref->data.location.y, ref->data.location.z, claimed ? "is a destructible object's own: not reported" : "reported");
+			}
+			if (claimed) {
+				continue;
+			}
+			std::scoped_lock e{ explosionLock };
+			explosions.push_back({ 0, base->GetFormID(), ref->data.location.x, ref->data.location.y, ref->data.location.z, space.first, space.second });
+			++explosionsReported;
+		}
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)

@@ -27,6 +27,7 @@
 #include "game/Hud.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
+#include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/WorkshopSync.h"
 #include "game/Voice.h"
@@ -515,6 +516,11 @@ namespace Session
 					WeaponFire::ApplyExplosion(*msg);
 				}
 				break;
+			case MessageType::kDestructions:
+				if (const auto msg = Protocol::DecodeDestructions(a_data)) {
+					Destructibles::Apply(*msg);
+				}
+				break;
 			case MessageType::kObjectHeld:
 				if (const auto msg = Protocol::DecodeObjectHold(a_data)) {
 					MovedObjects::OnHeld(*msg);
@@ -847,6 +853,7 @@ namespace Session
 			WorkshopSync::Reset();
 			Conversations::Reset();
 			MovedObjects::Reset();
+			Destructibles::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
@@ -1407,6 +1414,12 @@ namespace Session
 				SendOut(std::move(packet.data), packet.reliable);
 			}
 		}
+		Destructibles::Frame(welcomed && !Story::InOpening());
+		for (auto& packet : Destructibles::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
+			}
+		}
 		PERF_NEXT(perf, "Voice");
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
@@ -1451,6 +1464,7 @@ namespace Session
 		WeaponFire::DropHandThrowables();
 		Downed::OnBeforeSave();
 		MovedObjects::BeforeSaveOrLoad();
+		Destructibles::BeforeSaveOrLoad();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {
 			hostedServer->RequestSave();
@@ -1489,6 +1503,7 @@ namespace Session
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
 		MovedObjects::Reset();
+		Destructibles::Reset();
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
@@ -1529,7 +1544,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 

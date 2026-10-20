@@ -222,6 +222,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+- **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
+  shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
+  the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
 - **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
   your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
   Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,

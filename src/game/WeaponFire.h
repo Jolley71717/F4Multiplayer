@@ -50,8 +50,9 @@ namespace WeaponFire
 	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
-	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), for the
-	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
+	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), or a shot of ours that hit
+	// a destructible object (a mine, a car: Destructibles), for the others to set off too. Frame() scans while a watch is
+	// armed; ArmExplosionWatch() arms it. A destructible object's own (its stage's) goes with its wreck instead.
 	void ArmExplosionWatch();
 
 	// Ends any replayed sound still following this actor: called before the actor is deleted, since
