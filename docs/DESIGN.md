@@ -827,7 +827,10 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
   drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` from inside the HUD's
   own update (its `AdvanceMovie`, hooked; one update queued at a time, and none while a loading
-  screen or another menu is up). The bar is 304 px for about 100 degrees (3.02 px/degree);
+  screen or another menu is up). In power armor that compass is hidden and `PowerArmorHUDMenu`, a
+  menu of its own, shows its own `HUDCompassWidget` at `root.CompassWidget_mc`: the markers and
+  ping rings go there too, from inside its update (hooked in its vtable from the address library,
+  as that menu is made anew each time the player gets in, and never looked up). The bar is 304 px for about 100 degrees (3.02 px/degree);
   friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
   HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
