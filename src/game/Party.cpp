@@ -1029,7 +1029,7 @@ namespace Party
 				return;
 			}
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll();
+			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -1040,7 +1040,7 @@ namespace Party
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll();
+			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);

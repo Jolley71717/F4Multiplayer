@@ -93,8 +93,11 @@ namespace RemotePlayers
 	[[nodiscard]] bool IsStandInBase(std::uint32_t a_base);
 
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
-	// Used before saving and loading so puppets never end up in a save file.
-	void DespawnAll();
+	// Used before saving and loading so puppets never end up in a save file: each is disabled now and
+	// marked for deletion a second later (DeferredDelete::MayDelete), its record kept out of the save.
+	// a_deleteNow marks them for deletion at once, for a teleport (Party), whose cells the engine
+	// clears later in this frame.
+	void DespawnAll(bool a_deleteNow = false);
 	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
 	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
 	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
