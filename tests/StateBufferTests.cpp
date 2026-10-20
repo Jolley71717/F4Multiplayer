@@ -743,3 +743,85 @@ TEST("state buffer: a stand-in placed a moment before our frame's work sampled i
 	CHECK(at(-5ms) < at(0ms));
 	CHECK(at(10ms) > at(0ms) + RUN * 0.008f);
 }
+
+namespace
+{
+	// Sets the lead quantile stand-ins are drawn behind by, for one test, and puts back the usual one after.
+	struct LeadQuantile
+	{
+		explicit LeadQuantile(float a_quantile) { StateBuffer::leadQuantile.store(a_quantile); }
+		~LeadQuantile() { StateBuffer::leadQuantile.store(StateBuffer::LEAD_QUANTILE); }
+		LeadQuantile(const LeadQuantile&) = delete;
+		LeadQuantile& operator=(const LeadQuantile&) = delete;
+	};
+
+	float MeanDelay(const std::vector<Drawn>& a_drawn, std::size_t a_from)
+	{
+		float sum = 0.0f;
+		for (std::size_t i = a_from; i < a_drawn.size(); ++i) {
+			sum += a_drawn[i].delay;
+		}
+		return a_drawn.size() > a_from ? sum / static_cast<float>(a_drawn.size() - a_from) : 0.0f;
+	}
+}
+
+TEST("state buffer: the delay is sized on nearly all of the recent leads, not the furthest one")
+{
+	StateBuffer::Buffer buffer;
+	buffer.leadCount = StateBuffer::LEADS;
+	buffer.leads.fill(0.03f);
+	// Three slots in 64 far out (one late state, or one long frame of the friend's game): left out, so the least delay.
+	buffer.leads[5] = buffer.leads[20] = buffer.leads[40] = 0.2f;
+	CHECK(std::abs(buffer.Wanted() - 0.07f) < 0.001f);
+	// Ten of them is a link that got worse: covered.
+	for (std::size_t i = 0; i < 10; ++i) {
+		buffer.leads[i * 6] = 0.2f;
+	}
+	CHECK(std::abs(buffer.Wanted() - 0.21f) < 0.001f);
+	// A few slots in (a friend just come): the furthest of them.
+	StateBuffer::Buffer fresh;
+	fresh.leadCount = 3;
+	fresh.leads[0] = 0.05f;
+	fresh.leads[1] = 0.12f;
+	fresh.leads[2] = 0.08f;
+	CHECK(std::abs(fresh.Wanted() - 0.13f) < 0.001f);
+	// The furthest of them all, as before, when asked for (netsim lead 100).
+	const LeadQuantile furthest{ 1.0f };
+	CHECK(std::abs(buffer.Wanted() - 0.21f) < 0.001f);
+	buffer.leads.fill(0.03f);
+	buffer.leads[7] = 0.2f;
+	CHECK(std::abs(buffer.Wanted() - 0.21f) < 0.001f);
+}
+
+TEST("state buffer: on a clean link where a state now and then comes late, a friend is drawn close behind, still never leaping")
+{
+	// What the host saw on LAN (2026-10-19): sized on the furthest lead of the last three seconds, one late state (or one
+	// long frame of the friend's game) every few seconds drew the friend 150 ms behind all the time. Carried on past
+	// the newest state over the late one instead, it is drawn about 70 ms behind and runs on as evenly.
+	for (const float fps : { 30.0f, 60.0f, 144.0f }) {
+		Setup setup;
+		setup.fps = fps;
+		setup.frameJitter = 0.2f;
+		setup.trip = 2ms;
+		setup.jitter = 4ms;
+		setup.lateEvery = 3s;
+		setup.lateBy = 80ms;
+		setup.queued = true;
+		const auto drawn = Play(setup);
+		const auto from = FirstAfter(drawn, 5s);
+		const auto counts = Count(drawn, from);
+		CHECK(counts.frames > 300);
+		CHECK(counts.backwards == 0);
+		CHECK(counts.leaps == 0);
+		CHECK(counts.heldFor < 0.02f);
+		CHECK(counts.uneven <= counts.frames / 50);
+		// About 70 ms at 60 fps and up, 88 at 30, whose frames make the leads longer anyway.
+		const float delay = MeanDelay(drawn, from);
+		CHECK(delay < 0.095f);
+
+		// Sized on the furthest, the same link was drawn 130 ms behind or more.
+		const LeadQuantile furthest{ 1.0f };
+		const auto         before = Play(setup);
+		CHECK(MeanDelay(before, FirstAfter(before, 5s)) > delay + 0.04f);
+	}
+}

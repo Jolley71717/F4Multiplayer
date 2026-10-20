@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -33,6 +34,14 @@ namespace StateBuffer
 	// but under half a second at 144: a state held up on the way was forgotten long before the next, the delay
 	// eased back down, and the next one froze the stand-in again. A frame after a stall of our own game (longer
 	// than MAX_DELAY) is not counted: nothing was drawn meanwhile, so nothing stood still.
+	//
+	// Not the furthest lead of them all, though: a high quantile of the slots. The furthest took one late state in three
+	// seconds, or one long frame of the sender's game, as what every state needed, and on a clean link drew the friend
+	// 150 ms behind where about 70 covered all but a few slots. A state later than the delay covers is carried on past
+	// (EXTRAPOLATE); a run of them (a link that got worse) is more than the quantile leaves out, so the delay grows for it.
+	constexpr float LEAD_QUANTILE = 0.95f;
+	// What Wanted takes: LEAD_QUANTILE, or another to measure against it (netsim lead); 1 is the furthest, as before.
+	inline std::atomic<float> leadQuantile{ LEAD_QUANTILE };
 	constexpr auto  MIN_DELAY = 70ms;
 	constexpr auto  MAX_DELAY = 250ms;
 	constexpr float DELAY_SLACK = 0.01f;  // seconds
@@ -193,11 +202,17 @@ namespace StateBuffer
 			return v;
 		}
 
-		// How far behind now it should be drawn, before easing: the furthest of the recent leads, plus slack.
+		// How far behind now it should be drawn, before easing: the recent leads' quantile (LEAD_QUANTILE), plus slack.
+		// With few slots yet, that is the furthest of them.
 		float Wanted() const
 		{
-			const float furthest = *std::max_element(leads.begin(), leads.begin() + static_cast<std::ptrdiff_t>(leadCount));
-			return std::clamp(furthest + DELAY_SLACK, std::chrono::duration<float>(MIN_DELAY).count(), std::chrono::duration<float>(MAX_DELAY).count());
+			auto        sorted = leads;
+			const auto  end = sorted.begin() + static_cast<std::ptrdiff_t>(leadCount);
+			const float q = std::clamp(leadQuantile.load(std::memory_order_relaxed), 0.0f, 1.0f);
+			const auto  rank = static_cast<std::size_t>(std::ceil(q * static_cast<float>(leadCount)));
+			const auto  at = sorted.begin() + static_cast<std::ptrdiff_t>(std::clamp<std::size_t>(rank, 1, leadCount) - 1);
+			std::nth_element(sorted.begin(), at, end);
+			return std::clamp(*at + DELAY_SLACK, std::chrono::duration<float>(MIN_DELAY).count(), std::chrono::duration<float>(MAX_DELAY).count());
 		}
 
 		// Notes a frame's lead (seconds) in the slot for a_now: the slots for the time since the last are opened empty.
