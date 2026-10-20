@@ -7,6 +7,7 @@
 
 #include <random>
 
+#include "game/CopyWatch.h"
 #include "game/Conversations.h"
 #include "game/Dialogue.h"
 #include "game/Drops.h"
@@ -1017,6 +1018,28 @@ namespace DevCommands
 			return Equipment::DescribeInventory(actor);
 		}
 
+		// contents <refHex>: every stack a container, a corpse or any reference holds ("<form> x<count>"), or "no inventory" when
+		// the engine has made none for it yet (a container never loaded in this game). Read only.
+		std::string Contents(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			if (!ref) {
+				return "error: usage: contents <refHex>";
+			}
+			const auto list = ref->inventoryList;
+			if (!list) {
+				return std::format("{:08X}: no inventory", ref->GetFormID());
+			}
+			std::string out = std::format("{:08X}:", ref->GetFormID());
+			std::size_t stacks = 0;
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& entry : list->data) {
+				if (entry.object && stacks++ < 60) {
+					out += std::format(" {:08X}x{}", entry.object->GetFormID(), entry.GetCount());
+				}
+			}
+			return stacks ? out + std::format(" ({} stacks)", stacks) : out + " empty";
+		}
 		// drops [loseplaced]: what lies in the session to be taken, our copies of it and our world's record (Drops).
 		// loseplaced: our next drop's kPlaced isn't sent (as one lost with the link; then `net drop`).
 		std::string DropsList(std::string_view a_args)
@@ -1457,7 +1480,11 @@ namespace DevCommands
 		std::string RefInfo(std::string_view a_args)
 		{
 			const auto ref = LookupRef(a_args);
-			return ref ? DescribeRef(ref) : "error: no such reference";
+			if (!ref) {
+				return "error: no such reference";
+			}
+			const auto actor = ref->As<RE::Actor>();
+			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
 		}
 
 		// gate <refHex>: what a two-state gate's script (Default2StateActivator, SharedGates) says of it.
@@ -3334,6 +3361,7 @@ namespace DevCommands
 			Entry{ "enemies", Enemies },
 			Entry{ "equipped", Equipped },
 			Entry{ "inventory", Inventory },
+			Entry{ "contents", Contents },
 			Entry{ "drops", DropsList },
 			Entry{ "dropitem", DropItem },
 			Entry{ "activate", ActivateCommand },
