@@ -19,6 +19,11 @@ namespace
 	constexpr std::uint32_t INSTR01 = 0x000F7933;            // Pest Control
 	constexpr std::uint32_t RRR01A = 0x000B1F1D;             // Butcher's Bill (runs once)
 	constexpr std::uint32_t RRR02A = 0x000B3E82;             // Concierge
+	constexpr std::uint32_t RRR03 = 0x000B926B;              // Jackpot
+	constexpr std::uint32_t RRR04 = 0x000B26C2;              // Mercer Safehouse
+	constexpr std::uint32_t RRR05 = 0x000B926A;              // Weathervane
+	constexpr std::uint32_t RRR06 = 0x001845F7;              // Randolph Safehouse
+	constexpr std::uint32_t BOSR05 = 0x000D1EB2;             // Feeding the Troops
 	constexpr std::uint32_t MQ104 = 0x0001F25E;              // Unlikely Valentine (the main story)
 	constexpr std::uint32_t MIN01 = 0x0005DEE4;              // When Freedom Calls (a side quest)
 
@@ -88,26 +93,41 @@ TEST("radiants: the Minutemen's settlement requests are shared by their run; att
 	}
 }
 
-TEST("radiants: the factions' jobs at a dungeon or a place are shared; those with targets made at runtime, a settlement's workshop or HQ's count are not")
+TEST("radiants: every faction's jobs at a settlement, a dungeon or a place are shared; those with NPCs made at runtime are not")
 {
-	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery.
+	// The Minutemen's: the locket, the hostile settlements, Preston's building, generator and synth requests.
+	for (const std::uint32_t minutemen : { 0x00106F05u, 0x0015F03Fu, 0x0015F040u, 0x00161D1Du, 0x00162F44u, 0x00109D73u }) {
+		CHECK(ShareOf(minutemen) == Share::kShared);
+	}
+	CHECK(ShareOf(0x00157577) == Share::kLeftAlone);  // a synth boss made at runtime
+	CHECK(ShareOf(0x00164167) == Share::kLeftAlone);  // refugees made at runtime
+	// Every settlement attack: the attackers are made at runtime.
+	for (const std::uint32_t attack : { 0x000A1412u, 0x0005E51Fu, 0x00160409u, 0x00186A08u, 0x000E477Fu, 0x001533A9u, 0x000BDB04u }) {
+		CHECK(ShareOf(attack) == Share::kLeftAlone);
+	}
+	// The Brotherhood's: Cleansing the Commonwealth, Quartermastery, Feeding the Troops.
 	CHECK(ShareOf(BOSR01) == Share::kShared);
 	CHECK(ShareOf(BOSR02) == Share::kShared);
+	CHECK(ShareOf(BOSR05) == Share::kShared);
 	CHECK(ShareOf(0x000C8675) == Share::kLeftAlone);  // Leading by Example: a squire made at runtime
 	CHECK(ShareOf(0x000CF3E2) == Share::kLeftAlone);  // Learning Curve: a scribe made at runtime
-	CHECK(ShareOf(0x000D1EB2) == Share::kLeftAlone);  // Feeding the Troops: a settlement's workshop
 	// The Institute's: Pest Control, Hypothesis, Political Leanings.
 	CHECK(ShareOf(INSTR01) == Share::kShared);
 	CHECK(ShareOf(0x000EB268) == Share::kShared);
 	CHECK(ShareOf(0x000F0D8C) == Share::kShared);
 	CHECK(ShareOf(0x000EDCEF) == Share::kLeftAlone);  // Appropriation: defenders made at runtime
 	CHECK(ShareOf(0x000EDE28) == Share::kLeftAlone);  // Reclamation: the synth made at runtime
-	// The Railroad's: Butcher's Bill and Concierge; the others count their offer at HQ or make their targets.
-	CHECK(ShareOf(RRR01A) == Share::kShared);
-	CHECK(ShareOf(RRR02A) == Share::kShared);
-	for (const std::uint32_t railroad : { 0x000B1F1Cu, 0x000B926Bu, 0x000B26C2u, 0x000B926Au, 0x001845F7u, 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
-		CHECK(ShareOf(railroad) == Share::kLeftAlone);
+	// The Railroad's: Butcher's Bill (both parts), Concierge, Jackpot, Mercer and Randolph Safehouse, Weathervane.
+	for (const std::uint32_t railroad : { RRR01A, 0x000B1F1Cu, RRR02A, RRR03, RRR04, RRR05, RRR06 }) {
+		CHECK(ShareOf(railroad) == Share::kShared);
 	}
+	for (const std::uint32_t railroad : { 0x00186C79u, 0x0013A33Du, 0x00145F1Au, 0x0014A34Au, 0x00150577u }) {
+		CHECK(ShareOf(railroad) == Share::kLeftAlone);  // a courser, bosses, the one to rescue, a patrol, a vertibird made at runtime
+	}
+	// Diamond City's wanted posters (misc quests).
+	CHECK(ShareOf(0x0014182C) == Share::kShared);
+	CHECK(ShareOf(0x0018127D) == Share::kShared);
+	CHECK(ShareOf(0x00181280) == Share::kShared);
 }
 
 TEST("radiants: a run here its player hasn't been given is stopped for a friend's only where that changes nothing else")
@@ -123,6 +143,13 @@ TEST("radiants: a run here its player hasn't been given is stopped for a friend'
 	// A quest that runs once would never run again here.
 	CHECK(!Replaces(INSTR01, false, false, true));
 	CHECK(!Replaces(RRR01A, false, false, false));  // Butcher's Bill: runs once
+	// The Railroad's jobs counted on offer are (OFFERS counts them off); Randolph Safehouse's offer hides the place's
+	// enemies, which a stop would leave hidden.
+	CHECK(Replaces(RRR03, false, false, false));
+	CHECK(Replaces(RRR04, false, false, false));
+	CHECK(Replaces(RRR05, false, false, false));
+	CHECK(!Replaces(RRR06, false, false, false));
+	CHECK(Replaces(BOSR05, false, false, false));
 	// The Minutemen's (their stop runs a stage of its own), and the radiants left alone or not radiants at all.
 	CHECK(!Replaces(MIN_RECRUIT01, false, false, false));
 	CHECK(!Replaces(MIN_OWNED01, false, false, false));
@@ -133,10 +160,39 @@ TEST("radiants: the Brotherhood's developer shortcut (its 0, which makes the pla
 {
 	CHECK(!Takes(BOSR01, 0));
 	CHECK(!Takes(BOSR02, 0));
+	CHECK(!Takes(BOSR05, 0));
+	CHECK(Takes(BOSR05, 30));
 	CHECK(Takes(BOSR01, 10));
 	CHECK(Takes(BOSR01, 50));  // the reward: once in each game
 	CHECK(Takes(MIN_RECRUIT01, 0));
 	CHECK(Takes(INSTR01, 0));
+}
+
+TEST("radiants: a Railroad job stopped for a friend's run while on offer is counted off the jobs on offer, as its take would have")
+{
+	// Mercer Safehouse: counted at its 50, off at its 75.
+	CHECK(LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0 }, 0.0f));               // not offered yet
+	CHECK(!LeavesCounted(RRR04, std::vector<std::uint16_t>{ 0, 50, 75 }, 0.0f));       // taken: counted off already
+	// Jackpot counts its offer only once done before (RRR03Completed above 0).
+	CHECK(LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50 }, 1.0f));
+	CHECK(!LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR03, std::vector<std::uint16_t>{ 0, 50, 100 }, 1.0f));
+	// Weathervane only while no MILA is placed.
+	CHECK(LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(RRR05, std::vector<std::uint16_t>{ 0, 50 }, 2.0f));
+	// Concierge counts nothing; nor do the others.
+	CHECK(!LeavesCounted(RRR02A, std::vector<std::uint16_t>{ 0, 50 }, 0.0f));
+	CHECK(!LeavesCounted(INSTR01, std::vector<std::uint16_t>{ 5 }, 0.0f));
+	// Every quest with an offer is a shared one that may be stopped (and only such a one needs it).
+	for (const auto& offer : OFFERS) {
+		const auto entry = Find(offer.quest);
+		REQUIRE(entry != nullptr);
+		CHECK(entry->share == Share::kShared);
+		CHECK(entry->replace);
+		CHECK(offer.offered < offer.taken);
+		CHECK(((offer.counted == Counted::kAlways) == (offer.global == 0)));
+	}
 }
 
 TEST("radiants: a friend's Cleansing the Commonwealth is started here at their dungeon, the level picks they left empty left empty")

@@ -358,6 +358,7 @@ namespace RadiantSync
 			std::vector<std::uint16_t> stages;  // the friend's stages that came meanwhile
 			Clock::time_point          since{};
 			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
+			bool                       uncount = false;   // ... whose offer stays counted at the Railroad's HQ: counted off once stopped
 		};
 		std::optional<Starting> starting;
 
@@ -549,11 +550,32 @@ namespace RadiantSync
 			}
 		}
 
+		float GlobalValue(std::uint32_t a_global)
+		{
+			const auto global = a_global ? RE::TESForm::GetFormByID<RE::TESGlobal>(a_global) : nullptr;
+			return global ? global->GetValue() : 0.0f;
+		}
+
+		// A Railroad job of ours stopped before it was taken: counted off the jobs on offer, as its take would have.
+		void CountOff(std::uint32_t a_quest)
+		{
+			const auto global = RE::TESForm::GetFormByID<RE::TESGlobal>(RadiantRules::RR_QUESTS_AVAILABLE);
+			if (!global) {
+				return;
+			}
+			const float before = global->value;
+			global->value = std::max(0.0f, before - 1.0f);
+			REX::INFO("RadiantSync: {:08X}: this game's run stopped while on offer, so the Railroad's jobs on offer go from {} to {}", a_quest, before, global->value);
+		}
+
 		// This game's own run (not given to the player) stopped: theirs is started in its place.
 		void StoppedForThem()
 		{
 			auto       start = std::move(*starting);
 			starting.reset();
+			if (start.uncount) {
+				CountOff(start.quest);
+			}
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(start.quest);
 			if (!quest) {
 				book.Refuse(start.quest, start.run);
@@ -569,6 +591,9 @@ namespace RadiantSync
 			Starting next{ a_start.quest, a_run, a_start };
 			next.since = Clock::now();
 			next.stopping = true;
+			if (const auto offer = RadiantRules::OfferOf(a_start.quest)) {
+				next.uncount = RadiantRules::LeavesCounted(a_start.quest, QuestStageLayout::Done(a_quest), GlobalValue(offer->global));
+			}
 			book.Starting(a_start.quest, a_run);
 			REX::INFO("RadiantSync: {:08X} '{}' runs here with other targets ({}) and this player hasn't been given it: stopping it for player {}'s run {}", a_start.quest,
 				QuestName(a_quest), a_why, a_run.origin, a_run.serial);
@@ -642,6 +667,12 @@ namespace RadiantSync
 		{
 			if (starting) {
 				Restore(starting->saved);
+				if (starting->stopping && starting->uncount) {
+					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
+					if (quest && !(quest->data.flags & QUEST_RUNNING)) {
+						CountOff(starting->quest);  // ours stopped; theirs won't start now
+					}
+				}
 				starting.reset();
 			}
 		}
