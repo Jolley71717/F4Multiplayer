@@ -26,22 +26,32 @@ namespace FrameClock
 	};
 	[[nodiscard]] Raw Read();
 
-	// Dev (netsim pace): what our states are stamped with: the moment our work runs (kWall, as shipped: the rig measured
-	// the others as below), the frame the
-	// timer last timed (kFrame: much worse, as the player's place read by our work is the frame before's), or the one before
-	// it (kPrevious). Stand-ins go by the wall clock with kWall,
-	// by the frame clock otherwise.
-	enum class Pace : std::uint8_t
+	// Dev (netsim stamp, netsim place), to measure one against another. What our states are stamped with: the moment our
+	// work runs (kWall, as before), the frame the timer last marked (kFrame), or the one before it (kPrevious, as shipped).
+	// The rig showed the place our work reads the player at is the one the frame before left them in: the timer has
+	// already marked the frame our work runs in. Stamped with that frame, an even run read three times as uneven.
+	enum class Stamp : std::uint8_t
 	{
 		kWall,
 		kFrame,
 		kPrevious,
 	};
-	void SetPace(Pace a_pace);
-	[[nodiscard]] Pace GetPace();
-	[[nodiscard]] const char* PaceName(Pace a_pace);
+	void SetStamp(Stamp a_stamp);
+	[[nodiscard]] Stamp GetStamp();
+	[[nodiscard]] const char* StampName(Stamp a_stamp);
 
-	// The time to stamp our state sampled at a_now with, by the pace.
+	// Where a stand-in is placed on its path in its update: at the moment the update runs (kWall, as shipped) or at the
+	// time of the frame the timer last marked (kFrame).
+	enum class Place : std::uint8_t
+	{
+		kWall,
+		kFrame,
+	};
+	void SetPlace(Place a_place);
+	[[nodiscard]] Place GetPlace();
+	[[nodiscard]] const char* PlaceName(Place a_place);
+
+	// The time to stamp our state sampled at a_now with.
 	[[nodiscard]] Clock::time_point StampAt(Clock::time_point a_now);
 	// The time to place a stand-in at, in its update running at a_now.
 	[[nodiscard]] Clock::time_point PlaceAt(Clock::time_point a_now);

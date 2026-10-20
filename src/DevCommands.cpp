@@ -669,22 +669,35 @@ namespace DevCommands
 			return "error: usage: trace start [hz] | trace stop";
 		}
 
-		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]: friends' movement states come in
-		// as over a worse connection (NetSim.h): a LAN rig drawn as over Steam's relays, for the trace. No arguments: as it is.
-		// pace: what our states are stamped with and stand-ins placed by (FrameClock.h), to measure one against another.
+		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | stamp wall|frame|previous |
+		// place wall|frame]: friends' movement states come in as over a worse connection (NetSim.h): a LAN rig drawn as over
+		// Steam's relays, for the trace. No arguments: as it is. stamp, place: what our states are stamped with and where
+		// stand-ins are placed on their paths (FrameClock.h), to measure one against another.
 		std::string NetSimCmd(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
-			const auto describe = [] { return std::format("{} pace={}", RemotePlayers::DescribeNetSim(), FrameClock::PaceName(FrameClock::GetPace())); };
-			if (args.size() == 2 && args[0] == "pace") {
+			const auto describe = [] {
+				return std::format("{} stamp={} place={}", RemotePlayers::DescribeNetSim(), FrameClock::StampName(FrameClock::GetStamp()), FrameClock::PlaceName(FrameClock::GetPlace()));
+			};
+			if (args.size() == 2 && args[0] == "stamp") {
 				if (args[1] == "wall") {
-					FrameClock::SetPace(FrameClock::Pace::kWall);
+					FrameClock::SetStamp(FrameClock::Stamp::kWall);
 				} else if (args[1] == "frame") {
-					FrameClock::SetPace(FrameClock::Pace::kFrame);
+					FrameClock::SetStamp(FrameClock::Stamp::kFrame);
 				} else if (args[1] == "previous") {
-					FrameClock::SetPace(FrameClock::Pace::kPrevious);
+					FrameClock::SetStamp(FrameClock::Stamp::kPrevious);
 				} else {
-					return "error: usage: netsim pace wall|frame|previous";
+					return "error: usage: netsim stamp wall|frame|previous";
+				}
+				return describe();
+			}
+			if (args.size() == 2 && args[0] == "place") {
+				if (args[1] == "wall") {
+					FrameClock::SetPlace(FrameClock::Place::kWall);
+				} else if (args[1] == "frame") {
+					FrameClock::SetPlace(FrameClock::Place::kFrame);
+				} else {
+					return "error: usage: netsim place wall|frame";
 				}
 				return describe();
 			}
@@ -697,7 +710,7 @@ namespace DevCommands
 				const auto lag = number(0), jitter = number(1), loss = number(2), spike = number(3), spikes = number(4);
 				if (!lag || !jitter || !loss || !spike || !spikes || *lag < 0.0f || *lag > 2000.0f || *jitter < 0.0f || *jitter > 2000.0f || *loss < 0.0f || *loss > 100.0f || *spike < 0.0f ||
 					*spike > 2000.0f || *spikes < 0.0f || *spikes > 100.0f) {
-					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]";
+					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | stamp wall|frame|previous | place wall|frame]";
 				}
 				settings.lagMs = static_cast<int>(*lag);
 				settings.jitterMs = static_cast<int>(*jitter);
@@ -756,6 +769,12 @@ namespace DevCommands
 				// frame against how far the engine moved all else in that frame.
 				const double placedStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - put->placedAt).count();
 				trace.rows.push_back(std::format("{:.3f},fp{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", placedStamp, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f, 0.0f));
+				// And at the times of the frame the timer had marked at that update (tp) and the one before (qp): which the engine
+				// drew everything else at shows as the even one.
+				for (const auto& [who, when] : { std::pair{ "tp", put->frameAt }, std::pair{ "qp", put->previousAt } }) {
+					const double frameStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - when).count();
+					trace.rows.push_back(std::format("{:.3f},{}{},{:.1f},{:.1f},{:.1f},{:.1f},0.0", frameStamp, who, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f));
+				}
 			}
 			// The player's place now at the time of the frame the engine's timer last timed (fme) and the one before (qme):
 			// which of the two moved them here shows as the even one. And the timer itself (tim: its frame time, the same

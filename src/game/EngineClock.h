@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <chrono>
+#include <cstdint>
 
 // The time a frame of the engine's is at: the last frame's plus the frame time the engine's timer measured for it
 // (BSTimer's delta; FrameClock.h reads it), kept near the wall clock.
@@ -43,6 +44,56 @@ namespace EngineClock
 				at += std::chrono::duration_cast<Clock::duration>(off * PULL);
 			}
 			return at;
+		}
+	};
+}
+
+namespace EngineClock
+{
+	// A timer whose time stops for longer than this is not one we can go by (it is not running, its layout is not the
+	// one we read, or nothing asked through a loading screen): the wall clock is used until it moves again.
+	inline constexpr auto STOPPED = 250ms;
+
+	// The engine's frames as its timer marks them (FrameClock.h reads BSTimer): a new frame when the timer's mark
+	// changes, a_frameSeconds long. Asked from anywhere in a frame, any number of times.
+	struct Frames
+	{
+		Timeline          timeline;
+		std::uint64_t     seen = 0;       // the timer's mark at the last step
+		Clock::time_point steppedAt{};    // when that was, on the wall clock
+		Clock::time_point previous{};     // the frame before's time
+
+		// The time of the frame the timer last marked.
+		Clock::time_point Now(Clock::time_point a_wall, std::uint64_t a_mark, float a_frameSeconds)
+		{
+			if (a_mark != seen) {
+				// After a stop (or a loading screen nobody asked through), the frame before is long gone: both start
+				// again at the wall clock, rather than the time before the stop going out as the frame before.
+				if (steppedAt == Clock::time_point{} || a_wall - steppedAt > STOPPED) {
+					timeline.started = false;
+				}
+				seen = a_mark;
+				steppedAt = a_wall;
+				previous = timeline.started ? timeline.at : a_wall;
+				const auto at = timeline.Advance(a_wall, a_frameSeconds);
+				if (previous > at) {
+					previous = at;  // set back to the wall clock: the frame before is no later than this one
+				}
+				return at;
+			}
+			if (a_wall - steppedAt > STOPPED) {
+				timeline.started = false;
+				return a_wall;
+			}
+			return timeline.at;
+		}
+
+		// The time of the frame before that one: the place our work reads the player at is the one the frame before
+		// left them in, as the timer has already marked the frame it runs in.
+		Clock::time_point Previous(Clock::time_point a_wall, std::uint64_t a_mark, float a_frameSeconds)
+		{
+			const auto now = Now(a_wall, a_mark, a_frameSeconds);
+			return timeline.started && previous != Clock::time_point{} && previous <= now ? previous : now;
 		}
 	};
 }

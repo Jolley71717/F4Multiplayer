@@ -529,7 +529,7 @@ namespace Puppets
 				{
 					std::scoped_lock l{ lock };
 					if (const auto entry = Find(a_this)) {
-						entry->put = Put{ now, puppet->target.position, placeAt };
+						entry->put = Put{ now, puppet->target.position, placeAt, FrameClock::Now(), FrameClock::Previous() };
 					}
 				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
