@@ -496,6 +496,49 @@ stand-in, not our player, so a script that acts on whoever pressed it (rads from
 acts on the stand-in. Without the stand-in here the press is refused (`acts=` sent/applied/refused);
 the door or lock it drives arrives as its state.
 
+World traps (src/game/Traps.cpp, rules in src/game/TrapRules.h; protocol 51) are spent in every game: a
+mine (a placed grenade projectile, PGRE, whose projectile explodes), a tripwire (script TrapTripwire), a
+tension trigger on a door or a container (TrapTrigTension), a trap proper (TrapBase and its children: a
+grenade bouquet, a gun trap, an IED, a flamethrower, an electric arc, a radiation trap) and a Far Harbor
+bear trap (DLC03:TrapBear). A pressure plate (TrapTrigBase) isn't: it sets itself again. Neither is a
+trap made at runtime (a mine a raider threw, a trap built in a settlement), which no other game has.
+There is no baseball pitcher in the base game or its DLCs (it is Contraptions Workshop's, a
+workshop-built trap, runtime). Each game watches the traps loaded around its player four times a second
+(found once a second within 12000 units): a scripted trap by its script's state (`Object::currentState`,
+the most specific of the listed scripts bound to it, through `ObjectTypeInfo::parentTypeInfo`), a mine
+by whether it is still there (deleted, disabled or freed while its cell is attached: gone). Only a trap
+seen armed is reported: going off, disarmed, or gone (a mine our player activated in the last 3 s was
+picked up: kTaken; a bear trap that snapped and then went was taken). Each kind's states, read from the
+scripts on 1.11.240 (tools: the pex dump of `Fallout4 - Misc.ba2` and `DLCCoast - Main.ba2`):
+
+| Kind | Armed | Going | Fired | Disarmed |
+|---|---|---|---|---|
+| tripwire | Active | Busy | Inactive | Disarmed |
+| tension trigger | Waiting | Busy | triggered | Disarmed |
+| trap (TrapBase) | Idle | | warn, TrapFired | Disarm |
+| bear trap | Open | | Busy, Closed | Disarming |
+
+The server keeps the first report of each trap (a take still replaces a spring or a disarm,
+`Protocol::TrapSupersedes`) from a player within 16000 units of it, passes it on at once (kTraps, live),
+and sends the list (kTraps, not live) to whoever joins or loads, before the world state; it is in the
+session file (layout 34). A receiver does a state to its trap only while that is armed and has been
+loaded, and its player in the world, 2 s (the script's OnLoad first): set off as it went (a mine's
+explosion placed as a friend's is, its copies of NPCs other games run made ghosts; a tripwire's
+`Trigger()`, which sets off what it is linked to; a tension trigger's `triggered`; a trap's `warn`; a bear
+trap's `Disarming`, which snaps on nobody) when the report came in the last 3 s and names where ours is
+(within 512 units); otherwise spent quietly through its script (Inactive, Busy and destroyed, TrapFired
+and destroyed, Disarming; a mine disabled). A disarm is done as the trap's disarmed look, never its
+disarm function, which gives the disarm's reward and XP to whoever's game runs it. A take disables it.
+What that does in the receiver's game is in the session already, so it isn't reported back. A trap's
+activation is no longer pressed by the presser's stand-in (`acts=` refused): that disarmed our copy and
+gave our player the XP. For 8 s after a trap went off in our game, explosions within 1500 units of it,
+and any at a mine we watch, are the trap's (`Traps::Claims`): WeaponFire's explosion watch doesn't
+report them as our player's, or they would go off twice. While a trap set off for a friend's goes off,
+our copies near it stay ghosts (BlastShield, renewed each look). A mine picked up was not shared before:
+the pickup pairing matches the activated reference's base (the mine's projectile) with the item added
+(its weapon), which never match. `traps=` watched/known, `sent=`, `got=`, `live=`, `quiet=`,
+`disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones.
+
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.
 
@@ -1058,6 +1101,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
 | `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
+| `kReportTrap` | a game that has the trap loaded | its position must be known and the trap within 16000 units of it; the event budget; a plugin's reference, a state of 1 to 3 and a place in the world; first kept, then only a take; past the session's table size or the player's share, dropped | done only to a trap of ours that is armed and settled; set off as it went only within 3 s and 512 units of where theirs was, else spent quietly | yes |
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
