@@ -23,6 +23,7 @@ namespace Downed
 		DownRules::Helper helper;
 		Clock::time_point giveUpHeldSince{};
 		bool              giveUpHeld = false;
+		std::optional<Clock::time_point> lastSaveAt;  // OnBeforeSave, for the stand-up log
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 
@@ -112,6 +113,34 @@ namespace Downed
 			}
 		}
 
+		// The engine's own start of an essential down (Actor, true), as a lethal hit on an essential character runs it
+		// (KillImpl): the life state, the bleed-out camera for the player, and the bleed-out event the animation answers.
+		// 1.11.240: +C83F80.
+		void PutDown(RE::PlayerCharacter* a_player)
+		{
+			using start_t = void (*)(RE::Actor*, bool);
+			static REL::Relocation<start_t> start{ REL::ID{ 2230033 } };
+			start(a_player, true);
+		}
+
+		// What the game shows of the player as it stands them up while they wait for help, for the log: which of
+		// its paths did it is then a look at the line (the stay-down flag dropped, the character's own essential
+		// copy off, a knock-down's get-up, a save a moment before).
+		std::string StandUpFacts(RE::PlayerCharacter* a_player)
+		{
+			const auto& state = static_cast<RE::ActorState&>(*a_player);
+			float       health = 0.0f;
+			if (const auto values = RE::ActorValue::GetSingleton(); values && values->health) {
+				health = static_cast<RE::ActorValueOwner&>(*a_player).GetActorValue(*values->health);
+			}
+			const auto npc = a_player->GetNPC();
+			const auto sinceSave = lastSaveAt ? std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - *lastSaveAt).count() : -1;
+			return std::format("life state {}, knock state {}, health {:.1f}, stay-down flag {}, in bleed-out animation {}, essential: base {} own {} protected {}, ms since a save {}",
+				static_cast<std::uint32_t>(state.lifeState), static_cast<std::uint32_t>(state.knockState), health,
+				a_player->boolFlags.all(BoolFlag::kNoBleedoutRecovery), a_player->boolFlags.all(BoolFlag::kInBleedoutAnimation),
+				npc && npc->IsEssential(), a_player->boolFlags.all(BoolFlag::kEssential), a_player->boolFlags.all(BoolFlag::kProtected), sinceSave);
+		}
+
 		// The game stands an essential character up with full health; being helped up leaves the player hurt.
 		void TrimHealth(RE::PlayerCharacter* a_player)
 		{
@@ -126,6 +155,10 @@ namespace Downed
 
 		void Apply(RE::PlayerCharacter* a_player, const DownRules::Step& a_step)
 		{
+			if (a_step.stoodUp) {
+				// As the game left them, before the flags below are set again.
+				REX::WARN("Downed: the game stood us up while we wait for help ({}); putting us down again", StandUpFacts(a_player));
+			}
 			if (a_step.essential) {
 				SetEssential(a_player, *a_step.essential);
 			}
@@ -141,6 +174,15 @@ namespace Downed
 			}
 			if (a_step.secondsLeft >= 0) {
 				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
+			}
+			if (a_step.putDown) {
+				PutDown(a_player);
+			}
+			if (a_step.backDown) {
+				REX::INFO("Downed: down again ({} put-down(s) in all)", self.putDowns);
+			}
+			if (a_step.stayedUp) {
+				REX::WARN("Downed: the game kept us up through {} s of putting us down ({}); up it is", DownRules::PUT_DOWN_GIVE_UP.count(), StandUpFacts(a_player));
 			}
 			if (a_step.revivesBack) {
 				REX::INFO("Downed: revives back (the window or the fight is over)");
@@ -285,12 +327,27 @@ namespace Downed
 
 	void OnBeforeSave()
 	{
-		// Neither flag may end up in the save; while down, Frame sets both again.
+		// Neither flag may end up in the save; while down, OnAfterSave sets both again (and Frame, should it not come).
+		lastSaveAt = Clock::now();
 		if (const auto player = RE::PlayerCharacter::GetSingleton()) {
 			SetEssential(player, false);
 			if (self.IsDown()) {
 				SetStayDown(player, false);
 			}
+		}
+	}
+
+	void OnAfterSave()
+	{
+		// At once, not at the next frame of ours: the engine's own update may come first, and with the stay-down flag
+		// off it stands a downed player up.
+		const auto player = Player();
+		if (!player || !self.IsDown()) {
+			return;
+		}
+		SetEssential(player, true);
+		if (self.WaitsForHelp()) {
+			SetStayDown(player, true);
 		}
 	}
 
@@ -320,8 +377,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} helped={} friendsDown={} revivesLeft={} cooldown={}",
-			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, helper.helped, helper.FriendsDown(),
-			self.RevivesLeft(now), self.InCooldown(now));
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={}",
+			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, helper.helped,
+			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now));
 	}
 }

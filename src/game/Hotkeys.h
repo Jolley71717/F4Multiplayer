@@ -23,6 +23,10 @@ namespace Hotkeys
 	// The key is down and the game window is in front (menus don't matter).
 	[[nodiscard]] bool Held(std::uint32_t a_vk);
 
+	// The game window is in front, as the hotkeys read it (under Wine with no window in front, the game's own thread
+	// having its window active counts). Main thread.
+	[[nodiscard]] bool GameInFront();
+
 	// Why a key may be doing nothing right now: focus, menu mode, the console, chord keys held,
 	// each hotkey's code and whether it's down, and how often Poll ran.
 	[[nodiscard]] std::string Describe();

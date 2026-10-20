@@ -228,6 +228,11 @@ namespace Hotkeys
 		return IsDown(a_vk) && GameHasFocus();
 	}
 
+	bool GameInFront()
+	{
+		return GameHasFocus();
+	}
+
 	std::string Describe()
 	{
 		const auto&                    settings = Config::Get();

@@ -26,6 +26,8 @@ namespace DownRules
 	inline constexpr auto  HELP_RETRY = 3s;     // before helping the same friend again
 	inline constexpr float HELP_RANGE = 300.0f; // game units (about 4 m): "right here" in the down notice is 5 m
 	inline constexpr auto  FIGHT_OVER = 30s;    // out of a fight this long, it is over (revives "per fight")
+	inline constexpr auto  PUT_DOWN_RETRY = 500ms;  // stood up by the game while waiting for help: put down again this often
+	inline constexpr auto  PUT_DOWN_GIVE_UP = 5s;   // still up after this long of that: up it is
 
 	// The session's rules for being down (the host's, Protocol::SessionRules). The defaults are what every session
 	// had before there were rules: 45 s to bleed out, 2 s to help, up with 30 %, no limits.
@@ -146,6 +148,10 @@ namespace DownRules
 		bool                lastRevive = false;    // (AfterRevive) helped up for the last time this window or fight
 		bool                revivesBack = false;   // the window or the fight is over: a lethal hit knocks down again
 		int                 cooldownSeconds = -1;  // (AfterRevive) for this long a lethal hit kills
+		bool                stoodUp = false;       // the game stood the player up while they wait for help (once per time)
+		bool                putDown = false;       // put them down again (the engine's own essential down)
+		bool                backDown = false;      // down again after that
+		bool                stayedUp = false;      // the game kept them up through PUT_DOWN_GIVE_UP of that: up it is
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -215,9 +221,15 @@ namespace DownRules
 				break;
 			case Phase::kDown:
 				if (!a_facts.down) {
-					phase = Phase::kUp;  // up again by itself (a save and load, a console command)
-					step.stayDown = false;
-				} else if (giveUp || !a_facts.enabled || a_now - downSince >= rules.bleedOut) {
+					StoodUp(a_facts, step, a_now);
+					break;
+				}
+				if (standingSince) {
+					step.backDown = true;  // the put-down took
+					standingSince.reset();
+					lastPutDown.reset();
+				}
+				if (giveUp || !a_facts.enabled || a_now - downSince >= rules.bleedOut) {
 					// Bleeding out counts real time, paused or not: friends' games go on while ours is stopped.
 					BleedOut(step, a_now);
 				} else {
@@ -275,6 +287,8 @@ namespace DownRules
 			if (phase != Phase::kDown) {
 				return false;
 			}
+			standingSince.reset();
+			lastPutDown.reset();
 			phase = Phase::kGettingUp;
 			revivedAt = a_now;
 			pausedGettingUp = {};
@@ -322,6 +336,8 @@ namespace DownRules
 		{
 			phase = Phase::kUp;
 			giveUp = false;
+			standingSince.reset();
+			lastPutDown.reset();
 			if (!a_down) {
 				return false;
 			}
@@ -342,8 +358,60 @@ namespace DownRules
 		std::uint32_t revives = 0;
 		std::uint32_t bleedOuts = 0;
 		std::uint32_t killRetries = 0;
+		std::uint32_t standUps = 0;  // times the game stood the player up while they waited for help
+		std::uint32_t putDowns = 0;  // times they were put down again for it
 
 	private:
+		// Down and waiting for help, neither helped up nor bled out, and the game has the player up again. The game
+		// stands an essential character up by itself on several paths the stay-down flag does not hold back (seen
+		// 2026-10-19: downed in a pile of clutter, the host was stood up and their revive state lost). They are put
+		// down again, the engine's own way, every PUT_DOWN_RETRY, the bleed-out time running on, until they are down
+		// or PUT_DOWN_GIVE_UP has gone by. Not when the session is over (up is right then), and not while they are
+		// dying or dead: that is waited out (a hit the game is still turning into a down, or a real death).
+		void StoodUp(const Facts& a_facts, Step& a_step, Clock::time_point a_now)
+		{
+			if (!a_facts.enabled) {
+				phase = Phase::kUp;
+				a_step.stayDown = false;
+				standingSince.reset();
+				lastPutDown.reset();
+				return;
+			}
+			if (!standingSince) {
+				standingSince = a_now;
+				standUpTold = false;
+			}
+			if (!a_facts.dead && !standUpTold) {
+				standUpTold = true;
+				a_step.stoodUp = true;
+				++standUps;
+			}
+			if (giveUp || a_now - downSince >= rules.bleedOut) {
+				standingSince.reset();
+				lastPutDown.reset();
+				BleedOut(a_step, a_now);
+				return;
+			}
+			if (a_now - *standingSince >= PUT_DOWN_GIVE_UP) {
+				phase = Phase::kUp;
+				a_step.stayDown = false;
+				a_step.stayedUp = !a_facts.dead;
+				standingSince.reset();
+				lastPutDown.reset();
+				return;
+			}
+			if (a_facts.dead) {
+				return;
+			}
+			a_step.essential = true;
+			a_step.stayDown = true;
+			if (!lastPutDown || a_now - *lastPutDown >= PUT_DOWN_RETRY) {
+				a_step.putDown = true;
+				lastPutDown = a_now;
+				++putDowns;
+			}
+		}
+
 		void BleedOut(Step& a_step, Clock::time_point a_now)
 		{
 			phase = Phase::kBledOut;
@@ -369,6 +437,9 @@ namespace DownRules
 		Clock::time_point lastFrame{};
 		Clock::time_point killedAt{};
 		int               reminders = 0;
+		std::optional<Clock::time_point> standingSince;  // down and waiting, but the game has them up (StoodUp)
+		std::optional<Clock::time_point> lastPutDown;
+		bool                             standUpTold = false;  // this time up has been told (stoodUp)
 	};
 
 	// Helping downed friends up: stay within HELP_RANGE of one's stand-in for the rules' help time (HELP_TIME), and,
