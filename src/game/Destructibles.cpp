@@ -100,7 +100,9 @@ namespace Destructibles
 
 		std::optional<Object> Read(RE::TESObjectREFR* a_ref)
 		{
-			if (!a_ref || !Protocol::IsShareableRef(a_ref->GetFormID()) || a_ref->IsDeleted()) {
+			// A deleted reference is left alone, but for one the engine deleted itself when it was destroyed: a barrel's
+			// last stage disables it, then marks it deleted and destroyed (seen on the rig), and that is the stage to report.
+			if (!a_ref || !Protocol::IsShareableRef(a_ref->GetFormID()) || (a_ref->IsDeleted() && (a_ref->GetFormFlags() & DESTROYED_FLAG) == 0)) {
 				return std::nullopt;
 			}
 			const auto base = a_ref->GetObjectReference();

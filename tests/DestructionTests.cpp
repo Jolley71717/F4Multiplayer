@@ -266,6 +266,30 @@ TEST("server destruction: a car a player shot is relayed as theirs, going off on
 	CHECK(!got[0].explode);
 }
 
+TEST("server destruction: a car the shooter set burning goes off from the friend whose copy got there first")
+{
+	// Found on the rig: each game's copy of a burning car burns on its own, and the friend's (who never shot) passed the
+	// big stage first. Its explosion must reach the shooter, or the shooter's game gets the hulk with no blast.
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Shot());
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(1, Destroyed({ Report(WAGON, 390.0f, false, false) }));  // burning: no explosion yet
+	CHECK(Relayed(f, 2).size() == 1);
+	f.fake->Deliver(2, Destroyed({ Report(WAGON, 250.0f, true, true) }));
+	auto got = Relayed(f, 1);
+	REQUIRE(got.size() == 1);
+	CHECK(got[0].explode);
+
+	// An object nobody attacked lately stays as it was: Bob's explosion for it is the wreck alone.
+	f.fake->Deliver(2, Destroyed({ Report(BARREL_REF, 0.0f, true, true) }));
+	got = Relayed(f, 1);
+	REQUIRE(got.size() == 1);
+	CHECK(!got[0].explode);
+}
+
 TEST("server destruction: only news is relayed; a wreck is never mended, and comes once")
 {
 	Fixture f;

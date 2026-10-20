@@ -64,6 +64,9 @@ namespace
 	// A destructible object a player damaged goes off in the others' games only for this long after their last shot or
 	// throw: a car set on fire burns for some 10 s before its big explosion, longer if it was shot only lightly.
 	constexpr auto  DESTRUCTION_EXPLODES_AFTER_ATTACK = std::chrono::seconds(30);
+	// And for this long after such a report of it, from whoever reports it next: each game's copy of a burning car burns
+	// on its own, so the stage the attacker set going can be passed first in a friend's game, who never shot.
+	constexpr auto  DESTRUCTION_ARMED_FOR = std::chrono::seconds(30);
 	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
 	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
 	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
@@ -378,6 +381,9 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
+	// The objects one of those reports came for lately (DESTRUCTION_ARMED_FOR): their explosions are let through from
+	// anyone. Not saved: over in seconds.
+	std::unordered_map<std::uint32_t, Clock::time_point>    destructionsArmed;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -549,6 +555,7 @@ void Server::Run()
 		refStates.clear();
 		actorOwners.clear();
 		destructions.clear();
+		destructionsArmed.clear();
 		spawns.clear();
 		npcEquipment.clear();
 		workshop.Clear();
@@ -2088,7 +2095,9 @@ void Server::Run()
 	// session keeps each one's lowest health and destroyed for good; only news is relayed (one a friend's report already
 	// took further is dropped), so a wreck is never mended and the same stage never comes twice. Each new object takes a
 	// place in the table, and from the player's share. Its explosion is let through only after one of the player's shots
-	// or throws, and within their explosion budget (as kReportExplosion): else the others get the wreck alone.
+	// or throws, and within their explosion budget (as kReportExplosion): else the others get the wreck alone. Such a
+	// report arms its object for a while, so that the next stage's explosion goes through from whoever passes it first
+	// (a friend's copy, burning on its own, can get there before the attacker's).
 	const auto handleDestruction = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2100,8 +2109,16 @@ void Server::Run()
 		const auto  now = Clock::now();
 		const auto& attacks = budgetOf(a_player);
 		const bool  attacked = now - (std::max)(attacks.lastThrow, attacks.lastShot) <= DESTRUCTION_EXPLODES_AFTER_ATTACK;
+		if (destructionsArmed.size() > 4096) {
+			std::erase_if(destructionsArmed, [&](const auto& a_entry) { return now >= a_entry.second; });
+		}
 		Protocol::Destructions relayed{ a_player.id, {} };
 		for (const auto& entry : report->entries) {
+			const auto armed = destructionsArmed.find(entry.refId);
+			const bool mayExplode = attacked || (armed != destructionsArmed.end() && now < armed->second);
+			if (attacked) {
+				destructionsArmed[entry.refId] = now + DESTRUCTION_ARMED_FOR;
+			}
 			auto it = destructions.find(entry.refId);
 			if (it == destructions.end()) {
 				if (destructions.size() >= maxWorldEntries || !withinShare(a_player, kDestructions)) {
@@ -2122,7 +2139,7 @@ void Server::Run()
 			}
 			touched();
 			auto out = it->second;
-			if (entry.explode && attacked) {
+			if (entry.explode && mayExplode) {
 				out.explode = a_player.local || spend(a_player, &RateBudget::explosions, now);
 				if (!out.explode) {
 					auto& budget = budgetOf(a_player);

@@ -749,12 +749,18 @@ before the first whose percent is below the object's.
   moved since the scan before (an explosion's, an NPC's shot, burning down). Each stage passed that the session didn't
   know of goes out as `kReportDestruction` (reliable): the health, destroyed, and `explode` when a stage passed since
   sets off an explosion. An object first seen by a scan is taken as it is: damage from our own save before the session
-  isn't shared.
+  isn't shared. A deleted reference is left out, but for one the engine deleted as it destroyed it: an explosive
+  barrel's last stage disables it and marks it deleted and destroyed at once (seen on the rig), so leaving out every
+  deleted reference lost the very stage to report, and the shooter's explosion watch reported its blast as a plain
+  explosion.
 - The server keeps the lowest health of each and destroyed for good (a wreck is never mended), relays only news (a
   report another game's already took further is dropped), and saves the table with the session (layout 35). `explode`
-  is let through only after one of the reporter's shots or throws in the last 30 s, within their explosion budget (the
-  same as `kExplosion`'s: 16 at once, 4 a second); past it, the others get the wreck alone. The host's own game has no
-  budget. Each player has a share of the table (`maxWorldEntriesPerPlayer`), as for doors.
+  is let through only after one of the reporter's shots or throws in the last 30 s, or for 30 s after such a report of
+  the same object from anyone, within the reporter's explosion budget (the same as `kExplosion`'s: 16 at once, 4 a
+  second); past it, the others get the wreck alone. The second window is because each game's copy of a burning car
+  burns down on its own: on the rig the friend's copy, set burning by the replayed first blast, passed the big stage a
+  moment before the shooter's, and with the first window alone the shooter's game got the hulk with no blast. The host's
+  own game has no budget. Each player has a share of the table (`maxWorldEntriesPerPlayer`), as for doors.
 - A friend's (`kDestructions`): our copy takes the lower health (ExtraDataList::SetHealth), destroyed (the form flag, as
   TESForm::SetDestroyed sets it), and both are marked for the save. What the stages it passes now do in the engine is
   done to it: the last replacement model passed goes in (ExtraModelSwap, the old model's saved physics dropped, and the
@@ -762,7 +768,7 @@ before the first whose percent is below the object's.
   health (the engine's own, as Load3D does); a stage that takes it away disables it. With `explode`, the explosion of
   each stage our copy passes now goes off at the object through `WeaponFire::ApplyExplosion` (range and radius checks,
   BlastShield). A stage our copy had passed went off here already (our own shot, an explosion of ours), so it never goes
-  off twice; a burning car isn't set burning here (the friend's game burns it down and reports each stage). A catch-up
+  off twice. Whichever game's copy passes a stage first reports it; the other's takes it and doesn't pass it again. A catch-up
   (joining, loading a save, a restarted session) names nobody and is the wreck alone. An object not in our world waits
   (up to 20000) until its reference loads (WorldSync's retry).
 - The explosion of a destructible object's own stage is never reported as `kReportExplosion` too: WeaponFire's watch
