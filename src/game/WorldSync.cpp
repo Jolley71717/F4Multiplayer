@@ -1192,7 +1192,7 @@ namespace WorldSync
 				if (name && *name && _stricmp(name, "ObjectReference") != 0) {
 					a_visit(std::string_view{ name });
 				}
-				return RE::BSContainer::ForEachResult::kContinue;
+				return Papyrus::BOUND_NEXT;  // on to the next script, not only the first
 			} };
 			vm->ForEachBoundObject(handle, visit);
 		}
@@ -1301,8 +1301,11 @@ namespace WorldSync
 			SharedGates::Facts facts;
 			facts.activator = true;
 			facts.listedOut = gateBasesOut.contains(base->GetFormID()) || gateRefsOut.contains(a_ref->GetFormID());
+			std::string      names;
 			std::string_view running = SharedGates::SCRIPT;
 			ForEachScript(a_ref, [&](std::string_view a_name) {
+				names += names.empty() ? "" : ", ";
+				names += a_name;
 				++facts.scripts;
 				if (SharedGates::IsGateScript(a_name)) {
 					++facts.gateScripts;
@@ -1322,6 +1325,9 @@ namespace WorldSync
 				REX::INFO("WorldSync: {:08X} (base {:08X}) runs the two-state script {}; its open state isn't shared", a_ref->GetFormID(), base->GetFormID(),
 					facts.listedOut ? "but is listed out (not a way through, or the story's)" :
 									  std::format("with {} other script(s)", facts.scripts - facts.gateScripts - facts.childScripts - facts.siblings));
+			} else if (facts.scripts > 0 && facts.siblings > 0) {
+				// A gate the survey shares with a script beside it, seen without its two-state script: not bound yet, or not visited.
+				REX::INFO("WorldSync: {:08X} (base {:08X}) has a script the two-state gates have beside them but not the two-state script ({}); its open state isn't shared", a_ref->GetFormID(), base->GetFormID(), names);
 			}
 			gates.emplace(a_ref->GetFormID(), shared);
 			return shared;

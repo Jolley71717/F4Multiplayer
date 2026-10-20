@@ -8,6 +8,13 @@
 // hits the neighbouring slot. We call the real slots explicitly instead.
 namespace Papyrus
 {
+	// What a functor given to the VM's ForEachBoundObject answers. The engine goes on to the next bound script on 1,
+	// which CommonLibF4 names kStop, and stops on 0, its kContinue: answered kContinue, it visited only the first of a
+	// gate's two scripts, which the two games bind in different orders (the rig, 2026-10-20, dev command `scripts`).
+	// Other engine walks (a cell's references, an inventory) read the names as written.
+	inline constexpr auto BOUND_NEXT = RE::BSContainer::ForEachResult::kStop;
+	inline constexpr auto BOUND_DONE = RE::BSContainer::ForEachResult::kContinue;
+
 	namespace detail
 	{
 		using ArgsFn = RE::BSTThreadScrapFunction<bool(RE::BSScrapArray<RE::BSScript::Variable>&)>;
