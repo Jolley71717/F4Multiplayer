@@ -263,9 +263,10 @@ namespace RadiantRules
 		std::string_view name;
 	};
 
-	// Aliases' flags (BGSBaseAlias::FLAGS): optional, filled by other aliases.
+	// Aliases' flags (BGSBaseAlias::FLAGS): optional, filled by other aliases, may take a reference another quest reserves.
 	inline constexpr std::uint32_t ALIAS_OPTIONAL = 1u << 1;
 	inline constexpr std::uint32_t ALIAS_BY_OTHERS = 1u << 11;
+	inline constexpr std::uint32_t ALIAS_ALLOW_RESERVED = 1u << 9;
 
 	// How a reference alias is filled, by BGSRefAlias::FILL_TYPE: 0 conditions, 1 forced, 2 from another alias, 3
 	// from the start's event, 4 made at runtime, 5 another quest's alias, 6 a unique actor, 7 near another alias.
@@ -320,8 +321,11 @@ namespace RadiantRules
 	// player's own).
 	struct Plan
 	{
-		std::vector<Force> forces;
-		std::string        fallback;
+		std::vector<Force>         forces;
+		std::string                fallback;
+		// Reference aliases that follow the others whose friend's fill this game didn't have loaded at the start (a settler of a
+		// settlement far away): left to the aliases they follow, and only noted if they differ once it runs (Compare).
+		std::vector<std::uint32_t> unforced;
 
 		[[nodiscard]] bool Ok() const { return fallback.empty(); }
 	};
@@ -383,6 +387,9 @@ namespace RadiantRules
 			const std::optional<std::uint32_t> local = a_resolve(alias.kind, form);
 			if (!local || *local == 0) {
 				if (alias.fill != Fill::kSource) {
+					if (alias.kind == Kind::kRef) {
+						plan.unforced.push_back(alias.id);
+					}
 					continue;
 				}
 				plan.fallback = Why(alias, form);
@@ -405,9 +412,20 @@ namespace RadiantRules
 
 	// After the start, or for a quest that already runs here: the fills of this game (a_here(kind, alias), 0 when empty)
 	// that differ from the friend's. Only those this game can name (a fill made at runtime in each game is each game's).
+	// a_unforced: after a start, the plan's (Plan::unforced): one of them that differs while a place of the run is the
+	// friend's is another settler of the same place, only noted.
 	template <class Resolve, class Here>
-	std::vector<Mismatch> Compare(std::span<const Alias> a_aliases, std::span<const Protocol::RadiantFill> a_fills, Resolve&& a_resolve, Here&& a_here)
+	std::vector<Mismatch> Compare(std::span<const Alias> a_aliases, std::span<const Protocol::RadiantFill> a_fills, Resolve&& a_resolve, Here&& a_here,
+		std::span<const std::uint32_t> a_unforced = {})
 	{
+		const bool samePlace = std::ranges::any_of(a_aliases, [&](const Alias& a_alias) {
+			const auto fill = FillFor(a_fills, a_alias);
+			if (a_alias.kind != Kind::kLoc || !fill || fill->form == 0) {
+				return false;
+			}
+			const std::optional<std::uint32_t> local = a_resolve(a_alias.kind, fill->form);
+			return local && *local != 0 && *local == a_here(a_alias.kind, a_alias.id);
+		});
 		std::vector<Mismatch> out;
 		for (const auto& alias : a_aliases) {
 			const auto fill = FillFor(a_fills, alias);
@@ -415,7 +433,8 @@ namespace RadiantRules
 				continue;
 			}
 			// A place is the run's target whichever way it is filled (a fill type read wrong leaves it checked).
-			const bool picked = alias.fill == Fill::kSource || alias.fill == Fill::kByOthers || alias.kind == Kind::kLoc;
+			const bool unforced = alias.kind == Kind::kRef && alias.fill != Fill::kSource && samePlace && std::ranges::find(a_unforced, alias.id) != a_unforced.end();
+			const bool picked = (alias.fill == Fill::kSource || alias.fill == Fill::kByOthers || alias.kind == Kind::kLoc) && !unforced;
 			std::uint32_t theirs = 0;
 			if (fill->form != 0) {
 				const std::optional<std::uint32_t> local = a_resolve(alias.kind, fill->form);

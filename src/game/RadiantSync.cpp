@@ -39,6 +39,7 @@ namespace RadiantSync
 		bool                                   inSession = false;
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		std::deque<Protocol::RadiantStart>     pending;  // friends' runs to start or compare here, in the order they came
+		std::set<std::uint32_t>                stopped;  // shared runs' quests seen stopped at the last poll: ended at this one
 
 		std::uint32_t begun = 0;     // runs of ours shared
 		std::uint32_t joined = 0;    // friends' runs shared here
@@ -320,10 +321,11 @@ namespace RadiantSync
 			return out;
 		}
 
-		std::vector<RadiantRules::Mismatch> CompareHere(RE::TESQuest* a_quest, const std::vector<GameAlias>& a_aliases, const std::vector<Protocol::RadiantFill>& a_fills)
+		std::vector<RadiantRules::Mismatch> CompareHere(RE::TESQuest* a_quest, const std::vector<GameAlias>& a_aliases, const std::vector<Protocol::RadiantFill>& a_fills,
+			std::span<const std::uint32_t> a_unforced = {})
 		{
 			const auto rules = Rules(a_aliases);
-			return RadiantRules::Compare(rules, a_fills, Resolve, [&](Kind a_kind, std::uint32_t a_alias) { return Here(a_quest, a_kind, a_alias); });
+			return RadiantRules::Compare(rules, a_fills, Resolve, [&](Kind a_kind, std::uint32_t a_alias) { return Here(a_quest, a_kind, a_alias); }, a_unforced);
 		}
 
 		std::string Describe(const RadiantRules::Mismatch& a_mismatch)
@@ -347,6 +349,7 @@ namespace RadiantSync
 			std::uint16_t                fillType = 0;
 			std::array<std::uint64_t, 3> data{};
 			RE::BGSLocation*             forcedLoc = nullptr;
+			RE::TESCondition*            conditions = nullptr;  // an optional alias's, lifted while it is forced
 		};
 
 		struct Starting
@@ -355,6 +358,7 @@ namespace RadiantSync
 			Run                        run;
 			Protocol::RadiantStart     start;
 			std::vector<Saved>         saved;  // the definitions forced for it, put back once it runs
+			std::vector<std::uint32_t> unforced;  // the plan's (RadiantRules::Plan::unforced)
 			std::vector<std::uint16_t> stages;  // the friend's stages that came meanwhile
 			Clock::time_point          since{};
 			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
@@ -375,8 +379,10 @@ namespace RadiantSync
 				saved.alias->fillType = saved.fillType;
 				if (const auto ref = AsRef(saved.alias)) {
 					std::ranges::copy(saved.data, ref->fillData.data);
+					ref->conditions = saved.conditions;
 				} else if (const auto loc = AsLoc(saved.alias)) {
 					loc->forcedLoc = saved.forcedLoc;
+					loc->conditions = saved.conditions;
 				}
 			}
 			a_saved.clear();
@@ -417,8 +423,13 @@ namespace RadiantSync
 				}
 				const auto alias = *it;
 				Saved      saved{ alias, Flags(alias), alias->fillType };
+				// An optional alias picks between the quest's ways by this game's state (a settlement the friend's game has unowned
+				// and this one owned): the friend's way is taken, its conditions lifted for the start. A needed alias keeps its
+				// own (a target that fails them here fails the start: the run stays each player's own).
+				const bool lift = force.form != 0 && (Flags(alias) & RadiantRules::ALIAS_OPTIONAL);
 				if (const auto ref = AsRef(alias); ref && force.kind == Kind::kRef) {
 					std::ranges::copy(ref->fillData.data, saved.data.begin());
+					saved.conditions = ref->conditions;
 					const auto word = RefWord(force.form);
 					if (force.form != 0 && word == 0) {
 						Restore(a_saved);
@@ -429,8 +440,12 @@ namespace RadiantSync
 					ref->fillData.data[1] = 0;
 					ref->fillData.data[2] = 0;
 					ref->fillType = REF_FORCED;
+					if (lift) {
+						ref->conditions = nullptr;
+					}
 				} else if (const auto loc = AsLoc(alias); loc && force.kind == Kind::kLoc) {
 					saved.forcedLoc = loc->forcedLoc;
+					saved.conditions = loc->conditions;
 					const auto location = force.form ? RE::TESForm::GetFormByID<RE::BGSLocation>(force.form) : nullptr;
 					if (force.form != 0 && !location) {
 						Restore(a_saved);
@@ -439,11 +454,17 @@ namespace RadiantSync
 					a_saved.push_back(saved);
 					loc->forcedLoc = location;
 					loc->fillType = *calibration.locForced;
+					if (lift) {
+						loc->conditions = nullptr;
+					}
 				} else {
 					Restore(a_saved);
 					return false;
 				}
-				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>(Flags(alias) & ~RadiantRules::ALIAS_BY_OTHERS);
+				// The friend's pick is taken even when another quest of this game holds it (a reference one reserves): which quests
+				// run is each game's own.
+				const auto reserved = force.form != 0 ? RadiantRules::ALIAS_ALLOW_RESERVED : 0u;
+				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>((Flags(alias) & ~RadiantRules::ALIAS_BY_OTHERS) | reserved);
 			}
 			return true;
 		}
@@ -496,7 +517,7 @@ namespace RadiantSync
 				return;
 			}
 			const auto aliases = AliasesOf(quest);
-			const auto mismatches = CompareHere(quest, aliases, start.start.fills);
+			const auto mismatches = CompareHere(quest, aliases, start.start.fills, start.unforced);
 			for (const auto& mismatch : mismatches) {
 				if (!mismatch.decisive) {
 					REX::INFO("RadiantSync: {:08X}: {} (follows from the rest; not a different target)", start.quest, Describe(mismatch));
@@ -535,6 +556,7 @@ namespace RadiantSync
 			}
 			Starting next{ a_start.quest, a_run, a_start };
 			next.stages = std::move(a_stages);
+			next.unforced = plan.unforced;
 			if (!Force(a_quest, plan, next.saved)) {
 				Decline(a_start.quest, a_run, "an alias of theirs couldn't be forced here");
 				return;
@@ -619,7 +641,8 @@ namespace RadiantSync
 				return;
 			case Answer::kCompare:
 				{
-					const auto mismatches = CompareHere(quest, AliasesOf(quest), a_start.fills);
+					const auto aliases = AliasesOf(quest);  // the mismatches name its aliases: kept while they are
+					const auto mismatches = CompareHere(quest, aliases, a_start.fills);
 					if (RadiantRules::SameTargets(mismatches)) {
 						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets");
 					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
@@ -783,12 +806,19 @@ namespace RadiantSync
 			}
 		}
 
-		// Runs that ended here: their quest stopped (completed, failed, or handed in). Never started here again.
+		// Runs that ended here: their quest stopped (completed, failed, or handed in). Never started here again. Ended a
+		// poll after it is first seen stopped: the stages that stopped it (a reward stage that stops the quest at once) are
+		// seen done by QuestSync's poll after this, and still go under the run.
 		for (const auto id : book.Quests()) {
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
 			if (book.IsStarting(id) || (quest && (quest->data.flags & QUEST_RUNNING))) {
+				stopped.erase(id);
 				continue;
 			}
+			if (stopped.insert(id).second) {
+				continue;
+			}
+			stopped.erase(id);
 			book.Ended(id);
 			REX::INFO("RadiantSync: {:08X} '{}' stopped here; its shared run is over", id, QuestName(quest));
 		}
@@ -833,6 +863,7 @@ namespace RadiantSync
 		AbortStart();
 		pending.clear();
 		book.EndSession();
+		stopped.clear();
 		inSession = false;
 	}
 
@@ -841,6 +872,7 @@ namespace RadiantSync
 		AbortStart();
 		pending.clear();
 		book.Clear();
+		stopped.clear();
 		outgoing.clear();
 	}
 
@@ -849,6 +881,7 @@ namespace RadiantSync
 		AbortStart();
 		pending.clear();
 		book.Clear();
+		stopped.clear();
 		outgoing.clear();
 	}
 

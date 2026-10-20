@@ -342,6 +342,46 @@ TEST("radiants: the targets are the same when the fills each game picks are; a s
 	CHECK(!SameTargets(Compare(RECRUIT01, withPlace, Resolve, ours)));
 }
 
+TEST("radiants: a settler of the friend's settlement that isn't loaded here at the start is left to the others, and only noted if it differs")
+{
+	// BoSR05's aliases (some of them): the settlement's workshop, owned or not, pushed into Workshop; its settlers from it.
+	const std::vector<Alias> bosr05{
+		{ 10, REF, Fill::kSource, true, "OwnedWorkshop" },
+		{ 11, REF, Fill::kSource, true, "UnownedWorkshop" },
+		{ 6, REF, Fill::kByOthers, false, "Workshop" },
+		{ 0, LOC, Fill::kDerived, false, "Settlement" },
+		{ 4, REF, Fill::kDerived, false, "SettlementBoss" },
+		{ 5, REF, Fill::kByOthers, false, "SettlementSpokesman" },
+	};
+	constexpr std::uint32_t THEIR_SETTLER = 0x0009B1C6;
+	constexpr std::uint32_t OUR_SETTLER = 0x0009B1C7;  // the settlement's other one, which this game took
+	const std::vector<RadiantFill> fills{ { 10, 0, 0 }, { 11, 0, TENPINES_WORKSHOP }, { 6, 0, TENPINES_WORKSHOP }, { 0, 1, CORVEGA }, { 4, 0, THEIR_SETTLER },
+		{ 5, 0, THEIR_SETTLER } };
+
+	bool       loaded = false;  // their settler: in memory here only once the quest runs with the settlement
+	const auto resolve = [&](Kind a_kind, std::uint32_t a_form) { return a_form == THEIR_SETTLER && !loaded ? std::nullopt : Resolve(a_kind, a_form); };
+	const auto plan = MakePlan(bosr05, fills, resolve);
+	REQUIRE(plan.Ok());
+	CHECK(plan.forces.size() == 4);  // the workshops, Workshop and the settlement
+	CHECK((plan.unforced == std::vector<std::uint32_t>{ 4, 5 }));
+
+	loaded = true;
+	std::map<std::pair<Kind, std::uint32_t>, std::uint32_t> here{ { { REF, 11 }, TENPINES_WORKSHOP }, { { REF, 6 }, TENPINES_WORKSHOP }, { { LOC, 0 }, CORVEGA },
+		{ { REF, 4 }, OUR_SETTLER }, { { REF, 5 }, OUR_SETTLER } };
+	const auto ours = [&](Kind a_kind, std::uint32_t a_alias) {
+		const auto it = here.find({ a_kind, a_alias });
+		return it != here.end() ? it->second : 0u;
+	};
+	auto mismatches = Compare(bosr05, fills, resolve, ours, plan.unforced);
+	CHECK(mismatches.size() == 2);
+	CHECK(SameTargets(mismatches));
+	// Without the plan's word (a run compared as it runs here), the spokesman counts.
+	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours)));
+	// Another settlement: the targets differ whatever the settlers.
+	here[{ LOC, 0 }] = LEXINGTON;
+	CHECK(!SameTargets(Compare(bosr05, fills, resolve, ours, plan.unforced)));
+}
+
 TEST("radiants: a friend's run starts here once; its stages are set once and never reported back, so its reward is paid once in each game")
 {
 	Book       book;
