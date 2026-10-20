@@ -375,6 +375,7 @@ namespace
 			RunBeforeSaveOrLoad(
 				[] {
 					Session::OnBeforeSaveOrLoad();
+					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
@@ -386,6 +387,7 @@ namespace
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
 				if (OnMainThread()) {
 					Downed::OnAfterSave();
+					WeaponFire::AfterSave();
 				} else {
 					MainThread::Post([] { Downed::OnAfterSave(); });
 				}
