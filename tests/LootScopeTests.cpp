@@ -344,6 +344,40 @@ TEST("loot sync: a chest emptied of the session's things is emptied for the frie
 	CHECK(alice.loot.Stats().emptiedApplied == 0);
 }
 
+TEST("loot sync: taking only a weapon and a note from a chest that holds nothing else the session shares empties the friend's copy too")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+	// Alice's roll held no junk at all; Bob's rolled some.
+	alice.holders[CHEST_REF] = { { PIPE_PISTOL, 1 }, { PAPER_NOTE, 1 } };
+	bob.holders[CHEST_REF] = { { PIPE_PISTOL, 1 }, { PAPER_NOTE, 1 }, { STEEL, 5 }, { AMMO_38, 3 } };
+
+	alice.Take(f, CHEST_REF, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 1);  // the note left is hers alone: nothing the session shares is left
+	CHECK(alice.loot.Stats().sent == 0);          // the gun is not the session's
+	alice.Take(f, CHEST_REF, PAPER_NOTE, 1);
+	CHECK(alice.loot.Stats().sent == 0);          // nor is the note
+	CHECK(alice.loot.Stats().emptiedSent == 1);  // told once: not again for each thing of hers taken after
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, STEEL) == 0);
+	CHECK(bob.In(CHEST_REF, AMMO_38) == 0);
+	CHECK(bob.In(CHEST_REF, PIPE_PISTOL) == 1);  // his own gun and note stay
+	CHECK(bob.In(CHEST_REF, PAPER_NOTE) == 1);
+	CHECK(bob.loot.Stats().emptiedApplied == 1);
+
+	// A chest that still holds something the session shares isn't bare: nothing goes out.
+	alice.holders[CHEST_2] = { { PIPE_PISTOL, 1 }, { STEEL, 4 } };
+	bob.holders[CHEST_2] = { { PIPE_PISTOL, 1 }, { STEEL, 4 } };
+	alice.Take(f, CHEST_2, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_2, STEEL) == 4);
+}
+
 TEST("loot sync: a corpse looted bare by the joiner is bare for the host, both ways; a partial loot sends no emptying")
 {
 	Fixture f;
