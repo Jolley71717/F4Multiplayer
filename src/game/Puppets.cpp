@@ -2,11 +2,9 @@
 
 #include "game/AimPoint.h"
 #include "game/CreatureGait.h"
-#include "game/EngineClock.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
 #include "game/MoveSync.h"
-#include "game/PlayerMotion.h"
 #include "game/Papyrus.h"
 
 #include "Protocol.h"
@@ -53,7 +51,6 @@ namespace Puppets
 			std::uint32_t                         seatExits = 0;     // stood up out of furniture (see ReleaseIdle)
 			bool                                  held = false;      // held for furniture: neither placed nor driven (see Hold)
 			std::optional<Put>                    put;               // dev (trace): where its update last put it, and when
-			EngineClock::Timeline                 clock;             // its updates' time, on the pace the engine moves things by
 		};
 
 		std::mutex                                    lock;
@@ -460,12 +457,10 @@ namespace Puppets
 				return;
 			}
 
-			std::optional<Puppet>                 puppet;
-			std::chrono::steady_clock::time_point drawAt{};  // this update's time on the engine's pace (EngineClock.h)
+			std::optional<Puppet> puppet;
 			{
 				std::scoped_lock l{ lock };
 				if (const auto it = puppets.find(a_this); it != puppets.end() && it->second.formId == a_this->GetFormID()) {
-					drawAt = it->second.clock.Advance(std::chrono::steady_clock::now(), a_delta);
 					puppet = it->second;
 				}
 			}
@@ -517,10 +512,8 @@ namespace Puppets
 			const float speed = puppet->moving ? puppet->target.speed : 0.0f;
 			if (puppet->hasTarget) {
 				// Where its path is now (MotionPath.h), not where it was when our frame's work last ran, which comes at
-				// another moment of each frame than this update does. And where it is at this update's time on the pace the
-				// engine moves everything else by, not at the moment it runs, which is up to a frame off that pace in a game
-				// that skips frames unevenly: it steps as far each frame as all else drawn with it (EngineClock.h).
-				if (const auto at = puppet->target.path.At(PlayerMotion::EngineTime() ? drawAt : now)) {
+				// another moment of each frame than this update does.
+				if (const auto at = puppet->target.path.At(now)) {
 					puppet->target.position = { at->x, at->y, at->z };
 					puppet->target.heading = at->heading;
 				}
@@ -529,7 +522,7 @@ namespace Puppets
 				{
 					std::scoped_lock l{ lock };
 					if (const auto entry = Find(a_this)) {
-						entry->put = Put{ now, puppet->target.position, drawAt };
+						entry->put = Put{ now, puppet->target.position };
 					}
 				}
 				static_cast<RE::ActorState&>(*a_this).moveMode = puppet->target.moveMode;
