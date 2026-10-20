@@ -14,8 +14,7 @@ namespace Compass
 	{
 		using GValue = Scaleform::GFx::Value;
 
-		constexpr const char* COMPASS_PATH = "root.BottomCenterGroup_mc.CompassWidget_mc";
-		// The compass bar is 304 px across and shows about 100 degrees (N and E are 272 px apart).
+		// The compass bar (the same HUDCompassWidget in both HUDs, see Surface) is 304 px across and shows about 100 degrees (N and E are 272 px apart).
 		constexpr float PIXELS_PER_DEGREE = 3.02f;
 		constexpr float HALF_WIDTH = 148.0f;  // past this they're pinned to the edge
 		enum class Shape
@@ -54,11 +53,6 @@ namespace Compass
 			bool          pinned;   // off to the side or behind: shown at the edge, dimmer
 		};
 
-		// Players we have made a marker for (UI thread only). The markers themselves are looked up
-		// by name every time: loading a save rebuilds the HUD, maybe at the same address, and a
-		// kept reference would point at a destroyed object.
-		std::set<std::uint64_t> markerIds;
-
 		// What each marker was last given (UI thread only): a value that has not changed is not written
 		// again, so a HUD with nobody near shows no writes at all.
 		struct Placed
@@ -67,14 +61,34 @@ namespace Compass
 			bool  pinned = false;
 			bool  visible = false;
 		};
-		std::map<std::uint64_t, Placed> placed;
+
+		using AdvanceFn = void (*)(RE::IMenu*, float, std::uint64_t);
+
+		// A compass the markers are drawn on, each in its own menu's movie, written from inside that menu's own update
+		// (its AdvanceMovie, hooked). On foot it is the HUD's; in power armor the HUD's is hidden and PowerArmorHUDMenu
+		// (PowerArmorHUDMenu.swf, a menu of its own) shows its compass, the same HUDCompassWidget with the same 304 px
+		// bar, at its root: markers drawn only on the HUD's were missing in power armor. Both get them.
+		struct Surface
+		{
+			const char* path;
+			// Players we have made a marker for (UI thread only). The markers themselves are looked up by name every
+			// time: loading a save rebuilds the HUD, maybe at the same address, and the power armor HUD is made anew
+			// each time the player gets in; a kept reference would point at a destroyed object.
+			std::set<std::uint64_t>         markerIds;
+			std::map<std::uint64_t, Placed> placed;
+			std::atomic<bool>               queued{ false };  // an update waits for its menu's next update
+			std::atomic<std::uint32_t>      shown{ 0 };
+			std::atomic<std::uint32_t>      advances{ 0 };
+			AdvanceFn                       original = nullptr;
+		};
+		Surface hudCompass{ "root.BottomCenterGroup_mc.CompassWidget_mc" };
+		Surface armorCompass{ "root.CompassWidget_mc" };
 
 		// A marker's key in markerIds and placed: a friend's and a ping of theirs are two markers.
 		std::uint64_t KeyOf(std::uint32_t a_playerId, bool a_ping)
 		{
 			return (static_cast<std::uint64_t>(a_ping) << 32) | a_playerId;
 		}
-		std::atomic<bool>          updateQueued{ false };
 		// While a loading screen is up (Hud::LoadingScreenUp) the HUD is being torn down or rebuilt; no
 		// marker is touched until it has closed. Crashes in the HUD's render tree on loading screens
 		// pointed here (TreeNode::SetVisible on the render thread, no plugin frame).
@@ -104,7 +118,6 @@ namespace Compass
 			return !ui || ui->menuMode != 0 || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
 		}
 
-		std::atomic<std::uint32_t> shown{ 0 };
 		std::atomic<std::uint32_t> made{ 0 };
 
 		float WrapDegrees(float a_degrees)
@@ -201,8 +214,8 @@ namespace Compass
 			return shape;
 		}
 
-		// Inside the HUD's own update (HudAdvance).
-		void Apply(RE::IMenu* a_hud, const std::vector<Target>& a_targets)
+		// Inside the menu's own update (HudAdvance, ArmorHudAdvance).
+		void Apply(Surface& a_surface, RE::IMenu* a_hud, const std::vector<Target>& a_targets)
 		{
 			Seen(uiThreads);
 			if (Hud::LoadingScreenUp()) {
@@ -215,7 +228,7 @@ namespace Compass
 			}
 			const auto movie = a_hud->uiMovie.get();
 			GValue     compass;
-			if (!movie || !movie->GetVariable(&compass, COMPASS_PATH) || !compass.IsDisplayObject()) {
+			if (!movie || !movie->GetVariable(&compass, a_surface.path) || !compass.IsDisplayObject()) {
 				return;
 			}
 			std::uint32_t visible = 0;
@@ -227,11 +240,11 @@ namespace Compass
 					if (!shape) {
 						continue;
 					}
-					markerIds.insert(key);
-					placed.erase(key);  // a fresh shape: everything below is written once
+					a_surface.markerIds.insert(key);
+					a_surface.placed.erase(key);  // a fresh shape: everything below is written once
 					shape->SetMember("y", GValue(0.0));
 				}
-				auto& was = placed[key];
+				auto& was = a_surface.placed[key];
 				if (was.x != target.x) {
 					shape->SetMember("x", GValue(static_cast<double>(target.x)));
 					was.x = target.x;
@@ -246,9 +259,9 @@ namespace Compass
 				}
 				++visible;
 			}
-			for (const auto id : markerIds) {
+			for (const auto id : a_surface.markerIds) {
 				if (std::ranges::none_of(a_targets, [&](const Target& a_target) { return KeyOf(a_target.id, a_target.ping) == id; })) {
-					auto& was = placed[id];
+					auto& was = a_surface.placed[id];
 					if (!was.visible) {
 						continue;
 					}
@@ -258,7 +271,7 @@ namespace Compass
 					was.visible = false;
 				}
 			}
-			shown = visible;
+			a_surface.shown = visible;
 		}
 
 		// The markers are written from inside the HUD menu's own AdvanceMovie, after the engine's update of
@@ -268,27 +281,21 @@ namespace Compass
 		// conversation opening). In the HUD's own update nothing else touches the HUD movie. The plugin posts
 		// no UI task at all any more (a test reads the source).
 		constexpr std::size_t ADVANCE_MOVIE_INDEX = 0x04;  // IMenu::AdvanceMovie
-		using AdvanceFn = void (*)(RE::IMenu*, float, std::uint64_t);
 		std::atomic<std::uintptr_t> hookedHudVtable{ 0 };
-		AdvanceFn                   originalAdvance = nullptr;
+		std::atomic<bool>           hookedArmorHud{ false };
 		std::mutex                  targetsLock;
 		std::vector<Target>         latestTargets;  // from the frame task, for the next HUD update
-		std::atomic<std::uint32_t>  advances{ 0 };
 
-		void HudAdvance(RE::IMenu* a_this, float a_timeDelta, std::uint64_t a_time)
+		// After the menu's own update: the update queued for this compass, if any. One queued before a load (or its
+		// loading screen) names a HUD that is being torn down and rebuilt; it is dropped, and Frame queues a fresh one
+		// once the HUD has settled.
+		void Update(Surface& a_surface, RE::IMenu* a_menu)
 		{
-			originalAdvance(a_this, a_timeDelta, a_time);
-			++advances;
-			// An update queued before a load (or its loading screen) names a HUD that is being torn down
-			// and rebuilt; it is dropped, and Frame queues a fresh one once the HUD has settled.
 			if (Hud::LoadingScreenUp() || !Hud::IsSettled()) {
-				updateQueued = false;
+				a_surface.queued = false;
 				return;
 			}
-			Hud::OnHudAdvance();
-			// The icons over friends in a menu (MenuIcons), queued by their own frame.
-			MenuIcons::OnHudAdvance(a_this);
-			if (!updateQueued.exchange(false)) {
+			if (!a_surface.queued.exchange(false)) {
 				return;
 			}
 			std::vector<Target> targets;
@@ -296,7 +303,44 @@ namespace Compass
 				std::scoped_lock l{ targetsLock };
 				targets = latestTargets;
 			}
-			Apply(a_this, targets);
+			Apply(a_surface, a_menu, targets);
+		}
+
+		void HudAdvance(RE::IMenu* a_this, float a_timeDelta, std::uint64_t a_time)
+		{
+			hudCompass.original(a_this, a_timeDelta, a_time);
+			++hudCompass.advances;
+			if (Hud::LoadingScreenUp() || !Hud::IsSettled()) {
+				hudCompass.queued = false;
+				return;
+			}
+			Hud::OnHudAdvance();
+			// The icons over friends in a menu (MenuIcons), queued by their own frame.
+			MenuIcons::OnHudAdvance(a_this);
+			Update(hudCompass, a_this);
+		}
+
+		// The power armor HUD's update: only the markers on its compass.
+		void ArmorHudAdvance(RE::IMenu* a_this, float a_timeDelta, std::uint64_t a_time)
+		{
+			armorCompass.original(a_this, a_timeDelta, a_time);
+			++armorCompass.advances;
+			Update(armorCompass, a_this);
+		}
+
+		// The power armor HUD is made each time the player gets in and let go when they get out, so it is not looked
+		// up (OpenMenus): its class's update is hooked in its vtable, found by the address library, once.
+		void HookArmorHud()
+		{
+			if (hookedArmorHud.exchange(true)) {
+				return;
+			}
+			MainThread::Assert("Compass::HookArmorHud");
+			const auto vtable = RE::VTABLE::PowerArmorHUDMenu[0].address();
+			const auto slot = vtable + sizeof(void*) * ADVANCE_MOVIE_INDEX;
+			armorCompass.original = *reinterpret_cast<AdvanceFn*>(slot);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ArmorHudAdvance));
+			REX::INFO("Compass: hooked the power armor HUD's update (vtable {:X})", vtable);
 		}
 
 		void HookHud()
@@ -314,7 +358,7 @@ namespace Compass
 			}
 			const auto vtable = *reinterpret_cast<std::uintptr_t*>(menu.get());
 			const auto slot = vtable + sizeof(void*) * ADVANCE_MOVIE_INDEX;
-			originalAdvance = *reinterpret_cast<AdvanceFn*>(slot);
+			hudCompass.original = *reinterpret_cast<AdvanceFn*>(slot);
 			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&HudAdvance));
 			hookedHudVtable = vtable;
 			REX::INFO("Compass: hooked the HUD's update (vtable {:X})", vtable);
@@ -361,6 +405,7 @@ namespace Compass
 	{
 		if (!Hud::LoadingScreenUp()) {
 			HookHud();  // the HUD messages go out through it too, markers or not
+			HookArmorHud();
 		}
 		if (!Config::Get().compassMarkers || Hud::LoadingScreenUp() || !Hud::IsSettled()) {
 			return;  // the HUD is being torn down or rebuilt (loading screen, or a game load just finished)
@@ -371,14 +416,15 @@ namespace Compass
 			return;  // the markers stay where they were until the menu has closed
 		}
 		auto targets = FindTargets();
-		if (targets.empty() && shown.load() == 0) {
+		if (targets.empty() && hudCompass.shown.load() == 0 && armorCompass.shown.load() == 0) {
 			return;  // nobody to show and nothing showing: the HUD is not touched at all (main menu, loads, playing alone)
 		}
 		{
 			std::scoped_lock l{ targetsLock };
 			latestTargets = std::move(targets);
 		}
-		updateQueued = true;
+		hudCompass.queued = true;
+		armorCompass.queued = true;
 	}
 
 	std::string_view MarkerName(std::uint32_t a_playerId)
@@ -389,7 +435,8 @@ namespace Compass
 	std::string Describe()
 	{
 		std::scoped_lock l{ threadsLock };
-		return std::format("compass: shown={} made={} skippedLoading={} skippedMenus={} frameThreads={} hudThreads={} hudAdvances={}", shown.load(), made.load(),
-			skippedLoading.load(), skippedMenus.load(), frameThreads.size(), uiThreads.size(), advances.load());
+		return std::format("compass: shown={} made={} skippedLoading={} skippedMenus={} frameThreads={} hudThreads={} hudAdvances={} armorShown={} armorAdvances={}",
+			hudCompass.shown.load(), made.load(), skippedLoading.load(), skippedMenus.load(), frameThreads.size(), uiThreads.size(), hudCompass.advances.load(),
+			armorCompass.shown.load(), armorCompass.advances.load());
 	}
 }
