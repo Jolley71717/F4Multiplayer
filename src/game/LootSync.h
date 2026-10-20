@@ -111,12 +111,21 @@ namespace LootSync
 				const auto scope = LootScope::Of(holder, a_world.Item(move.item), direction);
 				if (scope != LootScope::Scope::kShared) {
 					++counts.keptSent[static_cast<std::size_t>(scope)];
+					// A weapon, a key or a note taken from a chest or corpse that holds nothing else the session shares leaves it
+					// bare too (its own take isn't reported): a friend's copy still holds its own roll of junk. Once told, not
+					// again for each gun taken after (told: until something shared is put back in it).
+					if (direction == LootScope::Direction::kTake && (scope == LootScope::Scope::kPersonal || scope == LootScope::Scope::kWeaponArmor) &&
+						LootScope::Of(holder, { .kind = LootScope::Item::kMisc }, direction) == LootScope::Scope::kShared && !toldBare.contains(move.holder) &&
+						std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
+						takenFrom.push_back(move.holder);
+					}
 					continue;
 				}
 				const Protocol::ContainerChange change{ move.holder, move.item, move.count };
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
+				toldBare.erase(move.holder);  // it holds something shared again (a put), or is about to be asked
 				if (direction == LootScope::Direction::kTake && std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
 					takenFrom.push_back(move.holder);
 				}
@@ -129,6 +138,7 @@ namespace LootSync
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.emptiedSent;
+				toldBare.insert(holder);
 			}
 			return packets;
 		}
@@ -139,6 +149,7 @@ namespace LootSync
 		void OnWelcome(std::uint64_t a_session, std::uint32_t a_localId)
 		{
 			live = a_session;
+			toldBare.clear();
 			liveId = a_localId;
 			if (receiver.OnWelcome(a_session, a_localId)) {
 				pending.clear();  // a different session: none of its changes are in our world yet
@@ -151,6 +162,7 @@ namespace LootSync
 		// A save's record was read, before the game says the save has loaded (a_session 0: it has none).
 		void LoadRecord(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending)
 		{
+			toldBare.clear();  // the world is the save's: a chest looted bare since may hold its things again
 			receiver.Load(a_session, a_next);
 			pending = std::move(a_pending);
 			// In session order, whatever order the record holds them in: a container's changes go in in that order.
@@ -162,6 +174,7 @@ namespace LootSync
 		// on carry a record. Returns the request for what our world lacks, to send now.
 		Protocol::WorldRequest AfterLoad(std::uint64_t a_session, std::uint32_t a_localId, Clock::time_point a_now)
 		{
+			toldBare.clear();
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
 			}
@@ -429,6 +442,7 @@ namespace LootSync
 		std::uint64_t             live = 0;    // the session we are welcomed into (0: none, or the connection went)
 		std::uint32_t             liveId = 0;  // our player ID in it
 		std::vector<Pending>      pending;
+		std::unordered_set<std::uint32_t> toldBare;  // holders reported emptied (CONTAINER_EMPTIED) and not stocked with anything shared since
 		Counts                    counts;
 	};
 }

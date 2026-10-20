@@ -478,7 +478,7 @@ Each game rolls a chest's and an NPC's leveled loot on its own (the same corpse 
 different things in the two games of the rig), so a friend taking what their copy held left ours
 holding its own roll. A take that leaves a holder with nothing the session shares is followed by an
 emptied marker (`Protocol::CONTAINER_EMPTIED`: the player's ref as the item, count -1, an ordinary
-numbered change, so it is caught up on after a load or a join like any other): every receiver takes out
+numbered change, so it is caught up on after a load or a join like any other; one also follows a weapon, a key or a note taken from a holder that then holds nothing the session shares, once, though that take itself is not reported): every receiver takes out
 each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
 items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
 yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
