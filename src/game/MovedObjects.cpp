@@ -468,7 +468,7 @@ namespace MovedObjects
 				return;
 			}
 			const auto& at = a_ref->data.location;
-			if (blasts.Note(a_ref->GetHandle().native_handle(), { at.x, at.y, at.z }, form->data.outerRadius, *role, a_now)) {
+			if (blasts.Note(a_ref->GetHandle().get_handle(), { at.x, at.y, at.z }, form->data.outerRadius, *role, a_now)) {
 				++counts.blastsSeen;
 			}
 		}
