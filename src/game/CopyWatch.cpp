@@ -23,6 +23,7 @@ namespace CopyWatch
 			float             damage = 0.0f;
 			bool              usesHitData = false;
 			bool              explosion = false;
+			bool              ownersToDeal = false;  // a throw's blow: the NPC's own game deals it (CopyHealth::OwnersToDeal)
 			Clock::time_point at{};
 		};
 
@@ -61,6 +62,10 @@ namespace CopyWatch
 		float         healthRestored = 0.0f;
 		std::uint32_t copiesDied = 0;
 		std::uint32_t reportsSet = 0;
+		std::vector<std::pair<std::uint32_t, float>> damageOut;  // what our hits took off copies, by session id, to send
+		std::uint32_t damageSent = 0;
+		std::uint32_t leftToOwner = 0;  // throws' blows of ours on copies, left to the NPC's own game (OwnersToDeal)
+		float         damageTotal = 0.0f;
 		std::uint32_t hitsLogged = 0;
 		std::uint32_t restoresLogged = 0;
 		std::uint32_t deathsLogged = 0;
@@ -200,6 +205,22 @@ namespace CopyWatch
 		return cause;
 	}
 
+	CopyHealth::Blow BlowOf(const RE::TESHitEvent& a_event)
+	{
+		const auto throwable = [](const RE::TESForm* a_form) {
+			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+			const auto type = weapon ? weapon->weaponData.type.get() : RE::WEAPON_TYPE::kHandToHand;
+			return weapon && (type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine);
+		};
+		const auto weapon = a_event.hitData.weapon.object;
+		const auto source = a_event.sourceFormID != 0 ? RE::TESForm::GetFormByID(a_event.sourceFormID) : nullptr;
+		return {
+			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
+			.throwable = throwable(weapon) || throwable(source),
+			.spellAlone = !weapon && source && source->IsMagicItem(),
+		};
+	}
+
 	void NoteHit(const RE::TESHitEvent& a_event)
 	{
 		const auto target = a_event.target.get();
@@ -220,6 +241,7 @@ namespace CopyWatch
 			.damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage,
 			.usesHitData = a_event.usesHitData,
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
+			.ownersToDeal = CopyHealth::OwnersToDeal(BlowOf(a_event)),
 			.at = Clock::now(),
 		};
 		std::scoped_lock l{ inboxLock };
@@ -245,7 +267,7 @@ namespace CopyWatch
 		if (wire == 0) {
 			return;  // one of our game's own, never shared: no copy of anyone's
 		}
-		book.Set(wire, a_health);
+		book.Heard(wire, a_before, a_health, Clock::now());
 		if (const auto owner = OtherOwner(wire)) {
 			++reportsSet;
 			if (reportsLogged < 40) {
@@ -275,9 +297,16 @@ namespace CopyWatch
 			}
 			const auto owner = OtherOwner(wire);
 			// Our player's hit on anything, as it may become a copy of ours; another actor's matters only on a copy.
-			const auto hitter = hit.byPlayer ? CopyHealth::Hitter::kOurPlayer :
-			                    owner != 0   ? CopyHealth::Judge(CauseOf(hit.cause), local) :
-			                                   CopyHealth::Hitter::kNotOurs;
+			auto hitter = hit.byPlayer ? CopyHealth::Hitter::kOurPlayer :
+			              owner != 0   ? CopyHealth::Judge(CauseOf(hit.cause), local) :
+			                             CopyHealth::Hitter::kNotOurs;
+			// A throw's blow on a copy: the NPC's own game deals it (the explosion goes off there too), so what it took
+			// here is given back, and that game's health follows (HealthShare).
+			const bool left = owner != 0 && hit.ownersToDeal && hitter != CopyHealth::Hitter::kNotOurs;
+			if (left) {
+				hitter = CopyHealth::Hitter::kNotOurs;
+				++leftToOwner;
+			}
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
 				book.OurHit(wire, hit.at);
 			}
@@ -288,7 +317,7 @@ namespace CopyWatch
 			if (hitter == CopyHealth::Hitter::kOurs) {
 				++allyHits;
 			}
-			const auto what = Describe(hit, hitter != CopyHealth::Hitter::kNotOurs);
+			const auto what = Describe(hit, hitter != CopyHealth::Hitter::kNotOurs) + (left ? "; ours, but a throw's: its own game deals it" : "");
 			lastHits[wire] = { what, hit.at };
 			if (hitsLogged < 100) {
 				++hitsLogged;
@@ -321,6 +350,15 @@ namespace CopyWatch
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
 				const float give = book.Check(id, health, now);
+				// What our hits took off it, for the game that runs it (WorldSync sends it).
+				if (const float ours = book.TakeOurs(id); ours > 0.0f) {
+					const float maximum = values.GetPermanentActorValue(*info);
+					if (maximum > 0.0f && damageOut.size() < MAX_INBOX) {
+						damageOut.push_back({ id, std::clamp(ours / maximum, 0.0f, 1.0f) });
+						++damageSent;
+						damageTotal += ours;
+					}
+				}
 				if (give <= 0.0f) {
 					continue;
 				}
@@ -376,13 +414,19 @@ namespace CopyWatch
 			deathInbox.clear();
 		}
 		book.Clear();
+		damageOut.clear();
 		lastHits.clear();
 		copiesSeen.clear();
 	}
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDeaths={}", book.Size(), hitsOnCopies, allyHits, restores,
-			healthRestored, reportsSet, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyThrows={} copyDeaths={}", book.Size(), hitsOnCopies,
+			allyHits, restores, healthRestored, reportsSet, damageSent, damageTotal, leftToOwner, copiesDied);
+	}
+
+	std::vector<std::pair<std::uint32_t, float>> TakeDamage()
+	{
+		return std::exchange(damageOut, {});
 	}
 }

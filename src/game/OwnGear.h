@@ -23,6 +23,10 @@ namespace OwnGear
 		kEmptyFrame,    // a power armor frame emptied for a stand-in to get into (a copy placed for it, SwitchIntoPowerArmor)
 		kTakeLoose,     // a loose item a friend picked up, taken out of this world too (WorldSync's pickups)
 		kContainer,     // what a friend took from or put into a container or a corpse (the shared loot)
+		// An item lying in the world that a player gave by dropping it (Drops): this game's copy of it placed, taken away when
+		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
+		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
+		kDropCopy,
 		kCount,
 	};
 
@@ -82,6 +86,14 @@ namespace OwnGear
 			return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
 		case Change::kContainer:
 			return a_target.standIn ? Verdict::kWrongActor : Verdict::kGo;
+		case Change::kDropCopy:
+			if (!a_target.inWorld) {
+				if (a_target.heldByPlayer) {
+					return Verdict::kInOurInventory;
+				}
+				return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
+			}
+			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
 		case Change::kCount:
 			break;
 		}
@@ -101,6 +113,8 @@ namespace OwnGear
 			return "takeLoose";
 		case Change::kContainer:
 			return "container";
+		case Change::kDropCopy:
+			return "dropCopy";
 		case Change::kCount:
 			break;
 		}

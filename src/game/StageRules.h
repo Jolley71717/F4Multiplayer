@@ -67,9 +67,11 @@ namespace StageRules
 		{ 0, 0x01CB51, 140, 0, 15 },
 		{ 0, 0x01CB51, 200, 0, 10 },
 		{ 0, 0x01CB51, 210, 0, 10 },
-		{ 0, 0x01CC2A, 0, 0, 30 },  // MQ102
+		{ 0, 0x01CC2A, 0, 0, 30 },  // MQ102 (below 10 the opening's: never shared, see IsOpening)
+		{ 0, 0x01CC2A, 4, kMoves, 0 },  // the Pip-Boy's image-space effect
 		{ 0, 0x01CC2A, 6, 0, 10 },
 		{ 0, 0x01CC2A, 7, kMoves, 3 },
+		{ 0, 0x01ED62, 40, kMoves, 0 },  // DialogueVault111 (the opening's: never shared, see IsOpening): into the cryopod
 		{ 0, 0x0229E6, 0, kMoves | kBridge, 20 },  // MQ105
 		{ 0, 0x0229E6, 177, kPays, 0 },
 		{ 0, 0x0229E7, 0, kMoves | kBridge, 40 },  // MQ106
@@ -85,8 +87,8 @@ namespace StageRules
 		{ 0, 0x0229EE, 700, 0, 30 },
 		{ 0, 0x0229EE, 750, kMoves, 80 },
 		{ 0, 0x0229EE, 800, 0, 20 },
-		{ 0, 0x0229EE, 850, 0, 250 },
-		{ 0, 0x0229EE, 855, 0, 1 },
+		{ 0, 0x0229EE, 850, kMoves | kBridge, 250 },  // fades to black for the ending
+		{ 0, 0x0229EE, 855, kMoves | kBridge, 1 },  // the ending's slides
 		{ 0, 0x0229F6, 0, kMoves, 20 },  // MS01
 		{ 0, 0x0229F6, 1050, 0, 50 },
 		{ 0, 0x0229FD, 35, kMoves, 75 },  // MS07b
@@ -287,11 +289,13 @@ namespace StageRules
 		{ 0, 0x0BACFF, 90, kMoves, 118 },
 		{ 0, 0x0BACFF, 99, kMoves, 60 },
 		{ 0, 0x0BACFF, 100, 0, 150 },
-		{ 0, 0x0BAD00, 40, kMoves, 20 },  // Inst308
+		{ 0, 0x0BAD00, 30, kMoves | kBridge, 0 },  // Inst308: the ending's slides
+		{ 0, 0x0BAD00, 40, kMoves, 20 },
 		{ 0, 0x0BDB04, 0, 0, 10 },  // MinDefendCastle
 		{ 0, 0x0C30DC, 0, kMoves | kBridge, 20 },  // BosR02
 		{ 0, 0x0C8675, 0, kMoves | kBridge, 60 },  // BoSR03
-		{ 0, 0x0C9B0B, 60, 0, 1 },  // MQ00
+		{ 0, 0x0C9B0B, 50, kMoves | kBridge, 0 },  // MQ00: the ending's slides
+		{ 0, 0x0C9B0B, 60, kMoves | kBridge, 1 },
 		{ 0, 0x0CF3E2, 0, kMoves | kBridge, 60 },  // BoSR04
 		{ 0, 0x0D1EB2, 0, kMoves | kBridge, 60 },  // BoSR05
 		{ 0, 0x0DDFDB, 0, 0, 10 },  // Min301
@@ -416,6 +420,26 @@ namespace StageRules
 		return it != std::end(RULES) && std::tuple{ it->file, it->quest, it->stage } == key ? &*it : nullptr;
 	}
 
+	// The opening's quests in Fallout4.esm (see Story::InOpening): MQ102 "Out of Time" until the player first steps
+	// out of Vault 111 (its 10, set by the trigger outside the vault's lift), and the vault's dialogue quest, whose
+	// stages put the player in the cryopod (40), play the vault's scenes, open the vault door (95), give the last
+	// look in the mirror (98), start the ride up (100, set by the lift's script, which then fades the screen to black
+	// and leaves it so until the trigger at the top fades it back in) and greet the player outside (110). Every player
+	// goes through these in their own game, in their own order (a dialogue quest's stages aren't in order: each game
+	// has a different set), and set from a friend's anywhere else they pull the player back into the pod or start the
+	// vault's scenes around them. Never reported, never set from a friend's.
+	inline constexpr std::uint32_t MQ102 = 0x01CC2A;
+	inline constexpr std::uint16_t MQ102_OUT_OF_THE_VAULT = 10;
+	inline constexpr std::uint32_t DIALOGUE_VAULT111 = 0x01ED62;
+
+	inline bool IsOpening(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
+	{
+		if (a_file != File::kFallout4) {
+			return false;
+		}
+		return (a_quest == MQ102 && a_stage < MQ102_OUT_OF_THE_VAULT) || a_quest == DIALOGUE_VAULT111;
+	}
+
 	inline const Lock* FindLock(File a_file, std::uint32_t a_quest, std::uint16_t a_stage)
 	{
 		const auto it = std::ranges::find_if(LOCKS, [&](const Lock& a_lock) {
@@ -458,6 +482,7 @@ namespace StageRules
 		kLater,       // not yet; nothing that came after it is set either
 		kWarn,        // not yet: tell the player first that it will move them
 		kQuestWaits,  // not yet: its quest waits for the stage that frees the player; other quests go on
+		kOpeningWaits,  // not yet: it moves the player, and a game in the session is still in the opening; other quests go on
 	};
 
 	struct Situation
@@ -467,6 +492,7 @@ namespace StageRules
 		bool                           nearFriend = false;    // a friend is close by
 		bool                           held = false;          // caught-up stages wait now (the player is fighting)
 		bool                           releaseComing = true;  // a stage that takes the controls away: the one that gives them back is coming too
+		bool                           opening = false;       // this game or a friend's is still in the opening (Story::InOpening)
 		std::optional<Clock::duration> warned;                // since the player was told a stage would move them
 	};
 
@@ -482,12 +508,17 @@ namespace StageRules
 	// A friend's stage that moves the player is set while the player is with them (it moves them along,
 	// as it moved the friend), and skipped otherwise, unless nothing else would start what it starts:
 	// then the player is warned first, and it waits while they fight. A friend's payment is never made
-	// here, and without a shared story a side quest doesn't move the player's own story on.
+	// here, and without a shared story a side quest doesn't move the player's own story on. Nothing that moves
+	// the player is set while any game in the session is in the opening: the vault's own scripts fade the screen and
+	// take the controls there, and a friend's stage moving the player meanwhile breaks the scripts that give them back.
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;
 		if ((flags & kPays) || ((flags & kStory) && !a_now.sharedStory)) {
 			return Verdict::kSkip;
+		}
+		if ((flags & kMoves) && a_now.opening) {
+			return Verdict::kOpeningWaits;
 		}
 		if (!a_now.releaseComing) {
 			return Verdict::kQuestWaits;

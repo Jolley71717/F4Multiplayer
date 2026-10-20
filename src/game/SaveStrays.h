@@ -265,6 +265,11 @@ namespace SaveStrays
 		// Whether the reference under this id, of this base, is one of those we placed this run.
 		[[nodiscard]] bool IsPlaced(std::uint32_t a_id, std::uint32_t a_base) const { return placed.Ours(a_id, a_base); }
 
+		// One of ours the player took into their inventory (a copy of an item a friend dropped: Drops): the engine's pickup
+		// deletes the reference, and the game hands its id out again, often to the item of that base the player drops next,
+		// which is not ours. So it is let go of at once (not forgotten: that keeps the id out of saves while its base is).
+		void Release(std::uint32_t a_id) { placed.Erase(a_id); }
+
 		// One of ours whose handle stopped resolving (see Forgotten).
 		void Forget(std::uint32_t a_id)
 		{

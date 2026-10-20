@@ -15,8 +15,8 @@
 #include <vector>
 
 // The session's shared world, saved on the host's disk so it survives the host quitting: the next
-// time the host plays with the same load order, the session carries on (dead NPCs stay dead, loot
-// stays taken, built walls stand). The file is a header followed by ordinary protocol packets
+// time the host plays, the session carries on (dead NPCs stay dead, loot stays taken, built walls
+// stand), with their mods in any order (the file keeps the plugin table its form IDs are numbered by). The file is a header followed by ordinary protocol packets
 // (the same ones a joiner gets), each length-prefixed, so nothing here has its own wire format.
 namespace SessionFile
 {
@@ -27,20 +27,36 @@ namespace SessionFile
 	// did it; the file's stages don't) must not throw away every host's saved session. Raise it when
 	// what Encode writes changes. Until the file had its own, its header carried the protocol version;
 	// the layout did not change from the file's first (protocol 23) until 29, which added the deaths an
-	// older build saved (Snapshot::healable) after the identities.
-	inline constexpr std::uint16_t FORMAT = 29;
+	// older build saved (Snapshot::healable) after the identities. Three changes each added to 29 on their own,
+	// under a number of their own (their test builds wrote it):
+	// - 30, the items players dropped for each other (Snapshot::drops, as kDropList packets);
+	// - 31, a byte on each workshop item for a power wire's shape (WorkshopItem::wire);
+	// - 32, the session's plugin table (Snapshot::plugins, a kPluginTable packet first among the packets), which
+	//   numbers the file's form IDs.
+	// 33 has all three. A file of any layout from 29 on reads as one without what its layout lacks (no drops, items
+	// without wires, no plugin table: its IDs are the load order its hash names); what its layout lacks is damage.
+	inline constexpr std::uint16_t FORMAT = 33;
+	inline constexpr std::uint16_t BEFORE_WIRES = 29;         // the releases' layout: before drops, wires and the plugin table
+	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
+	inline constexpr std::uint16_t DROPS_ONLY = 30;
+	inline constexpr std::uint16_t WIRES_ONLY = 31;
+	inline constexpr std::uint16_t PLUGIN_TABLE_ONLY = 32;
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 30.
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 34.
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
 	}
 
+	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format == FORMAT; }
+	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format == FORMAT; }
+	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format == FORMAT; }
+
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || a_format == FORMAT;
+		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT);
 	}
 
 	struct Snapshot
@@ -63,10 +79,17 @@ namespace SessionFile
 		std::optional<Protocol::WorldTime>                  worldTime;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> markers;
 		std::vector<Protocol::WorkshopItem>                 workshopItems;
+		// Items players dropped for each other (common/DropStore.h): those lying in the session, and those taken (takerId set),
+		// which a taker's reload may bring back.
+		std::vector<Protocol::DroppedItem>                  drops;
+		// The plugins that number every form ID above (Protocol::PluginTable): kept, so a host who changes their mods,
+		// or their order, carries on with the same world. Empty in a file of an older layout: its IDs are the load order
+		// contentHash names, and only a host with that one carries on.
+		std::vector<std::string>                            plugins;
 
 		[[nodiscard]] bool Empty() const
 		{
-			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty();
+			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty();
 		}
 	};
 
@@ -96,6 +119,9 @@ namespace SessionFile
 			put(id);
 		}
 
+		if (!a_snapshot.plugins.empty()) {
+			packet(Protocol::Encode(Protocol::PluginTable{ a_snapshot.plugins }));
+		}
 		// World state in the same chunks a joiner gets.
 		const auto slice = [](const auto& a_list, std::size_t a_offset) {
 			using T = typename std::decay_t<decltype(a_list)>::value_type;
@@ -127,6 +153,10 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.workshopItems.size(); i += Protocol::MAX_ACTORS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.workshopItems.size(), i + Protocol::MAX_ACTORS_PER_PACKET);
 			packet(Protocol::Encode(std::vector<Protocol::WorkshopItem>(a_snapshot.workshopItems.begin() + i, a_snapshot.workshopItems.begin() + end)));
+		}
+		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
+			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
+			packet(Protocol::Encode(Protocol::DropList{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } }));
 		}
 		return out;
 	}
@@ -181,6 +211,14 @@ namespace SessionFile
 				return std::nullopt;
 			}
 			switch (*type) {
+			case Protocol::MessageType::kPluginTable: {
+				auto table = HasPluginTable(version) ? Protocol::DecodePluginTable(packet) : std::nullopt;
+				if (!table || !snapshot.plugins.empty()) {
+					return std::nullopt;  // one, in the layout that has it
+				}
+				snapshot.plugins = std::move(table->plugins);
+				break;
+			}
 			case Protocol::MessageType::kWorldState: {
 				const auto world = Protocol::DecodeWorldState(packet);
 				if (!world) {
@@ -212,11 +250,19 @@ namespace SessionFile
 				break;
 			}
 			case Protocol::MessageType::kWorkshopItems: {
-				const auto items = Protocol::DecodeWorkshopItems(packet);
+				const auto items = HasWires(version) ? Protocol::DecodeWorkshopItems(packet) : Protocol::DecodeWorkshopItemsBeforeWires(packet);
 				if (!items) {
 					return std::nullopt;
 				}
 				snapshot.workshopItems.insert(snapshot.workshopItems.end(), items->begin(), items->end());
+				break;
+			}
+			case Protocol::MessageType::kDropList: {
+				const auto list = HasDrops(version) ? Protocol::DecodeDropList(packet) : std::nullopt;
+				if (!list) {
+					return std::nullopt;
+				}
+				snapshot.drops.insert(snapshot.drops.end(), list->drops.begin(), list->drops.end());
 				break;
 			}
 			default:

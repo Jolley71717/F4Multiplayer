@@ -388,7 +388,11 @@ namespace Puppets
 				}
 			}
 			if (dog) {
-				graph->SetGraphVariableFloat(VariableName(dogGait.range->rateVariable), dogGait.rate);
+				// Every clip's rate, not only the one it is told to play: a state it is in by some other way keeps a
+				// sane one (the root graph starts the fast trot's at 0, a frozen pose).
+				for (const auto& write : CreatureGait::Rates(dogGait, motion.speed)) {
+					graph->SetGraphVariableFloat(VariableName(write.variable), write.rate);
+				}
 				if (CreatureGait::Send(moving, a_puppet.moving, dogGait.range->id, a_puppet.range, step.resent != nullptr)) {
 					graph->NotifyAnimationGraphImpl(VariableName(dogGait.range->event));
 				}
@@ -898,16 +902,17 @@ namespace Puppets
 		}
 		const auto furniture = OccupiedFurniture(a_actor);
 		constexpr const char* FAMILIES[] = { "none", "person", "dog", "creature" };
-		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
+		auto       out = std::format("puppet: moving={} speed={:.0f} idleStops={} taken={} resyncs={} sit={} furniture={:08X} seatExits={} held={} ownerGait={} played={} graph: family={}", puppet.moving, puppet.target.speed, puppet.idleStops,
 			puppet.idleStopsTaken, puppet.resyncsTaken, static_cast<int>(a_actor->DoGetSitSleepState()), furniture ? furniture->GetFormID() : 0, puppet.seatExits, puppet.held,
-			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" },
+			(puppet.target.flags & Protocol::kOwnGait) ? std::format("{}@{:.2f}", puppet.target.gait, CreatureGait::UnpackRate(puppet.target.gaitRate)) : std::string{ "none" }, puppet.range,
 			FAMILIES[std::to_underlying(GaitGraphOf(a_actor).family)]);
 		// What the locomotion graph holds: a dog that refuses to move shows bForceIdleStop (sitting or
-		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate its
-		// walk and run play at; a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and iSyncIdleLocomotion is 1
-		// while a graph moves.
+		// lying), and one that runs shows its gait in iSyncLocomotionRangeID (3 is the run, CreatureGait.h) and the rate
+		// each clip plays at (played= is the gait a dog's copy was last told, -1 standing: not ownerGait's when the speed
+		// rules that one out, CreatureGait::Fits); a person's gait is iSyncLocomotionSpeed (0 walk, 1 jog, 2 run), and
+		// iSyncIdleLocomotion is 1 while a graph moves.
 		const auto graph = static_cast<const RE::IAnimationGraphManagerHolder*>(a_actor);
-		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
+		for (const auto name : { "Speed", "iSyncLocomotionRangeID", "iSyncLocomotionSpeed", "iSyncIdleLocomotion", "fWalkClipMult", "fTrotClipMult", "fTrotFastClipMult", "fRunClipMult", "bAnimationDriven", "bForceIdleStop" }) {
 			const RE::BSFixedString var{ name };
 			float                   f = 0.0f;
 			std::int32_t            n = 0;

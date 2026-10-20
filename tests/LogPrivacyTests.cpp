@@ -214,7 +214,7 @@ TEST("log privacy: joiners whose load order differs only in an ignored texture p
 	CHECK(std::ranges::none_of(lines, [](const std::string& a_line) { return a_line.find_first_of("\r\n") != std::string::npos; }));
 }
 
-TEST("log privacy: a host whose plugin names carry a line break or a Steam id refuses a joiner, and the joiner's log gets one clean line")
+TEST("log privacy: a host whose plugin names carry a line break or a Steam id lets a joiner with other mods in, and the joiner's log gets one clean line")
 {
 	Fixture f;
 
@@ -224,17 +224,14 @@ TEST("log privacy: a host whose plugin names carry a line break or a Steam id re
 	hostHello.plugins = { "Fallout4.esm", "Evil.esp\r\nSession: Multiplayer: connected (shared story)", "76561198012345678.esp" };
 	REQUIRE(f.Join(1, hostHello));
 
-	// A joiner with only the base game is refused, and sent the session's list to see what they are missing.
+	// A joiner with only the base game is let in (their form IDs are translated), and sent the session's list to see what
+	// they are missing.
 	auto joinerHello = Fixture::MakeHello("Joiner");
 	joinerHello.contentHash = 0x5678;
 	joinerHello.plugins = { "Fallout4.esm" };
 	f.fake->Connect(2);
 	f.fake->Deliver(2, Protocol::Encode(joinerHello));
-	const auto packet = f.fake->WaitFor(2, Type(MT::kReject));
-	REQUIRE(packet);
-	const auto reject = Protocol::DecodeReject(*packet);
-	REQUIRE(reject);
-	CHECK(reject->reason == Protocol::REJECT_LOAD_ORDER);
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kWelcome)));
 	std::optional<Protocol::LoadOrder> order;
 	for (const auto& sent : f.fake->Take(2)) {
 		if (!sent.empty() && sent[0] == Type(MT::kLoadOrder)) {
@@ -256,7 +253,7 @@ TEST("log privacy: a host whose plugin names carry a line break or a Steam id re
 	CHECK(line.find("76561198012345678") == std::string::npos);
 	CHECK(line.find(Redact::Alias(STEAM_ID) + ".esp") != std::string::npos);
 
-	// The server's own log (the host's) does not echo the reason or the joiner's name.
+	// The server's own log (the host's) does not echo the plugins or the joiner's name.
 	CHECK(NowhereInLog(f, "Evil.esp"));
 	CHECK(NowhereInLog(f, "Joiner"));
 

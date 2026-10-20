@@ -50,6 +50,8 @@
 #   - the channel not answering at all for SILENT_SECONDS (30): another client holds the channel, or the
 #     game is gone
 # A step the game refuses (no workbench near, no junk, the NPC elsewhere) is a miss, not stuck.
+# A key, mouse or click goes only with the game in front (`focus` brings it there and says so); one that can't
+# is not sent, logged and counted (unsentKeys; unsentPicks for options), never taken for a menu that ignored it.
 # At the end, a summary per game; the exit code is 1 when anything got stuck, else 0. Stop early with
 # touch <outDir>/stop.
 
@@ -104,7 +106,8 @@ f() { if [[ " $2" =~ \ $3=([^ ]*) ]]; then printf -v "$1" '%s' "${BASH_REMATCH[1
 
 G=""; LOG=""; PORT=""; TOKEN=""; OUT=""; MENUS=""
 silent_since=0; silent_reported=0; hung_since=0; hang_answers=0; hang_caught=0; game_log_at=0
-cycles=0; steps=0; misses=0; stuck_count=0; scraps=0; picks=0; picks_ignored=0; game_picks=0; game_picks_taken=0; silences=0; hangs=0
+cycles=0; steps=0; misses=0; stuck_count=0; scraps=0; picks=0; picks_ignored=0; picks_unsent=0; game_picks=0; game_picks_taken=0; silences=0; hangs=0; unsent=0
+FOCUS=""; DROPPED=""
 
 log() { echo "$(date +%T) $*" >> "$LOG"; }
 
@@ -212,6 +215,37 @@ stuck() {
 	call "net status" && log "  net: ${OUT:0:600}"
 }
 
+# in_front: asks for the game to be in front and waits up to 3 s for it. FOCUS is the last answer of focus, and
+# DROPPED the plugin's count of the input it dropped so far (it sends key, mouse and click only with the game
+# in front). A plugin that predates that check (focus answers only "requested") counts as in front.
+in_front() {
+	local i
+	FOCUS=""
+	for ((i = 0; i < 7; i++)); do
+		call focus || return 1
+		FOCUS=$OUT; f DROPPED "$OUT" dropped
+		[[ $OUT == front=yes* || $OUT != *front=* ]] && return 0
+		sleep 0.5
+	done
+	return 1
+}
+
+# press <command>: a step's key. key, mouse and click go through Windows, which hands them to whatever window
+# is in front, so the game is brought to the front first; when it can't be, the press is not sent, logged and
+# counted (unsent), and press fails. On 2026-10-11 presses sent while a screenshot task had the front went
+# nowhere and were read as a dialogue that no longer took input. Other commands (input ...) are sent as they are.
+press() {
+	case $1 in
+	key\ * | mouse\ * | click*)
+		if ! in_front; then
+			unsent=$((unsent + 1))
+			log "not sent, the game isn't in front: '$*' (focus: ${FOCUS:-no answer})"
+			return 1
+		fi ;;
+	esac
+	call "$@"
+}
+
 # menus_now: MENUS is the menus line. is_open <menu>: whether it lists the menu open. open_for <menu>:
 # SECS is how long it has been (whole seconds), 0 when it isn't.
 menus_now() { call menus && [[ $OUT != error* ]] && MENUS=$OUT; }
@@ -250,7 +284,7 @@ recover() {
 	if is_open WorkshopMenu; then call "workshop exit"; wait_menu WorkshopMenu closed 10 || log "  recover: still in workshop mode"; fi
 	if is_open PipboyMenu; then call "menu PipboyMenu force"; wait_menu PipboyMenu closed 10 || log "  recover: the Pip-Boy is still open"; fi
 	if is_open DialogueMenu; then
-		call "input Cancel"; wait_menu DialogueMenu closed 10 || { call "$LEAVE_TALK"; wait_menu DialogueMenu closed 10 || log "  recover: still in the dialogue"; }
+		call "input Cancel"; wait_menu DialogueMenu closed 10 || { press "$LEAVE_TALK"; wait_menu DialogueMenu closed 10 || log "  recover: still in the dialogue"; }
 	fi
 }
 
@@ -275,7 +309,7 @@ workshop_step() {
 		else
 			call "turnto $id 300"; sleep 0.45
 			call "workshop select $id"; sleep 0.4
-			if [ "$WS_SCRAP" = engine ]; then call "workshop scrap $id"; else call "$WS_SCRAP"; fi
+			if [ "$WS_SCRAP" = engine ]; then call "workshop scrap $id"; else press "$WS_SCRAP"; fi
 			log "scrap $id: $OUT"
 			sleep 1.2
 			call "refinfo $id"
@@ -284,7 +318,7 @@ workshop_step() {
 			if [[ $OUT == error* ]] || [ "$dis" = true ] || [ "$del" = true ]; then scraps=$((scraps + 1)); else miss "workshop: $id is still there after '$WS_SCRAP'"; fi
 		fi
 	fi
-	call "$WS_LEAVE"
+	press "$WS_LEAVE"
 	if ! wait_menu WorkshopMenu closed 10; then
 		stuck "still in workshop mode 10 s after '$WS_LEAVE'"
 		recover; return
@@ -293,10 +327,10 @@ workshop_step() {
 }
 
 pipboy_step() {
-	call "$PIP_KEY"
+	press "$PIP_KEY"
 	if ! wait_menu PipboyMenu open 8; then miss "the Pip-Boy didn't open (in combat, or another menu up)"; recover; return; fi
-	sleep 1.2; call "$PIP_PAGE"; sleep 1.2
-	call "$PIP_KEY"
+	sleep 1.2; press "$PIP_PAGE"; sleep 1.2
+	press "$PIP_KEY"
 	if ! wait_menu PipboyMenu closed 8; then
 		stuck "the Pip-Boy is still open 8 s after '$PIP_KEY'"
 		recover; return
@@ -347,22 +381,31 @@ dialogue_step() {
 	read -r nx ny nrz < <(awk -v x="$mx" -v y="$my" -v r="$mrz" 'BEGIN{a=r*3.14159265/180; printf "%.0f %.0f %.0f\n", x+110*sin(a), y+110*cos(a), (r+180)%360}')
 	call "setpos $NPC $nx $ny $mz $nrz"; sleep 0.6
 	call "turnto $NPC 120"; sleep 0.3
-	call "$TALK"
+	if ! press "$TALK"; then miss "dialogue: '$TALK' not sent (the game isn't in front)"; return; fi
 	if ! wait_menu DialogueMenu open 6; then miss "dialogue: '$TALK' didn't open a dialogue with $NPC"; recover; return; fi
 	local n
 	for ((n = 1; n <= EXCHANGES; n++)); do
 		if ! wait_options 20; then stuck "dialogue: no options to pick 20 s into exchange $n"; recover; return; fi
 		[ "$DMENU" = false ] && break
-		call "$PICK"; picks=$((picks + 1))
+		# The pick only counts when it reached the game: sent with the game in front, and not dropped by the
+		# plugin for losing the front on the way (its dropped count unchanged across the pick).
+		if ! press "$PICK"; then picks_unsent=$((picks_unsent + 1)); miss "dialogue: pick $n not sent (the game isn't in front)"; recover; return; fi
+		local dropped_before=$DROPPED
+		picks=$((picks + 1))
 		if pick_took "$PICK_SECONDS"; then continue; fi
+		in_front; if [ -n "$dropped_before" ] && [ -n "$DROPPED" ] && [ "$DROPPED" != "$dropped_before" ]; then
+			picks=$((picks - 1)); picks_unsent=$((picks_unsent + 1))
+			miss "dialogue: pick $n was dropped on its way (the game lost the front: $FOCUS)"; recover; return
+		fi
 		picks_ignored=$((picks_ignored + 1))
-		# The pick went nowhere. The state that says why, then the same pick past Windows: if that one takes,
-		# the menu wasn't getting the key; if not, the menu takes no input at all.
+		# The pick reached the game and went nowhere. The state that says why, then the same pick past Windows:
+		# if that one takes, the menu wasn't getting the key; if not, the menu takes no input at all.
 		log "pick $n ('$PICK') did nothing in $PICK_SECONDS s"
+		log "  focus: $FOCUS"
 		call dialogue && log "  dialogue: $OUT"
 		call "dialogue menu" && log "  dialogue menu: $OUT"
 		call controls && log "  controls: $OUT"
-		call "$PICK_GAME"; game_picks=$((game_picks + 1)); log "  '$PICK_GAME': $OUT"
+		press "$PICK_GAME"; game_picks=$((game_picks + 1)); log "  '$PICK_GAME': $OUT"
 		if pick_took "$PICK_SECONDS"; then
 			game_picks_taken=$((game_picks_taken + 1)); log "  the pick past Windows took"
 		else
@@ -372,7 +415,7 @@ dialogue_step() {
 	done
 	menus_now
 	if is_open DialogueMenu; then
-		call "$LEAVE_TALK"
+		press "$LEAVE_TALK"
 		if ! wait_menu DialogueMenu closed 10; then
 			stuck "still in the dialogue 10 s after '$LEAVE_TALK'"
 			recover; return
@@ -382,7 +425,7 @@ dialogue_step() {
 }
 
 summary() {
-	echo "$G: cycles=$cycles steps=$steps misses=$misses stuck=$stuck_count hangs=$hangs silences=$silences scraps=$scraps picks=$picks ignored=$picks_ignored pickedPastWindows=$game_picks_taken/$game_picks"
+	echo "$G: cycles=$cycles steps=$steps misses=$misses stuck=$stuck_count hangs=$hangs silences=$silences scraps=$scraps picks=$picks ignored=$picks_ignored unsentPicks=$picks_unsent pickedPastWindows=$game_picks_taken/$game_picks unsentKeys=$unsent"
 }
 
 run_game() {

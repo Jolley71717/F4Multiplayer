@@ -247,10 +247,12 @@ TEST("mod diff: the Mods page lists each kind under its heading, a page of names
 	const auto    diff = Compare(Order(With({ "Mine.esp" }), { "A.esp" }), Order(With({ "A.esp", "Theirs.esp" })));
 	const auto    pages = ModDiff::Pages(diff);
 	REQUIRE(pages.size() == 1u);
-	CHECK(pages[0] == "Your mods compared with the host's: 3 to change. The game loads mods only when it starts: change yours to match, then restart it."
+	CHECK(pages[0] == "Your mods compared with the host's: 2 only one of you has. You can still play together: what comes from those (an NPC, "
+	                  "an item, a quest) is left out in the other game. To share it, match the host's mods, then restart the game: it loads "
+	                  "mods only when it starts."
 	                  "\n\nMissing in your game (install and enable these):\nTheirs.esp"
 	                  "\n\nOnly in your game (disable these):\nMine.esp"
-	                  "\n\nIn another place in your load order (sort these like the host's):\nA.esp (light in your game, full in the host's)");
+	                  "\n\nIn another place in your load order (no need to change these):\nA.esp (light in your game, full in the host's)");
 
 	// 25 missing at 10 a page: three pages, the heading again at the top of each.
 	Names theirs = BASE;
@@ -260,7 +262,7 @@ TEST("mod diff: the Mods page lists each kind under its heading, a page of names
 	const auto many = ModDiff::Pages(Compare(Order(BASE), Order(theirs)));
 	REQUIRE(many.size() == 3u);
 	for (const auto& page : many) {
-		CHECK(page.starts_with("Your mods compared with the host's: 25 to change."));
+		CHECK(page.starts_with("Your mods compared with the host's: 25 only one of you has."));
 		CHECK(page.find("\n\nMissing in your game (install and enable these):\n") != std::string::npos);
 	}
 	CHECK(many[0].find("M9.esp") != std::string::npos);
@@ -408,4 +410,30 @@ TEST("mod diff: the menu key's name")
 	CHECK(ModDiff::KeyName(0x70) == "F1");
 	CHECK(ModDiff::KeyName(0x7B) == "F12");
 	CHECK(ModDiff::KeyName(0x4D) == "key 4D");
+}
+
+TEST("mod diff: plugins only in another place are no news to the HUD since form IDs are translated, but a refusal names them")
+{
+	const English english;
+	ModDiff::Tracker tracker;
+	const auto       moved = Compare(Order(Names{ "Fallout4.esm", "DLCCoast.esm", "DLCRobot.esm" }), Order(BASE));
+	REQUIRE(moved.moved.size() == 1u);
+	CHECK(moved.Matters() == 0u);
+	CHECK(moved.Count() == 1u);
+
+	tracker.OnConnected();
+	CHECK(!tracker.OnList(moved, ModDiff::Tracker::Clock::time_point{}));
+	CHECK(!tracker.OnWelcome());  // in: nothing to tell
+	CHECK(tracker.Differing() == 0u);
+	CHECK(tracker.Differing(true) == 1u);
+
+	// A session that still needs the same load order (one of the games sent no list) refuses for it: told as the move.
+	tracker.OnConnected();
+	CHECK(!tracker.OnList(moved, ModDiff::Tracker::Clock::time_point{}));
+	CHECK(tracker.OnRefused());
+
+	// The Mods page says the mods match, and lists the moved one as nothing to change.
+	const auto pages = ModDiff::Pages(moved);
+	REQUIRE(pages.size() == 1u);
+	CHECK(pages[0] == "Your mods match the host's.\n\nIn another place in your load order (no need to change these):\nDLCRobot.esm");
 }

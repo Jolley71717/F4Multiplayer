@@ -1,5 +1,5 @@
 # F4Multiplayer texts: English (UK spelling). The built-in English is American; this file is the same words spelled the
-# British way (the texts so far use no word that differs, so it matches en.txt; where one does, it is changed here).
+# British way (only armour differs so far; where a word does, it is changed here).
 #
 # One "key = text" per line, in UTF-8 without a byte order mark. A line starting with # is a comment. \n is a
 # line break. Keep the {placeholders} ({player}, {n}, {address}...) exactly as written: the mod fills them in, and
@@ -17,6 +17,8 @@ session.player_joined = {player} joined
 session.player_left = {player} left
 session.player_renamed = {player} is now {name}
 session.someone_left = A player left
+session.kicked = Multiplayer: the host removed you from the session
+session.banned = Multiplayer: the host banned you from the session
 session.disconnected = Multiplayer: disconnected
 session.hosting_cant_join = Multiplayer: you're hosting. Set bHost = false to join friends.
 session.host_waits_for_world = Multiplayer: this game hosts once you're in the world (bHost). Stop hosting in the menu to join friends.
@@ -36,6 +38,8 @@ reject.version = Version mismatch: server uses protocol {server}, you have {you}
 reject.password = Wrong password
 reject.host_not_ready = The host isn't in the game yet
 reject.full = Server is full
+reject.banned = The host has banned you from this session
+reject.locked = The session is locked: the host isn't letting anyone new in
 reject.order = Your load order is different from the other players.
 reject.order_all = Everyone needs the same mods in the same order.
 reject.texture = Texture plugins may differ only when they load last.
@@ -72,10 +76,13 @@ party.friend_down_far = {player} is down! Hold {key} to teleport to them and hel
 party.friend_down_near = {player} is down! Get to them to help them up ({where})
 party.friend_died = {player} died
 party.friend_back_up = {player} is back up
+party.ping = {player}: {what} ({where})
+party.called = Ping: {what} ({where})
+party.ping_here = over here!
+party.ping_you = you
+party.ping_something = something
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [in a menu]
-party.ping = {player}: over here! ({where})
-party.called = You called your party over
 party.killed = {killer} killed {victim}
 party.xp = +{xp} XP from your party's kills
 
@@ -114,6 +121,9 @@ quest.stuck = Your main story was stuck; it goes on with {quest}
 quest.next = the next quest
 quest.completed = {player} completed {quest}
 workshop.rescued = What you kept in a friend's container is in your inventory
+drops.container_hint = Weapons and armour you put in a container stay in your game only. To give one to a friend, drop it near them
+drops.not_given = Friends can't pick this item up: it stays on the ground in your game only
+drops.taken_first = A friend picked it up first
 
 # --- The F1 menu ---
 menu.unavailable = Multiplayer: the menu isn't available
@@ -172,15 +182,47 @@ menu.fast_loading_what = vsync off during loading screens
 
 menu.mods = Compare mods ({n})
 menu.mods_ask = Ask the host again
+menu.host_controls = Host controls
+menu.hc_waiting = Waiting for your server to answer. Try again in a moment.
+menu.hc_open = The session is open: friends can join.
+menu.hc_locked = The session is locked: nobody new can join (those here stay).
+menu.hc_no_password = No password: anyone who can reach the session can join.
+menu.hc_password = Password: {password} (friends set sPassword = {password} in their F4Multiplayer.ini)
+menu.hc_banned = Banned players: {n}
+menu.hc_players = Kick or ban ({n})
+menu.hc_lock = Lock the session
+menu.hc_unlock = Unlock the session
+menu.hc_password_button = Password
+menu.hc_bans = Banned ({n})
+menu.hc_pick_player = Pick a player to kick or ban:
+menu.hc_nobody = Nobody else is in the session.
+menu.hc_player = {player}\nKick: they are dropped from the session and told the host removed them; they can join again.\nBan: kicked, and refused every time they try to join again. Kept on this PC by their Steam account; unban them under Banned.
+menu.hc_kick = Kick {player}
+menu.hc_ban = Ban {player}
+menu.hc_password_page = The menu can't type, so a new password is made up for you. Players already in the session stay.
+menu.hc_new_password = New password
+menu.hc_remove_password = Remove the password
+menu.hc_bans_page = Banned players ({n}). Pick one to unban:
+menu.hc_no_bans = Nobody is banned.
+menu.hc_unban = Unban {who}
+menu.hc_ban_named = {player} ({alias})
+menu.hc_ban_unnamed = {alias}, banned {date}
+menu.hc_unban_all = Unban everyone
+menu.hc_kicked = Multiplayer: {player} was kicked
+menu.hc_banned_hud = Multiplayer: {player} was banned
+menu.hc_unbanned = Multiplayer: {who} was unbanned
+menu.hc_not_saved = Multiplayer: the ban list could not be saved; it holds until you stop hosting
+menu.hc_no_identity = Multiplayer: {player} could not be banned (no account known), so was kicked
+menu.hc_gone = Multiplayer: that player is no longer in the session
 
 # --- Your mods compared with the host's ---
 mods.differ = Multiplayer: your mods differ from the host's ({n}): see {key}
 mods.match = Multiplayer: your mods match the host's
 mods.ask_wait = Multiplayer: you just asked the host; try again in a few seconds
 mods.same = Your mods match the host's.
-mods.page_intro = Your mods compared with the host's: {n} to change. The game loads mods only when it starts: change yours to match, then restart it.
+mods.page_intro = Your mods compared with the host's: {n} only one of you has. You can still play together: what comes from those (an NPC, an item, a quest) is left out in the other game. To share it, match the host's mods, then restart the game: it loads mods only when it starts.
 mods.missing = Missing in your game (install and enable these):
 mods.extra = Only in your game (disable these):
-mods.order = In another place in your load order (sort these like the host's):
+mods.order = In another place in your load order (no need to change these):
 mods.light_here = {name} (light in your game, full in the host's)
 mods.full_here = {name} (full in your game, light in the host's)

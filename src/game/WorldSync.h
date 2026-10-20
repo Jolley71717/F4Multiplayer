@@ -10,8 +10,9 @@ namespace LootSync
 }
 
 // Shared world state: things that happen in one player's world are replayed in everyone's.
-// Actor deaths and health, container contents, picked-up items, doors and locks, and (through
-// QuestSync) quest stages. Also forwards NPC hits on remote players' stand-ins. Main thread only.
+// Actor deaths and health, container contents, picked-up items, doors and locks (and the stages that open the doors
+// only a quest's script opens: ScriptDoors; and the security gates run by the game's two-state script: SharedGates),
+// and (through QuestSync) quest stages. Also forwards NPC hits on remote players' stand-ins. Main thread only.
 //
 // Remote changes are applied only while the player is in the world (not during loading screens
 // or at the main menu) and to loaded references; anything else waits until it can be applied.
@@ -37,7 +38,13 @@ namespace WorldSync
 	[[nodiscard]] FoundDead::Npc DescribeStory(RE::Actor* a_actor);
 	void ApplyRemoteActivation(std::uint32_t a_refId, std::uint32_t a_playerId);  // another player pressed a button, switch or lever
 	void ApplyWorldState(const Protocol::WorldState& a_state);
+	// A session's quest stage that opens a door only that stage opens (ScriptDoors: Vault 114's gear door), live or
+	// caught up: set here once the door is loaded. False for any other stage, which is QuestSync's.
+	[[nodiscard]] bool ApplyScriptDoor(const Protocol::QuestStage& a_stage);
 	void ApplyRemoteHealth(std::uint32_t a_refId, float a_health);
+	// Another player took a_damage (a fraction of the maximum) off their copy of an NPC: taken off here if our game runs it
+	// (its health then goes to everyone, HealthShare); nothing otherwise.
+	void ApplyRemoteDamage(std::uint32_t a_refId, float a_damage);
 	// Who runs these NPCs (as NpcSync is told). When we host, one another player's game runs that is dead
 	// in ours is reported dead: our world is the session's (with everyone on their own story, not a story
 	// character: FoundDead::Shared). The server gives nobody a dead NPC, so a death we hold for one that now has

@@ -216,6 +216,9 @@ namespace Face
 		face.bodyTint[1] = static_cast<std::uint8_t>(a_npc->bodyTintColorG);
 		face.bodyTint[2] = static_cast<std::uint8_t>(a_npc->bodyTintColorB);
 		face.bodyTint[3] = static_cast<std::uint8_t>(a_npc->bodyTintColorA);
+		// Its own skin, if any: a LooksMenu skin override puts the template's skin here (with its face texture set and
+		// head parts, which travel above).
+		face.skin = IdOf(a_npc->formSkin);
 		return face;
 	}
 
@@ -298,15 +301,29 @@ namespace Face
 			npc->headRelatedData = head;
 		}
 
+		bool skin = false;
 		if (a_parts & kBody) {
 			npc->morphWeight = { a_face.weight[0], a_face.weight[1], a_face.weight[2] };
+			// Their skin, when they have one of their own (a LooksMenu skin override): only one that is a skin here (same
+			// load order, so it should be). Without one the settler's stays, the race's as a rule.
+			if (const auto armor = a_face.skin ? RE::TESForm::GetFormByID<RE::TESObjectARMO>(a_face.skin) : nullptr) {
+				npc->formSkin = armor;
+				skin = true;
+			}
 		}
 
+		std::size_t sliderCount = 0;
 		if (a_parts & kSliders) {
-			const auto sliders = new RE::BSTArray<float>();
-			for (const float v : a_face.sliders) {
-				sliders->push_back(v);
+			// Never an empty array: the engine indexes it by body region unchecked (FaceHeads::RegionSliders).
+			const auto values = FaceHeads::RegionSliders(a_face.sliders);
+			RE::BSTArray<float>* sliders = nullptr;
+			if (!values.empty()) {
+				sliders = new RE::BSTArray<float>();
+				for (const float v : values) {
+					sliders->push_back(v);
+				}
 			}
+			sliderCount = values.size();
 			npc->morphRegionSliderValues = sliders;
 			const auto morphs = EngineRefs::New<RE::BSTHashMap<std::uint32_t, float>>();
 			if (!morphs) {
@@ -368,9 +385,10 @@ namespace Face
 			npc->actorData.templateUseFlags.reset(RE::ACTOR_BASE_DATA::TEMPLATE_USE_FLAG::kTraits);
 		}
 		++made;
-		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
-			(a_parts & kHeadParts) ? headParts.size() : 0, (a_parts & kSliders) ? a_face.sliders.size() : 0, (a_parts & kSliders) ? a_face.morphs.size() : 0,
-			(a_parts & kBones) ? a_face.bones.size() : 0, tintCount, OwnHead(a_parts) ? " (its own head)" : " (the settler's head)");
+		REX::INFO("Face: made base {:08X} from {:08X} with parts {:02X}: {} head parts, {} sliders, {} morphs, {} bones, {} tints{}{}", npc->GetFormID(), a_base->GetFormID(), a_parts,
+			(a_parts & kHeadParts) ? headParts.size() : 0, sliderCount, (a_parts & kSliders) ? a_face.morphs.size() : 0,
+			(a_parts & kBones) ? a_face.bones.size() : 0, tintCount, skin ? std::format(", skin {:08X}", a_face.skin) : std::string{},
+			OwnHead(a_parts) ? " (its own head)" : " (the settler's head)");
 		return npc;
 	}
 

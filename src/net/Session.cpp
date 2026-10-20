@@ -1,6 +1,8 @@
 ﻿#include "net/Session.h"
 
 #include "Config.h"
+#include "FormIds.h"
+#include "FormTranslate.h"
 #include "MainThread.h"
 #include "Name.h"
 #include "Protocol.h"
@@ -11,16 +13,19 @@
 #include "game/AimPoint.h"
 #include "game/CharacterBinding.h"
 #include "game/Compass.h"
+#include "game/FadeWatch.h"
 #include "game/MenuIcons.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
 #include "game/Downed.h"
+#include "game/Drops.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
 #include "game/Gait.h"
 #include "game/Hud.h"
 #include "game/LooksMenu.h"
 #include "game/MapShare.h"
+#include "game/MovedObjects.h"
 #include "game/WorkshopSync.h"
 #include "game/Voice.h"
 #include "game/Party.h"
@@ -29,6 +34,7 @@
 #include "game/Perf.h"
 #include "game/OpenMenus.h"
 #include "game/QuestSync.h"
+#include "game/RadiantSync.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
@@ -86,6 +92,11 @@ namespace Session
 		Refusals          refusals;  // why the server last turned us away, and when to try again
 		ModDiff::Tracker  hostMods;  // our mods compared with the host's, once its list came (kLoadOrder)
 		bool              shuttingDown = false;  // the game is quitting (Shutdown): nothing more is done
+		// Host controls: the server's last word on its lock, password and bans (kHostInfo, to our own game only while we
+		// host), counted so the menu sees a new one; and the host removed us, or refused us for a ban (Leave after the poll).
+		std::optional<Protocol::HostInfo> hostInfo;
+		std::uint32_t                     hostInfoSerial = 0;
+		bool                              removedAfterPoll = false;
 		Clock::time_point nextHostAttempt{};  // bHost: when Frame may try to start the server again
 		std::string       lastHostError;      // what went wrong the last time (said once, not at every try)
 
@@ -256,10 +267,11 @@ namespace Session
 			static_cast<RE::ActorValueOwner&>(*player).ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *values->health, -damage);
 		}
 
-		// What the HUD says of our mods compared with the host's (ModDiff::Tracker decides when).
-		void NotifyMods()
+		// What the HUD says of our mods compared with the host's (ModDiff::Tracker decides when): the plugins only one of us
+		// has, or, refused for our load order, the moved ones too.
+		void NotifyMods(bool a_refused = false)
 		{
-			if (const auto count = hostMods.Differing(); count == 0) {
+			if (const auto count = hostMods.Differing(a_refused); count == 0) {
 				Notify("mods.match");
 			} else {
 				Notify("mods.differ", { { "n", count }, { "key", ModDiff::KeyName(Config::Get().keyMenu) } });
@@ -268,7 +280,8 @@ namespace Session
 
 		// The session's load order came (kLoadOrder: our hello's differed, or we asked): ours compared with it, the
 		// plugins the host lets differ left out, goes to the log name by name, and to the HUD when it is news
-		// (ModDiff::Tracker). The hash alone still decides whether we are let in.
+		// (ModDiff::Tracker). Whatever it says we are let in (form IDs are translated by plugin name), unless our hello or
+		// the session's first sent no list.
 		void OnHostLoadOrder(const Protocol::LoadOrder& a_hosts)
 		{
 			auto       diff = ModDiff::Compare(plugins, a_hosts.plugins, a_hosts.ignored);
@@ -292,10 +305,105 @@ namespace Session
 			}
 		}
 
+		// Our form IDs and the session's (common/FormIds.h): the identity until the server's plugin table comes (just
+		// before the welcome), and again once we leave. Every packet we send and get goes through FormTranslate on the
+		// way (SendOut, Receive), so the rest of the game only sees our own IDs. What had no ID on the other side is
+		// counted, and the plugin it was of named once in the log.
+		FormIds::Mapper forms;
+		bool            tableThisConnection = false;
+		struct FormSkips
+		{
+			std::uint32_t packets = 0;  // messages dropped
+			std::uint32_t entries = 0;  // list entries left out (and container changes emptied)
+			std::uint32_t fields = 0;   // details set to none
+		};
+		FormSkips                       skippedOut;
+		FormSkips                       skippedIn;
+		std::unordered_set<std::string> formPluginsLogged;  // "<" or ">" and the plugin's name
+		constexpr std::size_t           MAX_FORM_PLUGINS_LOGGED = 256;
+
+		void NoteSkips(const FormTranslate::Result& a_result, FormTranslate::Way a_way, std::span<const std::uint8_t> a_packet)
+		{
+			const bool out = a_way == FormTranslate::Way::kToSession;
+			auto&      skips = out ? skippedOut : skippedIn;
+			skips.packets += a_result.kind == FormTranslate::Result::Kind::kDropped ? 1 : 0;
+			skips.entries += a_result.entries;
+			skips.fields += a_result.fields;
+			const auto type = a_packet.empty() ? 0 : a_packet[0];
+			for (const auto id : a_result.unmapped) {
+				auto plugin = out ? forms.LocalPlugin(id) : forms.SessionPlugin(id);
+				if (plugin.empty()) {
+					plugin = "a plugin past the table's end";
+				}
+				if (formPluginsLogged.size() >= MAX_FORM_PLUGINS_LOGGED || !formPluginsLogged.insert((out ? ">" : "<") + plugin).second) {
+					continue;
+				}
+				if (out) {
+					REX::INFO("Session: forms: {} is not in the session's plugin table; what of ours comes from it is not shared (first: {:08X}, message {})", Redact::OneLine(plugin), id, type);
+				} else {
+					REX::INFO("Session: forms: {} is not in our game; what comes from it is skipped here (first: {:08X}, message {})", Redact::OneLine(plugin), id, type);
+				}
+			}
+		}
+
+		// Every packet we send: in the session's numbering, or not at all when what it is about has none there.
+		void SendOut(std::vector<std::uint8_t> a_packet, bool a_reliable)
+		{
+			if (!forms.Identity()) {
+				auto result = FormTranslate::Translate(a_packet, forms, FormTranslate::Way::kToSession);
+				NoteSkips(result, FormTranslate::Way::kToSession, a_packet);
+				if (result.kind == FormTranslate::Result::Kind::kDropped) {
+					return;
+				}
+				if (result.kind == FormTranslate::Result::Kind::kChanged) {
+					a_packet = std::move(result.packet);
+				}
+			}
+			client->Send(std::move(a_packet), a_reliable);
+		}
+
+		// The session's plugin table came (before the welcome, or grown by a joiner's plugins).
+		void OnPluginTable(const Protocol::PluginTable& a_table)
+		{
+			const bool grew = std::exchange(tableThisConnection, true);
+			forms = FormIds::Mapper(plugins, a_table.plugins);
+			if (forms.Identity()) {
+				REX::INFO("Session: forms: the session's plugin table is our load order ({} plugins): nothing to translate", forms.Session().Size());
+			} else {
+				REX::INFO("Session: forms: the session's plugin table has {} plugins, our load order {}: form IDs are translated by plugin name "
+						  "({} of ours are not in it, {} of its are not in our game){}",
+					forms.Session().Size(), forms.Local().Size(), forms.OursOnly(), forms.SessionsOnly(), grew ? " (grown by a joiner's plugins)" : "");
+			}
+		}
+
+		void HandlePacket(std::span<const std::uint8_t> a_data);
+
+		// Every packet we get: in our numbering, or not at all when what it is about has none here.
+		void Receive(std::span<const std::uint8_t> a_data)
+		{
+			if (!forms.Identity()) {
+				auto result = FormTranslate::Translate(a_data, forms, FormTranslate::Way::kToLocal);
+				NoteSkips(result, FormTranslate::Way::kToLocal, a_data);
+				if (result.kind == FormTranslate::Result::Kind::kDropped) {
+					return;
+				}
+				if (result.kind == FormTranslate::Result::Kind::kChanged) {
+					HandlePacket(result.packet);
+					return;
+				}
+			}
+			HandlePacket(a_data);
+		}
+
 		void HandlePacket(std::span<const std::uint8_t> a_data)
 		{
 			using Protocol::MessageType;
 			switch (Protocol::PeekType(a_data).value_or(MessageType{})) {
+			case MessageType::kPluginTable:
+				if (const auto msg = Protocol::DecodePluginTable(a_data)) {
+					OnPluginTable(*msg);
+				}
+				break;
 			case MessageType::kWelcome:
 				if (welcomed) {
 					break;  // one welcome per connection: a second would reset the world counters mid-session
@@ -311,7 +419,9 @@ namespace Session
 					localId = msg->playerId;
 					NpcSync::SetLocalPlayer(localId);
 					Party::SetLocalPlayer(localId);
+					RadiantSync::SetLocalPlayer(localId);
 					WorldSync::OnWelcome(msg->friendlyFire);
+					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
 					refusals.Clear();
@@ -336,12 +446,31 @@ namespace Session
 					const bool modsDiffer = hostMods.OnRefused() && msg->reason.starts_with(Protocol::REJECT_LOAD_ORDER);
 					if (answer.notify && modsDiffer) {
 						REX::INFO("Session: refused: {}", Redact::OneLine(msg->reason));
-						NotifyMods();
+						NotifyMods(true);
 					} else if (answer.notify) {
 						Say(Text::Format("session.notice", { { "text", Text::Reject(msg->reason) } }),
 							Text::FormatEnglish("session.notice", { { "text", msg->reason } }));
 					}
 					nextConnectAttempt = Clock::now() + answer.retryIn;
+					// Banned: trying again would be refused every time (and fill the host's log); the player joins again
+					// from the menu once the host has unbanned them.
+					if (msg->reason == Protocol::REJECT_BANNED) {
+						removedAfterPoll = true;
+					}
+				}
+				break;
+			case MessageType::kRemoved:
+				// The host kicked or banned us: said in our language, and we stop reconnecting (the connection closes next).
+				if (const auto msg = Protocol::DecodeRemoved(a_data)) {
+					Notify(msg->reason == Protocol::RemovedReason::kBanned ? "session.banned" : "session.kicked");
+					removedAfterPoll = true;
+				}
+				break;
+			case MessageType::kHostInfo:
+				// Only our own server sends it, to the host's game.
+				if (const auto msg = Protocol::DecodeHostInfo(a_data); msg && hostedServer) {
+					hostInfo = *msg;
+					++hostInfoSerial;
 				}
 				break;
 			case MessageType::kPlayerJoined:
@@ -350,7 +479,9 @@ namespace Session
 					// fields with markup or bytes that aren't UTF-8 in it (common/Name.h).
 					const auto name = Name::Shown(msg->name, msg->playerId);
 					RemotePlayers::Add(msg->playerId, name, msg->appearance);
+					WorkshopSync::OnPlayerJoined();  // our pieces' power, for their copies of them
 					REX::INFO("Session: player {} joined", msg->playerId);
+					RadiantSync::OnPlayerJoined();  // our radiants' runs, for them
 					Hud::Notify(Text::Format("session.player_joined", { { "player", name } }));
 				}
 				break;
@@ -371,6 +502,7 @@ namespace Session
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
+					MovedObjects::OnPlayerLeft(msg->playerId);
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
@@ -378,6 +510,16 @@ namespace Session
 			case MessageType::kExplosion:
 				if (const auto msg = Protocol::DecodeExplosion(a_data)) {
 					WeaponFire::ApplyExplosion(*msg);
+				}
+				break;
+			case MessageType::kObjectHeld:
+				if (const auto msg = Protocol::DecodeObjectHold(a_data)) {
+					MovedObjects::OnHeld(*msg);
+				}
+				break;
+			case MessageType::kObjectRested:
+				if (const auto msg = Protocol::DecodeObjectRest(a_data)) {
+					MovedObjects::OnRested(*msg);
 				}
 				break;
 			case MessageType::kActivation:
@@ -403,6 +545,11 @@ namespace Session
 					WorldSync::ApplyRemoteHealth(msg->refId, msg->health);
 				}
 				break;
+			case MessageType::kActorDamaged:
+				if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
+					WorldSync::ApplyRemoteDamage(msg->refId, msg->health);
+				}
+				break;
 			case MessageType::kContainerChanged:
 				if (const auto msg = Protocol::DecodeIndexedContainerChange(a_data)) {
 					WorldSync::ApplyContainerChange(*msg);
@@ -415,7 +562,19 @@ namespace Session
 				break;
 			case MessageType::kQuestStage:
 				if (const auto msg = Protocol::DecodeQuestStage(a_data)) {
-					QuestSync::Apply(*msg, true);
+					if (!WorldSync::ApplyScriptDoor(*msg)) {  // a stage that opens a door (ScriptDoors), not one QuestSync shares
+						QuestSync::Apply(*msg, true);
+					}
+				}
+				break;
+			case MessageType::kRadiantStarted:
+				if (const auto msg = Protocol::DecodeRadiantStart(a_data)) {
+					RadiantSync::OnStart(*msg);
+				}
+				break;
+			case MessageType::kRadiantStage:
+				if (const auto msg = Protocol::DecodeRadiantStage(a_data)) {
+					RadiantSync::OnStage(*msg);
 				}
 				break;
 			case MessageType::kActorOwners:
@@ -460,6 +619,21 @@ namespace Session
 					Party::ApplyXp(*msg);
 				}
 				break;
+			case MessageType::kDropPlaced:
+				if (const auto msg = Protocol::DecodeDroppedItem(a_data)) {
+					Drops::OnPlaced(*msg);
+				}
+				break;
+			case MessageType::kDropGone:
+				if (const auto msg = Protocol::DecodeDropGone(a_data)) {
+					Drops::OnGone(*msg);
+				}
+				break;
+			case MessageType::kDropList:
+				if (const auto msg = Protocol::DecodeDropList(a_data)) {
+					Drops::OnList(*msg);
+				}
+				break;
 			case MessageType::kMarkersFound:
 				if (const auto msg = Protocol::DecodeMarkers(a_data)) {
 					MapShare::Apply(*msg);
@@ -490,6 +664,11 @@ namespace Session
 					for (const auto& item : *msg) {
 						WorkshopSync::Apply(item);
 					}
+				}
+				break;
+			case MessageType::kWorkshopPower:
+				if (const auto msg = Protocol::DecodePowerStates(a_data)) {
+					WorkshopSync::ApplyPower(*msg);
 				}
 				break;
 			case MessageType::kVoiceRelay:
@@ -640,7 +819,13 @@ namespace Session
 			}
 			welcomed = false;
 			hostMods.OnDisconnected();  // an ask out on this connection gets no answer
+			hostInfo.reset();
+			forms = {};                 // our own IDs again, until the next session's table
+			tableThisConnection = false;
+			formPluginsLogged.clear();
 			localId = 0;
+			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
+			RadiantSync::SetLocalPlayer(0);
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
@@ -654,6 +839,7 @@ namespace Session
 			MapShare::Reset();
 			WorkshopSync::Reset();
 			Conversations::Reset();
+			MovedObjects::Reset();
 			// Nothing of the session reaches a solo game: no stage still waiting is set, and the story is our own.
 			QuestSync::OnSessionEnded();
 			Story::SetShared(false);
@@ -716,7 +902,7 @@ namespace Session
 		{
 			for (auto& packet : WorldSync::TakeOutgoing()) {
 				if (welcomed && !Story::InOpening()) {
-					client->Send(std::move(packet), true);
+					SendOut(std::move(packet), true);
 				}
 			}
 		}
@@ -784,6 +970,10 @@ namespace Session
 				REX::INFO("Session: hosting character {:016X}; its session is kept in {}", character, path.filename().string());
 			}
 		}
+		// The host's bans, beside the sessions: one list for every character this PC hosts (the rig's own, apart).
+		if (const auto folder = Identity::DataFolder()) {
+			options.banFile = (*folder / (settings.devChannel ? "F4Multiplayer.dev.bans" : "F4Multiplayer.bans")).string();
+		}
 		std::vector<std::unique_ptr<ServerTransport>> extra;
 		if (steamMode) {
 			extra.push_back(std::make_unique<SteamServerTransport>(settings.maxPlayers + 2));
@@ -825,6 +1015,60 @@ namespace Session
 		}
 		Steam::Leave();
 		SwitchServer({});
+	}
+
+	bool DropConnection()
+	{
+		if (hostedServer || client->GetStatus() != ClientConnection::Status::kConnected) {
+			return false;
+		}
+		client->Disconnect();
+		client->Poll();
+		OnDisconnected();
+		nextConnectAttempt = {};
+		return true;
+	}
+
+	std::optional<Protocol::HostInfo> HostControls()
+	{
+		return hostedServer ? hostInfo : std::nullopt;
+	}
+
+	std::uint32_t HostControlsSerial()
+	{
+		return hostInfoSerial;
+	}
+
+	bool SendHostCommand(const Protocol::HostCommand& a_command)
+	{
+		if (!hostedServer || !welcomed) {
+			return false;
+		}
+		SendOut(Protocol::Encode(a_command), true);
+		return true;
+	}
+
+	void AskHostControls()
+	{
+		if (hostedServer && welcomed) {
+			SendOut(Protocol::Encode(Protocol::HostInfoRequest{}), true);
+		}
+	}
+
+	std::string DescribeHostControls()
+	{
+		if (!hostedServer) {
+			return "hostctl: not hosting";
+		}
+		if (!hostInfo) {
+			return std::format("hostctl: hosting, no state from the server yet (welcomed={})", welcomed);
+		}
+		std::string bans;
+		for (const auto& ban : hostInfo->list) {
+			bans += (bans.empty() ? "" : ",") + ban.alias;  // aliases only: the dev channel's reply may be pasted anywhere
+		}
+		return std::format("hostctl: locked={} password={} bans={} [{}] result={} action={} serial={}", hostInfo->locked, hostInfo->password, hostInfo->bans, bans,
+			static_cast<int>(hostInfo->result), static_cast<int>(hostInfo->action), hostInfoSerial);
 	}
 
 	Status GetStatus()
@@ -888,7 +1132,7 @@ namespace Session
 					hello.world = SessionSteps::OnHello(binding, WorldSync::Loot(), CurrentCharacter());
 					hello.identity = Identity::Get();
 					hello.plugins = plugins;
-					client->Send(Protocol::Encode(hello), true);
+					SendOut(Protocol::Encode(hello), true);
 					hostMods.OnConnected();
 				}
 				break;
@@ -896,13 +1140,17 @@ namespace Session
 				OnDisconnected();
 				break;
 			case ClientConnection::Event::Type::kPacket:
-				HandlePacket(event.data);
+				Receive(event.data);
 				break;
 			}
 		}
 		if (std::exchange(leaveAfterPoll, false)) {
 			Leave();
 			Notify("session.host_other_session");
+		}
+		if (std::exchange(removedAfterPoll, false)) {
+			REX::INFO("Session: the host removed us or refused us for a ban; not reconnecting");
+			Leave();
 		}
 
 		PERF_NEXT(perf, "Hosting");
@@ -918,7 +1166,7 @@ namespace Session
 				if (auto name = PlayerName(); name != sentName) {
 					sentName = std::move(name);
 					REX::INFO("Session: our name changed; telling the others");
-					client->Send(Protocol::Encode(Protocol::Rename{ 0, sentName }, Protocol::MessageType::kRename), true);
+					SendOut(Protocol::Encode(Protocol::Rename{ 0, sentName }, Protocol::MessageType::kRename), true);
 				}
 			}
 			switch (binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() })) {
@@ -956,7 +1204,7 @@ namespace Session
 			}
 			if (auto state = SampleLocalState(now)) {
 				if (welcomed) {
-					client->Send(Protocol::Encode(*state), false);
+					SendOut(Protocol::Encode(*state), false);
 				}
 				if (echo) {
 					state->x += echoOffsetX;
@@ -974,14 +1222,14 @@ namespace Session
 		const auto sound = shots ? WeaponFire::ShotSound(RE::PlayerCharacter::GetSingleton()) : 0;
 		if (welcomed) {
 			for (std::uint32_t i = 0; i < shots; ++i) {
-				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound }, Protocol::MessageType::kReportShot), false);
+				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, Protocol::ShotAction::kShot, sound }, Protocol::MessageType::kReportShot), false);
 			}
 			// One our game made at runtime fires under the spawn id we share it as.
 			for (const auto id : npcShots) {
 				const auto wire = Protocol::IsSpawnRef(id) ? Spawns::OwnIdOf(id) : id;
 				if (wire && NpcSync::RunsLocally(wire)) {
 					const auto npcSound = WeaponFire::ShotSound(RE::TESForm::GetFormByID<RE::Actor>(id));
-					client->Send(Protocol::Encode(Protocol::Shot{ 0, wire, Protocol::ShotAction::kShot, npcSound }, Protocol::MessageType::kReportShot), false);
+					SendOut(Protocol::Encode(Protocol::Shot{ 0, wire, Protocol::ShotAction::kShot, npcSound }, Protocol::MessageType::kReportShot), false);
 				}
 			}
 		}
@@ -995,7 +1243,7 @@ namespace Session
 		WeaponFire::Frame();
 		for (const auto& explosion : WeaponFire::TakeExplosions()) {
 			if (welcomed) {
-				client->Send(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), false);
+				SendOut(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), false);
 			}
 		}
 
@@ -1004,12 +1252,12 @@ namespace Session
 		const auto npcActions = WeaponFire::TakeNpcActions();
 		if (welcomed) {
 			for (const auto action : actions) {
-				client->Send(Protocol::Encode(Protocol::Shot{ 0, 0, action }, Protocol::MessageType::kReportShot), false);
+				SendOut(Protocol::Encode(Protocol::Shot{ 0, 0, action }, Protocol::MessageType::kReportShot), false);
 			}
 			for (const auto& [id, action] : npcActions) {
 				const auto wire = Protocol::IsSpawnRef(id) ? Spawns::OwnIdOf(id) : id;
 				if (wire && NpcSync::RunsLocally(wire)) {
-					client->Send(Protocol::Encode(Protocol::Shot{ 0, wire, action }, Protocol::MessageType::kReportShot), false);
+					SendOut(Protocol::Encode(Protocol::Shot{ 0, wire, action }, Protocol::MessageType::kReportShot), false);
 				}
 			}
 		}
@@ -1024,12 +1272,13 @@ namespace Session
 			nextEquipmentCheck = now + EQUIPMENT_INTERVAL;
 			// Our look, once per session (and again after a plastic surgeon: it's compared each time).
 			auto face = Face::Read(RE::PlayerCharacter::GetSingleton()->GetNPC());
-			// With LooksMenu, its body sliders too: the face waits for the first read of them (a moment), so that
-			// friends do not make our stand-in once without them and again with them.
+			// With LooksMenu, its body sliders and overlays too: the face waits for the first read of them (a moment), so
+			// that friends do not make our stand-in once without them and again with them.
 			face.bodyMorphs = LooksMenu::PlayerMorphs();
+			face.overlays = LooksMenu::PlayerOverlays();
 			if (face.race != 0 && LooksMenu::Settled() && (!sentFace || *sentFace != face)) {
 				if (welcomed) {
-					client->Send(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);
+					SendOut(Protocol::Encode(face, Protocol::MessageType::kReportFace), true);
 				}
 				if (echo) {
 					RemotePlayers::SetFace(ECHO_ID, face);
@@ -1041,7 +1290,7 @@ namespace Session
 			Protocol::Equipment equipment{ 0, Equipment::Read(player), Equipment::ReadMods(player) };
 			if (!sentEquipment || *sentEquipment != equipment) {
 				if (welcomed) {
-					client->Send(Protocol::Encode(equipment, Protocol::MessageType::kEquipment), true);
+					SendOut(Protocol::Encode(equipment, Protocol::MessageType::kEquipment), true);
 				}
 				if (echo) {
 					RemotePlayers::SetEquipment(ECHO_ID, equipment.items, equipment.mods);
@@ -1072,7 +1321,7 @@ namespace Session
 		// Our quest reports wait while we join or rejoin a session (an address to connect to; a host's own
 		// server is one), and playing alone they are dropped: a session joined later doesn't get them.
 		for (auto& packet : QuestSync::TakeOutgoing(welcomed, welcomed || !serverAddress.empty())) {
-			client->Send(std::move(packet), true);
+			SendOut(std::move(packet), true);
 		}
 		PERF_NEXT(perf, "NpcSync");
 		// After NpcSync::Frame and WorldSync::Frame: this frame's takeover claims leave ahead of the deaths
@@ -1080,12 +1329,12 @@ namespace Session
 		// NpcSync's states and releases of them.
 		for (auto& packet : Spawns::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);
+				SendOut(std::move(packet), true);
 			}
 		}
 		for (auto& packet : NpcSync::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet.data), packet.reliable);
+				SendOut(std::move(packet.data), packet.reliable);
 			}
 		}
 
@@ -1096,12 +1345,12 @@ namespace Session
 		}
 		for (auto& packet : Party::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);
+				SendOut(std::move(packet), true);
 			}
 		}
 		for (auto& packet : WorldClock::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), false);
+				SendOut(std::move(packet), false);
 			}
 		}
 		PERF_NEXT(perf, "MapWorkshop");
@@ -1110,25 +1359,41 @@ namespace Session
 			WorkshopSync::Frame(hostedServer && hostedServer->Running());
 		}
 		for (auto& packet : WorkshopSync::TakeOutgoing(welcomed)) {
-			client->Send(std::move(packet), true);
+			SendOut(std::move(packet), true);
 		}
 		for (auto& packet : MapShare::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);
+				SendOut(std::move(packet), true);
+			}
+		}
+		PERF_NEXT(perf, "Drops");
+		if (welcomed && InGame()) {
+			Drops::Frame();
+		}
+		for (auto& packet : Drops::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);
 			}
 		}
 		PERF_NEXT(perf, "Conversations");
 		Conversations::Frame(welcomed);
 		for (auto& packet : Conversations::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), true);
+				SendOut(std::move(packet), true);
+			}
+		}
+		PERF_NEXT(perf, "MovedObjects");
+		MovedObjects::Frame(welcomed && !Story::InOpening());
+		for (auto& packet : MovedObjects::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet.data), packet.reliable);
 			}
 		}
 		PERF_NEXT(perf, "Voice");
 		Voice::Frame(welcomed);
 		for (auto& packet : Voice::TakeOutgoing()) {
 			if (welcomed) {
-				client->Send(std::move(packet), false);
+				SendOut(std::move(packet), false);
 			}
 		}
 
@@ -1141,6 +1406,9 @@ namespace Session
 		PERF_NEXT(perf, "Compass");
 		Compass::Frame();
 		MenuIcons::Frame();
+		if (InGame()) {
+			FadeWatch::Frame();
+		}
 		PERF_NEXT(perf, "Puppets");
 		Puppets::Tick();
 	}
@@ -1152,12 +1420,19 @@ namespace Session
 		// request they are in its answer, numbered before it.
 		WorldSync::FlushLoot();
 		SendWorldEvents();
+		Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
+		for (auto& packet : Drops::TakeOutgoing()) {
+			if (welcomed) {
+				SendOut(std::move(packet), true);  // a take given back: before the save, as the moves
+			}
+		}
 		Spawns::DiscardCopies();  // into the stand-ins' graveyard, which DespawnAll empties: no copy is saved
 		RemotePlayers::DespawnAll();
 		NpcSync::ReleaseMirrors();
 		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
 		WeaponFire::DropHandThrowables();
 		Downed::OnBeforeSave();
+		MovedObjects::BeforeSaveOrLoad();
 		// The session file is never older than our save. (A load asks too; it costs a write.)
 		if (hostedServer) {
 			hostedServer->RequestSave();
@@ -1195,7 +1470,9 @@ namespace Session
 		Spawns::OnGameLoaded();
 		LooksMenu::OnGameLoaded();
 		WorldClock::Rebaseline();
+		MovedObjects::Reset();
 		WorkshopSync::OnGameLoaded();
+		Drops::OnGameLoaded();
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
 		// host stops hosting (Frame starts it again with that character's session, out of the opening), and a friend
 		// leaves. (After the above: leaving removes stand-ins and copies, and their handles from before the load are let
@@ -1213,7 +1490,8 @@ namespace Session
 				}
 			},
 			[](const Protocol::WorldRequest& a_request) {
-				client->Send(Protocol::Encode(a_request), true);
+				SendOut(Protocol::Encode(a_request), true);
+				Drops::SendRecord();  // what the loaded world holds of the items given: the server makes the session agree
 				REX::INFO("Session: save loaded; asking for the session's changes since #{}", a_request.containerFrom);
 			});
 	}
@@ -1233,8 +1511,8 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
-		       std::format(" hits: taken={} ignored={} mult={}", hitsTaken, hitsIgnored, lastHitMult) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
 	std::optional<ModDiff::Difference> HostMods()
@@ -1251,7 +1529,7 @@ namespace Session
 			Notify("mods.ask_wait");  // the server would not answer yet (ModDiff::Tracker::ASK_INTERVAL)
 			return AskResult::kTooSoon;
 		}
-		client->Send(Protocol::Encode(Protocol::LoadOrderRequest{}), true);
+		SendOut(Protocol::Encode(Protocol::LoadOrderRequest{}), true);
 		return AskResult::kAsked;
 	}
 
@@ -1265,6 +1543,23 @@ namespace Session
 		std::string out = std::format("mods: asking={}", asking);
 		for (const auto& line : ModDiff::LogLines(*known)) {
 			out += " | " + line;
+		}
+		return out;
+	}
+
+	std::string DescribeForms(std::optional<std::uint32_t> a_id)
+	{
+		const auto skips = [](const FormSkips& a_skips) { return std::format("{}/{}/{}", a_skips.packets, a_skips.entries, a_skips.fields); };
+		std::string out = std::format("forms: {} table={} ours={} oursOnly={} tableOnly={} skipped(messages/entries/details) out={} in={}",
+			forms.Identity() ? (tableThisConnection ? "same" : "none") : "translated", forms.Session().Size(), FormIds::Table::Of(plugins).Size(), forms.OursOnly(), forms.SessionsOnly(),
+			skips(skippedOut), skips(skippedIn));
+		if (a_id) {
+			const auto name = [](const std::string& a_plugin) { return a_plugin.empty() ? std::string{ "?" } : a_plugin; };
+			const auto hex = [](std::optional<std::uint32_t> a_v) { return a_v ? std::format("{:08X}", *a_v) : std::string{ "none" }; };
+			const auto toSession = forms.ToSession(*a_id);
+			const auto toLocal = forms.ToLocal(*a_id);
+			out += std::format(" | ours {:08X} ({}) is the session's {} | the session's {:08X} ({}) is our {}", *a_id, name(forms.LocalPlugin(*a_id)), hex(toSession), *a_id,
+				name(forms.SessionPlugin(*a_id)), hex(toLocal));
 		}
 		return out;
 	}

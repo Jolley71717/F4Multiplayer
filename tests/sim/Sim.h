@@ -261,6 +261,8 @@ namespace Sim
 		// companion's: CopyHealth::Credited), not when something else of ours or nothing killed it.
 		void Died(std::uint32_t a_ref, bool a_killed);
 		void Hurt(std::uint32_t a_ref, float a_health);
+		// What our player took off our copy of an NPC another game runs (a fraction of its maximum), as WorldSync sends it.
+		void Damage(std::uint32_t a_ref, float a_damage) { Send(Protocol::Encode(Protocol::ActorHealth{ a_ref, a_damage }, MT::kReportDamage), true); }
 		void Loot(std::uint32_t a_container, std::uint32_t a_item, std::int32_t a_count);
 		void PickUp(std::uint32_t a_ref);
 		void Door(std::uint32_t a_ref, std::uint8_t a_open, std::uint8_t a_locked);
@@ -343,6 +345,8 @@ namespace Sim
 			return it != owners.end() ? it->second : 0;
 		}
 		// The health another game last reported for an NPC (a fraction), if any came.
+		// The damage friends took off NPCs, as the session passed it on since the last call.
+		std::vector<Protocol::ActorHealth> TakeDamageHeard() { return std::exchange(damageHeard, {}); }
 		[[nodiscard]] std::optional<float> HealthHeard(std::uint32_t a_ref) const
 		{
 			const auto it = npcHealth.find(a_ref);
@@ -440,6 +444,7 @@ namespace Sim
 		std::map<std::uint32_t, Protocol::ActorState> npcStates;
 		std::map<std::uint32_t, std::vector<std::uint32_t>> npcGear;
 		std::map<std::uint32_t, float>                npcHealth;
+		std::vector<Protocol::ActorHealth>            damageHeard;
 		std::map<std::uint32_t, std::uint32_t>        killedBy;  // deaths the session told us of: whose kill (0: nobody's)
 		WorkshopCells::Waiting<WorkshopKey, Protocol::WorkshopItem> copies;  // the others' builds, waiting for their settlement's cell
 		std::set<WorkshopKey>                         copyKeys;
@@ -831,6 +836,7 @@ namespace Sim
 		npcStates.clear();
 		npcGear.clear();
 		npcHealth.clear();
+		damageHeard.clear();
 		killedBy.clear();
 		copies.Clear();
 		copyKeys.clear();
@@ -1378,6 +1384,15 @@ namespace Sim
 				unless(false);
 			}
 			break;
+		case MT::kActorDamaged:
+			if (const auto msg = Protocol::DecodeActorHealth(a_data)) {
+				if (damageHeard.size() < 4096) {
+					damageHeard.push_back(*msg);
+				}
+			} else {
+				unless(false);
+			}
+			break;
 		case MT::kContainerChanged:
 			if (const auto msg = Protocol::DecodeIndexedContainerChange(a_data)) {
 				ApplyContainer(msg->index, msg->playerId, msg->change);
@@ -1529,6 +1544,12 @@ namespace Sim
 			break;
 		case MT::kHeartbeatAck:
 			unless(Protocol::DecodeHeartbeat(a_data).has_value());
+			break;
+		case MT::kHostInfo:  // the host controls' state, to the host's game
+			unless(Protocol::DecodeHostInfo(a_data).has_value());
+			break;
+		case MT::kRemoved:
+			unless(Protocol::DecodeRemoved(a_data).has_value());
 			break;
 		default:
 			unless(false);  // nothing a player's game knows

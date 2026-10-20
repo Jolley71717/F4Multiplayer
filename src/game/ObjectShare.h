@@ -1,0 +1,756 @@
+#pragma once
+
+#include "Protocol.h"
+#include "TokenBucket.h"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <numbers>
+#include <optional>
+#include <span>
+#include <unordered_map>
+#include <vector>
+
+// Loose objects a player moves by hand or knocks about, shared (src/game/MovedObjects.cpp runs these in the game). Kept
+// free of the game so the rules can be tested (tests/MovedObjectsTests.cpp):
+// - HolderFrame: an object's pose in its holder's own frame, and back. A held object travels in its holder's frame, so
+//   each game draws it in front of its own stand-in of the holder, however far behind or ahead of the holder's own
+//   place that stand-in is drawn: the friend sees it in the stand-in's hands as they walk and turn, never trailing.
+// - Carry: what our player holds, sent at HOLD_HZ while it moves; their let-go (with how it left their hands) and where
+//   it came to rest once still.
+// - Carried: what friends hold, drawn eased towards their newest hold (Smooth), stale holds dropped.
+// - KnockWatch: objects near our player that something moved with no hand on them (our player walking into them, our
+//   shots); where they came to rest, when our player moved them, on a budget.
+// - Judge: what a friend's message may do in our world.
+namespace ObjectShare
+{
+	using Clock = std::chrono::steady_clock;
+	using Vec3 = std::array<float, 3>;
+
+	inline constexpr float TWO_PI = 2.0f * std::numbers::pi_v<float>;
+
+	// An angle brought into [-pi, pi).
+	inline float Wrap(float a_angle)
+	{
+		if (!std::isfinite(a_angle)) {
+			return 0.0f;
+		}
+		a_angle = std::fmod(a_angle + std::numbers::pi_v<float>, TWO_PI);
+		if (a_angle < 0.0f) {
+			a_angle += TWO_PI;
+		}
+		return a_angle - std::numbers::pi_v<float>;
+	}
+
+	inline bool Finite(const Vec3& a_v)
+	{
+		return std::ranges::all_of(a_v, [](float a_x) { return std::isfinite(a_x); });
+	}
+
+	inline float Distance(const Vec3& a_a, const Vec3& a_b)
+	{
+		const float dx = a_a[0] - a_b[0], dy = a_a[1] - a_b[1], dz = a_a[2] - a_b[2];
+		return std::sqrt(dx * dx + dy * dy + dz * dz);
+	}
+
+	// The largest of the three angles' differences, the short way round.
+	inline float Turned(const Vec3& a_a, const Vec3& a_b)
+	{
+		float most = 0.0f;
+		for (std::size_t i = 0; i < 3; ++i) {
+			most = (std::max)(most, std::fabs(Wrap(a_a[i] - a_b[i])));
+		}
+		return most;
+	}
+
+	// Where an object is: its space (an interior cell, or a worldspace), place and angles (the reference's, radians).
+	struct Pose
+	{
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		Vec3          position{};
+		Vec3          angles{};
+
+		bool operator==(const Pose&) const = default;
+	};
+
+	// Where a player is: their feet and heading (radians; 0 faces +y, a quarter turn faces +x, as the game has it).
+	struct Holder
+	{
+		Vec3  position{};
+		float heading = 0.0f;
+	};
+
+	// --- rotations ------------------------------------------------------------------------------------------------
+	//
+	// A reference's angles (x, y, z) are its 3D's rotation R = Rz(z) Ry(y) Rx(x), the rows of R being the object's own
+	// axes in the world (row 1 is where it faces: a heading h faces (sin h, cos h)). So the object turned with its holder
+	// by a heading d is R Rz(d): measured in the game, carrying a tilted tire round (its x and y angles change as it
+	// turns, and R's third column stays put). The game's NiMatrix3::ToEulerAnglesXYZ gives these angles back.
+
+	using Mat3 = std::array<Vec3, 3>;  // rows
+
+	inline Mat3 Multiply(const Mat3& a_a, const Mat3& a_b)
+	{
+		Mat3 out{};
+		for (std::size_t r = 0; r < 3; ++r) {
+			for (std::size_t c = 0; c < 3; ++c) {
+				out[r][c] = a_a[r][0] * a_b[0][c] + a_a[r][1] * a_b[1][c] + a_a[r][2] * a_b[2][c];
+			}
+		}
+		return out;
+	}
+
+	// Rz(a_heading): a player's own rotation at that heading.
+	inline Mat3 Yaw(float a_heading)
+	{
+		const float c = std::cos(a_heading), s = std::sin(a_heading);
+		return { Vec3{ c, -s, 0.0f }, Vec3{ s, c, 0.0f }, Vec3{ 0.0f, 0.0f, 1.0f } };
+	}
+
+	// R = Rz(z) Ry(y) Rx(x).
+	inline Mat3 FromAngles(const Vec3& a_angles)
+	{
+		const float cx = std::cos(a_angles[0]), sx = std::sin(a_angles[0]);
+		const float cy = std::cos(a_angles[1]), sy = std::sin(a_angles[1]);
+		const Mat3  x{ Vec3{ 1.0f, 0.0f, 0.0f }, Vec3{ 0.0f, cx, -sx }, Vec3{ 0.0f, sx, cx } };
+		const Mat3  y{ Vec3{ cy, 0.0f, sy }, Vec3{ 0.0f, 1.0f, 0.0f }, Vec3{ -sy, 0.0f, cy } };
+		return Multiply(Multiply(Yaw(a_angles[2]), y), x);
+	}
+
+	// The angles of a rotation (FromAngles undone), each in [-pi, pi]; y in [-pi/2, pi/2].
+	inline Vec3 ToAngles(const Mat3& a_m)
+	{
+		const float sy = std::clamp(-a_m[2][0], -1.0f, 1.0f);
+		const float y = std::asin(sy);
+		if (std::fabs(sy) < 0.99999f) {
+			return { std::atan2(a_m[2][1], a_m[2][2]), y, std::atan2(a_m[1][0], a_m[0][0]) };
+		}
+		return { 0.0f, y, std::atan2(-a_m[0][1], a_m[1][1]) };  // pitched straight up or down: x folded into z
+	}
+
+	// --- the holder's frame ---------------------------------------------------------------------------------------
+
+	struct Relative
+	{
+		Vec3 offset{};    // to the holder's right, ahead, up
+		Vec3 rotation{};  // the object's angles in the holder's frame: its rotation turned back by their heading
+
+		bool operator==(const Relative&) const = default;
+	};
+
+	// An object at a_position with a_angles, in a_holder's frame.
+	inline Relative ToHolderFrame(const Vec3& a_position, const Vec3& a_angles, const Holder& a_holder)
+	{
+		const float c = std::cos(a_holder.heading), s = std::sin(a_holder.heading);
+		const float dx = a_position[0] - a_holder.position[0], dy = a_position[1] - a_holder.position[1];
+		return {
+			.offset = { dx * c - dy * s, dx * s + dy * c, a_position[2] - a_holder.position[2] },
+			.rotation = ToAngles(Multiply(FromAngles(a_angles), Yaw(-a_holder.heading))),
+		};
+	}
+
+	// The world place and angles of an object held at a_relative by a holder at a_holder.
+	inline std::pair<Vec3, Vec3> FromHolderFrame(const Relative& a_relative, const Holder& a_holder)
+	{
+		const float c = std::cos(a_holder.heading), s = std::sin(a_holder.heading);
+		const auto& o = a_relative.offset;
+		return {
+			Vec3{ a_holder.position[0] + o[0] * c + o[1] * s, a_holder.position[1] - o[0] * s + o[1] * c, a_holder.position[2] + o[2] },
+			ToAngles(Multiply(FromAngles(a_relative.rotation), Yaw(a_holder.heading))),
+		};
+	}
+
+	// --- what our player holds --------------------------------------------------------------------------------------
+
+	inline constexpr auto  HOLD_INTERVAL = std::chrono::milliseconds(66);   // 15 a second while it moves in their hands
+	inline constexpr auto  HOLD_KEEPALIVE = std::chrono::milliseconds(500);  // and twice a second while it doesn't
+	inline constexpr float HOLD_MOVED = 0.5f;                                // units, in the holder's frame
+	inline constexpr float HOLD_TURNED = 0.01f;                              // radians
+	inline constexpr auto  LAUNCH_WINDOW = std::chrono::milliseconds(80);    // its flight's start, after the let-go
+	inline constexpr auto  SETTLE_TIME = std::chrono::milliseconds(600);     // still that long: come to rest
+	inline constexpr float STILL_DISTANCE = 1.0f;                            // units between two looks
+	inline constexpr float STILL_TURN = 0.02f;                               // radians between two looks
+	inline constexpr auto  REST_GIVE_UP = std::chrono::seconds(10);          // then where it is is where it rests
+	inline constexpr std::size_t MAX_SETTLING = 8;                           // objects let go of, still moving
+
+	// What our player holds and has let go of. Once a frame: what they hold now (0: nothing) and where they are; for each
+	// object it watches (Watched), where it is (none: gone from our world). Out come holds, let-gos and rests to send.
+	class Carry
+	{
+	public:
+		using PoseOf = std::function<std::optional<Pose>(std::uint32_t)>;
+
+		// The objects whose place it needs this frame: the one held and those let go of, still moving.
+		[[nodiscard]] std::vector<std::uint32_t> Watched() const
+		{
+			std::vector<std::uint32_t> out;
+			if (held) {
+				out.push_back(held->refId);
+			}
+			for (const auto& flying : settling) {
+				out.push_back(flying.refId);
+			}
+			return out;
+		}
+
+		void Frame(std::uint32_t a_held, const Holder& a_holder, const PoseOf& a_poseOf, Clock::time_point a_now)
+		{
+			if (held && held->refId != a_held) {
+				LetGo(a_poseOf, a_now);
+			}
+			if (refused && refused != a_held) {
+				refused = 0;  // they let go of what a friend holds: nothing of theirs to say
+			}
+			if (a_held && a_held != refused) {
+				if (!held) {
+					std::erase_if(settling, [&](const Settling& a_s) { return a_s.refId == a_held; });
+					held = Held{ .refId = a_held };
+				}
+				if (const auto pose = a_poseOf(a_held)) {
+					Track(*held, *pose, a_holder, a_now);
+				}
+			}
+			Settle(a_poseOf, a_now);
+		}
+
+		// The server says a friend holds what our player holds (they grabbed it first): nothing more of it is sent until
+		// our player lets go of it, and that let-go says nothing.
+		void Refused(std::uint32_t a_ref)
+		{
+			if (held && held->refId == a_ref) {
+				held.reset();
+				refused = a_ref;
+			}
+		}
+
+		// A friend's move of the object: our own let-go of it (if any) is over; their game says where it rests.
+		void TakenOver(std::uint32_t a_ref)
+		{
+			std::erase_if(settling, [&](const Settling& a_s) { return a_s.refId == a_ref; });
+		}
+
+		[[nodiscard]] std::uint32_t Holding() const { return held ? held->refId : 0; }
+		[[nodiscard]] bool          IsRefused(std::uint32_t a_ref) const { return a_ref != 0 && refused == a_ref; }
+		[[nodiscard]] bool          IsSettling(std::uint32_t a_ref) const
+		{
+			return std::ranges::any_of(settling, [&](const auto& a_s) { return a_s.refId == a_ref; });
+		}
+
+		std::vector<Protocol::ObjectHold> TakeHolds() { return std::exchange(holds, {}); }
+		std::vector<Protocol::ObjectRest> TakeRests() { return std::exchange(rests, {}); }
+
+		void Reset()
+		{
+			held.reset();
+			settling.clear();
+			refused = 0;
+			holds.clear();
+			rests.clear();
+		}
+
+	private:
+		struct Held
+		{
+			std::uint32_t           refId = 0;
+			std::optional<Relative> sent;
+			Clock::time_point       sentAt{};
+			Pose                    last{};  // its place in the world, as last seen
+			bool                    seen = false;
+		};
+
+		struct Settling
+		{
+			std::uint32_t     refId = 0;
+			std::uint32_t     sequence = 0;
+			Clock::time_point letGoAt{};
+			bool              launched = false;  // its let-go went
+			Pose              first{};           // its first place after the let-go
+			Clock::time_point firstAt{};
+			Pose              last{};
+			Clock::time_point lastAt{};
+			Clock::time_point stillSince{};
+			bool              seen = false;
+		};
+
+		void Track(Held& a_held, const Pose& a_pose, const Holder& a_holder, Clock::time_point a_now)
+		{
+			if (!Finite(a_pose.position) || !Finite(a_pose.angles) || !Finite(a_holder.position) || !std::isfinite(a_holder.heading)) {
+				return;
+			}
+			a_held.last = a_pose;
+			a_held.seen = true;
+			const auto relative = ToHolderFrame(a_pose.position, a_pose.angles, a_holder);
+			if (!Protocol::WithinLength(relative.offset, Protocol::MAX_HOLD_OFFSET)) {
+				return;  // not in their hands (a frame where the game moved them and not it yet)
+			}
+			if (a_held.sent) {
+				const auto since = a_now - a_held.sentAt;
+				if (since < HOLD_INTERVAL) {
+					return;
+				}
+				const bool still = Distance(relative.offset, a_held.sent->offset) < HOLD_MOVED && Turned(relative.rotation, a_held.sent->rotation) < HOLD_TURNED;
+				if (still && since < HOLD_KEEPALIVE) {
+					return;
+				}
+			}
+			a_held.sent = relative;
+			a_held.sentAt = a_now;
+			holds.push_back({ .playerId = 0, .refId = a_held.refId, .sequence = ++sequence, .offset = relative.offset, .rotation = relative.rotation });
+		}
+
+		void LetGo(const PoseOf& a_poseOf, Clock::time_point a_now)
+		{
+			const auto was = *std::exchange(held, std::nullopt);
+			if (!was.sent) {
+				return;  // nothing of it went: nobody saw it held
+			}
+			if (settling.size() >= MAX_SETTLING) {
+				settling.erase(settling.begin());
+			}
+			Settling s{ .refId = was.refId, .sequence = sequence, .letGoAt = a_now };
+			if (const auto pose = a_poseOf(was.refId); pose && Finite(pose->position) && Finite(pose->angles)) {
+				s.first = s.last = *pose;
+				s.firstAt = s.lastAt = s.stillSince = a_now;
+				s.seen = true;
+			} else if (was.seen) {
+				s.first = s.last = was.last;
+				s.firstAt = s.lastAt = s.stillSince = a_now;
+				s.seen = true;
+			}
+			settling.push_back(s);
+		}
+
+		static Protocol::ObjectRest Message(const Settling& a_s, const Pose& a_pose, std::uint8_t a_kind)
+		{
+			Protocol::ObjectRest rest{ .refId = a_s.refId, .kind = a_kind, .sequence = a_s.sequence, .cell = a_pose.cell, .worldspace = a_pose.worldspace,
+				.position = a_pose.position };
+			for (std::size_t i = 0; i < 3; ++i) {
+				rest.rotation[i] = Wrap(a_pose.angles[i]);
+			}
+			return rest;
+		}
+
+		void Settle(const PoseOf& a_poseOf, Clock::time_point a_now)
+		{
+			for (auto it = settling.begin(); it != settling.end();) {
+				auto&      s = *it;
+				const auto pose = a_poseOf(s.refId);
+				if (!pose || !Finite(pose->position) || !Finite(pose->angles)) {
+					if (s.launched || !s.seen) {
+						it = settling.erase(it);  // gone from our world (picked up, its cell unloaded)
+						continue;
+					}
+				} else if (!s.seen) {
+					s.first = s.last = *pose;
+					s.firstAt = s.lastAt = s.stillSince = a_now;
+					s.seen = true;
+				} else {
+					if (Distance(pose->position, s.last.position) > STILL_DISTANCE || Turned(pose->angles, s.last.angles) > STILL_TURN) {
+						s.stillSince = a_now;
+					}
+					s.last = *pose;
+					s.lastAt = a_now;
+				}
+				if (!s.launched && s.seen && (a_now - s.letGoAt >= LAUNCH_WINDOW || !pose)) {
+					auto       letGo = Message(s, s.first, Protocol::ObjectRestKind::kLetGo);
+					const auto dt = std::chrono::duration<float>(s.lastAt - s.firstAt).count();
+					if (dt >= 0.01f) {
+						for (std::size_t i = 0; i < 3; ++i) {
+							letGo.velocity[i] = (s.last.position[i] - s.first.position[i]) / dt;
+						}
+					}
+					if (!Protocol::WithinLength(letGo.velocity, Protocol::MAX_OBJECT_SPEED)) {
+						letGo.velocity = {};
+					}
+					rests.push_back(letGo);
+					s.launched = true;
+				}
+				if (s.launched && (a_now - s.stillSince >= SETTLE_TIME || a_now - s.letGoAt >= REST_GIVE_UP)) {
+					rests.push_back(Message(s, s.last, Protocol::ObjectRestKind::kRest));
+					it = settling.erase(it);
+					continue;
+				}
+				++it;
+			}
+		}
+
+		std::optional<Held>                held;
+		std::vector<Settling>              settling;
+		std::uint32_t                      refused = 0;
+		std::uint32_t                      sequence = 0;
+		std::vector<Protocol::ObjectHold> holds;
+		std::vector<Protocol::ObjectRest> rests;
+	};
+
+	// --- what friends hold ------------------------------------------------------------------------------------------
+
+	inline constexpr auto  HELD_TIMEOUT = std::chrono::milliseconds(1500);  // no hold for that long: they let go somehow
+	inline constexpr float SMOOTH_SECONDS = 0.06f;                          // the drawn pose's time constant
+	inline constexpr auto  LETGO_MEMORY = std::chrono::seconds(5);          // late holds of a let-go are dropped that long
+
+	// a_from eased towards a_to over a_seconds (angles the short way round), in time constant SMOOTH_SECONDS.
+	inline Relative Smooth(const Relative& a_from, const Relative& a_to, float a_seconds)
+	{
+		if (!(a_seconds > 0.0f)) {
+			return a_from;
+		}
+		const float k = 1.0f - std::exp(-a_seconds / SMOOTH_SECONDS);
+		Relative    out;
+		for (std::size_t i = 0; i < 3; ++i) {
+			out.offset[i] = a_from.offset[i] + (a_to.offset[i] - a_from.offset[i]) * k;
+			out.rotation[i] = Wrap(a_from.rotation[i] + Wrap(a_to.rotation[i] - a_from.rotation[i]) * k);
+		}
+		return out;
+	}
+
+	class Carried
+	{
+	public:
+		struct Entry
+		{
+			std::uint32_t     holder = 0;
+			std::uint32_t     sequence = 0;
+			Relative          target{};
+			Relative          drawn{};
+			Clock::time_point heardAt{};
+			bool              placed = false;  // drawn in its holder's hands at least once (MovedObjects took it over)
+		};
+
+		// A friend's hold. False when it is older than what we have of them (or than their let-go), or another friend
+		// holds the object (the server lets only one: an old holder's last holds can still be on the way).
+		bool OnHold(const Protocol::ObjectHold& a_hold, Clock::time_point a_now)
+		{
+			Prune(a_now);
+			if (const auto gone = letGo.find(a_hold.refId); gone != letGo.end() && gone->second.holder == a_hold.playerId && !Newer(a_hold.sequence, gone->second.sequence)) {
+				return false;
+			}
+			const Relative relative{ a_hold.offset, a_hold.rotation };
+			auto           it = held.find(a_hold.refId);
+			if (it != held.end()) {
+				auto& e = it->second;
+				if (e.holder == a_hold.playerId && !Newer(a_hold.sequence, e.sequence)) {
+					return false;
+				}
+				// Another friend's: they took it after the holder's let-go, which has not come yet (the server passes an
+				// object on only once its holder let go of it). Theirs now.
+				e.holder = a_hold.playerId;
+				e.sequence = a_hold.sequence;
+				e.target = relative;
+				e.heardAt = a_now;
+				return true;
+			}
+			held.emplace(a_hold.refId, Entry{ .holder = a_hold.playerId, .sequence = a_hold.sequence, .target = relative, .drawn = relative, .heardAt = a_now });
+			return true;
+		}
+
+		// A friend let go of it (or it came to rest after they moved it): no longer in anyone's hands. Their holds up to
+		// the let-go's sequence that come after it are dropped. Whether it was in their hands here.
+		bool OnLetGo(const Protocol::ObjectRest& a_rest, Clock::time_point a_now)
+		{
+			if (a_rest.kind == Protocol::ObjectRestKind::kLetGo) {
+				letGo[a_rest.refId] = { a_rest.playerId, a_rest.sequence, a_now };
+			}
+			const auto it = held.find(a_rest.refId);
+			if (it == held.end() || it->second.holder != a_rest.playerId) {
+				return false;
+			}
+			held.erase(it);
+			return true;
+		}
+
+		// The pose to draw a held object at this frame, a_seconds after the last: eased towards its newest hold.
+		std::optional<Relative> Step(std::uint32_t a_ref, float a_seconds)
+		{
+			const auto it = held.find(a_ref);
+			if (it == held.end()) {
+				return std::nullopt;
+			}
+			it->second.drawn = Smooth(it->second.drawn, it->second.target, (std::min)(a_seconds, 0.25f));
+			return it->second.drawn;
+		}
+
+		// Held objects not heard of for HELD_TIMEOUT (their game paused, gone, or their let-go lost): no longer held.
+		std::vector<std::uint32_t> TakeStale(Clock::time_point a_now)
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = held.begin(); it != held.end();) {
+				if (a_now - it->second.heardAt >= HELD_TIMEOUT) {
+					out.push_back(it->first);
+					it = held.erase(it);
+				} else {
+					++it;
+				}
+			}
+			return out;
+		}
+
+		// A friend left: what they held is held by nobody.
+		std::vector<std::uint32_t> Leave(std::uint32_t a_holder)
+		{
+			std::vector<std::uint32_t> out;
+			for (auto it = held.begin(); it != held.end();) {
+				if (it->second.holder == a_holder) {
+					out.push_back(it->first);
+					it = held.erase(it);
+				} else {
+					++it;
+				}
+			}
+			return out;
+		}
+
+		// Our game can't draw it (unloaded, picked up, ours to hold now): forgotten until their next hold.
+		void Drop(std::uint32_t a_ref) { held.erase(a_ref); }
+
+		[[nodiscard]] const Entry* Find(std::uint32_t a_ref) const
+		{
+			const auto it = held.find(a_ref);
+			return it == held.end() ? nullptr : &it->second;
+		}
+		Entry* Find(std::uint32_t a_ref)
+		{
+			const auto it = held.find(a_ref);
+			return it == held.end() ? nullptr : &it->second;
+		}
+
+		[[nodiscard]] std::vector<std::uint32_t> Refs() const
+		{
+			std::vector<std::uint32_t> out;
+			for (const auto& [ref, entry] : held) {
+				out.push_back(ref);
+			}
+			return out;
+		}
+		[[nodiscard]] std::size_t Size() const { return held.size(); }
+
+		void Reset()
+		{
+			held.clear();
+			letGo.clear();
+		}
+
+	private:
+		struct LetGo
+		{
+			std::uint32_t     holder = 0;
+			std::uint32_t     sequence = 0;
+			Clock::time_point at{};
+		};
+
+		static bool Newer(std::uint32_t a_seq, std::uint32_t a_than)
+		{
+			return a_seq != a_than && static_cast<std::uint32_t>(a_seq - a_than) < 0x80000000u;
+		}
+
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(letGo, [&](const auto& a_entry) { return a_now - a_entry.second.at >= LETGO_MEMORY; });
+		}
+
+		std::unordered_map<std::uint32_t, Entry> held;
+		std::unordered_map<std::uint32_t, LetGo> letGo;
+	};
+
+	// --- objects knocked about --------------------------------------------------------------------------------------
+
+	inline constexpr float  MOVE_DISTANCE = 4.0f;    // units from where it rested: moved
+	inline constexpr float  MOVE_TURN = 0.07f;       // radians (4 degrees)
+	inline constexpr auto   MOVING_GIVE_UP = std::chrono::seconds(15);
+	inline constexpr auto   FORGET_AFTER = std::chrono::seconds(3);  // not seen in a scan that long
+	inline constexpr auto   QUIET_AFTER_PLACED = std::chrono::seconds(4);  // a friend's move: ours of it are theirs
+	inline constexpr std::size_t MAX_WATCHED = 512;
+	inline constexpr double KNOCK_BURST = 8.0;  // rests our game reports: a few at once, then KNOCKS_PER_SECOND
+	inline constexpr double KNOCKS_PER_SECOND = 3.0;
+	inline constexpr float  NEAR_DISTANCE = 160.0f;  // our player this close (across) walked into it
+	inline constexpr float  NEAR_HEIGHT = 200.0f;
+
+	// Whether our player at a_player is close enough to an object at a_object to have walked into it.
+	inline bool Near(const Vec3& a_player, const Vec3& a_object)
+	{
+		const float dx = a_player[0] - a_object[0], dy = a_player[1] - a_object[1];
+		return dx * dx + dy * dy <= NEAR_DISTANCE * NEAR_DISTANCE && std::fabs(a_object[2] - a_player[2]) <= NEAR_HEIGHT;
+	}
+
+	// The objects our game sees moving, by a scan of those near our player (a few times a second). One moved with no
+	// hand on it and come to rest is reported when our player moved it (walked into it, shot it: the game says so in
+	// byUs, while it moves), and a friend is near enough to have it loaded too (friendNear); the friend's game reports
+	// the ones their player moves. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying
+	// from them (busy), is never ours to report.
+	class KnockWatch
+	{
+	public:
+		struct Seen
+		{
+			std::uint32_t refId = 0;
+			Pose          pose{};
+			bool          byUs = false;
+			bool          busy = false;
+		};
+
+		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, bool a_friendNear, Clock::time_point a_now)
+		{
+			std::vector<Protocol::ObjectRest> out;
+			for (const auto& seen : a_seen) {
+				if (!Finite(seen.pose.position) || !Finite(seen.pose.angles)) {
+					continue;
+				}
+				auto it = watched.find(seen.refId);
+				if (it == watched.end()) {
+					if (watched.size() >= MAX_WATCHED) {
+						continue;
+					}
+					watched.emplace(seen.refId, Watch{ .rest = seen.pose, .last = seen.pose, .seenAt = a_now });
+					continue;
+				}
+				auto& w = it->second;
+				w.seenAt = a_now;
+				if (seen.busy) {
+					w.rest = w.last = seen.pose;
+					w.moving = false;
+					w.quietUntil = (std::max)(w.quietUntil, a_now + QUIET_AFTER_PLACED);
+					continue;
+				}
+				if (!w.moving) {
+					if (Distance(seen.pose.position, w.rest.position) > MOVE_DISTANCE || Turned(seen.pose.angles, w.rest.angles) > MOVE_TURN) {
+						w.moving = true;
+						w.byUs = seen.byUs;
+						w.movingSince = w.stillSince = a_now;
+						w.last = seen.pose;
+					}
+					continue;
+				}
+				w.byUs = w.byUs || seen.byUs;
+				if (Distance(seen.pose.position, w.last.position) > STILL_DISTANCE || Turned(seen.pose.angles, w.last.angles) > STILL_TURN) {
+					w.stillSince = a_now;
+				}
+				w.last = seen.pose;
+				if (a_now - w.stillSince < SETTLE_TIME && a_now - w.movingSince < MOVING_GIVE_UP) {
+					continue;
+				}
+				w.moving = false;
+				w.rest = seen.pose;
+				if (w.byUs && a_friendNear && a_now >= w.quietUntil && budget.Take(a_now)) {
+					Protocol::ObjectRest rest{ .refId = seen.refId, .kind = Protocol::ObjectRestKind::kRest, .cell = seen.pose.cell, .worldspace = seen.pose.worldspace,
+						.position = seen.pose.position };
+					for (std::size_t i = 0; i < 3; ++i) {
+						rest.rotation[i] = Wrap(seen.pose.angles[i]);
+					}
+					out.push_back(rest);
+					++reported;
+				}
+				w.byUs = false;
+			}
+			std::erase_if(watched, [&](const auto& a_entry) { return a_now - a_entry.second.seenAt >= FORGET_AFTER; });
+			return out;
+		}
+
+		// A friend's move put the object at a_pose: where it rests now, and what our game sees of it settling there (its
+		// own physics) is not ours to report for a while.
+		void Placed(std::uint32_t a_ref, const Pose& a_pose, Clock::time_point a_now)
+		{
+			auto& w = watched[a_ref];
+			w.rest = w.last = a_pose;
+			w.moving = false;
+			w.byUs = false;
+			w.seenAt = a_now;
+			w.quietUntil = a_now + QUIET_AFTER_PLACED;
+		}
+
+		[[nodiscard]] std::size_t Watching() const { return watched.size(); }
+		[[nodiscard]] std::size_t Moving() const
+		{
+			return static_cast<std::size_t>(std::ranges::count_if(watched, [](const auto& a_entry) { return a_entry.second.moving; }));
+		}
+		[[nodiscard]] std::uint64_t Reported() const { return reported; }
+
+		void Reset() { watched.clear(); }
+
+	private:
+		struct Watch
+		{
+			Pose              rest{};
+			Pose              last{};
+			bool              moving = false;
+			bool              byUs = false;
+			Clock::time_point movingSince{};
+			Clock::time_point stillSince{};
+			Clock::time_point seenAt{};
+			Clock::time_point quietUntil{};
+		};
+
+		std::unordered_map<std::uint32_t, Watch> watched;
+		TokenBucket                              budget{ KNOCK_BURST, KNOCKS_PER_SECOND };
+		std::uint64_t                            reported = 0;
+	};
+
+	// --- what a friend's message may do ---------------------------------------------------------------------------
+
+	inline constexpr float HOLD_REACH = 2500.0f;   // a held object this close to its holder's stand-in here, at most
+	inline constexpr float APPLY_RANGE = 8000.0f;  // a moved object this close to our player, at most
+	inline constexpr float MAX_JUMP = 4096.0f;     // from where our game has it: a throw goes far, never across the map
+
+	// What our game knows of the object a friend's message names.
+	struct Facts
+	{
+		bool  loaded = false;      // a loose object of ours (MovedObjects::Movable), loaded with its 3D
+		bool  sameSpace = false;   // in the space the message says (a rest), or the holder's stand-in's (a hold)
+		bool  oursHeld = false;    // in our player's hands
+		float fromUs = 0.0f;       // its distance from our player
+		float fromPlace = 0.0f;    // from where the message puts it (a rest), or from the holder's stand-in (a hold)
+	};
+
+	enum class Verdict : std::uint8_t
+	{
+		kApply,
+		kNotHere,    // not loaded here (or not a loose object), in another space, or too far from us
+		kOurs,       // in our player's hands: the server says who holds it, and our game lets go if it is a friend
+		kTooFar,     // the message puts it further than the game could have moved it
+	};
+
+	inline Verdict JudgeHold(const Facts& a_facts)
+	{
+		if (!a_facts.loaded || !a_facts.sameSpace || !(a_facts.fromUs <= APPLY_RANGE)) {
+			return Verdict::kNotHere;
+		}
+		if (a_facts.oursHeld) {
+			return Verdict::kOurs;
+		}
+		return a_facts.fromPlace <= HOLD_REACH ? Verdict::kApply : Verdict::kTooFar;
+	}
+
+	inline Verdict JudgeRest(const Facts& a_facts)
+	{
+		if (!a_facts.loaded || !a_facts.sameSpace || !(a_facts.fromUs <= APPLY_RANGE)) {
+			return Verdict::kNotHere;
+		}
+		if (a_facts.oursHeld) {
+			return Verdict::kOurs;
+		}
+		return a_facts.fromPlace <= MAX_JUMP ? Verdict::kApply : Verdict::kTooFar;
+	}
+
+	// Whether a pose may be written into the game: finite, in the world, angles a turn or so.
+	inline bool Writable(const Vec3& a_position, const Vec3& a_angles)
+	{
+		return std::ranges::all_of(a_position, Protocol::InWorld) && Protocol::ObjectAngles(a_angles);
+	}
+
+	// A friend's launch velocity, as far as our game takes it: none when it is not finite, at most MAX_OBJECT_SPEED.
+	inline Vec3 Launch(const Vec3& a_velocity)
+	{
+		if (!Finite(a_velocity)) {
+			return {};
+		}
+		const float length = std::sqrt(a_velocity[0] * a_velocity[0] + a_velocity[1] * a_velocity[1] + a_velocity[2] * a_velocity[2]);
+		if (length <= Protocol::MAX_OBJECT_SPEED) {
+			return a_velocity;
+		}
+		const float k = Protocol::MAX_OBJECT_SPEED / length;
+		return { a_velocity[0] * k, a_velocity[1] * k, a_velocity[2] * k };
+	}
+}

@@ -129,6 +129,19 @@ TEST("save strays: a load forgets what was placed before it, and remembers there
 	CHECK(placed.Any());
 }
 
+TEST("save strays: a copy the player took is let go of at once, so the item of its base they drop next under its id is the game's")
+{
+	SaveStrays::Book book;
+	book.Track(0xFF000F63, 0x0004835D);  // a copy of a Nuka-Cola a friend dropped
+	CHECK(book.IsPlaced(0xFF000F63, 0x0004835D));
+	book.Release(0xFF000F63);  // taken into the player's inventory: the engine deletes the reference
+	// The game hands the id to the Nuka-Cola the player drops next: theirs, to be given, not ours.
+	CHECK(!book.IsPlaced(0xFF000F63, 0x0004835D));
+	CHECK(book.PlacedCount() == 0);
+	CHECK(book.ForgottenCount() == 0);  // nor kept out of saves
+	CHECK(book.Session());
+}
+
 TEST("save strays: one the engine cannot save under a cell or a worldspace is a stray, whoever placed it, deleted or not")
 {
 	// The 10-11 crash: a stand-in alive, with its base, in no cell after the host's cells were cleared under it.
