@@ -523,13 +523,19 @@ else skips this: the player is never in those places.
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 47): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The
-  receiver adds "[Pip-Boy]" or "[in a menu]" to the friend's name tag, and draws a small icon over their stand-in's head
-  on its own HUD (a Pip-Boy, two pause bars, or a bubble with three dots), from the HUD's own advance like the compass
-  markers, never while one of its own menus is open; `bMenuIcons = false` turns the icon off. While the friend is in the
-  Pip-Boy, the stand-in checks its wrist (`IdlePipboyExamineMale`/`Female`, the human graph's own idle; NPCs have no
-  third-person "Pip-Boy up" pose to hold), again each time it ends, and `IdleStop` ends it when they close the Pip-Boy
-  mid-way. Not in furniture, power armor, down or moving. The Pip-Boy itself (`Pipboy` 00021B3B) is
-  worn like any other gear the friend's game reports.
+  receiver adds "[Pip-Boy]" or "[in a menu]" to the friend's name tag. While the friend is in the Pip-Boy, the
+  stand-in checks its wrist (`IdlePipboyExamineMale`/`Female`, the human graph's own idle; NPCs have no third-person
+  "Pip-Boy up" pose to hold), again every 6 s, and `IdleStop` ends it when they close the Pip-Boy mid-way. Not in
+  furniture, power armor, down or moving. The Pip-Boy itself (`Pipboy` 00021B3B) is worn like any other gear the
+  friend's game reports: the rig showed it on the left forearm of both stand-ins.
+  An icon over the stand-in's head (a Pip-Boy, two pause bars, or a bubble with three dots), drawn on the HUD from its
+  own advance like the compass markers, is written but off (`bMenuIcons`, not in the shipped ini): on the rig the HUD
+  showed it only in part, or where it was first drawn, while the values read back from the movie were right. The HUD
+  seems to redraw only what the game itself changed: a shape made and moved from the plugin showed, if at all, only
+  near the middle of the screen, whether it was in a layer of its own, straight in the root, in the
+  center group or the quest markers' base, scaled or drawn at its size, added again or made anew on each move, or
+  drawn into the parent's own graphics. The compass markers likely show because the game redraws the compass every frame.
+  `menuicons layer` and `menuicons opt` (DEV-CHANNEL.md) are there to try the next idea.
 - Furniture (`StandInSeat.h`; protocol 31): while the player sits, lies or works in furniture (a chair, couch, bench,
   stool, bed, sleeping bag, workbench, chem or cooking station, terminal: the engine's sit/sleep state says they are in
   it or getting in, and it names the furniture they occupy), the status carries it: the reference when every game has

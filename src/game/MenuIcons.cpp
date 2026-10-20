@@ -118,54 +118,62 @@ namespace MenuIcons
 			return a_graphics.Invoke(a_method, nullptr, a_args.begin(), a_args.size());
 		}
 
-		// The glyph, MenuIconPlace::SIZE across at a_scale 1, its bottom edge at (0, 0) so it stands on the spot over the
-		// head. Drawn at its size rather than scaled (scaleX and scaleY).
-		void DrawGlyph(GValue& a_graphics, Glyph a_glyph, std::uint32_t a_color, double a_scale = 1.0)
+		// The glyph, MenuIconPlace::SIZE across at a_scale 1, its bottom edge at (a_x, a_y) so it stands on the spot over the
+		// head. Drawn at its size and place rather than scaled or moved (a_clear first clears what the graphics hold).
+		void DrawGlyph(GValue& a_graphics, Glyph a_glyph, std::uint32_t a_color, double a_scale = 1.0, double a_x = 0.0, double a_y = 0.0, bool a_clear = true)
 		{
-			const auto p = [&](double a_value) { return GValue(a_value * a_scale); };
+			const auto x = [&](double a_value) { return GValue(a_x + a_value * a_scale); };
+			const auto y = [&](double a_value) { return GValue(a_y + a_value * a_scale); };
+			const auto l = [&](double a_value) { return GValue(a_value * a_scale); };
 			const auto color = GValue(a_color);
 			const auto dark = GValue(DARK);
-			Draw(a_graphics, "clear", {});
+			if (a_clear) {
+				Draw(a_graphics, "clear", {});
+			}
 			switch (a_glyph) {
 			case Glyph::kPipboy:
 				// The wrist unit: a dark body, a lit screen and the dial beside it.
-				Draw(a_graphics, "lineStyle", { p(2.0), color, GValue(1.0) });
+				Draw(a_graphics, "lineStyle", { l(2.0), color, GValue(1.0) });
 				Draw(a_graphics, "beginFill", { dark, GValue(0.8) });
-				Draw(a_graphics, "drawRoundRect", { p(-13.0), p(-22.0), p(26.0), p(19.0), p(6.0), p(6.0) });
+				Draw(a_graphics, "drawRoundRect", { x(-13.0), y(-22.0), l(26.0), l(19.0), l(6.0), l(6.0) });
 				Draw(a_graphics, "endFill", {});
 				Draw(a_graphics, "lineStyle", { GValue(0.0), color, GValue(0.0) });
 				Draw(a_graphics, "beginFill", { color, GValue(0.9) });
-				Draw(a_graphics, "drawRect", { p(-9.0), p(-18.5), p(12.0), p(12.0) });
-				Draw(a_graphics, "drawCircle", { p(8.0), p(-12.5), p(2.5) });
+				Draw(a_graphics, "drawRect", { x(-9.0), y(-18.5), l(12.0), l(12.0) });
+				Draw(a_graphics, "drawCircle", { x(8.0), y(-12.5), l(2.5) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kPause:
-				Draw(a_graphics, "lineStyle", { p(1.5), dark, GValue(0.9) });
+				Draw(a_graphics, "lineStyle", { l(1.5), dark, GValue(0.9) });
 				Draw(a_graphics, "beginFill", { color, GValue(1.0) });
-				Draw(a_graphics, "drawRect", { p(-8.0), p(-22.0), p(5.5), p(18.0) });
-				Draw(a_graphics, "drawRect", { p(2.5), p(-22.0), p(5.5), p(18.0) });
+				Draw(a_graphics, "drawRect", { x(-8.0), y(-22.0), l(5.5), l(18.0) });
+				Draw(a_graphics, "drawRect", { x(2.5), y(-22.0), l(5.5), l(18.0) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kBusy:
 				// A speech bubble with three dots, its tail pointing down at the head.
-				Draw(a_graphics, "lineStyle", { p(2.0), color, GValue(1.0) });
+				Draw(a_graphics, "lineStyle", { l(2.0), color, GValue(1.0) });
 				Draw(a_graphics, "beginFill", { dark, GValue(0.8) });
-				Draw(a_graphics, "drawRoundRect", { p(-14.0), p(-24.0), p(28.0), p(16.0), p(10.0), p(10.0) });
+				Draw(a_graphics, "drawRoundRect", { x(-14.0), y(-24.0), l(28.0), l(16.0), l(10.0), l(10.0) });
 				Draw(a_graphics, "endFill", {});
-				Draw(a_graphics, "moveTo", { p(-4.0), p(-8.0) });
-				Draw(a_graphics, "lineTo", { p(0.0), p(-2.0) });
-				Draw(a_graphics, "lineTo", { p(4.0), p(-8.0) });
+				Draw(a_graphics, "moveTo", { x(-4.0), y(-8.0) });
+				Draw(a_graphics, "lineTo", { x(0.0), y(-2.0) });
+				Draw(a_graphics, "lineTo", { x(4.0), y(-8.0) });
 				Draw(a_graphics, "lineStyle", { GValue(0.0), color, GValue(0.0) });
 				Draw(a_graphics, "beginFill", { color, GValue(1.0) });
-				Draw(a_graphics, "drawCircle", { p(-7.0), p(-16.0), p(2.2) });
-				Draw(a_graphics, "drawCircle", { p(0.0), p(-16.0), p(2.2) });
-				Draw(a_graphics, "drawCircle", { p(7.0), p(-16.0), p(2.2) });
+				Draw(a_graphics, "drawCircle", { x(-7.0), y(-16.0), l(2.2) });
+				Draw(a_graphics, "drawCircle", { x(0.0), y(-16.0), l(2.2) });
+				Draw(a_graphics, "drawCircle", { x(7.0), y(-16.0), l(2.2) });
 				Draw(a_graphics, "endFill", {});
 				break;
 			case Glyph::kNone:
 				break;
 			}
 		}
+
+		// Dev (menuicons opt canvas 1): every icon drawn into the parent's own graphics, at its place on the stage.
+		std::atomic<bool> optCanvas{ false };
+		std::string       canvasDrawn;  // HUD thread only: what the canvas holds, so the same is not drawn again
 
 		std::string IconName(std::uint32_t a_id)
 		{
@@ -256,6 +264,7 @@ namespace MenuIcons
 			previous = oldParent;
 		}
 		if (relayer.exchange(false)) {
+			canvasDrawn.clear();
 			GValue old;
 			if (movie->GetVariable(&old, previous.c_str()) && old.IsDisplayObject()) {
 				if (auto stale = ChildByName(old, LAYER_NAME)) {
@@ -290,6 +299,40 @@ namespace MenuIcons
 			color = latestColor;
 		}
 		++writes;
+		if (optCanvas.load()) {
+			const auto     frame = movie->GetVisibleFrameRect();
+			const MenuIconPlace::Stage stage{ frame.x1, frame.y1, frame.x2, frame.y2 };
+			std::string    signature;
+			std::uint32_t  count = 0;
+			std::vector<std::pair<Glyph, MenuIconPlace::Spot>> spots;
+			if (!hide) {
+				for (const auto& target : targets) {
+					const auto spot = MenuIconPlace::Place(target.screen, target.distance, stage);
+					if (spot.shown) {
+						spots.emplace_back(target.glyph, spot);
+						signature += std::format("{}:{:.0f},{:.0f},{:.2f};", std::to_underlying(target.glyph), spot.x * 2.0f, spot.y * 2.0f, spot.scale);
+					}
+				}
+				signature += std::format("{:06X}", color);
+			}
+			if (signature != canvasDrawn) {
+				GValue graphics;
+				GValue ox;
+				GValue oy;
+				const double originX = root.GetMember("x", &ox) && ox.IsNumber() ? ox.GetNumber() : 0.0;  // the parent's place on the stage
+				const double originY = root.GetMember("y", &oy) && oy.IsNumber() ? oy.GetNumber() : 0.0;
+				if (root.GetMember("graphics", &graphics)) {
+					Draw(graphics, "clear", {});
+					for (const auto& [glyph, spot] : spots) {
+						DrawGlyph(graphics, glyph, color, spot.scale, spot.x - originX, spot.y - originY, false);
+						++count;
+					}
+					canvasDrawn = signature;
+				}
+			}
+			shown = static_cast<std::uint32_t>(spots.size());
+			return;
+		}
 		if (hide || targets.empty()) {
 			if (layerVisible) {
 				if (!direct) SetVisible(*layer, false);
@@ -406,7 +449,7 @@ namespace MenuIcons
 
 	std::string Opt(const std::string& a_name, bool a_on)
 	{
-		auto* opt = a_name == "scale" ? &optScale : a_name == "readd" ? &optReadd : a_name == "remake" ? &optRemake : nullptr;
+		auto* opt = a_name == "scale" ? &optScale : a_name == "readd" ? &optReadd : a_name == "remake" ? &optRemake : a_name == "canvas" ? &optCanvas : nullptr;
 		if (!opt) {
 			return "error: menuicons opt scale|readd|remake 0|1";
 		}
