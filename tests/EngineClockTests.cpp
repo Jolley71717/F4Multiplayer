@@ -110,3 +110,54 @@ TEST("engine clock: the first update, a long stall and a game slowed far off the
 	wall += 16ms;
 	CHECK(timeline.Advance(wall, std::nanf("")) == wall);
 }
+
+TEST("engine clock: frames step when the timer's mark changes, once however often asked, and the frame before is the last one's time")
+{
+	EngineClock::Frames frames;
+	auto wall = start;
+	const auto first = frames.Now(wall, 1, 0.033f);
+	CHECK(first == wall);
+	CHECK(frames.Previous(wall, 1, 0.033f) == first);  // no frame before yet
+	wall += 5ms;
+	CHECK(frames.Now(wall, 1, 0.033f) == first);  // asked again in the same frame
+	wall += 30ms;
+	const auto second = frames.Now(wall, 2, 0.033f);
+	CHECK(std::abs(Ms(second - first) - 33.0) < 1.0);
+	CHECK(frames.Previous(wall + 3ms, 2, 0.033f) == first);
+	wall += 31ms;
+	const auto third = frames.Now(wall, 3, 0.031f);
+	CHECK(frames.Previous(wall, 3, 0.031f) == second);
+	CHECK(third > second);
+}
+
+TEST("engine clock: after a loading screen nobody asked through, the frame before is not the time before it")
+{
+	// Stamped with the time before a two-second load, our first state after it went out two seconds old: the friend's
+	// game took their clock to have jumped, and drew them that much behind until it caught up.
+	EngineClock::Frames frames;
+	auto wall = start;
+	for (std::uint64_t mark = 1; mark <= 30; ++mark) {
+		wall += 33ms;
+		(void)frames.Now(wall, mark, 0.033f);
+	}
+	wall += 2s;  // loading: the timer may go on marking, but nothing asks
+	const auto previous = frames.Previous(wall, 31, 0.033f);
+	CHECK(std::abs(Ms(wall - previous)) < 1.0);
+	wall += 33ms;
+	CHECK(std::abs(Ms(frames.Previous(wall, 32, 0.033f) - previous)) < 1.0);
+}
+
+TEST("engine clock: a timer that stops marking frames gives the wall clock, and starts again from it")
+{
+	EngineClock::Frames frames;
+	auto wall = start;
+	for (std::uint64_t mark = 1; mark <= 10; ++mark) {
+		wall += 33ms;
+		(void)frames.Now(wall, mark, 0.033f);
+	}
+	wall += EngineClock::STOPPED + 50ms;
+	CHECK(frames.Now(wall, 10, 0.033f) == wall);
+	CHECK(frames.Previous(wall, 10, 0.033f) == wall);
+	wall += 33ms;
+	CHECK(frames.Now(wall, 11, 0.033f) == wall);
+}
