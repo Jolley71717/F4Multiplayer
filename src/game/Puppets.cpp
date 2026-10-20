@@ -466,6 +466,9 @@ namespace Puppets
 		constexpr REL::ID SUBGRAPHS_LOADED{ 2231748 };
 		constexpr std::uint32_t SUBGRAPH_PRIORITY = 7;
 
+		// ExtraDataList::OverrideEssential(bool) (+2929C0): the reference's own essential setting, over its base's (see SetDown).
+		constexpr REL::ID OVERRIDE_ESSENTIAL{ 2190653 };
+
 		// Stand-ins' rebuilt graphs set up here (SetUpRebuiltGraph): for the dev status line.
 		std::atomic<std::uint64_t> graphsSetUp{ 0 };
 
@@ -868,8 +871,19 @@ namespace Puppets
 		// As the engine downs an essential character: its life state, which plays the graph's bleedout start or stop through
 		// the default bleedout actions (Actor::SetLifeState), and, as our own player's while down (Downed.cpp), no recovery
 		// of its own.
+		// Essential through its reference's own override (ExtraDataList::OverrideEssential; true is 1, false 2, "not
+		// essential"): the engine's per-frame actor update (ProcessLists, +C63BC0, apart from the Actor::Update we replace)
+		// sets the essential and protected flags anew from that override or the base every frame, then stands an actor in
+		// essential-down that is neither back up at once (SetLifeState alive). The kEssential that SuppressBehavior sets
+		// was gone by then: laid down, the stand-in got up 20 ms later, every time (rig, 2026-10-20). Its base is a settler
+		// the world's own settlers share, never made essential itself.
+		static REL::Relocation<void (*)(RE::ExtraDataList*, bool)> overrideEssential{ OVERRIDE_ESSENTIAL };
+		if (a_actor->extraList) {
+			overrideEssential(a_actor->extraList.get(), a_down);
+		}
 		using BoolFlag = RE::Actor::BOOL_FLAGS;
 		if (a_down) {
+			a_actor->boolFlags.set(BoolFlag::kEssential);
 			a_actor->boolFlags.set(BoolFlag::kNoBleedoutRecovery);
 			a_actor->SetLifeState(RE::ACTOR_LIFE_STATE::kEssentialDown);
 		} else {
