@@ -148,11 +148,8 @@ namespace RemotePlayers
 		}
 
 		// Stand-ins to delete once their 3D is in (see DeferredDelete).
-		// A stand-in (or its light or frame) goes in two steps: disabled now, so the engine takes its 3D and
-		// collision out at its own safe point, and marked for deletion a moment later. Deleting in one
-		// step crashed a physics job that was still handling a collision with the actor
-		// (CharacterCollisionHandler -> Actor::GetDesiredProcessLevel -> Get3D on a freed actor).
-		constexpr auto DELETE_AFTER_DISABLE = 1s;
+		// A stand-in (or its light or frame) goes in two steps: disabled now, and marked for deletion a moment
+		// later (DeferredDelete::MayDelete), never both in one frame, not even before a save.
 		struct Grave
 		{
 			RE::ObjectRefHandle              actor;
@@ -2045,7 +2042,7 @@ namespace RemotePlayers
 		return npc && !npc->IsUnique();
 	}
 
-	void DespawnAll()
+	void DespawnAll(bool a_deleteNow)
 	{
 		// A frame of ours hidden while a friend wears theirs stays hidden: only its 3D was touched, which no save keeps.
 		// Shown here, it stood in the world again until the next check put it away, and counted as hidden anew.
@@ -2064,12 +2061,16 @@ namespace RemotePlayers
 			SaveGuard::Exclude(ref.get());
 			return false;
 		});
-		// Before a save: whatever is only disabled, or has been waiting for its 3D, is deleted now. (A
-		// reference whose 3D is still loading is left alone: deleting it crashes the loader when it
-		// finishes.) The save runs between frames, so no physics job holds any of them. None of them may
-		// be written into the save, deleted or not: a stand-in saved as deleted comes back from the save in
-		// no cell, and every later save crashed on it. A stand-in kept for the player's
-		// conversation goes too: should it be the speaker, Dialogue ends the conversation it leaves open.
+		// Before a save: whatever still stands in the graveyard is disabled now, and deleted by Update once
+		// DeferredDelete::MayDelete lets it (one disabled long enough ago goes now). Disabled and deleted in one
+		// step here, the physics jobs of the frames after the save still handled a collision with the freed
+		// stand-in and crashed (CharacterCollisionHandler -> Actor::GetDesiredProcessLevel -> Get3D, VM
+		// 2026-10-20, on `save` with a friend's stand-in just respawned beside the player). A reference whose 3D
+		// is still loading is left alone: deleting it crashes the loader when it finishes. None of them may be
+		// written into the save, deleted or not (a stand-in saved as deleted comes back from the save in no
+		// cell, and every later save crashed on it): Exclude drops each one's record. A stand-in kept for the
+		// player's conversation goes too: should it be the speaker, Dialogue ends the conversation it leaves open.
+		const auto now = Clock::now();
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
@@ -2077,16 +2078,21 @@ namespace RemotePlayers
 				Release(a_grave, nullptr);
 				return true;
 			}
-			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, Clock::now() - a_grave.spawnedAt)) {
+			if (!a_grave.disabledAt && !DeferredDelete::Safe(ref->Get3D() != nullptr, now - a_grave.spawnedAt)) {
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}
-			Release(a_grave, ref.get());
-			ref->Disable();
+			if (!a_grave.disabledAt) {
+				Disable(a_grave, ref.get(), now);
+			}
+			++flushedBeforeSave;
+			if (!a_deleteNow && !DeferredDelete::MayDelete(now - *a_grave.disabledAt)) {
+				SaveGuard::Exclude(ref.get());
+				return false;
+			}
 			ref->SetDelete(true);
 			SaveGuard::Exclude(ref.get());
 			deleting.push_back({ a_grave.actor, a_grave.id });
-			++flushedBeforeSave;
 			return true;
 		});
 	}
@@ -2354,7 +2360,7 @@ namespace RemotePlayers
 				Disable(a_grave, actor.get(), now);
 				return false;
 			}
-			if (now - *a_grave.disabledAt < DELETE_AFTER_DISABLE) {
+			if (!DeferredDelete::MayDelete(now - *a_grave.disabledAt)) {
 				return false;
 			}
 			actor->SetDelete(true);
