@@ -22,11 +22,49 @@ namespace CharacterBinding
 	// Before sessions were per character, one file held the session whatever the host played.
 	inline constexpr std::string_view LEGACY_FILE = "F4Multiplayer.session";
 
+	// The character a game's ID (BGSSaveLoadManager::currentPlayerID) names: its low 32 bits. Only they are the
+	// character's: a save's file name holds them and one letter after them (Quicksave0_D8F04348M4A6F..., the name in
+	// hex after the letter), '_' before the game had a plugin of a mod and 'M' since, and a load of that save gives the
+	// ID back with the letter in the high half ('M': 1). The game in memory keeps the high half it had: a character
+	// first loaded from a save made before its first mod is 0 there, and so is a coc character from the main menu, yet
+	// their quicksaves load back as 1. Comparing the whole ID took a quickload for another character (seen on the rig,
+	// 0 hosted, 0000000100000000 loaded) and restarted hosting, into a fresh session file.
+	[[nodiscard]] constexpr std::uint64_t Character(std::uint64_t a_playerId) { return a_playerId & 0xFFFFFFFFull; }
+
 	// The file of a_character's session. The dev channel's test rig uses files of its own, so its test
 	// kills never reach a real session (and it never reads one).
 	[[nodiscard]] inline std::string FileName(std::uint64_t a_character, bool a_dev)
 	{
 		return std::format("F4Multiplayer.{}{:016X}.session", a_dev ? "dev." : "", a_character);
+	}
+
+	// Up to 0.9.0-rc2 a session file was named after the whole ID, high half too: the newest such file of a_character
+	// (the same low half, another high half), if there is one and a_character has no file under its own name yet.
+	[[nodiscard]] inline std::optional<std::filesystem::path> FileUnderWholeId(const std::filesystem::path& a_folder, std::uint64_t a_character, bool a_dev)
+	{
+		const auto own = FileName(a_character, a_dev);
+		const auto prefix = std::format("F4Multiplayer.{}", a_dev ? "dev." : "");
+		const auto suffix = std::format("{:08X}.session", Character(a_character));
+		std::optional<std::filesystem::path>   found;
+		std::filesystem::file_time_type        newest{};
+		std::error_code                        error;
+		for (std::filesystem::directory_iterator it{ a_folder, error }, end; !error && it != end; it.increment(error)) {
+			const auto name = it->path().filename().string();
+			if (name.size() != prefix.size() + 16 + std::string_view{ ".session" }.size() || name == own || !name.starts_with(prefix) || !name.ends_with(suffix)) {
+				continue;
+			}
+			const auto high = std::string_view{ name }.substr(prefix.size(), 8);
+			if (high.find_first_not_of("0123456789ABCDEF") != std::string_view::npos || !it->is_regular_file(error)) {
+				continue;
+			}
+			const auto time = it->last_write_time(error);
+			if (!error && (!found || time > newest)) {
+				found = it->path();
+				newest = time;
+			}
+			error.clear();
+		}
+		return found;
 	}
 
 	// What Session is to do.
@@ -151,11 +189,19 @@ namespace CharacterBinding
 	inline std::filesystem::path PrepareFile(const std::filesystem::path& a_folder, std::uint64_t a_character, bool a_dev, std::uint64_t a_saveSession,
 		const std::function<void(const std::string&)>& a_log)
 	{
-		const auto path = a_folder / FileName(a_character, a_dev);
+		const auto      path = a_folder / FileName(a_character, a_dev);
+		std::error_code error;
+		if (!std::filesystem::exists(path, error)) {
+			if (const auto whole = FileUnderWholeId(a_folder, a_character, a_dev)) {
+				std::filesystem::rename(*whole, path, error);
+				a_log(error ? std::format("could not rename {} to {}: {}", whole->filename().string(), path.filename().string(), error.message()) :
+				              std::format("continuing the saved co-op session: {} is now {}", whole->filename().string(), path.filename().string()));
+				error.clear();
+			}
+		}
 		if (a_dev) {
 			return path;  // the rig never reads a real session
 		}
-		std::error_code error;
 		const auto      legacyPath = a_folder / LEGACY_FILE;
 		if (!std::filesystem::exists(legacyPath, error)) {
 			return path;
