@@ -178,11 +178,12 @@ namespace Session
 
 		// The loaded character's ID: the game makes it when the player confirms the name in the opening and
 		// keeps it in every save of that character. 0 is an ordinary ID (a character from coc at the main menu
-		// has it, and many saves do).
+		// has it, and many saves do). Its low half only (CharacterBinding::Character): a quickload of the same
+		// character can bring another high half.
 		std::uint64_t CurrentCharacter()
 		{
 			const auto saves = RE::BGSSaveLoadManager::GetSingleton();
-			return saves ? saves->currentPlayerID : 0;
+			return saves ? CharacterBinding::Character(saves->currentPlayerID) : 0;
 		}
 
 		// What CharacterBinding needs to know of us. Joining: set to reach a friend's server, whether in it, connecting
