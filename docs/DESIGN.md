@@ -594,10 +594,10 @@ else skips this: the player is never in those places.
   `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
 - VATS in real time (src/game/RealTime.cpp, src/game/RealTimeVats.h; `bRealTimeVats`): the game slows VATS's
   aiming through `VATS::magicTimeSlowdown` (0.04 while aiming, measured on 1.11.240; the global time multiplier
-  and its target follow it; Jet's slow motion is taken to use it too, not measured), and a shot playing out
-  through the VATS camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time multiplier under
-  1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the slowdown was
-  already on the frame before VATS came up (Jet or the like). Tutorial hints: the game's
+  and its target follow it; Jet sets the same slowdown to 0.3), and a shot playing out through the VATS
+  camera (0.001 or the shot's own). While VATS is up (its menu, or a shot playing out) a global time
+  multiplier under 1 is set back to 1 each frame (`BSTimer::SetGlobalTimeMultiplier(1, true)`), unless the
+  slowdown was already on the frame before VATS came up (Jet or the like). Tutorial hints: the game's
   `bShowTutorials:Interface`, which its help messages read each time, is held off in a session
   (Background::Switch) and put back after; its tutorial message boxes are not gated by it.
 - Menus still pause: clearing `kPausesGame` as a menu is made (wrapping its `UIMenuEntry::create`) was tried

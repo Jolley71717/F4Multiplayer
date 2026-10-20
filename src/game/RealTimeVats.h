@@ -6,7 +6,7 @@
 // while VATS is up. Free of the game, so it is tested; game/RealTime.cpp does it.
 //
 // The game slows VATS's aiming through its "magic" time slowdown (VATS::magicTimeSlowdown, 0.04 while aiming,
-// measured on 1.11.240), which Jet and the like are taken to use too (not measured). So Jet is told by the slowdown
+// measured on 1.11.240), the same one Jet sets (0.3). So Jet is told by the slowdown
 // as it was before VATS came up: on Jet, VATS is left as the game has it.
 namespace RealTimeVats
 {
