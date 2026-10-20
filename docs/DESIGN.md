@@ -866,7 +866,11 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   (`DownRules::StandInDown`, tested; `Puppets::SetDown`): their stand-in's life state goes to
   `kEssentialDown` with `kNoBleedoutRecovery`, which plays its own graph's downed pose (in a power armor
   frame too, once its switch into the frame is done), and it is still put at their spot each update but
-  told no locomotion, aim or draw, so the revive range is measured where they lie. Up again, its life
+  told no locomotion, aim or draw, so the revive range is measured where they lie. The reference's own
+  essential override is set while it lies (`ExtraDataList::OverrideEssential`; "overridden not essential"
+  once up): the engine's per-actor update in ProcessLists recomputes the essential flag every frame from
+  that override or the base, a settler shared with world NPCs, and stands a non-essential actor in
+  `kEssentialDown` up (rig 2026-10-20: up 20 ms after each lie-down without it). Up again, its life
   state goes back to alive (the engine's get-up); still down 4 s later it is replaced, standing. Found up
   again while they are down, it is laid down again 2 s on. Laid down by us, it is not replaced as broken.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
