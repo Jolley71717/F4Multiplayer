@@ -36,6 +36,7 @@
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/StateBuffer.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
@@ -670,15 +671,25 @@ namespace DevCommands
 		}
 
 		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | stamp wall|frame|previous |
-		// place wall|frame]: friends' movement states come in as over a worse connection (NetSim.h): a LAN rig drawn as over
-		// Steam's relays, for the trace. No arguments: as it is. stamp, place: what our states are stamped with and where
-		// stand-ins are placed on their paths (FrameClock.h), to measure one against another.
+		// place wall|frame | lead <percent>]: friends' movement states come in as over a worse connection (NetSim.h): a LAN
+		// rig drawn as over Steam's relays, for the trace. No arguments: as it is. stamp, place: what our states are stamped
+		// with and where stand-ins are placed on their paths (FrameClock.h); lead: the quantile of recent leads stand-ins are
+		// drawn behind by (StateBuffer::LEAD_QUANTILE; 100 is the furthest); to measure one against another.
 		std::string NetSimCmd(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
 			const auto describe = [] {
-				return std::format("{} stamp={} place={}", RemotePlayers::DescribeNetSim(), FrameClock::StampName(FrameClock::GetStamp()), FrameClock::PlaceName(FrameClock::GetPlace()));
+				return std::format("{} stamp={} place={} lead={:.0f}", RemotePlayers::DescribeNetSim(), FrameClock::StampName(FrameClock::GetStamp()),
+					FrameClock::PlaceName(FrameClock::GetPlace()), StateBuffer::leadQuantile.load(std::memory_order_relaxed) * 100.0f);
 			};
+			if (args.size() == 2 && args[0] == "lead") {
+				const auto percent = ParseFloat(args[1]);
+				if (!percent || *percent < 50.0f || *percent > 100.0f) {
+					return "error: usage: netsim lead <50-100>";
+				}
+				StateBuffer::leadQuantile.store(*percent / 100.0f, std::memory_order_relaxed);
+				return describe();
+			}
 			if (args.size() == 2 && args[0] == "stamp") {
 				if (args[1] == "wall") {
 					FrameClock::SetStamp(FrameClock::Stamp::kWall);
@@ -710,7 +721,7 @@ namespace DevCommands
 				const auto lag = number(0), jitter = number(1), loss = number(2), spike = number(3), spikes = number(4);
 				if (!lag || !jitter || !loss || !spike || !spikes || *lag < 0.0f || *lag > 2000.0f || *jitter < 0.0f || *jitter > 2000.0f || *loss < 0.0f || *loss > 100.0f || *spike < 0.0f ||
 					*spike > 2000.0f || *spikes < 0.0f || *spikes > 100.0f) {
-					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | stamp wall|frame|previous | place wall|frame]";
+					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | stamp wall|frame|previous | place wall|frame | lead <percent>]";
 				}
 				settings.lagMs = static_cast<int>(*lag);
 				settings.jitterMs = static_cast<int>(*jitter);
