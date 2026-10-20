@@ -87,6 +87,11 @@ namespace Config
 		// Menus). Their stand-in raises its Pip-Boy and its name tag says so either way.
 		bool menuIcons = false;
 
+		// Friends on the Pip-Boy's world and local maps, in their color and shape (bFriendsOnMap; FriendMap), with their
+		// name beside them (bFriendsOnMapNames).
+		bool friendsOnMap = true;
+		bool friendsOnMapNames = true;
+
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 
