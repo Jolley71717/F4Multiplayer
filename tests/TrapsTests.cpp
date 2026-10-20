@@ -26,6 +26,8 @@ namespace
 	constexpr std::uint32_t MINE = 0x00181819;      // a frag mine placed in the Commonwealth
 	constexpr std::uint32_t TRIPWIRE = 0x0010BE7F;  // a tripwire, linked to a grenade bouquet
 	constexpr std::uint32_t BOUQUET = 0x0010BE80;
+	constexpr std::uint32_t BEAR = 0x020385EB;  // bear traps in a Far Harbor quarry
+	constexpr std::uint32_t BEAR2 = 0x020385EA;
 	constexpr std::uint64_t HOST_IDENTITY = 0x7AB5ull;
 
 	std::vector<std::uint8_t> StateAt(std::uint32_t a_sequence, float a_x, float a_y)
@@ -63,12 +65,12 @@ namespace
 		std::map<std::uint32_t, Action>                          done;
 
 		// The watcher's look: a report for each change, as Traps::Poll makes it.
-		void Look(bool a_takenByUs = false)
+		void Look(bool a_takenByUs = false, bool a_settled = true)
 		{
 			for (auto& [id, trap] : traps) {
 				const auto it = known.find(id);
 				const auto session = it != known.end() ? std::optional{ it->second.state.state } : std::nullopt;
-				if (const auto state = TrapRules::Change(trap.kind, trap.last, trap.phase, a_takenByUs, session)) {
+				if (const auto state = a_settled ? TrapRules::Change(trap.kind, trap.last, trap.phase, a_takenByUs, session) : std::nullopt) {
 					reports.push_back(Trap(id, *state));
 					TrapRules::Take(known, reports.back(), false, Clock::now());
 					known[id].applied = true;
@@ -151,6 +153,17 @@ TEST("traps: a script's state reads as the trap's phase, whatever its case")
 	CHECK(TrapRules::ScriptOf(Kind::kBearTrap) == "DLC03:TrapBear");
 	CHECK(TrapRules::SCRIPTS.back().kind == Kind::kTrap);
 	CHECK(TrapRules::ScriptOf(Kind::kMine).empty());
+}
+
+TEST("traps: an activator with no trap script bound yet is looked at again until it has been loaded a while")
+{
+	const auto t0 = Clock::now();
+	CHECK(!TrapRules::ClassFinal(Kind::kNone, true, t0, t0));  // its cell just loaded: its scripts may not be bound yet
+	CHECK(!TrapRules::ClassFinal(Kind::kNone, true, t0, t0 + 9s));
+	CHECK(TrapRules::ClassFinal(Kind::kNone, true, t0, t0 + 10s));  // long enough: no trap
+	CHECK(TrapRules::ClassFinal(Kind::kTrap, true, t0, t0));        // a trap is known at once
+	CHECK(TrapRules::ClassFinal(Kind::kNone, false, t0, t0));       // not an activator: never a scripted trap
+	CHECK(TrapRules::ClassFinal(Kind::kMine, false, t0, t0));
 }
 
 TEST("traps: only a trap seen armed is reported, once, and a mine gone went off unless our player picked it up")
@@ -272,6 +285,27 @@ TEST("traps: a tripwire the host trips sets off the friend's, its bouquet goes t
 	// What that did in Bob's game is no news.
 	bob.Look();
 	CHECK(bob.reports.empty());
+}
+
+TEST("traps: what a trap does in its first moments loaded is its script setting it up, not news")
+{
+	Game host;
+	host.traps[BEAR] = { Kind::kBearTrap };
+	host.Look(false, false);  // found open
+	host.traps[BEAR].phase = Phase::kFired;
+	host.Look(false, false);  // closed by its OnLoad a moment later
+	CHECK(host.reports.empty());
+	host.Look();  // settled: closed is how it was
+	CHECK(host.reports.empty());
+
+	// Once settled, a snap is reported.
+	host.traps[BEAR2] = { Kind::kBearTrap };
+	host.Look();
+	host.traps[BEAR2].phase = Phase::kFired;
+	host.Look();
+	REQUIRE(host.reports.size() == 1);
+	CHECK(host.reports[0].refId == BEAR2);
+	CHECK(host.reports[0].state == TS::kFired);
 }
 
 TEST("traps: a mine a friend set off while we were elsewhere is spent quietly when we come by, and stays so after a load")

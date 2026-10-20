@@ -44,7 +44,14 @@ namespace Traps
 			std::uint32_t     from = 0;
 		};
 
-		std::unordered_map<std::uint32_t, Kind>              classified;  // references looked at while loaded (kNone: no trap)
+		struct Class
+		{
+			Kind              kind = Kind::kNone;
+			Clock::time_point firstLooked{};
+			bool              final = false;  // ClassFinal: not looked at again until the next load
+		};
+
+		std::unordered_map<std::uint32_t, Class>             classified;  // references looked at while loaded (kNone: no trap)
 		std::unordered_map<std::uint32_t, Watch>             watched;
 		std::unordered_map<std::uint32_t, TrapRules::Known>  known;  // the session's spent traps
 		std::unordered_map<std::uint32_t, Clock::time_point> activatedByUs;
@@ -98,34 +105,32 @@ namespace Traps
 			if (!base->Is(RE::ENUM_FORM_ID::kACTI)) {
 				return Kind::kNone;
 			}
-			const auto game = RE::GameVM::GetSingleton();
-			const auto vm = game ? game->GetVM() : nullptr;
-			if (!vm) {
-				return Kind::kNone;
-			}
-			const auto& handles = vm->GetObjectHandlePolicy();
-			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), a_ref);
-			if (handle == handles.EmptyHandle()) {
-				return Kind::kNone;
-			}
-			std::size_t best = TrapRules::SCRIPTS.size();
-			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
-				for (RE::BSTSmartPointer type{ a_object ? a_object->type.get() : nullptr }; type; type = type->parentTypeInfo) {
-					const char* name = type->GetName();
-					if (!name) {
-						break;
-					}
-					for (std::size_t i = 0; i < best; ++i) {
-						if (TrapRules::SameName(name, TrapRules::SCRIPTS[i].name)) {
-							best = i;
-							break;
-						}
-					}
+			// Each trap script looked up by name (FindBoundObject finds one that extends it too), not by walking the bound
+			// scripts (ForEachBoundObject): the walk showed only one script of a grenade bouquet a settlement can build,
+			// which has workshopobjectscript beside its trap script, and which one changed from one run to the next.
+			for (const auto& script : TrapRules::SCRIPTS) {
+				if (ScriptObject(a_ref, script.name)) {
+					return script.kind;
 				}
-				return RE::BSContainer::ForEachResult::kContinue;
-			} };
-			vm->ForEachBoundObject(handle, visit);
-			return best < TrapRules::SCRIPTS.size() ? TrapRules::SCRIPTS[best].kind : Kind::kNone;
+			}
+			return Kind::kNone;
+		}
+
+		// Classify, remembered: once it is known (ClassFinal), it isn't looked at again until the next load.
+		Kind KindOf(RE::TESObjectREFR* a_ref, Clock::time_point a_now)
+		{
+			const auto id = a_ref->GetFormID();
+			auto       it = classified.find(id);
+			if (it != classified.end() && it->second.final) {
+				return it->second.kind;
+			}
+			if (it == classified.end()) {
+				it = classified.emplace(id, Class{ Kind::kNone, a_now, false }).first;
+			}
+			const auto base = a_ref->GetObjectReference();
+			it->second.kind = Classify(a_ref);
+			it->second.final = TrapRules::ClassFinal(it->second.kind, base && base->Is(RE::ENUM_FORM_ID::kACTI), it->second.firstLooked, a_now);
+			return it->second.kind;
 		}
 
 		bool CellAttached(std::uint32_t a_cell)
@@ -303,16 +308,13 @@ namespace Traps
 				if (ref->IsDeleted() || ref->IsDisabled() || !ref->Get3D() || !ref->GetParentCell()) {
 					continue;
 				}
-				auto it = classified.find(id);
-				if (it == classified.end()) {
-					it = classified.emplace(id, Classify(ref)).first;
-				}
-				if (it->second == Kind::kNone) {
+				const auto kind = KindOf(ref, a_now);
+				if (kind == Kind::kNone) {
 					continue;
 				}
 				const auto cell = ref->GetParentCell();
 				Watch watch;
-				watch.kind = it->second;
+				watch.kind = kind;
 				watch.seenSince = a_now;
 				watch.at = ref->data.location;
 				watch.cell = cell->GetFormID();
@@ -344,7 +346,8 @@ namespace Traps
 				const auto entry = known.find(id);
 				const auto session = entry != known.end() ? std::optional{ entry->second.state.state } : std::nullopt;
 				const bool takenByUs = activatedByUs.contains(id);
-				if (const auto state = TrapRules::Change(watch.kind, watch.last, phase, takenByUs, session)) {
+				const bool settled = settledWorld && TrapRules::Settled(watch.seenSince, *inWorldSince, a_now);
+				if (const auto state = settled ? TrapRules::Change(watch.kind, watch.last, phase, takenByUs, session) : std::nullopt) {
 					Protocol::TrapState report{ 0, id, *state, watch.interior, watch.worldspace, watch.at.x, watch.at.y, watch.at.z };
 					outgoing.push_back(Protocol::Encode(report));
 					TrapRules::Take(known, report, false, a_now);
@@ -429,15 +432,10 @@ namespace Traps
 		if (!a_ref) {
 			return false;
 		}
-		const auto id = a_ref->GetFormID();
-		if (const auto it = classified.find(id); it != classified.end()) {
-			return it->second != Kind::kNone && it->second != Kind::kMine;
-		}
 		if (!a_ref->Get3D() || a_ref->IsDeleted()) {
 			return false;
 		}
-		const auto kind = Classify(a_ref);
-		classified.emplace(id, kind);
+		const auto kind = KindOf(a_ref, Clock::now());
 		return kind != Kind::kNone && kind != Kind::kMine;
 	}
 
@@ -505,5 +503,61 @@ namespace Traps
 				watch.at.z, entry == known.end() ? "" : std::format(" session: {} by player {}{}", entry->second.state.state, entry->second.state.playerId, entry->second.applied ? " (done)" : ""));
 		}
 		return out.empty() ? "no traps watched" : out;
+	}
+
+	std::string Why(std::uint32_t a_ref)
+	{
+		const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ref);
+		if (!ref) {
+			return std::format("{:08X}: no such reference", a_ref);
+		}
+		const auto  base = ref->GetObjectReference();
+		std::string out = std::format("{:08X} base={:08X} type={} 3d={} disabled={}", a_ref, base ? base->GetFormID() : 0, base ? static_cast<int>(base->GetFormType()) : -1,
+			ref->Get3D() != nullptr, ref->IsDisabled());
+		if (const auto it = classified.find(a_ref); it != classified.end()) {
+			out += std::format(" taken for {} ({}, first looked {} s ago)", TrapRules::NameOf(it->second.kind), it->second.final ? "final" : "looked at again",
+				std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - it->second.firstLooked).count());
+		} else {
+			out += " not looked at";
+		}
+		out += watched.contains(a_ref) ? ", watched" : ", not watched";
+		const auto game = RE::GameVM::GetSingleton();
+		const auto vm = game ? game->GetVM() : nullptr;
+		if (!vm) {
+			return out + "; no script VM";
+		}
+		const auto& handles = vm->GetObjectHandlePolicy();
+		const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+		if (handle == handles.EmptyHandle()) {
+			return out + "; no script handle";
+		}
+		// The bound scripts walked twice, the walker answering kContinue, then kStop (how many each walk sees), and each trap
+		// script looked up by name.
+		std::string scripts;
+		int         seen = 0;
+		auto        result = RE::BSContainer::ForEachResult::kContinue;
+		const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+			++seen;
+			if (result == RE::BSContainer::ForEachResult::kContinue) {
+				std::string chain;
+				for (RE::BSTSmartPointer type{ a_object ? a_object->type.get() : nullptr }; type; type = type->parentTypeInfo) {
+					const char* name = type->GetName();
+					chain += std::format("{}{}", chain.empty() ? "" : "<", name ? name : "?");
+				}
+				const char* state = a_object ? a_object->currentState.c_str() : nullptr;
+				scripts += std::format("{}{} [{}]", scripts.empty() ? "" : ", ", chain, state ? state : "");
+			}
+			return result;
+		} };
+		vm->ForEachBoundObject(handle, visit);
+		const int seenContinuing = std::exchange(seen, 0);
+		result = RE::BSContainer::ForEachResult::kStop;
+		vm->ForEachBoundObject(handle, visit);
+		std::string found;
+		for (const auto& script : TrapRules::SCRIPTS) {
+			found += std::format(" {}={}", script.name, ScriptObject(ref, script.name) ? "bound" : "no");
+		}
+		return out + std::format("; handle {:X}, walk (kContinue) saw {}: {}; walk (kStop) saw {}; looked up:{}", handle, seenContinuing, scripts.empty() ? "none" : scripts, seen,
+			found);
 	}
 }

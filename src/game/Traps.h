@@ -54,4 +54,7 @@ namespace Traps
 
 	// For the dev commands: the traps we watch, one line each.
 	std::string List();
+
+	// For the dev commands: what a loaded reference was taken for, and the scripts bound to it now.
+	std::string Why(std::uint32_t a_ref);
 }

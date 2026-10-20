@@ -1071,9 +1071,14 @@ namespace DevCommands
 			return Drops::List();
 		}
 
-		// traps: the world traps around our player we watch, and what the session holds of them (Traps).
-		std::string TrapsList(std::string_view)
+		// traps [refHex]: the world traps around our player we watch, and what the session holds of them (Traps); with a
+		// reference, what it was taken for and the scripts bound to it now.
+		std::string TrapsList(std::string_view a_args)
 		{
+			if (!a_args.empty()) {
+				const auto id = ParseHex(a_args);
+				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";
+			}
 			return Traps::List() + " | " + Traps::Describe();
 		}
 

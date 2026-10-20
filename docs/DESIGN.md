@@ -505,9 +505,13 @@ trap made at runtime (a mine a raider threw, a trap built in a settlement), whic
 There is no baseball pitcher in the base game or its DLCs (it is Contraptions Workshop's, a
 workshop-built trap, runtime). Each game watches the traps loaded around its player four times a second
 (found once a second within 12000 units): a scripted trap by its script's state (`Object::currentState`,
-the most specific of the listed scripts bound to it, through `ObjectTypeInfo::parentTypeInfo`), a mine
+each listed script looked up by name with `FindBoundObject`, which finds one that extends it too: walking
+the bound scripts with `ForEachBoundObject` showed one script of an activator that has two, which one
+changing from run to run; an activator with none of them is looked at again once a second until it has
+been loaded 10 s, `TrapRules::ClassFinal`), a mine
 by whether it is still there (deleted, disabled or freed while its cell is attached: gone). Only a trap
-seen armed is reported: going off, disarmed, or gone (a mine our player activated in the last 3 s was
+seen armed, once it has settled (loaded, its player in the world, 2 s: a Far Harbor bear trap placed shut
+reads open until its OnLoad shuts it), is reported: going off, disarmed, or gone (a mine our player activated in the last 3 s was
 picked up: kTaken; a bear trap that snapped and then went was taken). Each kind's states, read from the
 scripts on 1.11.240 (tools: the pex dump of `Fallout4 - Misc.ba2` and `DLCCoast - Main.ba2`):
 
@@ -537,7 +541,8 @@ report them as our player's, or they would go off twice. While a trap set off fo
 our copies near it stay ghosts (BlastShield, renewed each look). A mine picked up was not shared before:
 the pickup pairing matches the activated reference's base (the mine's projectile) with the item added
 (its weapon), which never match. `traps=` watched/known, `sent=`, `got=`, `live=`, `quiet=`,
-`disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones.
+`disarmed=`, `taken=`, `blasts=` (explosions left to the trap); the dev channel's `traps` lists the watched ones, and
+`traps <ref>` says how one was classified.
 
 Remote changes are applied only while the player is in the world (no loading screen, not at the main
 menu) and to loaded references; everything else waits and is retried.

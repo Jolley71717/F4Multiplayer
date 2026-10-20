@@ -214,7 +214,19 @@ namespace TrapRules
 		return a_live ? Action::kFireLive : Action::kFireQuiet;
 	}
 
+	// A trap that has only just loaded is left alone (Decide), and what it does is not reported: its script's OnLoad may
+	// still be setting it up (a bear trap in DLC03NorthwoodRidgeQuarry01, 020385EB, read open when found and closed a
+	// moment later with nobody near). What it is once settled is taken as how it was.
 	inline constexpr auto SETTLE = std::chrono::seconds(2);
+
+	// An activator found with none of the trap scripts bound may only not have them bound yet (its cell has just loaded):
+	// it is looked at again, once a second, until it has been loaded this long. Anything else is known at the first look.
+	inline constexpr auto BIND_WAIT = std::chrono::seconds(10);
+
+	constexpr bool ClassFinal(Kind a_kind, bool a_activator, Clock::time_point a_firstLooked, Clock::time_point a_now)
+	{
+		return a_kind != Kind::kNone || !a_activator || a_now - a_firstLooked >= BIND_WAIT;
+	}
 
 	constexpr bool Settled(Clock::time_point a_seenSince, Clock::time_point a_inWorldSince, Clock::time_point a_now)
 	{
