@@ -32,6 +32,8 @@ namespace Party
 
 	// What the hotkeys do, also reachable from dev commands.
 	void ShowPlayerList();
+	// Each friend's distance and direction on the HUD (the iKeyWhere hotkey).
+	void ShowWhere();
 	void PickTeleportTarget();
 	void TeleportToTarget();
 	void SendPing();
