@@ -22,6 +22,7 @@
 #include "game/SaveLoadHold.h"
 #include "game/HavokGuard.h"
 #include "game/TextureWait.h"
+#include "game/WeaponFire.h"
 #include "net/Session.h"
 #include "Text.h"
 
@@ -301,12 +302,16 @@ namespace
 			RunBeforeSaveOrLoad(
 				[] {
 					Session::OnBeforeSaveOrLoad();
+					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
 				},
 				"save");
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
+			if (gameDataReady && OnMainThread()) {
+				WeaponFire::AfterSave();
+			}
 			EndSaveOrLoad(SaveLoadHold::Global().Newest(), "save");
 			break;
 		case F4SE::MessagingInterface::kPostLoadGame:

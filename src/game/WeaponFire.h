@@ -70,6 +70,13 @@ namespace WeaponFire
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
 
+	// Before a save, after EndAllShields: the console's setghost 0 lands a frame after it is sent, so the ghosts it is
+	// still to take off have their flag turned off for the save itself (a ghost saved stayed one for good in the game
+	// that loaded it). AfterSave, once the save is written, turns it back on and sends setghost 0 again, which the
+	// console leaves alone on a flag that reads off already. Main thread.
+	void HideGhostsFromSave();
+	void AfterSave();
+
 	// Dev (handthrowable on|off, off at every start): the grenade is shown in the hand of a stand-in replaying a
 	// friend's throw, from its wind-up to its release (HandThrowable.h). Main thread, but for HandThrowables(), which
 	// the animation hook reads.
