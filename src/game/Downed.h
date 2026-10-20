@@ -34,6 +34,9 @@ namespace Downed
 	// The essential flag we set must never be written into a save.
 	void OnBeforeSave();
 
+	// The save is written: still down, the flags go back on at once. Main thread (a save's message comes there).
+	void OnAfterSave();
+
 	// A save was loaded: whatever state we were in belongs to the old game.
 	void OnGameLoaded();
 

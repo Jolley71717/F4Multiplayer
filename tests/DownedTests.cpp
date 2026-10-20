@@ -37,6 +37,16 @@ namespace
 		int  standUpFrames = 30;
 		bool fullHealth = false;  // the game stood them up with full health
 		int  trims = 0;
+		bool putDownIgnored = false;  // the engine's put-down does not take
+		int  putDowns = 0;
+
+		// The game stands them up on a path the stay-down flag does not hold back.
+		void StoodUpByGame()
+		{
+			if (down && !dead) {
+				down = false;
+			}
+		}
 
 		void LethalHit()
 		{
@@ -64,6 +74,9 @@ namespace
 		int               kills = 0;
 		int               lastRevives = 0;
 		int               revivesBack = 0;
+		int               stoodUp = 0;
+		int               backDown = 0;
+		int               stayedUp = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -107,6 +120,15 @@ namespace
 					body.standUpIn = -1;
 				}
 			}
+			if (step.putDown) {
+				++body.putDowns;
+				if (!body.putDownIgnored && !body.dead) {
+					body.down = true;
+				}
+			}
+			stoodUp += step.stoodUp;
+			backDown += step.backDown;
+			stayedUp += step.stayedUp;
 			if (step.trimHealth) {
 				body.fullHealth = false;
 				++body.trims;
@@ -393,6 +415,135 @@ TEST("downed: a save cleared the flags while down; they are set again next frame
 	CHECK(game.body.essential);
 	CHECK(game.body.stayDown);
 	CHECK(game.self.Now() == Phase::kDown);
+}
+
+TEST("downed: the game standing the player up while they wait for help puts them down again, and a friend can still help")
+{
+	// Seen 2026-10-19: downed in a pile of clutter, the host was stood up by the game, and their revive state was lost.
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 5s);
+	game.body.StoodUpByGame();
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.stoodUp == 1);
+	CHECK(game.body.putDowns == 1);
+	CHECK(game.body.down);  // put down again
+	CHECK(game.body.stayDown);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.self.WaitsForHelp());
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.backDown == 1);
+	CHECK(game.downNotices == 1);  // the same down: no second "You're down!"
+	CHECK(game.self.downs == 1);
+	CHECK(game.self.standUps == 1);
+
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.trims == 1);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed: stood up again and again while down, the bleed-out time runs on from the first down")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	const auto downAt = now;
+	for (int frame = 0; now - downAt < DownRules::BLEEDOUT_TIME + 3s; ++frame) {
+		if (frame % 10 == 5) {
+			game.body.StoodUpByGame();  // every second, a pile of clutter jostling the player
+		}
+		game.Frame(now);
+		now += FRAME;
+	}
+	CHECK(game.self.standUps >= 40);
+	CHECK(game.self.bleedOuts == 1);
+	CHECK(game.body.dead);
+	CHECK(game.self.revives == 0);
+	CHECK(game.downNotices == 1);
+	CHECK(game.stayedUp == 0);
+}
+
+TEST("downed: a put-down the game never takes is tried every half second, and after 5 s the player is left up")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.putDownIgnored = true;
+	game.body.StoodUpByGame();
+	game.Run(now, DownRules::PUT_DOWN_GIVE_UP + 1s);
+	CHECK(game.stayedUp == 1);
+	CHECK(game.body.putDowns == 10);  // 5 s, every 500 ms
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.self.WaitsForHelp());
+	CHECK(!game.body.stayDown);
+	CHECK(!game.body.dead);
+	CHECK(game.kills == 0);
+	// Up again: a lethal hit knocks them down as usual.
+	game.body.putDownIgnored = false;
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.downNotices == 2);
+}
+
+TEST("downed: stood up as the last friend leaves, the player is left up, not killed")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.withFriends = false;
+	game.body.StoodUpByGame();
+	game.Run(now, 2s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.putDowns == 0);
+	CHECK(!game.body.dead);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed: dying for a moment while down is waited out, with no put-down and no second down")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.down = false;  // a hit the game is still turning into a down
+	game.body.dead = true;
+	game.Run(now, 1s);
+	CHECK(game.body.putDowns == 0);
+	CHECK(game.self.Now() == Phase::kDown);
+	game.body.dead = false;
+	game.body.down = true;
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.downNotices == 1);
+	CHECK(game.backDown == 1);
+}
+
+TEST("downed: a real death while down is up (dead) after the wait, and the next life starts over")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.down = false;
+	game.body.dead = true;
+	game.Run(now, DownRules::PUT_DOWN_GIVE_UP + 1s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.putDowns == 0);
+	CHECK(!game.self.IsDown());
 }
 
 TEST("downed: a save loaded with the player down stands them up as if helped")
