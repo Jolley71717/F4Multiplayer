@@ -81,6 +81,8 @@ party.called = Ping: {what} ({where})
 party.ping_here = over here!
 party.ping_you = you
 party.ping_something = something
+party.tag_pipboy = {name} [Pip-Boy]
+party.tag_menu = {name} [in a menu]
 party.killed = {killer} killed {victim}
 party.xp = +{xp} XP from your party's kills
 

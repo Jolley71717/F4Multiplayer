@@ -25,8 +25,9 @@ namespace Protocol
 	// items (settlement-sync), 39 LooksMenu skins and overlays on the face (looksmenu-faces), 40 damage over time
 	// (dot-damage-sync), 41 moved objects (moved-objects), 42 host controls (host-controls), 43 pings of what is under
 	// the crosshair (better-pings), 45 the Minutemen's shared settlement requests (shared-radiants), 46 whether
-	// workshop pieces are powered (settlement-power). 44 was a trial bundle's. The next change takes 48.
-	inline constexpr std::uint16_t VERSION = 47;
+	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
+	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
+	inline constexpr std::uint16_t VERSION = 48;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -1068,6 +1069,21 @@ namespace Protocol
 		}
 	};
 
+	// The kind of menu a player is in (PlayerStatus::menu, protocol 48), for their stand-in in friends' games: the
+	// Pip-Boy, which it raises, or another menu; either shows an icon over it. Only which kind, never what is in it.
+	namespace MenuKind
+	{
+		inline constexpr std::uint8_t kNone = 0;
+		inline constexpr std::uint8_t kPipboy = 1;
+		inline constexpr std::uint8_t kPaused = 2;     // the pause menu, the console, sleeping or waiting, a level up
+		inline constexpr std::uint8_t kLooting = 3;    // a container, a corpse, or trading
+		inline constexpr std::uint8_t kTerminal = 4;   // a terminal
+		inline constexpr std::uint8_t kCrafting = 5;   // a workbench, cooking, a power armor station, or building (workshop mode)
+		inline constexpr std::uint8_t kTalking = 6;    // a conversation
+		inline constexpr std::uint8_t kOther = 7;      // another menu that holds the player (a lock, a message box, the looks menu)
+		inline constexpr std::uint8_t kMax = kOther;
+	}
+
 	// playerId is ignored client -> server in all of these.
 	struct PlayerStatus
 	{
@@ -1088,6 +1104,8 @@ namespace Protocol
 		std::optional<ParkedFrame> parked;
 		// The furniture they are in or getting into (protocol 31); none while they stand, and in power armor.
 		std::optional<Seat> seat;
+		// The menu they are in (MenuKind; protocol 48).
+		std::uint8_t menu = MenuKind::kNone;
 
 		bool operator==(const PlayerStatus&) const = default;
 	};
@@ -3089,6 +3107,7 @@ namespace Protocol
 			w.F32(seat.y);
 			w.F32(seat.z);
 		}
+		w.U8(a_msg.menu);
 		return w.Data();
 	}
 
@@ -3130,9 +3149,10 @@ namespace Protocol
 			seat.z = r.F32();
 			msg.seat = seat;
 		}
+		msg.menu = r.U8();
 		// A frame is parked, and a seat is told, only while they are out of power armor (a frame is furniture too, but
 		// a frame's own path handles that).
-		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
+		if (!r.Ok() || !r.AtEnd() || msg.health > 100 || msg.menu > MenuKind::kMax || (msg.powerArmorFrameRef != 0 && !IsShareableRef(msg.powerArmorFrameRef)) ||
 			(msg.parked && (msg.powerArmor || !msg.parked->Valid())) || (msg.seat && (msg.powerArmor || !msg.seat->Valid()))) {
 			return std::nullopt;
 		}

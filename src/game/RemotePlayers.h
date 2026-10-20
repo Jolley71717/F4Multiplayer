@@ -33,6 +33,9 @@ namespace RemotePlayers
 
 	// Their Pip-Boy light is on (from their status): a light follows their stand-in.
 	void SetLight(std::uint32_t a_id, bool a_on);
+	// The kind of menu they are in (Protocol::MenuKind, from their status): in the Pip-Boy their stand-in raises its own
+	// (StandInPipboy), and in any menu its name tag says so and an icon hangs over it (MenuIcons).
+	void SetMenu(std::uint32_t a_id, std::uint8_t a_menu);
 	// Their power armor state, the base form of the frame they are in and, when every game has that frame (a
 	// pre-placed one), its reference (else 0); out of it, the frame they got out of last, where it stands in their world
 	// (a copy is shown there).
@@ -56,6 +59,7 @@ namespace RemotePlayers
 		std::string                          name;
 		std::optional<Protocol::PlayerState> state;  // latest received
 		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
+		std::uint8_t                         menu = 0;         // the menu they are in (Protocol::MenuKind), from their status
 	};
 
 	[[nodiscard]] std::vector<Info> List();

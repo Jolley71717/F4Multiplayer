@@ -91,6 +91,9 @@ namespace Text
 		{ "party.ping_here", "over here!" },
 		{ "party.ping_you", "you" },
 		{ "party.ping_something", "something" },
+		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
+		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
+		{ "party.tag_menu", "{name} [in a menu]" },
 		{ "party.killed", "{killer} killed {victim}" },
 		{ "party.xp", "+{xp} XP from your party's kills" },
 

@@ -538,8 +538,8 @@ TEST("protocol: PlayerStatus round trips the downed, opening, light and power ar
 				const PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 100, 65535, downed, opening, light, armor, armor ? 0x0017F6E4u : 0u, armor ? REF_B : 0u };
 				const auto         packet = Encode(in, type);
 				// downed is bit 0, opening bit 1, the Pip-Boy light bit 2 and power armor bit 3 of the flags byte, then the
-				// frame base and the frame reference.
-				CHECK(packet[packet.size() - 9] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
+				// frame base, the frame reference and the menu (protocol 48).
+				CHECK(packet[packet.size() - 10] == ((downed ? 1 : 0) | (opening ? 2 : 0) | (light ? 4 : 0) | (armor ? 8 : 0)));
 				const auto out = DecodePlayerStatus(packet);
 				REQUIRE(out);
 				CHECK(*out == in);
@@ -559,11 +559,42 @@ TEST("protocol: PlayerStatus reads only the flag bits it knows")
 	w.U8(0xCE);  // opening set, downed clear, unknown bits set (bit 4, a parked frame, and bit 5, a seat, would have their fields follow)
 	w.U32(0);  // no frame
 	w.U32(0);  // no frame reference
+	w.U8(MenuKind::kNone);
 	const auto out = DecodePlayerStatus(w.Data());
 	REQUIRE(out);
 	CHECK(!out->downed);
 	CHECK(out->opening);
 	CHECK(out->powerArmor);  // bit 3 is power armor now
+}
+
+TEST("protocol: PlayerStatus carries the kind of menu the player is in, and refuses a kind it doesn't know")
+{
+	for (const auto type : { MT::kReportStatus, MT::kPlayerStatus }) {
+		for (std::uint8_t menu = MenuKind::kNone; menu <= MenuKind::kMax; ++menu) {
+			PlayerStatus in{ 5, 0x0001D5E0, 0x0001A2B3, 60, 12 };
+			in.light = true;
+			in.menu = menu;
+			const auto packet = Encode(in, type);
+			CHECK(packet.back() == menu);  // the last byte, after the seat
+			const auto out = DecodePlayerStatus(packet);
+			REQUIRE(out);
+			CHECK(*out == in);
+			// With a seat its fields come first, and the menu after them.
+			in.seat = Seat{ .ref = 0, .base = 0x000DF45C, .x = 1.0f, .y = 2.0f, .z = 3.0f };
+			const auto seated = DecodePlayerStatus(Encode(in, type));
+			REQUIRE(seated);
+			CHECK(*seated == in);
+		}
+		PlayerStatus bad{ 5 };
+		bad.menu = MenuKind::kMax + 1;
+		CHECK(!DecodePlayerStatus(Encode(bad, type)));
+		bad.menu = 0xFF;
+		CHECK(!DecodePlayerStatus(Encode(bad, type)));
+		// A status from before protocol 48 (no menu byte) is cut short: refused, not read past its end.
+		auto old = Encode(PlayerStatus{ 5 }, type);
+		old.pop_back();
+		CHECK(!DecodePlayerStatus(old));
+	}
 }
 
 TEST("protocol: WorldTime, Ping, Heartbeat, XpGain round trip")

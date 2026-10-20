@@ -13,6 +13,7 @@
 #include "game/Hud.h"
 #include "game/MapShare.h"
 #include "game/Menu.h"
+#include "game/MenuKinds.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
 #include "game/PingRules.h"
@@ -504,6 +505,9 @@ namespace Party
 			status.downed = Downed::WaitsForHelp();
 			status.opening = Story::InOpening();
 			status.light = player->IsPipboyLightOn();
+			// The kind of menu we are in (the Pip-Boy, paused, a container...), never what it shows: friends' stand-ins of us
+			// raise their Pip-Boy, and show an icon over the head (MenuIcons).
+			status.menu = MenuKinds::Of([](OpenMenus::Menu a_menu) { return OpenMenus::Open(a_menu); });
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = Equipment::InPowerArmor(player);
@@ -803,6 +807,7 @@ namespace Party
 		entry.status = a_status;
 		entry.hasStatus = true;
 		RemotePlayers::SetLight(a_status.playerId, a_status.light);
+		RemotePlayers::SetMenu(a_status.playerId, a_status.menu);
 		RemotePlayers::SetPowerArmor(a_status.playerId, a_status.powerArmor, a_status.powerArmorFrame, a_status.powerArmorFrameRef, a_status.parked);
 		RemotePlayers::SetSeat(a_status.playerId, a_status.seat);
 		RemotePlayers::SetHealth(a_status.playerId, a_status.health, a_status.downed);

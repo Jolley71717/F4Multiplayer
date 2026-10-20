@@ -15,6 +15,7 @@
 #include "game/StandInGear.h"
 #include "game/StandInHold.h"
 #include "game/StandInRange.h"
+#include "game/StandInPipboy.h"
 #include "game/StandInSeat.h"
 #include "game/StandInSpace.h"
 #include "game/StateBuffer.h"
@@ -23,6 +24,7 @@
 #include "game/FaceWatch.h"
 #include "game/LooksMenu.h"
 #include "Config.h"
+#include "Text.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
@@ -127,6 +129,8 @@ namespace RemotePlayers
 			ArmorFrames::PlayTime seatTriedAt{};
 			bool                 seatHeld = false;       // the stand-in is held for it (Puppets::Hold)
 			bool                 seatLogged = false;     // whether it got in, or did not, was logged for this seat
+			std::uint8_t         menu = Protocol::MenuKind::kNone;  // the menu they are in (their status)
+			StandInPipboy::Track pipboy;                 // the Pip-Boy raised on their stand-in while they are in theirs
 		};
 
 		std::map<std::uint32_t, RemotePlayer> players;
@@ -388,7 +392,15 @@ namespace RemotePlayers
 			}
 			// Rounded to tens so the tag doesn't change with every scratch.
 			const int shown = (a_player.health + 9) / 10 * 10;
-			return shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+			auto      tag = shown >= 100 ? a_player.name : std::format("{} ({}%)", a_player.name, shown);
+			// In their Pip-Boy or another menu (the icon over them says which kind; MenuIcons).
+			if (a_player.menu == Protocol::MenuKind::kPipboy) {
+				return Text::Format("party.tag_pipboy", { { "name", tag } });
+			}
+			if (a_player.menu != Protocol::MenuKind::kNone) {
+				return Text::Format("party.tag_menu", { { "name", tag } });
+			}
+			return tag;
 		}
 
 		RE::Actor* GetActor(const RemotePlayer& a_player)
@@ -1950,7 +1962,7 @@ namespace RemotePlayers
 	{
 		std::vector<Info> out;
 		for (const auto& [id, remote] : players) {
-			Info info{ id, remote.name, std::nullopt, GetActor(remote) };
+			Info info{ id, remote.name, std::nullopt, GetActor(remote), remote.menu };
 			if (!remote.states.snapshots.empty()) {
 				info.state = remote.states.snapshots.back().state;
 			}
@@ -2199,6 +2211,13 @@ namespace RemotePlayers
 	{
 		if (const auto it = players.find(a_id); it != players.end()) {
 			it->second.lightOn = a_on;  // Update() keeps the light with the stand-in
+		}
+	}
+
+	void SetMenu(std::uint32_t a_id, std::uint8_t a_menu)
+	{
+		if (const auto it = players.find(a_id); it != players.end()) {
+			it->second.menu = a_menu;  // Update() raises their Pip-Boy, and the tag follows (NameTag differs from shownName)
 		}
 	}
 
@@ -2614,6 +2633,27 @@ namespace RemotePlayers
 				REX::INFO("RemotePlayers: player {} stand-in isn't wearing their gear; dressing it again (wears {} wants {})", remote.id, worn, wanted);
 			}
 
+			// In their Pip-Boy: the stand-in checks its own wrist, again and again, and lowers it as they close theirs
+			// (StandInPipboy). Only standing on its own feet and still: not in its frame or furniture, not down.
+			StandInPipboy::Facts pipboyFacts;
+			pipboyFacts.inPipboy = remote.menu == Protocol::MenuKind::kPipboy;
+			pipboyFacts.standIn = actor->GetFormID();
+			pipboyFacts.ready = actor->Get3D() && !inArmor && !remote.inPowerArmor && !remote.powerArmorOn && !remote.seat && !remote.seatHeld && !remote.downed &&
+			                    remote.health > 0 && state->speed < 1.0f;
+			switch (StandInPipboy::Frame(remote.pipboy, pipboyFacts, now)) {
+			case StandInPipboy::Do::kRaise:
+				{
+					const auto npc = actor->GetNPC();
+					RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", actor->GetFormID(), StandInPipboy::RaiseFor(npc && npc->IsFemale())).c_str());
+				}
+				break;
+			case StandInPipboy::Do::kLower:
+				RE::Console::ExecuteCommand(std::format("{:08X}.playidle {}", actor->GetFormID(), StandInPipboy::LOWER).c_str());
+				break;
+			case StandInPipboy::Do::kNothing:
+				break;
+			}
+
 			KeepCalm(remote.calm, remote.id, actor, player, now);
 
 			// Pushed off our own spot (StandInSpace): its path, which the engine's update goes by, is moved as far.
@@ -2677,6 +2717,10 @@ namespace RemotePlayers
 				const auto ourSeat = remote.seatRef.get();
 				const auto seatIn = actor ? Puppets::FurnitureOf(actor) : RE::NiPointer<RE::TESObjectREFR>{};
 				armor += std::format(" seat={:08X}/{:08X} ours={:08X} held={} in={:08X} tries={}", remote.seat->ref, remote.seat->base, ourSeat ? ourSeat->GetFormID() : 0, remote.seatHeld, seatIn ? seatIn->GetFormID() : 0, remote.seatTries);
+			}
+			// The menu they are in, and the Pip-Boy raises (and early lowers) played on their stand-ins.
+			if (remote.menu != Protocol::MenuKind::kNone || remote.pipboy.raises) {
+				armor += std::format(" menu={} pipboyRaises={} lowers={} raised={}", remote.menu, remote.pipboy.raises, remote.pipboy.lowers, remote.pipboy.raised);
 			}
 			out += std::format("{}[{} '{}' puppet={:08X} x={:.0f} y={:.0f} cell={:08X} ws={:08X} gapMs={} delayMs={} pa={}/{} frame={:08X} offSpot={}/{} worst={:.1f}{}]",
 				out.empty() ? "" : " ", id, remote.name, actor ? actor->GetFormID() : 0,

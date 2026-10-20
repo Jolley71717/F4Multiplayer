@@ -3,6 +3,7 @@
 #include "game/RemotePlayers.h"
 #include "Config.h"
 #include "game/Hud.h"
+#include "game/MenuIcons.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
 #include "MainThread.h"
@@ -285,6 +286,8 @@ namespace Compass
 				return;
 			}
 			Hud::OnHudAdvance();
+			// The icons over friends in a menu (MenuIcons), queued by their own frame.
+			MenuIcons::OnHudAdvance(a_this);
 			if (!updateQueued.exchange(false)) {
 				return;
 			}

@@ -79,6 +79,8 @@ party.called = マーク：{what}（{where}）
 party.ping_here = こっちだ！
 party.ping_you = あなた
 party.ping_something = 何か
+party.tag_pipboy = {name} [Pip-Boy]
+party.tag_menu = {name} [メニュー中]
 party.killed = {killer}が{victim}を倒しました
 party.xp = パーティのキルで+{xp} XP
 
