@@ -17,7 +17,7 @@ namespace FrameClock
 		std::uint64_t         seenTime = 0;      // the timer's time when the timeline last stepped
 		Clock::time_point     steppedAt{};       // when that was, on the wall clock
 		Clock::time_point     previous{};        // the timeline's time a step before
-		std::atomic<Pace>     pace{ Pace::kFrame };
+		std::atomic<Pace>     pace{ Pace::kWall };
 
 		// A timer whose time stops for longer than this is not one we can go by (it is not running, or its layout is
 		// not the one we read): the wall clock is used until it moves again.

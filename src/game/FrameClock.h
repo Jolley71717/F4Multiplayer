@@ -26,8 +26,10 @@ namespace FrameClock
 	};
 	[[nodiscard]] Raw Read();
 
-	// Dev (netsim pace): what our states are stamped with: the moment our work runs, as before (kWall), the frame the
-	// timer last timed (kFrame, as shipped), or the one before it (kPrevious). Stand-ins go by the wall clock with kWall,
+	// Dev (netsim pace): what our states are stamped with: the moment our work runs (kWall, as shipped: the rig measured
+	// the others as below), the frame the
+	// timer last timed (kFrame: much worse, as the player's place read by our work is the frame before's), or the one before
+	// it (kPrevious). Stand-ins go by the wall clock with kWall,
 	// by the frame clock otherwise.
 	enum class Pace : std::uint8_t
 	{
