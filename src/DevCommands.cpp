@@ -40,6 +40,7 @@
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/SharedGates.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
@@ -1513,9 +1514,13 @@ namespace DevCommands
 			if (!ref) {
 				return "error: no such reference";
 			}
-			const auto object = Papyrus::BoundObject(ref, "Default2StateActivator", false);
+			// The two-state script itself, or one of the scripts that extend it which SharedGates shares (CHILDREN).
+			auto object = Papyrus::BoundObject(ref, SharedGates::SCRIPT, false);
+			for (std::size_t i = 0; !object && i < SharedGates::CHILDREN.size(); ++i) {
+				object = Papyrus::BoundObject(ref, SharedGates::CHILDREN[i].script, false);
+			}
 			if (!object) {
-				return std::format("{:08X} 3d={} no Default2StateActivator object", ref->GetFormID(), ref->Get3D() != nullptr);
+				return std::format("{:08X} 3d={} no Default2StateActivator object (nor one extending it)", ref->GetFormID(), ref->Get3D() != nullptr);
 			}
 			const auto flag = [&](const char* a_name) {
 				const auto var = object->GetProperty(RE::BSFixedString{ a_name });
