@@ -62,6 +62,7 @@ namespace Puppets
 	{
 		std::chrono::steady_clock::time_point at;
 		RE::NiPoint3                          position;
+		std::chrono::steady_clock::time_point placedAt;  // the time on its path it was put at (FrameClock.h)
 	};
 	[[nodiscard]] std::optional<Put> LastPut(const RE::Actor* a_actor);
 

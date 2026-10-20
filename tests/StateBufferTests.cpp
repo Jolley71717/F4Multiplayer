@@ -38,6 +38,10 @@ namespace
 		bool            queued = false;       // batches come in the order they went: one held up holds up those behind it, which then come together
 		float           dropChance = 0.0f;    // a batch is lost on the way this often, at random: the next brings a state a gap later
 		Clock::duration senderClock{};        // the sender's steady clock is this far ahead of ours
+		// The sender's work (Session sampling its player) runs up to this long into its frame, at random, after the engine
+		// moved the player for that frame; its state is stamped with that moment, or with the frame's (FrameClock).
+		Micro           senderWork{};
+		bool            senderStampsFrame = true;
 		Clock::duration length = 20s;
 		unsigned        seed = 1;
 		Clock::duration stallAt{};  // the drawing game stops for `stall` here
@@ -89,13 +93,14 @@ namespace
 			auto          nextSend = start;
 			std::uint32_t sequence = 0;
 			for (auto now = start; now < end; now += frameOf(a_setup.senderFps, a_setup.senderFrameJitter)) {
+				const auto workAt = a_setup.senderWork > Micro{} ? now + Micro{ static_cast<Micro::rep>(unit(random) * static_cast<float>(a_setup.senderWork.count())) } : now;
 				const bool paused = a_setup.pause != Clock::duration{} && now >= start + a_setup.pauseAt && now < start + a_setup.pauseAt + a_setup.pause;
-				if (paused || now < nextSend) {
+				if (paused || workAt < nextSend) {
 					continue;
 				}
 				nextSend += a_setup.sendEvery;
-				if (nextSend <= now) {
-					nextSend = now + a_setup.sendEvery;
+				if (nextSend <= workAt) {
+					nextSend = workAt + a_setup.sendEvery;
 				}
 				Protocol::PlayerState state;
 				state.sequence = ++sequence;
@@ -103,8 +108,8 @@ namespace
 				state.x = RUN * std::chrono::duration<float>(now - start).count();
 				state.heading = 1.5708f;
 				state.speed = RUN;
-				state.sentMs = a_setup.sendsTime ? Protocol::SentMs(now + a_setup.senderClock) : 0;
-				sent.emplace_back(now, state);
+				state.sentMs = a_setup.sendsTime ? Protocol::SentMs((a_setup.senderStampsFrame ? now : workAt) + a_setup.senderClock) : 0;
+				sent.emplace_back(workAt, state);
 			}
 		}
 
@@ -680,4 +685,61 @@ TEST("state buffer: carried on past the newest state, a running friend's path go
 	// It stands once EXTRAPOLATE has run out.
 	CHECK(std::abs(at(400ms) - at(300ms)) < 0.01f);
 	CHECK(at(400ms) <= state.x + RUN * 0.1f + 0.5f);
+}
+
+TEST("state buffer: a friend whose game skips frames unevenly is drawn running evenly when their states carry their frames' time")
+{
+	// The rig's VM (F4Multiplayer-ktmu): about 30 fps, frames half as long again or half as short, and the work that samples
+	// the player up to 20 ms into the frame. Stamped with that moment, an even run comes as a stand and a leap.
+	for (const bool frames : { false, true }) {
+		int uneven = 0, total = 0, leaps = 0;
+		for (unsigned seed = 1; seed <= 5; ++seed) {
+			Setup setup;
+			setup.senderFps = 30.0f;
+			setup.senderFrameJitter = 0.5f;
+			setup.senderWork = 20ms;
+			setup.senderStampsFrame = frames;
+			setup.seed = seed;
+			const auto drawn = Play(setup);
+			const auto counts = Count(drawn, FirstAfter(drawn, 5s));
+			CHECK(counts.backwards == 0);
+			uneven += counts.uneven;
+			leaps += counts.leaps;
+			total += counts.frames;
+		}
+		REQUIRE(total > 4000);
+		if (frames) {
+			CHECK(uneven <= total / 100);
+			CHECK(leaps == 0);
+		} else {
+			CHECK(uneven > total / 10);  // as it was
+		}
+	}
+}
+
+TEST("state buffer: a stand-in placed a moment before our frame's work sampled it is on its way there, not standing at that moment's place")
+{
+	StateBuffer::Buffer   buffer;
+	Protocol::PlayerState state;
+	state.worldspace = 0x3C;
+	state.speed = RUN;
+	auto now = start;
+	for (std::uint32_t i = 1; i <= 30; ++i) {
+		state.sequence = i;
+		state.x = RUN * 0.033f * static_cast<float>(i);
+		state.sentMs = Protocol::SentMs(now);
+		buffer.Push(state, now);
+		buffer.Frame(now);
+		now += 33ms;
+	}
+	now -= 16ms;  // between two states
+	buffer.Frame(now);
+	const auto sampled = buffer.Sample(now);
+	REQUIRE(sampled);
+	const auto at = [&](Clock::duration a_off) { return sampled->path.At(now + a_off)->x; };
+	// The engine's frame a few ms before our work: drawn that much further back, on the same run.
+	CHECK(at(-10ms) < at(0ms) - RUN * 0.008f);
+	CHECK(at(-10ms) > at(0ms) - RUN * 0.012f);
+	CHECK(at(-5ms) < at(0ms));
+	CHECK(at(10ms) > at(0ms) + RUN * 0.008f);
 }

@@ -319,7 +319,16 @@ namespace StateBuffer
 			const auto sampled = [&](const Protocol::PlayerState& a_state, float a_motionAngle, std::size_t a_next, float a_pitch) {
 				Sampled out{ a_state, a_motionAngle };
 				out.pitch = a_pitch;
-				out.path = MotionPath::Ahead({ a_now, a_state.x, a_state.y, a_state.z, a_state.heading }, a_state.cell, a_state.worldspace, snaps, a_next, behind, &Snapshot::stamp);
+				const auto ahead = MotionPath::Ahead({ a_now, a_state.x, a_state.y, a_state.z, a_state.heading }, a_state.cell, a_state.worldspace, snaps, a_next, behind, &Snapshot::stamp);
+				// From the state before too, when there is one in this space: the engine places the stand-in at the time of
+				// its frame (FrameClock.h), which can be a little before this moment, and there it is on the way from that
+				// state, not standing where this moment has it.
+				if (a_next > 0 && a_next <= snaps.size() && snaps[a_next - 1].state.cell == a_state.cell && snaps[a_next - 1].state.worldspace == a_state.worldspace) {
+					const auto& before = snaps[a_next - 1];
+					out.path.Add({ before.stamp + behind, before.state.x, before.state.y, before.state.z, before.state.heading });
+				}
+				for (std::uint8_t i = 0; i < ahead.count && out.path.Add(ahead.points[i]); ++i) {
+				}
 				return out;
 			};
 			if (renderTime <= snaps.front().stamp) {

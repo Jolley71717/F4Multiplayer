@@ -13,6 +13,7 @@
 #include "game/EnemySpawn.h"
 #include "game/Equipment.h"
 #include "game/Face.h"
+#include "game/FrameClock.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
 #include "game/MenuMessages.h"
@@ -537,13 +538,27 @@ namespace DevCommands
 			return "error: usage: trace start [hz] | trace stop";
 		}
 
-		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered]]: friends' movement states come in
+		// netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]: friends' movement states come in
 		// as over a worse connection (NetSim.h): a LAN rig drawn as over Steam's relays, for the trace. No arguments: as it is.
+		// pace: what our states are stamped with and stand-ins placed by (FrameClock.h), to measure one against another.
 		std::string NetSimCmd(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
+			const auto describe = [] { return std::format("{} pace={}", RemotePlayers::DescribeNetSim(), FrameClock::PaceName(FrameClock::GetPace())); };
+			if (args.size() == 2 && args[0] == "pace") {
+				if (args[1] == "wall") {
+					FrameClock::SetPace(FrameClock::Pace::kWall);
+				} else if (args[1] == "frame") {
+					FrameClock::SetPace(FrameClock::Pace::kFrame);
+				} else if (args[1] == "previous") {
+					FrameClock::SetPace(FrameClock::Pace::kPrevious);
+				} else {
+					return "error: usage: netsim pace wall|frame|previous";
+				}
+				return describe();
+			}
 			if (args.empty()) {
-				return RemotePlayers::DescribeNetSim();
+				return describe();
 			}
 			NetSim::Settings settings;
 			if (args[0] != "off") {
@@ -551,7 +566,7 @@ namespace DevCommands
 				const auto lag = number(0), jitter = number(1), loss = number(2), spike = number(3), spikes = number(4);
 				if (!lag || !jitter || !loss || !spike || !spikes || *lag < 0.0f || *lag > 2000.0f || *jitter < 0.0f || *jitter > 2000.0f || *loss < 0.0f || *loss > 100.0f || *spike < 0.0f ||
 					*spike > 2000.0f || *spikes < 0.0f || *spikes > 100.0f) {
-					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered]]";
+					return "error: usage: netsim [off | <lagMs> [jitterMs] [lossPercent] [spikeMs] [spikePercent] [unordered] | pace wall|frame|previous]";
 				}
 				settings.lagMs = static_cast<int>(*lag);
 				settings.jitterMs = static_cast<int>(*jitter);
@@ -561,7 +576,7 @@ namespace DevCommands
 				settings.ordered = !(args.size() > 5 && args[5] == "unordered");
 			}
 			RemotePlayers::SetNetSim(settings);
-			return RemotePlayers::DescribeNetSim();
+			return describe();
 		}
 
 		void TraceFrame()
@@ -606,6 +621,22 @@ namespace DevCommands
 				}
 				const double stamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - put->at).count();
 				trace.rows.push_back(std::format("{:.3f},p{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", stamp, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f, 0.0f));
+				// The same place at the time on its path it was put at (FrameClock.h, the engine's frame): how far it stepped each
+				// frame against how far the engine moved all else in that frame.
+				const double placedStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - put->placedAt).count();
+				trace.rows.push_back(std::format("{:.3f},fp{},{:.1f},{:.1f},{:.1f},{:.1f},{:.1f}", placedStamp, info.id, put->position.x, put->position.y, put->position.z, info.actor->data.angle.z * 57.29578f, 0.0f));
+			}
+			// The player's place now at the time of the frame the engine's timer last timed (fme) and the one before (qme):
+			// which of the two moved them here shows as the even one. And the timer itself (tim: its frame time, the same
+			// before the time multiplier, both in ms, and its time), to check it is read right.
+			{
+				const auto& p = player->data.location;
+				const double frameStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - FrameClock::Now()).count();
+				const double previousStamp = msNow - std::chrono::duration<double, std::milli>(steadyNow - FrameClock::Previous()).count();
+				trace.rows.push_back(std::format("{:.3f},fme,{:.1f},{:.1f},{:.1f},{:.1f},0.0", frameStamp, p.x, p.y, p.z, player->data.angle.z * 57.29578f));
+				trace.rows.push_back(std::format("{:.3f},qme,{:.1f},{:.1f},{:.1f},{:.1f},0.0", previousStamp, p.x, p.y, p.z, player->data.angle.z * 57.29578f));
+				const auto timer = FrameClock::Read();
+				trace.rows.push_back(std::format("{:.3f},tim,{:.3f},{:.3f},{},0.0,0.0", msNow, timer.delta * 1000.0f, timer.realDelta * 1000.0f, timer.lastTime));
 			}
 			// Every other actor nearby (shared NPCs have the same form ID in both games, so the two files
 			// line up by it): a mirrored NPC drifting up or sinking shows as a height error over time.
