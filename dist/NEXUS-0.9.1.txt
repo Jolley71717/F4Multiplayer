@@ -1,0 +1,3 @@
+Every player's hits on an enemy count again: no more only one player able to hurt it, damage healing back, or a melee hit taking it over
+Still protocol 49 (plays with 0.9.0), but the fix only works in the games that have it: everyone should update, the host most of all
+Full notes on GitHub
