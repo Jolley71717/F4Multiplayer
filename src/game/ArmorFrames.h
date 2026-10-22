@@ -489,8 +489,25 @@ namespace ArmorFrames
 		bool          frame = false;
 	};
 
+	// The frame our player wears, as OwnWear learns it: the furniture they sit in (a_occupied) while that is a frame, as
+	// it is when the armor goes on, else the frame the engine keeps as worn (a_held: the actor's ExtraPowerArmor,
+	// which a save keeps). A game loaded with the player already in power armor (a save made in the armor, a reload, a
+	// relaunch before hosting or joining) has them sitting in nothing: the frame was learnt only from what they sat in
+	// as they got in, so friends were told a wear with no frame, and saw them out of their suit until they got out and
+	// in again. Neither a frame: what they sit in, for the log.
+	constexpr Seat WornSeat(const Seat& a_occupied, const Seat& a_held)
+	{
+		if (a_occupied.frame && a_occupied.base != 0) {
+			return a_occupied;
+		}
+		if (a_held.frame && a_held.base != 0) {
+			return a_held;
+		}
+		return a_occupied;
+	}
+
 	// Our own wear as friends are told it (Party::SampleStatus). The frame is the furniture we sat in as the armor
-	// went on, remembered for as long as it stays on: the occupied furniture changes with every terminal or chair
+	// went on (loaded in the armor, the engine's worn frame: see WornSeat), remembered for as long as it stays on: the occupied furniture changes with every terminal or chair
 	// used in the armor (a terminal was once sent as the frame, and friends placed a terminal copy and sat the
 	// stand-in at it). The reference goes too when every game has it (a frame placed in the world by a plugin, such
 	// as the museum's suit in Concord): friends hide their own copy of it while we wear ours, else they saw two suits.

@@ -522,15 +522,20 @@ namespace Party
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = Equipment::InPowerArmor(player);
-			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on (see
-			// ArmorFrames::OwnWear).
+			// The frame is the furniture occupied when the armor went on, or the engine's worn frame when the game was loaded
+			// in it, remembered for as long as it stays on (see ArmorFrames::OwnWear and WornSeat).
 			const auto wear = ownWear.Update(
 				status.powerArmor,
 				[&] {
+					const auto seatOf = [](const RE::TESObjectREFR* a_ref) {
+						const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+						return ArmorFrames::Seat{ .ref = a_ref ? a_ref->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+					};
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 					const auto seat = middle ? middle->occupiedFurniture.get() : nullptr;
-					const auto base = seat ? seat->GetObjectReference() : nullptr;
-					return ArmorFrames::Seat{ .ref = seat ? seat->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+					// After a load in the armor nothing is sat in; the engine's own worn frame names it (see WornSeat).
+					const auto held = Equipment::PowerArmorFrameOf(player);
+					return ArmorFrames::WornSeat(seatOf(seat.get()), seatOf(held && !held->IsDeleted() ? held.get() : nullptr));
 				},
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
