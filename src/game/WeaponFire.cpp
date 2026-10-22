@@ -669,6 +669,17 @@ namespace WeaponFire
 		watchUntil = Clock::now() + EXPLOSION_WATCH;
 	}
 
+	bool ExplosionsShared()
+	{
+		return Clock::now() <= watchUntil.load();
+	}
+
+	bool ThrewLately()
+	{
+		const auto until = watchUntil.load();
+		return until != Clock::time_point{} && Clock::now() <= until + THREW_LATELY;
+	}
+
 	void ScanExplosions()
 	{
 		const auto now = Clock::now();
