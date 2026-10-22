@@ -342,7 +342,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 
 - Detection: every actor gets its animation graph's events through its
   `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot
-  and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack.
+  and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack. A gun's bash
+  sends "weaponSwing" too; with a gun in hand it is not reported (`AttackKind::ReportsAsShot`): a
+  receiver replays any attack of a friend holding a gun as a shot, so each bash sounded as a gunshot.
   We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
   NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
 - `ReportShot {refId, sound}` (0 = the sender) goes to the server, which accepts NPC shots only from

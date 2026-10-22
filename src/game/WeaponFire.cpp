@@ -28,7 +28,9 @@ namespace WeaponFire
 
 	namespace
 	{
-		std::atomic<std::uint32_t> pending{ 0 };
+		std::atomic<std::uint32_t> pending{ 0 };        // our shots ("WeaponFire") not taken yet
+		std::atomic<std::uint32_t> pendingSwings{ 0 };  // our swings, punches and bashes ("weaponSwing") not taken yet
+		std::uint32_t              bashesKept = 0;      // gun bashes (ours and our NPCs') not sent as shots (AttackKind::ReportsAsShot)
 		std::atomic<std::uint32_t> total{ 0 };
 		std::uint32_t              replayed = 0;  // shots received for a stand-in or mirrored NPC
 		std::uint32_t              played = 0;    // ... that its animation graph accepted
@@ -50,9 +52,15 @@ namespace WeaponFire
 		// frame): both are replayed as an attack on the stand-in, which swings whatever it holds.
 		const char* EmoteIdle(std::uint8_t a_action);
 
-		bool IsAttackEvent(std::string_view a_tag)
+		std::optional<AttackKind::Event> AttackOf(std::string_view a_tag)
 		{
-			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
+			if (a_tag == "WeaponFire") {
+				return AttackKind::Event::kFire;
+			}
+			if (a_tag == "weaponSwing") {
+				return AttackKind::Event::kSwing;
+			}
+			return std::nullopt;
 		}
 
 		// A grenade or mine leaving the hand: the graph's "WeaponFire" with payload "2" (a gun's has none).
@@ -159,8 +167,9 @@ namespace WeaponFire
 					playerActions.push_back(Protocol::ShotAction::kThrow);
 				}
 				ArmExplosionWatch();
-			} else if (IsAttackEvent(tag)) {
-				++pending;
+			} else if (const auto attack = AttackOf(tag)) {
+				// Which it was is kept for TakeShots: a swing with a gun in hand is a bash, never sent as a shot.
+				++(*attack == AttackKind::Event::kFire ? pending : pendingSwings);
 				++total;
 			} else if (IsThrowAttachEvent(tag, payload)) {
 				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it shows it for
@@ -184,7 +193,12 @@ namespace WeaponFire
 		ProcessEventFn             originalActorEvent = nullptr;
 		std::atomic<std::uint32_t> loggedActor{ 0 };
 		std::mutex                 npcLock;
-		std::vector<std::uint32_t> npcShots;
+		struct NpcAttack
+		{
+			std::uint32_t     id = 0;
+			AttackKind::Event event = AttackKind::Event::kFire;
+		};
+		std::vector<NpcAttack>     npcShots;
 		constexpr std::size_t      MAX_PENDING_NPC_SHOTS = 256;
 
 		RE::BSEventNotifyControl OnActorAnimationEvent(RE::BSTEventSink<RE::BSAnimationGraphEvent>* a_this, const RE::BSAnimationGraphEvent& a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* a_source)
@@ -219,10 +233,10 @@ namespace WeaponFire
 					}
 					ArmExplosionWatch();
 				}
-			} else if (shared && IsAttackEvent(npcTag)) {
+			} else if (const auto attack = shared ? AttackOf(npcTag) : std::nullopt) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
-					npcShots.push_back(id);
+					npcShots.push_back({ id, *attack });
 				}
 			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
 				++throwAttaches;
@@ -264,12 +278,6 @@ namespace WeaponFire
 	{
 		InstallForNpcs(a_actor);
 		loggedActor = a_actor ? a_actor->GetFormID() : 0;
-	}
-
-	std::vector<std::uint32_t> TakeNpcShots()
-	{
-		std::scoped_lock l{ npcLock };
-		return std::exchange(npcShots, {});
 	}
 
 	std::vector<std::uint8_t> TakeActions()
@@ -565,12 +573,43 @@ namespace WeaponFire
 
 	std::uint32_t TakeShots()
 	{
-		return pending.exchange(0);
+		auto       shots = pending.exchange(0);
+		const auto swings = pendingSwings.exchange(0);
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (swings == 0) {
+			return shots;
+		}
+		if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
+			shots += swings;
+		} else {
+			bashesKept += swings;
+		}
+		return shots;
+	}
+
+	std::vector<std::uint32_t> TakeNpcShots()
+	{
+		std::vector<NpcAttack> attacks;
+		{
+			std::scoped_lock l{ npcLock };
+			attacks = std::exchange(npcShots, {});
+		}
+		std::vector<std::uint32_t> out;
+		out.reserve(attacks.size());
+		for (const auto& attack : attacks) {
+			const auto actor = attack.event == AttackKind::Event::kSwing ? RE::TESForm::GetFormByID<RE::Actor>(attack.id) : nullptr;
+			if (AttackKind::ReportsAsShot(attack.event, actor && HoldsGun(actor))) {
+				out.push_back(attack.id);
+			} else {
+				++bashesKept;
+			}
+		}
+		return out;
 	}
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} inhand={}", total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)

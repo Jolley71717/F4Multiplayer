@@ -39,3 +39,17 @@ TEST("AttackKind: a grenade listed before the gun does not make a friend's shots
 	CHECK(!AttackKind::HoldsGun(std::vector<std::int32_t>{}));
 	CHECK(AttackKind::ReplayShot(AttackKind::HoldsGun(std::vector<std::int32_t>{ grenade, sword }), true) == AttackKind::Replay::kSwing);
 }
+
+TEST("AttackKind: a gun's bash is not reported as a shot, so friends hear no gunshot for it")
+{
+	using AttackKind::Event;
+	// A shot is always reported.
+	CHECK(AttackKind::ReportsAsShot(Event::kFire, true));
+	CHECK(AttackKind::ReportsAsShot(Event::kFire, false));
+	// The hit frame of a swing or a punch is, with no gun in hand: the stand-in swings (ReplayShot's kSwing).
+	CHECK(AttackKind::ReportsAsShot(Event::kSwing, false));
+	// The same event with a gun in hand is a bash: reported, a friend holding a gun replays it as a shot.
+	CHECK(AttackKind::ReplayShot(true, true) == AttackKind::Replay::kFire);
+	CHECK(!AttackKind::ReportsAsShot(Event::kSwing, true));
+	CHECK(!AttackKind::ReportsAsShot(Event::kSwing, AttackKind::HoldsGun(std::vector<std::int32_t>{ 10, AttackKind::GUN_TYPE })));
+}
