@@ -54,6 +54,13 @@ namespace WeaponFire
 	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
 	void ArmExplosionWatch();
 
+	// Whether our game reports the explosions around our player now (a throw's watch is on), so each goes off in the
+	// friends' games too; and whether it did within THREW_LATELY, while the fire a Molotov left may still burn there
+	// (CopyHealth::OwnersToDeal). Any thread.
+	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
+	[[nodiscard]] bool ExplosionsShared();
+	[[nodiscard]] bool ThrewLately();
+
 	// Ends any replayed sound still following this actor: called before the actor is deleted, since
 	// the sound follows its 3D root.
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId);
