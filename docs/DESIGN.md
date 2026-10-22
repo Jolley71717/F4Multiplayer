@@ -735,7 +735,11 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
   armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
   such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
-  itself. The stand-in wears the pieces they wear from the moment the status says they are in
+  itself. The frame is the furniture they sat in as the armor went on or, in a game loaded with them
+  already in the armor (a save made in it, a reload, a relaunch before hosting or joining), the frame
+  the engine keeps as worn (`ExtraPowerArmor`, `ArmorFrames::WornSeat`): learnt only from getting in,
+  such a player was told as in power armor with no frame, and friends saw them out of their suit
+  until they got out and in again. The stand-in wears the pieces they wear from the moment the status says they are in
   power armor (`RemotePlayers.cpp`, `ArmorFrames.h`), and the receiver keeps a copy of the base
   (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
   placed at once, hidden and without collision from the moment its 3D is in, and moved along with
