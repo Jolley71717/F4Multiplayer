@@ -1,0 +1,28 @@
+# A "reviewed" label vouches for the code a reviewer read, so it goes as soon as new commits land on the PR.
+# pull_request_target runs this file from main with a token that can write labels, also for PRs from forks; it never
+# checks out or runs the PR's code.
+name: review-label
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  unreview:
+    if: contains(github.event.pull_request.labels.*.name, 'reviewed')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove the reviewed label and say why
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          gh pr edit "$PR" --repo "$REPO" --remove-label reviewed
+          gh pr comment "$PR" --repo "$REPO" --body "New commits (${BEFORE:0:7}..${AFTER:0:7}) since the review: the \`reviewed\` label is removed until they are reviewed too."
