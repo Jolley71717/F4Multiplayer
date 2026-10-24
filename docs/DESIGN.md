@@ -799,7 +799,12 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   (`SaveGuard::Forget`, `SaveStrays::Book::KeepForgotten`'s orphans, counted as `orphansDropped`). And before a copy
   is placed, one an earlier session left at that very spot (within 2 units: made at runtime, the same frame, enabled,
   emptied, held by no quest, nobody's to use here and not one this run placed; `HeldCopy::Leftover`) is taken over
-  instead, so what 0.9.1 left in a save goes with the friend this time. `net status` counts them: `framesUnloaded`,
+  instead, so what 0.9.1 left in a save goes with the friend this time. The leak the rig showed (2026-10-24): a load
+  does not free every copy DespawnAll had just disabled or deleted for it; one stayed in memory, nobody's once the load
+  had emptied the book, the next save wrote it, and a game started afresh from that save had it back drawn and whole
+  beside the copy placed for the friend, and the host shared it as its own frame. Now each reference placed before a
+  load that is still there under its base, deleted or disabled (never the player's own suit), is forgotten anew and
+  kept out of every save (`SaveStrays::Book::AfterLoad`'s lingering ones, `lingered` in `saveguard`). `net status` counts them: `framesUnloaded`,
   `framesBack`, `leftoversTaken` (stand-ins), `unloaded` and `back` (spawns).
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or

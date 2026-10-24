@@ -312,3 +312,34 @@ TEST("held copy: a frame with pieces in it, or one this run placed for another f
 	CHECK(sanctuary.held.id != first);
 	CHECK(sanctuary.Frames() == 3);
 }
+
+TEST("save strays: a copy still on its way out as a load came is forgotten anew, kept out of every save after it, and let go of once gone")
+{
+	SaveStrays::Book book;
+	book.Track(0xFF001814, FRAME);  // the parked copy, disabled and deleted by DespawnAll just before the load
+	book.Track(0xFF001993, FRAME);  // another, gone with the load
+	book.Track(0xFF001A00, OTHER);  // its id names the loaded game's own reference now
+	const auto lingers = [](std::uint32_t a_id, std::uint32_t a_base) { return a_id == 0xFF001814 && a_base == FRAME; };
+	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, lingers);
+	CHECK(book.PlacedCount() == 0);  // nothing placed before the load is ours to place or hold
+	CHECK(book.ForgottenCount() == 1);
+	std::vector<std::uint32_t> excluded;
+	const auto baseNow = [](std::uint32_t a_id) -> std::optional<std::uint32_t> {
+		return a_id == 0xFF001814 ? std::optional{ FRAME } : std::nullopt;
+	};
+	book.BeforeSave(baseNow, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {}, [](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(excluded == std::vector<std::uint32_t>{ 0xFF001814 });  // 0.9.1 wrote it into the next save, and a fresh game brought it back whole
+	excluded.clear();
+	book.BeforeSave(baseNow, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {}, [](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(excluded.size() == 1);  // every save, while it is there
+	// Freed at last: let go of, its record dropped.
+	std::vector<std::uint32_t> orphaned;
+	book.KeepForgotten([](std::uint32_t) -> std::optional<std::uint32_t> { return std::nullopt; }, [](std::uint32_t) {}, [&](std::uint32_t a_id) { orphaned.push_back(a_id); });
+	CHECK(orphaned == std::vector<std::uint32_t>{ 0xFF001814 });
+	CHECK(book.ForgottenCount() == 0);
+	// Without a lingering check, a load forgets them all, as before.
+	SaveStrays::Book plain;
+	plain.Track(0xFF001814, FRAME);
+	plain.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(plain.ForgottenCount() == 0);
+}

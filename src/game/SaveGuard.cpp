@@ -144,6 +144,32 @@ namespace SaveGuard
 			return base ? base->GetFormID() : 0;
 		}
 
+		// One placed before a load whose form is still there under the base it was placed from, on its way out: deleted, or
+		// disabled for it (see SaveStrays::Book::AfterLoad). Never the player's own suit, which the engine disables while
+		// they are in it: the save's own reference under a reused id is the save's.
+		std::uint32_t lingered = 0;  // of those, forgotten anew after a load (see SaveStrays::Book::AfterLoad)
+
+		bool Lingers(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (!base || base->GetFormID() != a_base || (!ref->IsDeleted() && !ref->IsDisabled())) {
+				return false;
+			}
+			if (!ref->IsDeleted()) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				if (player && (player->lastUsedPowerArmor.get().get() == ref || (occupied && occupied.get() == ref))) {
+					return false;
+				}
+			}
+			++lingered;
+			REX::INFO("SaveGuard: {:08X} (base {:08X}), placed before the load, is still there {}; kept out of every save from now on", a_id, a_base,
+				ref->IsDeleted() ? "marked for deletion" : "disabled");
+			return true;
+		}
+
 		// One of ours the engine unloaded with its cell, its form gone and its record kept under the cell, which would bring it
 		// back when the cell loads again (see SaveStrays::Book::KeepForgotten): the record is dropped. Only with no form of
 		// any kind under the id (BaseNow looks for a reference): a runtime form of another kind there now owns any record.
@@ -436,7 +462,9 @@ namespace SaveGuard
 		// What we placed before the load is gone, and its ids name the loaded game's references now (see
 		// SaveStrays::Book::AfterLoad).
 		unpromoted.Clear();
-		const auto strays = book.AfterLoad(Sweep(), StandIn);
+		const auto strays = book.AfterLoad(Sweep(), StandIn, Lingers);
+		// The ones placed before the load and still there on their way out are out of the save from now on (Lingers).
+		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, DropOrphan);
 		for (const auto& [c, verdict] : strays) {
 			lastStray = c.id;
 			const bool doomed = SaveStrays::Doomed(c.seen);
@@ -464,7 +492,7 @@ namespace SaveGuard
 	void NewGame()
 	{
 		unpromoted.Clear();
-		book.AfterLoad({}, StandIn);  // what was placed before it is gone, as after a load
+		book.AfterLoad({}, StandIn, Lingers);  // what was placed before it is gone, as after a load (or on its way out: Lingers)
 	}
 
 	std::string ListStrays()
@@ -502,8 +530,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
-			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
 			unpromoted.Refused());
 	}
 }

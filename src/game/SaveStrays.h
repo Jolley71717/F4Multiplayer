@@ -146,6 +146,14 @@ namespace SaveStrays
 
 		[[nodiscard]] std::size_t Size() const { return bases.size(); }
 
+		template <class F>
+		void ForEach(F&& a_each) const
+		{
+			for (const auto& [id, base] : bases) {
+				a_each(id, base);
+			}
+		}
+
 	private:
 		std::unordered_map<std::uint32_t, std::uint32_t> bases;
 		bool                                             any = false;
@@ -232,6 +240,14 @@ namespace SaveStrays
 		void Clear() { entries.clear(); }
 
 		[[nodiscard]] std::size_t Size() const { return entries.size(); }
+
+		template <class F>
+		void ForEach(F&& a_each) const
+		{
+			for (const auto& [id, base] : entries) {
+				a_each(id, base);
+			}
+		}
 
 	private:
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> entries;  // id, base
@@ -342,13 +358,34 @@ namespace SaveStrays
 
 		// Right after a load, or a new game: what was placed and forgotten before it is let go of first (see
 		// Placed::Clear), then each stray the loaded game has, with what is done with it.
-		template <class S>
-		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn)
+		// a_lingers(id, base): whether the form under the id is still the one placed before the load, on its way out
+		// (deleted, or disabled for it). The load does not always free those: one still marked for deletion as the load
+		// came (a copy DespawnAll had just disabled or deleted, the stand-ins' graveyard emptied before the load) stayed
+		// in memory, nobody's from then on, and the next save wrote it; loaded by a game started afresh, it came back
+		// drawn and whole, a frame nobody owned where a friend's copy had stood, beside the copy placed for them then,
+		// and shared from then on as the host's own (0.9.1). So each of those is forgotten anew: kept out of every save
+		// for as long as its form is there under that base (KeepForgotten), and its record dropped once it is gone.
+		template <class S, class L>
+		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn, L&& a_lingers)
 		{
+			std::vector<std::pair<std::uint32_t, std::uint32_t>> before;
+			placed.ForEach([&](std::uint32_t a_id, std::uint32_t a_base) { before.emplace_back(a_id, a_base); });
+			forgotten.ForEach([&](std::uint32_t a_id, std::uint32_t a_base) { before.emplace_back(a_id, a_base); });
 			placed.Clear();
 			forgotten.Clear();
 			gone.clear();
+			for (const auto& [id, base] : before) {
+				if (a_lingers(id, base)) {
+					forgotten.Add(id, base);
+				}
+			}
 			return JudgeAll(Strays(std::move(a_found), a_standIn), When::kLoad);
+		}
+
+		template <class S>
+		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn)
+		{
+			return AfterLoad(std::move(a_found), a_standIn, [](std::uint32_t, std::uint32_t) { return false; });
 		}
 
 		// Each stray there is now, with what a save would do with it, and what a load would (changes nothing).
