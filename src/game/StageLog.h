@@ -326,6 +326,13 @@ namespace StageLog
 	// read done: a stage of another quest may start it (MQ104's 210 starts MQ105, its script a moment
 	// later), and starting it as well would set its first stage twice. A quest that waits for good (one not
 	// to be started here, a lock waiting for its release) holds no start up.
+	//
+	// So is a stage whose script sets a stage of another quest (StageRules::SETS_ANOTHER: Codsworth's talk in
+	// Sanctuary sets Out of Time's 30): it waits until nothing that came before it is still to be set or running on.
+	// Set ahead of the other quest's stages that came first, it would move that quest past them, and they would be
+	// dropped as behind it, their scripts never run here: a friend's Out of Time caught up all at once lost the search
+	// of Sanctuary's houses (its 32 to 40) to Codsworth's 200, which sets its 50. Not the lock's quests: nothing holds
+	// them up.
 	class Queue
 	{
 	public:
@@ -361,7 +368,8 @@ namespace StageLog
 
 		// One poll. a_game has Quest(quest) -> Quest; Settled(quest, stage): the stage needs nothing
 		// more here (done, or the quest is already past it); Set(quest, stage) -> Set; Hold(quest,
-		// stage) -> Clock::duration: how long its script may run on once it reads done. A ready quest's
+		// stage) -> Clock::duration: how long its script may run on once it reads done; SetsAnother(quest, stage): its
+		// script sets a stage of another quest (StageRules::SetsAnother). A ready quest's
 		// settled stages are dropped, and all of a quest that is gone. Returns the stages given up on:
 		// set, but not done TIMEOUT later. While the game is paused nothing is set, and the time since
 		// the last poll doesn't count against any hold or timeout, nor the lock's.
@@ -382,6 +390,7 @@ namespace StageLog
 			std::vector<std::tuple<bool, std::uint64_t, std::uint32_t>>      ready;  // (not the lock's, when its first stage came, quest)
 			std::uint64_t                                                     blockedFrom = NONE;  // what came from here on waits
 			std::vector<std::pair<std::uint64_t, std::uint32_t>>              starts;  // quests to start here: (when their first stage came, quest)
+			std::vector<std::pair<std::uint64_t, std::uint32_t>>              setters;  // ready quests whose next stage sets another's (SetsAnother)
 			std::uint64_t                                                     pendingFrom = NONE;  // the first stage still to be set or running on
 			for (auto it = quests.begin(); it != quests.end();) {
 				const auto id = it->first;
@@ -426,7 +435,9 @@ namespace StageLog
 					pendingFrom = (std::min)(pendingFrom, First(entry));
 				}
 				if (goesOn && !entry.setting && !holding && !entry.stages.empty()) {
-					if (state == Quest::kReady) {
+					if (state == Quest::kReady && !Locks(id) && a_game.SetsAnother(id, entry.stages.begin()->first)) {
+						setters.emplace_back(First(entry), id);
+					} else if (state == Quest::kReady) {
 						ready.emplace_back(!Locks(id), First(entry), id);
 					} else {
 						starts.emplace_back(First(entry), id);
@@ -438,6 +449,12 @@ namespace StageLog
 			for (const auto& [from, id] : starts) {
 				if (from <= pendingFrom && a_now - lastSettled >= START_GRACE) {
 					ready.emplace_back(!Locks(id), from, id);
+				}
+			}
+			// pendingFrom counts the quest's own stages too: it goes once its oldest is the oldest of them all.
+			for (const auto& [from, id] : setters) {
+				if (from <= pendingFrom) {
+					ready.emplace_back(true, from, id);
 				}
 			}
 

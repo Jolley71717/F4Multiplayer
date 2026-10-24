@@ -238,7 +238,7 @@ public static class QuestScan
         return rest.StartsWith("Dialogue");
     }
 
-    static string Shared(GearScan.Quest q, int a_file)
+    public static string Shared(GearScan.Quest q, int a_file)
     {
         if (q.Type > 0 && q.Type != 6) return "shared";
         if (q.Type == 0 && a_file == 0 && FINALES.Contains(q.Id & 0xFFFFFF)) return "shared (finale)";
@@ -310,6 +310,78 @@ public static class QuestScan
                 }
             }
             foreach (var line in lines) sb.AppendLine(line);
+        }
+        return sb.ToString();
+    }
+}
+
+// The shared quests' stages whose own fragment sets a stage of another quest (SetStage on a quest property other than
+// its own quest), following the stages of its own quest it sets: what src/game/StageRules.h's SETS_ANOTHER holds. A
+// property is matched to a quest by its name (MQ102_var, pMQ103_var); one that matches no quest is listed with (?), and
+// kept in the table, since it may be a shared quest by another name. One line per stage: file, quest, stage, quest
+// name, and what it sets.
+
+public static class CrossScan
+{
+    public static string Run(string data)
+    {
+        var sb = new StringBuilder();
+        var files = new[] { new { Esm = "Fallout4.esm", Ba2 = "Fallout4 - Misc.ba2" }, new { Esm = "DLCCoast.esm", Ba2 = "DLCCoast - Main.ba2" } };
+        // every quest by editor ID, of both files (a DLC stage can set a base game quest's)
+        var byEdid = new Dictionary<string, Tuple<GearScan.Quest, int>>(StringComparer.OrdinalIgnoreCase);
+        var perFile = new List<Dictionary<uint, GearScan.Quest>>();
+        for (int f = 0; f < files.Length; f++)
+        {
+            var d = new Dictionary<uint, GearScan.Quest>();
+            foreach (var q in GearScan.Quests(Path.Combine(data, files[f].Esm), f)) { d[q.Id & 0xFFFFFF] = q; if (!byEdid.ContainsKey(q.Edid)) byEdid[q.Edid] = Tuple.Create(q, f); }
+            perFile.Add(d);
+        }
+        for (int file = 0; file < files.Length; file++)
+        {
+            var quests = perFile[file];
+            var scripts = GearScan.Ba2(Path.Combine(data, files[file].Ba2), n => n.IndexOf(@"\fragments\quests\", StringComparison.OrdinalIgnoreCase) >= 0 && n.EndsWith(".pex", StringComparison.OrdinalIgnoreCase));
+            var lines = new SortedSet<string>();
+            foreach (var kv in scripts)
+            {
+                var name = Path.GetFileNameWithoutExtension(kv.Key);
+                uint id;
+                if (!uint.TryParse(name.Substring(name.LastIndexOf('_') + 1), System.Globalization.NumberStyles.HexNumber, null, out id)) continue;
+                GearScan.Quest quest;
+                if (!quests.TryGetValue(id & 0xFFFFFF, out quest) || QuestScan.Shared(quest, file) == "not shared") continue;
+                List<GearScan.Func> funcs;
+                try { funcs = GearScan.Pex(kv.Value); } catch { continue; }
+                // per stage: the own stages it sets, the other quests' stages it sets
+                var self = new Dictionary<int, List<int>>();
+                var other = new Dictionary<int, List<string>>();
+                foreach (var f in funcs)
+                {
+                    if (!f.Name.StartsWith("Fragment_Stage_", StringComparison.OrdinalIgnoreCase)) continue;
+                    int stage; if (!int.TryParse(f.Name.Substring("Fragment_Stage_".Length, 4), out stage)) continue;
+                    if (!self.ContainsKey(stage)) { self[stage] = new List<int>(); other[stage] = new List<string>(); }
+                    var kmy = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "self", "kmyQuest", "__temp" };
+                    foreach (var i in f.Code)
+                    {
+                        if (i.Op != 23 || !i.Args[0].Equals("SetStage", StringComparison.OrdinalIgnoreCase)) continue;
+                        var obj = i.Args[1];
+                        var val = i.Args.Count > 3 ? i.Args[3] : "?";
+                        if (kmy.Contains(obj)) { int s; if (int.TryParse(val, out s)) self[stage].Add(s); continue; }
+                        var n = obj.Replace("::", ""); if (n.EndsWith("_var")) n = n.Substring(0, n.Length - 4);
+                        Tuple<GearScan.Quest, int> t;
+                        if (!byEdid.TryGetValue(n, out t) && n.StartsWith("p")) byEdid.TryGetValue(n.Substring(1), out t);
+                        if (t == null) { other[stage].Add(n + "(?) " + val); continue; }
+                        if (QuestScan.Shared(t.Item1, t.Item2) != "not shared") other[stage].Add(t.Item1.Edid + " " + val);
+                    }
+                }
+                foreach (var st in self.Keys)
+                {
+                    // follow its own quest's stages it sets
+                    var seen = new HashSet<int>(); var todo = new Stack<int>(); todo.Push(st); var hits = new List<string>();
+                    while (todo.Count > 0) { var s = todo.Pop(); if (!seen.Add(s) || !self.ContainsKey(s)) continue; hits.AddRange(other[s].Select(h => s == st ? h : h + " (via " + s + ")")); foreach (var n in self[s]) todo.Push(n); }
+                    if (hits.Count == 0) continue;
+                    lines.Add(string.Format("{0} {1:X6} {2,5} {3,-34} -> {4}", file, quest.Id & 0xFFFFFF, st, quest.Edid, string.Join("; ", hits.Distinct().ToArray())));
+                }
+            }
+            foreach (var l in lines) sb.AppendLine(l);
         }
         return sb.ToString();
     }

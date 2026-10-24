@@ -606,6 +606,11 @@ namespace QuestSync
 				}
 				return StageRules::Hold(RuleFor(a_quest, a_stage));
 			}
+			bool SetsAnother(std::uint32_t a_quest, std::uint16_t a_stage) const
+			{
+				const auto file = FileOf(RE::TESForm::GetFormByID<RE::TESQuest>(a_quest));
+				return file && StageRules::SetsAnother(*file, a_quest & 0x00FFFFFF, a_stage);
+			}
 		};
 
 		// An older version set only the highest stage of a friend's quest. MQ104 went straight to 1000,
