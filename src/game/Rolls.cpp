@@ -13,6 +13,24 @@ namespace Rolls
 		constexpr std::size_t MAX_REACH_CACHED = 256;
 		std::unordered_map<std::uint32_t, NpcRoll::Reach> reaches;
 
+		// Whether the NPC is put together from templates: a default template or one for a slot. Not
+		// ACTOR_BASE_DATA's kUsesTemplate: on the rig a leveled mirelurk (000361C1) read as not using one, and a walk
+		// that trusted it found nothing its lists give.
+		bool Templated(const RE::TESNPC& a_npc)
+		{
+			if (a_npc.baseTemplateForm || a_npc.actorData.templateUseFlags.underlying() != 0) {
+				return true;
+			}
+			if (a_npc.templateForms) {
+				for (std::size_t i = 0; i < Protocol::IDENTITY_TEMPLATES; ++i) {
+					if (a_npc.templateForms[i]) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		RE::ExtraLeveledCreature* LeveledOf(RE::Actor* a_actor)
 		{
 			return a_actor && a_actor->extraList ? a_actor->extraList->GetByType<RE::ExtraLeveledCreature>() : nullptr;
@@ -86,7 +104,7 @@ namespace Rolls
 			};
 			if (const auto npc = form->As<RE::TESNPC>()) {
 				node.npc = true;
-				if (npc->UsesTemplate()) {
+				if (Templated(*npc)) {
 					add(npc->baseTemplateForm, false);
 					if (npc->templateForms) {
 						for (std::size_t i = 0; i < Protocol::IDENTITY_TEMPLATES; ++i) {
@@ -115,6 +133,32 @@ namespace Rolls
 		{
 			const auto name = a_actor->GetDisplayFullName();
 			return name ? name : "";
+		}
+
+		// The NPC's own health value (its stats, before the actor's), "?" without the value's form.
+		std::string BaseHealthOf(RE::TESNPC& a_npc)
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			if (!values || !values->health) {
+				return "?";
+			}
+			return std::format("{:.0f}", static_cast<RE::ActorValueOwner&>(a_npc).GetActorValue(*values->health));
+		}
+
+		// Its health now and at most, and its damage resistance: what a hit on it does (a friend's copy's hits go as a
+		// fraction of the copy's maximum, WorldSync's kReportDamage).
+		std::string ToughnessOf(RE::Actor* a_actor)
+		{
+			const auto values = RE::ActorValue::GetSingleton();
+			if (!values || !values->health) {
+				return "health=?";
+			}
+			auto& owner = static_cast<RE::ActorValueOwner&>(*a_actor);
+			auto  out = std::format("health={:.0f}/{:.0f}", owner.GetActorValue(*values->health), owner.GetPermanentActorValue(*values->health));
+			if (values->damageResistance) {
+				out += std::format(" dr={:.0f}", owner.GetActorValue(*values->damageResistance));
+			}
+			return out;
 		}
 	}
 
@@ -198,14 +242,19 @@ namespace Rolls
 					return commands;
 				}
 			}
-			const auto before = NameOf(a_actor);
-			// The roll is kept on the reference (a save of ours keeps theirs), and the roll's copy is put together from
-			// it again, as the engine does when it makes one with its templates given.
+			const auto before = NameOf(a_actor) + ", " + ToughnessOf(a_actor);
+			// The roll is kept on the reference (a save of ours keeps theirs). The engine puts the actor's NPC together
+			// from it when the actor loads: on the rig, ghouls written so were the owner's roll (name, damage resistance)
+			// once their cell loaded again. The NPC already made is not put together again in place: neither
+			// CopyFromTemplateForms (asked below all the same), nor a disable and enable, nor Reset3D changed its name,
+			// health or damage resistance. So the roll is the owner's from the copy's next load on (a cell left and come
+			// back to, a fast travel, a save loaded); until then only the level below is the owner's.
 			std::ranges::copy(forms, std::begin(leveled->templates));
 			npc->CopyFromTemplateForms(leveled->templates);
 			rebuild = true;
-			REX::INFO("Rolls: {:08X} ({}) made player {}'s roll of {:08X}{}: now {}", a_actor->GetFormID(), before, a_theirs.playerId, a_theirs.originalBase,
-				(a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "", NameOf(a_actor));
+			REX::INFO("Rolls: {:08X} ({}) has player {}'s roll of {:08X}{} written: theirs from its next load on (its NPC now {}, {} health)", a_actor->GetFormID(), before,
+				a_theirs.playerId, a_theirs.originalBase, (a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "", RE::TESFullName::GetFullName(*npc),
+				BaseHealthOf(*npc));
 		}
 		if (a_plan.level && npc) {
 			// A level of its own, no longer its player's times a multiplier: our player's level isn't theirs.
@@ -215,6 +264,7 @@ namespace Rolls
 		}
 		if (rebuild) {
 			a_actor->Reset3D(true, 0, true, 0);
+			REX::INFO("Rolls: {:08X} is level {} now (player {}'s: {}), {}", a_actor->GetFormID(), LevelOf(a_actor), a_theirs.playerId, a_theirs.level, ToughnessOf(a_actor));
 		}
 		for (const auto& entry : a_plan.add) {
 			RE::Console::ExecuteCommand(std::format("{:08X}.addtofaction {:08X} {}", a_actor->GetFormID(), entry.faction, static_cast<int>(entry.rank)).c_str());
@@ -230,7 +280,7 @@ namespace Rolls
 	bool IsLeveledNpc(std::uint32_t a_base)
 	{
 		const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
-		return npc && npc->UsesTemplate() && !npc->IsUnique();
+		return npc && Templated(*npc) && !npc->IsUnique();
 	}
 
 	std::string Describe(RE::Actor* a_actor)
@@ -239,13 +289,21 @@ namespace Rolls
 			return "no actor";
 		}
 		const auto ours = ReadOurs(a_actor, true);
-		std::string out = std::format("name=\"{}\" level={} leveled={} original={:08X} templates=", NameOf(a_actor), ours.level, ours.leveled, ours.originalBase);
+		std::string out = std::format("name=\"{}\" level={} {} leveled={} original={:08X} templates=", NameOf(a_actor), ours.level, ToughnessOf(a_actor), ours.leveled, ours.originalBase);
 		for (std::size_t i = 0; i < ours.templates.size(); ++i) {
 			out += std::format("{}{:08X}", i ? "," : "", ours.templates[i]);
 		}
 		if (ours.leveled && ours.originalBase) {
 			const auto& reach = ReachOf(ours.originalBase);
 			out += std::format(" legendary={} reach={}/{}", NpcRoll::Legendary(ours.templates, NpcRoll::MaskOf(ours.templates), reach), reach.normal.size(), reach.legendary.size());
+		}
+		// The roll's copy itself: what it is templated on now (the deepest NPCs the roll came to, slot by slot).
+		if (const auto npc = a_actor->GetNPC()) {
+			const auto idOf = [](const RE::TESForm* a_form) { return a_form ? a_form->GetFormID() : 0u; };
+			out += std::format(" base={:08X} \"{}\" baseHealth={} flags={:04X} tpl={:08X} slots=", npc->GetFormID(), RE::TESFullName::GetFullName(*npc), BaseHealthOf(*npc), npc->actorData.templateUseFlags.underlying(), idOf(npc->baseTemplateForm));
+			for (std::size_t i = 0; i < Protocol::IDENTITY_TEMPLATES; ++i) {
+				out += std::format("{}{:08X}", i ? "," : "", npc->templateForms ? idOf(npc->templateForms[i]) : 0u);
+			}
 		}
 		out += " factions=";
 		for (std::size_t i = 0; i < ours.factions.size(); ++i) {
@@ -260,7 +318,7 @@ namespace Rolls
 		case NpcRoll::Roll::kSame:
 			return "same";
 		case NpcRoll::Roll::kMake:
-			return "made";
+			return "written";
 		case NpcRoll::Roll::kNotLeveled:
 			return "not leveled here";
 		case NpcRoll::Roll::kOtherOriginal:

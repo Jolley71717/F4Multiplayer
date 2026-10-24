@@ -250,13 +250,20 @@
   template slot, traits to keywords). The owner reports it (`kReportNpcIdentity`: the slots, its level, legendary or
   not, and for a spawn its factions) when it changes, and the server keeps the first runner's as the session's roll: a
   later runner's report is ignored while it stands, and it goes when the NPC dies, when nobody runs it and when that
-  player leaves. A newcomer is told the run NPCs' rolls. The others make their own NPC that roll while they mirror it
-  (`TESActorBaseData::CopyFromTemplateForms` with the owner's templates, then `Reset3D`) and give it the owner's level,
-  only when theirs was placed as the same NPC and each of the roll's NPCs is one their lists can give (`NpcRoll::Walk`
-  over lists, templates and legendary templates); a roll that doesn't take is tried 3 times, 5 s apart, then left as
-  their game has it. A plugin's NPC whose base is a plugin's NPC (not leveled) is every game's own, and its factions
-  are its game's story (a recruited settler), never set from another game. `net status`: `rolls=` sent/known/made/
-  kept/factions set; `mirror <ref>` shows ours and theirs.
+  player leaves. A newcomer is told the run NPCs' rolls. The others write the owner's roll onto their copy while they
+  mirror it (its `ExtraLeveledCreature` slots) and give it the owner's level, only when theirs was placed as the same
+  NPC and each of the roll's NPCs is one their lists can give (`NpcRoll::Walk` over lists, templates and legendary
+  templates); a roll that can't be written is tried 3 times, 5 s apart, then left as their game has it. The engine puts
+  the NPC together from those slots when the copy loads, so the roll is the owner's from the copy's next load on (a cell
+  left and come back to, a fast travel, a save loaded): on the rig, written ghouls were the host's once the cell loaded
+  again, while `CopyFromTemplateForms`, a disable and enable and `Reset3D` left the NPC already made as it was. Until
+  then only the level is the owner's. A plugin's NPC whose base is a plugin's NPC (not leveled) is every game's own,
+  and its factions are its game's story (a recruited settler), never set from another game. `net status`: `rolls=`
+  sent/known/written/kept/factions set; `mirror <ref>` shows ours and theirs.
+- Hits on a copy whose roll is not the owner's yet: what our hit took is reported as a fraction of the copy's maximum
+  and the owner takes that fraction of its own, so the shots it takes to kill are as many as the shooter's copy needs,
+  dealt through the copy's damage resistance. A copy rolled tougher than the owner's NPC (a Stalker's 30 DR against a
+  Roamer's 15, a Guardian against a Watcher) takes less from each shot, and so does the NPC; one rolled weaker, more.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
