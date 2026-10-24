@@ -53,8 +53,11 @@ namespace
 			return { std::ranges::find(named, a_id) != named.end(), wired.contains(a_id), benched.contains(a_id) };
 		}
 
+		std::uint32_t detaches = 0;  // the game's grid and wire code run on a copy
+
 		void Detach(std::uint32_t a_id)
 		{
+			++detaches;
 			if (stubborn.contains(a_id)) {
 				return;
 			}
@@ -171,6 +174,28 @@ TEST("workshop power: the audit names the copies the game kept tied in")
 	s.stubborn.insert(GENERATOR);
 	Counts counts;
 	CHECK((Audit(s, counts) == std::vector<std::uint32_t>{ GENERATOR }));
+}
+
+TEST("workshop power: a copy the game kept tied in is not taken off again by every audit, but still named")
+{
+	Settlement s;
+	s.Wire(LIGHT, GENERATOR, WIRE);
+	s.stubborn.insert(GENERATOR);
+	Counts                  counts;
+	std::set<std::uint32_t> kept;
+	const auto              skip = [&](std::uint32_t a_id) { return kept.contains(a_id); };
+	auto                    stuck = Audit(s, counts, skip);
+	CHECK((stuck == std::vector<std::uint32_t>{ GENERATOR }));
+	kept.insert(stuck.begin(), stuck.end());
+	const auto detaches = s.detaches;
+	for (int i = 0; i < 30; ++i) {  // a minute of the session's audits
+		CHECK((Audit(s, counts, skip) == std::vector<std::uint32_t>{ GENERATOR }));
+	}
+	CHECK(s.detaches == detaches);  // its grid and wires were left alone
+	CHECK(counts.found == 1);
+	// The audit before a save still tries it.
+	CHECK((Audit(s, counts) == std::vector<std::uint32_t>{ GENERATOR }));
+	CHECK(s.detaches == detaches + 1);
 }
 
 TEST("workshop power: a session's end with copies wired in leaves a save whose grids name none of them")
@@ -348,6 +373,49 @@ TEST("workshop power: a copy whose game won't take it is let be after a few trie
 	CHECK(mirror.Refresh(game, t) == 0);  // let be
 	game.drawn[{ BUILDER, PYLON }] = 0x2000;
 	CHECK(mirror.Refresh(game, t + REFRESH) == 1);  // drawn anew: tried again
+}
+
+TEST("workshop power: a copy the game keeps drawing anew is shown a few times, then let be for a while")
+{
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { LIGHT, true });
+	std::size_t shows = 0;
+	std::uintptr_t model = 0x1000;
+	for (int i = 0; i < 240; ++i, t += REFRESH) {  // a minute, a new 3D at every look
+		game.drawn[{ BUILDER, LIGHT }] = model;
+		model += 0x10;
+		shows += mirror.Refresh(game, t);
+	}
+	CHECK(shows == 1u + MAX_REDRAWS);  // the first draw, then MAX_REDRAWS anew
+	CHECK(mirror.RedrawsCapped() > 0);
+	// Once the window is over it is shown again.
+	t += REDRAW_WINDOW;
+	game.drawn[{ BUILDER, LIGHT }] = model + 0x10;
+	CHECK(mirror.Refresh(game, t) == 1);
+}
+
+TEST("workshop power: a builder who left has their copies shown no more, until their game speaks again")
+{
+	Mirror     mirror;
+	FriendGame game;
+	auto       t = Clock::now();
+	mirror.Set(BUILDER, { LIGHT, true });
+	mirror.Set(3, { PYLON, true });
+	game.drawn[{ BUILDER, LIGHT }] = 0x1000;
+	game.drawn[{ 3, PYLON }] = 0x2000;
+	CHECK(mirror.Refresh(game, t) == 2);
+	mirror.Freeze(BUILDER);
+	game.drawn[{ BUILDER, LIGHT }] = 0x1100;  // its cell loaded again
+	game.drawn[{ 3, PYLON }] = 0x2100;
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);  // only the other builder's
+	CHECK(mirror.Wanted({ BUILDER, LIGHT }) == std::optional{ true });  // kept for when they come back
+	mirror.Set(BUILDER, { LIGHT, true });  // back: their join's snapshot
+	t += REFRESH;
+	CHECK(mirror.Refresh(game, t) == 1);
+	CHECK(game.shown.at({ BUILDER, LIGHT }));
 }
 
 TEST("workshop power: two builders' pieces with the same ID are told apart; a scrapped piece is forgotten")

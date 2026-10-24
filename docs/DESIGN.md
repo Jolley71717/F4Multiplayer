@@ -375,14 +375,22 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 
 - Detection: every actor gets its animation graph's events through its
   `BSTEventSink<BSAnimationGraphEvent>` base at +0x38; the graph sends "WeaponFire" once per shot
-  and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack.
+  and "weaponSwing" at the hit frame of a melee swing or punch. Both count as an attack. A gun's bash
+  sends "weaponSwing" too; with a gun in hand it is not reported (`AttackKind::ReportsAsShot`): a
+  receiver replays any attack of a friend holding a gun as a shot, so each bash sounded as a gunshot.
   We hook slot 1 of that vtable twice: the player's class (our shots) and the NPC class (shots by
   NPCs we run; stand-ins and mirrored NPCs use the same class and are filtered out).
 - `ReportShot {refId, sound}` (0 = the sender) goes to the server, which accepts NPC shots only from
   the NPC's owner and relays `ShotFired {playerId, refId, sound}` unreliably (60 shots/s per player).
 - Replay: "attackStart" on the stand-in's or mirrored NPC's graph plays the full firing animation
-  (recoil, aim pose). Nothing is launched: damage already arrives through health sync, and real
-  projectiles from stand-ins would add friendly fire and kills nobody made.
+  (recoil, aim pose). Nothing may be launched: damage already arrives through health sync, and real
+  projectiles from stand-ins would add friendly fire and kills nobody made. The animation's own
+  "WeaponFire" did launch one from a stand-in, though (seen on the rig: its round hit our player on
+  every replayed shot, whichever way it faced, so each of a friend's shots showed the other player a
+  hit's flash, blood and damage marker). A stand-in's "WeaponFire" within 1.5 s of a replayed shot is
+  kept from the engine (`AttackKind::HoldsOwnFire`, `firesHeld=` in the status), as a replayed
+  throw's release is. The engine then draws no flash of its own for it either, so a stand-in's
+  replayed shot gets MuzzleFlash's.
 - A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
   rejects attacks, so after every equipment change it holsters and draws again.
 - Gunshot: the weapon's own attack sound fields are empty for vanilla guns. The game picks the

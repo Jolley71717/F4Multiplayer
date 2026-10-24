@@ -30,7 +30,9 @@ namespace WeaponFire
 
 	namespace
 	{
-		std::atomic<std::uint32_t> pending{ 0 };
+		std::atomic<std::uint32_t> pending{ 0 };        // our shots ("WeaponFire") not taken yet
+		std::atomic<std::uint32_t> pendingSwings{ 0 };  // our swings, punches and bashes ("weaponSwing") not taken yet
+		std::uint32_t              bashesKept = 0;      // gun bashes (ours and our NPCs') not sent as shots (AttackKind::ReportsAsShot)
 		std::atomic<std::uint32_t> total{ 0 };
 		std::uint32_t              replayed = 0;  // shots received for a stand-in or mirrored NPC
 		std::uint32_t              played = 0;    // ... that its animation graph accepted
@@ -52,9 +54,15 @@ namespace WeaponFire
 		// frame): both are replayed as an attack on the stand-in, which swings whatever it holds.
 		const char* EmoteIdle(std::uint8_t a_action);
 
-		bool IsAttackEvent(std::string_view a_tag)
+		std::optional<AttackKind::Event> AttackOf(std::string_view a_tag)
 		{
-			return a_tag == "WeaponFire" || a_tag == "weaponSwing";
+			if (a_tag == "WeaponFire") {
+				return AttackKind::Event::kFire;
+			}
+			if (a_tag == "weaponSwing") {
+				return AttackKind::Event::kSwing;
+			}
+			return std::nullopt;
 		}
 
 		// A grenade or mine leaving the hand: the graph's "WeaponFire" with payload "2" (a gun's has none).
@@ -115,6 +123,53 @@ namespace WeaponFire
 			return true;
 		}
 
+		// A friend's shot replayed on their stand-in: the stand-in's own bullet is kept from the engine
+		// (AttackKind::HoldsOwnFire). Armed on the main thread (PlayShot); the shot comes on the animation threads.
+		std::mutex                                                               fireLock;
+		std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> fireReplays;  // under fireLock
+		constexpr std::size_t                                                    MAX_FIRE_REPLAYS = 64;
+		std::atomic<std::uint32_t>                                               firesHeld{ 0 };
+		std::atomic<std::uint32_t>                                               firesLogged{ 0 };
+
+		void ArmReplayedFire(std::uint32_t a_actorId)
+		{
+			const auto       now = std::chrono::steady_clock::now();
+			std::scoped_lock l{ fireLock };
+			if (fireReplays.size() >= MAX_FIRE_REPLAYS) {
+				std::erase_if(fireReplays, [&](const auto& a_entry) { return now - a_entry.second > AttackKind::HOLD_FIRE_FOR; });
+			}
+			if (fireReplays.size() < MAX_FIRE_REPLAYS || fireReplays.contains(a_actorId)) {
+				fireReplays[a_actorId] = now;
+			}
+		}
+
+		// Whether this "WeaponFire" is a stand-in's own, after a replayed shot, kept from the engine.
+		bool HoldsReplayedFire(std::uint32_t a_actorId, std::string_view a_tag, std::string_view a_payload)
+		{
+			const auto attack = AttackOf(a_tag);
+			if (attack != AttackKind::Event::kFire) {
+				return false;
+			}
+			std::chrono::steady_clock::duration since;
+			{
+				std::scoped_lock l{ fireLock };
+				const auto it = fireReplays.find(a_actorId);
+				if (it == fireReplays.end()) {
+					return false;
+				}
+				since = std::chrono::steady_clock::now() - it->second;
+			}
+			if (!AttackKind::HoldsOwnFire(*attack, IsThrowEvent(a_tag, a_payload), since)) {
+				return false;
+			}
+			++firesHeld;
+			if (firesLogged.fetch_add(1) < 20) {
+				REX::INFO("WeaponFire: {:08X} fired {} ms after a replayed shot; kept from the engine, so no bullet of its own leaves the gun", a_actorId,
+					std::chrono::duration_cast<std::chrono::milliseconds>(since).count());
+			}
+			return true;
+		}
+
 		// Other things the graph tells us the actor did, replayed on the stand-in as ShotActions.
 		std::optional<std::uint8_t> ActionOf(std::string_view a_tag)
 		{
@@ -161,8 +216,9 @@ namespace WeaponFire
 					playerActions.push_back(Protocol::ShotAction::kThrow);
 				}
 				ArmExplosionWatch();
-			} else if (IsAttackEvent(tag)) {
-				++pending;
+			} else if (const auto attack = AttackOf(tag)) {
+				// Which it was is kept for TakeShots: a swing with a gun in hand is a bash, never sent as a shot.
+				++(*attack == AttackKind::Event::kFire ? pending : pendingSwings);
 				++total;
 			} else if (IsThrowAttachEvent(tag, payload)) {
 				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it shows it for
@@ -186,7 +242,12 @@ namespace WeaponFire
 		ProcessEventFn             originalActorEvent = nullptr;
 		std::atomic<std::uint32_t> loggedActor{ 0 };
 		std::mutex                 npcLock;
-		std::vector<std::uint32_t> npcShots;
+		struct NpcAttack
+		{
+			std::uint32_t     id = 0;
+			AttackKind::Event event = AttackKind::Event::kFire;
+		};
+		std::vector<NpcAttack>     npcShots;
 		constexpr std::size_t      MAX_PENDING_NPC_SHOTS = 256;
 
 		RE::BSEventNotifyControl OnActorAnimationEvent(RE::BSTEventSink<RE::BSAnimationGraphEvent>* a_this, const RE::BSAnimationGraphEvent& a_event, RE::BSTEventSource<RE::BSAnimationGraphEvent>* a_source)
@@ -205,6 +266,10 @@ namespace WeaponFire
 			if (IsThrowEvent(npcTag, npcPayload) && HoldsReplayedRelease(id)) {
 				return RE::BSEventNotifyControl::kContinue;
 			}
+			// A friend's shot replayed here: the engine is not told the stand-in's gun fired, so it fires no bullet of its own.
+			if (HoldsReplayedFire(id, npcTag, npcPayload)) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
 			// A plugin's NPC, or one our game made at runtime that we run under a spawn id (Spawns): a stand-in, a copy of a
 			// friend's spawn or one not shared is in no other game to replay it.
 			const bool shared = Protocol::IsShareableRef(id) || (Protocol::IsSpawnRef(id) && [&] {
@@ -221,10 +286,10 @@ namespace WeaponFire
 					}
 					ArmExplosionWatch();
 				}
-			} else if (shared && IsAttackEvent(npcTag)) {
+			} else if (const auto attack = shared ? AttackOf(npcTag) : std::nullopt) {
 				std::scoped_lock l{ npcLock };
 				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
-					npcShots.push_back(id);
+					npcShots.push_back({ id, *attack });
 				}
 			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
 				++throwAttaches;
@@ -266,12 +331,6 @@ namespace WeaponFire
 	{
 		InstallForNpcs(a_actor);
 		loggedActor = a_actor ? a_actor->GetFormID() : 0;
-	}
-
-	std::vector<std::uint32_t> TakeNpcShots()
-	{
-		std::scoped_lock l{ npcLock };
-		return std::exchange(npcShots, {});
 	}
 
 	std::vector<std::uint8_t> TakeActions()
@@ -479,17 +538,22 @@ namespace WeaponFire
 		}
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
-		bool animated = false;
+		bool       animated = false;
+		const bool standIn = replay == AttackKind::Replay::kFire && Puppets::IsPuppet(a_actor);
+		if (standIn) {
+			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
+		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
 		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
 			animated = true;
 		}
-		// The engine shows the gun's flash and light with the firing animation; a shot whose animation the graph
-		// refused gets the flash from MuzzleFlash instead (nothing is fired: ROADMAP #17).
+		// The engine shows the gun's flash and light when the gun fires; a shot whose animation the graph refused gets
+		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a stand-in's, whose own fire is kept from the
+		// engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
-			MuzzleFlash::OnShot(a_actor, animated);
+			MuzzleFlash::OnShot(a_actor, animated && !standIn);
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
 		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one
@@ -567,12 +631,43 @@ namespace WeaponFire
 
 	std::uint32_t TakeShots()
 	{
-		return pending.exchange(0);
+		auto       shots = pending.exchange(0);
+		const auto swings = pendingSwings.exchange(0);
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		if (swings == 0) {
+			return shots;
+		}
+		if (player && AttackKind::ReportsAsShot(AttackKind::Event::kSwing, HoldsGun(player))) {
+			shots += swings;
+		} else {
+			bashesKept += swings;
+		}
+		return shots;
+	}
+
+	std::vector<std::uint32_t> TakeNpcShots()
+	{
+		std::vector<NpcAttack> attacks;
+		{
+			std::scoped_lock l{ npcLock };
+			attacks = std::exchange(npcShots, {});
+		}
+		std::vector<std::uint32_t> out;
+		out.reserve(attacks.size());
+		for (const auto& attack : attacks) {
+			const auto actor = attack.event == AttackKind::Event::kSwing ? RE::TESForm::GetFormByID<RE::Actor>(attack.id) : nullptr;
+			if (AttackKind::ReportsAsShot(attack.event, actor && HoldsGun(actor))) {
+				out.push_back(attack.id);
+			} else {
+				++bashesKept;
+			}
+		}
+		return out;
 	}
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)

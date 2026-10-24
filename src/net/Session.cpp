@@ -508,6 +508,7 @@ namespace Session
 					RemotePlayers::Remove(msg->playerId);
 					Party::OnPlayerLeft(msg->playerId);
 					Voice::OnPlayerLeft(msg->playerId);
+					WorkshopSync::OnPlayerLeft(msg->playerId);  // their copies' power, shown no more
 					MovedObjects::OnPlayerLeft(msg->playerId);
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));

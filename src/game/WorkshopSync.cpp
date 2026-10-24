@@ -625,6 +625,8 @@ namespace WorkshopSync
 		std::uint32_t            audits = 0;
 		std::uint32_t            stuckWarned = 0;
 		std::unordered_set<std::uint32_t> retired;   // copies switched off and kept: the game kept them tied in
+		std::unordered_set<std::uint32_t> keptTied;  // copies an audit could not take off: the session's audit tries them no more
+		std::uint32_t            auditSkips = 0;     // ... skipped by it since
 		std::set<std::uint32_t>  powerBenches;       // workbenches seen in loaded cells, and ones a copy was linked to
 		std::uint64_t            frameNumber = 0;
 		std::uint64_t            gridNamedFrame = ~0ull;
@@ -862,7 +864,15 @@ namespace WorkshopSync
 			++audits;
 			PowerEngine engine;
 			const auto  before = untied.found;
-			const auto  stuck = WorkshopPower::Audit(engine, untied);
+			// Every 2 s in a session, a copy the game kept tied in before is not taken off again (its grid and wires
+			// re-run each time, to no end); before a save, and by hand, every copy is tried.
+			const bool  session = a_when == "session";
+			const auto  stuck = WorkshopPower::Audit(engine, untied, [&](std::uint32_t a_id) {
+				const bool skip = session && (keptTied.contains(a_id) || retired.contains(a_id));
+				auditSkips += skip;
+				return skip;
+			});
+			keptTied.insert(stuck.begin(), stuck.end());
 			if (untied.found != before) {
 				REX::WARN("WorkshopSync: {}: {} copies were tied into our power; {} still are", a_when, untied.found - before, stuck.size());
 			}
@@ -1989,6 +1999,7 @@ namespace WorkshopSync
 		sentScraps.Clear();
 		reporter.Clear();
 		mirror.Clear();
+		keptTied.clear();
 		powerBenches.clear();
 		benchWorld = 0;
 		std::scoped_lock l{ outLock };
@@ -2044,6 +2055,11 @@ namespace WorkshopSync
 		reporter.SendAll();
 	}
 
+	void OnPlayerLeft(std::uint32_t a_playerId)
+	{
+		mirror.Freeze(a_playerId);
+	}
+
 	void BeforeSave()
 	{
 		AuditPower("save");
@@ -2096,9 +2112,9 @@ namespace WorkshopSync
 
 	std::string DescribePower()
 	{
-		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} mirrorDropped={} pollMsMax={:.2f}",
+		return std::format("power: block={} blocked={} audits={} found={} detached={} retired={} wiresRemoved={} benches={} tracked={} sent={} received={} mirrored={} shown={} showCalls={} givenUp={} redrawsCapped={} mirrorDropped={} keptTied={} auditSkips={} pollMsMax={:.2f}",
 			blockCopies, copiesBlocked, audits, untied.found, untied.detached, untied.retired, wiresUntied, powerBenches.size(), reporter.Size(), powerSent, powerReceived, mirror.Size(),
-			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.Dropped(), static_cast<double>(pollUsMax) / 1000.0);
+			mirror.Shown(), powerShown, mirror.GivenUp(), mirror.RedrawsCapped(), mirror.Dropped(), keptTied.size(), auditSkips, static_cast<double>(pollUsMax) / 1000.0);
 	}
 
 	std::string DescribeGrids(RE::TESObjectREFR* a_bench)
