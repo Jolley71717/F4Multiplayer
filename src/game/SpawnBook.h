@@ -231,6 +231,7 @@ namespace SpawnBook
 		std::optional<Spot> copyAt;             // where it stands, while it is in a cell
 		bool                copyLoaded = true;  // its 3D is in
 		bool                baseOk = true;      // its base is an NPC we place copies of (not unique, not the player's)
+		bool                waiting = false;    // its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT): not placed yet
 	};
 
 	enum class Act
@@ -354,7 +355,7 @@ namespace SpawnBook
 			if (!a_facts.owner || !RemoteEdits::Within(RemoteEdits::Distance(*a_facts.owner, copy.at), OWNER_RANGE)) {
 				return Act::kNone;
 			}
-			return Act::kPlace;
+			return a_facts.waiting ? Act::kNone : Act::kPlace;
 		}
 
 		// A friend's frame, placed as a friend's parked one is (ArmorFrames::ChoosePark) rather than as an NPC: wherever its

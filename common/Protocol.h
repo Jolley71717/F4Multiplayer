@@ -28,7 +28,9 @@ namespace Protocol
 	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
 	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
 	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
-	inline constexpr std::uint16_t VERSION = 49;
+	// 54: what a leveled NPC was rolled as in the game that runs it (kReportNpcIdentity, kNpcIdentity: NpcIdentity). 50 to
+	// 53 are other branches' test builds.
+	inline constexpr std::uint16_t VERSION = 54;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -137,6 +139,7 @@ namespace Protocol
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 		kReportMarkers = 24,      // map markers the sender discovered
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
+		kReportNpcIdentity = 67,   // what an NPC the sender runs was rolled as: its leveled templates, level and factions
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
@@ -181,6 +184,7 @@ namespace Protocol
 		kWorldTime = 119,         // the session's time of day and weather
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
+		kNpcIdentity = 167,       // what an NPC another player's game runs was rolled as there: the session's roll of it
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
@@ -954,6 +958,51 @@ namespace Protocol
 		std::vector<std::uint32_t> items;
 
 		bool operator==(const NpcEquipment&) const = default;
+	};
+
+	// What an NPC was rolled as in the game that runs it. A leveled NPC (a raider, a bloatfly, a ghoul placed from a
+	// leveled list) is put together by each game on its own as it first loads: its list is rolled at that game's player's
+	// level, and so is the chance of a legendary one. So one game had a legendary bloatfly where the other had a plain
+	// one. The engine keeps the roll as one NPC per template slot (ExtraLeveledCreature: traits, stats, factions, spells
+	// and the rest, in TEMPLATE_USE_FLAG's order), and a legendary roll is in them (its name, keyword and mutation). The
+	// owner reports them, and the others make their own NPC that roll (src/game/NpcRoll.h). factions: for a spawn only
+	// (kFactions), what its owner's copy is in, the runtime changes of a random encounter or a settlement included.
+	// playerId is ignored client -> server: the server sets it, and keeps the first runner's (the session's roll).
+	inline constexpr std::size_t   IDENTITY_TEMPLATES = 13;
+	inline constexpr std::size_t   MAX_IDENTITY_FACTIONS = 32;
+	inline constexpr std::uint16_t MAX_IDENTITY_LEVEL = 1000;
+
+	struct FactionRank
+	{
+		std::uint32_t faction = 0;
+		std::int8_t   rank = 0;
+
+		bool operator==(const FactionRank&) const = default;
+	};
+
+	struct NpcIdentity
+	{
+		enum Flags : std::uint8_t
+		{
+			kLegendary = 1 << 0,    // its owner's game rolled it legendary (logged and shown; the templates make it so)
+			kFactions = 1 << 1,     // factions lists what it is in (else they were not sent)
+			kFactionsCut = 1 << 2,  // ... and it is in more than MAX_IDENTITY_FACTIONS: the list is the first of them
+		};
+		static constexpr std::uint8_t ALL_FLAGS = kLegendary | kFactions | kFactionsCut;
+
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;         // a plugin's reference or a spawn id
+		std::uint32_t originalBase = 0;  // the NPC it was placed as (its leveled data's), 0 if it isn't leveled
+		std::uint16_t level = 0;
+		std::uint8_t  flags = 0;
+		// The slots the owner's roll filled: bit i for templates[i].
+		std::uint16_t mask = 0;
+		// Slot i's NPC (0 where the roll left it empty). Translated, one the other side lacks becomes 0 with its bit still
+		// in mask: the receiver can tell the roll is not whole there.
+		std::array<std::uint32_t, IDENTITY_TEMPLATES> templates{};
+		std::vector<FactionRank>                      factions;
+
+		bool operator==(const NpcIdentity&) const = default;
 	};
 
 	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
@@ -2968,6 +3017,73 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The filled slots' NPCs in mask order, then the factions.
+	inline std::vector<std::uint8_t> Encode(const NpcIdentity& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.originalBase);
+		w.U16(a_msg.level);
+		w.U8(a_msg.flags);
+		const auto mask = static_cast<std::uint16_t>(a_msg.mask & ((1u << IDENTITY_TEMPLATES) - 1));
+		w.U16(mask);
+		for (std::size_t i = 0; i < IDENTITY_TEMPLATES; ++i) {
+			if (mask & (1u << i)) {
+				w.U32(a_msg.templates[i]);
+			}
+		}
+		const auto count = (std::min)(a_msg.factions.size(), MAX_IDENTITY_FACTIONS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.factions[i].faction);
+			w.U8(static_cast<std::uint8_t>(a_msg.factions[i].rank));
+		}
+		return w.Data();
+	}
+
+	// An NPC the session names, a level of at most MAX_IDENTITY_LEVEL, slots only with the NPC it was placed as, and
+	// factions only when flagged, none 0 and none twice. A slot's NPC may be 0 (a translation had none for it).
+	inline std::optional<NpcIdentity> DecodeNpcIdentity(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		NpcIdentity msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.originalBase = r.U32();
+		msg.level = r.U16();
+		msg.flags = r.U8();
+		msg.mask = r.U16();
+		if (!r.Ok() || msg.mask >= (1u << IDENTITY_TEMPLATES) || (msg.flags & ~NpcIdentity::ALL_FLAGS) != 0) {
+			return std::nullopt;
+		}
+		for (std::size_t i = 0; i < IDENTITY_TEMPLATES; ++i) {
+			if (msg.mask & (1u << i)) {
+				msg.templates[i] = r.U32();
+			}
+		}
+		const auto count = r.U8();
+		if (count > MAX_IDENTITY_FACTIONS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			FactionRank entry;
+			entry.faction = r.U32();
+			entry.rank = static_cast<std::int8_t>(r.U8());
+			if (entry.faction == 0 || std::ranges::any_of(msg.factions, [&](const FactionRank& a_other) { return a_other.faction == entry.faction; })) {
+				return std::nullopt;
+			}
+			msg.factions.push_back(entry);
+		}
+		const bool listed = (msg.flags & NpcIdentity::kFactions) != 0;
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || msg.level > MAX_IDENTITY_LEVEL || (msg.mask != 0 && msg.originalBase == 0) ||
+			(!listed && (!msg.factions.empty() || (msg.flags & NpcIdentity::kFactionsCut) != 0))) {
 			return std::nullopt;
 		}
 		return msg;

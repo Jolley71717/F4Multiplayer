@@ -243,6 +243,20 @@
   the host's armor, and a corpse holds only its own roll). An NPC in a power armor frame is left alone, and
   power armor pieces are never put on a body. Where its roll lacks the owner's item it wears its own; the
   one thing it is given is a grenade or mine to hold for a replayed throw, which the throw spends.
+- Roll (`NpcRoll.h`, game-free and tested; `Rolls.cpp`; protocol 54): a leveled NPC (a bloatfly, a ghoul, a raider
+  placed from a leveled list) is put together by each game on its own as it first loads, its list and its legendary
+  chance rolled at that game's player's level, so one game had a legendary black bloatfly where the other had a plain
+  one. The engine keeps the roll on the reference (`ExtraLeveledCreature`: the NPC it was placed as and one NPC per
+  template slot, traits to keywords). The owner reports it (`kReportNpcIdentity`: the slots, its level, legendary or
+  not, and for a spawn its factions) when it changes, and the server keeps the first runner's as the session's roll: a
+  later runner's report is ignored while it stands, and it goes when the NPC dies, when nobody runs it and when that
+  player leaves. A newcomer is told the run NPCs' rolls. The others make their own NPC that roll while they mirror it
+  (`TESActorBaseData::CopyFromTemplateForms` with the owner's templates, then `Reset3D`) and give it the owner's level,
+  only when theirs was placed as the same NPC and each of the roll's NPCs is one their lists can give (`NpcRoll::Walk`
+  over lists, templates and legendary templates); a roll that doesn't take is tried 3 times, 5 s apart, then left as
+  their game has it. A plugin's NPC whose base is a plugin's NPC (not leveled) is every game's own, and its factions
+  are its game's story (a recruited settler), never set from another game. `net status`: `rolls=` sent/known/made/
+  kept/factions set; `mirror <ref>` shows ours and theirs.
 - Fix-ups: a copy that is off here while the owner's runs is switched on (`enable`), and a friend's companion
   standing near us whose copy is in a cell we have not loaded is moved here (`moveto`). Each is tried at most
   every 5 s (10 s for moving) and three times per NPC (`RetryBudget`): one a quest keeps off in our game is
@@ -299,7 +313,13 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   away; only the messages about NPCs take them (`IsActorRef`), and each game looks its own NPC up under one.
 - The base is what every game puts together the same: the first of the leveled data's templates that is a whole
   NPC (no template of its own), else the NPC it was placed as (a leveled one is rolled again by each game), else
-  its own base when that is a plugin's. Without one it isn't shared.
+  its own base when that is a plugin's. Without one it isn't shared. A copy is placed from the NPC the owner's game
+  placed it as when that is a leveled NPC in ours too, so our engine rolls it and the owner's roll is then made ours
+  (Shared NPC AI: Roll); it waits up to 2 s for the roll (`NpcRoll::IDENTITY_WAIT`), else it is placed from the base,
+  and a copy placed before its roll came is placed again from the right NPC. The copy is put in the owner's copy's
+  factions and taken out of the rest (a random encounter's scavengers and a settlement's settlers get theirs from
+  their quest at runtime: a copy of one template's NPC had that NPC's own, a friendly settler in one game, a hostile
+  scavenger in the other); never our player's or our companion's faction.
 - The server grants an id to the first game to ask (`actorOwners` names the owner; `spawns` holds the details),
   sends the others `kSpawned` and everyone the owner. A joiner is sent the spawns before who runs NPCs. Limits:
   32 a player at once, 128 in the session, a budget of 32 and 2 a second; past them the answer names nobody and
@@ -334,8 +354,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   the frames shared before it came, so a friend's suit parked before the session stands there too. `net status`:
   `framesMade=` shared/standing/our player's own (npcs), `frames: ours= reported= placed= moved= taken=` (spawns).
 - Not yet: copies are not shielded from a friend's explosion (BlastShield) or watched by CopyWatch, a copy
-  carries what its own game gives it until the owner's gear report dresses it, and a copy whose owner's game
-  only knows the leveled NPC it was placed as can come out as another of that list's NPCs. Each game's corpse of a
+  carries what its own game gives it until the owner's gear report dresses it, a roll's new abilities (its spells
+  slot) may take effect only once the copy loads again, and the factions an alias of the owner's quest gives are not
+  read. Each game's corpse of a
   spawn carries its own loot: each player loots their own.
 
 ## Weapon fire (src/game/WeaponFire.cpp)
@@ -1060,7 +1081,7 @@ session as a player would), and `wsinfo <ref>` (now with `blocked=`, `powerPiece
 
 ## Status (2026-10-09)
 
-Protocol VERSION 47 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46)). The sections below record each review as it was written.
+Protocol VERSION 54 (28 adds who reported a quest stage to kQuestStage, 29 the sender's clock to player states, to NPC states their owner's graph's direction and a dog's gait, and kReportSpawn and kSpawned for NPCs made at runtime, 30 whether a claimed NPC is essential to kClaimActors and the frame a player left parked to their status, 31 a line's recording (info, response number and voice type) in place of its topic, 33 a mirrored NPC's gait, 34 kRename and kRenamed, and names of 32 UTF-8 characters, 128 bytes on the wire, 35 a hello's load order, kRequestLoadOrder and kLoadOrder; 47 the next release's branches together, which took 36 to 46 for their own test builds (44 was a trial bundle's): the session's plugin table and kPluginTable (36), items given by dropping them: kReportDrop, kClaimDrop, kDropRecord, kDropPlaced, kDropGone, kDropList (37), a power wire's shape on a workshop item (38), LooksMenu skins and overlays on the face (39), kReportDamage and kActorDamaged for damage over time (40), kReportObjectHold, kReportObjectRest, kObjectHeld and kObjectRested for loose objects moved by hand (41), the host controls kHostCommand, kRequestHostInfo, kRemoved and kHostInfo (42), pings of what is under the crosshair, kPing 56 and kPinged 156 in place of 18 and 120 (43), the Minutemen's settlement requests shared by their run: kReportRadiantStart, kReportRadiantStage, kRadiantStarted and kRadiantStage (45), and whether workshop pieces are powered: kReportWorkshopPower and kWorkshopPower, see "Settlement power" (46), and a leveled NPC's roll and a spawn's factions: kReportNpcIdentity 67 and kNpcIdentity 167, see "Shared NPC AI" (54; 50 to 53 were other branches' test builds)). The sections below record each review as it was written.
 
 ### Trust review of the 0.6.2-0.6.3 changes (2026-10-09)
 
@@ -1084,6 +1105,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
 | `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
+| `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
 | `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take | yes |
