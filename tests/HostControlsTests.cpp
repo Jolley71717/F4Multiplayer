@@ -385,6 +385,89 @@ TEST("host controls: a player turned away from a full server was never in the se
 	CHECK(locked->reason == Protocol::REJECT_LOCKED);
 }
 
+TEST("host controls: a locked session takes a member back only by the Steam account they joined with")
+{
+	Fixture f{ HostedOptions() };
+	JoinHost(f);
+	const auto bob = JoinBob(f, 2);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+	f.fake->Drop(2);
+	REQUIRE(f.fake->Settle());
+
+	// His game identity isn't a secret: from another account, or from none, it isn't him.
+	f.fake->SetIdentity(3, 76561198000000009ull);
+	const auto other = JoinRefused(f, 3, Fixture::MakeHello("Mallory", BOB_GAME));
+	REQUIRE(other);
+	CHECK(other->reason == Protocol::REJECT_LOCKED);
+	const auto none = JoinRefused(f, 4, Fixture::MakeHello("Mallory", BOB_GAME));
+	REQUIRE(none);
+	CHECK(none->reason == Protocol::REJECT_LOCKED);
+	CHECK(JoinBob(f, 5) == bob);
+}
+
+TEST("host controls: a restarted server forgets who was in; a lock takes back only those who joined again while it was open")
+{
+	const TempSessionFile file;
+	Server::Options       options = HostedOptions();
+	options.sessionFile = file.path.string();
+	constexpr std::uint64_t CAROL_GAME = 0xCA201;
+	std::uint32_t           bob = 0;
+	{
+		Fixture f{ options };
+		JoinHost(f);
+		bob = JoinBob(f, 2);
+		const auto carol = JoinAs(f, 3, "Carol", CAROL_GAME);
+		const auto kicked = Command(f, HOST_PEER, { Protocol::HostAction::kKick, carol });
+		REQUIRE(kicked);
+		REQUIRE(WaitRemoved(f, 3));
+		REQUIRE(f.fake->Settle());
+	}
+
+	// The session file keeps both numbers, but the new run has nobody in yet.
+	Fixture f{ options };
+	JoinHost(f);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+	f.fake->SetIdentity(10, BOB_STEAM);
+	const auto earlier = JoinRefused(f, 10, Fixture::MakeHello("Bob", BOB_GAME));
+	REQUIRE(earlier);
+	CHECK(earlier->reason == Protocol::REJECT_LOCKED);
+	const auto kicked = JoinRefused(f, 11, Fixture::MakeHello("Carol", CAROL_GAME));
+	REQUIRE(kicked);
+	CHECK(kicked->reason == Protocol::REJECT_LOCKED);
+
+	// Bob joins again while it is open, as himself; from then on a lock takes him back after a drop. Carol still isn't in.
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kUnlock }));
+	CHECK(JoinBob(f, 12) == bob);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+	f.fake->Drop(12);
+	REQUIRE(f.fake->Settle());
+	CHECK(JoinBob(f, 13) == bob);
+	const auto still = JoinRefused(f, 14, Fixture::MakeHello("Carol", CAROL_GAME));
+	REQUIRE(still);
+	CHECK(still->reason == Protocol::REJECT_LOCKED);
+}
+
+TEST("host controls: a full list of members makes room by dropping the one gone longest, and a new member is always taken back")
+{
+	constexpr std::uint32_t CAP = 1024;  // MAX_IDENTITIES in common/Server.cpp
+	Fixture                 f{ HostedOptions() };
+	JoinHost(f);
+	for (std::uint32_t i = 0; i < CAP + 20; ++i) {
+		const PeerId peer = 100 + i;
+		REQUIRE(f.Join(peer, Fixture::MakeHello("P", 0x10000 + i)));
+		f.fake->Drop(peer);
+	}
+	REQUIRE(f.fake->Settle());
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+
+	// The latest are members; the earliest were let go for them.
+	CHECK(f.Join(5000, Fixture::MakeHello("P", 0x10000 + CAP + 19)));
+	CHECK(f.Join(5001, Fixture::MakeHello("P", 0x10000 + 100)));
+	const auto first = JoinRefused(f, 5002, Fixture::MakeHello("P", 0x10000));
+	REQUIRE(first);
+	CHECK(first->reason == Protocol::REJECT_LOCKED);
+}
+
 TEST("host controls: the host changes and removes the password, and the log never has it")
 {
 	Server::Options options = HostedOptions();
