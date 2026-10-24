@@ -428,8 +428,8 @@ namespace LootSync
 		}
 
 		// A holder told bare follows our player's moves (what ours holds should be what it held then, give or take
-		// them). One that holds more than that had its loot respawned (a cell reset) and is told again when it is
-		// taken bare.
+		// them). One that holds more than that, or gave more of something than that, had its loot respawned (a cell
+		// reset) and is told again when it is taken bare.
 		void Restocked(std::span<const Move> a_moves, World& a_world)
 		{
 			std::vector<std::uint32_t> touched;
@@ -445,7 +445,8 @@ namespace LootSync
 			}
 			for (const auto holder : touched) {
 				const auto& told = toldBare.at(holder);
-				const auto  more = std::ranges::any_of(a_world.Stacks(holder), [&](const Stack& a_stack) {
+				const auto  more = std::ranges::any_of(told, [](const auto& a_item) { return a_item.second < 0; }) ||
+				                   std::ranges::any_of(a_world.Stacks(holder), [&](const Stack& a_stack) {
 					const auto it = told.find(a_stack.item);
 					return a_stack.count > (it != told.end() ? it->second : 0);
 				});
