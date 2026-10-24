@@ -25,6 +25,7 @@
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
+#include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
@@ -3335,6 +3336,18 @@ namespace DevCommands
 			return MovedObjects::Command(joined);
 		}
 
+		// destruct: what is shared of destructible objects (Destructibles: cars, barrels); `near [radius]` lists those around the
+		// player with their health and stages, `probe <ref>` one.
+		std::string DestructCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Destructibles::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -3508,6 +3521,7 @@ namespace DevCommands
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
+			Entry{ "destruct", DestructCommand },
 		};
 	}
 

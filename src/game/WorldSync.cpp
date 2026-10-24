@@ -13,6 +13,7 @@
 #include "game/LinkedRefs.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
+#include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/SessionDeaths.h"
 #include "game/NpcHold.h"
@@ -667,9 +668,11 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
-				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects).
+				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects). Or a destructible one
+				// (a car, a barrel): the stages it passes are (Destructibles).
 				if (byPlayer && !target->As<RE::Actor>()) {
 					MovedObjects::OnHit(target->GetFormID());
+					Destructibles::OnHit(target->GetFormID());
 				}
 				const auto victim = target->As<RE::Actor>();
 				if (victim && Puppets::IsPuppet(victim) && (byPlayer || IsShareableRef(attacker) || Protocol::IsSpawnRef(attacker))) {
@@ -1749,6 +1752,9 @@ namespace WorldSync
 				pendingRefStates.erase(it);
 				++done;
 			}
+			if (a_inWorld && Destructibles::ApplyWaiting(a_id)) {
+				++done;
+			}
 			return done;
 		}
 
@@ -1766,6 +1772,8 @@ namespace WorldSync
 			for (const auto& [id, state] : pendingRefStates) {
 				ids.push_back(id);
 			}
+			const auto wrecks = Destructibles::WaitingRefs();
+			ids.insert(ids.end(), wrecks.begin(), wrecks.end());
 			return ids;
 		}
 
@@ -2264,7 +2272,7 @@ namespace WorldSync
 				gateLoads[id] = now;
 			}
 		}
-		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty();
+		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting();
 		const auto started = Clock::now();
 		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
 		for (const auto id : plan.loaded) {

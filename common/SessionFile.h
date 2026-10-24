@@ -35,7 +35,10 @@ namespace SessionFile
 	//   numbers the file's form IDs.
 	// 33 has all three. A file of any layout from 29 on reads as one without what its layout lacks (no drops, items
 	// without wires, no plugin table: its IDs are the load order its hash names); what its layout lacks is damage.
-	inline constexpr std::uint16_t FORMAT = 33;
+	// 35 adds to 33 the destructible objects damaged in the session (Snapshot::destructions, as kDestructions packets).
+	// 34 is world traps' (fix/traps), also on 33: a layout with both takes 36.
+	inline constexpr std::uint16_t FORMAT = 35;
+	inline constexpr std::uint16_t ALL_THREE = 33;
 	inline constexpr std::uint16_t BEFORE_WIRES = 29;         // the releases' layout: before drops, wires and the plugin table
 	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
 	inline constexpr std::uint16_t DROPS_ONLY = 30;
@@ -44,19 +47,20 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 34.
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 36.
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
 	}
 
-	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format == FORMAT; }
-	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format == FORMAT; }
-	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format == FORMAT; }
+	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format >= ALL_THREE; }
+	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format >= ALL_THREE; }
+	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format >= ALL_THREE; }
+	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format == FORMAT; }
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT);
+		return Legacy(a_format) || (a_format >= 29 && a_format <= ALL_THREE) || a_format == FORMAT;
 	}
 
 	struct Snapshot
@@ -86,10 +90,13 @@ namespace SessionFile
 		// or their order, carries on with the same world. Empty in a file of an older layout: its IDs are the load order
 		// contentHash names, and only a host with that one carries on.
 		std::vector<std::string>                            plugins;
+		// Destructible objects damaged in the session (a shot car, a blown barrel): each one's lowest health, and whether it
+		// is destroyed. playerId 0 and explode false: a game takes these as the wreck alone.
+		std::vector<Protocol::Destruction>                  destructions;
 
 		[[nodiscard]] bool Empty() const
 		{
-			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty();
+			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && destructions.empty();
 		}
 	};
 
@@ -157,6 +164,10 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.drops.size(); i += Protocol::MAX_DROPS_PER_PACKET) {
 			const auto end = (std::min)(a_snapshot.drops.size(), i + Protocol::MAX_DROPS_PER_PACKET);
 			packet(Protocol::Encode(Protocol::DropList{ end == a_snapshot.drops.size(), { a_snapshot.drops.begin() + i, a_snapshot.drops.begin() + end } }));
+		}
+		for (std::size_t i = 0; i < a_snapshot.destructions.size(); i += Protocol::MAX_DESTRUCTION_ENTRIES) {
+			const auto end = (std::min)(a_snapshot.destructions.size(), i + Protocol::MAX_DESTRUCTION_ENTRIES);
+			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_snapshot.destructions.begin() + i, a_snapshot.destructions.begin() + end } }, Protocol::MessageType::kDestructions));
 		}
 		return out;
 	}
@@ -263,6 +274,17 @@ namespace SessionFile
 					return std::nullopt;
 				}
 				snapshot.drops.insert(snapshot.drops.end(), list->drops.begin(), list->drops.end());
+				break;
+			}
+			case Protocol::MessageType::kDestructions: {
+				const auto list = HasDestructions(version) ? Protocol::DecodeDestructions(packet) : std::nullopt;
+				if (!list || list->playerId != 0) {
+					return std::nullopt;
+				}
+				for (auto entry : list->entries) {
+					entry.explode = false;  // a wreck from the file never goes off again
+					snapshot.destructions.push_back(entry);
+				}
 				break;
 			}
 			default:

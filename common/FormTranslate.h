@@ -509,6 +509,13 @@ namespace FormTranslate
 		case MessageType::kObjectRested:
 			Apply<ObjectRest>(a_packet, ctx, DecodeObjectRest, [&](ObjectRest& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, typed);
 			break;
+		case MessageType::kReportDestruction:
+		case MessageType::kDestructions:
+			Apply<Destructions>(a_packet, ctx, DecodeDestructions, [&](Destructions& m) {
+				ctx.Entries(m.entries, [&](Destruction& a_entry) { return ctx.Key(a_entry.refId); });
+				return !m.entries.empty();
+			}, typed);
+			break;
 		case MessageType::kReportWorkshopPower:
 		case MessageType::kWorkshopPower:
 			Apply<PowerStates>(a_packet, ctx, DecodePowerStates, [&](PowerStates& m) {
