@@ -1,4 +1,5 @@
 #include "game/SaveGuard.h"
+#include "game/Equipment.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveStrays.h"
 
@@ -144,30 +145,108 @@ namespace SaveGuard
 			return base ? base->GetFormID() : 0;
 		}
 
-		// One placed before a load whose form is still there under the base it was placed from, on its way out: deleted, or
-		// disabled for it (see SaveStrays::Book::AfterLoad). Never the player's own suit, which the engine disables while
-		// they are in it: the save's own reference under a reused id is the save's.
-		std::uint32_t lingered = 0;  // of those, forgotten anew after a load (see SaveStrays::Book::AfterLoad)
-
-		bool Lingers(std::uint32_t a_id, std::uint32_t a_base)
+		// Each power armor frame of ours as SaveGuard noted it just before a load (BeforeLoad): what tells the form under its
+		// id after the load from one the loaded game made since under the same id (see SaveStrays::Remains). The address
+		// and extra data are only compared, never read through.
+		struct Noted
 		{
-			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
-			const auto base = ref ? ref->GetObjectReference() : nullptr;
-			if (!base || base->GetFormID() != a_base || (!ref->IsDeleted() && !ref->IsDisabled())) {
+			const void*   ref = nullptr;
+			const void*   extra = nullptr;
+			std::uint32_t base = 0;
+			float         x = 0.0f, y = 0.0f, z = 0.0f;
+		};
+		std::unordered_map<std::uint32_t, Noted> noted;
+
+		std::uint32_t lingered = 0;         // copies of ours from before a load found still there after it (see SaveStrays::Book::AfterLoad)
+		std::uint32_t lingeringDropped = 0; // of those, let go of later: no longer provably ours and nobody's (see SaveStrays::Remains)
+
+		// Somebody here is in this frame, or our player is in it or got out of it last.
+		bool Worn(const RE::TESObjectREFR* a_frame)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (player && (player->lastUsedPowerArmor.get().get() == a_frame || Equipment::PowerArmorFrameOf(player).get() == a_frame)) {
+				return true;
+			}
+			const auto inIt = [&](RE::Actor* a_actor) {
+				const auto middle = a_actor && a_actor->currentProcess ? a_actor->currentProcess->middleHigh : nullptr;
+				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
+				return occupied && occupied.get() == a_frame;
+			};
+			if (inIt(player)) {
+				return true;
+			}
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
 				return false;
 			}
-			if (!ref->IsDeleted()) {
-				const auto player = RE::PlayerCharacter::GetSingleton();
-				const auto middle = player && player->currentProcess ? player->currentProcess->middleHigh : nullptr;
-				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-				if (player && (player->lastUsedPowerArmor.get().get() == ref || (occupied && occupied.get() == ref))) {
-					return false;
+			for (const auto& handle : lists->highActorHandles) {
+				if (const auto actor = handle.get(); actor && inIt(actor.get())) {
+					return true;
 				}
 			}
+			return false;
+		}
+
+		bool HoldsItems(RE::TESObjectREFR* a_ref)
+		{
+			const auto list = a_ref->inventoryList;
+			if (!list) {
+				return false;
+			}
+			const RE::BSAutoReadLock l{ list->rwLock };
+			return !list->data.empty();
+		}
+
+		// What is under the id now, against what was noted of our copy there before the load (see SaveStrays::Remains).
+		SaveStrays::Remains RemainsOf(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			SaveStrays::Remains remains;
+			const auto          it = noted.find(a_id);
+			const auto          ref = it != noted.end() ? RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id) : nullptr;
+			const auto          base = ref ? ref->GetObjectReference() : nullptr;
+			if (!base) {
+				return remains;
+			}
+			const auto& was = it->second;
+			const auto& at = ref->data.location;
+			remains.same = was.ref == ref && was.extra == ref->extraList.get() && was.base == a_base && base->GetFormID() == a_base && at.x == was.x && at.y == was.y && at.z == was.z;
+			if (!remains.same) {
+				return remains;
+			}
+			remains.frame = Equipment::IsPowerArmorFrame(base);
+			remains.off = ref->IsDeleted() || ref->IsDisabled();
+			remains.worn = Worn(ref);
+			remains.owned = ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
+			remains.holdsItems = HoldsItems(ref);
+			return remains;
+		}
+
+		// Right after a load: one of ours from before it, still there on its way out (see SaveStrays::Book::AfterLoad).
+		bool Lingers(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			if (!SaveStrays::StillOurs(RemainsOf(a_id, a_base))) {
+				return false;
+			}
 			++lingered;
-			REX::INFO("SaveGuard: {:08X} (base {:08X}), placed before the load, is still there {}; kept out of every save from now on", a_id, a_base,
-				ref->IsDeleted() ? "marked for deletion" : "disabled");
+			REX::INFO("SaveGuard: {:08X} (frame {:08X}), our copy from before the load, is still there on its way out; kept out of saves while it stays so", a_id, a_base);
 			return true;
+		}
+
+		bool StillLingers(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			return SaveStrays::StillOurs(RemainsOf(a_id, a_base));
+		}
+
+		void LingeringDropped(std::uint32_t a_id)
+		{
+			++lingeringDropped;
+			noted.erase(a_id);
+			REX::INFO("SaveGuard: {:08X}, our copy from before the load, is no longer provably ours and nobody's; left to the game from now on", a_id);
+		}
+
+		void KeepLingering()
+		{
+			book.KeepLingering(StillLingers, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, LingeringDropped);
 		}
 
 		// One of ours the engine unloaded with its cell, its form gone and its record kept under the cell, which would bring it
@@ -408,12 +487,26 @@ namespace SaveGuard
 	{
 		const auto now = Clock::now();
 		LogRefusals(now);
-		if (book.ForgottenCount() == 0 || now < forgottenCheckAt) {
+		if ((book.ForgottenCount() == 0 && book.LingeringCount() == 0) || now < forgottenCheckAt) {
 			return;
 		}
 		forgottenCheckAt = now + FORGOTTEN_CHECK_INTERVAL;
 		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, DropOrphan);
+		KeepLingering();
 		LetGoOfGone();
+	}
+
+	void BeforeLoad()
+	{
+		noted.clear();
+		book.ForEachHeld([](std::uint32_t a_id, std::uint32_t a_base) {
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base)) {
+				const auto& at = ref->data.location;
+				noted[a_id] = { ref, ref->extraList.get(), a_base, at.x, at.y, at.z };
+			}
+		});
 	}
 
 	std::uint32_t BeforeSave()
@@ -463,7 +556,8 @@ namespace SaveGuard
 		// SaveStrays::Book::AfterLoad).
 		unpromoted.Clear();
 		const auto strays = book.AfterLoad(Sweep(), StandIn, Lingers);
-		// The ones placed before the load and still there on their way out are out of the save from now on (Lingers).
+		KeepLingering();
+		// What was forgotten before the load is let go of with it (AfterLoad); this only lets go of the gone list.
 		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, DropOrphan);
 		for (const auto& [c, verdict] : strays) {
 			lastStray = c.id;
@@ -530,8 +624,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
-			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
 			unpromoted.Refused());
 	}
 }

@@ -63,6 +63,10 @@ namespace SaveGuard
 	// mod). Every save is searched. Returns how many were kept out.
 	std::uint32_t BeforeSave();
 
+	// Just before a load, once the stand-ins and their copies are on their way out: each frame copy of ours is noted as it
+	// is, to tell it after the load from one the loaded game made since under the same id (see SaveStrays::Remains).
+	void BeforeLoad();
+
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.
 	std::uint32_t AfterLoad();
 

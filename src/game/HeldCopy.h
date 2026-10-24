@@ -47,36 +47,4 @@ namespace HeldCopy
 		}
 		return Lost::kForget;
 	}
-
-	// ---- A copy an earlier run left where one is about to be placed ---------------------------------------------
-
-	// A save made before this was fixed (or one the engine wrote past us) may hold a copy: after its load it is one of the
-	// game's references like any other, and our book of what this run placed knows nothing of it. On rejoin, the friend's
-	// frame stands where it stood, and its parked copy was placed again right on the old one: two suits in one spot, one
-	// more each session. A frame standing at the very spot a copy of the same frame is about to be placed, made at runtime,
-	// enabled, emptied (its inventory made, and nothing in it: every copy is emptied as it is placed, and a frame the world
-	// placed fills its inventory from its base only once something reads it), held by no quest, nobody's to use here (our
-	// player is not in it and did not leave it last, nobody else here is in it) and not one this run placed, is such a copy:
-	// it is taken over as the copy (ours from then on, and out of saves) instead of a second one placed beside it.
-	struct Standing
-	{
-		bool  created = false;   // made at runtime (0xFF......)
-		bool  sameBase = false;  // of the frame the copy is placed of
-		bool  enabled = false;   // neither disabled nor deleted
-		bool  emptied = false;   // its inventory is made, and empty
-		bool  quest = false;     // it fills a quest alias of ours
-		bool  used = false;      // our player is in it or left it last, or somebody here is in it
-		bool  placed = false;    // this run placed it (SaveGuard::Placed): somebody's copy now, or on its way out
-		float distance = 0.0f;   // from the spot
-	};
-
-	// How close to the spot: a copy is placed at the friend's spot as their game sends it, so one left by an earlier session
-	// for a frame that has not moved since stands on it to a fraction of a unit.
-	constexpr float LEFTOVER_RADIUS = 2.0f;
-
-	constexpr bool Leftover(const Standing& a_standing)
-	{
-		return a_standing.created && a_standing.sameBase && a_standing.enabled && a_standing.emptied && !a_standing.quest && !a_standing.used && !a_standing.placed &&
-		       a_standing.distance <= LEFTOVER_RADIUS;
-	}
 }

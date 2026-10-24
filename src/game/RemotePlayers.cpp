@@ -986,69 +986,12 @@ namespace RemotePlayers
 			return Equipment::IsPowerArmorFrame(base) ? base : nullptr;
 		}
 
-		std::uint32_t leftoversTaken = 0;  // copies an earlier session left, taken over instead of a second placed on them
-
-		// Its inventory is made, and empty (see HeldCopy::Standing::emptied).
-		bool Emptied(RE::TESObjectREFR* a_ref)
-		{
-			const auto list = a_ref->inventoryList;
-			if (!list) {
-				return false;
-			}
-			RE::BSAutoReadLock l{ list->rwLock };
-			return list->data.empty();
-		}
-
-		// A copy of a_base an earlier session left at this very spot, in this cell (see HeldCopy::Leftover), or none.
-		RE::NiPointer<RE::TESObjectREFR> LeftoverAt(RE::TESBoundObject* a_base, RE::TESObjectCELL* a_interior, RE::TESWorldSpace* a_world, const RE::NiPoint3& a_at)
-		{
-			const auto tes = RE::TES::GetSingleton();
-			if (!tes) {
-				return {};
-			}
-			RE::NiPointer<RE::TESObjectREFR> found;
-			float                            nearest = HeldCopy::LEFTOVER_RADIUS;
-			tes->ForEachReferenceInRange(a_at, HeldCopy::LEFTOVER_RADIUS, [&](RE::TESObjectREFR* a_ref) {
-				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (!base || !Equipment::IsPowerArmorFrame(base)) {
-					return RE::BSContainer::ForEachResult::kContinue;
-				}
-				const auto cell = a_ref->GetParentCell();
-				const bool here = cell && (a_interior ? cell == a_interior : !cell->IsInterior() && cell->worldSpace == a_world);
-				HeldCopy::Standing standing;
-				standing.created = a_ref->IsCreated();
-				standing.sameBase = base == a_base;
-				standing.enabled = here && !a_ref->IsDisabled() && !a_ref->IsDeleted();
-				standing.emptied = standing.enabled && Emptied(a_ref);
-				standing.quest = a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
-				standing.used = OurFrame(a_ref) || FrameInUse(a_ref);
-				standing.placed = SaveGuard::Placed(a_ref);
-				standing.distance = a_ref->data.location.GetDistance(a_at);
-				if (HeldCopy::Leftover(standing) && standing.distance <= nearest) {
-					nearest = standing.distance;
-					found.reset(a_ref);
-				}
-				return RE::BSContainer::ForEachResult::kContinue;
-			});
-			return found;
-		}
-
 		// Places a copy of a frame in an interior (a_interior) or outside (a_world): for the stand-in to get into, where they
-		// got out, or where they left theirs parked. One an earlier session left at that very spot is taken over instead
-		// (see HeldCopy::Leftover): the same, emptied, now ours and out of saves.
+		// got out, or where they left theirs parked.
 		RE::ObjectRefHandle PlaceCopy(RE::TESBoundObject* a_base, RE::TESObjectCELL* a_interior, RE::TESWorldSpace* a_world, const RE::NiPoint3& a_at, float a_heading)
 		{
 			if (!a_base || (!a_interior && !a_world)) {
 				return {};
-			}
-			if (const auto leftover = LeftoverAt(a_base, a_interior, a_world, a_at)) {
-				leftover->data.angle = { 0.0f, 0.0f, a_heading };
-				leftover->Update3DPosition(true);
-				++leftoversTaken;
-				REX::INFO("RemotePlayers: copy {:08X} of frame {:08X}, left at this spot by an earlier session, taken over instead of a second one placed on it",
-					leftover->GetFormID(), a_base->GetFormID());
-				SaveGuard::Track(leftover.get());
-				return leftover->GetHandle();
 			}
 			RE::NEW_REFR_DATA data;
 			data.location = a_at;
@@ -2939,9 +2882,6 @@ namespace RemotePlayers
 		}
 		if (framesBack || framesUnloaded) {
 			out += std::format(" framesUnloaded={} framesBack={}", framesUnloaded, framesBack);
-		}
-		if (leftoversTaken) {
-			out += std::format(" leftoversTaken={}", leftoversTaken);
 		}
 		if (seatsEntered || seatsMissed || seatsLeft) {
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);

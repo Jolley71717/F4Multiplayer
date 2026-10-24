@@ -159,6 +159,31 @@ namespace SaveStrays
 		bool                                             any = false;
 	};
 
+	// A load does not always free a copy of ours that was on its way out as it came (see Book::AfterLoad): its form stays
+	// in memory under its id, nobody's from then on, and the next save writes it. After the load the game counts ids on
+	// from the save's last one, so the id may just as well name a reference the loaded game made since, often of the very
+	// base ours had (a raider's frame, disabled while worn). So the form under the id is taken for our old copy only when
+	// it is provably the same form SaveGuard noted before the load (the same address and extra data, which the copy held
+	// the whole time it was in memory, under the same base, at the very spot to the bit: a form made since at that
+	// address is placed where its maker placed it), and only while it stays a power armor frame on its way out that
+	// nobody could want: disabled or deleted, nobody in it or last out of it, with no owner and nothing in it (every copy
+	// of ours is emptied as it is placed, and the engine gives a frame to whoever gets out of it). Asked again at every
+	// check (each second, and before each save): one that fails once is left to the game for good.
+	struct Remains
+	{
+		bool same = false;        // the very form noted before the load
+		bool frame = false;       // a power armor frame
+		bool off = false;         // disabled, or marked for deletion
+		bool worn = false;        // the player is in it or left it last, or an actor here is in it
+		bool owned = false;       // it has an owner of its own
+		bool holdsItems = false;  // its inventory holds anything
+	};
+
+	constexpr bool StillOurs(const Remains& a_remains)
+	{
+		return a_remains.same && a_remains.frame && a_remains.off && !a_remains.worn && !a_remains.owned && !a_remains.holdsItems;
+	}
+
 	// When SaveGuard looks for strays: before a save, or right after a load.
 	enum class When
 	{
@@ -356,31 +381,62 @@ namespace SaveStrays
 			return BeforeSave(a_baseNow, a_kept, [](std::uint32_t) {}, std::move(a_found), a_standIn);
 		}
 
+		// Every id held as ours now: placed this run, forgotten, or lingering from before a load (for SaveGuard to note
+		// before a load which forms are ours; see Remains).
+		template <class F>
+		void ForEachHeld(F&& a_each) const
+		{
+			placed.ForEach(a_each);
+			forgotten.ForEach(a_each);
+			for (const auto& [id, base] : lingering) {
+				a_each(id, base);
+			}
+		}
+
 		// Right after a load, or a new game: what was placed and forgotten before it is let go of first (see
 		// Placed::Clear), then each stray the loaded game has, with what is done with it.
-		// a_lingers(id, base): whether the form under the id is still the one placed before the load, on its way out
-		// (deleted, or disabled for it). The load does not always free those: one still marked for deletion as the load
-		// came (a copy DespawnAll had just disabled or deleted, the stand-ins' graveyard emptied before the load) stayed
-		// in memory, nobody's from then on, and the next save wrote it; loaded by a game started afresh, it came back
-		// drawn and whole, a frame nobody owned where a friend's copy had stood, beside the copy placed for them then,
-		// and shared from then on as the host's own (0.9.1). So each of those is forgotten anew: kept out of every save
-		// for as long as its form is there under that base (KeepForgotten), and its record dropped once it is gone.
+		// a_lingers(id, base): whether the form under the id is still the copy placed before the load, on its way out (see
+		// Remains). The load does not always free those: one still marked for deletion as the load came (a copy
+		// DespawnAll had just disabled or deleted) stayed in memory, nobody's from then on, and the next save wrote it;
+		// loaded by a game started afresh, it came back drawn and whole, a frame nobody owned where a friend's copy had
+		// stood, beside the copy placed for them then, and shared from then on as the host's own (0.9.1). So each of
+		// those lingers: kept out of every save while it is still provably that copy and nobody's (KeepLingering), and let
+		// go of for good once it is not. Never forgotten: its id is not ours after the load, and a record under it once its
+		// form is gone may be the loaded game's, so none is ever dropped for it.
 		template <class S, class L>
 		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn, L&& a_lingers)
 		{
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> before;
-			placed.ForEach([&](std::uint32_t a_id, std::uint32_t a_base) { before.emplace_back(a_id, a_base); });
-			forgotten.ForEach([&](std::uint32_t a_id, std::uint32_t a_base) { before.emplace_back(a_id, a_base); });
+			ForEachHeld([&](std::uint32_t a_id, std::uint32_t a_base) { before.emplace_back(a_id, a_base); });
 			placed.Clear();
 			forgotten.Clear();
+			lingering.clear();
 			gone.clear();
 			for (const auto& [id, base] : before) {
-				if (a_lingers(id, base)) {
-					forgotten.Add(id, base);
+				if (std::ranges::find(lingering, std::pair{ id, base }) == lingering.end() && a_lingers(id, base)) {
+					lingering.emplace_back(id, base);
 				}
 			}
 			return JudgeAll(Strays(std::move(a_found), a_standIn), When::kLoad);
 		}
+
+		// The lingering ones (see AfterLoad) still provably our old copies, each asked again: a_still(id, base) says
+		// whether it is; a_kept(id) for each that is (its record to be dropped), a_dropped(id) for each that no longer is,
+		// let go of for good and left to the game.
+		template <class St, class K, class D>
+		void KeepLingering(St&& a_still, K&& a_kept, D&& a_dropped)
+		{
+			std::erase_if(lingering, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
+				if (!a_still(a_entry.first, a_entry.second)) {
+					a_dropped(a_entry.first);
+					return true;
+				}
+				a_kept(a_entry.first);
+				return false;
+			});
+		}
+
+		[[nodiscard]] std::size_t LingeringCount() const { return lingering.size(); }
 
 		template <class S>
 		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn)
@@ -419,7 +475,8 @@ namespace SaveStrays
 
 		Placed                                               placed;
 		Forgotten                                            forgotten;
-		std::vector<std::pair<std::uint32_t, std::uint32_t>> gone;  // id, base
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> lingering;  // id, base: copies from before the last load (see AfterLoad)
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> gone;       // id, base
 	};
 
 	// The stand-ins the engine is not let keep persistent. Something of the game's (a quest alias filled with one, a

@@ -492,7 +492,8 @@ namespace DevCommands
 				if (!a_ref || count >= 20 || !Equipment::IsPowerArmorFrame(a_ref->GetObjectReference())) {
 					return RE::BSContainer::ForEachResult::kContinue;
 				}
-				out += std::format("{}{} at {:.0f} owner={:08X}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()));
+				out += std::format("{}{} at {:.0f} owner={:08X} refOwned={}", count++ ? "; " : "", Equipment::DescribeFrameUse(a_ref), a_ref->data.location.GetDistance(player->data.location), NpcSync::Owner(a_ref->GetFormID()),
+					a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership));
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return std::format("{} ({})", count ? out : "none", Equipment::DescribeFrameMends());

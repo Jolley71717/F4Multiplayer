@@ -364,6 +364,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
+					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
 				},
 				"load");
 			break;

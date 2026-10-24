@@ -1,6 +1,6 @@
-// A friend's frame copy the engine unloads with its cell (HeldCopy, SaveStrays::Book::KeepForgotten), and the copy an
-// earlier session left where one is about to be placed (HeldCopy::Leftover): what made the 0.9.1 report's frames pile up
-// in Sanctuary, one more each time the player came back, and what keeps one copy per friend's frame now.
+// A friend's frame copy the engine unloads with its cell (HeldCopy, SaveStrays::Book::KeepForgotten), and one still on
+// its way out as a load comes (SaveStrays::Remains, Book::AfterLoad): what made the 0.9.1 report's frames pile up in
+// Sanctuary, and what keeps one copy per friend's frame now without ever taking a frame of the player's for ours.
 
 #include "Test.h"
 #include "game/HeldCopy.h"
@@ -36,27 +36,6 @@ TEST("held copy: the same copy back under its id with its cell is held again; an
 	CHECK(Look(held, false, { .baseNow = 0 }) == Lost::kForget);                                      // a form that is no reference
 	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = true, .ours = true }) == Lost::kForget);   // on its way out
 	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = false, .ours = false }) == Lost::kForget);  // a frame not ours under the id
-}
-
-TEST("held copy: a leftover is a runtime frame of the same base at the very spot, enabled, emptied, nobody's, and not one this run placed")
-{
-	using HeldCopy::Leftover;
-	const HeldCopy::Standing leftover{ .created = true, .sameBase = true, .enabled = true, .emptied = true, .distance = 0.1f };
-	CHECK(Leftover(leftover));
-	auto with = [&](auto a_change) {
-		auto standing = leftover;
-		a_change(standing);
-		return Leftover(standing);
-	};
-	CHECK(!with([](auto& s) { s.created = false; }));   // a pre-placed suit (the museum's): the game's own
-	CHECK(!with([](auto& s) { s.sameBase = false; }));  // another frame
-	CHECK(!with([](auto& s) { s.enabled = false; }));   // disabled or deleted: on its way out
-	CHECK(!with([](auto& s) { s.emptied = false; }));   // pieces in it, or its inventory never made: a suit somebody has
-	CHECK(!with([](auto& s) { s.quest = true; }));      // a quest of ours holds it
-	CHECK(!with([](auto& s) { s.used = true; }));       // our player's own, or somebody here is in it
-	CHECK(!with([](auto& s) { s.placed = true; }));     // a copy this run placed: another friend's, or the graveyard's
-	CHECK(!with([](auto& s) { s.distance = HeldCopy::LEFTOVER_RADIUS + 0.5f; }));
-	CHECK(with([](auto& s) { s.distance = HeldCopy::LEFTOVER_RADIUS; }));
 }
 
 TEST("save strays: a forgotten one is orphaned only when no form is under its id, not when the id names another")
@@ -119,7 +98,6 @@ namespace
 		struct Ref
 		{
 			std::uint32_t base = FRAME;
-			bool          emptied = true;
 		};
 		std::map<std::uint32_t, Ref> loaded;    // the forms there are now
 		std::map<std::uint32_t, Ref> buffered;  // records kept under the cell while it is unloaded
@@ -204,20 +182,10 @@ namespace
 			}
 		}
 
-		// RemotePlayers::PlaceCopy: a leftover at the spot is taken over (now), or a new one placed.
+		// RemotePlayers::PlaceCopy: a new copy, always. A frame already at the spot is never taken over: nothing tells one an
+		// earlier session left from one of the player's own.
 		std::uint32_t PlaceCopy()
 		{
-			if (fixed) {
-				for (const auto& [id, ref] : loaded) {
-					const HeldCopy::Standing standing{
-						.created = true, .sameBase = ref.base == FRAME, .enabled = true, .emptied = ref.emptied, .placed = book.IsPlaced(id, ref.base), .distance = 0.0f
-					};
-					if (HeldCopy::Leftover(standing)) {
-						book.Track(id, FRAME);
-						return id;
-					}
-				}
-			}
 			return Place();
 		}
 
@@ -261,85 +229,115 @@ TEST("held copy: with the friend parked in Sanctuary, each walk off and back lef
 	CHECK(WalkOffAndBack(true, 3) == 1);
 }
 
-TEST("held copy: what 0.9.1 left came back in every session after; now the copy goes with the friend, and an old leftover is taken over")
+
+TEST("held copy: a frame an earlier save left at the spot is never taken over, so one of the player's own there is safe")
 {
-	// 0.9.1: the copies that came back with the cell were nobody's, and a save kept them.
-	Sanctuary old;
-	old.fixed = false;
-	old.Frame();
-	old.UnloadCell();
-	old.Frame();
-	old.LoadCell();
-	old.Frame();
-	CHECK(old.Frames() == 2);
-	old.Despawn();  // the friend leaves: only the one held goes
-	CHECK(old.Frames() == 1);
-	const auto left = old.loaded;
-	CHECK(old.records.contains(left.begin()->first));
-
-	// The next session, from that save: the friend is back, parked where they were.
-	Sanctuary next;
-	next.loaded = left;
-	next.records = old.records;
-	next.nextId = old.nextId;
-	next.Frame();
-	CHECK(next.Frames() == 1);  // the leftover is the copy now
-	CHECK(next.held.id == left.begin()->first);
-	next.Despawn();  // and it goes with the friend, out of the save
-	CHECK(next.Frames() == 0);
-	CHECK(next.records.empty());
-
-	// Without the takeover, the next session placed a second on it.
-	Sanctuary before;
-	before.fixed = false;
-	before.loaded = left;
-	before.records = old.records;
-	before.nextId = old.nextId;
-	before.Frame();
-	CHECK(before.Frames() == 2);
-}
-
-TEST("held copy: a frame with pieces in it, or one this run placed for another friend, is never taken over")
-{
+	// The player stripped a suit of theirs at the very spot a friend's frame stands (pieces out, its inventory made and
+	// empty, its owner unknown to us), or an earlier session's copy stands there: nothing tells the two apart.
 	Sanctuary sanctuary;
-	sanctuary.loaded[0xFF000100] = { .base = FRAME, .emptied = false };  // a runtime suit somebody filled
+	sanctuary.loaded[0xFF000100] = {};
+	sanctuary.records.insert(0xFF000100);
 	sanctuary.Frame();
-	CHECK(sanctuary.Frames() == 2);
 	CHECK(sanctuary.held.id != 0xFF000100);
-	const auto first = sanctuary.held.id;
-	sanctuary.held = {};  // a second friend parked at the same spot
-	sanctuary.Frame();
-	CHECK(sanctuary.held.id != first);
-	CHECK(sanctuary.Frames() == 3);
+	CHECK(sanctuary.Frames() == 2);
+	sanctuary.Despawn();  // the friend leaves: only their copy goes
+	CHECK(sanctuary.Frames() == 1);
+	CHECK(sanctuary.loaded.contains(0xFF000100));
+	CHECK(sanctuary.records.contains(0xFF000100));  // and it is saved as it was
 }
 
-TEST("save strays: a copy still on its way out as a load came is forgotten anew, kept out of every save after it, and let go of once gone")
+TEST("save strays: a reference under an id from before a load is our old copy only while it is provably the same form, a frame, off, and nobody's")
+{
+	using SaveStrays::StillOurs;
+	const SaveStrays::Remains copy{ .same = true, .frame = true, .off = true };
+	CHECK(StillOurs(copy));
+	auto with = [&](auto a_change) {
+		auto remains = copy;
+		a_change(remains);
+		return StillOurs(remains);
+	};
+	CHECK(!with([](auto& r) { r.same = false; }));      // a form the loaded game made since under the id (a raider's frame, disabled while worn)
+	CHECK(!with([](auto& r) { r.frame = false; }));     // a stand-in, a light, an item copy: left as the game has it
+	CHECK(!with([](auto& r) { r.off = false; }));       // enabled
+	CHECK(!with([](auto& r) { r.worn = true; }));       // the player's or a companion's suit now
+	CHECK(!with([](auto& r) { r.owned = true; }));      // somebody got out of it
+	CHECK(!with([](auto& r) { r.holdsItems = true; })); // pieces or a core in it
+}
+
+TEST("save strays: a copy still on its way out as a load came is kept out of saves while it stays so, and left to the game once it does not")
 {
 	SaveStrays::Book book;
 	book.Track(0xFF001814, FRAME);  // the parked copy, disabled and deleted by DespawnAll just before the load
 	book.Track(0xFF001993, FRAME);  // another, gone with the load
-	book.Track(0xFF001A00, OTHER);  // its id names the loaded game's own reference now
-	const auto lingers = [](std::uint32_t a_id, std::uint32_t a_base) { return a_id == 0xFF001814 && a_base == FRAME; };
-	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, lingers);
-	CHECK(book.PlacedCount() == 0);  // nothing placed before the load is ours to place or hold
-	CHECK(book.ForgottenCount() == 1);
-	std::vector<std::uint32_t> excluded;
-	const auto baseNow = [](std::uint32_t a_id) -> std::optional<std::uint32_t> {
-		return a_id == 0xFF001814 ? std::optional{ FRAME } : std::nullopt;
+	book.Track(0xFF001A00, FRAME);  // the id names a frame the loaded game made since (not the noted form)
+	book.Track(0xFF001A01, FRAME);
+	book.Forget(0xFF001A01);        // forgotten before the load
+	std::set<std::uint32_t> held;  // a forgotten one is still placed too: it may come twice
+	book.ForEachHeld([&](std::uint32_t a_id, std::uint32_t) { held.insert(a_id); });
+	CHECK(held.size() == 4);  // all noted before the load (SaveGuard::BeforeLoad)
+
+	std::map<std::uint32_t, SaveStrays::Remains> now{
+		{ 0xFF001814, { .same = true, .frame = true, .off = true } },
+		{ 0xFF001A00, { .same = false, .frame = true, .off = true } },
 	};
-	book.BeforeSave(baseNow, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {}, [](std::uint32_t, std::uint32_t) { return false; });
-	CHECK(excluded == std::vector<std::uint32_t>{ 0xFF001814 });  // 0.9.1 wrote it into the next save, and a fresh game brought it back whole
+	const auto still = [&](std::uint32_t a_id, std::uint32_t a_base) {
+		const auto it = now.find(a_id);
+		return a_base == FRAME && it != now.end() && SaveStrays::StillOurs(it->second);
+	};
+	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, still);
+	CHECK(book.PlacedCount() == 0);     // nothing placed before the load is ours to place or hold
+	CHECK(book.ForgottenCount() == 0);  // nor forgotten: its id is not ours after the load
+	CHECK(book.LingeringCount() == 1);
+
+	std::vector<std::uint32_t> excluded;
+	std::vector<std::uint32_t> dropped;
+	const auto keep = [&] {
+		book.KeepLingering(still, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [&](std::uint32_t a_id) { dropped.push_back(a_id); });
+	};
+	keep();
+	keep();
+	CHECK((excluded == std::vector<std::uint32_t>{ 0xFF001814, 0xFF001814 }));  // at every check and save while it is so
+	CHECK(dropped.empty());
+
+	// A second load with it still there: it lingers on, once.
+	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, still);
+	CHECK(book.LingeringCount() == 1);
+
+	// The player gets into it (or it is enabled, filled, owned): left to the game from then on, never excluded again, and
+	// no record under its id is ever dropped for it (KeepForgotten has nothing of it).
+	now[0xFF001814].worn = true;
 	excluded.clear();
-	book.BeforeSave(baseNow, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {}, [](std::uint32_t, std::uint32_t) { return false; });
-	CHECK(excluded.size() == 1);  // every save, while it is there
-	// Freed at last: let go of, its record dropped.
+	keep();
+	CHECK(excluded.empty());
+	CHECK(dropped == std::vector<std::uint32_t>{ 0xFF001814 });
+	now[0xFF001814].worn = false;
+	keep();
+	CHECK(excluded.empty());
+	CHECK(book.LingeringCount() == 0);
 	std::vector<std::uint32_t> orphaned;
 	book.KeepForgotten([](std::uint32_t) -> std::optional<std::uint32_t> { return std::nullopt; }, [](std::uint32_t) {}, [&](std::uint32_t a_id) { orphaned.push_back(a_id); });
-	CHECK(orphaned == std::vector<std::uint32_t>{ 0xFF001814 });
-	CHECK(book.ForgottenCount() == 0);
+	CHECK(orphaned.empty());
+
 	// Without a lingering check, a load forgets them all, as before.
 	SaveStrays::Book plain;
 	plain.Track(0xFF001814, FRAME);
 	plain.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(plain.LingeringCount() == 0);
 	CHECK(plain.ForgottenCount() == 0);
+}
+
+TEST("save strays: the review's case: a raider's frame under our old id, stripped and got into by the player, is never kept out of a save")
+{
+	SaveStrays::Book book;
+	book.Track(0xFF000A10, FRAME);  // our copy, placed after the save the player quickloads
+	// After the quickload the engine hands 0xFF000A10 to a raider's frame, disabled while worn: same id, same base, not the
+	// form noted before the load.
+	SaveStrays::Remains raiders{ .same = false, .frame = true, .off = true };
+	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, [&](std::uint32_t, std::uint32_t) { return SaveStrays::StillOurs(raiders); });
+	CHECK(book.LingeringCount() == 0);
+	std::vector<std::uint32_t> excluded;
+	book.KeepLingering([](std::uint32_t, std::uint32_t) { return true; }, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {});
+	book.BeforeSave([](std::uint32_t) -> std::optional<std::uint32_t> { return FRAME; }, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {},
+		[](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(excluded.empty());
 }
