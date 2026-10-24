@@ -203,7 +203,7 @@ namespace
 	}
 }
 
-TEST("shared gates: only an activator running the two-state script alone, and not listed out")
+TEST("shared gates: an activator running the two-state script, nothing else beside it, not listed out")
 {
 	CHECK(SharedGates::IsGateScript("Default2StateActivator"));
 	CHECK(SharedGates::IsGateScript("default2stateactivator"));  // a reference's own copy is named so in the game's files
@@ -453,4 +453,60 @@ TEST("shared gates: a gate's state is a door's to the server: kept in the world 
 	REQUIRE(it != states.end());
 	CHECK(it->open == RS::kYes);
 	CHECK(it->playerId == 0);
+}
+
+TEST("shared gates: a gate run by a listed script that extends the two-state one, or with a quiet script beside it, is shared")
+{
+	// Med-Tek's lab doors and Jamaica Plain's treasure gates: the reference has the base script removed and its own in place.
+	CHECK(SharedGates::RunningScript("DN066_LabDoorScript") == std::optional<std::string_view>{ "DN066_LabDoorScript" });
+	CHECK(SharedGates::RunningScript("dn066_sublabdoorscript") == std::optional<std::string_view>{ "DN066_SubLabDoorScript" });
+	CHECK(SharedGates::RunningScript("DN070_TreasureDoorScript").has_value());
+	CHECK(SharedGates::RunningScript("default2stateactivator") == std::optional<std::string_view>{ SharedGates::SCRIPT });
+	CHECK(SharedGates::Shares({ .activator = true, .scripts = 1, .childScripts = 1 }));
+	// Vault 75's cells, the airport gate, the Mechanist's garage door: the base script and one that acts on activation only.
+	CHECK(SharedGates::IsSibling("dn143RemoveFromCaptiveFaction"));
+	CHECK(SharedGates::IsSibling("DefaultRefEnableLinkedRefOnActivate"));
+	CHECK(SharedGates::IsSibling("DLC01:DLC01_GarageDoorKlaxonScript"));
+	CHECK(SharedGates::Shares({ .activator = true, .scripts = 2, .gateScripts = 1, .siblings = 1 }));
+	CHECK(SharedGates::Shares({ .activator = true, .scripts = 2, .childScripts = 1, .siblings = 1 }));
+
+	// Never the sibling alone, both the base script and a child, two children, or a sibling with another script.
+	CHECK(!SharedGates::Shares({ .activator = true, .scripts = 1, .siblings = 1 }));
+	CHECK(!SharedGates::Shares({ .activator = true, .scripts = 2, .gateScripts = 1, .childScripts = 1 }));
+	CHECK(!SharedGates::Shares({ .activator = true, .scripts = 2, .childScripts = 2 }));
+	CHECK(!SharedGates::Shares({ .activator = true, .scripts = 3, .gateScripts = 1, .siblings = 1 }));
+	CHECK(!SharedGates::Shares({ .activator = true, .scripts = 1, .listedOut = true, .childScripts = 1 }));
+	CHECK(!SharedGates::Shares({ .activator = false, .scripts = 1, .childScripts = 1 }));
+}
+
+TEST("shared gates: the scripts that extend it or sit beside it and still aren't shared")
+{
+	// Each sets a stage that does more, is the story's, or moves with something of its own (SharedGates.h).
+	for (const auto script : { "DN017_PrototypeLabDoorScript", "DN103_SetStageOnOpen", "DN084_AssaultronDoorScript", "DLC04:DLC04_GauntletGasDoorScript",
+			 "DLC01:DLC01_MechanistDoorScript", "DLC01:DLC01_TrackSystemDoor" }) {
+		CHECK(!SharedGates::RunningScript(script));
+		CHECK(!SharedGates::IsSibling(script));
+	}
+	for (const auto script : { "dn133_SecurityDoorScript", "DN009_SecurityDoor", "DN015_ActivateOnOpen", "DN130_CambridgePDDoorStateToggle" }) {
+		CHECK(!SharedGates::IsSibling(script));
+		CHECK(!SharedGates::RunningScript(script));
+	}
+	std::set<std::string_view> names{ SharedGates::SCRIPT };
+	for (const auto& listed : SharedGates::CHILDREN) {
+		CHECK(!listed.why.empty());
+		CHECK(names.insert(listed.script).second);
+	}
+	for (const auto& listed : SharedGates::SIBLINGS) {
+		CHECK(!listed.why.empty());
+		CHECK(names.insert(listed.script).second);
+	}
+}
+
+TEST("shared gates: script names match whatever their case")
+{
+	CHECK(ScriptNames::Same("Default2StateActivator", "DEFAULT2STATEACTIVATOR"));
+	CHECK(ScriptNames::Same("DLC01:DLC01_GarageDoorKlaxonScript", "dlc01:dlc01_garagedoorklaxonscript"));
+	CHECK(!ScriptNames::Same("Default2StateActivator", "Default2StateActivato"));
+	CHECK(!ScriptNames::Same("a", "b"));
+	CHECK(ScriptNames::Same("", ""));
 }

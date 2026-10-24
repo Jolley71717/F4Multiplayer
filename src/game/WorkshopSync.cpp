@@ -16,6 +16,7 @@
 #include "game/DeferredDelete.h"
 #include "game/Hud.h"
 #include "game/MenuWatch.h"
+#include "game/Papyrus.h"
 #include "Text.h"
 
 // A grid's links are kept in sets (BSTSet<PowerUtils::GridConnection>), which CommonLibF4 gives no equality: the same
@@ -1324,9 +1325,9 @@ namespace WorkshopSync
 				const auto type = a_object ? a_object->type.get() : nullptr;
 				if (type && _stricmp(type->GetName(), "ObjectReference") != 0) {
 					scripted = true;
-					return RE::BSContainer::ForEachResult::kStop;
+					return Papyrus::BOUND_DONE;
 				}
-				return RE::BSContainer::ForEachResult::kContinue;
+				return Papyrus::BOUND_NEXT;  // past a plain ObjectReference object to the scripts after it
 			} };
 			vm->ForEachBoundObject(handle, visit);
 			return scripted;

@@ -114,6 +114,10 @@ namespace WorldSync
 			Clock::time_point time{};
 		};
 		std::vector<Activation> activateInbox;
+		// Doors an NPC opened (TESActivateEvent: the door, and the NPC as Activation::base), sorted out in Frame()
+		// (DoorShare::WatchesNpcOpen).
+		std::vector<Activation> npcDoorInbox;
+		std::uint32_t           npcDoorsWatched = 0;
 
 		// Recent local activations and world pickups, matched up in Frame() (either can arrive first).
 		constexpr auto          MATCH_WINDOW = 2s;
@@ -142,10 +146,13 @@ namespace WorldSync
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
 		DoorShare::Book                                        refBook;      // what the session last said of each door: a world state's repeats aren't applied again
 		std::unordered_map<std::uint32_t, bool>                opensShared;  // per reference with an open state: whether a player's opening it is shared
+		std::unordered_set<std::uint32_t>                      doorRefsOut;  // DoorShare::NEVER, by this game's IDs
+		bool                                                   doorListResolved = false;
 
 		// Security gates and the like, run by the game's two-state script (SharedGates): their open state is shared as a
 		// door's is, and applied here through the script.
 		std::unordered_map<std::uint32_t, bool>              gates;         // per loaded activator: whether it is a shared gate
+		std::unordered_map<std::uint32_t, std::string_view>  gateScripts;   // per shared gate: the script it runs by (SharedGates::RunningScript)
 		std::unordered_map<std::uint32_t, Clock::time_point> gateLoads;     // activators the game loaded in the last moments (SharedGates::LOAD_SETTLE)
 		SharedGates::Applied                                 gatesApplied;  // gates we set from another player's state, until they get there
 		std::unordered_set<std::uint32_t>                    gateBasesOut, gateRefsOut;  // SharedGates::NOT_A_WAY and NEVER, by this game's IDs
@@ -767,6 +774,15 @@ namespace WorldSync
 				if (target && by && by->IsPlayerRef() && target->IsCreated()) {
 					Drops::OnActivated(target->GetFormID());  // perhaps a copy of an item a friend dropped: Take asks the server
 				}
+				// An NPC opening a door: only taken here (the event's thread), and looked at in Frame().
+				if (target && by && !by->IsPlayerRef() && by->Is(RE::ENUM_FORM_ID::kACHR) && IsShareableRef(target->GetFormID())) {
+					const auto doorBase = target->GetObjectReference();
+					if (doorBase && doorBase->Is(RE::ENUM_FORM_ID::kDOOR)) {
+						std::scoped_lock l{ inboxLock };
+						npcDoorInbox.push_back({ target->GetFormID(), by->GetFormID() });
+					}
+					return RE::BSEventNotifyControl::kContinue;
+				}
 				if (!target || !by || !by->IsPlayerRef() || !IsShareableRef(target->GetFormID())) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -1155,31 +1171,45 @@ namespace WorldSync
 			std::erase_if(unmatchedPickups, expired);
 		}
 
-		// Whether a script is attached to the reference (from its base, or of its own). A plain ObjectReference
-		// object is only Papyrus holding the reference somewhere, not a script on it.
-		bool ScriptAttached(RE::TESObjectREFR* a_ref)
+		// Calls a_visit with the name of each script bound to the reference (from its base, or of its own). A plain
+		// ObjectReference object is only Papyrus holding the reference somewhere, not a script on it.
+		template <class F>
+		void ForEachScript(RE::TESObjectREFR* a_ref, F&& a_visit)
 		{
 			const auto game = RE::GameVM::GetSingleton();
 			const auto vm = game ? game->GetVM() : nullptr;
 			if (!vm) {
-				return false;
+				return;
 			}
 			const auto& handles = vm->GetObjectHandlePolicy();
 			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), a_ref);
 			if (handle == handles.EmptyHandle()) {
-				return false;
+				return;
 			}
-			bool                                                                                      scripted = false;
 			const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
-				const auto type = a_object ? a_object->type.get() : nullptr;
-				if (type && _stricmp(type->GetName(), "ObjectReference") != 0) {
-					scripted = true;
-					return RE::BSContainer::ForEachResult::kStop;
+				const auto  type = a_object ? a_object->type.get() : nullptr;
+				const char* name = type ? type->GetName() : nullptr;
+				if (name && *name && _stricmp(name, "ObjectReference") != 0) {
+					a_visit(std::string_view{ name });
 				}
-				return RE::BSContainer::ForEachResult::kContinue;
+				return Papyrus::BOUND_NEXT;  // on to the next script, not only the first
 			} };
 			vm->ForEachBoundObject(handle, visit);
-			return scripted;
+		}
+
+		// DoorShare::NEVER by the IDs this game has them under, once its data is loaded.
+		void ResolveDoorList()
+		{
+			const auto handler = RE::TESDataHandler::GetSingleton();
+			if (!handler || doorListResolved) {
+				return;
+			}
+			for (const auto& ref : DoorShare::NEVER) {
+				if (const auto id = handler->LookupFormID(ref.id, ref.file)) {
+					doorRefsOut.insert(id);
+				}
+			}
+			doorListResolved = !doorRefsOut.empty();  // else asked again: the game's data may not be loaded yet
 		}
 
 		// Whether a loaded reference's open state is a player's to share (DoorShare::SharesOpen), worked out
@@ -1194,14 +1224,31 @@ namespace WorldSync
 			DoorShare::Facts facts;
 			facts.door = door != nullptr;
 			facts.doorFlags = door ? static_cast<std::uint8_t>(door->flags) : 0;
-			facts.scripted = door && ScriptAttached(a_ref);
+			std::string others;
+			if (door) {
+				ResolveDoorList();
+				facts.listedOut = doorRefsOut.contains(a_ref->GetFormID());
+				ForEachScript(a_ref, [&](std::string_view a_name) {
+					++facts.scripts;
+					if (DoorShare::IsQuiet(a_name)) {
+						++facts.quietScripts;
+					} else {
+						others += others.empty() ? "" : ", ";
+						others += a_name;
+					}
+				});
+			}
 			const bool shared = DoorShare::SharesOpen(facts);
 			if (!shared) {
 				// Not a door: an activator's script, or a container's lid, a chair, a marker (by the base's type). A door
 				// only a quest stage opens is shared by that stage (ScriptDoors), not by its open state.
 				REX::INFO("WorldSync: {:08X} (base {:08X}) is opened by {}; its open state isn't shared", a_ref->GetFormID(), base ? base->GetFormID() : 0,
-					!door ? std::format("a script or itself (a {}, not a door)", base ? base->GetFormTypeString() : "?") :
-					facts.scripted ? std::string("a script on the door") : std::string("itself (an automatic door)"));
+					!door                              ? std::format("a script or itself (a {}, not a door)", base ? base->GetFormTypeString() : "?") :
+					facts.listedOut                    ? std::string("the story (a door listed out)") :
+					facts.scripts > facts.quietScripts ? std::format("a script on the door ({})", others) :
+														 std::string("itself (an automatic door)"));
+			} else if (facts.scripts > 0) {
+				REX::INFO("WorldSync: {:08X} (base {:08X}) has {} quiet script(s); its open state is shared as a plain door's", a_ref->GetFormID(), base ? base->GetFormID() : 0, facts.scripts);
 			}
 			opensShared.emplace(a_ref->GetFormID(), shared);
 			return shared;
@@ -1227,8 +1274,9 @@ namespace WorldSync
 		}
 
 		// Whether a loaded reference is a gate whose open state is shared (SharedGates::Shares): an activator that runs
-		// the game's two-state script and no other. Worked out once per reference, while it is loaded (its scripts are
-		// bound to it then); false, and asked again later, while it isn't.
+		// the game's two-state script, or one of the few that extend it, with nothing beside it but the quiet ones.
+		// Worked out once per reference, while it is loaded (its scripts are bound to it then); false, and asked again
+		// later, while it isn't.
 		bool IsSharedGate(RE::TESObjectREFR* a_ref)
 		{
 			if (!a_ref) {
@@ -1253,37 +1301,51 @@ namespace WorldSync
 			SharedGates::Facts facts;
 			facts.activator = true;
 			facts.listedOut = gateBasesOut.contains(base->GetFormID()) || gateRefsOut.contains(a_ref->GetFormID());
-			const auto& handles = vm->GetObjectHandlePolicy();
-			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), a_ref);
-			if (handle != handles.EmptyHandle()) {
-				const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
-					const auto type = a_object ? a_object->type.get() : nullptr;
-					const char* name = type ? type->GetName() : nullptr;
-					if (name && *name && _stricmp(name, "ObjectReference") != 0) {
-						++facts.scripts;
-						if (SharedGates::IsGateScript(name)) {
-							++facts.gateScripts;
-						}
-					}
-					return RE::BSContainer::ForEachResult::kContinue;
-				} };
-				vm->ForEachBoundObject(handle, visit);
-			}
+			std::string      names;
+			std::string_view running = SharedGates::SCRIPT;
+			ForEachScript(a_ref, [&](std::string_view a_name) {
+				names += names.empty() ? "" : ", ";
+				names += a_name;
+				++facts.scripts;
+				if (SharedGates::IsGateScript(a_name)) {
+					++facts.gateScripts;
+				} else if (const auto child = SharedGates::RunningScript(a_name)) {
+					++facts.childScripts;
+					running = *child;
+				} else if (SharedGates::IsSibling(a_name)) {
+					++facts.siblings;
+				}
+			});
 			const bool shared = SharedGates::Shares(facts);
 			if (shared) {
-				REX::INFO("WorldSync: {:08X} (base {:08X}) is a two-state gate; its open state is shared", a_ref->GetFormID(), base->GetFormID());
-			} else if (facts.gateScripts > 0) {
+				REX::INFO("WorldSync: {:08X} (base {:08X}) is a two-state gate ({}{}); its open state is shared", a_ref->GetFormID(), base->GetFormID(), running,
+					facts.siblings > 0 ? " and a quiet script beside it" : "");
+				gateScripts.emplace(a_ref->GetFormID(), running);
+			} else if (facts.gateScripts + facts.childScripts > 0) {
 				REX::INFO("WorldSync: {:08X} (base {:08X}) runs the two-state script {}; its open state isn't shared", a_ref->GetFormID(), base->GetFormID(),
-					facts.listedOut ? "but is listed out (not a way through, or the story's)" : std::format("with {} other script(s)", facts.scripts - facts.gateScripts));
+					facts.listedOut ? "but is listed out (not a way through, or the story's)" :
+									  std::format("with {} other script(s)", facts.scripts - facts.gateScripts - facts.childScripts - facts.siblings));
+			} else if (facts.scripts > 0 && facts.siblings > 0) {
+				// A gate the survey shares with a script beside it, seen without its two-state script: not bound yet, or not visited.
+				REX::INFO("WorldSync: {:08X} (base {:08X}) has a script the two-state gates have beside them but not the two-state script ({}); its open state isn't shared", a_ref->GetFormID(), base->GetFormID(), names);
 			}
 			gates.emplace(a_ref->GetFormID(), shared);
 			return shared;
 		}
 
-		// What a shared gate's script says of it, or nullopt if there is no script object to read (yet).
+		// The script a shared gate runs by (SharedGates::RunningScript): the two-state script itself, or the one that
+		// extends it.
+		std::string_view GateScript(std::uint32_t a_ref)
+		{
+			const auto it = gateScripts.find(a_ref);
+			return it != gateScripts.end() ? it->second : SharedGates::SCRIPT;
+		}
+
+		// What a shared gate's script says of it, or nullopt if there is no script object to read (yet). A script that
+		// extends the two-state one has its isOpen and its states (GetProperty looks in the script it extends too).
 		std::optional<SharedGates::ScriptState> ReadGate(RE::TESObjectREFR* a_ref)
 		{
-			const auto object = Papyrus::BoundObject(a_ref, SharedGates::SCRIPT, false);
+			const auto object = Papyrus::BoundObject(a_ref, GateScript(a_ref->GetFormID()), false);
 			if (!object) {
 				return std::nullopt;
 			}
@@ -1382,7 +1444,7 @@ namespace WorldSync
 				if (*gateApply == SharedGates::Apply::kSet) {
 					const bool open = a_state.open == Protocol::RefState::kYes;
 					// As a terminal does: the script plays the animation and turns the gate's collision off or on.
-					if (!Papyrus::CallMethod(ref, SharedGates::SCRIPT, "SetOpenNoWait", false, open)) {
+					if (!Papyrus::CallMethod(ref, GateScript(a_state.refId), "SetOpenNoWait", false, open)) {
 						return false;
 					}
 					gatesApplied.Set(a_state.refId, open, Clock::now());
@@ -1437,6 +1499,36 @@ namespace WorldSync
 				if (const auto target = LinkedTarget(link)) {
 					a_visit(target);
 				}
+			}
+		}
+
+		// Puts on watch the doors NPCs our game runs opened near our player (DoorShare::WatchesNpcOpen): their state is
+		// reported as a door our player opened is, so a friend's door opens and closes as their copy of the NPC walks
+		// through it.
+		void WatchNpcDoors(Clock::time_point a_now, const std::vector<Activation>& a_opens)
+		{
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (a_opens.empty() || !player) {
+				return;
+			}
+			for (const auto& open : a_opens) {
+				const auto door = RE::TESForm::GetFormByID<RE::TESObjectREFR>(open.ref);
+				const auto npc = RE::TESForm::GetFormByID<RE::Actor>(open.base);
+				if (!door || !npc || npc->IsPlayerRef() || door->IsDeleted() || !door->Get3D() || !door->GetParentCell()) {
+					continue;
+				}
+				DoorShare::NpcOpen facts;
+				const auto session = RemotePlayers::PlayerIdFor(npc->GetFormID()) == 0 && !Puppets::IsPuppet(npc) ? NpcSync::SessionId(npc->GetFormID()) : 0;
+				facts.runsHere = session != 0 && NpcSync::RunsLocally(session);
+				facts.sharesOpen = OpensShared(door);
+				facts.loadDoor = door->extraList && door->extraList->HasType(RE::EXTRA_DATA_TYPE::kTeleport);
+				facts.playerDistance = player->GetParentCell() ? player->data.location.GetDistance(door->data.location) : DoorShare::NPC_REACH * 2;
+				if (!DoorShare::WatchesNpcOpen(facts)) {
+					continue;
+				}
+				auto& entry = watched[open.ref];
+				entry.until = std::max(entry.until, a_now + DoorShare::NPC_WATCH);
+				++npcDoorsWatched;
 			}
 		}
 
@@ -2023,6 +2115,7 @@ namespace WorldSync
 		std::vector<std::uint32_t> newHarvests;
 		std::vector<StandInHit> newStandInHits;
 		std::vector<Activation>    newActivations;
+		std::vector<Activation>    newNpcDoors;
 		std::vector<Move>          newMoves;
 		std::vector<std::pair<std::uint32_t, bool>> newRuntimeDeaths;
 		{
@@ -2038,6 +2131,7 @@ namespace WorldSync
 			newHarvests.swap(harvestInbox);
 			newStandInHits.swap(standInHits);
 			newActivations.swap(activateInbox);
+			newNpcDoors.swap(npcDoorInbox);
 			newMoves.swap(lootInbox);
 		}
 
@@ -2130,6 +2224,7 @@ namespace WorldSync
 			Queue(Protocol::Encode(Protocol::RefPickedUp{ id }, Protocol::MessageType::kReportPickup));
 			++harvestsSent;
 		}
+		WatchNpcDoors(now, newNpcDoors);
 		WatchRefStates(now, newActivations);
 		LookAtScriptDoors(now, a_hosting);
 		// Container changes that came before one we still lack, with nothing arriving for a while: the
@@ -2237,6 +2332,7 @@ namespace WorldSync
 		refBook.Clear();
 		opensShared.clear();
 		gates.clear();
+		gateScripts.clear();
 		gatesApplied.Clear();
 		scriptDoors.Clear();
 		scriptDoorsReported = false;
@@ -2252,6 +2348,7 @@ namespace WorldSync
 		harvestInbox.clear();
 		standInHits.clear();
 		activateInbox.clear();
+		npcDoorInbox.clear();
 		deathInbox.clear();
 		killInbox.clear();
 		runtimeDeathInbox.clear();
@@ -2331,8 +2428,8 @@ namespace WorldSync
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks) +
-		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
+		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
-			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size());
+			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched);
 	}
 }

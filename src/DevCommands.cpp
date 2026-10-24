@@ -40,6 +40,7 @@
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/SharedGates.h"
 #include "game/StateBuffer.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -1517,6 +1518,38 @@ namespace DevCommands
 			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
 		}
 
+		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked
+		// twice, the visitor answering kContinue and then kStop each time, so the visit counts show which of the two the
+		// engine takes as "go on" (WorldSync counts the scripts on doors and gates this way).
+		std::string ScriptsCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!ref || !vm) {
+				return "error: usage: scripts <refHex>";
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+			if (handle == handles.EmptyHandle()) {
+				return std::format("{:08X} no handle", ref->GetFormID());
+			}
+			const auto walk = [&](RE::BSContainer::ForEachResult a_answer) {
+				std::string names;
+				int         visits = 0;
+				const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+					const auto  type = a_object ? a_object->type.get() : nullptr;
+					const char* name = type ? type->GetName() : nullptr;
+					names += std::format("{}{}", visits++ ? "," : "", name && *name ? name : "?");
+					return a_answer;
+				} };
+				vm->ForEachBoundObject(handle, visit);
+				return std::format("{} [{}]", visits, names);
+			};
+			return std::format("{:08X} 3d={} continue={} stop={}", ref->GetFormID(), ref->Get3D() != nullptr, walk(RE::BSContainer::ForEachResult::kContinue),
+				walk(RE::BSContainer::ForEachResult::kStop));
+		}
+
 		// gate <refHex>: what a two-state gate's script (Default2StateActivator, SharedGates) says of it.
 		std::string Gate(std::string_view a_args)
 		{
@@ -1524,9 +1557,13 @@ namespace DevCommands
 			if (!ref) {
 				return "error: no such reference";
 			}
-			const auto object = Papyrus::BoundObject(ref, "Default2StateActivator", false);
+			// The two-state script itself, or one of the scripts that extend it which SharedGates shares (CHILDREN).
+			auto object = Papyrus::BoundObject(ref, SharedGates::SCRIPT, false);
+			for (std::size_t i = 0; !object && i < SharedGates::CHILDREN.size(); ++i) {
+				object = Papyrus::BoundObject(ref, SharedGates::CHILDREN[i].script, false);
+			}
 			if (!object) {
-				return std::format("{:08X} 3d={} no Default2StateActivator object", ref->GetFormID(), ref->Get3D() != nullptr);
+				return std::format("{:08X} 3d={} no Default2StateActivator object (nor one extending it)", ref->GetFormID(), ref->Get3D() != nullptr);
 			}
 			const auto flag = [&](const char* a_name) {
 				const auto var = object->GetProperty(RE::BSFixedString{ a_name });
@@ -3401,6 +3438,7 @@ namespace DevCommands
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
+			Entry{ "scripts", ScriptsCommand },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },

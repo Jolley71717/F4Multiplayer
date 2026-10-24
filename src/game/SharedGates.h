@@ -8,6 +8,8 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "game/ScriptNames.h"
+
 // Security gates and other two-state activators whose open state is shared like a door's (docs/script-doors-survey.md,
 // "What is not shared today", 1 to 3). A security gate is an activator, not a door, run by the game's standard two-state
 // script, Default2StateActivator: its property isOpen says whether it is open, its function SetOpen(abOpen) plays the
@@ -27,12 +29,20 @@
 // no longer replayed by the presser's stand-in (WorldSync::ApplyRemoteActivation): its state says where it ends up,
 // while a replayed press toggles, the wrong way if the two games' gates disagree.
 //
-// Only the base script itself: every script that extends it (DN017_PrototypeLabDoorScript, DN066_LabDoorScript and
-// DN066_SubLabDoorScript, DN070_TreasureDoorScript, DN084_AssaultronDoorScript, DN103_SetStageOnOpen) also sets a quest
-// stage, sounds a klaxon or opens shutters when opened, and a gate with another script beside it
-// (dn133_SecurityDoorScript, DN009_SecurityDoor, DN015_ActivateOnOpen, dn143RemoveFromCaptiveFaction,
-// DefaultRefEnableLinkedRefOnActivate...) may do something of its own when it opens. Those are left as they were. So
-// are the few bases below that run the script but open no way, and the Mass Fusion gates the survey marks NEVER.
+// The base script, and the few that extend it whose additions do no more than lights, sounds and a show when the gate
+// opens in a friend's game too (CHILDREN). A script that extends it is called as itself (SetOpenNoWait is its own
+// override, if it has one), so whatever it adds runs in every game the gate opens in. The others that extend it set a
+// stage that does more (DN017_PrototypeLabDoorScript: Arcjet's, the Brotherhood's story; DN103_SetStageOnOpen:
+// Poseidon Energy's protectrons wake; DLC04_GauntletGasDoorScript: Nuka-World's story), are the story's
+// (DN084_AssaultronDoorScript), or move with something of their own: the Mechanist's lair doors
+// (DLC01_MechanistDoorScript, 84) follow their door controls, whose red and green state is each game's own and would
+// disagree with a door set from outside; the track system's doors (DLC01_TrackSystemDoor) open and close as its carts
+// pass, in each game. A gate with another script beside the base one is shared only when that script does its thing on
+// activation alone (SIBLINGS): SetOpenNoWait raises no OnActivate, so it happens in the presser's game only. Left out:
+// dn133_SecurityDoorScript (the Castle's, a script of its own opening the gate), DN009_SecurityDoor (sets Hunter/Hunted's
+// stage as the gate's animation ends), DN015_ActivateOnOpen (lets a glowing one out as the animation plays) and
+// DN130_CambridgePDDoorStateToggle (sets the gate from the Brotherhood's stage on load). So are the few bases below that
+// run the script but open no way, and the Mass Fusion gates the survey marks NEVER.
 //
 // What isn't shared, on purpose (the survey's gap 3): a button, lever or switch pressed while the friend was elsewhere
 // is not pressed again in their game later. Every other switch script toggles, or does its thing once, with effects of
@@ -48,6 +58,26 @@ namespace SharedGates
 
 	// The script, by the name the game's VM knows it by.
 	inline constexpr std::string_view SCRIPT = "Default2StateActivator";
+
+	struct Listed
+	{
+		std::string_view script;
+		std::string_view why;
+	};
+
+	// Scripts that extend it and are shared as it is (see above): what they add when the gate opens.
+	inline constexpr std::array CHILDREN{
+		Listed{ "DN066_LabDoorScript", "Med-Tek Research's first lab door: sounds its klaxon and opens the lab's window shutters" },
+		Listed{ "DN066_SubLabDoorScript", "Med-Tek Research's sub-lab door: sounds its klaxon and opens the sub-lab's shutters" },
+		Listed{ "DN070_TreasureDoorScript", "the Jamaica Plain treasure vault's two inner gates: set DN070's stages 95, 105 and 110, lights, displays and the vault's music" },
+	};
+
+	// Scripts beside it that do their thing only when the gate is activated (in the presser's game alone).
+	inline constexpr std::array SIBLINGS{
+		Listed{ "dn143RemoveFromCaptiveFaction", "Vault 75's two cell gates: on activation, the captives behind them turn on the player" },
+		Listed{ "DefaultRefEnableLinkedRefOnActivate", "a gate at the Boston Airport ruins, whose link it would enable is unset: nothing" },
+		Listed{ "DLC01:DLC01_GarageDoorKlaxonScript", "the Mechanist's lair garage door: its klaxon lights and sounds while it moves" },
+	};
 
 	struct FileForm
 	{
@@ -77,20 +107,26 @@ namespace SharedGates
 		FileForm{ "Fallout4.esm", 0x00098B11, "Mass Fusion's DN084_ReactorLabSecurityDoor" },
 	};
 
-	// Whether a script's name is the gate script's (the VM's names keep the case they were written with; the game's
-	// own lookups ignore it).
+	// Whether a script's name is the gate script's itself (the VM's names keep the case they were written with; the
+	// game's own lookups ignore it).
 	constexpr bool IsGateScript(std::string_view a_name)
 	{
-		if (a_name.size() != SCRIPT.size()) {
-			return false;
+		return ScriptNames::Same(a_name, SCRIPT);
+	}
+
+	// The script a shared gate is run by, as this list spells it, if a_name is the gate script or one of CHILDREN: the
+	// one whose isOpen is read and whose SetOpenNoWait is called.
+	constexpr std::optional<std::string_view> RunningScript(std::string_view a_name)
+	{
+		if (IsGateScript(a_name)) {
+			return SCRIPT;
 		}
-		const auto lower = [](char a_c) { return (a_c >= 'A' && a_c <= 'Z') ? static_cast<char>(a_c - 'A' + 'a') : a_c; };
-		for (std::size_t i = 0; i < a_name.size(); ++i) {
-			if (lower(a_name[i]) != lower(SCRIPT[i])) {
-				return false;
-			}
-		}
-		return true;
+		return ScriptNames::Find(CHILDREN, a_name);
+	}
+
+	constexpr bool IsSibling(std::string_view a_name)
+	{
+		return ScriptNames::Find(SIBLINGS, a_name).has_value();
 	}
 
 	// What the game knows of a reference.
@@ -98,14 +134,18 @@ namespace SharedGates
 	{
 		bool          activator = false;  // its base is an activator (not a door, nor a light or a moveable static)
 		std::uint32_t scripts = 0;        // the scripts bound to it (a plain ObjectReference object is no script)
-		std::uint32_t gateScripts = 0;    // ... of them, the gate script itself (not one that extends it)
+		std::uint32_t gateScripts = 0;    // ... of them, the gate script itself
 		bool          listedOut = false;  // its base is in NOT_A_WAY, or it is in NEVER
+		std::uint32_t childScripts = 0;   // ... one of CHILDREN (a reference that has one has the base script removed)
+		std::uint32_t siblings = 0;       // ... one of SIBLINGS
 	};
 
-	// Whether its open state is shared: an activator that runs the gate script and nothing else, not listed out.
+	// Whether its open state is shared: an activator run by the gate script or one of CHILDREN, never both, with
+	// nothing beside it but SIBLINGS, not listed out.
 	constexpr bool Shares(const Facts& a_facts)
 	{
-		return a_facts.activator && a_facts.scripts > 0 && a_facts.gateScripts == a_facts.scripts && !a_facts.listedOut;
+		const bool runs = (a_facts.gateScripts > 0) != (a_facts.childScripts > 0) && a_facts.childScripts <= 1;
+		return a_facts.activator && runs && a_facts.gateScripts + a_facts.childScripts + a_facts.siblings == a_facts.scripts && !a_facts.listedOut;
 	}
 
 	// What the script says of the gate: its isOpen, and whether it is in its "busy" state (SetOpen goes busy before the
