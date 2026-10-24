@@ -19,11 +19,12 @@ namespace WeaponFire
 	// Hooks NPCs' animation events (all NPCs share the hook), using any loaded NPC.
 	void InstallForNpcs(RE::Actor* a_npc);
 
-	// Shots by the local player since the last call.
+	// Shots (and swings or punches) by the local player since the last call. A gun's bash is left out
+	// (AttackKind::ReportsAsShot): friends would replay it as a gunshot. Main thread.
 	[[nodiscard]] std::uint32_t TakeShots();
 
-	// NPCs (form IDs) that fired since the last call, one entry per shot. Includes NPCs we don't
-	// run; the caller filters.
+	// NPCs (form IDs) that fired since the last call, one entry per shot, a gun's bash left out as for
+	// TakeShots. Includes NPCs we don't run; the caller filters. Main thread.
 	[[nodiscard]] std::vector<std::uint32_t> TakeNpcShots();
 
 	// The sound the game picked for the actor's gun when it was equipped (a keyword sound mapping's

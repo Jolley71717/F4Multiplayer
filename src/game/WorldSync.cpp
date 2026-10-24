@@ -641,6 +641,8 @@ namespace WorldSync
 			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); }, a_now);
 		}
 
+		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
+
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
 		{
@@ -660,6 +662,19 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
+				// A friend's stand-in replays their attacks and must hit nobody; one
+				// that hits our player is logged, with what it hit with, for the rig.
+				if (target->IsPlayerRef() && !byPlayer) {
+					const auto by = cause->As<RE::Actor>();
+					if (by && Puppets::IsPuppet(by)) {
+						const auto n = ++hitsOnUsByPuppets;
+						if (n <= 20) {
+							REX::INFO("WorldSync: our player was hit by puppet {:08X} (weapon {:08X}, projectile {:08X}, damage {:.1f}, flags {:08X}); {} so far", attacker,
+								a_event.hitData.weapon.object ? a_event.hitData.weapon.object->GetFormID() : 0, a_event.projectileFormID,
+								a_event.usesHitData ? a_event.hitData.totalDamage : -1.0f, a_event.usesHitData ? a_event.hitData.flags.underlying() : 0u, n);
+						}
+					}
+				}
 				// Our player shot a loose object: where it comes to rest is ours to report (MovedObjects).
 				if (byPlayer && !target->As<RE::Actor>()) {
 					MovedObjects::OnHit(target->GetFormID());
@@ -2333,6 +2348,7 @@ namespace WorldSync
 			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks) +
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
-			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size());
+			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size()) +
+		       std::format(" puppetHitsOnUs={}", hitsOnUsByPuppets.load());
 	}
 }
