@@ -1275,3 +1275,219 @@ TEST("sim quests: leaving mid-teleport with more of the session's Institute step
 	CHECK(!bob.Quests().Locked());
 	CHECK(bob.Quests().WaitingCount() == 0);  // nothing of the session is left to be set in the next one he joins
 }
+
+
+// ---- Out of Time: Vault 111, then Codsworth in Sanctuary ------------------------------------------------
+
+namespace
+{
+	// Fallout4.esm's, read off its quest records and fragments (QF_MQ102_0001CC2A, QF_DialogueCodsworthPostWar_0001E64E).
+	constexpr std::uint32_t MQ102 = 0x0001CC2A;      // Out of Time: main quest (type 1); below 10 the vault's, each player's own
+	constexpr std::uint32_t CODSWORTH = 0x0001E64E;  // DialogueCodsworthPostWar: type 0, no objectives, runs from the start; his talk and search
+	constexpr std::uint32_t VAULT111 = 0x0001ED62;   // DialogueVault111: the vault's own scenes, each player's own
+
+	// Out of Time from the cryopod to Concord. 1 to 9 are the vault (each player's own), 10 the trigger at the top of
+	// the lift, 15 on the way home, 20 "Talk to Codsworth", 22 his holotape, 25 the bloatflies, 30 to 38 the search (he
+	// walks off and stops at the houses; 34 or 38, whichever comes second, sets 40), 40 sets Codsworth's 100 (his
+	// search scene stops), 50 "Look for help in Concord" (it completes 10 to 34), 60 starts Preston's balcony scene.
+	Quest OutOfTime()
+	{
+		auto quest = Started({ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 22, 25, 30, 32, 34, 36, 38, 40, 50, 60, 65, 70, 150, 200 });
+		quest.story = true;
+		quest.starts = { { 38, { MQ102, 40 } }, { 40, { CODSWORTH, 100 } } };
+		return quest;
+	}
+
+	// Codsworth's own quest: his 50 is the talk, which sets Out of Time's 30 and starts his search scene; his 200, back
+	// with him after it, sets its 50. These are in StageRules::SETS_ANOTHER (with his 275, and Out of Time's 34, 38 and 40).
+	Quest CodsworthPostWar()
+	{
+		Quest quest;
+		quest.stages = { 5, 15, 20, 30, 35, 50, 100, 200, 250, 275, 300, 500 };
+		quest.quiet = quest.stages;
+		quest.story = true;
+		quest.dialogue = true;
+		quest.running = true;
+		quest.starts = { { 50, { MQ102, 30 } }, { 200, { MQ102, 50 } } };
+		quest.stops = { 500 };
+		return quest;
+	}
+
+	Quest Vault111Scenes()
+	{
+		Quest quest;
+		quest.stages = { 40, 55, 95, 97, 98, 100, 110 };
+		quest.quiet = quest.stages;
+		quest.story = true;
+		quest.dialogue = true;
+		quest.running = true;
+		return quest;
+	}
+
+	// A new character in the cryopod: the vault's stages so far done, still in the opening.
+	void InTheVault(Client& a_player, std::initializer_list<std::uint16_t> a_done)
+	{
+		auto outOfTime = OutOfTime();
+		for (const auto stage : a_done) {
+			outOfTime.done.insert(stage);
+			outOfTime.current = (std::max)(outOfTime.current, stage);
+		}
+		a_player.GiveQuest(MQ102, std::move(outOfTime));
+		a_player.GiveQuest(CODSWORTH, CodsworthPostWar());
+		a_player.GiveQuest(VAULT111, Vault111Scenes());
+		a_player.Quests().opening = true;
+	}
+
+	// Out of the vault: the trigger at the top of the lift.
+	void OutOfTheVault(Client& a_player)
+	{
+		a_player.Quests().opening = false;
+		a_player.Stage(MQ102, 10);
+	}
+
+	// Home, Codsworth's talk, his search and Concord's lead, as one player plays them: a few seconds between steps,
+	// so each goes in a report of its own (what is done in one poll goes in one, in the game's order of quests).
+	void Sanctuary(Session& a_session, Client& a_player)
+	{
+		const auto step = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+			a_player.Stage(a_quest, a_stage);
+			a_session.PlayFor(3s);
+		};
+		step(MQ102, 15);
+		step(MQ102, 20);
+		step(MQ102, 22);
+		step(MQ102, 25);
+		step(CODSWORTH, 50);  // the talk: Out of Time's 30, and he walks off searching
+		step(MQ102, 32);
+		step(MQ102, 34);
+		step(MQ102, 36);
+		step(MQ102, 38);       // its script sets 40, whose sets his 100
+		step(CODSWORTH, 200);  // back with him: Out of Time's 50
+		step(MQ102, 60);       // Concord
+	}
+
+	const std::vector<std::uint16_t> OUT_OF_SANCTUARY{ 15, 20, 22, 25, 30, 32, 34, 36, 38, 40, 50, 60 };
+	const std::vector<std::uint16_t> CODSWORTH_SEARCH{ 50, 100, 200 };
+
+	// The stages of Out of Time set in this game past the vault's lift (10), in order.
+	std::vector<std::uint16_t> PastTheVault(const Client& a_player)
+	{
+		auto order = Order(a_player, MQ102);
+		std::erase_if(order, [](std::uint16_t a_stage) { return a_stage <= 10; });
+		return order;
+	}
+
+	// Host and friend both out of the vault, in a session.
+	void BothOut(Session& a_session, Client& a_host, Client& a_friend)
+	{
+		GiveQuests({ &a_host, &a_friend });
+		InTheVault(a_host, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+		a_host.Quests().opening = false;
+		InTheVault(a_friend, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+		a_friend.Quests().opening = false;
+		REQUIRE(a_host.Join());
+		REQUIRE(a_friend.Join());
+		Settled(a_session);
+	}
+}
+
+TEST("sim quests: with a shared story, a friend's talk with Codsworth and his search of Sanctuary move the host's Out of Time along as they play it")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	Sanctuary(s, bob);
+	s.PlayFor(10s);
+	CHECK(PastTheVault(host) == OUT_OF_SANCTUARY);
+	CHECK(Order(host, CODSWORTH) == CODSWORTH_SEARCH);  // his search started and stopped in the host's game too
+	CHECK(host.Quests().WaitingCount() == 0);
+	CHECK(host.Quests().Skipped().empty());
+	CHECK(PastTheVault(bob) == OUT_OF_SANCTUARY);  // nothing came back to Bob as the host's
+}
+
+TEST("sim quests: with a shared story, a host who was in a conversation while a friend did Codsworth's search catches up on all of it in order, none of it lost to Codsworth's stages")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	host.Quests().talking = true;  // the host talks with someone else the whole time
+	Sanctuary(s, bob);
+	CHECK(PastTheVault(host).empty());
+	CHECK(host.Quests().WaitingCount() == 15);  // 12 of Out of Time and 3 of Codsworth's
+
+	// All at once: Codsworth's 50 and 200 set Out of Time's 30 and 50. Set ahead of the stages of it that came before
+	// them, those would read as behind it and be dropped: 0.9.1 left the host without 20 to 25, and the end of the
+	// search (36 to 40) never ran.
+	host.Quests().talking = false;
+	s.PlayFor(30s);
+	CHECK(PastTheVault(host) == OUT_OF_SANCTUARY);
+	CHECK(Order(host, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(host.Quests().WaitingCount() == 0);
+	CHECK(host.Quests().Skipped().empty());
+}
+
+TEST("sim quests: with a shared story, the host's talk with Codsworth and his search reach a friend once they are out of the vault, and a late joiner too; the vault stays each player's")
+{
+	Session s{ SharedStory() };
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	auto&   carol = s.Player("Carol");
+	auto&   old = s.Player("Old");  // an older version's game: it reports the vault's stages, which 0.9.0 stopped sharing
+	GiveQuests({ &host, &bob, &carol });
+	InTheVault(host, { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+	host.Quests().opening = false;
+	InTheVault(bob, { 0, 1, 2 });
+	REQUIRE(host.Join());
+	REQUIRE(bob.Join());
+	Settled(s);
+	CHECK(host.Quests().baselined == 1);  // its 10; not the vault's 0 to 9
+
+	Sanctuary(s, host);
+	REQUIRE(old.Join());
+	old.Stage(MQ102, 4);      // the Pip-Boy's effect
+	old.Stage(VAULT111, 40);  // into the cryopod
+	s.PlayFor(10s);
+	CHECK((Done(bob, MQ102) == Stages{ 0, 1, 2 }));  // still in the vault: it all waits
+	CHECK(bob.Quests().openingDropped == 2);         // the old game's vault stages are dropped, not kept for later
+
+	Reach(bob, MQ102, { 3, 4, 5, 6, 7, 8, 9 });
+	OutOfTheVault(bob);
+	s.PlayFor(30s);
+	CHECK(PastTheVault(bob) == OUT_OF_SANCTUARY);
+	CHECK(Order(bob, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(Done(bob, VAULT111).empty());
+	CHECK(Done(host, VAULT111).empty());
+	CHECK(bob.Quests().WaitingCount() == 0);
+	CHECK(bob.Quests().Skipped().empty());
+
+	// Carol joins later, a new character in the vault: she plays it herself, then catches up from the session.
+	InTheVault(carol, { 0, 1 });
+	REQUIRE(carol.Join());
+	s.PlayFor(8s);
+	CHECK((Done(carol, MQ102) == Stages{ 0, 1 }));
+	Reach(carol, MQ102, { 2, 3, 4, 5, 6, 7, 8, 9 });
+	OutOfTheVault(carol);
+	s.PlayFor(30s);
+	CHECK(PastTheVault(carol) == OUT_OF_SANCTUARY);
+	CHECK(Order(carol, CODSWORTH) == CODSWORTH_SEARCH);
+	CHECK(Done(carol, VAULT111).empty());
+	CHECK(carol.Quests().Skipped().empty());
+}
+
+TEST("sim quests: with each player's own story, a friend's Codsworth search never reaches the host's Out of Time")
+{
+	Session s;  // sStory = own
+	auto&   host = s.Host();
+	auto&   bob = s.Player("Bob");
+	BothOut(s, host, bob);
+
+	Sanctuary(s, bob);
+	s.PlayFor(10s);
+	CHECK(PastTheVault(host).empty());  // the host talks to Codsworth and follows him around Sanctuary themselves
+	CHECK(Done(host, CODSWORTH).empty());
+	CHECK(host.Quests().WaitingCount() == 0);
+}

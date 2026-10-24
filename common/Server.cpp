@@ -304,8 +304,9 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	stopRequested = false;
 	running = true;
 	thread = std::thread([this] { Run(); });
-	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports)", options.port,
-		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size()));
+	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
+	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
+		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
 	return true;
 }
 

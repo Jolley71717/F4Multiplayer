@@ -14,7 +14,8 @@
 // The glue between them is a copy of QuestSync.cpp's and only as good as that copy: when a stage counts
 // as live, the friend nearby, the combat hold, the warning and its cover, the lock and its release (looked
 // at before the queue's poll), what is dropped when the session ends (with Session's
-// Story::SetShared(false)) or the server changes, and the 5 s settle before reporting. Left out: scenes
+// Story::SetShared(false)) or the server changes, the 5 s settle before reporting, and the opening's own
+// stages (StageRules::IsOpening: never reported, in the host's baseline or set). Left out: scenes
 // (only a conversation holds stages back), the MQ104/MQ105 repair, completion notices
 // and the type checks (a test says which quests are the story).
 //
@@ -169,6 +170,11 @@ namespace Sim
 			if (it == quests.end() || !Shared(it->second) || StageLog::Finished(Flags(it->second)) || Settled(a_stage.quest, a_stage.stage)) {
 				return;
 			}
+			// The opening is every player's own (Vault 111): dropped, as QuestSync drops one an older version reported.
+			if (Opening(a_stage.quest, a_stage.stage)) {
+				++openingDropped;
+				return;
+			}
 			if (!it->second.stages.contains(a_stage.stage)) {
 				++unknown;
 				return;
@@ -231,7 +237,9 @@ namespace Sim
 				for (const auto& [id, quest] : quests) {
 					if (Shared(quest) && (Started(quest) || quest.completed)) {
 						for (const auto stage : quest.done) {
-							baseline.push_back({ id, stage, quest.story });
+							if (!Opening(id, stage)) {  // every player's own
+								baseline.push_back({ id, stage, quest.story });
+							}
 						}
 					}
 				}
@@ -262,6 +270,9 @@ namespace Sim
 				}
 				fresh = unstarted.Take(id, std::move(fresh), now);
 				for (const auto stage : fresh) {
+					if (Opening(id, stage)) {
+						continue;  // the opening is every player's own (the vault's 110 outside)
+					}
 					outbox.Add(Protocol::Encode(Protocol::QuestStage{ id, stage }, Protocol::MessageType::kReportQuestStage), quest.story);
 					++reported;
 				}
@@ -340,6 +351,7 @@ namespace Sim
 		std::size_t gaveUp = 0;
 		std::size_t unknown = 0;
 		std::size_t released = 0;  // controls given back by the lock's timeout
+		std::size_t openingDropped = 0;  // friends' stages of the opening, never set (StageRules::IsOpening)
 		std::size_t baselined = 0;  // stages of this game's progress so far reported when it hosts (QueueBaseline)
 		std::size_t caughtUpStarted = 0;  // quests started here for the session whose friends' stages are all set
 		std::vector<std::uint32_t> started;  // quests a friend's stage started here, in order
@@ -388,6 +400,10 @@ namespace Sim
 				}
 				return StageRules::Hold(StageRules::Find(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage));
 			}
+			bool SetsAnother(std::uint32_t a_quest, std::uint16_t a_stage) const
+			{
+				return (a_quest >> 24) == 0 && StageRules::SetsAnother(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
+			}
 		};
 
 		static std::uint64_t Key(std::uint32_t a_quest, std::uint16_t a_stage) { return (static_cast<std::uint64_t>(a_quest) << 16) | a_stage; }
@@ -398,6 +414,12 @@ namespace Sim
 		}
 
 		bool Shared(const Quest& a_quest) const { return !a_quest.story || story; }
+
+		// QuestSync's IsOpeningStage: MQ102 below 10 and DialogueVault111, Fallout4.esm's (load order index 00).
+		static bool Opening(std::uint32_t a_quest, std::uint16_t a_stage)
+		{
+			return (a_quest >> 24) == 0 && StageRules::IsOpening(StageRules::File::kFallout4, a_quest & 0x00FFFFFF, a_stage);
+		}
 
 		// QuestSync's SessionStarted: an objective shown, or a dialogue quest running or with stages done.
 		static bool Started(const Quest& a_quest) { return a_quest.started || (a_quest.dialogue && (a_quest.running || !a_quest.done.empty())); }
