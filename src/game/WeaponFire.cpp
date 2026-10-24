@@ -1448,6 +1448,11 @@ namespace WeaponFire
 		return std::exchange(explosions, {});
 	}
 
+	bool SetOffForFriend(RE::TESObjectREFR* a_explosion)
+	{
+		return a_explosion && setOffExplosions.Has(a_explosion);
+	}
+
 	void ApplyExplosion(const Protocol::Explosion& a_explosion)
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
