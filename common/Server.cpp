@@ -68,6 +68,9 @@ namespace
 	// on its own, so the stage the attacker set going can be passed first in a friend's game, who never shot.
 	constexpr auto  DESTRUCTION_ARMED_FOR = std::chrono::seconds(30);
 	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
+	// A trap is reported by a game that has it loaded: it lies within the loaded cells around the reporter (a mine can be
+	// shot from the far side of them), never across the map.
+	constexpr float TRAP_RANGE = 16000.0f;
 	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
 	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
 	constexpr double EXPLOSION_BURST = 16.0;
@@ -146,12 +149,13 @@ namespace
 		kQuestStages,
 		kContainers,
 		kWorkshop,
+		kTraps,
 		kDestructions,
 		kTables
 	};
 	// For log lines: "the session's {} table", "{} sharing".
-	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "destroyed object" };
-	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "destruction" };
+	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object" };
+	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction" };
 
 	// Whose budget: the transport's own name for the peer (a Steam ID, which a client can't choose), else
 	// the identity their game says hello with, else the connection itself.
@@ -379,6 +383,7 @@ void Server::Run()
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
+	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	// The objects one of those reports came for lately (DESTRUCTION_ARMED_FOR): their explosions are let through from
@@ -466,6 +471,12 @@ void Server::Run()
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
 			}
+			for (const auto& trap : saved->traps) {
+				auto& kept = traps[trap.refId];
+				if (Protocol::TrapSupersedes(trap.state, kept.refId != 0 ? std::optional{ kept.state } : std::nullopt)) {
+					kept = trap;
+				}
+			}
 			questStages = saved->questStages;
 			questStageKeys.clear();
 			for (const auto& stage : questStages) {
@@ -489,6 +500,7 @@ void Server::Run()
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
+			noteFill(kTraps, traps.size());
 			noteFill(kQuestStages, questStages.size());
 			noteFill(kContainers, containerChanges.size());
 			noteFill(kDestructions, destructions.size());
@@ -518,6 +530,9 @@ void Server::Run()
 		snapshot.pickedUp.assign(pickedUp.begin(), pickedUp.end());
 		for (const auto& [id, state] : refStates) {
 			snapshot.refStates.push_back(state);
+		}
+		for (const auto& [id, trap] : traps) {
+			snapshot.traps.push_back(trap);
 		}
 		snapshot.questStages = questStages;
 		snapshot.worldTime = worldTime;
@@ -553,6 +568,7 @@ void Server::Run()
 		diedAt.clear();
 		pickedUp.clear();
 		refStates.clear();
+		traps.clear();
 		actorOwners.clear();
 		destructions.clear();
 		destructionsArmed.clear();
@@ -777,6 +793,18 @@ void Server::Run()
 	// already in the receiver's world.
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
 		sendMarkers(a_to);
+		// The spent traps before the world state that ends the catching up, so a game holds the whole list by then.
+		Protocol::TrapStates spent;
+		for (const auto& [id, trap] : traps) {
+			spent.traps.push_back(trap);
+			if (spent.traps.size() == Protocol::MAX_TRAPS_PER_PACKET) {
+				send(a_to, Protocol::Encode(spent), true);
+				spent.traps.clear();
+			}
+		}
+		if (!spent.traps.empty()) {
+			send(a_to, Protocol::Encode(spent), true);
+		}
 		// Deaths with a known place go first, one by one with the place; the list that follows then finds
 		// them already dead, so each copy lies where the killer saw it fall.
 		std::size_t placed = 0;
@@ -2158,6 +2186,41 @@ void Server::Run()
 		}
 	};
 
+	// A world trap spent in the reporter's game (TrapState): kept, first come first kept (a take still replaces a spring or a
+	// disarm), and passed on to everyone else live, so each game whose copy is still armed sets it off there. Only one near
+	// where the reporter is: a report is otherwise a way to set off any mine at anyone. (Each game judges it again:
+	// TrapRules::Live, from where the trap and the reporter's stand-in are there.)
+	const auto handleTrap = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto trap = Protocol::DecodeTrapState(a_data);
+		if (!trap || !a_player.hasState) {
+			return;
+		}
+		const float dx = trap->x - a_player.state.x;
+		const float dy = trap->y - a_player.state.y;
+		const float dz = trap->z - a_player.state.z;
+		if (!(dx * dx + dy * dy + dz * dz <= TRAP_RANGE * TRAP_RANGE)) {
+			return;
+		}
+		const auto known = traps.find(trap->refId);
+		if (!Protocol::TrapSupersedes(trap->state, known != traps.end() ? std::optional{ known->second.state } : std::nullopt)) {
+			return;
+		}
+		if (known == traps.end()) {
+			if (traps.size() >= maxWorldEntries || !withinShare(a_player, kTraps)) {
+				return;
+			}
+			++budgetOf(a_player).added[kTraps];
+			noteFill(kTraps, traps.size() + 1);
+		}
+		trap->playerId = a_player.id;
+		traps[trap->refId] = *trap;
+		touched();
+		broadcast(Protocol::Encode(Protocol::TrapStates{ true, { *trap } }), true, a_player.key);
+	};
+
 	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
 		if (!allowEvent(a_player) || now - budgetOf(a_player).lastLine < std::chrono::milliseconds(250)) {
@@ -2718,6 +2781,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportDestruction:
 			handleDestruction(a_player, a_data);
+			break;
+		case MessageType::kReportTrap:
+			handleTrap(a_player, a_data);
 			break;
 		case MessageType::kReportActivation:
 			handleActivation(a_player, a_data);

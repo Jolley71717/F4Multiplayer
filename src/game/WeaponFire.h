@@ -71,9 +71,17 @@ namespace WeaponFire
 	// The copies go by the session's ids (NpcSync::SessionId): our copy of a friend's spawn by its spawn id.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
 
-	// Whether this explosion is one our game set off for a friend's throw (ApplyExplosion): theirs, never ours to report
-	// what it throws about (MovedObjects).
+	// Whether this explosion is one our game set off for a friend's throw (ApplyExplosion) or trap (SetOffTrapExplosion):
+	// theirs, never ours to report what it throws about (MovedObjects).
 	[[nodiscard]] bool SetOffForFriend(RE::TESObjectREFR* a_explosion);
+
+	// A world mine's blast, set off here because the mine went off in a_from's game (Traps): placed as their explosion
+	// would be, our copies of NPCs other games run made ghosts while it goes off, and never reported back as ours.
+	void SetOffTrapExplosion(RE::BGSExplosion* a_explosion, const RE::NiPoint3& a_at, std::uint32_t a_from);
+
+	// Our copies of NPCs other games run near a_at are made ghosts a moment (BlastShield; called again to keep them so):
+	// a trap set off here for a friend's (its grenades, its shots) is their owners' to deal.
+	void ShieldCopiesNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from);
 
 	// Our copy of this NPC (the session's id) stops being mirrored: a ghost of ours against a friend's explosion
 	// comes off now.

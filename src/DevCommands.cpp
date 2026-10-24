@@ -43,6 +43,7 @@
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
 #include "game/StateBuffer.h"
+#include "game/Traps.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
@@ -1081,6 +1082,17 @@ namespace DevCommands
 				return "ok";
 			}
 			return Drops::List();
+		}
+
+		// traps [refHex]: the world traps around our player we watch, and what the session holds of them (Traps); with a
+		// reference, what it was taken for and the scripts bound to it now.
+		std::string TrapsList(std::string_view a_args)
+		{
+			if (!a_args.empty()) {
+				const auto id = ParseHex(a_args);
+				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";
+			}
+			return Traps::List() + " | " + Traps::Describe();
 		}
 
 		// dropitem <baseHex> [count]: our player drops that item, as from the Pip-Boy (the console's drop, which the
@@ -3443,6 +3455,7 @@ namespace DevCommands
 			Entry{ "inventory", Inventory },
 			Entry{ "contents", Contents },
 			Entry{ "drops", DropsList },
+			Entry{ "traps", TrapsList },
 			Entry{ "dropitem", DropItem },
 			Entry{ "activate", ActivateCommand },
 			Entry{ "itemmods", ItemModsCommand },

@@ -119,8 +119,9 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (34), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 34 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (36),
+	// and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 36 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -495,10 +496,6 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 	auto bare = MakeSnapshot();
 	bare.workshopItems.clear();
 	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
-		if (layout == 34) {
-			CHECK(!SessionFile::Readable(layout));  // world traps' (another branch's), which this build can't read
-			continue;
-		}
 		const auto out = as(SessionFile::Encode(bare), layout);
 		REQUIRE(out);
 		CHECK(out->deadActors == bare.deadActors);
@@ -534,9 +531,9 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 	}
 }
 
-// Layout 35 adds the destructible objects damaged in the session to 33: they come back whole, never to go off again,
-// and in a file of an older layout they are damage.
-TEST("session file: destructible objects come back from layout 35 as wrecks alone")
+// Layout 34 adds the destructible objects damaged in the session to 33 (with the spent traps): they come back whole,
+// never to go off again, and in a file of an older layout they are damage.
+TEST("session file: destructible objects come back from layout 34 as wrecks alone")
 {
 	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
 		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));

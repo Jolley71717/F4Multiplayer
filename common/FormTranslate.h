@@ -485,6 +485,15 @@ namespace FormTranslate
 		case MessageType::kActivation:
 			Apply<Activation>(a_packet, ctx, DecodeActivation, [&](Activation& m) { return ctx.Key(m.refId); }, typed);
 			break;
+		case MessageType::kReportTrap:
+			Apply<TrapState>(a_packet, ctx, DecodeTrapState, [&](TrapState& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, plain);
+			break;
+		case MessageType::kTraps:
+			Apply<TrapStates>(a_packet, ctx, DecodeTrapStates, [&](TrapStates& m) {
+				ctx.Entries(m.traps, [&](TrapState& a_trap) { return ctx.Key(a_trap.refId) && ctx.Place(a_trap.cell, a_trap.worldspace); });
+				return !m.traps.empty();  // a live one whose trap has no ID here is about nothing
+			}, plain);
+			break;
 		case MessageType::kReportSpawn:
 		case MessageType::kSpawned:
 			// The spawn id is the session's own (runtime range): only what to place, and where.

@@ -270,6 +270,10 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
 		}
+		s.push_back({ "TrapState", Encode(TrapState{ 2, 0x00181819, TrapState::kFired, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f }), D(DecodeTrapState) });
+		s.push_back({ "TrapStates(live)", Encode(TrapStates{ true, { TrapState{ 2, 0x00181819, TrapState::kDisarmed, 0x0001A2B3, 0, 120.0f, -40.5f, 6.0f } } }), D(DecodeTrapStates) });
+		s.push_back({ "TrapStates", Encode(TrapStates{ false, { TrapState{ 0, 0x00181819, TrapState::kFired, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f },
+			TrapState{ 3, 0x0010BE7F, TrapState::kTaken, 0x0001A2B3, 0, 1.0f, 2.0f, 3.0f } } }), D(DecodeTrapStates) });
 		for (const auto type : { MT::kReportObjectHold, MT::kObjectHeld }) {
 			s.push_back({ "ObjectHold", Encode(ObjectHold{ 2, 0x000A1B2C, 77, { 4.5f, 95.0f, 110.25f }, { 0.1f, -0.2f, 1.5f } }, type), D(DecodeObjectHold) });
 		}
@@ -374,6 +378,7 @@ namespace ProtocolSamples
 		case MT::kReportObjectRest:
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
+		case MT::kReportTrap:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
@@ -423,6 +428,7 @@ namespace ProtocolSamples
 		case MT::kObjectHeld:
 		case MT::kObjectRested:
 		case MT::kPluginTable:
+		case MT::kTraps:
 			return true;
 		}
 		return false;

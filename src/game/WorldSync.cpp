@@ -29,6 +29,7 @@
 #include "game/SharedGates.h"
 #include "game/Spawns.h"
 #include "game/Story.h"
+#include "game/Traps.h"
 #include "game/WeaponFire.h"
 #include "game/WorkshopSync.h"
 #include "Text.h"
@@ -1933,6 +1934,12 @@ namespace WorldSync
 			++gatePressesLeft;
 			return;
 		}
+		// A trap: its state is shared (Traps). A press replayed by the stand-in would disarm ours, and the disarm's XP
+		// and reward go to our player.
+		if (Traps::IsTrap(ref)) {
+			++activationsRefused;
+			return;
+		}
 		// Only a press by someone standing at the thing: a report naming a far-away activator (or
 		// from a player we know nothing about) would run its script here on their say-so.
 		const auto senderAt = RemotePlayers::PositionOf(a_playerId);
@@ -2207,9 +2214,11 @@ namespace WorldSync
 		for (const auto& activation : newActivations) {
 			NpcSync::OnLocalInteraction(activation.ref);
 			NpcSync::OnActivated(activation.ref);
-			// A button, switch or lever: the others press it too, so what it drives happens in their games.
+			Traps::OnPlayerActivated(activation.ref);  // a mine gone a moment later was picked up
+			// A button, switch or lever: the others press it too, so what it drives happens in their games. Not a trap: its
+			// state is shared (Traps), and a press replayed by our stand-in would disarm theirs and give their player the XP.
 			const auto base = RE::TESForm::GetFormByID(activation.base);
-			if (base && base->Is(RE::ENUM_FORM_ID::kACTI)) {
+			if (base && base->Is(RE::ENUM_FORM_ID::kACTI) && !Traps::IsTrap(RE::TESForm::GetFormByID<RE::TESObjectREFR>(activation.ref))) {
 				Queue(Protocol::Encode(Protocol::Activation{ 0, activation.ref }, Protocol::MessageType::kReportActivation));
 				++activationsSent;
 			}

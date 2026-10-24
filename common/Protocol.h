@@ -28,9 +28,11 @@ namespace Protocol
 	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
 	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
 	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
-	// 52: destructible objects' damage (Destruction: kReportDestruction, kDestructions): a car, a barrel or a gas pump a
-	// player shot is as wrecked in every game, and goes off once. 50 is the VATS modes' (feat/vats-modes), 51 world traps' (fix/traps).
-	inline constexpr std::uint16_t VERSION = 52;
+	// 50: the next release's branches together: world traps (kReportTrap, kTraps: a mine, a tripwire, a bear trap, a
+	// grenade bouquet that went off, was disarmed or was taken) and destructible objects' damage (Destruction:
+	// kReportDestruction, kDestructions: a car, a barrel or a gas pump a player shot is as wrecked in every game, and goes
+	// off once). 51 and 52 were those branches' own test builds (traps', destructibles').
+	inline constexpr std::uint16_t VERSION = 50;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -148,6 +150,7 @@ namespace Protocol
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
 		kReportDestruction = 34,   // destructible objects (a car, a barrel) the sender's game damaged past a stage (Destructions)
 		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
+		kReportTrap = 64,           // a world trap in the sender's game went off, was disarmed or was taken (TrapState)
 		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
 		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
 		// 18 and 120 were the ping before version 43, which named only where the sender stood.
@@ -194,6 +197,7 @@ namespace Protocol
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
 		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
 		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kTraps = 164,             // world traps spent in the session: one that just went off in another game (live), or the list (catching up)
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
 		kPinged = 156,            // another player pinged something
@@ -750,6 +754,48 @@ namespace Protocol
 
 		bool operator==(const Activation&) const = default;
 	};
+
+	// A world trap from a plugin (a placed mine, a tripwire, a tension trigger, a grenade bouquet or another of the game's
+	// TrapBase traps, a bear trap) that is spent in the sender's game: it went off, a player disarmed it, or a player took it
+	// (a mine picked up, a sprung bear trap carried off). Kept by the server, first come first kept (a take still follows a
+	// spring), and sent to everyone: live as it happens (each game whose copy is armed sets it off), and in the list a joiner
+	// or a loaded save gets (spent quietly). src/game/TrapRules.h has the rules.
+	struct TrapState
+	{
+		enum State : std::uint8_t
+		{
+			kFired = 1,     // it went off (stepped on, shot, set off by its trigger)
+			kDisarmed = 2,  // a player disarmed it
+			kTaken = 3,     // a player took it away: it is gone from the world
+		};
+
+		std::uint32_t playerId = 0;  // who reported it (set by the server)
+		std::uint32_t refId = 0;
+		std::uint8_t  state = kFired;
+		std::uint32_t cell = 0;        // where it is: interior cell, or 0 outside
+		std::uint32_t worldspace = 0;  // ... or its worldspace
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
+
+		bool operator==(const TrapState&) const = default;
+	};
+
+	// kTraps: live (one just spent in a friend's game) or caught up (part of the session's list, MAX_TRAPS_PER_PACKET at most).
+	struct TrapStates
+	{
+		bool                   live = false;
+		std::vector<TrapState> traps;
+
+		bool operator==(const TrapStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_TRAPS_PER_PACKET = 1000;
+
+	// Whether a trap's new state replaces the one the session has: none yet, or a take after a spring or a disarm (the trap is
+	// gone from the world now). Never the other way: a trap taken stays taken.
+	[[nodiscard]] constexpr bool TrapSupersedes(std::uint8_t a_new, std::optional<std::uint8_t> a_old)
+	{
+		return !a_old || (a_new == TrapState::kTaken && *a_old != TrapState::kTaken);
+	}
 
 	// A power wire's shape. The game makes a wire (a BGSBendableSpline reference) between two things the
 	// player wired: its reference stands halfway between its ends, each end halfExtents away (one plus, one
@@ -2230,6 +2276,92 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	namespace detail
+	{
+		inline void WriteTrap(Writer& a_w, const TrapState& a_trap)
+		{
+			a_w.U32(a_trap.playerId);
+			a_w.U32(a_trap.refId);
+			a_w.U8(a_trap.state);
+			a_w.U32(a_trap.cell);
+			a_w.U32(a_trap.worldspace);
+			a_w.F32(a_trap.x);
+			a_w.F32(a_trap.y);
+			a_w.F32(a_trap.z);
+		}
+
+		// False for one that names no trap a session can share, a state there is none of, or a place outside the world.
+		inline bool ReadTrap(Reader& a_r, TrapState& a_trap)
+		{
+			a_trap.playerId = a_r.U32();
+			a_trap.refId = a_r.U32();
+			a_trap.state = a_r.U8();
+			a_trap.cell = a_r.U32();
+			a_trap.worldspace = a_r.U32();
+			a_trap.x = a_r.F32();
+			a_trap.y = a_r.F32();
+			a_trap.z = a_r.F32();
+			return a_r.Ok() && IsShareableRef(a_trap.refId) && a_trap.state >= TrapState::kFired && a_trap.state <= TrapState::kTaken && InWorld(a_trap.x) &&
+			       InWorld(a_trap.y) && InWorld(a_trap.z);
+		}
+	}
+
+	// kReportTrap: the sender's one trap.
+	inline std::vector<std::uint8_t> Encode(const TrapState& a_msg)
+	{
+		Writer w{ MessageType::kReportTrap };
+		detail::WriteTrap(w, a_msg);
+		return w.Data();
+	}
+
+	inline std::optional<TrapState> DecodeTrapState(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TrapState msg;
+		if (!detail::ReadTrap(r, msg) || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Up to MAX_TRAPS_PER_PACKET traps (any more are left off: the server splits its list).
+	inline std::vector<std::uint8_t> Encode(const TrapStates& a_msg)
+	{
+		Writer     w{ MessageType::kTraps };
+		const auto count = (std::min)(a_msg.traps.size(), MAX_TRAPS_PER_PACKET);
+		w.U8(a_msg.live ? 1 : 0);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteTrap(w, a_msg.traps[i]);
+		}
+		return w.Data();
+	}
+
+	// None if any trap in it is bad (see ReadTrap), or a live one isn't one trap alone.
+	inline std::optional<TrapStates> DecodeTrapStates(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TrapStates msg;
+		const auto live = r.U8();
+		const auto count = r.U16();
+		if (!r.Ok() || live > 1 || count > MAX_TRAPS_PER_PACKET || (live == 1 && count != 1)) {
+			return std::nullopt;
+		}
+		msg.live = live == 1;
+		msg.traps.resize(count);
+		for (auto& trap : msg.traps) {
+			if (!detail::ReadTrap(r, trap)) {
+				return std::nullopt;
+			}
+		}
+		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;

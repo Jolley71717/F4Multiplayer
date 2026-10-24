@@ -12,6 +12,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/ThrowReplays.h"
+#include "game/Traps.h"
 
 #include "game/ShotLoops.h"
 
@@ -709,6 +710,11 @@ namespace WeaponFire
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 			seenExplosions.Add(a_ref);
+			// A world trap's (a mine, a grenade bouquet's grenades): every game sets its own off (Traps), so reported too
+			// it would go off twice.
+			if (Traps::Claims(a_ref->data.location)) {
+				return RE::BSContainer::ForEachResult::kContinue;
+			}
 			fresh.push_back(a_ref);
 			return RE::BSContainer::ForEachResult::kContinue;
 		});
@@ -1512,5 +1518,31 @@ namespace WeaponFire
 			setOffExplosions.Add(ref.get());
 		}
 		++explosionsSetOff;
+	}
+
+	void SetOffTrapExplosion(RE::BGSExplosion* a_explosion, const RE::NiPoint3& a_at, std::uint32_t a_from)
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto cell = player ? player->GetParentCell() : nullptr;
+		if (!cell || !a_explosion) {
+			return;
+		}
+		ShieldNear(a_at, a_explosion->data.outerRadius, a_from);
+		RE::NEW_REFR_DATA data;
+		data.location = a_at;
+		data.object = a_explosion;
+		data.interior = cell->IsInterior() ? cell : nullptr;
+		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
+		data.clearStillLoadingFlag = true;
+		const auto handle = EngineRefs::CreateReferenceAtLocation(data);
+		if (const auto ref = handle.get()) {
+			setOffExplosions.Add(ref.get());
+		}
+		++explosionsSetOff;
+	}
+
+	void ShieldCopiesNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from)
+	{
+		ShieldNear(a_at, a_radius, a_from);
 	}
 }
