@@ -93,6 +93,8 @@ namespace Text
 		{ "party.ping_something", "something" },
 		{ "party.where", "{player}: {where}" },
 		{ "party.no_emote_armor", "No emotes in power armor" },
+		// Our player tried to get into our copy of a friend's frame (FriendFrame.h).
+		{ "party.friends_frame", "This is {player}'s power armor. Sharing power armor with friends is coming in a later version." },
 		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
 		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
 		{ "party.tag_menu", "{name} [in a menu]" },

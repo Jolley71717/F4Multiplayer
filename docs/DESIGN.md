@@ -1011,6 +1011,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
   id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
   (stand-ins), `unloaded` and `back` (spawns).
+  A friend's frame is theirs (`FriendFrame.h`, `RemotePlayers::KeepOutOfFrame`, through `Equipment::SetFrameGate` in
+  the frame use `InstallFrameUse` patches): our player is kept out of our copy of the frame a friend used last (their
+  parked one, the one their stand-in got out of, or the copy of a frame their game made standing where they say they
+  parked it) and told whose it is (`party.friends_frame`). Getting into one made it ours while the friend's stayed
+  theirs, and their game shared it again after their next load: a second copy on the same spot. A plugin's frame (each
+  game has its own reference), a runtime frame no friend used, our player's own and a quest's are never kept from them.
+  Counted as `framesKeptOut` (`net status`) and `keptOut` (`paframes`). Borrowing a friend's suit comes later.
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The

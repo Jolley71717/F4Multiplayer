@@ -167,6 +167,11 @@ namespace Equipment
 	// 1.11.240 has it. Once, at load.
 	void InstallFrameUse();
 
+	// Asked as our player gets into a frame, before anything is mended or the engine starts getting them in: true keeps
+	// them out (RemotePlayers::KeepOutOfFrame, which says why on the HUD). Main thread.
+	using FrameGate = bool (*)(RE::TESObjectREFR*);
+	void SetFrameGate(FrameGate a_gate);
+
 	// What that hook mended and logged, for the paframes dev command.
 	std::string DescribeFrameMends();
 }

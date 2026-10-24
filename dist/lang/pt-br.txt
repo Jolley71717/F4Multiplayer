@@ -70,6 +70,7 @@ party.ping_you = você
 party.ping_something = algo
 party.where = {player}: {where}
 party.no_emote_armor = Sem emotes na armadura de energia
+party.friends_frame = Esta é a armadura de energia de {player}. O compartilhamento de armaduras de energia com amigos chegará em uma versão futura.
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [em um menu]
 party.killed = {killer} matou {victim}

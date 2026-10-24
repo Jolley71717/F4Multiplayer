@@ -112,6 +112,9 @@ namespace RemotePlayers
 	// stands within ArmorFrames::ORIGINAL_RADIUS of a_spot and nobody is in it: Spawns' copy of the same frame, once
 	// their game shares it, takes it over rather than standing a second suit in the same spot. None otherwise.
 	RE::ObjectRefHandle TakeParkedCopy(std::uint32_t a_owner, std::uint32_t a_base, const RemoteEdits::Spot& a_spot);
+	// Our player asks to get into this frame (Equipment's frame use, before the engine starts getting them in): whether
+	// they are kept out of it, a copy of the frame a friend used last (see FriendFrame). The HUD tells them whose it is.
+	[[nodiscard]] bool KeepOutOfFrame(RE::TESObjectREFR* a_frame);
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

@@ -83,6 +83,7 @@ party.ping_you = you
 party.ping_something = something
 party.where = {player}: {where}
 party.no_emote_armor = No emotes in power armor
+party.friends_frame = This is {player}'s power armor. Sharing power armor with friends is coming in a later version.
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [in a menu]
 party.killed = {killer} killed {victim}

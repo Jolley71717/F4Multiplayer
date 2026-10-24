@@ -29,6 +29,13 @@ namespace Spawns
 	// (a_parked, within a_radius): it stands for that frame, and RemotePlayers places no parked copy of its own there.
 	[[nodiscard]] bool FrameCopyAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius);
 
+	// The local form ID of that copy (see FrameCopyAt), 0 if none stands there.
+	[[nodiscard]] std::uint32_t FrameCopyLocalAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius);
+
+	// The friend whose frame (one their game made and shares) our reference a_local is a copy of, 0 if it is no copy of a
+	// friend's frame (see FriendFrame).
+	[[nodiscard]] std::uint32_t FrameCopyOwnerOf(std::uint32_t a_local);
+
 	// Our NPC under a spawn id: our own, or our copy of a friend's (0: none).
 	[[nodiscard]] std::uint32_t LocalOf(std::uint32_t a_id);
 

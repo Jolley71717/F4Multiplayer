@@ -70,6 +70,7 @@ party.ping_you = 你
 party.ping_something = 某样东西
 party.where = {player}：{where}
 party.no_emote_armor = 穿着动力装甲时无法使用表情
+party.friends_frame = 这是{player}的动力装甲。与好友共用动力装甲的功能将在后续版本中推出。
 party.tag_pipboy = {name} [哔哔小子]
 party.tag_menu = {name} [菜单中]
 party.killed = {killer} 击杀了 {victim}

@@ -1044,10 +1044,12 @@ namespace Equipment
 		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
 		using MessageFn = void (*)(const char*, const char*, bool, bool);
 		UseFn                   originalUse = nullptr;
+		FrameGate               keepOut = nullptr;  // SetFrameGate
 		MessageFn               originalMessage = nullptr;
 		std::uint32_t           seatsFreed = 0;
 		std::uint32_t           framesStoodUp = 0;
 		std::uint32_t           refusals = 0;
+		std::uint32_t           keptOut = 0;  // asks the gate turned down
 		std::uint32_t           enterRefusals = 0;
 		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
 		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
@@ -1057,6 +1059,11 @@ namespace Equipment
 		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
 		{
 			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
+			if (frame && keepOut && keepOut(a_ref)) {
+				// Not seated, and no word from the engine: Activate returns true whatever the use answers (FrameUse.h).
+				++keptOut;
+				return false;
+			}
 			if (frame) {
 				lastFrame = a_ref->GetFormID();
 				const auto facts = FrameUseOf(a_ref);
@@ -1135,8 +1142,13 @@ namespace Equipment
 		REX::INFO("Equipment: power armor entry watched (use {}, enter message {})", originalUse != nullptr, originalMessage != nullptr);
 	}
 
+	void SetFrameGate(FrameGate a_gate)
+	{
+		keepOut = a_gate;
+	}
+
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={}", seatsFreed, framesStoodUp, refusals, enterRefusals);
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={}", seatsFreed, framesStoodUp, refusals, enterRefusals, keptOut);
 	}
 }

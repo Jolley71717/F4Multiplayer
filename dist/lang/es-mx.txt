@@ -70,6 +70,7 @@ party.ping_you = a ti
 party.ping_something = algo
 party.where = {player}: {where}
 party.no_emote_armor = No se pueden hacer gestos con la servoarmadura
+party.friends_frame = Esta es la servoarmadura de {player}. Poder compartir servoarmaduras con amigos llegará en una versión futura.
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [en un menú]
 party.killed = {killer} mató a {victim}

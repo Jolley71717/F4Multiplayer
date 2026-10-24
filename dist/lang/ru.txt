@@ -85,6 +85,7 @@ party.ping_you = вас
 party.ping_something = что-то
 party.where = {player}: {where}
 party.no_emote_armor = В силовой броне эмоции недоступны
+party.friends_frame = Это силовая броня игрока {player}. Делиться силовой бронёй с друзьями можно будет в одной из следующих версий.
 party.tag_pipboy = {name} [Пип-Бой]
 party.tag_menu = {name} [в меню]
 party.killed = {killer} убил: {victim}

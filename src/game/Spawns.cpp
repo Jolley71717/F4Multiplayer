@@ -402,6 +402,21 @@ namespace Spawns
 		return ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->GetParentCell();
 	}
 
+	std::uint32_t FrameCopyLocalAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius)
+	{
+		const auto id = theirs.FrameAt(a_owner, a_parked.base, { a_parked.cell, a_parked.worldspace, a_parked.x, a_parked.y, a_parked.z }, a_radius);
+		const auto it = id != 0 ? placed.find(id) : placed.end();
+		const auto ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+		return ref ? ref->GetFormID() : 0;
+	}
+
+	std::uint32_t FrameCopyOwnerOf(std::uint32_t a_local)
+	{
+		const auto id = theirs.IdOf(a_local);
+		const auto copy = id != 0 && placed.contains(id) ? theirs.Find(id) : nullptr;
+		return copy ? copy->spawn.playerId : 0;
+	}
+
 	std::uint32_t LocalOf(std::uint32_t a_id)
 	{
 		if (const auto local = ours.LocalOf(a_id)) {

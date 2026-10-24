@@ -72,6 +72,7 @@ party.ping_you = ciebie
 party.ping_something = coś
 party.where = {player}: {where}
 party.no_emote_armor = Brak emotek w pancerzu wspomaganym
+party.friends_frame = To pancerz wspomagany gracza {player}. Dzielenie się pancerzami wspomaganymi ze znajomymi pojawi się w jednej z kolejnych wersji.
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [w menu]
 party.killed = {killer} zabija: {victim}
