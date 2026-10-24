@@ -53,3 +53,19 @@ TEST("AttackKind: a gun's bash is not reported as a shot, so friends hear no gun
 	CHECK(!AttackKind::ReportsAsShot(Event::kSwing, true));
 	CHECK(!AttackKind::ReportsAsShot(Event::kSwing, AttackKind::HoldsGun(std::vector<std::int32_t>{ 10, AttackKind::GUN_TYPE })));
 }
+
+TEST("AttackKind: a stand-in's own bullet after a replayed shot is kept from the engine, so it hits nobody")
+{
+	using AttackKind::Event;
+	using namespace std::chrono_literals;
+	// The firing animation's "WeaponFire" soon after the replay: held, for an automatic gun's run of shots too.
+	CHECK(AttackKind::HoldsOwnFire(Event::kFire, false, 0ms));
+	CHECK(AttackKind::HoldsOwnFire(Event::kFire, false, 120ms));
+	CHECK(AttackKind::HoldsOwnFire(Event::kFire, false, AttackKind::HOLD_FIRE_FOR));
+	// A throw's release is ThrowReplays' to hold; a swing fires nothing.
+	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, true, 120ms));
+	CHECK(!AttackKind::HoldsOwnFire(Event::kSwing, false, 120ms));
+	// Long after the last replay (or a clock gone backwards): not a replay's.
+	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, AttackKind::HOLD_FIRE_FOR + 1ms));
+	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, -1ms));
+}

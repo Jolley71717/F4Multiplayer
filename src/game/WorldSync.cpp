@@ -641,7 +641,7 @@ namespace WorldSync
 			healthShare.Prune([&](std::uint32_t a_wire) { return seen.contains(a_wire); }, a_now);
 		}
 
-		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a stand-in or mirrored NPC (HitWatcher)
+		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
 
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
@@ -662,7 +662,7 @@ namespace WorldSync
 				// it (Spawns: the victim's game has a copy of it), as Frame() finds.
 				const bool byPlayer = cause->IsPlayerRef();
 				const auto attacker = byPlayer ? 0 : cause->GetFormID();
-				// A friend's stand-in (or our copy of an NPC their game runs) replays their attacks and must hit nobody; one
+				// A friend's stand-in replays their attacks and must hit nobody; one
 				// that hits our player is logged, with what it hit with, for the rig.
 				if (target->IsPlayerRef() && !byPlayer) {
 					const auto by = cause->As<RE::Actor>();
