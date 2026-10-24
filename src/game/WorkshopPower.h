@@ -156,8 +156,12 @@ namespace WorkshopPower
 	//   std::vector<Grid>          Grids()                   the loaded settlements' grids
 	//   std::vector<std::uint32_t> Copies()                  our copies of friends' pieces
 	//   bool                       IsCopy(std::uint32_t)
-	template <class Engine>
-	std::vector<std::uint32_t> Audit(Engine& a_engine, Counts& a_counts)
+	//
+	// a_skip(copy): copies not to try again (the session's audit passes those the game kept tied in before: taking one off
+	// again every AUDIT_EVERY re-ran the game's grid and wire code on it for the rest of the session, and the game kept it
+	// all the same). They are still named among the stuck ones.
+	template <class Engine, class Skip>
+	std::vector<std::uint32_t> Audit(Engine& a_engine, Counts& a_counts, Skip&& a_skip)
 	{
 		const auto grids = a_engine.Grids();
 		auto       suspects = NamedWhere(std::span<const Grid>{ grids }, [&](std::uint32_t a_id) { return a_engine.IsCopy(a_id); });
@@ -171,11 +175,17 @@ namespace WorkshopPower
 		suspects.erase(std::unique(suspects.begin(), suspects.end()), suspects.end());
 		std::vector<std::uint32_t> stuck;
 		for (const auto copy : suspects) {
-			if (Untie(a_engine, copy, a_counts) == Removal::kRetire) {
+			if (a_skip(copy) || Untie(a_engine, copy, a_counts) == Removal::kRetire) {
 				stuck.push_back(copy);
 			}
 		}
 		return stuck;
+	}
+
+	template <class Engine>
+	std::vector<std::uint32_t> Audit(Engine& a_engine, Counts& a_counts)
+	{
+		return Audit(a_engine, a_counts, [](std::uint32_t) { return false; });
 	}
 
 	inline constexpr auto AUDIT_EVERY = 2s;
@@ -272,6 +282,11 @@ namespace WorkshopPower
 	inline constexpr std::size_t MAX_MIRRORED = 8192;
 	inline constexpr auto        REFRESH = 250ms;  // how often the copies are looked at (a copy just drawn, a graph not ready)
 	inline constexpr std::uint8_t MAX_TRIES = 8;   // a copy whose game won't take it is let be (until it is drawn anew)
+	// A copy drawn anew more often than this in REDRAW_WINDOW is let be until the window is over: each show switches its
+	// lights and sends its graph "Powered" or "Unpowered", which a switch, a lamp or a machine answers with its sound, and
+	// a copy whose 3D the game kept making anew was shown again four times a second with no end.
+	inline constexpr std::uint8_t MAX_REDRAWS = 6;
+	inline constexpr auto         REDRAW_WINDOW = 60s;
 
 	// What each builder's game says of its pieces, and whether each copy shows it yet. A copy shows it once its 3D is
 	// there and the game took it (a graph not loaded yet doesn't), and again whenever it is drawn anew (it came back into
@@ -294,11 +309,26 @@ namespace WorkshopPower
 			}
 			if (it->second.powered != a_entry.powered) {
 				it->second = Want{ a_entry.powered };
+			} else if (it->second.frozen) {
+				it->second.frozen = false;  // their game is back: shown afresh
+				it->second.shown = false;
+				it->second.tries = 0;
 			}
 			return true;
 		}
 
 		void Forget(const Key& a_key) { wants.erase(a_key); }
+
+		// The builder left: their copies keep what they show, and nothing powers or unpowers them, nor shows them again,
+		// until their game says so again (Set).
+		void Freeze(std::uint32_t a_player)
+		{
+			for (auto& [key, want] : wants) {
+				if (key.first == a_player) {
+					want.frozen = true;
+				}
+			}
+		}
 
 		// Every copy is shown again (a save was loaded: the copies are new references).
 		void Invalidate()
@@ -329,13 +359,28 @@ namespace WorkshopPower
 			nextRefresh = a_now + REFRESH;
 			std::size_t shown = 0;
 			for (auto& [key, want] : wants) {
+				if (want.frozen) {
+					continue;
+				}
 				const auto drawn = a_engine.Drawn(key);
 				if (drawn == 0 || (want.shown && want.drawn == drawn)) {
 					continue;
 				}
 				if (want.drawn != drawn) {
+					const bool anew = want.drawn != 0;
 					want.drawn = drawn;
 					want.tries = 0;
+					if (anew) {
+						if (a_now - want.redrawsSince >= REDRAW_WINDOW) {
+							want.redrawsSince = a_now;
+							want.redraws = 0;
+						}
+						if (++want.redraws > MAX_REDRAWS) {
+							want.shown = true;  // let be until the window is over and it is drawn anew again
+							++redrawsCapped;
+							continue;
+						}
+					}
 				}
 				if (a_engine.Show(key, want.powered)) {
 					want.shown = true;
@@ -357,6 +402,7 @@ namespace WorkshopPower
 		[[nodiscard]] std::size_t Size() const { return wants.size(); }
 		[[nodiscard]] std::size_t Dropped() const { return dropped; }
 		[[nodiscard]] std::size_t GivenUp() const { return givenUp; }
+		[[nodiscard]] std::size_t RedrawsCapped() const { return redrawsCapped; }
 
 		// How many copies show what their builder's game says (or were given up on).
 		[[nodiscard]] std::size_t Shown() const
@@ -371,11 +417,15 @@ namespace WorkshopPower
 			bool           shown = false;
 			std::uintptr_t drawn = 0;
 			std::uint8_t   tries = 0;
+			bool           frozen = false;          // its builder left (Freeze)
+			std::uint8_t   redraws = 0;             // drawn anew since redrawsSince
+			Clock::time_point redrawsSince{};
 		};
 
 		std::map<Key, Want> wants;
 		std::size_t         dropped = 0;
 		std::size_t         givenUp = 0;
+		std::size_t         redrawsCapped = 0;
 		Clock::time_point   nextRefresh{};
 	};
 }

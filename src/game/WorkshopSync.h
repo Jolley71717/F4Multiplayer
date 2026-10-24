@@ -72,6 +72,9 @@ namespace WorkshopSync
 	// Someone joined: all our pieces' power goes to them.
 	void OnPlayerJoined();
 
+	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
+	void OnPlayerLeft(std::uint32_t a_playerId);
+
 	// A save is about to be written: no grid of ours may name a copy (main thread).
 	void BeforeSave();
 
