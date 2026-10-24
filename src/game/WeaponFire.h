@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/RemoteEdits.h"
+
+#include <optional>
 
 // Weapon shots: the local player's and those of NPCs we run are reported, so other players see
 // the shooter's firing animation. Only the animation is replayed (no projectile, no damage):
@@ -51,10 +54,19 @@ namespace WeaponFire
 	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
-	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), or a shot of ours that hit
-	// a destructible object (a mine, a car: Destructibles), for the others to set off too. Frame() scans while a watch is
-	// armed; ArmExplosionWatch() arms it. A destructible object's own (its stage's) goes with its wreck instead.
+	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), for the others to set
+	// off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it. A destructible object's own (its stage's)
+	// goes with its wreck instead.
 	void ArmExplosionWatch();
+
+	// A shot of ours hit a destructible object (a mine, a car: Destructibles) that may set off an explosion other than its
+	// stage's own: one within a_radius of it is reported for the next few seconds, as after a throw (no other one).
+	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius);
+
+	// The explosion that dealt a blow on a_target just now (the nearest that reaches it), and what became of it: reported,
+	// each game's own, or ours alone (RemoteEdits::Fate). One not looked at yet is decided now, as the scan would have.
+	// Main thread.
+	[[nodiscard]] std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target);
 
 	// Whether our game reports the explosions around our player now (a throw's watch is on), so each goes off in the
 	// friends' games too; and whether it did within THREW_LATELY, while the fire a Molotov left may still burn there

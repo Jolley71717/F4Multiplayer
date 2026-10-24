@@ -101,6 +101,8 @@ namespace CopyHealth
 		bool inHand = false;        // its weapon, or the source, is a weapon that is no throwable: a gun, a bat, a baton
 		bool explosionsShared = false;  // our game reports the explosions around our player now (a throw's watch is on)
 		bool threwLately = false;       // ... or did a little while ago: the fire a Molotov left may burn there still
+		bool blastThere = false;        // an explosion's: the one that dealt it goes off in the NPC's own game too
+		                                // (RemoteEdits::DealtThere, judged on the main thread as the hit is taken)
 	};
 
 	// Whether the game that runs the NPC deals this blow there itself, so that a copy's hit is no hit of ours: a throw's.
@@ -112,15 +114,17 @@ namespace CopyHealth
 	// Only then. In 0.9.0 the players' gun hits on copies were left to the owner (none reported, each given back, no
 	// takeover), while a shock baton's took the NPC over: only the game that ran an NPC could hurt it, and the one who
 	// last hit it in melee became that game. The kExplosion bit (CommonLib's layout, from another game) and a hit with no
-	// weapon read are no proof of a throw. Only the explosions our game reports while a throw's watch is on go off in the
-	// owner's game (WeaponFire::ScanExplosions), every one near our player then, a missile's too: so an explosion's blow
-	// is the owner's to deal only meanwhile, and a missile's, or a mine's stepped on a minute after it was laid, is dealt
-	// nowhere else and is ours to report. Any other blow with a weapon in hand that is no throwable is ours whatever else
-	// the event reads, and the burn a Molotov's fire leaves is the owner's for WeaponFire::THREW_LATELY after the watch.
+	// weapon read are no proof of a throw. An explosion's blow is the owner's exactly when the explosion that dealt it goes
+	// off there (blastThere): one our game reported (WeaponFire's watch: a throw's, or one at a destructible object we
+	// hit), a destructible object's own (its wreck is shared), or a world trap's, and the owner's player near enough for
+	// it to be set off. Any other, a missile's with no watch on, one far from our player or too big to be set off, or a
+	// gun's hit read as an explosion's with none there, is dealt nowhere else and is ours to report. Any other blow with
+	// a weapon in hand that is no throwable is ours whatever else the event reads, and the burn a Molotov's fire leaves
+	// is the owner's for WeaponFire::THREW_LATELY after the watch.
 	constexpr bool OwnersToDeal(const Blow& a_blow)
 	{
-		if (a_blow.explosion && a_blow.explosionsShared) {
-			return true;
+		if (a_blow.explosion) {
+			return a_blow.blastThere;
 		}
 		if (a_blow.inHand) {
 			return false;

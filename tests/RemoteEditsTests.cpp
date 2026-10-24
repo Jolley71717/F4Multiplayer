@@ -8,6 +8,7 @@
 #include "game/DeathReports.h"
 #include "game/RemoteEdits.h"
 
+#include <chrono>
 #include <limits>
 #include <map>
 
@@ -108,6 +109,93 @@ TEST("remote edits: a friend's explosion goes off near us whoever stands beside 
 	CHECK(SetOff(us, us, -1.0f) == Blast::kNotThrown);
 	CHECK(SetOff(us, us, NaN) == Blast::kNotThrown);
 	CHECK(SetOff(us, us, INF) == Blast::kNotThrown);
+}
+
+TEST("remote edits: an explosion's blow on a copy is the owner's exactly when that explosion goes off in the owner's game")
+{
+	using namespace std::chrono_literals;
+	const auto       t = std::chrono::steady_clock::time_point{} + 100s;
+	const Spot       blast{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	const Spot       nearOwner{ 0, 0x3C, 3000.0f, 1000.0f, 0.0f };
+	const Spot       farOwner{ 0, 0x3C, 7500.0f, 1000.0f, 0.0f };
+	const Seen       reported{ blast, 500.0f, Fate::kShared, t };
+	const Seen       ours{ blast, 500.0f, Fate::kOurs, t };
+	const Seen       trap{ blast, 300.0f, Fate::kEachOwn, t };
+	const Seen       nuke{ blast, 3000.0f, Fate::kShared, t };
+	// Reported: set off where the owner's player is near enough, by the receiver's own rule (SetOff).
+	CHECK(DealtThere(reported, nearOwner));
+	CHECK(!DealtThere(reported, farOwner));        // too far there: never set off, so the blow is ours
+	CHECK(!DealtThere(reported, std::nullopt));    // the owner's player nowhere we know of
+	CHECK(!DealtThere(reported, Spot{ 0x1F00, 0, 1000.0f, 1000.0f, 0.0f }));  // inside somewhere
+	CHECK(!DealtThere(nuke, nearOwner));           // too big to be set off by anyone
+	// Ours alone (no watch, or out of its reach): dealt nowhere else.
+	CHECK(!DealtThere(ours, nearOwner));
+	// A world trap's: every game sets its own off.
+	CHECK(DealtThere(trap, farOwner));
+	CHECK(DealtThere(trap, std::nullopt));
+}
+
+TEST("remote edits: a blow is put down to the nearest explosion seen lately that reaches it")
+{
+	using namespace std::chrono_literals;
+	const auto t = std::chrono::steady_clock::time_point{} + 100s;
+	BlastLog   log;
+	CHECK(!log.At({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));
+	log.Note({ { 0, 0x3C, 0.0f, 0.0f, 0.0f }, 500.0f, Fate::kOurs, t });
+	log.Note({ { 0, 0x3C, 600.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t + 10ms });
+	log.Note({ { 0x1F00, 0, 100.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t });  // another space, same numbers
+
+	const auto first = log.At({ 0, 0x3C, 100.0f, 0.0f, 0.0f }, t + 20ms);
+	REQUIRE(first);
+	CHECK(first->fate == Fate::kOurs);
+	const auto second = log.At({ 0, 0x3C, 500.0f, 0.0f, 0.0f }, t + 20ms);
+	REQUIRE(second);
+	CHECK(second->fate == Fate::kShared);
+	// Within the radius and an actor's size of it; farther, it is no blow of that explosion's.
+	CHECK(log.At({ 0, 0x3C, 600.0f + 500.0f + BlastLog::REACH, 0.0f, 0.0f }, t + 20ms));
+	CHECK(!log.At({ 0, 0x3C, 600.0f + 500.0f + BlastLog::REACH + 1.0f, 0.0f, 0.0f }, t + 20ms));
+	const auto inside = log.At({ 0x1F00, 0, 0.0f, 0.0f, 0.0f }, t);
+	REQUIRE(inside);
+	CHECK(inside->fate == Fate::kShared);
+	// Seen too long ago: none.
+	CHECK(!log.At({ 0, 0x3C, 100.0f, 0.0f, 0.0f }, t + BlastLog::KEPT + 11ms));
+	log.Prune(t + BlastLog::KEPT + 11ms);
+	CHECK(log.Size() == 0u);
+
+	for (std::size_t i = 0; i < BlastLog::MAX + 10; ++i) {
+		log.Note({ { 0, 0x3C, static_cast<float>(i) * 2000.0f, 0.0f, 0.0f }, 100.0f, Fate::kOurs, t });
+	}
+	CHECK(log.Size() == BlastLog::MAX);
+	CHECK(!log.At({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));  // the oldest went first
+	CHECK(log.At({ 0, 0x3C, (BlastLog::MAX + 9) * 2000.0f, 0.0f, 0.0f }, t));
+}
+
+TEST("remote edits: a destructible object's watch covers only its own blast radius, for its time")
+{
+	using namespace std::chrono_literals;
+	const auto  t = std::chrono::steady_clock::time_point{} + 100s;
+	AreaWatches watches;
+	const Spot  car{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	CHECK(!watches.Any(t));
+	watches.Arm(car, 900.0f, t + 8s);
+	watches.Arm(car, 0.0f, t + 20s);  // no radius: nothing
+	CHECK(watches.Any(t));
+	CHECK(watches.Covers({ 0, 0x3C, 1900.0f, 1000.0f, 0.0f }, t));
+	CHECK(!watches.Covers({ 0, 0x3C, 1901.0f, 1000.0f, 0.0f }, t));  // a raider's grenade across the street
+	CHECK(!watches.Covers({ 0x1F00, 0, 1000.0f, 1000.0f, 0.0f }, t));
+	CHECK(!watches.Covers(car, t + 8s + 1ms));
+	// Armed again (it blew long after the hit): one watch, the longer.
+	watches.Arm(car, 128.0f, t + 30s);
+	CHECK(watches.Size() == 1u);
+	CHECK(watches.Covers({ 0, 0x3C, 1900.0f, 1000.0f, 0.0f }, t + 29s));
+	watches.Prune(t + 31s);
+	CHECK(!watches.Any(t + 31s));
+	CHECK(watches.Size() == 0u);
+	for (std::size_t i = 0; i < AreaWatches::MAX + 3; ++i) {
+		watches.Arm({ 0, 0x3C, static_cast<float>(i) * 5000.0f, 0.0f, 0.0f }, 300.0f, t + 8s + std::chrono::milliseconds(i));
+	}
+	CHECK(watches.Size() == AreaWatches::MAX);
+	CHECK(!watches.Covers({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));  // the soonest to end went first
 }
 
 TEST("remote edits: a friend's build is shown no smaller than a tenth and no bigger than ten times")

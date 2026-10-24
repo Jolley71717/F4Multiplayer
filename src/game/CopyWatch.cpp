@@ -3,6 +3,8 @@
 #include "game/CopyHealth.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/RemoteEdits.h"
+#include "game/RemotePlayers.h"
 #include "game/WeaponFire.h"
 
 #include "Protocol.h"
@@ -24,7 +26,7 @@ namespace CopyWatch
 			float             damage = 0.0f;
 			bool              usesHitData = false;
 			bool              explosion = false;
-			bool              ownersToDeal = false;  // a throw's blow: the NPC's own game deals it (CopyHealth::OwnersToDeal)
+			CopyHealth::Blow  blow;                 // what it was, for CopyHealth::OwnersToDeal (its explosion judged in Frame)
 			bool              inHand = false;        // a weapon in hand that is no throwable (CopyHealth::Blow::inHand)
 			std::uint32_t     flags = 0;             // HitData's flags as read, for the log: what the rig checks the throw rules against
 			Clock::time_point at{};
@@ -68,6 +70,7 @@ namespace CopyWatch
 		std::vector<std::pair<std::uint32_t, float>> damageOut;  // what our hits took off copies, by session id, to send
 		std::uint32_t damageSent = 0;
 		std::uint32_t leftToOwner = 0;  // throws' blows of ours on copies, left to the NPC's own game (OwnersToDeal)
+		std::uint32_t blastsThere = 0, blastsOurs = 0;  // explosions' blows on copies judged: its owner's game sets it off too / ours alone
 		float         damageTotal = 0.0f;
 		std::uint32_t hitsLogged = 0;
 		std::uint32_t restoresLogged = 0;
@@ -234,6 +237,18 @@ namespace CopyWatch
 		};
 	}
 
+	bool OwnersToDeal(CopyHealth::Blow a_blow, std::uint32_t a_target, std::uint32_t a_owner)
+	{
+		if (a_blow.explosion && a_owner != 0) {
+			const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_target);
+			const auto seen = WeaponFire::BlastAt(target);
+			const auto state = RemotePlayers::LastStateOf(a_owner);
+			a_blow.blastThere = seen && RemoteEdits::DealtThere(*seen, state ? std::optional{ RemoteEdits::SpotOf(*state) } : std::nullopt);
+			++(a_blow.blastThere ? blastsThere : blastsOurs);
+		}
+		return CopyHealth::OwnersToDeal(a_blow);
+	}
+
 	void NoteHit(const RE::TESHitEvent& a_event)
 	{
 		const auto target = a_event.target.get();
@@ -255,7 +270,7 @@ namespace CopyWatch
 			.damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage,
 			.usesHitData = a_event.usesHitData,
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
-			.ownersToDeal = CopyHealth::OwnersToDeal(blow),
+			.blow = blow,
 			.inHand = blow.inHand,
 			.flags = a_event.hitData.flags.underlying(),
 			.at = Clock::now(),
@@ -318,7 +333,7 @@ namespace CopyWatch
 			                             CopyHealth::Hitter::kNotOurs;
 			// A throw's blow on a copy: the NPC's own game deals it (the explosion goes off there too), so what it took
 			// here is given back, and that game's health follows (HealthShare).
-			const bool left = owner != 0 && hit.ownersToDeal && hitter != CopyHealth::Hitter::kNotOurs;
+			const bool left = owner != 0 && hitter != CopyHealth::Hitter::kNotOurs && OwnersToDeal(hit.blow, hit.target, owner);
 			if (left) {
 				hitter = CopyHealth::Hitter::kNotOurs;
 				++leftToOwner;
@@ -437,8 +452,8 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyThrows={} copyDeaths={}", book.Size(), hitsOnCopies,
-			allyHits, restores, healthRestored, reportsSet, damageSent, damageTotal, leftToOwner, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyDeaths={}", book.Size(), hitsOnCopies,
+			allyHits, restores, healthRestored, reportsSet, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, copiesDied);
 	}
 
 	std::vector<std::pair<std::uint32_t, float>> TakeDamage()

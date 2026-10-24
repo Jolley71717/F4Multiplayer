@@ -4,10 +4,13 @@
 
 #include "Protocol.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <vector>
 
 // What a game believes of another player's changes to its world. The server only passes on what each
 // player says (it can't see anyone's world), so each game judges what arrives by what it can see: its
@@ -186,6 +189,144 @@ namespace RemoteEdits
 		}
 		return Blast::kSetOff;
 	}
+
+	// What became of each explosion our game saw go off, as WeaponFire decided it once (BlastLog), and so whether the game
+	// that runs an NPC deals that explosion's blow on our copy of it itself (CopyHealth::OwnersToDeal): exactly one game
+	// deals each blow. The decision is the explosion's, made where it is reported or not, never the hit's: a hit judged by
+	// a watch of its own, while the explosion went unreported (out of the scan's range, or at the watch's very end), was
+	// dealt in neither game, and the owner's next health report healed the copy back.
+	enum class Fate : std::uint8_t
+	{
+		kOurs,     // not shared: it goes off in no other game, so its blows on copies are ours to report
+		kShared,   // reported (by our watch, or as a destructible object's own with its wreck): each friend's game sets it
+		           // off where SetOff says, its player near it
+		kEachOwn,  // a world trap's: every game sets its own off (Traps)
+	};
+
+	struct Seen
+	{
+		Spot                                  at;
+		float                                 radius = 0.0f;
+		Fate                                  fate = Fate::kOurs;
+		std::chrono::steady_clock::time_point when{};
+	};
+
+	// Whether the game whose player is at a_owner (its last state; none: not known) deals the blow of this explosion on
+	// the NPC it runs: it goes off there by the same rule ApplyExplosion judges it by.
+	inline bool DealtThere(const Seen& a_seen, const std::optional<Spot>& a_owner)
+	{
+		switch (a_seen.fate) {
+		case Fate::kEachOwn:
+			return true;
+		case Fate::kShared:
+			return a_owner && SetOff(a_seen.at, *a_owner, a_seen.radius) == Blast::kSetOff;
+		case Fate::kOurs:
+		default:
+			return false;
+		}
+	}
+
+	// The explosions our game saw lately and what became of each (main thread).
+	class BlastLog
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 64;
+		static constexpr auto        KEPT = std::chrono::seconds(3);  // an explosion's blows land in the frames after it
+		static constexpr float       REACH = 256.0f;                 // a blow lands on an actor within its radius, give or take the actor's size
+
+		void Note(const Seen& a_seen)
+		{
+			if (seen.size() >= MAX) {
+				seen.erase(seen.begin());
+			}
+			seen.push_back(a_seen);
+		}
+
+		// The explosion a blow on an actor at a_at came from: the nearest that reaches it, seen within KEPT before a_now.
+		[[nodiscard]] std::optional<Seen> At(const Spot& a_at, Clock::time_point a_now) const
+		{
+			std::optional<Seen> best;
+			float               bestDistance = std::numeric_limits<float>::max();
+			for (const auto& entry : seen) {
+				if (a_now - entry.when > KEPT || !SameSpace(entry.at, a_at)) {
+					continue;
+				}
+				const float distance = Distance(entry.at, a_at);
+				if (Within(distance, entry.radius + REACH) && distance < bestDistance) {
+					best = entry;
+					bestDistance = distance;
+				}
+			}
+			return best;
+		}
+
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(seen, [&](const Seen& a_entry) { return a_now - a_entry.when > KEPT; });
+		}
+
+		[[nodiscard]] std::size_t Size() const { return seen.size(); }
+		void Clear() { seen.clear(); }
+
+	private:
+		std::vector<Seen> seen;
+	};
+
+	// Where a hit of ours on a destructible object may set off an explosion that isn't the object's own stage's (a
+	// mine's) for a while (Destructibles): only an explosion within that object's blast radius is reported for it, not
+	// every one around our player (a raider's grenade there went off twice in each friend's game).
+	class AreaWatches
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 16;
+
+		void Arm(const Spot& a_at, float a_radius, Clock::time_point a_until)
+		{
+			if (!(a_radius > 0.0f)) {
+				return;
+			}
+			for (auto& watch : watches) {
+				if (SameSpace(watch.at, a_at) && Within(Distance(watch.at, a_at), 1.0f)) {
+					watch.radius = (std::max)(watch.radius, a_radius);
+					watch.until = (std::max)(watch.until, a_until);
+					return;
+				}
+			}
+			if (watches.size() >= MAX) {
+				watches.erase(std::ranges::min_element(watches, {}, &Watch::until));
+			}
+			watches.push_back({ a_at, a_radius, a_until });
+		}
+
+		[[nodiscard]] bool Covers(const Spot& a_at, Clock::time_point a_now) const
+		{
+			return std::ranges::any_of(watches, [&](const Watch& a_watch) { return a_now <= a_watch.until && Within(Distance(a_watch.at, a_at), a_watch.radius); });
+		}
+
+		[[nodiscard]] bool Any(Clock::time_point a_now) const
+		{
+			return std::ranges::any_of(watches, [&](const Watch& a_watch) { return a_now <= a_watch.until; });
+		}
+
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(watches, [&](const Watch& a_watch) { return a_now > a_watch.until; });
+		}
+
+		[[nodiscard]] std::size_t Size() const { return watches.size(); }
+		void Clear() { watches.clear(); }
+
+	private:
+		struct Watch
+		{
+			Spot              at;
+			float             radius = 0.0f;
+			Clock::time_point until{};
+		};
+		std::vector<Watch> watches;
+	};
 
 	// ---- Workshop (WorkshopSync) ----------------------------------------------------------------
 

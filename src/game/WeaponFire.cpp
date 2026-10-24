@@ -458,6 +458,7 @@ namespace WeaponFire
 	}
 
 	void ScanExplosions();
+	std::string DescribeBlasts();
 	void RemoveGhostGrenades();
 	void UpdateHandThrowables();
 	namespace
@@ -690,7 +691,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -784,9 +785,87 @@ namespace WeaponFire
 		});
 	}
 
+	namespace
+	{
+		// What became of each explosion we saw (RemoteEdits::BlastLog): the hits on copies are judged by it (BlastAt).
+		RemoteEdits::BlastLog    blasts;
+		// Where a hit of ours on a destructible object watches for an explosion it sets off (ArmBlastWatch).
+		RemoteEdits::AreaWatches areaWatches;
+		std::uint32_t            explosionsNotShared = 0;  // seen while a watch was on, but out of its reach: ours alone
+		std::uint32_t            explosionsOfStandIns = 0; // a friend's stand-in's own missile or shell: theirs, never reported back
+
+		RemoteEdits::Spot SpotOfRef(const RE::TESObjectREFR* a_ref)
+		{
+			const auto  cell = a_ref->GetParentCell();
+			const auto& at = a_ref->data.location;
+			if (!cell) {
+				return { 0, 0, at.x, at.y, at.z };
+			}
+			return cell->IsInterior() ? RemoteEdits::Spot{ cell->GetFormID(), 0, at.x, at.y, at.z } :
+			                            RemoteEdits::Spot{ 0, cell->worldSpace ? cell->worldSpace->GetFormID() : 0, at.x, at.y, at.z };
+		}
+
+		// An explosion reference not yet looked at: never one we set off for a friend, nor one going away (it lost its id
+		// first: the last throw's, a 00000000 where it went off 6.5 s before, was reported again by the next throw's watch).
+		bool Fresh(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+			return base && base->Is(RE::ENUM_FORM_ID::kEXPL) && a_ref->GetFormID() != 0 && !a_ref->IsDeleted() && !setOffExplosions.Has(a_ref) &&
+			       !seenExplosions.Has(a_ref);
+		}
+
+		// What becomes of a fresh explosion, decided once and kept (blasts): reported for the friends to set off when a
+		// throw's watch is on, or it is within a destructible object's watch, and it is near our player; else ours alone.
+		// A world trap's (a mine, a grenade bouquet's grenades): every game sets its own off (Traps), so reported too it
+		// would go off twice. One a destructible object's stage set off (a car we shot) is the object's to share, with its
+		// wreck (Destructibles): reported here as well, the others' copies went off twice, or before they were wrecked. A
+		// friend's stand-in's own (its missile, its shell: AttackKind::HoldsShotOf) went off in their game already.
+		void Decide(RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_player, Clock::time_point a_now)
+		{
+			seenExplosions.Add(a_ref);
+			const auto base = a_ref->GetObjectReference();
+			const auto record = base->As<RE::BGSExplosion>();
+			RemoteEdits::Seen seen{ SpotOfRef(a_ref), record ? record->data.outerRadius : 0.0f, RemoteEdits::Fate::kOurs, a_now };
+			const auto        explosion = RE::fallout_cast<RE::Explosion*>(a_ref);
+			const auto        by = explosion ? explosion->GetActorOwner() : nullptr;
+			const char*       what = "ours alone";
+			if (by && Puppets::IsPuppet(by)) {
+				++explosionsOfStandIns;
+				what = "a stand-in's own: its player's game has it";
+			} else if (Traps::Claims(a_ref->data.location)) {
+				seen.fate = RemoteEdits::Fate::kEachOwn;
+				what = "a trap's: every game sets its own off";
+			} else if (Destructibles::ClaimsExplosion(a_ref)) {
+				seen.fate = RemoteEdits::Fate::kShared;
+				what = "a destructible object's own: not reported, shared with its wreck";
+			} else if ((a_now <= watchUntil.load() || areaWatches.Covers(seen.at, a_now)) && a_ref->data.location.GetDistance(a_player) <= EXPLOSION_RANGE) {
+				seen.fate = RemoteEdits::Fate::kShared;
+				what = "reported";
+				std::scoped_lock e{ explosionLock };
+				explosions.push_back({ 0, base->GetFormID(), seen.at.x, seen.at.y, seen.at.z, seen.at.cell, seen.at.worldspace });
+				++explosionsReported;
+			} else if (a_now <= watchUntil.load() || areaWatches.Any(a_now)) {
+				++explosionsNotShared;
+			}
+			blasts.Note(seen);
+			if (reportsLogged < 20) {
+				++reportsLogged;
+				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) radius {:.0f}: {}", a_ref->GetFormID(), base->GetFormID(), seen.at.x, seen.at.y,
+					seen.at.z, seen.radius, what);
+			}
+		}
+	}
+
 	void ArmExplosionWatch()
 	{
 		watchUntil = Clock::now() + EXPLOSION_WATCH;
+	}
+
+	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius)
+	{
+		if (a_object) {
+			areaWatches.Arm(SpotOfRef(a_object), a_radius, Clock::now() + EXPLOSION_WATCH);
+		}
 	}
 
 	bool ExplosionsShared()
@@ -800,10 +879,35 @@ namespace WeaponFire
 		return until != Clock::time_point{} && Clock::now() <= until + THREW_LATELY;
 	}
 
+	std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target)
+	{
+		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto tes = RE::TES::GetSingleton();
+		if (!a_target || !player || !tes) {
+			return std::nullopt;
+		}
+		const auto now = Clock::now();
+		// The explosion may not have been looked at yet (the scan comes every 100 ms, and only while a watch is on): it is
+		// decided now, as the scan would have, so the hit and the report agree.
+		std::vector<RE::TESObjectREFR*> fresh;
+		tes->ForEachReferenceInRange(a_target->data.location, RemoteEdits::MAX_EXPLOSION_RADIUS + RemoteEdits::BlastLog::REACH, [&](RE::TESObjectREFR* a_ref) {
+			if (Fresh(a_ref)) {
+				fresh.push_back(a_ref);
+			}
+			return RE::BSContainer::ForEachResult::kContinue;
+		});
+		for (const auto ref : fresh) {
+			Decide(ref, player->data.location, now);  // after the walk: a destructible's claim walks the references around it
+		}
+		return blasts.At(SpotOfRef(a_target), now);
+	}
+
 	void ScanExplosions()
 	{
 		const auto now = Clock::now();
-		if (now > watchUntil.load()) {
+		blasts.Prune(now);
+		areaWatches.Prune(now);
+		if (now > watchUntil.load() && !areaWatches.Any(now)) {
 			return;
 		}
 		if (now < nextScan) {
@@ -818,42 +922,21 @@ namespace WeaponFire
 		// Every loaded cell around the player, not only the one they stand in: outdoors a grenade thrown
 		// across a cell seam went off in the next cell over and was never reported (the thrower's friends
 		// saw the throw and nothing else), while the same throw the other way was.
-		const auto space = cell->IsInterior() ? std::pair{ cell->GetFormID(), 0u } : std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
 		std::vector<RE::TESObjectREFR*> fresh;
 		RE::TES::GetSingleton()->ForEachReferenceInRange(player->data.location, EXPLOSION_RANGE, [&](RE::TESObjectREFR* a_ref) {
-			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-			// One going away has lost its id first: the last throw's, a 00000000 where it went off 6.5 s before, was
-			// reported again by the next throw's watch.
-			if (!base || !base->Is(RE::ENUM_FORM_ID::kEXPL) || a_ref->GetFormID() == 0 || a_ref->IsDeleted() || setOffExplosions.Has(a_ref) || seenExplosions.Has(a_ref)) {
-				return RE::BSContainer::ForEachResult::kContinue;
+			if (Fresh(a_ref)) {
+				fresh.push_back(a_ref);
 			}
-			seenExplosions.Add(a_ref);
-			// A world trap's (a mine, a grenade bouquet's grenades): every game sets its own off (Traps), so reported too
-			// it would go off twice.
-			if (Traps::Claims(a_ref->data.location)) {
-				return RE::BSContainer::ForEachResult::kContinue;
-			}
-			fresh.push_back(a_ref);
 			return RE::BSContainer::ForEachResult::kContinue;
 		});
-		// After the walk (a claim walks the references around the explosion): one a destructible object's stage set off (a
-		// car we shot) is the object's to share, with its wreck (Destructibles): reported here as well, the others' copies
-		// went off twice, or before they were wrecked.
 		for (const auto ref : fresh) {
-			const auto base = ref->GetObjectReference();
-			const bool claimed = Destructibles::ClaimsExplosion(ref);
-			if (reportsLogged < 20) {
-				++reportsLogged;
-				REX::INFO("WeaponFire: our explosion {:08X} ({:08X}) at ({:.0f},{:.0f},{:.0f}) {}", ref->GetFormID(), base->GetFormID(), ref->data.location.x,
-					ref->data.location.y, ref->data.location.z, claimed ? "is a destructible object's own: not reported" : "reported");
-			}
-			if (claimed) {
-				continue;
-			}
-			std::scoped_lock e{ explosionLock };
-			explosions.push_back({ 0, base->GetFormID(), ref->data.location.x, ref->data.location.y, ref->data.location.z, space.first, space.second });
-			++explosionsReported;
+			Decide(ref, player->data.location, now);
 		}
+	}
+
+	std::string DescribeBlasts()
+	{
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={}", blasts.Size(), areaWatches.Size(), explosionsNotShared, explosionsOfStandIns);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)

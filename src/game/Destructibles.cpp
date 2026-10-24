@@ -133,6 +133,26 @@ namespace Destructibles
 			return RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 		}
 
+		// The farthest an explosion of the object's stages reaches (or what one places: a car's nuke places the shove that
+		// throws people about), 0 when none sets one off.
+		float BlastRadiusOf(const Object& a_object)
+		{
+			float radius = 0.0f;
+			for (const auto stage : a_object.engineStages) {
+				const auto explosion = stage ? stage->explosion : nullptr;
+				if (!explosion) {
+					continue;
+				}
+				radius = (std::max)(radius, explosion->data.outerRadius);
+				if (const auto placed = explosion->data.impactPlacedObject; placed && placed->Is(RE::ENUM_FORM_ID::kEXPL)) {
+					if (const auto shove = placed->As<RE::BGSExplosion>()) {
+						radius = (std::max)(radius, shove->data.outerRadius);
+					}
+				}
+			}
+			return radius;
+		}
+
 		struct Counts
 		{
 			std::uint32_t hits = 0;
@@ -207,6 +227,10 @@ namespace Destructibles
 			outgoing.push_back(*report);
 			++counts.reported;
 			counts.reportedExplosions += report->explode ? 1 : 0;
+			// It blew (now, or long after our hit): an explosion its stage sets off beside its own is the others' to see too.
+			if (const float radius = report->explode ? BlastRadiusOf(a_object) : 0.0f; radius > 0.0f) {
+				WeaponFire::ArmBlastWatch(a_ref, radius);
+			}
 			Log(std::format("{:08X} ({:08X}) at {:.0f}/{} health{}: reported{}", id, a_ref->GetObjectReference()->GetFormID(), report->health, a_object.maximum,
 				report->destroyed ? ", destroyed" : "", report->explode ? ", with its explosion" : ""));
 		}
@@ -358,8 +382,12 @@ namespace Destructibles
 			}
 			++counts.hits;
 			watch.Add(id, now);
-			// Should its stage set off an explosion that isn't the object's own (a mine's), the others see it too.
-			WeaponFire::ArmExplosionWatch();
+			// Should its stage set off an explosion that isn't the object's own (a mine's), the others see it too: one within
+			// its stages' blast radius, not every explosion around our player for the watch's 8 s (no watch for an object
+			// none of whose stages sets one off). Its own goes with its wreck, whenever it blows (CopyHealth::OwnersToDeal).
+			if (const float radius = BlastRadiusOf(*object); radius > 0.0f) {
+				WeaponFire::ArmBlastWatch(Lookup(id), radius);
+			}
 		}
 		if (now >= nextScan) {
 			nextScan = now + SCAN_INTERVAL;
@@ -418,24 +446,31 @@ namespace Destructibles
 		if (!base || !tes) {
 			return false;
 		}
-		bool claimed = false;
+		std::uint32_t claimedBy = 0;
 		tes->ForEachReferenceInRange(a_explosion->data.location, CLAIM_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 			const auto object = Read(a_ref);
 			if (!object) {
 				return RE::BSContainer::ForEachResult::kContinue;
 			}
 			const auto passed = DestructionRules::Passed(object->stages, object->copy.health, object->maximum);
-			for (std::size_t i = 0; i < passed && !claimed; ++i) {
+			for (std::size_t i = 0; i < passed && claimedBy == 0; ++i) {
 				const auto explosion = object->engineStages[i]->explosion;
 				// Its own, or what that one places (a car's nuke places the shove that throws people about).
-				claimed = explosion && (explosion == base || explosion->data.impactPlacedObject == base);
+				if (explosion && (explosion == base || explosion->data.impactPlacedObject == base)) {
+					claimedBy = a_ref->GetFormID();
+				}
 			}
-			return claimed ? RE::BSContainer::ForEachResult::kStop : RE::BSContainer::ForEachResult::kContinue;
+			return claimedBy != 0 ? RE::BSContainer::ForEachResult::kStop : RE::BSContainer::ForEachResult::kContinue;
 		});
-		if (claimed) {
-			++counts.claimed;
+		if (claimedBy == 0) {
+			return false;
 		}
-		return claimed;
+		++counts.claimed;
+		// Its wreck is what sets it off in the others' games, so it must be reported (a car blown by an explosion near
+		// it, not by a hit of ours, would wait for the next scan, and one out of the scan's reach never): watched, its
+		// next look reports it (Check) unless the session has it already.
+		watch.Add(claimedBy, Clock::now());
+		return true;
 	}
 
 	bool AnyWaiting()
