@@ -395,6 +395,11 @@ void Server::Run()
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	// What each run NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
+	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
+	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
+	// when a fight hands it over. Gone with the NPC (dead, or nobody runs it) and with that player.
+	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
@@ -574,6 +579,7 @@ void Server::Run()
 		destructionsArmed.clear();
 		spawns.clear();
 		npcEquipment.clear();
+		npcIdentities.clear();
 		workshop.Clear();
 		drops.Clear();
 		questStages.clear();
@@ -923,9 +929,12 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
+			npcIdentities.erase(a_entry.first);
 			spawns.erase(a_entry.first);  // nobody else's game has it to run: the others' copies go
 			return true;
 		});
+		// The rolls they gave NPCs someone else runs now: that runner's report is the session's from here on.
+		std::erase_if(npcIdentities, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; });
 		sendOwners(released, 0);
 	};
 
@@ -1126,6 +1135,12 @@ void Server::Run()
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
 			}
 		}
+		// ... and what they were rolled as.
+		for (const auto& [ref, identity] : npcIdentities) {
+			if (actorOwners.contains(ref)) {
+				send(a_player.key, Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity), true);
+			}
+		}
 		sendWorkshop(a_player);
 
 		// Not to the host's own game: its clock is the session's, and a saved time would turn its clock back to
@@ -1217,6 +1232,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcIdentities.erase(a_death.refId);
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
@@ -1316,6 +1332,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcIdentities.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
@@ -1799,6 +1816,29 @@ void Server::Run()
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};
 
+	// What an NPC was rolled as, from the player whose game runs it: kept (the first runner's, see npcIdentities) and
+	// passed on. The same report again, or another runner's while the first one's stands, goes no further.
+	const auto handleNpcIdentity = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto identity = Protocol::DecodeNpcIdentity(a_data);
+		if (!identity) {
+			return;
+		}
+		const auto owner = actorOwners.find(identity->refId);
+		if (owner == actorOwners.end() || owner->second.playerId != a_player.id) {
+			return;
+		}
+		identity->playerId = a_player.id;
+		const auto known = npcIdentities.find(identity->refId);
+		if (known != npcIdentities.end() && (known->second.playerId != a_player.id || known->second == *identity)) {
+			return;
+		}
+		npcIdentities[identity->refId] = *identity;
+		broadcast(Protocol::Encode(*identity, Protocol::MessageType::kNpcIdentity), true, a_player.key);
+	};
+
 	const auto handleRelease = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1813,6 +1853,7 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				npcIdentities.erase(ref);  // nobody runs it: whoever runs it next has it as it is there (the roll made the session's, if it took)
 				spawns.erase(ref);        // a spawn its owner's game let go of (unloaded) is gone: the copies go
 				noteFighting(a_player, ref, now);  // it ran in their game until now (see noteRan)
 				released.push_back({ ref, 0 });
@@ -2725,6 +2766,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
+			break;
+		case MessageType::kReportNpcIdentity:
+			handleNpcIdentity(a_player, a_data);
 			break;
 		case MessageType::kReportFace:
 			handleFace(a_player, a_data);

@@ -43,6 +43,13 @@ namespace NpcSync
 	// What an NPC wears and holds in its owner's world: dress our copy the same.
 	void ApplyEquipment(const Protocol::NpcEquipment& a_equipment);
 
+	// What an NPC was rolled as in its owner's world (a leveled one's templates and level, a spawn's factions): our copy
+	// is made that roll while we mirror it (NpcRoll.h).
+	void ApplyIdentity(const Protocol::NpcIdentity& a_identity);
+
+	// The roll its owner's game reported for an NPC another game runs (nothing: none came).
+	[[nodiscard]] const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId);
+
 	// The local player hit or talked to this NPC: take it over so it reacts here.
 	void OnLocalInteraction(std::uint32_t a_refId);
 

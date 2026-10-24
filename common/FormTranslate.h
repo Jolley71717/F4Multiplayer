@@ -463,6 +463,25 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportNpcIdentity:
+		case MessageType::kNpcIdentity:
+			// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the
+			// NPC it was placed as there is no roll to make: the slots go. A faction it lacks is left out.
+			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) {
+				if (!ctx.Key(m.refId)) {
+					return false;
+				}
+				if (m.originalBase != 0 && !ctx.Detail(m.originalBase)) {
+					m.mask = 0;
+					m.templates = {};
+				}
+				for (auto& slot : m.templates) {
+					ctx.Detail(slot);
+				}
+				ctx.Entries(m.factions, [&](FactionRank& a_entry) { return ctx.Key(a_entry.faction); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportFace:
 		case MessageType::kPlayerFace:
 			Apply<Face>(a_packet, ctx, DecodeFace, [&](Face& m) { return detail::MapFace(ctx, m); }, typed);

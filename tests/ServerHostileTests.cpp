@@ -136,6 +136,9 @@ namespace
 		case MT::kNpcEquipment:
 			add(DecodeNpcEquipment(a_packet));
 			break;
+		case MT::kNpcIdentity:
+			add(DecodeNpcIdentity(a_packet));
+			break;
 		case MT::kPlayerFace:
 			add(DecodeFace(a_packet));
 			break;
