@@ -653,6 +653,11 @@ namespace Session
 					NpcSync::ApplyEquipment(*msg);
 				}
 				break;
+			case MessageType::kNpcIdentity:
+				if (const auto msg = Protocol::DecodeNpcIdentity(a_data)) {
+					NpcSync::ApplyIdentity(*msg);
+				}
+				break;
 			case MessageType::kPlayerFace:
 				if (auto msg = Protocol::DecodeFace(a_data)) {
 					RemotePlayers::SetFace(msg->playerId, std::move(*msg));

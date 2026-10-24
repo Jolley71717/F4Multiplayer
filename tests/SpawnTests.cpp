@@ -457,6 +457,10 @@ TEST("spawns: a copy is placed near us beside its owner, and goes when we leave 
 	auto unique = Near();
 	unique.baseOk = false;
 	CHECK(theirs.Decide(SPAWN, unique, T0) == Act::kNone);
+	// Its owner's roll of it is yet to come (NpcRoll::IDENTITY_WAIT): not placed until it is, or the wait is over.
+	auto waiting = Near();
+	waiting.waiting = true;
+	CHECK(theirs.Decide(SPAWN, waiting, T0) == Act::kNone);
 
 	// Placing failed: tried again a little later, a few times.
 	theirs.Placed(SPAWN, 0, T0);

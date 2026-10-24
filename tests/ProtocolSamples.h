@@ -248,6 +248,14 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });
 		}
+		for (const auto type : { MT::kReportNpcIdentity, MT::kNpcIdentity }) {
+			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .flags = NpcIdentity::kLegendary, .mask = 0b0000'1000'1001 };
+			roll.templates[0] = 0x0002A1B5;
+			roll.templates[3] = 0x0002A1B6;
+			roll.templates[7] = 0x0002A1B5;
+			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
+			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
+		}
 		for (const auto type : { MT::kReportFace, MT::kPlayerFace }) {
 			s.push_back({ "Face", Encode(MakeFace(), type), D(DecodeFace) });
 		}
@@ -353,6 +361,7 @@ namespace ProtocolSamples
 		case MT::kReportMarkers:
 		case MT::kReportLine:
 		case MT::kReportNpcEquipment:
+		case MT::kReportNpcIdentity:
 		case MT::kReportFace:
 		case MT::kReportWorkshopItem:
 		case MT::kReportExplosion:
@@ -399,6 +408,7 @@ namespace ProtocolSamples
 		case MT::kMarkersFound:
 		case MT::kLineSpoken:
 		case MT::kNpcEquipment:
+		case MT::kNpcIdentity:
 		case MT::kPlayerFace:
 		case MT::kWorkshopItem:
 		case MT::kWorkshopItems:
