@@ -66,6 +66,10 @@ namespace Drops
 		std::vector<std::uint32_t> activatedInbox;
 		std::vector<std::uint32_t> equippedInbox;  // bases our player equipped, or used up (food, a stim)
 		std::vector<std::uint32_t> blockedInbox;   // our copies (form IDs) whose activation is blocked now (the VM's threads)
+		std::vector<std::uint32_t> scrappedInbox;  // our copies (form IDs) the workshop's scrap event named
+		// Our copies' form IDs as of the last frame, for the workshop's event sinks (any thread): a copy is never reported as
+		// a workshop piece, and its scrap comes here.
+		std::unordered_set<std::uint32_t> copyRefIds;  // under inboxLock
 		std::atomic<bool>          listening{ false };  // welcomed: our player's drops are the session's
 		std::atomic<bool>          keptInContainer{ false };
 		std::atomic<bool>          devDrop{ false };
@@ -111,6 +115,9 @@ namespace Drops
 		std::unordered_set<std::uint32_t>       unplaceable;  // an item with a base or a mod this game lacks
 
 		DropBook::Claims claims;
+		// Copies our player scrapped in workshop mode, claimed as their take until the server answers.
+		DropBook::Scraps  scraps;
+		Clock::time_point lastWorkshop{};  // when workshop mode was last seen up
 		// Our drops swapped for a copy that the server hasn't said lie there yet: given back to our world if we leave first.
 		DropBook::Unconfirmed unconfirmed;
 		bool                  devLosePlaced = false;  // dev only: the next kPlaced isn't sent (as one lost with the link)
@@ -150,6 +157,7 @@ namespace Drops
 		std::uint32_t dropped = 0, notGiven = 0, reported = 0, refused = 0, swapped = 0, received = 0, placed = 0, placeFailed = 0, removed = 0;
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
 		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0, restored = 0, restoreFailed = 0;
+		std::uint32_t scrapped = 0, scrapLost = 0;  // copies scrapped in workshop mode: granted to us / someone else had it first
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -190,6 +198,13 @@ namespace Drops
 		bool Loose(RE::TESObjectREFR* a_ref)
 		{
 			return a_ref && !a_ref->IsDeleted() && a_ref->GetParentCell() != nullptr;
+		}
+
+		// An item lies there: loose and switched on. Workshop mode's scrap may only switch it off until the game deletes it,
+		// and a scrapped item is no drop to swap for a copy (the player has its components).
+		bool Lies(RE::TESObjectREFR* a_ref)
+		{
+			return Loose(a_ref) && !a_ref->IsDisabled();
 		}
 
 		// Our player's count of every base they carry.
@@ -564,7 +579,8 @@ namespace Drops
 				if (placedNow >= PLACE_PER_FRAME) {
 					break;
 				}
-				if (copies.contains(id) || unplaceable.contains(id) || pickedUnblocked.contains(id) || (taking && taking->dropId == id) || !Near(drop, cell, at, PLACE_RANGE)) {
+				if (copies.contains(id) || unplaceable.contains(id) || pickedUnblocked.contains(id) || scraps.Waiting(id) || (taking && taking->dropId == id) ||
+					!Near(drop, cell, at, PLACE_RANGE)) {
 					continue;
 				}
 				if (!Placeable(drop)) {
@@ -673,12 +689,13 @@ namespace Drops
 
 		// ---- our player's drops ----
 
-		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated, std::vector<std::uint32_t>& a_blocked)
+		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated, std::vector<std::uint32_t>& a_blocked, std::vector<std::uint32_t>& a_scrapped)
 		{
 			std::scoped_lock l{ inboxLock };
 			a_left.swap(leftInbox);
 			a_activated.swap(activatedInbox);
 			a_blocked.swap(blockedInbox);
+			a_scrapped.swap(scrappedInbox);
 			usedNow.insert(equippedInbox.begin(), equippedInbox.end());
 			equippedInbox.clear();
 		}
@@ -750,8 +767,8 @@ namespace Drops
 					return false;  // waiting for the server
 				}
 				const auto ref = a_pending.ref.get();
-				if (!ref || !Loose(ref.get())) {
-					return true;  // picked up again (or gone) before it was reported: nothing to tell anyone
+				if (!ref || !Lies(ref.get())) {
+					return true;  // picked up again, or scrapped, before it was reported: nothing to tell anyone
 				}
 				const auto& at = ref->data.location;
 				if (at.GetDistance(a_pending.last) > DropBook::SETTLE_MOVE) {
@@ -945,6 +962,74 @@ namespace Drops
 			}
 		}
 
+		// ---- scraps (see DropBook::Scraps) ----
+
+		// Our copy of a_dropId was scrapped in workshop mode: our world consumed the item, so it is our take. Recorded as taken
+		// at once (a link lost before the answer is settled by our next record), never given back to our world as we leave
+		// (Unconfirmed: it is in it, as components), and not placed again while the claim waits.
+		void ScrappedCopy(std::uint32_t a_dropId, Clock::time_point a_now)
+		{
+			const auto it = copies.find(a_dropId);
+			if (it == copies.end()) {
+				return;
+			}
+			const auto refId = it->second.refId;
+			SaveGuard::Release(refId);  // the game deletes it: its id may name the next item our player drops
+			copies.erase(it);
+			if (!lying.contains(a_dropId) || !scraps.Scrapped(a_dropId)) {
+				return;
+			}
+			unconfirmed.Heard(a_dropId);
+			{
+				std::scoped_lock l{ recordLock };
+				record.Took(a_dropId);
+			}
+			if (claims.Start(a_dropId, a_now)) {
+				Claim(a_dropId, Protocol::DropClaim::kTake);
+				++claimed;
+			}
+			REX::INFO("Drops: our copy {:08X} of drop {} was scrapped in workshop mode; claimed as our take", refId, a_dropId);
+		}
+
+		// Our copies taken away in workshop mode this frame (the workshop's event named them, or they went while it was up).
+		void NoticeScraps(const std::vector<std::uint32_t>& a_named, Clock::time_point a_now)
+		{
+			if (OpenMenus::Open(OpenMenus::Menu::kWorkshop)) {
+				lastWorkshop = a_now;
+			}
+			const bool workshop = lastWorkshop != Clock::time_point{} && a_now - lastWorkshop <= DropBook::SCRAP_GRACE;
+			if (workshop || !a_named.empty()) {
+				std::vector<std::uint32_t> gone;
+				for (const auto& [id, copy] : copies) {
+					const auto ref = copy.ref.get();
+					const bool named = std::ranges::find(a_named, copy.refId) != a_named.end();
+					if (DropBook::JudgeCopy(copy.shown, static_cast<bool>(ref),ref && Lies(ref.get()), named, workshop) == DropBook::CopyGone::kScrapped) {
+						gone.push_back(id);
+					}
+				}
+				for (const auto id : gone) {
+					ScrappedCopy(id, a_now);
+				}
+			}
+			// A claim whose answer went with a reconnect is made again (our next record settles it too).
+			for (const auto id : scraps.Unanswered()) {
+				if (lying.contains(id) && claims.Start(id, a_now)) {
+					Claim(id, Protocol::DropClaim::kTake);
+				}
+			}
+		}
+
+		// The workshop's sinks read our copies' ids from another thread.
+		void PublishCopyIds()
+		{
+			std::unordered_set<std::uint32_t> ids;
+			for (const auto& [id, copy] : copies) {
+				ids.insert(copy.refId);
+			}
+			std::scoped_lock l{ inboxLock };
+			copyRefIds = std::move(ids);
+		}
+
 		Protocol::DropRecord RecordForServer()
 		{
 			std::scoped_lock l{ recordLock };
@@ -989,6 +1074,24 @@ namespace Drops
 		}
 	}
 
+	bool IsCopyRef(std::uint32_t a_ref)
+	{
+		std::scoped_lock l{ inboxLock };
+		return copyRefIds.contains(a_ref);
+	}
+
+	bool OnScrapped(std::uint32_t a_ref)
+	{
+		std::scoped_lock l{ inboxLock };
+		if (!copyRefIds.contains(a_ref)) {
+			return false;
+		}
+		if (scrappedInbox.size() < MAX_INBOX) {
+			scrappedInbox.push_back(a_ref);
+		}
+		return true;
+	}
+
 	void DevDropNext()
 	{
 		devDrop = true;
@@ -1029,7 +1132,7 @@ namespace Drops
 		// Our drop, offered to us alone: the item we dropped makes way for a copy like everyone's, and only once it has
 		// does the server tell the others (kPlaced), so nobody can take it while it is still in our world.
 		const auto ref = it->ref.get();
-		if (ref && Loose(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
+		if (ref && Lies(ref.get()) && Equipment::MayChange(ref.get(), OwnGear::Change::kDropCopy)) {
 			RemotePlayers::Discard(it->ref, it->droppedAt);
 			{
 				std::scoped_lock l{ recordLock };
@@ -1046,7 +1149,7 @@ namespace Drops
 				REX::INFO("Drops: drop {} is the session's: {:08X} makes way for a copy", a_drop.dropId, it->refId);
 			}
 		} else {
-			// Our player picked it up again before the offer came (or it is gone): it never lay there for anyone.
+			// Our player picked it up again before the offer came (or scrapped it, or it is gone): it never lay there for anyone.
 			Claim(a_drop.dropId, Protocol::DropClaim::kKept);
 			++reclaimed;
 			if (Log()) {
@@ -1066,6 +1169,26 @@ namespace Drops
 			lying.erase(drop);
 		}
 		const bool ours = claims.Answered(a_gone.dropId);
+		switch (scraps.Answered(a_gone.dropId, a_gone.takerId, localId)) {
+		case DropBook::Scraps::Outcome::kOurs:
+			++scrapped;
+			if (Log()) {
+				REX::INFO("Drops: drop {} scrapped here is ours; gone for everyone", a_gone.dropId);
+			}
+			return;
+		case DropBook::Scraps::Outcome::kLost:
+			// Our copy went in a scrap, but someone else's claim came first: the item is theirs, and not in our world.
+			{
+				std::scoped_lock l{ recordLock };
+				record.Untook(a_gone.dropId);
+			}
+			++scrapLost;
+			REX::WARN("Drops: drop {} went to player {} as our player scrapped our copy of it; the item is theirs (our player kept the components)", a_gone.dropId,
+				a_gone.takerId);
+			return;
+		case DropBook::Scraps::Outcome::kNotScrapped:
+			break;
+		}
 		if (a_gone.takerId == localId && localId != 0) {
 			if (pickedUnblocked.erase(a_gone.dropId)) {
 				std::scoped_lock l{ recordLock };
@@ -1140,13 +1263,16 @@ namespace Drops
 		std::vector<Left>          left;
 		std::vector<std::uint32_t> activated;
 		std::vector<std::uint32_t> blocked;
-		TakeInbox(left, activated, blocked);
+		std::vector<std::uint32_t> scrappedNow;
+		TakeInbox(left, activated, blocked, scrappedNow);
 		NoticeDrops(left, now);
 		SettleDrops(now);
 		NoticeActivations(activated, now);
 		FinishTake(now);
+		NoticeScraps(scrappedNow, now);
 		PlaceCopies(now);
 		ShowCopies(blocked, now);
+		PublishCopyIds();
 		NoteCarried();
 		if (keptInContainer.exchange(false) && !std::exchange(hinted, true)) {
 			Hud::Notify(Text::Get("drops.container_hint"));
@@ -1187,6 +1313,7 @@ namespace Drops
 			}
 		}
 		copies.clear();
+		PublishCopyIds();
 		if (taking) {
 			// A take not checked yet: settled now, so the save's record says what its inventory holds. In it, the take is
 			// recorded; not, the item lies there again for anyone (our copy goes with the others).
@@ -1209,6 +1336,8 @@ namespace Drops
 		taking.reset();
 		pickedUnblocked.clear();
 		claims.Clear();
+		scraps.Clear();  // the loaded world's record says whether it took them
+		lastWorkshop = {};
 		unconfirmed.Clear();  // the loaded world's record says whether they left it
 		seenLoose.clear();
 		unplaceable.clear();
@@ -1219,6 +1348,8 @@ namespace Drops
 		activatedInbox.clear();
 		equippedInbox.clear();
 		blockedInbox.clear();
+		scrappedInbox.clear();
+		copyRefIds.clear();
 	}
 
 	std::vector<std::uint8_t> SaveRecord()
@@ -1314,8 +1445,9 @@ namespace Drops
 	std::string Describe()
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
-		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={}",
+		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
+		                   "scrapped={} scrapLost={} scrapWaiting={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size());
 	}
 }

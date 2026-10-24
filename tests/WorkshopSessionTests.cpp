@@ -165,16 +165,37 @@ namespace
 			return it != kinds.end() ? it->second : WorkshopApply::Kind::kOther;
 		}
 
-		// A piece of the same object at the spot that no copy of this run is.
+		// Pieces this game's player built (linked to our workbench): never a copy to take over (WorkshopSync::IsWorkshopObject).
+		std::set<int> built;
+
+		bool SameAtSpot(const Piece& a_piece, const Protocol::WorkshopItem& a_item) const
+		{
+			return a_piece.base == a_item.base && std::hypot(a_piece.at.position[0] - a_item.position[0], a_piece.at.position[1] - a_item.position[1]) <= ADOPT_RADIUS;
+		}
+
+		// A piece of the same object at the spot that no copy of this run is, nor one we built.
 		std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item) const
 		{
 			for (const auto& [id, piece] : world) {
 				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
-				if (!tracked && piece.base == a_item.base && std::hypot(piece.at.position[0] - a_item.position[0], piece.at.position[1] - a_item.position[1]) <= ADOPT_RADIUS) {
+				if (!tracked && !built.contains(id) && SameAtSpot(piece, a_item)) {
 					return id;
 				}
 			}
 			return std::nullopt;
+		}
+
+		bool OursAt(const Protocol::WorkshopItem& a_item) const
+		{
+			return std::ranges::any_of(built, [&](int a_id) { return world.contains(a_id) && SameAtSpot(world.at(a_id), a_item); });
+		}
+
+		// A piece our player built, at the spot.
+		int Build(float a_x, float a_y = 1000.0f)
+		{
+			world[nextId] = { WALL, { { a_x, a_y, 0.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f }, { WorkshopCells::Grid(a_x), WorkshopCells::Grid(a_y) } };
+			built.insert(nextId);
+			return nextId++;
 		}
 
 		std::optional<Copy> Create(const Protocol::WorkshopItem& a_item)
@@ -319,6 +340,39 @@ TEST("workshop session: a friend who loads a save gets the others' building back
 		}
 	}
 	CHECK(bob.At(400.0f) == 0);
+}
+
+TEST("workshop session: our own piece where a friend's identical one stands (saves that share a past) stays ours, and no copy is put over it")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Receive(Received(f, 2));
+	// Both saves come from one: the wall built before they parted stands in both, linked to each one's workbench (and a
+	// settler's job may hang on it). A copy an earlier session left is another matter: taken over, as before.
+	const auto mine = bob.Build(100.0f);
+	bob.world[bob.nextId++] = { WALL, { { 200.0f, 1000.0f, 0.0f }, { 0.0f, 0.0f, 1.5f }, 1.0f }, { 0, 0 } };
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));  // Alice's game tells of what she built before the session
+	f.fake->Deliver(1, Report(Wall(0xFF000002, 200.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.oursThere == 1);
+	CHECK(bob.counts.adopted == 1);
+	CHECK(bob.At(100.0f) == 1);  // not doubled
+	CHECK(bob.copies.size() == 1);
+	CHECK(std::ranges::none_of(bob.copies, [&](const auto& a_copy) { return a_copy.second == mine; }));
+
+	// Alice scraps hers: it was never ours to remove. Bob leaves: his own piece stays in his world.
+	f.fake->Deliver(1, Report(Scrapped(Wall(0xFF000001, 100.0f))));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.world.contains(mine));
+	bob.Leave();
+	CHECK(bob.world.contains(mine));
+	CHECK(bob.At(200.0f) == 0);  // the adopted copy went with the session
 }
 
 TEST("workshop session: after a reload, a friend's piece moved or scrapped later still moves or goes")

@@ -186,6 +186,66 @@ TEST("server drops: two players taking the same item at once: one gets it, and e
 	}
 }
 
+// Workshop mode scraps a loose item: Bob's game claims the drop as his take (Drops' Scraps), and his record says his world
+// took it from that moment. Nothing new on the wire: the server's rules for a take are what keeps the item in one place.
+TEST("server drops: an item scrapped in workshop mode is the scrapper's take: gone for everyone, and never listed or laid down again")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice", 0xA);
+	const auto bobWelcome = f.Join(2, Fixture::MakeHello("Bob", 0xB));
+	REQUIRE(bobWelcome);
+	const auto carolWelcome = f.Join(3, Fixture::MakeHello("Carol", 0xC));
+	REQUIRE(carolWelcome);
+	const auto session = bobWelcome->sessionId;
+	Clear(f, { 1, 2, 3 });
+	const auto scrapped = Drop(f, 1, Gun(1));
+	const auto lying = Drop(f, 1, Gun(2));
+	Clear(f, { 1, 2, 3 });
+
+	Claim(f, 2, scrapped.dropId);  // Bob's copy went in a scrap
+	for (const PeerId peer : { 1, 2, 3 }) {
+		const auto gone = Gone(Received(f, peer));
+		REQUIRE(gone.size() == 1);
+		CHECK(gone[0].dropId == scrapped.dropId);
+		CHECK(gone[0].takerId == bobWelcome->playerId);  // every friend's copy goes
+	}
+	// Carol's game, a moment behind, asks for it: refused, naming Bob.
+	Claim(f, 3, scrapped.dropId);
+	const auto refused = Gone(Received(f, 3));
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].takerId == bobWelcome->playerId);
+
+	// Bob's record (he took it at the scrap) changes nothing, and lists only what still lies there.
+	SendRecord(f, 2, { session, {}, { scrapped.dropId } });
+	const auto bobGot = Received(f, 2);
+	const auto [bobList, bobLast] = Listed(bobGot);
+	CHECK(bobLast);
+	REQUIRE(bobList.size() == 1);
+	CHECK(bobList[0].dropId == lying.dropId);
+	CHECK(Placed(Received(f, 1)).empty());
+	CHECK(Placed(Received(f, 3)).empty());
+	SendRecord(f, 3, { carolWelcome->sessionId, {}, {} });
+	const auto [carolList, carolLast] = Listed(Received(f, 3));
+	REQUIRE(carolList.size() == 1);
+	CHECK(carolList[0].dropId == lying.dropId);
+
+	// Bob scraps his copy of the other one too, but Carol took it a moment before: it is hers alone. Bob's record, the
+	// scrap taken back out of it, makes it lie nowhere again.
+	Clear(f, { 1, 2, 3 });
+	Claim(f, 3, lying.dropId);
+	Claim(f, 2, lying.dropId);
+	const auto lost = Gone(Received(f, 2));
+	REQUIRE(!lost.empty());
+	for (const auto& entry : lost) {
+		CHECK(entry.takerId == carolWelcome->playerId);
+	}
+	Clear(f, { 1, 3 });
+	SendRecord(f, 2, { session, {}, { scrapped.dropId } });
+	CHECK(Listed(Received(f, 2)).first.empty());
+	CHECK(Placed(Received(f, 1)).empty());
+	CHECK(Placed(Received(f, 3)).empty());
+}
+
 TEST("server drops: a take its game couldn't finish lies there again for everyone")
 {
 	Fixture f;
