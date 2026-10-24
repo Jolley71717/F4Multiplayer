@@ -14,9 +14,9 @@ Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https
   is played alone; alternate-start mods are untried.
 - Friends may have other mods, or the same ones in another order: what comes from a mod only one player has is left out in the other games. The F1 menu's *Compare mods* page names the mods that differ.
 
-Newest: 0.9.0 lets friends with different mods or load orders play together, gives items by dropping them, adds
-host controls (kick, ban, lock, password), compass pings, shared Minutemen requests, shared security gates and
-settlement power, and fixes the black screen on joining. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
+Newest: 0.9.1 makes every player's hits on enemies count again. 0.9.0 lets friends with different mods or load orders play together, gives items by dropping them, adds
+host controls (kick, ban, lock, password), much smoother movement, compass pings, shared radiant quests, loot and
+plants, host-tuned revives, shared security gates and settlement power, and fixes the black screen on joining. Notes for each version are in [dist](dist) (`RELEASE-<version>.md`).
 
 ## Requirements
 

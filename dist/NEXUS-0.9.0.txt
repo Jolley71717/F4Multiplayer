@@ -1,0 +1,13 @@
+Protocol 49: everyone needs 0.9.0
+Friends with different mods, or the same mods in another order, can play together
+Give each other items by dropping them; whoever takes it first gets it
+Host controls in the F1 menu: kick, ban, lock the session, password
+Much smoother movement for friends, adapting to the connection
+F8 pings what you aim at, with a ring on everyone's compass
+Shared radiant quests for the Minutemen, Brotherhood, Institute, Railroad and Diamond City posters
+Looted chests and corpses, and picked plants, are shared
+Host-tuned revives (bleed-out time, revives per fight, cooldown), VATS in real time, tutorial hints off
+Shared security gates, settlement power and building, and objects moved or knocked over
+A friend in power armor walks in it; a downed friend lies down until helped up
+Fixed: the black screen on joining, a crash on saving next to a friend, quickloads restarting the session with mods installed, damage not counting after a reload
+Full notes on GitHub

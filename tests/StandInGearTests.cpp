@@ -123,14 +123,30 @@ namespace
 			StandInGear::Report(gear, a_report->items, a_report->mods);
 		}
 
+		int takenAway = 0;  // guns in its hand taken away, their new copy given in a later dressing
+		int bothAtOnce = 0;  // a gun in its hand taken away and given again in the same dressing (came out in pieces)
+
 		// What Equipment::PutOn does with the stand-in's copy of one of her items, as StandInGear::ChooseCopy says, and
-		// Equipment::Give builds it: with those of her mods that are here, or else the default combination.
-		void PutOn(std::uint32_t a_item)
+		// Equipment::Give builds it: with those of her mods that are here, or else the default combination. True when a
+		// gun in its hand was only taken away (StandInGear::TakeAwayFirst).
+		bool PutOn(std::uint32_t a_item, bool a_wearing)
 		{
 			const auto buildable = StandInGear::Buildable(StandInGear::ModsOf(gear.mods, a_item), [&](std::uint32_t a_mod) { return Here(a_mod); });
 			const auto carried = standIn.copies.find(a_item);
 			const auto ours = carried != standIn.copies.end() ? std::optional{ carried->second } : std::nullopt;
-			switch (StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, ours)) {
+			const auto copy = StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, ours);
+			if (StandInGear::TakeAwayFirst(copy, a_wearing, InHand(a_item))) {
+				++replaces;
+				++takenAway;
+				standIn.copies.erase(a_item);
+				std::erase(standIn.wears, a_item);
+				standIn.gunOutAt = Clock::time_point::max();
+				return true;
+			}
+			if (copy == StandInGear::Copy::kReplace && a_wearing && InHand(a_item)) {
+				++bothAtOnce;
+			}
+			switch (copy) {
 			case StandInGear::Copy::kKeep:
 				break;
 			case StandInGear::Copy::kReplace:
@@ -145,13 +161,17 @@ namespace
 				standIn.copies[a_item] = buildable ? buildable->mods : DEFAULT_COMBINATION;
 				break;
 			}
+			return false;
 		}
 
-		void PutOn(const std::vector<std::uint32_t>& a_items)
+		// a_was: what it wore before this dressing.
+		bool PutOn(const std::vector<std::uint32_t>& a_items, const std::vector<std::uint32_t>& a_was = {})
 		{
+			bool tookAway = false;
 			for (const auto item : a_items) {
-				PutOn(item);
+				tookAway |= PutOn(item, std::ranges::contains(a_was, item));
 			}
+			return tookAway;
 		}
 
 		// A new stand-in for her (a door, a load, out of her frame): wearing its own outfit, its 3D not in yet.
@@ -234,17 +254,25 @@ namespace
 				PutOn(outfit);
 				break;
 			case Put::kWear:
-				++wears;
-				standIn.wears = outfit;
-				PutOn(outfit);
-				break;
+				{
+					++wears;
+					const auto was = standIn.wears;
+					standIn.wears = outfit;
+					if (PutOn(outfit, was)) {
+						StandInGear::TookAway(gear, now);
+					}
+					break;
+				}
 			case Put::kWearInArmor:
 				{
 					++inArmor;
+					const auto was = standIn.wears;
 					// Their pieces and weapons on; the frame the engine put on it stays.
 					std::erase_if(standIn.wears, [&](std::uint32_t a_item) { return ArmorFrames::Wears(Dress::kArmor, KindOf(a_item)); });
 					standIn.wears.insert(standIn.wears.end(), outfit.begin(), outfit.end());
-					PutOn(outfit);
+					if (PutOn(outfit, was)) {
+						StandInGear::TookAway(gear, now);
+					}
 					break;
 				}
 			case Put::kNone:
@@ -729,6 +757,8 @@ TEST("stand-in gear: a friend's 10mm reaches their stand-in with their own barre
 	CHECK(bob.redraws == 2);   // its new copy drawn
 	CHECK(bob.applies == 1);   // never stripped and dressed again for it
 	CHECK(bob.refits == 0);
+	CHECK(bob.takenAway == 1);  // the gun in its hand: taken away first, given in a later dressing
+	CHECK(bob.bothAtOnce == 0);
 
 	// Her game sending it again: the server keeps it to itself. The same mods listed in another order get past it, but
 	// are the copy it has: nothing given, the gun stays out.
@@ -755,6 +785,95 @@ TEST("stand-in gear: a friend's 10mm reaches their stand-in with their own barre
 	carol.Frames(2);
 	CHECK(carol.standIn.copies[PISTOL] == reordered[0].mods);  // as her game last listed them
 	CHECK(carol.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+}
+
+// Reported 0.9.0-rc1: the host gave themselves a plain 10mm at the console and equipped it in place of the modded 10mm they
+// held, and the friend saw its receiver, grip and magazine floating apart round the stand-in's hand. The stand-in's copy
+// was taken away, the new one given and the same weapon equipped again in one frame.
+TEST("stand-in gear: a friend who swaps their 10mm for another 10mm has the old copy taken out of their stand-in's hand first and the new one given a moment later, never both in one frame")
+{
+	Session session;
+	Ours    bob;
+	const std::vector<Protocol::ItemMods> modded{ { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL, REFLEX_SIGHT } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, modded));
+	bob.Frames(70);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+	const int gives = bob.gives;
+
+	// A plain one from the console, equipped: the same item, other mods.
+	const std::vector<Protocol::ItemMods> plain{ { PISTOL, 0, { STANDARD_RECEIVER, SHORT_BARREL, IRON_SIGHTS } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, plain));
+	int frames = 0;
+	while (bob.takenAway == 0 && frames++ < 200) {
+		bob.Frame();
+	}
+	REQUIRE(bob.takenAway == 1);
+	CHECK(!bob.standIn.copies.contains(PISTOL));  // only taken away
+	CHECK(bob.Wears() == Sorted({ VAULT_SUIT }));
+	CHECK(bob.gives == gives);
+	CHECK(bob.Shot() == AttackKind::Replay::kNone);  // nothing in its hand meanwhile
+
+	// Not in the next frames: the engine is given time to let go of the old copy's 3D.
+	bob.Frames(static_cast<int>(StandInGear::REGIVE_GAP / 16ms) - 1);
+	CHECK(!bob.standIn.copies.contains(PISTOL));
+	bob.Frames(2);
+	CHECK(bob.standIn.copies[PISTOL] == plain[0].mods);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT }));
+	CHECK(bob.gives == gives + 1);
+	bob.Frames(70);
+	CHECK(bob.bothAtOnce == 0);
+	CHECK(bob.changes == 1);   // one change of hers
+	CHECK(bob.replaces == 1);
+	CHECK(bob.redraws == 2);   // drawn once more, with the new copy in its hand
+	CHECK(bob.applies == 1);
+	CHECK(bob.refits == 0);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+	CHECK(bob.gives == gives + 1);  // and given once
+
+	// A change of hers inside the gap is put on with the gun given back, not lost.
+	const std::vector<Protocol::ItemMods> again{ { PISTOL, 3, { STANDARD_RECEIVER, LONG_BARREL, IRON_SIGHTS } } };
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT }, 2000ms, again));
+	frames = 0;
+	while (bob.takenAway == 1 && frames++ < 200) {
+		bob.Frame();
+	}
+	REQUIRE(bob.takenAway == 2);
+	bob.Receive(session.Report({ PISTOL, VAULT_SUIT, HAT }, 2000ms, again));
+	bob.Frames(120);
+	CHECK(bob.standIn.copies[PISTOL] == again[0].mods);
+	CHECK(bob.Wears() == Sorted({ PISTOL, VAULT_SUIT, HAT }));
+	CHECK(bob.bothAtOnce == 0);
+	CHECK(bob.refits == 0);
+	CHECK(bob.Shot() == AttackKind::Replay::kFire);
+}
+
+TEST("stand-in gear: a gun is taken out of the stand-in's hand first only when it holds one whose copy is to be replaced")
+{
+	using StandInGear::Copy;
+	using StandInGear::TakeAwayFirst;
+	CHECK(TakeAwayFirst(Copy::kReplace, true, true));
+	CHECK(!TakeAwayFirst(Copy::kReplace, false, true));  // carried but not on: given at once
+	CHECK(!TakeAwayFirst(Copy::kReplace, true, false));  // a hat with other paint
+	CHECK(!TakeAwayFirst(Copy::kGive, true, true));
+	CHECK(!TakeAwayFirst(Copy::kKeep, true, true));
+
+	StandInGear::Gear gear;
+	const auto        now = Clock::time_point{} + 1h;
+	StandInGear::Report(gear, { PISTOL });
+	StandInGear::Done(gear, StandInGear::Step::kDress, now, InHand);
+	StandInGear::TookAway(gear, now);
+	CHECK(StandInGear::Next(gear, now + StandInGear::REGIVE_GAP - 1ms) == StandInGear::Step::kNone);
+	CHECK(StandInGear::Next(gear, now + StandInGear::REGIVE_GAP) == StandInGear::Step::kChange);
+	CHECK(!StandInGear::Done(gear, StandInGear::Step::kChange, now + StandInGear::REGIVE_GAP, InHand));  // drawn by the dressing that took it
+	CHECK(StandInGear::Next(gear, now + 1h) == StandInGear::Step::kNone);
+	// Dressed afresh meanwhile (a new stand-in): everything given then, nothing more after.
+	StandInGear::TookAway(gear, now);
+	StandInGear::Redress(gear);
+	CHECK(StandInGear::Next(gear, now) == StandInGear::Step::kDress);
+	StandInGear::Done(gear, StandInGear::Step::kDress, now, InHand);
+	CHECK(StandInGear::Next(gear, now + 1s) == StandInGear::Step::kNone);
+	static_assert(StandInGear::REGIVE_GAP < 1s);                         // given before Puppets::RedrawWeapon draws it again
+	static_assert(StandInGear::REGIVE_GAP < StandInGear::CHECK_INTERVAL);  // the check never finds it gone meanwhile
 }
 
 TEST("stand-in gear: a friend in power armor gets their pieces built with their paint, and a stand-in placed again gets the same copies")

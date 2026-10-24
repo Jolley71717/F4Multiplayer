@@ -92,22 +92,40 @@ namespace CopyHealth
 		bool claim = false;
 	};
 
-	// What a blow was, as the hit event says.
+	// What a blow was, as the hit event says, and whether our explosions are being shared as it lands.
 	struct Blow
 	{
 		bool explosion = false;     // an explosion's (HitData's kExplosion flag)
 		bool throwable = false;     // its weapon, or the source, is a grenade, a Molotov or a mine
 		bool spellAlone = false;    // a spell or an enchantment with no weapon: what a Molotov's fire leaves burning
+		bool inHand = false;        // its weapon, or the source, is a weapon that is no throwable: a gun, a bat, a baton
+		bool explosionsShared = false;  // our game reports the explosions around our player now (a throw's watch is on)
+		bool threwLately = false;       // ... or did a little while ago: the fire a Molotov left may burn there still
 	};
 
 	// Whether the game that runs the NPC deals this blow there itself, so that a copy's hit is no hit of ours: a throw's.
 	// Every throw's explosion is reported by the thrower's game and set off in each friend's (WeaponFire::ApplyExplosion),
 	// where it hurts the NPCs that game runs, the fire it leaves too. Reported from the copy as well, a friend's Molotov
 	// hurt the NPC twice in its own game: a super mutant at full health lay dead within two seconds of one in the
-	// 2026-10-18 test, while the thrower's copy stood at 67. Our hits on our copies with a weapon in hand still count.
+	// 2026-10-18 test, while the thrower's copy stood at 67.
+	//
+	// Only then. In 0.9.0 the players' gun hits on copies were left to the owner (none reported, each given back, no
+	// takeover), while a shock baton's took the NPC over: only the game that ran an NPC could hurt it, and the one who
+	// last hit it in melee became that game. The kExplosion bit (CommonLib's layout, from another game) and a hit with no
+	// weapon read are no proof of a throw. Only the explosions our game reports while a throw's watch is on go off in the
+	// owner's game (WeaponFire::ScanExplosions), every one near our player then, a missile's too: so an explosion's blow
+	// is the owner's to deal only meanwhile, and a missile's, or a mine's stepped on a minute after it was laid, is dealt
+	// nowhere else and is ours to report. Any other blow with a weapon in hand that is no throwable is ours whatever else
+	// the event reads, and the burn a Molotov's fire leaves is the owner's for WeaponFire::THREW_LATELY after the watch.
 	constexpr bool OwnersToDeal(const Blow& a_blow)
 	{
-		return a_blow.explosion || a_blow.throwable || a_blow.spellAlone;
+		if (a_blow.explosion && a_blow.explosionsShared) {
+			return true;
+		}
+		if (a_blow.inHand) {
+			return false;
+		}
+		return (a_blow.throwable && a_blow.explosionsShared) || (a_blow.spellAlone && (a_blow.explosionsShared || a_blow.threwLately));
 	}
 
 	// a_ownersToDeal: the blow is one OwnersToDeal says the NPC's own game deals; on a copy it is reported never, and

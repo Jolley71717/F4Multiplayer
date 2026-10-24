@@ -46,7 +46,7 @@ differs only in case (`Data/f4se/plugins` beside `Data/F4SE/Plugins`, as real fo
 folder), Wine may only look in one of them: keep all of F4SE's plugins in one.
 
 The logs are inside the game's Proton prefix:
-`steamapps/compatdata/377160/pfx/drive_c/users/steamuser/Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`
+`steamapps/compatdata/377160/pfx/drive_c/`, then the `steamuser` folder in its `users` folder, then `Documents/My Games/Fallout4/F4SE/F4Multiplayer.log`
 (under `~/.local/share/Steam/`, or `~/.var/app/com.valvesoftware.Steam/.local/share/Steam/` for Steam's Flatpak, or the
 Steam library folder the game is installed in). F4SE's own `f4se.log` is beside it: it says whether
 `F4Multiplayer.dll` loaded. The mod's log starts with lines saying what it runs on and how the game was started:
@@ -139,9 +139,10 @@ Each player keeps their own save, character and inventory.
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
-| F2, F3, F4 | Emotes: point, cheer, clap. Your friends see your stand-in do it |
+| F2, F3, F4 | Emotes: point, cheer, clap. Your friends see your stand-in do it. Not in power armor: they slid the view sideways there, so the key says so and does nothing |
+| F10 | Where are my friends: a line each with their distance and direction ("Sam: 240 m NE"), or the place they are in when it is elsewhere |
 
-Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`). They don't
+Change them in `F4Multiplayer.ini` (`iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`, `iKeyEmoteClap`). They don't
 work while a menu or the console is open.
 
 ### Voice chat

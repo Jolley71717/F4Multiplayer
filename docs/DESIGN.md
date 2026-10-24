@@ -478,7 +478,7 @@ Each game rolls a chest's and an NPC's leveled loot on its own (the same corpse 
 different things in the two games of the rig), so a friend taking what their copy held left ours
 holding its own roll. A take that leaves a holder with nothing the session shares is followed by an
 emptied marker (`Protocol::CONTAINER_EMPTIED`: the player's ref as the item, count -1, an ordinary
-numbered change, so it is caught up on after a load or a join like any other): every receiver takes out
+numbered change, so it is caught up on after a load or a join like any other; one also follows a weapon, a key or a note taken from a holder that then holds nothing the session shares, once, though that take itself is not reported): every receiver takes out
 each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
 items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
 yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
@@ -502,7 +502,7 @@ menu) and to loaded references; everything else waits and is retried.
 | Feature | How |
 |---|---|
 | Deaths | TESDeathEvent -> ReportDeath; receivers run `<ref>.kill` when loaded. Of an NPC another game runs, the server believes the runner, the host's game about one dead in its save (found dead), and a player fighting it: one who reported its health, asked to take it over, or whose game ran it until it changed hands, within `Options::deathGrace` (10 s; the takeover itself is refused for 5 s after the NPC changes hands). Our kill's death event asks to take the NPC over first (a grenade's blows name no attacker), and the host's found-dead check leaves an NPC still falling, or hit by our player lately, to its death event for up to 15 s (`NpcHold`). Others are dropped, with a log line at most every 10 s |
-| Health | The game that runs an NPC reports its health (a fraction of max) after its hits and whenever it changes by anything else, at most every 250 ms (`HealthShare`: a fire, a burn, poison); receivers set their copy to it. A hit on a copy goes as the damage it did (`kReportDamage`, protocol 40: `CopyHealth::Book::TakeOurs`), which the game that runs the NPC takes off; only it applies it. Before, a copy reported its own health, which healed off the NPC whatever its game had taken since the copy last heard (a Molotov's fire) |
+| Health | The game that runs an NPC reports its health (a fraction of max) after its hits and whenever it changes by anything else, at most every 250 ms (`HealthShare`: a fire, a burn, poison); receivers set their copy to it. A hit on a copy goes as the damage it did (`kReportDamage`, protocol 40: `CopyHealth::Book::TakeOurs`), which the game that runs the NPC takes off; only it applies it. Before, a copy reported its own health, which healed off the NPC whatever its game had taken since the copy last heard (a Molotov's fire). A game that comes to run an NPC (a takeover, a claim, back from a load) reports its health at once, at most 16 such reports every 250 ms (`healthShared=` sent/of them first readings): a takeover's claim leaves a frame ahead of the hit's damage, which the old runner then drops, and a host back from a death's reload runs its NPCs at its save's health. Only a throw's blow on a copy is left to the NPC's own game (`CopyHealth::OwnersToDeal`): an explosion's only while our game shares its explosions (a throw's watch: every one near our player then goes off in the friends' games), a throwable's too but never one with a weapon in hand that is no throwable, and the fire a Molotov leaves for 20 s after. In 0.9.0, as players reported it, gun hits on copies were taken for throws (how their hit events read on this runtime is not verified yet: `CopyWatch` now logs the flags), so only the game that ran an NPC hurt it, and a melee hit, which claimed it, moved that game to the hitter |
 | Container loot | TESContainerChangedEvent player<->container -> resolved in the next frame on the main thread; shared moves (LootScope) -> ContainerChange; the server numbers it and echoes it to everyone, including the sender; receivers check the scope again and `removeitem`/`additem`, in order per container |
 | World item pickup | TESActivateEvent (player) paired with container event old=0,new=player (its ref is 0) -> RefPickedUp; receivers disable the ref, only while it is in the world (a persistent item's ref stays itself in the inventory that took it, ours too: OwnGear kTakeLoose). One the engine names an inventory for (ExtraReferenceHandles: the local player's, a container's, an NPC's) is left there and the pickup dropped; one in no cell and no inventory (being loaded or moved) stays pending and is tried again for 30 s (OwnGear::PICKUP_WAIT), then dropped |
 | The player's own gear | every inventory or equipment change the session makes for a friend's game is judged where it is made (src/game/OwnGear.h, Equipment::MayChange): stand-in dressing only on a stand-in, an NPC copy's only on a mirrored NPC, a frame emptied only if this game placed it and our player isn't in it, a pickup only off the world, loot never onto a stand-in, and none of them ever onto the local player (refused, logged, counted in `net status` as ownGear ourPlayer=). The counts start again with each session's welcome; the log takes up to 100 alarming refusals (our player, what they hold, the wrong actor, someone's own frame) and, on a budget of their own, 50 benign ones (gone, in an inventory, in no cell), so a join's catch-up can't hide the first. `inventory` (dev, read only) prints the player's stack and item counts, a checksum of every stack, the Pip-Boy (worn or not), caps and what is equipped, to compare before and after a join |
@@ -661,7 +661,7 @@ need their NPCs, doors and time of day as the game set them. Their game claims a
 applied once the player is out), takes no damage from friends' NPCs, gets no shared XP or map
 markers, and reports nothing. They can't teleport, and nobody can teleport to them (status flag
 `opening`). They still see friends who are in the same place. A mod that starts the game somewhere
-else skips this: the player is never in those places. Untried with any such mod (dist/INSTALL.md, Alternate-start mods): a start in a cell of its own is shared from its first frame, scenes and all, and a character named there gets its ID (`BGSSaveLoadManager::currentPlayerID`) outside the opening, so a host may start hosting under the unnamed ID and restart once named (CharacterBinding: kStopHosting), and a joiner who connected first stays bound to the old ID until a load makes it leave (Tracker::Check rebinds only in the opening).
+else skips this: the player is never in those places. Untried with any such mod (dist/INSTALL.md, Alternate-start mods): a start in a cell of its own is shared from its first frame, scenes and all, and a character named there gets its ID (`BGSSaveLoadManager::currentPlayerID`) outside the opening, so a host may start hosting under the unnamed ID and restart once named (CharacterBinding: kStopHosting), and a joiner who connected first stays bound to the old ID until a load makes it leave (Tracker::Check rebinds only in the opening). Only the ID's low 32 bits name the character (CharacterBinding::Character): a save's file name holds them and a letter the game loads back into the high half ('_' 0, 'M' 1 once the game has a mod's plugin), so the same character's quickload can bring another high half than the game had in memory.
 
 ## Moved objects (src/game/MovedObjects.cpp, ObjectShare.h, common/ObjectMovers.h)
 
@@ -751,7 +751,18 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   the stand-in (placed again if it is in another place, over 256 units off or without 3D after
   10 s). When they get out, the pieces come off and the copy is drawn where they got out, solid once
   nobody stands within 70 units of it, and deleted 4 s later; a copy someone here gets into is left
-  to them. Out of power armor, the status also carries the frame they got out of last
+  to them. The stand-in is switched into the copy (`ArmorFrames::ChooseSwitch`), and the engine rebuilds
+  it on the power armor skeleton with a fresh animation graph. Rebuilt before the power armor subgraphs
+  are loaded, that graph is set up only later by the tail of the engine's own `Actor::Update`
+  (`AIProcess::GetQueuedModifyInitialAnimationPose`, the subgraphs loaded, then the actor's
+  `ModifyInitialAnimationStateImpl`), which a stand-in's no-AI update skipped: it glided after its friend
+  with its legs still (every switch-in of a two-hour session, 2026-10-19; before 0.8.10 the switch-in ran
+  the stand-in's own AI update, and they walked). `Puppets` does the same after the no-AI update. A
+  stand-in whose legs still stay still while they walk is first tried in place, each way given 2 s
+  (`ArmorFrames::Remedy`): its graph set up afresh whatever the engine says of its subgraphs, then the
+  engine's own update for 1 s. Only then is it replaced (a try); with no try left it is kept in its frame,
+  never shown out of its armor for it. The log says at each step whether the engine had the setup queued
+  and the subgraphs loaded. Out of power armor, the status also carries the frame they got out of last
   (`lastUsedPowerArmor`, once the engine has it enabled in the world again; protocol 30): its base,
   its reference when every game has it, its cell or worldspace, position (to the unit) and heading.
   A pre-placed frame is shared as an NPC is besides (see Shared NPC AI): the receiver's own reference
@@ -836,7 +847,10 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   (blue circle, orange square, pink diamond, purple triangle by player ID), drawn with the Flash
   drawing API into `HUDMenu`'s `root.BottomCenterGroup_mc.CompassWidget_mc` from inside the HUD's
   own update (its `AdvanceMovie`, hooked; one update queued at a time, and none while a loading
-  screen or another menu is up). The bar is 304 px for about 100 degrees (3.02 px/degree);
+  screen or another menu is up). In power armor that compass is hidden and `PowerArmorHUDMenu`, a
+  menu of its own, shows its own `HUDCompassWidget` at `root.CompassWidget_mc`: the markers and
+  ping rings go there too, from inside its update (hooked in its vtable from the address library,
+  as that menu is made anew each time the player gets in, and never looked up). The bar is 304 px for about 100 degrees (3.02 px/degree);
   friends beyond it are pinned to the edge at half alpha. Text made in code doesn't render (the
   HUD's embedded fonts don't reach new TextFields), hence shapes; the player list names them.
 - Hotkeys: `GetAsyncKeyState`, only while the game window has focus and no menu or console is open.
@@ -860,7 +874,17 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   kill is repeated every 2 s while they are still alive and down. The rules are in
   src/game/DownRules.h (tested). Both flags are cleared for a save; a save made while down stands
   the player up when it's loaded. A stand-in put down in our game (a hit bigger than its health) is
-  replaced, so it never sits on the ground while its friend is up.
+  replaced, so it never sits on the ground while its friend is up. A friend who is down is shown down
+  (`DownRules::StandInDown`, tested; `Puppets::SetDown`): their stand-in's life state goes to
+  `kEssentialDown` with `kNoBleedoutRecovery`, which plays its own graph's downed pose (in a power armor
+  frame too, once its switch into the frame is done), and it is still put at their spot each update but
+  told no locomotion, aim or draw, so the revive range is measured where they lie. The reference's own
+  essential override is set while it lies (`ExtraDataList::OverrideEssential`; "overridden not essential"
+  once up): the engine's per-actor update in ProcessLists recomputes the essential flag every frame from
+  that override or the base, a settler shared with world NPCs, and stands a non-essential actor in
+  `kEssentialDown` up (rig 2026-10-20: up 20 ms after each lie-down without it). Up again, its life
+  state goes back to alive (the engine's get-up); still down 4 s later it is replaced, standing. Found up
+  again while they are down, it is laid down again 2 s on. Laid down by us, it is not replaced as broken.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help

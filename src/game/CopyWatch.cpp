@@ -3,6 +3,7 @@
 #include "game/CopyHealth.h"
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
+#include "game/WeaponFire.h"
 
 #include "Protocol.h"
 
@@ -24,6 +25,8 @@ namespace CopyWatch
 			bool              usesHitData = false;
 			bool              explosion = false;
 			bool              ownersToDeal = false;  // a throw's blow: the NPC's own game deals it (CopyHealth::OwnersToDeal)
+			bool              inHand = false;        // a weapon in hand that is no throwable (CopyHealth::Blow::inHand)
+			std::uint32_t     flags = 0;             // HitData's flags as read, for the log: what the rig checks the throw rules against
 			Clock::time_point at{};
 		};
 
@@ -144,9 +147,9 @@ namespace CopyWatch
 
 		std::string Describe(const Hit& a_hit, bool a_ours)
 		{
-			return std::format("by {:08X} ({}{}), weapon {:08X}, source {:08X}, projectile {:08X}{}, damage {}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer),
-				a_ours ? "; ours, reported" : "", a_hit.weapon, a_hit.source, a_hit.projectile, a_hit.explosion ? ", an explosion's" : "",
-				a_hit.usesHitData ? std::format("{:.1f}", a_hit.damage) : std::string{ "unknown" });
+			return std::format("by {:08X} ({}{}), weapon {:08X}, source {:08X}, projectile {:08X}{}{}, damage {}, flags {:08X}{}", a_hit.cause, KindOf(a_hit.cause, a_hit.byPlayer),
+				a_ours ? "; ours, reported" : "", a_hit.weapon, a_hit.source, a_hit.projectile, a_hit.explosion ? ", an explosion's" : "", a_hit.inHand ? ", in hand" : "",
+				a_hit.usesHitData ? std::format("{:.1f}", a_hit.damage) : std::string{ "unknown" }, a_hit.flags, a_hit.usesHitData ? "" : " (no hit data)");
 		}
 
 		std::string LastHitOn(std::uint32_t a_id, Clock::time_point a_now)
@@ -207,10 +210,17 @@ namespace CopyWatch
 
 	CopyHealth::Blow BlowOf(const RE::TESHitEvent& a_event)
 	{
-		const auto throwable = [](const RE::TESForm* a_form) {
-			const auto weapon = a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+		// A weapon's form: whether it is a throwable (a grenade, a Molotov, a mine), or one held in the hand.
+		const auto weaponOf = [](const RE::TESForm* a_form) {
+			return a_form && a_form->GetFormType() == RE::ENUM_FORM_ID::kWEAP ? a_form->As<RE::TESObjectWEAP>() : nullptr;
+		};
+		const auto throwable = [&](const RE::TESForm* a_form) {
+			const auto weapon = weaponOf(a_form);
 			const auto type = weapon ? weapon->weaponData.type.get() : RE::WEAPON_TYPE::kHandToHand;
 			return weapon && (type == RE::WEAPON_TYPE::kGrenade || type == RE::WEAPON_TYPE::kMine);
+		};
+		const auto inHand = [&](const RE::TESForm* a_form) {
+			return weaponOf(a_form) && !throwable(a_form);
 		};
 		const auto weapon = a_event.hitData.weapon.object;
 		const auto source = a_event.sourceFormID != 0 ? RE::TESForm::GetFormByID(a_event.sourceFormID) : nullptr;
@@ -218,6 +228,9 @@ namespace CopyWatch
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
 			.throwable = throwable(weapon) || throwable(source),
 			.spellAlone = !weapon && source && source->IsMagicItem(),
+			.inHand = inHand(weapon) || inHand(source),
+			.explosionsShared = WeaponFire::ExplosionsShared(),
+			.threwLately = WeaponFire::ThrewLately(),
 		};
 	}
 
@@ -231,6 +244,7 @@ namespace CopyWatch
 		}
 		const auto cause = a_event.cause.get();
 		const auto weapon = a_event.hitData.weapon.object;
+		const auto blow = BlowOf(a_event);
 		Hit hit{
 			.target = actor->GetFormID(),
 			.cause = cause ? cause->GetFormID() : 0,
@@ -241,7 +255,9 @@ namespace CopyWatch
 			.damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage,
 			.usesHitData = a_event.usesHitData,
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
-			.ownersToDeal = CopyHealth::OwnersToDeal(BlowOf(a_event)),
+			.ownersToDeal = CopyHealth::OwnersToDeal(blow),
+			.inHand = blow.inHand,
+			.flags = a_event.hitData.flags.underlying(),
 			.at = Clock::now(),
 		};
 		std::scoped_lock l{ inboxLock };

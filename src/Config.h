@@ -107,6 +107,7 @@ namespace Config
 		std::uint32_t keyPlayerList = 0x75;  // F6: where everyone is
 		std::uint32_t keyTeleport = 0x76;    // F7: tap to choose a friend, hold to teleport to them
 		std::uint32_t keyPing = 0x77;        // F8: ping what the crosshair is on
+		std::uint32_t keyWhere = 0x79;       // F10: how far and which way each friend is (F5 and F9 are the game's quicksave and quickload)
 		std::uint32_t keyEmotePoint = 0x71;  // F2: point (F9 is the game's quickload)
 		std::uint32_t keyEmoteCheer = 0x72;  // F3: cheer
 		std::uint32_t keyEmoteClap = 0x73;   // F4: clap

@@ -142,11 +142,7 @@ namespace Party
 		std::string Bearing(float a_dx, float a_dy)
 		{
 			static constexpr std::array names{ "compass.n", "compass.ne", "compass.e", "compass.se", "compass.s", "compass.sw", "compass.w", "compass.nw" };
-			float degrees = std::atan2(a_dx, a_dy) * 180.0f / std::numbers::pi_v<float>;
-			if (degrees < 0.0f) {
-				degrees += 360.0f;
-			}
-			return Text::Get(names[static_cast<std::size_t>(std::lround(degrees / 45.0f)) % names.size()]);
+			return Text::Get(names[PingRules::BearingIndex(a_dx, a_dy) % names.size()]);
 		}
 
 		// "230 m NE", or "" when they're somewhere else.
@@ -434,6 +430,21 @@ namespace Party
 			return out;
 		}
 
+		// How far and which way a friend is ("30 m NE"), or where they are when that is elsewhere, or that they are loading.
+		std::string WhereIs(const RemotePlayers::Info& a_player)
+		{
+			if (!a_player.state) {
+				return Text::Get("player.loading");
+			}
+			auto where = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y);
+			if (where.empty()) {
+				const auto it = known.find(a_player.id);
+				const auto place = it != known.end() && it->second.hasStatus ? PlaceName(it->second.status.location, it->second.status.cell) : std::string{};
+				where = place.empty() ? Text::Get("party.somewhere_else") : Text::Format("party.at_place", { { "place", place } });
+			}
+			return where;
+		}
+
 		// The frame our player got out of last, as the engine keeps it (PlayerCharacter::lastUsedPowerArmor).
 		ArmorFrames::LastFrame LastFrameOf(RE::PlayerCharacter* a_player)
 		{
@@ -714,6 +725,9 @@ namespace Party
 				case Hotkeys::Action::kPing:
 					SendPing();
 					break;
+				case Hotkeys::Action::kWhere:
+					ShowWhere();
+					break;
 				case Hotkeys::Action::kEmotePoint:
 				case Hotkeys::Action::kEmoteCheer:
 				case Hotkeys::Action::kEmoteClap:
@@ -726,8 +740,14 @@ namespace Party
 		}
 
 		// An emote: our stand-in plays it for the others, and so do we (third person shows it).
+		// (A frame has its own skeleton and animation graph: the human arm animation of a point, cheer or clap there slid the
+		// player's view sideways. Refused with a line saying why.)
 		void Emote(std::uint8_t a_action)
 		{
+			if (const auto player = Player(); player && Equipment::InPowerArmor(player)) {
+				Hud::Notify(Text::Get("party.no_emote_armor"));
+				return;
+			}
 			WeaponFire::QueueAction(a_action);
 			if (const auto idle = WeaponFire::EmoteIdleName(a_action)) {
 				RE::Console::ExecuteCommand(std::format("player.playidle {}", idle).c_str());
@@ -927,6 +947,18 @@ namespace Party
 		}
 	}
 
+	void ShowWhere()
+	{
+		const auto players = RemotePlayers::List();
+		if (players.empty()) {
+			Hud::Notify(Text::Get("party.alone"));
+			return;
+		}
+		for (const auto& player : players) {
+			Hud::Notify(Text::Format("party.where", { { "player", player.name }, { "where", WhereIs(player) } }));
+		}
+	}
+
 	void PickTeleportTarget()
 	{
 		const auto players = RemotePlayers::List();
@@ -997,7 +1029,7 @@ namespace Party
 				return;
 			}
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll();
+			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -1008,7 +1040,7 @@ namespace Party
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll();
+			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);

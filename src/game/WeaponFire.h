@@ -54,6 +54,13 @@ namespace WeaponFire
 	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
 	void ArmExplosionWatch();
 
+	// Whether our game reports the explosions around our player now (a throw's watch is on), so each goes off in the
+	// friends' games too; and whether it did within THREW_LATELY, while the fire a Molotov left may still burn there
+	// (CopyHealth::OwnersToDeal). Any thread.
+	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
+	[[nodiscard]] bool ExplosionsShared();
+	[[nodiscard]] bool ThrewLately();
+
 	// Ends any replayed sound still following this actor: called before the actor is deleted, since
 	// the sound follows its 3D root.
 	void ReleaseSoundsOf(std::uint32_t a_actorFormId);
@@ -73,6 +80,13 @@ namespace WeaponFire
 
 	// The same for every copy, before a save or a load and when the session ends (a ghost is never saved).
 	void EndAllShields();
+
+	// Before a save, after EndAllShields: the console's setghost 0 lands a frame after it is sent, so the ghosts it is
+	// still to take off have their flag turned off for the save itself (a ghost saved stayed one for good in the game
+	// that loaded it). AfterSave, once the save is written, turns it back on and sends setghost 0 again, which the
+	// console leaves alone on a flag that reads off already. Main thread.
+	void HideGhostsFromSave();
+	void AfterSave();
 
 	// The grenade is shown in the hand of a stand-in replaying a friend's throw, from its wind-up to its release
 	// (HandThrowable.h): set from bGrenadeInHand at load, and by the dev's handthrowable on|off|model (a_modelFallback:

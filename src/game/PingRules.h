@@ -208,6 +208,20 @@ namespace PingRules
 		std::uint32_t                    refused = 0;
 	};
 
+	// Which of the eight compass points (0 N, 1 NE ... 7 NW) an offset points to: dx east, dy north. 0 for an offset
+	// that is not a number.
+	[[nodiscard]] inline std::size_t BearingIndex(float a_dx, float a_dy)
+	{
+		if (!std::isfinite(a_dx) || !std::isfinite(a_dy)) {
+			return 0;
+		}
+		float degrees = std::atan2(a_dx, a_dy) * 180.0f / 3.14159265f;
+		if (degrees < 0.0f) {
+			degrees += 360.0f;
+		}
+		return static_cast<std::size_t>(std::lround(degrees / 45.0f)) % 8;
+	}
+
 	// A distance in whole meters, for the HUD.
 	[[nodiscard]] inline long Meters(float a_units)
 	{

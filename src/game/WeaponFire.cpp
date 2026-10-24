@@ -143,6 +143,8 @@ namespace WeaponFire
 		std::uint32_t            shieldsHurt = 0;     // ... that lost health meanwhile all the same
 		std::uint32_t            shieldedDied = 0;    // ... that died meanwhile all the same
 		std::uint32_t            ghostsStuck = 0;     // ... still ghosts five frames after we took the ghost off
+		std::uint32_t            ghostsHiddenFromSaves = 0;  // ghosts of ours whose flag was turned off for a save (HideGhostsFromSave)
+		std::uint32_t            ghostsRetried = 0;  // ... and setghost 0 sent again for them (ReadBackGhosts)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -568,7 +570,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
+		return std::format("shots={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} inhand={}", total.load(), played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -665,6 +667,17 @@ namespace WeaponFire
 	void ArmExplosionWatch()
 	{
 		watchUntil = Clock::now() + EXPLOSION_WATCH;
+	}
+
+	bool ExplosionsShared()
+	{
+		return Clock::now() <= watchUntil.load();
+	}
+
+	bool ThrewLately()
+	{
+		const auto until = watchUntil.load();
+		return until != Clock::time_point{} && Clock::now() <= until + THREW_LATELY;
 	}
 
 	void ScanExplosions()
@@ -1088,6 +1101,7 @@ namespace WeaponFire
 		// still hurt shows there).
 		std::unordered_map<std::uint32_t, float> healthWhenShielded;
 		std::unordered_set<std::uint32_t>        unghostLater;  // ghosts of ours not loaded when they were to come off
+		std::vector<std::uint32_t>               hiddenFromSave;  // ghosts whose flag HideGhostsFromSave turned off for the save (AfterSave)
 
 		// Our copy under the session's id (nullptr: none here, or gone).
 		RE::Actor* CopyOf(std::uint32_t a_id)
@@ -1119,6 +1133,18 @@ namespace WeaponFire
 				return "none";
 			}
 			return *reinterpret_cast<const bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData)) ? "on" : "off";
+		}
+
+		// Sets the ghost flag in the actor's extra data itself, which a save writes (the console's setghost takes a frame,
+		// and keeps its own count of the ghost: see AfterSave). Whether there was one to change.
+		bool SetGhostData(RE::Actor* a_actor, bool a_on)
+		{
+			const auto extra = a_actor->extraList ? a_actor->extraList->GetByType(RE::EXTRA_DATA_TYPE::kGhost) : nullptr;
+			if (!extra) {
+				return false;
+			}
+			auto& flag = *reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(extra) + sizeof(RE::BSExtraData));
+			return std::exchange(flag, a_on) != a_on;
 		}
 
 		bool WasGhost(RE::Actor* a_actor)
@@ -1158,17 +1184,32 @@ namespace WeaponFire
 			}
 		}
 
+		// Copies still ghosts five frames after their setghost 0, sent it again (how many times, up to GHOST_RETRIES).
+		constexpr std::uint8_t                           GHOST_RETRIES = 3;
+		std::unordered_map<std::uint32_t, std::uint8_t> ghostRetries;
+
 		void ReadBackGhosts()
 		{
-			std::erase_if(ghostReadbacks, [](const GhostReadback& a_readback) {
+			std::vector<std::uint32_t> again;
+			std::erase_if(ghostReadbacks, [&](const GhostReadback& a_readback) {
 				const auto after = frames - a_readback.frame;
 				if (after != 1 && after != READBACK_LAST) {
 					return after > READBACK_LAST;
 				}
 				const auto actor = CopyOf(a_readback.id);
 				const bool still = actor && a_readback.on != actor->GetGhost();
-				if (after == READBACK_LAST && still && !a_readback.on) {
-					++ghostsStuck;
+				if (after == READBACK_LAST && !a_readback.on) {
+					if (!still) {
+						ghostRetries.erase(a_readback.id);
+					} else {
+						++ghostsStuck;
+						// A setghost 1 sent in the frame a save began landed after the setghost 0 that followed it
+						// (the rig: both sent before either landed, the copy a ghost for good): the ghost is taken off
+						// again, unless a new explosion made it one meanwhile.
+						if (!shields.Shielded(a_readback.id) && ghostRetries[a_readback.id]++ < GHOST_RETRIES) {
+							again.push_back(a_readback.id);
+						}
+					}
 				}
 				if (readbacksLogged < 120 || (after == READBACK_LAST && still)) {
 					++readbacksLogged;
@@ -1177,6 +1218,16 @@ namespace WeaponFire
 				}
 				return after == READBACK_LAST;
 			});
+			for (const auto id : again) {
+				// A flag that reads off on a copy the engine still counts a ghost is put back on first: the console's
+				// setghost 0 leaves a flag that reads off alone (AfterSave).
+				if (const auto actor = CopyOf(id)) {
+					SetGhostData(actor, true);
+				}
+				++ghostsRetried;
+				REX::INFO("WeaponFire: {} still a ghost five frames after its setghost 0, sent again", Name(id));
+				SetGhost(id, false);
+			}
 		}
 
 		// Makes ghosts of our copies of NPCs another game runs that a friend's explosion at a_at reaches, before it is
@@ -1289,6 +1340,9 @@ namespace WeaponFire
 		void EndDueShields()
 		{
 			++frames;
+			if (!hiddenFromSave.empty()) {
+				AfterSave();  // the save's own message had it done already, unless it came off the main thread
+			}
 			ReadBackGhosts();
 			ReportShieldedDeaths();
 			std::erase_if(unghostLater, [](std::uint32_t a_id) {
@@ -1338,6 +1392,53 @@ namespace WeaponFire
 	{
 		for (const auto id : shields.EndAll()) {
 			Unshield(id, "a save, a load or the session's end");
+		}
+	}
+
+	void HideGhostsFromSave()
+	{
+		// The console's setghost 0 lands a frame after it is sent, and the save is written in this frame: the ghost went
+		// into the save, and whoever loaded it (a player who died loads their last save) found those enemies ghosts for
+		// good, their shots passing through; as ghosts already, they were never ours to clear again. So the flag the save
+		// writes is turned off for it: on the copies whose setghost 0 went in the last frames and hasn't landed
+		// (EndAllShields and NpcSync::ReleaseMirrors end every shield just before this), and on those whose ghost was to
+		// come off once they loaded again. AfterSave puts it back on.
+		const auto hide = [](std::uint32_t a_id) {
+			if (const auto actor = CopyOf(a_id); actor && SetGhostData(actor, false) && std::ranges::find(hiddenFromSave, a_id) == hiddenFromSave.end()) {
+				hiddenFromSave.push_back(a_id);
+			}
+		};
+		for (const auto& readback : ghostReadbacks) {
+			if (!readback.on) {
+				hide(readback.id);
+			}
+		}
+		std::ranges::for_each(unghostLater, hide);
+		if (!hiddenFromSave.empty()) {
+			ghostsHiddenFromSaves += static_cast<std::uint32_t>(hiddenFromSave.size());
+			REX::INFO("WeaponFire: {} ghost{} against friends' explosions kept out of the save", hiddenFromSave.size(), hiddenFromSave.size() == 1 ? "" : "s");
+		}
+	}
+
+	void AfterSave()
+	{
+		// The console's setghost 0 finds a ghost whose flag reads off already and leaves it: the engine still counted the
+		// copy a ghost (the rig: GetGhost on, the flag off, five frames on). So the flag goes back on and the command goes
+		// again, to take the ghost off as it does. One whose command landed meanwhile has no flag left to put back; one
+		// not loaded is unghosted as it loads again (unghostLater).
+		std::uint32_t again = 0;
+		for (const auto id : std::exchange(hiddenFromSave, {})) {
+			const auto actor = CopyOf(id);
+			if (!actor || !SetGhostData(actor, true)) {
+				continue;
+			}
+			if (!unghostLater.contains(id)) {
+				SetGhost(id, false);
+				++again;
+			}
+		}
+		if (again > 0) {
+			REX::INFO("WeaponFire: after the save, setghost 0 sent again to {} cop{}", again, again == 1 ? "y" : "ies");
 		}
 	}
 

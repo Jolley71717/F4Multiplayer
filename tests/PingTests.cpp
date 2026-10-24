@@ -1,6 +1,7 @@
 #include "Test.h"
 
 #include "Protocol.h"
+#include "Text.h"
 #include "game/PingRules.h"
 
 #include <chrono>
@@ -325,4 +326,31 @@ TEST("ping rules: distances in whole meters")
 	CHECK(PingRules::Meters(70.0f) == 1);     // 70 units is a meter
 	CHECK(PingRules::Meters(1610.0f) == 23);
 	CHECK(PingRules::Meters(NaN) == 0);
+}
+
+TEST("ping rules: the eight compass points, north up and east right")
+{
+	// dx east, dy north (the game's x and y): N NE E SE S SW W NW as the HUD names them.
+	CHECK(PingRules::BearingIndex(0.0f, 1.0f) == 0);
+	CHECK(PingRules::BearingIndex(1.0f, 1.0f) == 1);
+	CHECK(PingRules::BearingIndex(1.0f, 0.0f) == 2);
+	CHECK(PingRules::BearingIndex(1.0f, -1.0f) == 3);
+	CHECK(PingRules::BearingIndex(0.0f, -1.0f) == 4);
+	CHECK(PingRules::BearingIndex(-1.0f, -1.0f) == 5);
+	CHECK(PingRules::BearingIndex(-1.0f, 0.0f) == 6);
+	CHECK(PingRules::BearingIndex(-1.0f, 1.0f) == 7);
+	// A hair west of north is still north, not the last point; the edges fall to the nearer point.
+	CHECK(PingRules::BearingIndex(-0.01f, 1.0f) == 0);
+	CHECK(PingRules::BearingIndex(0.4f, 1.0f) == 0);
+	CHECK(PingRules::BearingIndex(0.5f, 1.0f) == 1);
+	CHECK(PingRules::BearingIndex(NaN, 1.0f) == 0);
+}
+
+TEST("ping rules: a friend's line reads \"Name: 240 m NE\"")
+{
+	// The same pieces the where key uses: whole meters, a compass word, and the party.where / player.distance texts.
+	const long  meters = PingRules::Meters(16800.0f);
+	const auto  dir = std::vector<const char*>{ "N", "NE", "E", "SE", "S", "SW", "W", "NW" }[PingRules::BearingIndex(100.0f, 100.0f)];
+	CHECK(meters == 240);
+	CHECK(Text::Format("party.where", { { "player", "Sam" }, { "where", Text::Format("player.distance", { { "m", std::to_string(meters) }, { "dir", dir } }) } }) == "Sam: 240 m NE");
 }

@@ -200,6 +200,20 @@ if ($null -ne $hudVtable) {
 	$slot = [BitConverter]::ToUInt64((BytesAt ($hudVtable + 4 * 8) 8), 0) - $imageBase
 	Report (IsFunctionStart $slot) ('HUDMenu vtable slot 4 (AdvanceMovie, hooked by Compass) is a function, +{0:X}' -f $slot)
 }
+# The power armor HUD's vtable (RE::VTABLE::PowerArmorHUDMenu[0], hooked by Compass): its class's primary one (the
+# RTTI locator before it names PowerArmorHUDMenu at offset 0), and slot 4 a function.
+$armorHudVtable = Resolve 1009779
+if ($null -eq $armorHudVtable) {
+	Report $false 'PowerArmorHUDMenu vtable 1009779: not in the Address Library'
+} else {
+	$locator = [BitConverter]::ToUInt64((BytesAt ($armorHudVtable - 8) 8), 0) - $imageBase
+	$locatorBytes = BytesAt $locator 24
+	$type = [BitConverter]::ToUInt32($locatorBytes, 12)
+	$name = [Text.Encoding]::ASCII.GetString((BytesAt ($type + 16) 26))
+	Report ([BitConverter]::ToUInt32($locatorBytes, 4) -eq 0 -and $name.StartsWith('.?AVPowerArmorHUDMenu@@')) ('PowerArmorHUDMenu vtable +{0:X} is the primary one of PowerArmorHUDMenu' -f $armorHudVtable)
+	$slot = [BitConverter]::ToUInt64((BytesAt ($armorHudVtable + 4 * 8) 8), 0) - $imageBase
+	Report (IsFunctionStart $slot) ('PowerArmorHUDMenu vtable slot 4 (AdvanceMovie, hooked by Compass) is a function, +{0:X}' -f $slot)
+}
 
 # The texture update the position job waits on (TextureWait.cpp, docs/HANG-20261017.md): its state, the wait's loop on
 # it, and the walk that hands a batch over when the streamer's pool runs out.

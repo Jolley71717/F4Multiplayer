@@ -14,7 +14,9 @@
 #include "game/CopyHealth.h"
 #include "game/HealthShare.h"
 
+#include <algorithm>
 #include <cmath>
+#include <thread>
 
 using namespace Sim;
 
@@ -62,6 +64,30 @@ namespace
 			copy.OurHit(RAIDER, now);
 			Frame();
 			if (Runs() || v0810) {
+				Report(health / 100.0f);
+				share.Sent(RAIDER, health / 100.0f, now);
+			}
+		}
+
+		// Our player's blow of a_damage, the hit event read as a_blow, taken as CopyWatch and WorldSync take it: on a copy,
+		// one OwnersToDeal leaves to the NPC's own game is no hit of ours (given back, not sent) and claims nothing; any
+		// other claims the raider (a takeover the server grants 5 s after it last changed hands), the claim leaving at the
+		// end of the frame, ahead of the damage the next frame sends (Session::Frame). a_rule090: 0.9.0's OwnersToDeal,
+		// which took any blow whose event read an explosion, a throwable or a spell with no weapon for a throw's.
+		void Strike(float a_damage, const CopyHealth::Blow& a_blow, bool a_rule090 = false)
+		{
+			const bool onCopy = !Runs();
+			const bool owners = a_rule090 ? (a_blow.explosion || a_blow.throwable || a_blow.spellAlone) : CopyHealth::OwnersToDeal(a_blow);
+			const auto after = CopyHealth::After(CopyHealth::Hitter::kOurPlayer, client.OwnerOf(RAIDER), client.Id(), false, owners);
+			health -= a_damage;
+			if (!(onCopy && owners)) {
+				copy.OurHit(RAIDER, now);
+			}
+			if (after.claim) {
+				client.Claim(RAIDER, Protocol::ClaimReason::kInteract);
+			}
+			Frame();
+			if (!onCopy && after.report) {
 				Report(health / 100.0f);
 				share.Sent(RAIDER, health / 100.0f, now);
 			}
@@ -141,6 +167,9 @@ namespace
 			hostGame.v0810 = bobGame.v0810 = a_v0810;
 			hostGame.Frame();
 			bobGame.Frame();
+			// The host's game reports the raider as it starts to run it; the throttle is out by the time the fight starts.
+			hostGame.Wait(HealthShare::THROTTLE);
+			Deliver();
 		}
 
 		void Deliver()
@@ -253,25 +282,54 @@ TEST("health share: a host's report that lands between Bob's shot and his next f
 	CHECK(Near(f.bobGame.health, 88.0f));
 }
 
-TEST("health share: the book reports nothing on first sight, nothing under a step, and at most once every throttle")
+TEST("health share: the book reports an NPC on first sight, then nothing under a step, and at most once every throttle")
 {
 	HealthShare::Book book;
-	const Clock::time_point t0{};
-	CHECK(!book.Due(RAIDER, 1.0f, t0));  // where it stands
-	CHECK(!book.Due(RAIDER, 1.0f - HealthShare::STEP / 2, t0 + FRAME));
-	CHECK(book.Due(RAIDER, 0.9f, t0 + 2 * FRAME));  // the first change goes at once
-	CHECK(!book.Due(RAIDER, 0.8f, t0 + 3 * FRAME));  // then waits out the throttle
-	CHECK(book.Due(RAIDER, 0.8f, t0 + 2 * FRAME + HealthShare::THROTTLE));
-	CHECK(book.Shared() == 2);
+	const Clock::time_point t0{ std::chrono::hours{ 1 } };
+	CHECK(book.Due(RAIDER, 0.7f, t0));  // newly ours: where it stands goes out, whatever the friends last heard
+	CHECK(!book.Due(RAIDER, 0.7f - HealthShare::STEP / 2, t0 + HealthShare::THROTTLE));
+	CHECK(book.Due(RAIDER, 0.6f, t0 + HealthShare::THROTTLE));  // a change once the throttle is out
+	CHECK(!book.Due(RAIDER, 0.5f, t0 + HealthShare::THROTTLE + FRAME));  // then waits out the throttle
+	CHECK(book.Due(RAIDER, 0.5f, t0 + 2 * HealthShare::THROTTLE));
+	CHECK(book.Shared() == 3);
+	CHECK(book.Firsts() == 1);
 
 	// A hit's report is what the friends have: the same health is not sent again.
 	book.Sent(RAIDER, 0.5f, t0 + std::chrono::seconds{ 5 });
 	CHECK(!book.Due(RAIDER, 0.5f, t0 + std::chrono::seconds{ 6 }));
 	CHECK(book.Due(RAIDER, 0.4f, t0 + std::chrono::seconds{ 6 }));
 
-	book.Prune([](std::uint32_t) { return false; });
+	// Out of sight a moment (a frame with no 3D, another process level): not new when it is back.
+	const auto unseen = [](std::uint32_t) { return false; };
+	book.Prune(unseen, t0 + std::chrono::seconds{ 7 });
+	CHECK(book.Size() == 1);
+	CHECK(!book.Due(RAIDER, 0.4f, t0 + std::chrono::seconds{ 8 }));
+	// Gone for good: forgotten, and reported afresh should our game run it again.
+	book.Prune(unseen, t0 + std::chrono::seconds{ 8 } + HealthShare::FORGET_AFTER);
 	CHECK(book.Size() == 0);
-	CHECK(!book.Due(RAIDER, 0.1f, t0 + std::chrono::seconds{ 7 }));  // seen anew
+	CHECK(book.Due(RAIDER, 0.4f, t0 + std::chrono::seconds{ 30 }));
+}
+
+TEST("health share: a load's crowd of NPCs newly ours is reported a few at a time, none of them lost")
+{
+	HealthShare::Book book;
+	const Clock::time_point t0{ std::chrono::hours{ 1 } };
+	constexpr std::uint32_t NPCS = 40;
+	std::uint32_t           reported = 0;
+	auto                    now = t0;
+	std::uint32_t           mostInAThrottle = 0;
+	while (reported < NPCS && now < t0 + std::chrono::seconds{ 5 }) {
+		std::uint32_t thisFrame = 0;
+		for (std::uint32_t i = 0; i < NPCS; ++i) {
+			thisFrame += book.Due(RAIDER + i, 1.0f, now);
+		}
+		reported += thisFrame;
+		mostInAThrottle = (std::max)(mostInAThrottle, thisFrame);
+		now += HealthShare::THROTTLE;
+	}
+	CHECK(reported == NPCS);
+	CHECK(mostInAThrottle == HealthShare::FIRST_PER_THROTTLE);
+	CHECK(book.Firsts() == NPCS);
 }
 
 TEST("copy health: what our hits take off a copy is booked once as ours to send; what nothing of ours took is given back, not sent")
@@ -327,10 +385,12 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	using CopyHealth::OwnersToDeal;
 	constexpr std::uint32_t US = 2;
 	constexpr std::uint32_t FRIEND = 1;
-	CHECK(OwnersToDeal(Blow{ .explosion = true }));
-	CHECK(OwnersToDeal(Blow{ .throwable = true }));
-	CHECK(OwnersToDeal(Blow{ .spellAlone = true }));
+	// While our game shares its explosions (a throw's watch is on), and a while after for what they left burning.
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .explosionsShared = true, .threwLately = true }));
+	CHECK(OwnersToDeal(Blow{ .throwable = true, .explosionsShared = true, .threwLately = true }));
+	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{}));  // a gun's, a bat's: ours to report
+	CHECK(!OwnersToDeal(Blow{ .inHand = true, .explosionsShared = true, .threwLately = true }));
 
 	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).report);
 	CHECK(!After(Hitter::kOurPlayer, FRIEND, US, false, true).claim);
@@ -341,4 +401,163 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	CHECK(After(Hitter::kOurPlayer, 0, US, false, true).report);
 	CHECK(After(Hitter::kOurPlayer, 0, US, false, true).claim);
 	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, false).report);
+}
+
+TEST("copy health: a blow with a weapon in hand is ours whatever else its hit event reads, and nothing is a throw's while our game shares no explosion")
+{
+	using CopyHealth::Blow;
+	using CopyHealth::OwnersToDeal;
+	// A gun's hit read as an explosion's, or as a spell's with no weapon: ours while no explosion of ours is shared.
+	CHECK(!OwnersToDeal(Blow{ .explosion = true, .inHand = true }));
+	CHECK(!OwnersToDeal(Blow{ .explosion = true, .inHand = true, .threwLately = true }));
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .inHand = true, .explosionsShared = true, .threwLately = true }));
+	CHECK(!OwnersToDeal(Blow{ .throwable = true, .inHand = true, .explosionsShared = true }));
+	// While a throw's watch is on, every explosion near our player goes off in the owner's game too, a missile's as well.
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .inHand = true, .explosionsShared = true }));
+	// No throw of ours lately: none of our explosions goes off in another game, so none of these is dealt there.
+	CHECK(!OwnersToDeal(Blow{ .explosion = true }));
+	CHECK(!OwnersToDeal(Blow{ .throwable = true }));  // a mine laid long ago, stepped on now
+	CHECK(!OwnersToDeal(Blow{ .spellAlone = true }));
+	// After the throw's watch: its explosions are no longer reported, while the fire it left may burn on there too.
+	CHECK(!OwnersToDeal(Blow{ .explosion = true, .threwLately = true }));
+	CHECK(!OwnersToDeal(Blow{ .throwable = true, .threwLately = true }));
+	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));
+}
+
+namespace
+{
+	// The host's game runs the raider; Bob and Carol have their copies of it. Within 5 s of the host's claim, so no
+	// takeover is granted.
+	struct Trio
+	{
+		Session s;
+		Client& host = s.Host();
+		Client& bob = s.Player("Bob");
+		Client& carol = s.Player("Carol");
+		Game    hostGame{ host };
+		Game    bobGame{ bob };
+		Game    carolGame{ carol };
+
+		Trio()
+		{
+			REQUIRE(host.Join());
+			REQUIRE(bob.Join());
+			REQUIRE(carol.Join());
+			host.Claim(RAIDER);
+			s.Settle();
+			REQUIRE(bob.OwnerOf(RAIDER) == host.Id());
+			REQUIRE(carol.OwnerOf(RAIDER) == host.Id());
+			for (auto* game : { &hostGame, &bobGame, &carolGame }) {
+				game->Frame();
+			}
+			hostGame.Wait(HealthShare::THROTTLE);
+			Deliver();
+		}
+
+		void Deliver()
+		{
+			s.Settle();
+			for (auto* game : { &hostGame, &bobGame, &carolGame }) {
+				game->Apply();
+			}
+		}
+
+		void Pass()
+		{
+			for (int i = 0; i < 2; ++i) {
+				for (auto* game : { &hostGame, &bobGame, &carolGame }) {
+					game->Wait(std::chrono::seconds{ 1 });
+				}
+				Deliver();
+			}
+		}
+	};
+
+	// A gun's hit as 0.9.0 took it in the players' reports: its hit event reads the kExplosion bit with the gun as the
+	// weapon in hand, or names no weapon and a spell for its source.
+	constexpr CopyHealth::Blow GUN_READ_AS_EXPLOSION{ .explosion = true, .inHand = true };
+	constexpr CopyHealth::Blow GUN_NO_WEAPON_READ{ .spellAlone = true };
+}
+
+TEST("copy health: in a team of three only the game that ran the raider hurt it with guns in 0.9.0; now every player's shots count")
+{
+	for (const bool rule090 : { true, false }) {
+		Trio t;
+		t.bobGame.Strike(10.0f, GUN_READ_AS_EXPLOSION, rule090);
+		t.carolGame.Strike(15.0f, GUN_NO_WEAPON_READ, rule090);
+		t.Deliver();
+		t.hostGame.Strike(5.0f, CopyHealth::Blow{ .inHand = true }, rule090);
+		t.Pass();
+		if (rule090) {
+			// "Exactly one player can deal damage normally": the host's 5 counts, the friends' shots came back.
+			CHECK(Near(t.hostGame.health, 95.0f));
+			CHECK(Near(t.bobGame.health, 95.0f));
+			CHECK(Near(t.carolGame.health, 95.0f));
+			CHECK(t.bobGame.givenBack == 10.0f);
+			CHECK(t.carolGame.givenBack == 15.0f);
+		} else {
+			CHECK(Near(t.hostGame.health, 70.0f));
+			CHECK(Near(t.bobGame.health, 70.0f));
+			CHECK(Near(t.carolGame.health, 70.0f));
+			CHECK(t.bobGame.givenBack == 0.0f);
+			CHECK(t.carolGame.givenBack == 0.0f);
+		}
+	}
+}
+
+TEST("copy health: a gun's hit on a copy is reported and claims the NPC, as a melee hit's does")
+{
+	using CopyHealth::After;
+	using CopyHealth::Hitter;
+	using CopyHealth::OwnersToDeal;
+	constexpr std::uint32_t US = 2;
+	constexpr std::uint32_t FRIEND = 1;
+	// In 0.9.0 a shock baton's hit claimed the NPC and a gun's did not: whoever last hit it in melee ran it, and only
+	// they could hurt it.
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, OwnersToDeal(GUN_READ_AS_EXPLOSION)).claim);
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, OwnersToDeal(GUN_READ_AS_EXPLOSION)).report);
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, OwnersToDeal(GUN_NO_WEAPON_READ)).claim);
+	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, OwnersToDeal(GUN_NO_WEAPON_READ)).report);
+}
+
+TEST("health share: Bob's shot that takes the raider over is not lost: his game reports the raider's health as it starts to run it")
+{
+	Fight f;
+	f.hostGame.Shoot(30.0f);
+	f.Pass();
+	REQUIRE(Near(f.bobGame.health, 70.0f));
+	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	// His claim leaves at the end of the frame, his shot's damage at the start of the next: the server gives him the
+	// raider first, and the host's game drops the damage as no longer its to deal.
+	f.bobGame.Strike(20.0f, CopyHealth::Blow{ .inHand = true });
+	f.Deliver();
+	REQUIRE(f.bob.OwnerOf(RAIDER) == f.bob.Id());
+	CHECK(Near(f.hostGame.health, 70.0f));
+	f.Pass();
+	// Bob's game reported where the raider stands as it took it over: the host's copy follows (in 0.9.0 it stayed at 70,
+	// and the host saw his own shots come off health the raider no longer had).
+	CHECK(Near(f.hostGame.health, 50.0f));
+	f.hostGame.Shoot(10.0f);
+	f.Pass();
+	CHECK(Near(f.bobGame.health, 40.0f));
+	CHECK(Near(f.hostGame.health, 40.0f));
+}
+
+TEST("health share: after a host's reload brings the raider back at its save's health, Bob's copy is told, and his next shot comes off that")
+{
+	Fight f;
+	f.hostGame.Shoot(60.0f);
+	f.Pass();
+	REQUIRE(Near(f.bobGame.health, 40.0f));
+	// The host dies and loads their save: the raider is back at full health in the host's game, and the book let go of
+	// it while the load hid it (FORGET_AFTER).
+	f.hostGame.health = 100.0f;
+	f.hostGame.share = HealthShare::Book{};
+	f.Pass();
+	CHECK(Near(f.bobGame.health, 100.0f));  // in 0.9.0 Bob's copy showed 40, and each of his shots "healed" it to the host's
+	f.bobGame.Strike(10.0f, CopyHealth::Blow{ .inHand = true });
+	f.Pass();
+	CHECK(Near(f.hostGame.health, 90.0f));
+	CHECK(Near(f.bobGame.health, 90.0f));
+	CHECK(f.bobGame.givenBack == 0.0f);
 }

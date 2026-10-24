@@ -37,6 +37,16 @@ namespace
 		int  standUpFrames = 30;
 		bool fullHealth = false;  // the game stood them up with full health
 		int  trims = 0;
+		bool putDownIgnored = false;  // the engine's put-down does not take
+		int  putDowns = 0;
+
+		// The game stands them up on a path the stay-down flag does not hold back.
+		void StoodUpByGame()
+		{
+			if (down && !dead) {
+				down = false;
+			}
+		}
 
 		void LethalHit()
 		{
@@ -64,6 +74,9 @@ namespace
 		int               kills = 0;
 		int               lastRevives = 0;
 		int               revivesBack = 0;
+		int               stoodUp = 0;
+		int               backDown = 0;
+		int               stayedUp = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -107,6 +120,15 @@ namespace
 					body.standUpIn = -1;
 				}
 			}
+			if (step.putDown) {
+				++body.putDowns;
+				if (!body.putDownIgnored && !body.dead) {
+					body.down = true;
+				}
+			}
+			stoodUp += step.stoodUp;
+			backDown += step.backDown;
+			stayedUp += step.stayedUp;
 			if (step.trimHealth) {
 				body.fullHealth = false;
 				++body.trims;
@@ -393,6 +415,135 @@ TEST("downed: a save cleared the flags while down; they are set again next frame
 	CHECK(game.body.essential);
 	CHECK(game.body.stayDown);
 	CHECK(game.self.Now() == Phase::kDown);
+}
+
+TEST("downed: the game standing the player up while they wait for help puts them down again, and a friend can still help")
+{
+	// Seen 2026-10-19: downed in a pile of clutter, the host was stood up by the game, and their revive state was lost.
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 5s);
+	game.body.StoodUpByGame();
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.stoodUp == 1);
+	CHECK(game.body.putDowns == 1);
+	CHECK(game.body.down);  // put down again
+	CHECK(game.body.stayDown);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.self.WaitsForHelp());
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.backDown == 1);
+	CHECK(game.downNotices == 1);  // the same down: no second "You're down!"
+	CHECK(game.self.downs == 1);
+	CHECK(game.self.standUps == 1);
+
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.trims == 1);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed: stood up again and again while down, the bleed-out time runs on from the first down")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	const auto downAt = now;
+	for (int frame = 0; now - downAt < DownRules::BLEEDOUT_TIME + 3s; ++frame) {
+		if (frame % 10 == 5) {
+			game.body.StoodUpByGame();  // every second, a pile of clutter jostling the player
+		}
+		game.Frame(now);
+		now += FRAME;
+	}
+	CHECK(game.self.standUps >= 40);
+	CHECK(game.self.bleedOuts == 1);
+	CHECK(game.body.dead);
+	CHECK(game.self.revives == 0);
+	CHECK(game.downNotices == 1);
+	CHECK(game.stayedUp == 0);
+}
+
+TEST("downed: a put-down the game never takes is tried every half second, and after 5 s the player is left up")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.putDownIgnored = true;
+	game.body.StoodUpByGame();
+	game.Run(now, DownRules::PUT_DOWN_GIVE_UP + 1s);
+	CHECK(game.stayedUp == 1);
+	CHECK(game.body.putDowns == 10);  // 5 s, every 500 ms
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(!game.self.WaitsForHelp());
+	CHECK(!game.body.stayDown);
+	CHECK(!game.body.dead);
+	CHECK(game.kills == 0);
+	// Up again: a lethal hit knocks them down as usual.
+	game.body.putDownIgnored = false;
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.downNotices == 2);
+}
+
+TEST("downed: stood up as the last friend leaves, the player is left up, not killed")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.withFriends = false;
+	game.body.StoodUpByGame();
+	game.Run(now, 2s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.putDowns == 0);
+	CHECK(!game.body.dead);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed: dying for a moment while down is waited out, with no put-down and no second down")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.down = false;  // a hit the game is still turning into a down
+	game.body.dead = true;
+	game.Run(now, 1s);
+	CHECK(game.body.putDowns == 0);
+	CHECK(game.self.Now() == Phase::kDown);
+	game.body.dead = false;
+	game.body.down = true;
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.downNotices == 1);
+	CHECK(game.backDown == 1);
+}
+
+TEST("downed: a real death while down is up (dead) after the wait, and the next life starts over")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.body.down = false;
+	game.body.dead = true;
+	game.Run(now, DownRules::PUT_DOWN_GIVE_UP + 1s);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.body.putDowns == 0);
+	CHECK(!game.self.IsDown());
 }
 
 TEST("downed: a save loaded with the player down stands them up as if helped")
@@ -965,4 +1116,82 @@ TEST("downed rules: out of combat only, a helper in a fight is told once and hel
 	CHECK(anyTime.Frame(true, close, now, true).started == 7);
 	now += DownRules::HELP_TIME;
 	CHECK(anyTime.Frame(true, close, now, true).helped == 7);
+}
+
+// ---- a downed friend's stand-in ------------------------------------------------------------------------
+
+TEST("downed rules: a downed friend's stand-in lies down once it can, and gets up when they do")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	// Up: nothing.
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+	// Down, but the stand-in can't lie yet (its 3D, a frame switch on its way): it waits.
+	CHECK(down.Frame(true, false, false, now) == Do::kNone);
+	now += FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	CHECK(down.Laid());
+	CHECK(down.Lying());
+	// Lying: nothing more while they are down.
+	for (int i = 0; i < 50; ++i) {
+		now += FRAME;
+		CHECK(down.Frame(true, true, true, now) == Do::kNone);
+	}
+	CHECK(down.lieDowns == 1);
+	// Up again: it gets up, and is ours until its life state says so.
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	CHECK(down.Laid());
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kNone);
+	CHECK(down.Laid());
+	now += FRAME;
+	CHECK(down.Frame(false, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+}
+
+TEST("downed rules: a downed friend's stand-in stood up by something here is laid down again a while later")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	// The engine's own recovery stood it up: not ours any more, and laid down again only after LIE_RETRY.
+	CHECK(down.Frame(true, true, false, now) == Do::kNone);
+	CHECK(!down.Laid());
+	CHECK(down.stoodUp == 1);
+	now += DownRules::StandInDown::LIE_RETRY - 2 * FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kNone);
+	now += 2 * FRAME;
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	CHECK(down.lieDowns == 2);
+}
+
+TEST("downed rules: a downed friend's stand-in that will not get up is placed again; one down again lies again")
+{
+	using Do = DownRules::StandInDown::Do;
+	DownRules::StandInDown down;
+	auto                   now = Start();
+	CHECK(down.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kGetUp);
+	// Still down for GET_UP_LIMIT: replaced, standing.
+	now += DownRules::StandInDown::GET_UP_LIMIT - FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kNone);
+	now += FRAME;
+	CHECK(down.Frame(false, true, true, now) == Do::kReplace);
+	CHECK(!down.Laid());
+	// Down again while getting up: lies down again at once.
+	DownRules::StandInDown again;
+	CHECK(again.Frame(true, true, false, now) == Do::kLieDown);
+	now += FRAME;
+	CHECK(again.Frame(false, true, true, now) == Do::kGetUp);
+	now += FRAME;
+	CHECK(again.Frame(true, true, true, now) == Do::kLieDown);
+	CHECK(again.Lying());
+	// A stand-in it laid down is not broken for it; any other down one still is.
+	CHECK(DownRules::StandInBroken(DownRules::LIFE_ESSENTIAL_DOWN, false, false));
 }

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using CharacterBinding::Legacy;
@@ -117,6 +118,74 @@ TEST("character binding: an old shared file that can't be read is left alone, an
 	// The test rig (dev channel) keeps files of its own, and never looks at the old one.
 	CHECK(CharacterBinding::PrepareFile(folder, SOLO, true, 0x5E55, say) == folder / CharacterBinding::FileName(SOLO, true));
 	CHECK(log.empty());
+
+	std::error_code error;
+	std::filesystem::remove_all(folder, error);
+}
+
+TEST("character binding: a quickload of the same character is the same character, whatever high half the game gives its ID")
+{
+	// The rig's host: a coc character from the main menu (0 in memory) loaded its own quicksave
+	// (Quicksave0_00000000M_...) and the game said 0000000100000000. A character first played before any mod is
+	// 0x0000000012345678 in memory and 0x0000000112345678 from its saves made since ('M').
+	CHECK(CharacterBinding::Character(0x0000000100000000) == CharacterBinding::Character(0));
+	CHECK(CharacterBinding::Character(0x0000000112345678) == 0x12345678);
+	CHECK(CharacterBinding::Character(0x0000000012345678) == 0x12345678);
+	CHECK(CharacterBinding::Character(0x0000000112345678) != CharacterBinding::Character(0x0000000112345679));
+
+	CharacterBinding::Tracker tracker;
+	const CharacterBinding::Link hosting{ true, true, false };
+	tracker.OnHostingStarted(CharacterBinding::Character(0));
+	CHECK(tracker.OnLoad(hosting, false, CharacterBinding::Character(0x0000000100000000)) == Step::kNone);
+	CHECK(tracker.Check(hosting, InWorld(CharacterBinding::Character(0x0000000100000000))) == Step::kNone);
+	CHECK(tracker.OnLoad(hosting, false, CharacterBinding::Character(0x00000001D8F04348)) == Step::kStopHosting);  // another character
+
+	// A friend joined with the character, then quickloads it: still in the session.
+	CharacterBinding::Tracker   friendTracker;
+	const CharacterBinding::Link joining{ false, false, true };
+	friendTracker.OnHello(CharacterBinding::Character(0x0000000012345678));
+	CHECK(friendTracker.OnLoad(joining, false, CharacterBinding::Character(0x0000000112345678)) == Step::kNone);
+	CHECK(friendTracker.OnLoad(joining, false, CharacterBinding::Character(0x0000000187654321)) == Step::kLeave);
+}
+
+TEST("character binding: a session file named after the whole ID (up to 0.9.0-rc2) becomes the character's file")
+{
+	const auto folder = std::filesystem::temp_directory_path() / std::format("f4mp-bind-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+	std::filesystem::create_directories(folder);
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	const auto               write = [&](const std::string& a_name, std::string_view a_text) {
+		std::ofstream out{ folder / a_name, std::ios::binary };
+		out << a_text;
+	};
+	constexpr std::uint64_t CHARACTER = 0xD8F04348;
+	write(CharacterBinding::FileName(0x00000001D8F04348, false), "the co-op session");
+	write(CharacterBinding::FileName(0x00000001D8F04349, false), "another character's");
+	write(CharacterBinding::FileName(0x00000001D8F04348, true), "the rig's");
+
+	const auto path = CharacterBinding::PrepareFile(folder, CHARACTER, false, 0, say);
+	CHECK(path == folder / CharacterBinding::FileName(CHARACTER, false));
+	CHECK(std::filesystem::exists(path) && std::filesystem::file_size(path) == std::string_view{ "the co-op session" }.size());
+	CHECK(!std::filesystem::exists(folder / CharacterBinding::FileName(0x00000001D8F04348, false)));
+	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(0x00000001D8F04349, false)));  // not this character's
+	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(0x00000001D8F04348, true)));   // the rig's stay apart
+	CHECK(log.size() == 1);
+
+	// Once it has its own file, an older one under a whole ID is left alone.
+	write(CharacterBinding::FileName(0x00000002D8F04348, false), "older");
+	CHECK(CharacterBinding::PrepareFile(folder, CHARACTER, false, 0, say) == path);
+	CHECK(std::filesystem::file_size(path) == std::string_view{ "the co-op session" }.size());
+	CHECK(log.size() == 1);
+
+	// The rig's files move the same way, among its own.
+	CHECK(CharacterBinding::PrepareFile(folder, CHARACTER, true, 0, say) == folder / CharacterBinding::FileName(CHARACTER, true));
+	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(CHARACTER, true)));
+	CHECK(log.size() == 2);
+
+	// The ID 0 (a coc character): its quickload's file (0000000100000000) is taken back too.
+	write(CharacterBinding::FileName(0x0000000100000000, true), "the rig's coc character");
+	CHECK(CharacterBinding::PrepareFile(folder, 0, true, 0, say) == folder / CharacterBinding::FileName(0, true));
+	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(0, true)));
 
 	std::error_code error;
 	std::filesystem::remove_all(folder, error);

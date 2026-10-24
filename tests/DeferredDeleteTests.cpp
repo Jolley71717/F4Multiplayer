@@ -27,3 +27,18 @@ TEST("deferred delete: but not for ever")
 	CHECK(!DeferredDelete::Held(true, DeferredDelete::MAX_HOLD));
 	CHECK(!DeferredDelete::Held(true, 10min));
 }
+
+TEST("deferred delete: a reference is marked for deletion only a second after it was disabled")
+{
+	CHECK(!DeferredDelete::MayDelete(std::nullopt));
+	CHECK(!DeferredDelete::MayDelete(999ms));
+	CHECK(DeferredDelete::MayDelete(DeferredDelete::DELETE_AFTER_DISABLE));
+	CHECK(DeferredDelete::MayDelete(5s));
+}
+
+TEST("deferred delete: not even before a save: one disabled in the save's flush waits")
+{
+	// The flush before a save disables what still stands and asks at once: the answer must be no, or it is
+	// disabled and deleted in one frame (a physics job crashed on the freed stand-in after a save).
+	CHECK(!DeferredDelete::MayDelete(0ms));
+}

@@ -2,13 +2,16 @@
 #include "DevChannel.h"
 #include "DevCommands.h"
 #include "game/Equipment.h"
+#include "game/Downed.h"
 #include "game/Drops.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
 #include "game/FrameWatch.h"
 #include "game/GpuWatch.h"
+#include "game/Hotkeys.h"
 #include "game/Hud.h"
+#include "game/InputGate.h"
 #include "game/WeaponFire.h"
 #include "game/WorldSync.h"
 #include "game/FrameStats.h"
@@ -38,6 +41,7 @@ __declspec(dllimport) std::intptr_t __stdcall SetWindowLongPtrW(void* a_window, 
 __declspec(dllimport) std::intptr_t __stdcall CallWindowProcW(std::intptr_t a_proc, void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) int __stdcall PostMessageW(void* a_window, unsigned int a_msg, std::uintptr_t a_wparam, std::intptr_t a_lparam);
 __declspec(dllimport) unsigned int __stdcall RegisterWindowMessageW(const wchar_t* a_name);
+__declspec(dllimport) short __stdcall GetAsyncKeyState(int a_key);
 }
 
 // kernel32, for the stack check (see NestedPump).
@@ -283,6 +287,50 @@ namespace
 		}
 	}
 
+	// Running on unfocused, the game must not read the mouse, keys or pad meant for another window (see InputGate).
+	// Main thread only: the game polls its devices there.
+	InputGate::Gate inputGate;
+	constexpr std::uint32_t INPUT_GATE_LOGGED = 3;  // the first few closes and opens go to the log
+	std::uint32_t           inputGateLogged = 0;
+
+	bool MouseButtonDown()
+	{
+		// VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2
+		for (const int vk : { 0x01, 0x02, 0x04, 0x05, 0x06 }) {
+			if ((GetAsyncKeyState(vk) & 0x8000) != 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void GateInput()
+	{
+		const auto input = RE::BSInputDeviceManager::GetSingleton();
+		const auto setting = AlwaysActive();
+		if (!input || !setting) {
+			return;
+		}
+		const bool enabled = setting->GetBinary();
+		const bool front = !enabled || Hotkeys::GameInFront();
+		const auto step = inputGate.Frame(enabled, front, front && enabled && MouseButtonDown());
+		if (step.polling) {
+			input->pollingEnabled = *step.polling;
+		}
+		if (step.clear) {
+			for (const auto device : input->devices) {
+				if (device) {
+					device->ClearInputState();
+				}
+			}
+		}
+		if ((step.closed || step.opened) && inputGateLogged < INPUT_GATE_LOGGED * 2) {
+			++inputGateLogged;
+			REX::INFO("Input: {}", step.closed ? "the game's window is not in front: no input reaches the game until it is (it runs on)" :
+			                                     std::format("the game's window is in front: input goes to the game again ({})", inputGate.Describe()));
+		}
+	}
+
 	void OnF4SEMessage(F4SE::MessagingInterface::Message* a_msg)
 	{
 		switch (a_msg->type) {
@@ -327,6 +375,7 @@ namespace
 			RunBeforeSaveOrLoad(
 				[] {
 					Session::OnBeforeSaveOrLoad();
+					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					SaveGuard::BeforeSave();
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
@@ -334,6 +383,15 @@ namespace
 				"save");
 			break;
 		case F4SE::MessagingInterface::kPostSaveGame:
+			if (gameDataReady) {
+				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
+				if (OnMainThread()) {
+					Downed::OnAfterSave();
+					WeaponFire::AfterSave();
+				} else {
+					MainThread::Post([] { Downed::OnAfterSave(); });
+				}
+			}
 			EndSaveOrLoad(SaveLoadHold::Global().Newest(), "save");
 			break;
 		case F4SE::MessagingInterface::kPostLoadGame:
@@ -438,6 +496,9 @@ namespace
 			{
 				PERF_SCOPE("Background");
 				RunInBackground();
+				if (a_onMain) {
+					GateInput();
+				}
 			}
 			{
 				PERF_SCOPE("RealTime");
