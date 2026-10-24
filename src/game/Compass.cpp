@@ -10,6 +10,8 @@
 
 namespace Compass
 {
+	void DrawShape(Scaleform::GFx::Value& a_graphics, PlayerMarks::Shape a_shape);  // below; FriendMap draws with it too
+
 	namespace
 	{
 		using GValue = Scaleform::GFx::Value;
@@ -17,31 +19,11 @@ namespace Compass
 		// The compass bar (the same HUDCompassWidget in both HUDs, see Surface) is 304 px across and shows about 100 degrees (N and E are 272 px apart).
 		constexpr float PIXELS_PER_DEGREE = 3.02f;
 		constexpr float HALF_WIDTH = 148.0f;  // past this they're pinned to the edge
-		enum class Shape
-		{
-			kCircle,
-			kSquare,
-			kDiamond,
-			kTriangle,
-		};
+		using PlayerMarks::Shape;
 
-		struct Marker
+		const PlayerMarks::Mark& MarkerOf(std::uint32_t a_playerId)
 		{
-			std::uint32_t    color;
-			Shape            shape;
-			std::string_view name;
-		};
-
-		constexpr std::array<Marker, 4> MARKERS{ {
-			{ 0x4FC3F7, Shape::kCircle, "blue circle" },
-			{ 0xFFB74D, Shape::kSquare, "orange square" },
-			{ 0xF06292, Shape::kDiamond, "pink diamond" },
-			{ 0xB39DDB, Shape::kTriangle, "purple triangle" },
-		} };
-
-		const Marker& MarkerOf(std::uint32_t a_playerId)
-		{
-			return MARKERS[a_playerId % MARKERS.size()];
+			return PlayerMarks::Of(a_playerId);
 		}
 
 		// A marker on the compass: a friend (their shape) or a ping (a ring in the pinger's color), each player's own.
@@ -134,32 +116,6 @@ namespace Compass
 		bool Draw(GValue& a_graphics, const char* a_method, std::initializer_list<GValue> a_args)
 		{
 			return a_graphics.Invoke(a_method, nullptr, a_args.begin(), a_args.size());
-		}
-
-		// Each player slot gets its own shape as well as its own color.
-		void DrawShape(GValue& a_graphics, Shape a_shape)
-		{
-			switch (a_shape) {
-			case Shape::kCircle:
-				Draw(a_graphics, "drawCircle", { GValue(0.0), GValue(0.0), GValue(6.0) });
-				break;
-			case Shape::kSquare:
-				Draw(a_graphics, "drawRect", { GValue(-5.5), GValue(-5.5), GValue(11.0), GValue(11.0) });
-				break;
-			case Shape::kDiamond:
-				Draw(a_graphics, "moveTo", { GValue(0.0), GValue(-7.5) });
-				Draw(a_graphics, "lineTo", { GValue(6.5), GValue(0.0) });
-				Draw(a_graphics, "lineTo", { GValue(0.0), GValue(7.5) });
-				Draw(a_graphics, "lineTo", { GValue(-6.5), GValue(0.0) });
-				Draw(a_graphics, "lineTo", { GValue(0.0), GValue(-7.5) });
-				break;
-			case Shape::kTriangle:
-				Draw(a_graphics, "moveTo", { GValue(0.0), GValue(6.5) });
-				Draw(a_graphics, "lineTo", { GValue(7.0), GValue(-6.0) });
-				Draw(a_graphics, "lineTo", { GValue(-7.0), GValue(-6.0) });
-				Draw(a_graphics, "lineTo", { GValue(0.0), GValue(6.5) });
-				break;
-			}
 		}
 
 		std::string ChildName(std::uint64_t a_key)
@@ -430,6 +386,31 @@ namespace Compass
 	std::string_view MarkerName(std::uint32_t a_playerId)
 	{
 		return MarkerOf(a_playerId).name;
+	}
+
+	void DrawShape(Scaleform::GFx::Value& a_graphics, PlayerMarks::Shape a_shape)
+	{
+		switch (a_shape) {
+		case Shape::kCircle:
+			Draw(a_graphics, "drawCircle", { GValue(0.0), GValue(0.0), GValue(6.0) });
+			break;
+		case Shape::kSquare:
+			Draw(a_graphics, "drawRect", { GValue(-5.5), GValue(-5.5), GValue(11.0), GValue(11.0) });
+			break;
+		case Shape::kDiamond:
+			Draw(a_graphics, "moveTo", { GValue(0.0), GValue(-7.5) });
+			Draw(a_graphics, "lineTo", { GValue(6.5), GValue(0.0) });
+			Draw(a_graphics, "lineTo", { GValue(0.0), GValue(7.5) });
+			Draw(a_graphics, "lineTo", { GValue(-6.5), GValue(0.0) });
+			Draw(a_graphics, "lineTo", { GValue(0.0), GValue(-7.5) });
+			break;
+		case Shape::kTriangle:
+			Draw(a_graphics, "moveTo", { GValue(0.0), GValue(6.5) });
+			Draw(a_graphics, "lineTo", { GValue(7.0), GValue(-6.0) });
+			Draw(a_graphics, "lineTo", { GValue(-7.0), GValue(-6.0) });
+			Draw(a_graphics, "lineTo", { GValue(0.0), GValue(6.5) });
+			break;
+		}
 	}
 
 	std::string Describe()

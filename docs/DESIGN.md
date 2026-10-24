@@ -909,6 +909,31 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   report new bits. Receivers run `showmap <ref> 1` (the console records the change for the save;
   writing the byte wouldn't). The server keeps the session's markers and sends them with the world
   state (on join and after loading a save).
+- Friends on the Pip-Boy's maps (src/game/FriendMap.cpp, `FriendMapPlace.h`; `bFriendsOnMap`, `bFriendsOnMapNames`): no
+  plugin, no quest, no reference, nothing in a save. Each friend's mark (their compass color and shape, `PlayerMarks.h`)
+  and name are drawn into the map page's own marker layer from inside the Pip-Boy menu's own update (`AdvanceMovie`,
+  hooked in `PipboyMenu`'s vtable: the menu is never looked up). What the page does, read from
+  `Interface/Pipboy_MapPage.swf` (in `Fallout4 - Interface.ba2`): under `root.Menu_mc` (PipboyMenu.swf's `PipboyMenu`),
+  `CurrentPage` is the map page while the map is up, with `WorldMapHolder_mc` and `LocalMapHolder_mc`; each holder's
+  `MarkerHolder_mc` holds its markers, and `markerArray` their data (world `x`/`y`, the `clip`, `shouldClamp` for the
+  quest and player-set markers pinned to the edge). A marker goes at `normalizedToMapSpace(n)`, `n` the world spot on the
+  map's axes from the corners in `DataObj` (`WorldMapNWCorner`/`NECorner`/`SWCorner`, the world map straight along x and
+  y, the local map projected on its own axes), and that a scale and offset per axis from the texture's size less gutters
+  the page keeps to itself (by map: the Commonwealth's, Far Harbor's, Nuka-World's; none on the local map). Panning and
+  zooming move and scale the whole holder; only the markers' scale changes (`MARKER_SCALE_MIN` to `MAX` by zoom). So
+  the axes are worked out as the page does, and the scale and offset fitted (least squares) to up to 24 of the page's
+  own markers, each of which must be within 2 px of the fit (a stray one is left out, at most one in four); a local map
+  with too few markers is taken at its texture's size, if those there agree. Nothing is drawn on a map that fits
+  badly (another mod's map page). Our marks take the smallest of the sampled markers' scale (times 1.6), so they zoom
+  as the page's do. They are MovieClips: the page's `ClearMarkers` reads every child of the layer as a MovieClip and
+  its `markerId`, and a Shape there would stop it with an error. They are put back on top when the page adds markers,
+  are not in `markerArray` (never selected, no fast travel), and take no mouse. The world map shows our worldspace
+  (a worldspace inside another counts as its parent's, whose coordinates it shares); a friend inside is shown at
+  their interior's way out, faded: the interiors' doors (persistent references with `ExtraTeleport`, read once from the
+  game data when first wanted) followed through the fewest interiors to one leading outside, as the game shows the
+  player there. When we are inside, our own way out says which world map is up (or the worldspace we were last
+  outside in). The local map shows friends in our interior, or outside near enough to be on it. Names are TextFields
+  in `$MAIN_Font_Bold` with a dark glow. `friendmap` (dev) says what the last update read and fitted.
 - Quest completion: `QUEST_DATA::flags` 0x0002. A quest that completes within 10 s of another
   player's stage was completed by them; otherwise `ReportQuestDone` names us to the others.
 - Conversations (src/game/Conversations.cpp): dialogue plays in one game only. The talker re-claims
