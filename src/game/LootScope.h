@@ -57,6 +57,8 @@ namespace LootScope
 		bool   vendorChest = false;  // a faction's merchant container: a vendor's stock and caps
 		bool   alive = false;        // an actor the engine says is alive
 		bool   knownDead = false;    // an actor the session says is dead (its kill may still be on its way here)
+		bool   storage = false;      // a container that keeps what is put in it: one that never respawns, one in a home or a
+		                             // settlement, or one the player owns (a stash, not a roll of loot)
 	};
 
 	enum class Direction : std::uint8_t
@@ -124,6 +126,14 @@ namespace LootScope
 			return Scope::kNotYetDead;
 		}
 		return Scope::kShared;
+	}
+
+	// Whether what the holder has is the game's own roll of loot, which each game rolls on its own: a chest that respawns
+	// outside a home or a settlement, or an NPC. Only such a holder taken bare is bare for friends (CONTAINER_EMPTIED): a
+	// container that keeps things may hold a friend's stash, put there in their own world.
+	constexpr bool Rolled(const HolderFacts& a_holder)
+	{
+		return a_holder.kind == Holder::kActor || (a_holder.kind == Holder::kContainer && !a_holder.storage);
 	}
 
 	// A loose item picked up from the world. Each game's copy of a placed item is that same reference, so a

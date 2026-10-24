@@ -4,6 +4,7 @@
 #include "game/DownRules.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/RemotePlayers.h"
 #include "game/WorldSync.h"
 #include "Text.h"
@@ -24,6 +25,8 @@ namespace Downed
 		Clock::time_point giveUpHeldSince{};
 		bool              giveUpHeld = false;
 		std::optional<Clock::time_point> lastSaveAt;  // OnBeforeSave, for the stand-up log
+		std::optional<Clock::time_point> consoleSeenAt;  // the console last seen open
+		constexpr auto                   CONSOLE_GRACE = std::chrono::seconds{ 2 };  // a command's effect may come as it closes
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 
@@ -181,6 +184,9 @@ namespace Downed
 			if (a_step.backDown) {
 				REX::INFO("Downed: down again ({} put-down(s) in all)", self.putDowns);
 			}
+			if (a_step.upByCommand) {
+				REX::INFO("Downed: stood up while waiting for help with the console open ({}); up it is", StandUpFacts(a_player));
+			}
 			if (a_step.stayedUp) {
 				REX::WARN("Downed: the game kept us up through {} s of putting us down ({}); up it is", DownRules::PUT_DOWN_GIVE_UP.count(), StandUpFacts(a_player));
 			}
@@ -245,13 +251,19 @@ namespace Downed
 		const bool enabled = self.GetRules().revive && a_withFriends && WorldSync::InWorld();
 		const auto now = Clock::now();
 		const bool fighting = player->IsInCombat();
+		// A stand-up while the console is open, or just after it closed, is the player's own command (DownRules::Facts).
+		if (OpenMenus::Open(OpenMenus::Menu::kConsole)) {
+			consoleSeenAt = now;
+		}
+		const bool console = consoleSeenAt && now - *consoleSeenAt < CONSOLE_GRACE;
 
 		const DownRules::Facts facts{ .enabled = enabled,
 			.essential = essential,
 			.down = InEssentialDown(player),
 			.dead = Dying(player),
 			.paused = GamePaused(),
-			.inCombat = fighting };
+			.inCombat = fighting,
+			.console = console };
 		Apply(player, self.Frame(facts, now));
 
 		// With the teleport key off, Party doesn't see the hold: watch the fallback key here.
@@ -269,10 +281,10 @@ namespace Downed
 		HelpFriends(player, enabled && self.Now() == DownRules::Self::Phase::kUp && !facts.dead, fighting, now);
 	}
 
-	void SetRules(const Protocol::SessionRules& a_rules)
+	void SetRules(const Protocol::SessionRules& a_rules, std::uint64_t a_session)
 	{
 		const auto rules = DownRules::Rules::From(a_rules);
-		self.SetRules(rules);
+		self.SetRules(rules, a_session);
 		helper.SetRules(rules);
 	}
 

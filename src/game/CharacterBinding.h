@@ -38,15 +38,19 @@ namespace CharacterBinding
 		return std::format("F4Multiplayer.{}{:016X}.session", a_dev ? "dev." : "", a_character);
 	}
 
-	// Up to 0.9.0-rc2 a session file was named after the whole ID, high half too: the newest such file of a_character
-	// (the same low half, another high half), if there is one and a_character has no file under its own name yet.
-	[[nodiscard]] inline std::optional<std::filesystem::path> FileUnderWholeId(const std::filesystem::path& a_folder, std::uint64_t a_character, bool a_dev)
+	// Up to 0.9.0-rc2 a session file was named after the whole ID, high half too: such a file of a_character (the same low
+	// half, another high half), if there is one and a_character has no file under its own name yet. The one of the session
+	// the loaded save was played in (a_saveSession, its co-save record's) if one is: a quickload that restarted hosting left
+	// a fresh file beside the real one, written last. Else the newest.
+	[[nodiscard]] inline std::optional<std::filesystem::path> FileUnderWholeId(const std::filesystem::path& a_folder, std::uint64_t a_character, bool a_dev,
+		std::uint64_t a_saveSession = 0)
 	{
 		const auto own = FileName(a_character, a_dev);
 		const auto prefix = std::format("F4Multiplayer.{}", a_dev ? "dev." : "");
 		const auto suffix = std::format("{:08X}.session", Character(a_character));
 		std::optional<std::filesystem::path>   found;
 		std::filesystem::file_time_type        newest{};
+		bool                                   saves = false;  // found is the save's session's
 		std::error_code                        error;
 		for (std::filesystem::directory_iterator it{ a_folder, error }, end; !error && it != end; it.increment(error)) {
 			const auto name = it->path().filename().string();
@@ -56,6 +60,16 @@ namespace CharacterBinding
 			const auto high = std::string_view{ name }.substr(prefix.size(), 8);
 			if (high.find_first_not_of("0123456789ABCDEF") != std::string_view::npos || !it->is_regular_file(error)) {
 				continue;
+			}
+			if (saves) {
+				continue;
+			}
+			if (a_saveSession != 0) {
+				if (const auto file = SessionFile::Load(it->path()); file && file->sessionId == a_saveSession) {
+					found = it->path();
+					saves = true;
+					continue;
+				}
 			}
 			const auto time = it->last_write_time(error);
 			if (!error && (!found || time > newest)) {
@@ -192,7 +206,7 @@ namespace CharacterBinding
 		const auto      path = a_folder / FileName(a_character, a_dev);
 		std::error_code error;
 		if (!std::filesystem::exists(path, error)) {
-			if (const auto whole = FileUnderWholeId(a_folder, a_character, a_dev)) {
+			if (const auto whole = FileUnderWholeId(a_folder, a_character, a_dev, a_saveSession)) {
 				std::filesystem::rename(*whole, path, error);
 				a_log(error ? std::format("could not rename {} to {}: {}", whole->filename().string(), path.filename().string(), error.message()) :
 				              std::format("continuing the saved co-op session: {} is now {}", whole->filename().string(), path.filename().string()));

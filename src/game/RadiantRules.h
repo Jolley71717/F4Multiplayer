@@ -268,6 +268,15 @@ namespace RadiantRules
 	inline constexpr std::uint32_t ALIAS_BY_OTHERS = 1u << 11;
 	inline constexpr std::uint32_t ALIAS_ALLOW_RESERVED = 1u << 9;
 
+	// A forced alias's flags for a friend's start: no longer filled by the others, and, only where its conditions are lifted
+	// (an optional pick that follows this game's state: a settlement owned here and not there), allowed a reference another
+	// quest of this game reserves. A needed alias keeps the reservations: a target a story or companion quest holds here
+	// fails the start, and the run stays each player's own.
+	constexpr std::uint32_t ForcedFlags(std::uint32_t a_flags, bool a_lifted)
+	{
+		return (a_flags & ~ALIAS_BY_OTHERS) | (a_lifted ? ALIAS_ALLOW_RESERVED : 0u);
+	}
+
 	// How a reference alias is filled, by BGSRefAlias::FILL_TYPE: 0 conditions, 1 forced, 2 from another alias, 3
 	// from the start's event, 4 made at runtime, 5 another quest's alias, 6 a unique actor, 7 near another alias.
 	inline Fill RefFill(std::uint16_t a_fillType, std::uint32_t a_flags)

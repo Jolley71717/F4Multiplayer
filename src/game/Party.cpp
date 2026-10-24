@@ -1010,10 +1010,11 @@ namespace Party
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
 
-		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins go first, in this
-		// frame (RemotePlayers::DespawnAll, as before a save): the engine clears the cells for the coc or cow later in this
-		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
-		// crashes the engine unloading it or the next save. They are placed again where we arrive.
+		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins are taken out first
+		// (RemotePlayers::DespawnAll, as before a save): disabled in this frame, before the engine clears the cells for the
+		// coc or cow later in it, and deleted a second later, their records kept out of every save meanwhile (a stand-in
+		// left with no cell crashed the next save). Not deleted at once: a physics job of the frames after still handles a
+		// collision with one just beside the player (the crash a save's flush had). They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
@@ -1029,7 +1030,7 @@ namespace Party
 				return;
 			}
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -1040,7 +1041,7 @@ namespace Party
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);

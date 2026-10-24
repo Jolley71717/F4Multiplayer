@@ -30,7 +30,7 @@ namespace FrameClock
 			return wall;
 		}
 		std::scoped_lock l{ lock };
-		return frames.Now(wall, timer->lastTime, timer->delta);
+		return frames.Now(wall, timer->lastTime, EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
 	}
 
 	Clock::time_point Previous()
@@ -41,7 +41,7 @@ namespace FrameClock
 			return wall;
 		}
 		std::scoped_lock l{ lock };
-		return frames.Previous(wall, timer->lastTime, timer->delta);
+		return frames.Previous(wall, timer->lastTime, EngineClock::FrameSeconds(timer->delta, timer->realTimeDelta));
 	}
 
 	Raw Read()

@@ -363,6 +363,7 @@ namespace RadiantSync
 			Clock::time_point          since{};
 			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
 			bool                       uncount = false;   // ... whose offer stays counted at the Railroad's HQ: counted off once stopped
+			bool                       replaced = false;  // this game's own run of it was stopped for it: started again if theirs isn't (RestartOwn)
 		};
 		std::optional<Starting> starting;
 
@@ -461,12 +462,74 @@ namespace RadiantSync
 					Restore(a_saved);
 					return false;
 				}
-				// The friend's pick is taken even when another quest of this game holds it (a reference one reserves): which quests
-				// run is each game's own.
-				const auto reserved = force.form != 0 ? RadiantRules::ALIAS_ALLOW_RESERVED : 0u;
-				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>((Flags(alias) & ~RadiantRules::ALIAS_BY_OTHERS) | reserved);
+				// A lifted pick is taken even when another quest of this game reserves it (the settlement this game owns): see
+				// RadiantRules::ForcedFlags.
+				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>(RadiantRules::ForcedFlags(Flags(alias), lift));
 			}
 			return true;
+		}
+
+		// Whether Force could force every alias of the plan, without forcing any: asked before this game's own run is stopped
+		// for a friend's, so a start that can't be made leaves ours running.
+		bool CanForce(RE::TESQuest* a_quest, const RadiantRules::Plan& a_plan)
+		{
+			for (const auto& force : a_plan.forces) {
+				const auto it = std::ranges::find_if(a_quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == force.alias; });
+				if (it == a_quest->aliases.end()) {
+					return false;
+				}
+				if (AsRef(*it) && force.kind == Kind::kRef) {
+					if (force.form != 0 && RefWord(force.form) == 0) {
+						return false;
+					}
+				} else if (AsLoc(*it) && force.kind == Kind::kLoc) {
+					if (force.form != 0 && !RE::TESForm::GetFormByID<RE::BGSLocation>(force.form)) {
+						return false;
+					}
+				} else {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// This game's own run, stopped for a friend's that then didn't start here: started again, once it has stopped, with
+		// its own fills (nothing of it was the player's yet, and the giver hands it out as before).
+		struct Restart
+		{
+			std::uint32_t     quest = 0;
+			Clock::time_point since{};
+		};
+		std::optional<Restart> restart;
+		std::uint32_t          restarted = 0;
+
+		void RestartOwn(std::uint32_t a_quest)
+		{
+			restart = Restart{ a_quest, Clock::now() };
+		}
+
+		void RestartFrame()
+		{
+			if (!restart) {
+				return;
+			}
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(restart->quest);
+			if (!quest) {
+				restart.reset();
+				return;
+			}
+			if (quest->data.flags & QUEST_RUNNING) {
+				// Still stopping (a stopquest of theirs a moment ago), or already started again by its own scripts.
+				if (Clock::now() - restart->since >= START_TIMEOUT) {
+					restart.reset();
+				}
+				return;
+			}
+			const auto id = restart->quest;
+			restart.reset();
+			RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+			++restarted;
+			REX::INFO("RadiantSync: {:08X} '{}': the friend's run didn't start here, so this game's own run was started again", id, QuestName(quest));
 		}
 
 		// A friend's stages of a run shared here: each set once (Book::Accept), in order, by QuestSync's queue.
@@ -514,6 +577,9 @@ namespace RadiantSync
 			}
 			if (a_timedOut) {
 				Decline(start.quest, start.run, "the game didn't start it with their fills");
+				if (start.replaced) {
+					RestartOwn(start.quest);
+				}
 				return;
 			}
 			const auto aliases = AliasesOf(quest);
@@ -526,6 +592,9 @@ namespace RadiantSync
 			if (!RadiantRules::SameTargets(mismatches)) {
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", start.quest).c_str());
 				Decline(start.quest, start.run, std::format("started here, it picked other targets ({}), so it was stopped again", FirstDecisive(mismatches)));
+				if (start.replaced) {
+					RestartOwn(start.quest);
+				}
 				return;
 			}
 			auto stages = start.start.stages;
@@ -539,26 +608,52 @@ namespace RadiantSync
 			return !ui || ui->menuMode != 0;
 		}
 
-		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
-		// game's own run of it stopped.
-		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages)
+		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops
+		// anything.
+		std::string CannotStart(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start)
 		{
 			if (!Calibrated()) {
-				Decline(a_start.quest, a_run, "this game's aliases can't be read");
+				return "this game's aliases can't be read";
+			}
+			const auto aliases = AliasesOf(a_quest);
+			const auto rules = Rules(aliases);
+			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
+			if (!plan.Ok()) {
+				return plan.fallback;
+			}
+			if (!CanForce(a_quest, plan)) {
+				return "an alias of theirs couldn't be forced here";
+			}
+			return {};
+		}
+
+		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
+		// game's own run of it stopped (a_replaced: that run is started again if theirs isn't).
+		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages, bool a_replaced = false)
+		{
+			const auto decline = [&](std::string_view a_why) {
+				Decline(a_start.quest, a_run, a_why);
+				if (a_replaced) {
+					RestartOwn(a_start.quest);
+				}
+			};
+			if (!Calibrated()) {
+				decline("this game's aliases can't be read");
 				return;
 			}
 			const auto aliases = AliasesOf(a_quest);
 			const auto rules = Rules(aliases);
 			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
 			if (!plan.Ok()) {
-				Decline(a_start.quest, a_run, plan.fallback);
+				decline(plan.fallback);
 				return;
 			}
 			Starting next{ a_start.quest, a_run, a_start };
 			next.stages = std::move(a_stages);
 			next.unforced = plan.unforced;
+			next.replaced = a_replaced;
 			if (!Force(a_quest, plan, next.saved)) {
-				Decline(a_start.quest, a_run, "an alias of theirs couldn't be forced here");
+				decline("an alias of theirs couldn't be forced here");
 				return;
 			}
 			next.since = Clock::now();
@@ -603,13 +698,19 @@ namespace RadiantSync
 				book.Refuse(start.quest, start.run);
 				return;
 			}
-			StartHere(quest, start.start, start.run, std::move(start.stages));
+			StartHere(quest, start.start, start.run, std::move(start.stages), true);
 		}
 
 		// A friend's run of a quest that runs here with other targets, its run here not given to this player: that run is
 		// stopped (nothing of it was the player's yet) and theirs started once it has.
 		void Replace(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::string_view a_why)
 		{
+			// Theirs must be one this game can start with their fills before ours is stopped; one that still fails once ours
+			// has stopped (the game's start picks others, or none in time) starts ours again (RestartOwn).
+			if (const auto why = CannotStart(a_quest, a_start); !why.empty()) {
+				Decline(a_start.quest, a_run, std::format("it runs here already with other targets ({}), and theirs can't start here: {}", a_why, why));
+				return;
+			}
 			Starting next{ a_start.quest, a_run, a_start };
 			next.since = Clock::now();
 			next.stopping = true;
@@ -690,10 +791,13 @@ namespace RadiantSync
 		{
 			if (starting) {
 				Restore(starting->saved);
-				if (starting->stopping && starting->uncount) {
+				if (starting->stopping || starting->replaced) {
 					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
 					if (quest && !(quest->data.flags & QUEST_RUNNING)) {
-						CountOff(starting->quest);  // ours stopped; theirs won't start now
+						if (starting->stopping && starting->uncount) {
+							CountOff(starting->quest);  // ours stopped; theirs won't start now
+						}
+						RestartOwn(starting->quest);  // so ours starts again
 					}
 				}
 				starting.reset();
@@ -785,6 +889,7 @@ namespace RadiantSync
 		if (!WorldSync::InWorld()) {
 			return;
 		}
+		RestartFrame();
 
 		// A friend's run being started here: done once it runs (or not, in time). One that replaces this game's own run:
 		// started once that has stopped.
@@ -879,6 +984,7 @@ namespace RadiantSync
 	void Rebaseline()
 	{
 		AbortStart();
+		restart.reset();  // the loaded world has its own runs
 		pending.clear();
 		book.Clear();
 		stopped.clear();
@@ -916,7 +1022,7 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(),
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted,
 			starting ? " starting" : "");
 	}
 }

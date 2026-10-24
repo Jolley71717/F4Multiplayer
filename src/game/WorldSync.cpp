@@ -903,6 +903,36 @@ namespace WorldSync
 			return facts;
 		}
 
+		constexpr std::uint32_t PLAYER_BASE = 0x00000007;     // the player's NPC
+		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;  // PlayerFaction
+
+		// A container that keeps what is put in it (LootScope::HolderFacts::storage), so a friend's copy of it may hold
+		// their stash: one whose base never respawns (the game would wipe a stash in one that does), one the player owns,
+		// or one in a home or a settlement (Home Plate, a Sanctuary house), its location's or a parent's.
+		bool IsStorage(RE::TESObjectREFR* a_ref)
+		{
+			const auto base = a_ref->GetObjectReference();
+			const auto container = base ? base->As<RE::TESObjectCONT>() : nullptr;
+			if (!container || (container->data.contFlags & static_cast<std::int8_t>(RE::TESObjectCONT::Flags::kRespawn)) == 0) {
+				return true;
+			}
+			const auto ours = [](const RE::TESForm* a_owner) { return a_owner && (a_owner->GetFormID() == PLAYER_BASE || a_owner->GetFormID() == PLAYER_FACTION); };
+			const auto cell = a_ref->GetParentCell();
+			if (ours(a_ref->GetOwner()) || (cell && ours(cell->GetOwner()))) {
+				return true;
+			}
+			auto location = a_ref->GetCurrentLocation();
+			if (!location && cell) {
+				location = cell->GetLocation();
+			}
+			for (int depth = 0; location && depth < 8; ++depth, location = location->parentLoc) {
+				if (location->HasKeywordString("LocTypePlayerHouse") || location->HasKeywordString("LocTypeWorkshopSettlement")) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// What holds the items, for LootScope: a reference ID from either end of a move.
 		LootScope::HolderFacts ReadHolderFacts(std::uint32_t a_id)
 		{
@@ -930,6 +960,7 @@ namespace WorldSync
 			const auto base = ref->GetObjectReference();
 			if (base && base->Is(RE::ENUM_FORM_ID::kCONT)) {
 				facts.kind = Holder::kContainer;
+				facts.storage = IsStorage(ref);
 			} else if (base && base->Is(RE::ENUM_FORM_ID::kFURN)) {
 				facts.kind = Holder::kFurniture;  // a power armor frame
 			}
@@ -2456,10 +2487,10 @@ namespace WorldSync
 		// personal= means what it did in 0.8.5: other players' personal items left alone (pickups and loot).
 		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
 		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={} flora={}/{} emptied={}/{}/{}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={} flora={}/{} emptied={}/{}/{} emptiedKept={}",
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
-			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks) +
+			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +

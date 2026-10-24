@@ -468,3 +468,17 @@ TEST("radiants: a friend's run of a quest already running here is shared only if
 	CHECK(!book.IsStarting(MIN_RECRUIT01));
 	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 2, 2 }, false) == Answer::kIgnore));
 }
+
+TEST("radiants: a friend's pick whose conditions are lifted here may take a reference another quest reserves; a needed alias may not")
+{
+	// Forced, an alias no longer follows the others either way.
+	CHECK((ForcedFlags(ALIAS_BY_OTHERS | ALIAS_OPTIONAL, true) & ALIAS_BY_OTHERS) == 0);
+	CHECK((ForcedFlags(ALIAS_BY_OTHERS, false) & ALIAS_BY_OTHERS) == 0);
+	// The settlement owned here and not in the friend's game: the reservation of this game's settlement quests is passed.
+	CHECK((ForcedFlags(ALIAS_OPTIONAL, true) & ALIAS_ALLOW_RESERVED) != 0);
+	// A needed target a story or companion quest reserves here fails the start instead of being taken from it.
+	CHECK((ForcedFlags(0, false) & ALIAS_ALLOW_RESERVED) == 0);
+	// An alias whose own definition allows it keeps it.
+	CHECK((ForcedFlags(ALIAS_ALLOW_RESERVED, false) & ALIAS_ALLOW_RESERVED) != 0);
+	CHECK((ForcedFlags(ALIAS_OPTIONAL, false) & ALIAS_OPTIONAL) != 0);
+}

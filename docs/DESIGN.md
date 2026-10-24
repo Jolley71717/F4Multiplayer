@@ -523,8 +523,13 @@ numbered change, so it is caught up on after a load or a join like any other; on
 each stack its own copy holds that the same take would share, and leaves weapons, armor and personal
 items. It waits like any change for a holder not loaded, a holder whose inventory the game hasn't made
 yet (a chest that rolls its loot as it first loads), and an NPC still alive there; a vendor's chest, a
-workbench or a frame is left alone. An older build sees the player's ref as no item and leaves it.
-`net status` counts `emptied=` sent/applied/stacks taken.
+workbench or a frame is left alone. Storage is too: a chest that never respawns, one in a player home or a
+settlement, one the player owns (`LootScope::HolderFacts::storage`); none is sent for it, and one an older build sends
+for it is not applied, so a friend's stash there stays. What the session put into the holder since it was emptied
+(a friend's put at the same moment, which the server may order either side of the marker) stays too, as many of each
+as the session put and didn't take again. Once a holder's loot respawns (it holds more of something than when it was
+emptied) it may be told empty again. An older build sees the player's ref as no item and leaves it.
+`net status` counts `emptied=` sent/applied/stacks taken and `emptiedKept=`, the items a marker left for the session's puts.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
 shareable ref, goes out as a pickup (kReportPickup, no new message). A receiver whose ref is flora runs
