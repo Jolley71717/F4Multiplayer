@@ -94,6 +94,10 @@ the rc's own zip (`tools/promote.ps1`) become `vX.Y.Z`, fast-forwarded to `main`
 soak with no crash and no regression report; Nexus gets settled versions in batches, rarely. Details
 in [docs/RELEASING.md](docs/RELEASING.md).
 
+A pull request is merged only with the `reviewed` label, which says its code was read at its current head; the review
+itself is a comment naming that commit. New commits remove the label (`.github/workflows/review-label.yml`) until they
+are reviewed too.
+
 ## No personal data
 
 Commits, diffs, commit messages, logs in issues and pull request descriptions must not carry
