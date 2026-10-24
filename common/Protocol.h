@@ -28,7 +28,9 @@ namespace Protocol
 	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
 	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
 	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
-	inline constexpr std::uint16_t VERSION = 49;
+	// 52: destructible objects' damage (Destruction: kReportDestruction, kDestructions): a car, a barrel or a gas pump a
+	// player shot is as wrecked in every game, and goes off once. 50 is the VATS modes' (feat/vats-modes), 51 world traps' (fix/traps).
+	inline constexpr std::uint16_t VERSION = 52;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -144,6 +146,7 @@ namespace Protocol
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
+		kReportDestruction = 34,   // destructible objects (a car, a barrel) the sender's game damaged past a stage (Destructions)
 		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
 		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
 		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
@@ -189,6 +192,7 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
 		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
@@ -862,6 +866,40 @@ namespace Protocol
 	};
 
 	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
+
+	// A destructible object placed by a plugin (a car, an explosive barrel, a gas pump: a reference whose base has
+	// destruction data, IsShareableRef), damaged in the sender's game: its health there (the engine's, in its own units: a
+	// station wagon has 500), and whether the engine counts it destroyed. Each game works out from the health which of the
+	// object's stages it has passed, as the engine does (src/game/DestructionRules.h). The session keeps the lowest health
+	// and destroyed for good (a wreck is never mended), and so does each game.
+	//
+	// explode: in a report, the change passed a stage that sets off an explosion in the sender's game; relayed, the
+	// server lets it through only after one of the sender's shots or throws, within their explosion budget. A game that
+	// gets it sets off the explosion of each stage the change moves its own copy past, once: a stage it had passed
+	// already went off there. Never in a catch-up (a world state after joining or loading: playerId 0), which is the
+	// wreck alone.
+	struct Destruction
+	{
+		std::uint32_t refId = 0;
+		float         health = 0.0f;
+		bool          destroyed = false;
+		bool          explode = false;
+
+		bool operator==(const Destruction&) const = default;
+	};
+
+	// kReportDestruction / kDestructions, reliable: what changed, MAX_DESTRUCTION_ENTRIES at most a packet.
+	struct Destructions
+	{
+		std::uint32_t            playerId = 0;  // stamped by the server; 0 in a catch-up
+		std::vector<Destruction> entries;
+
+		bool operator==(const Destructions&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_DESTRUCTION_ENTRIES = 255;
+	// The game's toughest destructible (a vertibird's wreck, a bus) has a few thousand; a friend's message can say anything.
+	inline constexpr float MAX_DESTRUCTIBLE_HEALTH = 1000000.0f;
 
 	struct FaceBone
 	{
@@ -2703,6 +2741,51 @@ namespace Protocol
 				return std::nullopt;
 			}
 			entry.powered = powered == 1;
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Up to MAX_DESTRUCTION_ENTRIES entries (any more are left off: the sender splits them).
+	inline std::vector<std::uint8_t> Encode(const Destructions& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_DESTRUCTION_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			w.U32(entry.refId);
+			w.F32(entry.health);
+			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (entry.explode ? 2 : 0)));
+		}
+		return w.Data();
+	}
+
+	// None if it names nothing, a reference no plugin placed, or a health no object has.
+	inline std::optional<Destructions> DecodeDestructions(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		Destructions msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			entry.health = r.F32();
+			const auto flags = r.U8();
+			if (!r.Ok() || (flags & ~3u) != 0 || !IsShareableRef(entry.refId) || !std::isfinite(entry.health) || entry.health < 0.0f ||
+				entry.health > MAX_DESTRUCTIBLE_HEALTH) {
+				return std::nullopt;
+			}
+			entry.destroyed = (flags & 1) != 0;
+			entry.explode = (flags & 2) != 0;
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

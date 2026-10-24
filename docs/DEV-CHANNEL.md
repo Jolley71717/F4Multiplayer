@@ -38,6 +38,7 @@ game's own code can:
   They are made at runtime like a random encounter's raiders, so in a session the hostile ones are shared
   as one is (`made=true` in `enemies`). Indoors a wide ring can put them inside a wall: use a small radius.
 - **Moved objects:** `objects` prints what is shared of loose objects moved by hand (the `objects:` part of `net status`), `objects grab` what the player holds (its reference, the grab type, its distance, and whether it is shared), and `objects probe <ref>` a reference's place and angles beside its 3D transform (translation, rotation matrix and XYZ Euler angles) and its physics bodies, to compare two games' copies.
+- **Destructible objects:** `destruct` prints what is shared of cars, barrels and the like (the `destruct:` part of `net status`), `destruct near [radius]` the destructible objects around the player (3000 units unless given: each one's health and maximum, stages passed, destroyed, and its stages as percent with `x` an explosion, `m` a replacement model, `d` gone), and `destruct probe <ref>` one, with whether it is watched or waits to load.
 - **Open and close menus:** `menu PipboyMenu force`.
 - **Change the log:** `log level debug` adds the DEBUG lines (friend scans by alias, the lines
   characters say; HUD messages name players and are never logged) until the game restarts, `log

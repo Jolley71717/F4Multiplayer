@@ -261,6 +261,9 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
+		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
+			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
+		}
 		for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
 			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C }, type), D(DecodeExplosion) });
 		}
@@ -360,6 +363,7 @@ namespace ProtocolSamples
 		case MT::kReportSpawn:
 		case MT::kRename:
 		case MT::kRequestLoadOrder:
+		case MT::kReportDestruction:
 		case MT::kReportDrop:
 		case MT::kClaimDrop:
 		case MT::kDropRecord:
@@ -409,6 +413,7 @@ namespace ProtocolSamples
 		case MT::kRadiantStarted:
 		case MT::kRadiantStage:
 		case MT::kLoadOrder:
+		case MT::kDestructions:
 		case MT::kDropPlaced:
 		case MT::kDropGone:
 		case MT::kDropList:

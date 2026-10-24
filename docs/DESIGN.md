@@ -728,6 +728,64 @@ lift holds the screen black on purpose), and a frame counts at most 250 ms. A fa
 hand in is logged after 30 s of play and left to the game; one up 5 s or more is logged when it goes.
 Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the session's, to test it).
 
+## Destructible objects (src/game/Destructibles.cpp, DestructionRules.h)
+
+A car, an explosive barrel, a fuel tank or a gas pump a player shoots is as wrecked in every game, and goes off once
+in each (protocol 52; 50 and 51 are the VATS modes' and world traps' branches). Before, a car shot in one game blew up
+there only: the friend's stayed whole, and could blow up again when they shot it.
+
+The engine keeps an object's damage as its health (ExtraObjectHealth on the reference, none while it was never
+damaged), and works out from it which of its base's destruction stages it has passed (DEST: a station wagon has 500
+health; at 80% it burns, at 75% a first blast, `CarExplosion`, at 70% it burns harder, at 50% its big one,
+`CarNukeLargeVehicles` with a 900 radius, where it becomes the hulk and counts destroyed, at 0% the last model). Each
+stage comes once, when the health first falls past it: its explosion, debris, model and self-damage (a burning car
+loses health on its own, about 10 s from first fire to the big blast). An explosive barrel has 1 health and one stage
+that blows it up and takes it away. The engine's rules (read from GetCurrentDestructionStage and the damage function):
+the percent is the health over the maximum rounded up; the stages are in order from most health down; passed are those
+before the first whose percent is below the object's.
+
+- Ours: an object our player hit (TESHitEvent, not an actor) is watched ten times a second for 30 s after its last
+  change (64 at most), and a scan once a second of the destructible objects within 4096 units finds any whose stage
+  moved since the scan before (an explosion's, an NPC's shot, burning down). Each stage passed that the session didn't
+  know of goes out as `kReportDestruction` (reliable): the health, destroyed, and `explode` when a stage passed since
+  sets off an explosion. An object first seen by a scan is taken as it is: damage from our own save before the session
+  isn't shared. A deleted reference is left out, but for one the engine deleted as it destroyed it: an explosive
+  barrel's last stage disables it and marks it deleted and destroyed at once (seen on the rig), so leaving out every
+  deleted reference lost the very stage to report, and the shooter's explosion watch reported its blast as a plain
+  explosion.
+- The server keeps the lowest health of each and destroyed for good (a wreck is never mended), relays only news (a
+  report another game's already took further is dropped), and saves the table with the session (layout 35). `explode`
+  is let through only after one of the reporter's shots or throws in the last 30 s, or for 30 s after such a report of
+  the same object from anyone, within the reporter's explosion budget (the same as `kExplosion`'s: 16 at once, 4 a
+  second); past it, the others get the wreck alone. The second window is because each game's copy of a burning car
+  burns down on its own: on the rig the friend's copy, set burning by the replayed first blast, passed the big stage a
+  moment before the shooter's, and with the first window alone the shooter's game got the hulk with no blast. The host's
+  own game has no budget. Each player has a share of the table (`maxWorldEntriesPerPlayer`), as for doors.
+- A friend's (`kDestructions`): our copy takes the lower health (ExtraDataList::SetHealth), destroyed (the form flag, as
+  TESForm::SetDestroyed sets it), and both are marked for the save. What the stages it passes now do in the engine is
+  done to it: the last replacement model passed goes in (ExtraModelSwap, the old model's saved physics dropped, and the
+  3D off and on 100 ms later so it loads with the hulk and its damage stage); otherwise the model's damage stage for the
+  health (the engine's own, as Load3D does); a stage that takes it away disables it. With `explode`, the explosion of
+  each stage our copy passes now goes off at the object through `WeaponFire::ApplyExplosion` (range and radius checks,
+  BlastShield). A stage our copy had passed went off here already (our own shot, an explosion of ours), so it never goes
+  off twice. Whichever game's copy passes a stage first reports it; the other's takes it and doesn't pass it again. A catch-up
+  (joining, loading a save, a restarted session) names nobody and is the wreck alone. An object not in our world waits
+  (up to 20000) until its reference loads (WorldSync's retry).
+- The explosion of a destructible object's own stage is never reported as `kReportExplosion` too: WeaponFire's watch
+  (armed now by a throw or by our hit on a destructible object, so a mine we shoot is shared) asks
+  `Destructibles::ClaimsExplosion`, which finds a plugin's destructible object within 1024 units that has passed a stage
+  with that explosion (or the one its explosion places). Before that the shooter's game would have sent the car's
+  explosion apart from its state, and the friend's whole car would have caught it and gone off on its own as well.
+- Explosion radii a shot sets off, read from Fallout4.esm: a car's first blast 128 and its big one 900 (small and large
+  vehicles alike), an explosive barrel's 350, a gas canister's 120, a Fat Man's shell 850: all under the 1024 cap.
+- `net status` has a `destruct:` part (hits, watched, reported, applied, already, waiting, set off, models, gone,
+  claimed, the scan's objects and time); the dev channel's `destruct near [radius]` lists the destructible objects
+  around our player (health, maximum, stages passed, each stage's percent with `x` explosion, `m` model, `d` gone),
+  `destruct probe <ref>` one.
+
+To check live: shoot a car in one game until it blows: one explosion in each game, the hulk in both; reload either
+game, and a friend who arrives later sees the hulk too (`destruct near` reads destroyed=true and passed=4 or 5).
+
 ## Party (src/game/Party.cpp, WorldClock.cpp, Hotkeys.cpp)
 
 - Status (location, interior cell, health %, level, downed, opening, Pip-Boy light, power armor, menu):
@@ -1082,7 +1140,8 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
 | `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
-| `kExplosion` | anyone who threw in the last 10 s | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
+| `kExplosion` | anyone who threw or shot in the last 10 s (a shot sets off a mine, a car: WeaponFire's watch is armed by our hit on a destructible object) | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
+| `kDestructions` | any game, of a plugin's destructible object (a car, a barrel) | the event budget; a plugin's reference, a health in [0, 1000000]; only news (lower health, or destroyed) is kept and relayed, and kept for good; each player's share of the table; `explode` only after the reporter's shot or throw in the last 30 s, within their explosion budget | a destructible object of ours, not an actor; only a lower health than ours is taken (a wreck is never mended); an explosion only for a stage our copy passes now, through `ApplyExplosion`'s checks; a catch-up sets nothing off | yes (layout 35) |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
