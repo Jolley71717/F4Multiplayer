@@ -65,6 +65,24 @@ namespace FaceHeads
 		return values;
 	}
 
+	// The class of a race's tint template entry, by its vtable (BGSCharacterTint::Template::Mask, Palette, TextureSet).
+	enum class TintClass : std::uint8_t
+	{
+		kMask = 0,
+		kPalette = 1,
+		kTextureSet = 2,
+		kOther,  // none of the three (not read)
+	};
+
+	// Whether a friend's tint layer (Protocol::FaceTint::type: 0 a mask, 1 a palette, 2 a texture set) may be made on
+	// the template it names: only one of the template's own class. The layer's class is the friend's word; the template
+	// is found by its id alone, and one of another class (another mod's race, a bad client) would be read as the wrong
+	// class when the engine builds the head on its loader thread, a crash. Such a layer is left out.
+	constexpr bool TintFits(std::uint8_t a_type, TintClass a_template)
+	{
+		return a_type <= 2 && a_template != TintClass::kOther && static_cast<std::uint8_t>(a_template) == a_type;
+	}
+
 	// Whether a copy made with these pieces has its own head (so its head is the engine's to build at runtime).
 	constexpr bool OwnHead(std::uint32_t a_parts) { return (a_parts & kHeadParts) != 0; }
 

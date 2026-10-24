@@ -34,7 +34,8 @@ namespace RadiantSync
 		// BGSBaseAlias::aliasID of an alias that has none.
 		constexpr std::uint32_t NO_ALIAS = 0xFFFFFFFF;
 
-		RadiantRules::Book                     book;
+		// Run numbers start at this game's start (SerialSeed): a game that restarts never numbers a run as one of its last.
+		RadiantRules::Book                     book{ RadiantRules::SerialSeed(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count())) };
 		std::uint32_t                          self = 0;
 		bool                                   inSession = false;
 		std::vector<std::vector<std::uint8_t>> outgoing;
@@ -555,11 +556,22 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}' isn't shared here, each player's own: {}", a_run.origin, a_run.serial, a_quest, QuestName(quest), a_why);
 		}
 
-		void Share(std::uint32_t a_quest, const Run& a_run, std::vector<std::uint16_t> a_stages, std::string_view a_how)
+		void Share(std::uint32_t a_quest, const Run& a_run, std::vector<std::uint16_t> a_stages, std::string_view a_how, std::span<const Protocol::RadiantFill> a_fills)
 		{
-			book.Join(a_quest, a_run);
+			const bool again = book.Join(a_quest, a_run, a_fills);
 			++joined;
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			if (again && quest) {
+				// Shared here already under another run: the same one shared again under a new number (its game loaded a save
+				// from inside it). The stages done here that its start lacks go to it under the new number, or its game falls
+				// behind (they were reported here under the old one, and are never reported again).
+				for (const auto stage : QuestStageLayout::Done(quest)) {
+					if (std::ranges::find(a_stages, stage) == a_stages.end()) {
+						outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, a_quest, a_run.origin, a_run.serial, stage }, Protocol::MessageType::kReportRadiantStage));
+						++sent;
+					}
+				}
+			}
 			REX::INFO("RadiantSync: sharing player {}'s run {} of {:08X} '{}' ({}), {} stage(s) of theirs to set", a_run.origin, a_run.serial, a_quest, QuestName(quest), a_how,
 				a_stages.size());
 			Take(a_quest, a_run, std::move(a_stages), a_run.origin, false);
@@ -599,7 +611,7 @@ namespace RadiantSync
 			}
 			auto stages = start.start.stages;
 			stages.insert(stages.end(), start.stages.begin(), start.stages.end());
-			Share(start.quest, start.run, std::move(stages), "started here with their fills");
+			Share(start.quest, start.run, std::move(stages), "started here with their fills", start.start.fills);
 		}
 
 		bool Paused()
@@ -657,7 +669,7 @@ namespace RadiantSync
 				return;
 			}
 			next.since = Clock::now();
-			book.Starting(a_start.quest, a_run);
+			book.Starting(a_start.quest, a_run, a_start.fills);
 			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
 				plan.forces.size());
 			starting = std::move(next);
@@ -717,7 +729,7 @@ namespace RadiantSync
 			if (const auto offer = RadiantRules::OfferOf(a_start.quest)) {
 				next.uncount = RadiantRules::LeavesCounted(a_start.quest, QuestStageLayout::Done(a_quest), GlobalValue(offer->global));
 			}
-			book.Starting(a_start.quest, a_run);
+			book.Starting(a_start.quest, a_run, a_start.fills);
 			REX::INFO("RadiantSync: {:08X} '{}' runs here with other targets ({}) and this player hasn't been given it: stopping it for player {}'s run {}", a_start.quest,
 				QuestName(a_quest), a_why, a_run.origin, a_run.serial);
 			starting = std::move(next);
@@ -737,15 +749,20 @@ namespace RadiantSync
 				return;
 			}
 			const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
-			switch (book.OnStart(a_start.quest, run, running)) {
+			switch (book.OnStart(a_start.quest, run, running, a_start.fills)) {
 			case Answer::kIgnore:
+				return;
+			case Answer::kDone:
+				// Their game shares again a run finished here (it loaded a save from inside it, or came back): started here
+				// again, its reward would be paid twice.
+				Decline(a_start.quest, run, "a run with its targets is finished here already");
 				return;
 			case Answer::kCompare:
 				{
 					const auto aliases = AliasesOf(quest);  // the mismatches name its aliases: kept while they are
 					const auto mismatches = CompareHere(quest, aliases, a_start.fills);
 					if (RadiantRules::SameTargets(mismatches)) {
-						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets");
+						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets", a_start.fills);
 					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
 						Replace(quest, a_start, run, FirstDecisive(mismatches));
 					} else {
@@ -767,8 +784,9 @@ namespace RadiantSync
 			if (done.size() > Protocol::MAX_RADIANT_STAGES) {
 				done.erase(done.begin(), done.end() - Protocol::MAX_RADIANT_STAGES);
 			}
-			const auto run = book.Begin(id, self, done);
-			Protocol::RadiantStart start{ 0, id, run.serial, FillsOf(a_quest), done };
+			auto       fills = FillsOf(a_quest);
+			const auto run = book.Begin(id, self, done, fills);
+			Protocol::RadiantStart start{ 0, id, run.serial, std::move(fills), done };
 			outgoing.push_back(Protocol::Encode(start, Protocol::MessageType::kReportRadiantStart));
 			++begun;
 			REX::INFO("RadiantSync: sharing our run {} of {:08X} '{}' ({} fills, {} stage(s) done)", run.serial, id, QuestName(a_quest), start.fills.size(), done.size());
@@ -859,6 +877,20 @@ namespace RadiantSync
 			return;
 		}
 		for (const auto& [quest, run] : book.Ours(self)) {
+			SendAgain(quest, run);
+		}
+	}
+
+	void OnPlayerReloaded(std::uint32_t a_playerId)
+	{
+		if (!Enabled() || self == 0 || a_playerId == self) {
+			return;
+		}
+		const auto ours = book.Ours(self);
+		if (!ours.empty()) {
+			REX::INFO("RadiantSync: player {} loaded a save; our {} run(s) going are sent again", a_playerId, ours.size());
+		}
+		for (const auto& [quest, run] : ours) {
 			SendAgain(quest, run);
 		}
 	}
@@ -986,7 +1018,7 @@ namespace RadiantSync
 		AbortStart();
 		restart.reset();  // the loaded world has its own runs
 		pending.clear();
-		book.Clear();
+		book.Reloaded();
 		stopped.clear();
 		outgoing.clear();
 	}

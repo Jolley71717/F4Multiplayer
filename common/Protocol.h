@@ -208,6 +208,7 @@ namespace Protocol
 		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
 		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
 		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
+		kPlayerReloaded = 160,    // another player loaded a save (asked for the world state again): their game knows no radiant run of ours
 		kPluginTable = 145,       // the session's plugin table, which numbers every form ID on the wire: before the welcome, and when it grows
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
@@ -483,6 +484,13 @@ namespace Protocol
 	};
 
 	struct PlayerLeft
+	{
+		std::uint32_t playerId = 0;
+	};
+
+	// Another player's game loaded a save (kRequestWorldState): what it knew of the others' radiant runs went with the
+	// world it threw away, so each game sends its runs going again (RadiantSync).
+	struct PlayerReloaded
 	{
 		std::uint32_t playerId = 0;
 	};
@@ -2185,6 +2193,25 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		PlayerLeft msg;
+		msg.playerId = r.U32();
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const PlayerReloaded& a_msg)
+	{
+		Writer w{ MessageType::kPlayerReloaded };
+		w.U32(a_msg.playerId);
+		return w.Data();
+	}
+
+	inline std::optional<PlayerReloaded> DecodePlayerReloaded(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerReloaded msg;
 		msg.playerId = r.U32();
 		if (!r.Ok()) {
 			return std::nullopt;

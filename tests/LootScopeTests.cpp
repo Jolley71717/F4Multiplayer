@@ -509,6 +509,16 @@ TEST("loot scope: a chest that respawns and an NPC hold a roll of loot; a contai
 	CHECK(Every(HolderFacts{ .kind = Holder::kContainer, .storage = true }, JUNK, Scope::kShared));
 }
 
+TEST("loot scope: storage is what the player made their own: owned, a settlement's workshop, or in a settlement they own")
+{
+	CHECK(IsStorage({ .playerOwned = true }));        // a home bought (its cell is PlayerFaction's), or a container they own
+	CHECK(IsStorage({ .workshopItem = true }));       // a workbench, or a chest built there
+	CHECK(IsStorage({ .inOwnedSettlement = true }));  // a Sanctuary house's dresser once Sanctuary is theirs
+	// A dungeon's one-off loot that never respawns (DN035_EasyCityDownsWallSafe), and a settlement's dresser before the
+	// settlement is anyone's, are a roll of loot: neither says storage on its own.
+	CHECK(!IsStorage({}));
+}
+
 TEST("loot sync: a friend's stash in the same home container stays when the other player takes its only item, or only a gun, or an older build sends an emptying")
 {
 	constexpr std::uint32_t HOME_CHEST = 0x0002C003;
@@ -516,7 +526,7 @@ TEST("loot sync: a friend's stash in the same home container stays when the othe
 	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
 	for (auto* game : { &alice, &bob, &carol }) {
 		Describe(*game);
-		game->holderFacts[HOME_CHEST] = { .kind = Holder::kContainer, .storage = true };  // a Sanctuary house's dresser
+		game->holderFacts[HOME_CHEST] = { .kind = Holder::kContainer, .storage = true };  // a Sanctuary house's dresser, Sanctuary theirs
 		game->Join(f, "P");
 	}
 	// Each player keeps their own things in it, in their own world.
@@ -584,11 +594,37 @@ TEST("loot sync: what a friend puts in a chest just as another player takes it b
 	CHECK(alice.In(CHEST_2, JET) == 1);
 
 	// Once taken, what was put in is the friend's to lose like anything else: Alice takes the jet, and hers is bare again.
-	bob.holders[CHEST_2][JET] += 2;  // and Bob's game had two more of its own (a stash of jet in a chest that respawns)
 	alice.Take(f, CHEST_2, JET, 1);
 	CHECK(alice.loot.Stats().emptiedSent == 3);
 	bob.Receive(f);
 	CHECK(bob.In(CHEST_2, JET) == 0);
+}
+
+TEST("loot sync: a friend's take of the chest's own roll doesn't use up what another friend put in the same moment, of the same item")
+{
+	constexpr std::uint32_t STIM = 0x0004A009;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->items[STIM] = { .kind = Item::kAid };
+		game->Join(f, "P");
+	}
+	// A raider's chest: each game rolled two stimpaks in it. Bob puts three of his in just as Alice takes her copy's two
+	// and leaves it bare, before his put has reached her.
+	alice.holders[CHEST_REF] = { { STIM, 2 } };
+	bob.holders[CHEST_REF] = { { STIM, 2 }, { CAPS, 9 } };
+	bob.carried[STIM] = 3;
+	bob.Put(f, CHEST_REF, STIM, 3);
+	alice.Take(f, CHEST_REF, STIM, 2);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	alice.Receive(f);
+	// Her take is taken from his copy's own two first; his three stay, as they are in hers.
+	CHECK(bob.In(CHEST_REF, STIM) == 3);
+	CHECK(alice.In(CHEST_REF, STIM) == 3);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.loot.Stats().emptiedKept == 3);
 }
 
 TEST("loot sync: a chest told bare whose loot respawns is told again when only a gun is taken from it; a gun put back and taken again is not")

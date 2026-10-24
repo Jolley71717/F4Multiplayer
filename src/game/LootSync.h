@@ -128,7 +128,7 @@ namespace LootSync
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
-				Track(change);
+				Track(change, CountOf(move.holder, move.item, a_world) - move.count);  // ours is made: what it held before
 				toldBare.erase(move.holder);  // it holds something shared again (a put), or is about to be asked
 				if (direction == LootScope::Direction::kTake && std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
 					takenFrom.push_back(move.holder);
@@ -405,8 +405,10 @@ namespace LootSync
 		}
 
 		// What the session put into a holder and hasn't taken out since, each item's count (another player's change put
-		// in here, or our player's own reported): an emptying leaves it.
-		void Track(const Protocol::ContainerChange& a_change)
+		// in here, or our player's own reported): an emptying leaves it. a_before: how many of the item the holder had
+		// before the change. A take is taken from the holder's own roll first: only what it took beyond that was a put of
+		// the session's (a friend taking their copy's roll while another's put races the marker leaves the put kept).
+		void Track(const Protocol::ContainerChange& a_change, std::int64_t a_before)
 		{
 			if (a_change.item == Protocol::CONTAINER_EMPTIED || a_change.count == 0) {
 				return;
@@ -419,12 +421,27 @@ namespace LootSync
 			if (holder == sessionPut.end()) {
 				return;
 			}
-			if (const auto it = holder->second.find(a_change.item); it != holder->second.end() && (it->second += a_change.count) <= 0) {
-				holder->second.erase(it);
+			if (const auto it = holder->second.find(a_change.item); it != holder->second.end()) {
+				const auto roll = (std::max)(std::int64_t{ 0 }, a_before - it->second);
+				const auto fromPut = (std::max)(std::int64_t{ 0 }, -std::int64_t{ a_change.count } - roll);
+				if ((it->second -= fromPut) <= 0) {
+					holder->second.erase(it);
+				}
 			}
 			if (holder->second.empty()) {
 				sessionPut.erase(holder);
 			}
+		}
+
+		static std::int64_t CountOf(std::uint32_t a_holder, std::uint32_t a_item, World& a_world)
+		{
+			std::int64_t count = 0;
+			for (const auto& stack : a_world.Stacks(a_holder)) {
+				if (stack.item == a_item) {
+					count += stack.count;
+				}
+			}
+			return count;
 		}
 
 		// A holder told bare follows our player's moves (what ours holds should be what it held then, give or take
@@ -476,7 +493,7 @@ namespace LootSync
 				++counts.keptApplied[static_cast<std::size_t>(scope)];
 				return Applied::kDone;
 			}
-			Track(a_change);
+			Track(a_change, CountOf(a_change.container, a_change.item, a_world));
 			a_world.Apply(a_change);
 			return Applied::kDone;
 		}

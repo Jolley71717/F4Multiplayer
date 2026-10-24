@@ -325,6 +325,7 @@ namespace FormTranslate
 		case MessageType::kWelcome:
 		case MessageType::kReject:
 		case MessageType::kPlayerLeft:
+		case MessageType::kPlayerReloaded:
 		case MessageType::kPartyXp:
 		case MessageType::kHeartbeatAck:
 		case MessageType::kRevived:

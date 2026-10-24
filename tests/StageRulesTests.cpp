@@ -201,7 +201,7 @@ TEST("stage rules: the fades and the endings' slides move the player")
 	CHECK(Hold(Find(0x0229EE, 850)) == 26s);
 }
 
-TEST("stage rules: nothing that moves the player is set while a game in the session is in the opening")
+TEST("stage rules: nothing that moves the player is set while this game is in the opening; a friend in it holds nothing here")
 {
 	using namespace StageRules;
 	const Rule plain{ 0, 0x1, 10, 0, 0 };
@@ -217,6 +217,12 @@ TEST("stage rules: nothing that moves the player is set while a game in the sess
 	// ... and once the opening is over, as before.
 	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = false }) == Verdict::kSet);
 	CHECK(Judge(&bridge, { .live = false, .opening = false }) == Verdict::kWarn);
+	// A friend still in the vault (three or more in the session): the others, side by side, go on as ever; their own game
+	// holds what moves them.
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .friendInOpening = true }) == Verdict::kSet);
+	CHECK(Judge(&moves, { .live = false, .friendInOpening = true }) == Verdict::kSkip);
+	CHECK(Judge(&bridge, { .live = false, .friendInOpening = true }) == Verdict::kWarn);
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = true, .friendInOpening = true }) == Verdict::kOpeningWaits);
 	// What doesn't move the player goes on; a payment is never made.
 	CHECK(Judge(&plain, { .live = true, .opening = true }) == Verdict::kSet);
 	CHECK(Judge(nullptr, { .live = false, .opening = true }) == Verdict::kSet);

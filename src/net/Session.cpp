@@ -514,6 +514,11 @@ namespace Session
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
 				}
 				break;
+			case MessageType::kPlayerReloaded:
+				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
+					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
+				}
+				break;
 			case MessageType::kExplosion:
 				if (const auto msg = Protocol::DecodeExplosion(a_data)) {
 					WeaponFire::ApplyExplosion(*msg);

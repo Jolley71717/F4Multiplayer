@@ -906,31 +906,46 @@ namespace WorldSync
 		constexpr std::uint32_t PLAYER_BASE = 0x00000007;     // the player's NPC
 		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;  // PlayerFaction
 
-		// A container that keeps what is put in it (LootScope::HolderFacts::storage), so a friend's copy of it may hold
-		// their stash: one whose base never respawns (the game would wipe a stash in one that does), one the player owns,
-		// or one in a home or a settlement (Home Plate, a Sanctuary house), its location's or a parent's.
+		bool OwnedByPlayer(const RE::TESForm* a_owner)
+		{
+			return a_owner && (a_owner->GetFormID() == PLAYER_BASE || a_owner->GetFormID() == PLAYER_FACTION);
+		}
+
+		// A container that keeps what the player puts in it (LootScope::IsStorage), so a friend's copy of it may hold their
+		// stash: one the player owns, or whose cell they own (a home bought: FFDiamondCity02 gives Home Plate's cell to
+		// PlayerFaction); a settlement's workbench or a piece built there; or one in the build area of a settlement the
+		// player owns (WorkshopScript.SetOwnedByPlayer makes the player's NPC the workbench's owner). A Sanctuary house's
+		// dresser is a roll of loot until Sanctuary is the player's.
 		bool IsStorage(RE::TESObjectREFR* a_ref)
 		{
-			const auto base = a_ref->GetObjectReference();
-			const auto container = base ? base->As<RE::TESObjectCONT>() : nullptr;
-			if (!container || (container->data.contFlags & static_cast<std::int8_t>(RE::TESObjectCONT::Flags::kRespawn)) == 0) {
-				return true;
+			LootScope::StorageFacts facts;
+			const auto              cell = a_ref->GetParentCell();
+			facts.playerOwned = OwnedByPlayer(a_ref->GetOwner()) || (cell && OwnedByPlayer(cell->GetOwner()));
+			facts.workshopItem = WorkshopSync::IsWorkbenchAnchor(a_ref) || WorkshopSync::WorkbenchOf(*a_ref) != nullptr;
+			if (!facts.playerOwned && !facts.workshopItem) {
+				const auto bench = RE::Workshop::FindNearestValidWorkshop(*a_ref);
+				facts.inOwnedSettlement = bench && OwnedByPlayer(bench->GetOwner()) && RE::Workshop::IsLocationWithinBuildableArea(*bench, a_ref->data.location);
 			}
-			const auto ours = [](const RE::TESForm* a_owner) { return a_owner && (a_owner->GetFormID() == PLAYER_BASE || a_owner->GetFormID() == PLAYER_FACTION); };
-			const auto cell = a_ref->GetParentCell();
-			if (ours(a_ref->GetOwner()) || (cell && ours(cell->GetOwner()))) {
-				return true;
+			return LootScope::IsStorage(facts);
+		}
+
+		// IsStorage, looked up again after STORAGE_FOR (a settlement taken, a home bought): each move and each friend's change
+		// asks it, and the nearest workbench is a search.
+		constexpr auto STORAGE_FOR = std::chrono::seconds{ 5 };
+		std::unordered_map<std::uint32_t, std::pair<bool, Clock::time_point>> storageSeen;  // main thread
+
+		bool StorageOf(RE::TESObjectREFR* a_ref)
+		{
+			const auto now = Clock::now();
+			if (const auto it = storageSeen.find(a_ref->GetFormID()); it != storageSeen.end() && now - it->second.second < STORAGE_FOR) {
+				return it->second.first;
 			}
-			auto location = a_ref->GetCurrentLocation();
-			if (!location && cell) {
-				location = cell->GetLocation();
+			if (storageSeen.size() >= 256) {
+				std::erase_if(storageSeen, [&](const auto& a_entry) { return now - a_entry.second.second >= STORAGE_FOR; });
 			}
-			for (int depth = 0; location && depth < 8; ++depth, location = location->parentLoc) {
-				if (location->HasKeywordString("LocTypePlayerHouse") || location->HasKeywordString("LocTypeWorkshopSettlement")) {
-					return true;
-				}
-			}
-			return false;
+			const bool storage = IsStorage(a_ref);
+			storageSeen[a_ref->GetFormID()] = { storage, now };
+			return storage;
 		}
 
 		// What holds the items, for LootScope: a reference ID from either end of a move.
@@ -960,7 +975,7 @@ namespace WorldSync
 			const auto base = ref->GetObjectReference();
 			if (base && base->Is(RE::ENUM_FORM_ID::kCONT)) {
 				facts.kind = Holder::kContainer;
-				facts.storage = IsStorage(ref);
+				facts.storage = StorageOf(ref);
 			} else if (base && base->Is(RE::ENUM_FORM_ID::kFURN)) {
 				facts.kind = Holder::kFurniture;  // a power armor frame
 			}
