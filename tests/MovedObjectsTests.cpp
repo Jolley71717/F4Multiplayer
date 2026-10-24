@@ -6,8 +6,12 @@
 #include "ObjectMovers.h"
 #include "game/ObjectShare.h"
 
+#include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <set>
+#include <vector>
 
 using namespace TestServer;
 using namespace std::chrono_literals;
@@ -554,6 +558,273 @@ TEST("moved objects knocks: walked into is near the player's feet")
 	CHECK(ObjectShare::Near({ 0, 0, 0 }, { 100, 50, 30 }));
 	CHECK(!ObjectShare::Near({ 0, 0, 0 }, { 300, 0, 0 }));
 	CHECK(!ObjectShare::Near({ 0, 0, 0 }, { 0, 0, 500 }));
+}
+
+// --- knocked about by NPCs and blasts -----------------------------------------------------------------------------
+// A loose object an NPC shoves or an explosion throws lands differently in each game; only our own player's knocks used
+// to be reported, so a friend's chair or a table of clutter stayed where it was in their game. The game that runs the NPC
+// (or caused the blast) reports what it moved; every other game, whose own physics shoved the same object, stays quiet.
+
+namespace
+{
+	constexpr std::uint32_t ALICE = 1;
+	constexpr std::uint32_t BOB = 2;
+	constexpr std::uint32_t RAIDER = 0x00140001;
+
+	// One game's view of loose objects.
+	struct Game
+	{
+		ObjectShare::KnockWatch watch;
+		Clock::time_point       t = Clock::now();
+
+		void Still(std::uint32_t a_ref, Vec3 a_at)
+		{
+			const std::array seen{ Seen{ .refId = a_ref, .pose = At(a_at) } };
+			watch.Scan(seen, true, t += 250ms);
+		}
+
+		// The object is shoved to a_to in this game, and rests there; a_how is what the game knew of who moved it, at the
+		// first look only. Returns what the game reports.
+		std::vector<Protocol::ObjectRest> Shoved(std::uint32_t a_ref, Vec3 a_to, Seen a_how)
+		{
+			a_how.refId = a_ref;
+			a_how.pose = At(a_to);
+			std::vector<Protocol::ObjectRest> out;
+			for (int i = 0; i < 8; ++i) {
+				const std::array seen{ a_how };
+				for (auto& rest : watch.Scan(seen, true, t += 250ms)) {
+					out.push_back(rest);
+				}
+				a_how.byUs = a_how.byNpc = a_how.theirs = false;
+				a_how.blast = 0;
+			}
+			return out;
+		}
+	};
+
+	// What each game's NPC rule says of an NPC at a_npc next to an object at a_object, the NPC run by a_owner.
+	bool ByNpc(std::uint32_t a_local, std::uint32_t a_owner, const Vec3& a_npc, const Vec3& a_object)
+	{
+		return ObjectShare::Answers(RAIDER, a_owner, a_local) && ObjectShare::NpcNear(a_npc, a_object);
+	}
+}
+
+TEST("npc knocks: an object an NPC our game runs shoved is reported where it came to rest, once")
+{
+	Game game;
+	game.Still(TIRE, { 100, 100, 0 });
+	const auto rests = game.Shoved(TIRE, { 160, 100, 0 }, { .byNpc = ByNpc(ALICE, ALICE, { 90, 100, 0 }, { 100, 100, 0 }) });
+	REQUIRE(rests.size() == 1);
+	CHECK(rests[0].refId == TIRE);
+	CHECK(Near(rests[0].position, { 160, 100, 0 }));
+}
+
+TEST("npc knocks: the game that does not run the NPC says nothing of what its copy shoved")
+{
+	// Alice's game runs the raider; in Bob's game it is a copy that shoves the same table in its own way.
+	Game alice, bob;
+	alice.Still(TIRE, { 100, 100, 0 });
+	bob.Still(TIRE, { 100, 100, 0 });
+	const auto aliceSays = alice.Shoved(TIRE, { 160, 100, 0 }, { .byNpc = ByNpc(ALICE, ALICE, { 90, 100, 0 }, { 100, 100, 0 }) });
+	const auto bobSays = bob.Shoved(TIRE, { 140, 120, 0 }, { .byNpc = ByNpc(BOB, ALICE, { 90, 100, 0 }, { 100, 100, 0 }) });
+	CHECK(aliceSays.size() == 1);
+	CHECK(bobSays.empty());
+	// Nobody runs it yet (owner 0), or it is not shared (id 0), or we are not in a session: nobody claims what it shoved.
+	CHECK(!ByNpc(ALICE, 0, { 90, 100, 0 }, { 100, 100, 0 }));
+	CHECK(!ObjectShare::Answers(0, ALICE, ALICE));
+	CHECK(!ObjectShare::Answers(RAIDER, 0, 0));
+}
+
+TEST("npc knocks: an NPC far from the object did not shove it, and nothing is said with no friend near")
+{
+	CHECK(ObjectShare::NpcNear({ 0, 0, 0 }, { 150, 100, 40 }));
+	CHECK(!ObjectShare::NpcNear({ 0, 0, 0 }, { 300, 0, 0 }));
+	CHECK(!ObjectShare::NpcNear({ 0, 0, 0 }, { 0, 0, 400 }));
+	Game game;
+	game.Still(TIRE, { 0, 0, 0 });
+	CHECK(game.Shoved(TIRE, { 50, 0, 0 }, {}).empty());  // moved by something we cannot name
+	ObjectShare::KnockWatch lonely;
+	auto                    t = Clock::now();
+	const std::array        still{ Seen{ .refId = TIRE, .pose = At({ 0, 0, 0 }) } };
+	lonely.Scan(still, false, t += 250ms);
+	std::size_t said = 0;
+	for (int i = 0; i < 8; ++i) {
+		const std::array seen{ Seen{ .refId = TIRE, .pose = At({ 60, 0, 0 }), .byNpc = i == 0 } };
+		said += lonely.Scan(seen, false, t += 250ms).size();
+	}
+	CHECK(said == 0);
+}
+
+TEST("npc knocks: an object a friend's blast reaches is theirs whoever else moved it, and a friend's put-down is quiet")
+{
+	Game game;
+	game.Still(TIRE, { 100, 100, 0 });
+	CHECK(game.Shoved(TIRE, { 160, 100, 0 }, { .byUs = true, .byNpc = true, .theirs = true }).empty());
+	game.Still(BROOM, { 0, 0, 0 });
+	game.watch.Placed(BROOM, At({ 300, 0, 0 }), game.t);
+	CHECK(game.Shoved(BROOM, { 310, 0, 0 }, { .byNpc = true }).empty());
+}
+
+TEST("blasts: the cause says whose blast it is")
+{
+	using ObjectShare::BlastRole;
+	using ObjectShare::Cause;
+	CHECK(ObjectShare::RoleOf(false, Cause::kPlayer, false) == BlastRole::kOurs);
+	CHECK(ObjectShare::RoleOf(false, Cause::kNpc, true) == BlastRole::kOurs);  // an NPC our game runs threw it
+	CHECK(ObjectShare::RoleOf(false, Cause::kNpc, false) == BlastRole::kTheirs);
+	CHECK(ObjectShare::RoleOf(false, Cause::kStandIn, false) == BlastRole::kTheirs);
+	CHECK(!ObjectShare::RoleOf(false, Cause::kNobody, false).has_value());         // a trap: no game claims it
+	CHECK(ObjectShare::RoleOf(true, Cause::kPlayer, true) == BlastRole::kTheirs);  // set off here for a friend's throw
+	CHECK(ObjectShare::RoleOf(true, Cause::kNobody, false) == BlastRole::kTheirs);
+}
+
+TEST("blasts: what a blast reaches, for how long, and what two blasts mean")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook book;
+	auto                   t = Clock::now();
+	CHECK(book.Note(7, { 0, 0, 0 }, 500, BlastRole::kOurs, t));
+	CHECK(!book.Note(7, { 0, 0, 0 }, 500, BlastRole::kOurs, t + 1s));  // the same explosion, still there
+	CHECK(!book.Note(8, { 0, 0, 0 }, std::numeric_limits<float>::quiet_NaN(), BlastRole::kOurs, t));
+	CHECK(!book.Note(9, { 0, 0, 0 }, 0, BlastRole::kOurs, t));
+	const auto serial = book.Reaching({ 300, 0, 0 }, t + 100ms).serial;
+	CHECK(serial != 0);
+	CHECK(book.Reaching({ 600, 0, 0 }, t + 100ms).serial == serial);  // the margin: bodies are bigger than centres
+	CHECK(book.Reaching({ 700, 0, 0 }, t + 100ms).serial == 0);
+	CHECK(book.Reaching({ 300, 0, 0 }, t + ObjectShare::BLAST_REACH_FOR + 1ms).serial == 0);
+	CHECK(!book.Reaching({ 300, 0, 0 }, t + 100ms).theirs);
+	// A friend's blast over the same place: the object is theirs, and never ours to report.
+	CHECK(book.Note(10, { 100, 0, 0 }, 400, BlastRole::kTheirs, t + 200ms));
+	CHECK(book.Reaching({ 300, 0, 0 }, t + 300ms).theirs);
+	// A nuke's reach is capped by the scan's.
+	CHECK(book.Note(11, { 5000, 0, 0 }, 50000, BlastRole::kOurs, t + 300ms));
+	CHECK(book.Reaching({ 5000 + ObjectShare::BLAST_MAX_RADIUS + ObjectShare::BLAST_MARGIN + 10, 0, 0 }, t + 400ms).serial == 0);
+	// Past the explosion's own lifetime it is noted again (a freed reference's id comes back).
+	CHECK(book.Note(7, { 0, 0, 0 }, 500, BlastRole::kOurs, t + ObjectShare::BLAST_KEY_MEMORY + 1s));
+	for (std::uint32_t i = 100; i < 100 + 2 * ObjectShare::MAX_BLASTS; ++i) {
+		book.Note(i, { 0, 0, 0 }, 100, BlastRole::kOurs, t + ObjectShare::BLAST_KEY_MEMORY + 2s);
+	}
+	CHECK(book.Size() <= ObjectShare::MAX_BLASTS);
+}
+
+TEST("blasts: a grenade into a table of clutter is reported by the thrower's game only, on a cap")
+{
+	using ObjectShare::BlastRole;
+	// Alice threw it: her book calls it hers. In Bob's game it is the explosion set off for her throw: his book calls it
+	// theirs, and his own player stands by the table, so his objects are byUs as well.
+	ObjectShare::BlastBook aliceBook, bobBook;
+	Game                   alice, bob;
+	constexpr std::uint32_t COUNT = 40;
+	std::vector<Seen>       still;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00300000 + i, .pose = At({ i * 5.0f, 0, 0 }) });
+	}
+	alice.watch.Scan(still, true, alice.t += 250ms);
+	bob.watch.Scan(still, true, bob.t += 250ms);
+	CHECK(aliceBook.Note(1, { 0, 0, 0 }, 300, BlastRole::kOurs, alice.t));
+	CHECK(bobBook.Note(1, { 0, 0, 0 }, 300, BlastRole::kTheirs, bob.t));
+	std::size_t             aliceSaid = 0, bobSaid = 0;
+	std::set<std::uint32_t> told;
+	// Every object is thrown a little in each game, differently; each game's scan has all 40 moving at once.
+	for (int look = 0; look < 40; ++look) {
+		std::vector<Seen> a, b;
+		for (std::uint32_t i = 0; i < COUNT; ++i) {
+			const std::uint32_t id = 0x00300000 + i;
+			const Vec3          inA{ i * 5.0f + 80.0f, 40.0f, 0 }, inB{ i * 5.0f + 60.0f, 70.0f, 0 };
+			const bool          first = look < 2;
+			const auto          ra = aliceBook.Reaching(inA, alice.t), rb = bobBook.Reaching(inB, bob.t);
+			a.push_back({ .refId = id, .pose = At(inA), .blast = first ? ra.serial : 0 });
+			b.push_back({ .refId = id, .pose = At(inB), .byUs = first, .theirs = first && rb.theirs });
+		}
+		for (const auto& rest : alice.watch.Scan(a, true, alice.t += 250ms)) {
+			++aliceSaid;
+			CHECK(told.insert(rest.refId).second);  // never twice
+		}
+		bobSaid += bob.watch.Scan(b, true, bob.t += 250ms).size();
+	}
+	CHECK(bobSaid == 0);
+	CHECK(aliceSaid > 0);
+	CHECK(aliceSaid <= ObjectShare::BLAST_MAX_REPORTS);
+	CHECK(alice.watch.Reported() == aliceSaid);
+}
+
+TEST("blasts: a burst waits for the budget instead of dropping its rests, up to the cap; with no friend near it is given up")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	book.Note(1, { 0, 0, 0 }, 600, BlastRole::kOurs, t);
+	const auto              serial = book.Reaching({ 0, 0, 0 }, t).serial;
+	constexpr std::uint32_t COUNT = 12;  // more than the burst of 8, fewer than the cap
+	std::vector<Seen>       still, moved;
+	for (std::uint32_t i = 0; i < COUNT; ++i) {
+		still.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
+		moved.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 90, 0 }), .blast = serial });
+	}
+	watch.Scan(still, true, t += 250ms);
+	watch.Scan(moved, true, t += 250ms);
+	for (auto& m : moved) {
+		m.blast = 0;
+	}
+	std::size_t said = 0, atOnce = 0;
+	for (int i = 0; i < 40; ++i) {
+		const auto n = watch.Scan(moved, true, t += 250ms).size();
+		if (said == 0) {
+			atOnce = n;
+		}
+		said += n;
+	}
+	CHECK(atOnce >= static_cast<std::size_t>(ObjectShare::KNOCK_BURST));
+	CHECK(atOnce <= static_cast<std::size_t>(ObjectShare::KNOCK_BURST) + 3);
+	CHECK(said == COUNT);  // the others came as the budget filled
+	// With no friend near, the rests are given up quietly.
+	ObjectShare::KnockWatch later;
+	auto                    u = Clock::now();
+	for (auto& m : moved) {
+		m.blast = serial;
+	}
+	later.Scan(still, false, u += 250ms);
+	later.Scan(moved, false, u += 250ms);
+	std::size_t gotten = 0;
+	for (int i = 0; i < 40; ++i) {
+		gotten += later.Scan(moved, false, u += 250ms).size();
+	}
+	CHECK(gotten == 0);
+}
+
+TEST("blasts: each blast has its own cap")
+{
+	using ObjectShare::BlastRole;
+	ObjectShare::BlastBook  book;
+	ObjectShare::KnockWatch watch;
+	auto                    t = Clock::now();
+	constexpr std::uint32_t COUNT = 20;  // under each blast: more than a blast's cap
+	std::size_t             said[2]{};
+	for (std::uint32_t blast = 0; blast < 2; ++blast) {
+		// A second blast, much later, where the first one's budget is long filled again.
+		t += 30s;
+		const float x = blast * 5000.0f;
+		std::vector<Seen> still, moved;
+		for (std::uint32_t i = 0; i < COUNT; ++i) {
+			still.push_back({ .refId = 0x00320000 + blast * 100 + i, .pose = At({ x + i * 5.0f, 0, 0 }) });
+		}
+		watch.Scan(still, true, t += 250ms);
+		CHECK(book.Note(1 + blast, { x, 0, 0 }, 300, BlastRole::kOurs, t));
+		const auto serial = book.Reaching({ x, 0, 0 }, t).serial;
+		CHECK(serial != 0);
+		for (std::uint32_t i = 0; i < COUNT; ++i) {
+			moved.push_back({ .refId = 0x00320000 + blast * 100 + i, .pose = At({ x + i * 5.0f, 90, 0 }), .blast = serial });
+		}
+		for (int look = 0; look < 40; ++look) {
+			said[blast] += watch.Scan(moved, true, t += 250ms).size();
+			for (auto& m : moved) {
+				m.blast = 0;
+			}
+		}
+	}
+	CHECK(said[0] == ObjectShare::BLAST_MAX_REPORTS);
+	CHECK(said[1] == ObjectShare::BLAST_MAX_REPORTS);
 }
 
 // --- what a friend's message may do -------------------------------------------------------------------------------
