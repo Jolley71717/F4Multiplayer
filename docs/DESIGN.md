@@ -254,14 +254,14 @@
   one. The engine keeps the roll on the reference (`ExtraLeveledCreature`: the NPC it was placed as and one NPC per
   template slot, traits to keywords). The owner reports it (`kReportNpcIdentity`: the slots, its level, legendary or
   not, and for a spawn its factions) when it changes, and the server keeps the first runner's as the session's roll: a
-  later runner's report is ignored while it stands, and it goes when the NPC dies, when nobody runs it and when that
-  player leaves. A newcomer is told the run NPCs' rolls. The others write the owner's roll onto their copy while they
+  later runner's report is ignored while it stands, and it goes when the NPC dies and when nobody runs it; when that
+  player leaves while someone else runs the NPC, it stays, as that runner's. A newcomer is told the run NPCs' rolls. The others write the owner's roll onto their copy while they
   mirror it (its `ExtraLeveledCreature` slots) and give it the owner's level, only when theirs was placed as the same
   NPC and each of the roll's NPCs is one their lists can give (`NpcRoll::Walk` over lists, templates and legendary
   templates); a roll that can't be written is tried 3 times, 5 s apart, then left as their game has it. The engine puts
   the NPC together from those slots when the copy loads, so the roll is the owner's from the copy's next load on (a cell
   left and come back to, a fast travel, a save loaded): on the rig, written ghouls were the host's once the cell loaded
-  again, while `CopyFromTemplateForms`, a disable and enable and `Reset3D` left the NPC already made as it was. Until
+  again, while `CopyFromTemplateForms`, a disable and enable and `Reset3D` left the NPC already made as it was, so a loaded copy is never rebuilt (that risks the game mid-fight): only the roll is written for its next load. Until
   then only the level is the owner's. A plugin's NPC whose base is a plugin's NPC (not leveled) is every game's own,
   and its factions are its game's story (a recruited settler), never set from another game. `net status`: `rolls=`
   sent/known/written/kept/factions set; `mirror <ref>` shows ours and theirs.
@@ -328,7 +328,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   its own base when that is a plugin's. Without one it isn't shared. A copy is placed from the NPC the owner's game
   placed it as when that is a leveled NPC in ours too, so our engine rolls it and the owner's roll is then made ours
   (Shared NPC AI: Roll); it waits up to 2 s for the roll (`NpcRoll::IDENTITY_WAIT`), else it is placed from the base,
-  and a copy placed before its roll came is placed again from the right NPC. The copy is put in the owner's copy's
+  and a copy placed before its roll came stays as it was placed (never swapped in front of a player). The copy is put in the owner's copy's
   factions and taken out of the rest (a random encounter's scavengers and a settlement's settlers get theirs from
   their quest at runtime: a copy of one template's NPC had that NPC's own, a friendly settler in one game, a hostile
   scavenger in the other); never our player's or our companion's faction.

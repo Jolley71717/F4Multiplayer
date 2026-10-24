@@ -268,6 +268,23 @@ namespace NpcRoll
 		return plan;
 	}
 
+	// What Rolls::Apply does to make ours a plan's roll, by whether the actor's 3D is in (a_loaded). The roll is written on
+	// the reference (the engine puts the NPC together from it at the actor's next load), and the level into its NPC (a
+	// number the engine reads when asked). Our copy of the NPC is put together from the roll only with no 3D in: on a
+	// loaded actor, one that may be in a fight, that and a rebuild of its 3D risk the game, and on the rig neither changed
+	// an NPC already built. Nothing rebuilds the 3D: a roll written while it is in is put together at its next load.
+	struct Steps
+	{
+		bool write = false;  // the roll on the reference
+		bool build = false;  // our copy of the NPC put together from it now
+		bool level = false;  // their level on it
+	};
+
+	[[nodiscard]] constexpr Steps StepsFor(const Plan& a_plan, bool a_loaded)
+	{
+		return { .write = a_plan.templates, .build = a_plan.templates && !a_loaded, .level = a_plan.level.has_value() };
+	}
+
 	// What our copy of a friend's spawn is placed from: the NPC their game placed it as when that is a leveled NPC here
 	// too (our engine rolls it, and their roll is then made ours), else the spawn's own base (SpawnBook::PickBase).
 	[[nodiscard]] constexpr std::uint32_t PlaceFrom(const Protocol::NpcIdentity* a_identity, std::uint32_t a_base, bool a_originalLeveledHere)

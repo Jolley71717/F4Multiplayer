@@ -934,7 +934,17 @@ void Server::Run()
 			spawns.erase(a_entry.first);  // nobody else's game has it to run: the others' copies go
 			return true;
 		});
-		// The rolls they gave NPCs someone else runs now: that runner's report is the session's from here on.
+		// The rolls they gave NPCs someone else runs now stay the session's, under that runner: their game was made that
+		// roll (or tried), its report was refused for it, and it never reports the same again (NpcRoll::Sent). A newcomer
+		// is told it as theirs; the runner's next change is the session's.
+		for (auto& [ref, identity] : npcIdentities) {
+			if (identity.playerId != a_playerId) {
+				continue;
+			}
+			if (const auto runner = actorOwners.find(ref); runner != actorOwners.end()) {
+				identity.playerId = runner->second.playerId;
+			}
+		}
 		std::erase_if(npcIdentities, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; });
 		sendOwners(released, 0);
 	};

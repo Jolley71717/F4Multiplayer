@@ -295,6 +295,11 @@ namespace MuzzleFlash
 		}
 	}
 
+	RE::BGSProjectile* GunProjectile(RE::Actor* a_actor)
+	{
+		return ProjectileOf(EquippedGun(a_actor));
+	}
+
 	void OnShot(RE::Actor* a_actor, bool a_animated)
 	{
 		if (a_animated) {

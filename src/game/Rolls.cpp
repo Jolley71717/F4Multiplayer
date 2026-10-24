@@ -228,8 +228,8 @@ namespace Rolls
 		std::uint32_t commands = 0;
 		const auto    npc = RollCopyOf(a_actor);
 		const auto    leveled = LeveledOf(a_actor);
-		bool          rebuild = false;
-		if (a_plan.templates && npc && leveled) {
+		const auto    steps = NpcRoll::StepsFor(a_plan, a_actor->Get3D() != nullptr);
+		if (steps.write && npc && leveled) {
 			std::array<RE::TESActorBase*, Protocol::IDENTITY_TEMPLATES> forms{};
 			for (std::size_t i = 0; i < forms.size(); ++i) {
 				if (!(a_theirs.mask & (1u << i))) {
@@ -246,24 +246,24 @@ namespace Rolls
 			// The roll is kept on the reference (a save of ours keeps theirs). The engine puts the actor's NPC together
 			// from it when the actor loads: on the rig, ghouls written so were the owner's roll (name, damage resistance)
 			// once their cell loaded again. The NPC already made is not put together again in place: neither
-			// CopyFromTemplateForms (asked below all the same), nor a disable and enable, nor Reset3D changed its name,
-			// health or damage resistance. So the roll is the owner's from the copy's next load on (a cell left and come
-			// back to, a fast travel, a save loaded); until then only the level below is the owner's.
+			// CopyFromTemplateForms, nor a disable and enable, nor Reset3D changed its name, health or damage resistance,
+			// and either on an actor that is loaded (it may be in a fight) risks the game. So with its 3D in, only the
+			// roll is written, for its next load (a cell left and come back to, a fast travel, a save loaded); our copy
+			// of the NPC is put together from it at that load. Until then only the level below is
+			// the owner's.
 			std::ranges::copy(forms, std::begin(leveled->templates));
-			npc->CopyFromTemplateForms(leveled->templates);
-			rebuild = true;
-			REX::INFO("Rolls: {:08X} ({}) has player {}'s roll of {:08X}{} written: theirs from its next load on (its NPC now {}, {} health)", a_actor->GetFormID(), before,
-				a_theirs.playerId, a_theirs.originalBase, (a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "", RE::TESFullName::GetFullName(*npc),
-				BaseHealthOf(*npc));
+			if (steps.build) {
+				npc->CopyFromTemplateForms(leveled->templates);
+			}
+			REX::INFO("Rolls: {:08X} ({}) has player {}'s roll of {:08X}{} written: theirs from its next load on{} (its NPC now {}, {} health)", a_actor->GetFormID(), before,
+				a_theirs.playerId, a_theirs.originalBase, (a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "", steps.build ? ", put together now" : "",
+				RE::TESFullName::GetFullName(*npc), BaseHealthOf(*npc));
 		}
-		if (a_plan.level && npc) {
-			// A level of its own, no longer its player's times a multiplier: our player's level isn't theirs.
+		if (steps.level && npc) {
+			// A level of its own, no longer its player's times a multiplier: our player's level isn't theirs. A number in
+			// the NPC's data, read as the engine asks for the level: nothing of the 3D is touched.
 			npc->actorData.actorBaseFlags.reset(RE::ACTOR_BASE_DATA::Flag::kPCLevelMult);
 			npc->actorData.level = *a_plan.level;
-			rebuild = true;
-		}
-		if (rebuild) {
-			a_actor->Reset3D(true, 0, true, 0);
 			REX::INFO("Rolls: {:08X} is level {} now (player {}'s: {}), {}", a_actor->GetFormID(), LevelOf(a_actor), a_theirs.playerId, a_theirs.level, ToughnessOf(a_actor));
 		}
 		for (const auto& entry : a_plan.add) {

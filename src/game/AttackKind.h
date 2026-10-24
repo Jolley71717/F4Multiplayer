@@ -9,7 +9,7 @@ namespace AttackKind
 	constexpr std::int32_t GUN_TYPE = 9;  // RE::WEAPON_TYPE::kGun
 
 	// Guns replay through the animation graph ("attackStart": the firing animation; its bullet is kept from the engine,
-	// HoldsOwnFire).
+	// HoldsOwnFire, when it is a plain one, HoldsShotOf).
 	// Melee weapons, and fists when nothing is held, refuse that event: they perform the engine's
 	// own attack action instead.
 	constexpr bool ReplaysAsGun(std::int32_t a_weaponType, bool a_holdsWeapon)
@@ -60,6 +60,31 @@ namespace AttackKind
 	constexpr bool HoldsOwnFire(Event a_event, bool a_throw, std::chrono::steady_clock::duration a_sinceReplay)
 	{
 		return a_event == Event::kFire && !a_throw && a_sinceReplay >= std::chrono::steady_clock::duration::zero() && a_sinceReplay <= HOLD_FIRE_FOR;
+	}
+
+	// The projectile record's flags (BGSProjectile::BGSProjectileFlags; WeaponFire.cpp checks them against CommonLib's):
+	// its explosion flag, and its motion type (one bit each, in the high half).
+	inline constexpr std::uint32_t PROJECTILE_EXPLOSION = 0x2;
+	inline constexpr std::uint32_t PROJECTILE_MOTION_MISSILE = 0x10000;  // a bullet, and a missile launcher's missile
+	inline constexpr std::uint32_t PROJECTILE_MOTION_BEAM = 0x40000;
+	inline constexpr std::uint32_t PROJECTILE_MOTION_TYPES = 0x7F0000;
+
+	// Whether a stand-in's shot of a gun firing this projectile (a_flags; a_explodes: it names an explosion) is one to
+	// keep from the engine (HoldsOwnFire): only a plain shot, a bullet or a beam with no explosion, which hit our player
+	// and shows nothing in flight but what the replay draws (MuzzleFlash). Anything else is fired as before 0.9.2, so
+	// friends see it fly and go off: a missile, a mini nuke or a grenade launcher's shell (an explosion, or lobbed), a
+	// flamer's or a cryolator's stream, a harpoon or a railway spike. A gun whose projectile we can't read (a_known false)
+	// is taken for a plain one.
+	constexpr bool HoldsShotOf(bool a_known, std::uint32_t a_flags, bool a_explodes)
+	{
+		if (!a_known) {
+			return true;
+		}
+		if (a_explodes || (a_flags & PROJECTILE_EXPLOSION) != 0) {
+			return false;
+		}
+		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
+		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM;
 	}
 
 	enum class Replay

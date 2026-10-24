@@ -69,3 +69,25 @@ TEST("AttackKind: a stand-in's own bullet after a replayed shot is kept from the
 	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, AttackKind::HOLD_FIRE_FOR + 1ms));
 	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, -1ms));
 }
+
+TEST("attack kind: only a plain shot is held from the engine, a missile, shell or stream leaves the gun as before")
+{
+	using AttackKind::HoldsShotOf;
+	// A bullet (with no motion type set too) and a laser's beam: held, they would hit our player.
+	CHECK(HoldsShotOf(true, 0, false));
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_BEAM, false));
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_MISSILE, false));  // most bullets: the missile motion, no blast
+	// A bullet that blasts (by its flag or an explosion of its own): fired, its blast seen.
+	CHECK(!HoldsShotOf(true, AttackKind::PROJECTILE_EXPLOSION, false));
+	CHECK(!HoldsShotOf(true, 0, true));
+	// A missile launcher's missile, a mini nuke: fired.
+	CHECK(!HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_MISSILE | AttackKind::PROJECTILE_EXPLOSION, true));
+	// A grenade launcher's shell, a flamer's or cryolator's stream, a harpoon, a cone or a barrier: fired.
+	CHECK(!HoldsShotOf(true, 0x20000, false));
+	CHECK(!HoldsShotOf(true, 0x80000, false));
+	CHECK(!HoldsShotOf(true, 0x100000, false));
+	CHECK(!HoldsShotOf(true, 0x200000, false));
+	CHECK(!HoldsShotOf(true, 0x400000, false));
+	// What the gun fires unknown: held, as every shot was.
+	CHECK(HoldsShotOf(false, AttackKind::PROJECTILE_MOTION_MISSILE | AttackKind::PROJECTILE_EXPLOSION, true));
+}

@@ -130,6 +130,26 @@ namespace WeaponFire
 		constexpr std::size_t                                                    MAX_FIRE_REPLAYS = 64;
 		std::atomic<std::uint32_t>                                               firesHeld{ 0 };
 		std::atomic<std::uint32_t>                                               firesLogged{ 0 };
+		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a missile, a shell, a flame
+
+		static_assert(AttackKind::PROJECTILE_EXPLOSION == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
+		static_assert(AttackKind::PROJECTILE_MOTION_MISSILE == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionMissile));
+		static_assert(AttackKind::PROJECTILE_MOTION_BEAM == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionBeam));
+		static_assert(AttackKind::PROJECTILE_MOTION_TYPES == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionTypes));
+
+		// Whether the stand-in's gun fires a plain shot, a bullet or a beam, to keep from the engine (AttackKind::HoldsShotOf):
+		// one that would go off or fly where friends see it is fired as before. Main thread (PlayShot).
+		bool HoldsShotOf(RE::Actor* a_actor)
+		{
+			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
+			return AttackKind::HoldsShotOf(projectile != nullptr, projectile ? projectile->data.flags : 0, projectile && projectile->data.explosionType);
+		}
+
+		void ForgetReplayedFire(std::uint32_t a_actorId)
+		{
+			std::scoped_lock l{ fireLock };
+			fireReplays.erase(a_actorId);
+		}
 
 		void ArmReplayedFire(std::uint32_t a_actorId)
 		{
@@ -539,9 +559,12 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		const bool standIn = replay == AttackKind::Replay::kFire && Puppets::IsPuppet(a_actor);
+		const bool standIn = replay == AttackKind::Replay::kFire && Puppets::IsPuppet(a_actor) && HoldsShotOf(a_actor);
 		if (standIn) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
+		} else if (replay == AttackKind::Replay::kFire && Puppets::IsPuppet(a_actor)) {
+			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
+			++firesLetGo;
 		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
@@ -550,8 +573,8 @@ namespace WeaponFire
 			animated = true;
 		}
 		// The engine shows the gun's flash and light when the gun fires; a shot whose animation the graph refused gets
-		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a stand-in's, whose own fire is kept from the
-		// engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
+		// the flash from MuzzleFlash instead (ROADMAP #17), and so does a stand-in's plain shot, whose own fire is kept
+		// from the engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
 			MuzzleFlash::OnShot(a_actor, animated && !standIn);
 		}
@@ -667,7 +690,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, DescribeHandThrowables()) + " " + MuzzleFlash::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
