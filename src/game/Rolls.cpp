@@ -228,7 +228,10 @@ namespace Rolls
 		std::uint32_t commands = 0;
 		const auto    npc = RollCopyOf(a_actor);
 		const auto    leveled = LeveledOf(a_actor);
-		const auto    steps = NpcRoll::StepsFor(a_plan, a_actor->Get3D() != nullptr);
+		// Loaded, or maybe loading: its 3D is in, or its cell is attached (the engine loads an actor's 3D on its own
+		// threads, from the NPC this would put together).
+		const auto cell = a_actor->GetParentCell();
+		const auto steps = NpcRoll::StepsFor(a_plan, a_actor->Get3D() != nullptr || (cell && cell->IsAttached()));
 		if (steps.write && npc && leveled) {
 			std::array<RE::TESActorBase*, Protocol::IDENTITY_TEMPLATES> forms{};
 			for (std::size_t i = 0; i < forms.size(); ++i) {

@@ -405,7 +405,7 @@ TEST("npc roll: ours is made their legendary roll at their level")
 	CHECK(!NpcRoll::Decide(OursPlain(), Rolled(GLOWING, GLOWING, Protocol::MAX_IDENTITY_LEVEL + 1), Reachable).level);
 }
 
-TEST("npc roll: a loaded copy only has the roll written, for its next load, and the level given")
+TEST("npc roll: a roll arriving for a loaded actor is deferred to its next load, never put together under it; the level is given")
 {
 	const auto plan = NpcRoll::Decide(OursPlain(), Rolled(GLOWING, LEGENDARY, 20), Reachable);
 	const auto loaded = NpcRoll::StepsFor(plan, true);

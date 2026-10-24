@@ -268,9 +268,10 @@ namespace NpcRoll
 		return plan;
 	}
 
-	// What Rolls::Apply does to make ours a plan's roll, by whether the actor's 3D is in (a_loaded). The roll is written on
+	// What Rolls::Apply does to make ours a plan's roll, by whether the actor's 3D is in or may be loading (a_loaded: its 3D
+	// is in, or its cell is attached, where the engine loads it on its own threads). The roll is written on
 	// the reference (the engine puts the NPC together from it at the actor's next load), and the level into its NPC (a
-	// number the engine reads when asked). Our copy of the NPC is put together from the roll only with no 3D in: on a
+	// number the engine reads when asked). Our copy of the NPC is put together from the roll only with no 3D in nor coming: on a
 	// loaded actor, one that may be in a fight, that and a rebuild of its 3D risk the game, and on the rig neither changed
 	// an NPC already built. Nothing rebuilds the 3D: a roll written while it is in is put together at its next load.
 	struct Steps
