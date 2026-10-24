@@ -540,7 +540,7 @@ namespace FormTranslate
 		case MessageType::kReportDestruction:
 		case MessageType::kDestructions:
 			Apply<Destructions>(a_packet, ctx, DecodeDestructions, [&](Destructions& m) {
-				ctx.Entries(m.entries, [&](Destruction& a_entry) { return ctx.Key(a_entry.refId); });
+				ctx.Entries(m.entries, [&](Destruction& a_entry) { return ctx.Key(a_entry.refId) && ctx.Place(a_entry.cell, a_entry.worldspace); });
 				return !m.entries.empty();
 			}, typed);
 			break;

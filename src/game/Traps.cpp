@@ -48,7 +48,8 @@ namespace Traps
 		{
 			Kind              kind = Kind::kNone;
 			Clock::time_point firstLooked{};
-			bool              final = false;  // ClassFinal: not looked at again until the next load
+			bool              final = false;  // ClassFinal: not looked at again until the next load, or its cell is back
+			std::uint32_t     cell = 0;       // its parent cell when looked at: forgotten once that is no longer loaded
 		};
 
 		std::unordered_map<std::uint32_t, Class>             classified;  // references looked at while loaded (kNone: no trap)
@@ -125,7 +126,8 @@ namespace Traps
 				return it->second.kind;
 			}
 			if (it == classified.end()) {
-				it = classified.emplace(id, Class{ Kind::kNone, a_now, false }).first;
+				const auto cell = a_ref->GetParentCell();
+				it = classified.emplace(id, Class{ Kind::kNone, a_now, false, cell ? cell->GetFormID() : 0 }).first;
 			}
 			const auto base = a_ref->GetObjectReference();
 			it->second.kind = Classify(a_ref);
@@ -296,6 +298,16 @@ namespace Traps
 			if (!tes) {
 				return;
 			}
+			// What was looked at in cells no longer loaded is forgotten (looked at afresh when they are back): else every
+			// reference a long run passes stays here.
+			std::unordered_map<std::uint32_t, bool> attached;
+			std::erase_if(classified, [&](const auto& a_entry) {
+				const auto [it, added] = attached.try_emplace(a_entry.second.cell, false);
+				if (added) {
+					it->second = a_entry.second.cell != 0 && CellAttached(a_entry.second.cell);
+				}
+				return !it->second;
+			});
 			std::vector<RE::TESObjectREFR*> found;
 			tes->ForEachReferenceInRange(a_player->data.location, WATCH_RANGE, [&](RE::TESObjectREFR* a_ref) {
 				if (a_ref && Protocol::IsShareableRef(a_ref->GetFormID()) && !watched.contains(a_ref->GetFormID())) {

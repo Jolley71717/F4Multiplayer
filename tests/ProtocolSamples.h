@@ -270,7 +270,7 @@ namespace ProtocolSamples
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
 		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
-			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
+			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
 		}
 		for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
 			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C }, type), D(DecodeExplosion) });

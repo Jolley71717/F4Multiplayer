@@ -214,14 +214,27 @@ namespace Destructibles
 			return {};
 		}
 
+		// An object's space as the session has it: an interior cell (worldspace 0), a worldspace (cell 0), or none.
+		std::pair<std::uint32_t, std::uint32_t> SpaceOf(RE::TESObjectREFR* a_ref)
+		{
+			const auto cell = a_ref->GetParentCell();
+			return !cell                ? std::pair{ 0u, 0u } :
+			       cell->IsInterior()   ? std::pair{ cell->GetFormID(), 0u } :
+			                              std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+		}
+
 		// Our copy of an object as a report, if it is news for the session.
 		void Check(RE::TESObjectREFR* a_ref, const Object& a_object, Clock::time_point a_now)
 		{
-			const auto  id = a_ref->GetFormID();
-			const auto  report = DestructionRules::Due(id, a_object.stages, a_object.maximum, a_object.copy, KnownOf(id));
+			const auto id = a_ref->GetFormID();
+			auto       report = DestructionRules::Due(id, a_object.stages, a_object.maximum, a_object.copy, KnownOf(id));
 			if (!report) {
 				return;
 			}
+			// Where it stands, for the server to hold against where we are.
+			const auto [cell, worldspace] = SpaceOf(a_ref);
+			report->cell = cell, report->worldspace = worldspace;
+			report->x = a_ref->data.location.x, report->y = a_ref->data.location.y, report->z = a_ref->data.location.z;
 			NoteKnown(id, { DestructionRules::Passed(a_object.stages, a_object.copy.health, a_object.maximum), a_object.copy.destroyed });
 			watch.Changed(id, a_now);
 			outgoing.push_back(*report);
@@ -344,10 +357,7 @@ namespace Destructibles
 			}
 			// Not in a catch-up: what the friend's game set off goes off here only now, as it happens.
 			if (a_playerId != 0) {
-				const auto cell = ref->GetParentCell();
-				const auto space = !cell                ? std::pair{ 0u, 0u } :
-				                   cell->IsInterior()   ? std::pair{ cell->GetFormID(), 0u } :
-				                                          std::pair{ 0u, cell->worldSpace ? cell->worldSpace->GetFormID() : 0u };
+				const auto  space = SpaceOf(ref);
 				const auto& at = ref->data.location;
 				for (const auto explosion : plan.explosions) {
 					WeaponFire::ApplyExplosion({ a_playerId, explosion, at.x, at.y, at.z, space.first, space.second });

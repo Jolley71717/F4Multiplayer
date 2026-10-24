@@ -71,6 +71,12 @@ namespace
 	// A trap is reported by a game that has it loaded: it lies within the loaded cells around the reporter (a mine can be
 	// shot from the far side of them), never across the map.
 	constexpr float TRAP_RANGE = 16000.0f;
+	// Taking or disarming a trap is done standing at it: the reporter is within this of it (their last state comes 20 times
+	// a second), or a report is a way to take away every mine around them.
+	constexpr float TRAP_REACH = 1024.0f;
+	// A destructible object is reported by a game that has it loaded, as a trap is: within the loaded cells around the
+	// reporter (a car can be shot from the far side of them), never across the map.
+	constexpr float DESTRUCTION_RANGE = 16000.0f;
 	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
 	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
 	constexpr double EXPLOSION_BURST = 16.0;
@@ -2171,6 +2177,18 @@ void Server::Run()
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);
 	};
 
+	// Whether a spot is within a_range of where the player last said they were, in the same interior cell or worldspace. A
+	// player who hasn't said where they are yet is near nothing.
+	const auto nearPlayer = [](const Player& a_player, std::uint32_t a_cell, std::uint32_t a_worldspace, float a_x, float a_y, float a_z, float a_range) {
+		if (!a_player.hasState || a_player.state.cell != a_cell || a_player.state.worldspace != a_worldspace) {
+			return false;
+		}
+		const float dx = a_x - a_player.state.x;
+		const float dy = a_y - a_player.state.y;
+		const float dz = a_z - a_player.state.z;
+		return dx * dx + dy * dy + dz * dz <= a_range * a_range;  // NaN fails
+	};
+
 	// Destructible objects the player's game damaged past a stage (a car they shot, a barrel their grenade blew). The
 	// session keeps each one's lowest health and destroyed for good; only news is relayed (one a friend's report already
 	// took further is dropped), so a wreck is never mended and the same stage never comes twice. Each new object takes a
@@ -2183,7 +2201,7 @@ void Server::Run()
 			return;
 		}
 		const auto report = Protocol::DecodeDestructions(a_data);
-		if (!report) {
+		if (!report || !a_player.hasState) {
 			return;
 		}
 		const auto  now = Clock::now();
@@ -2194,23 +2212,34 @@ void Server::Run()
 		}
 		Protocol::Destructions relayed{ a_player.id, {} };
 		for (const auto& entry : report->entries) {
+			// Only an object near where the reporter is (where the session first heard it stands, once it has): a report
+			// is otherwise a way to wreck any car, and set it off, at anyone.
+			auto       it = destructions.find(entry.refId);
+			const bool placed = it != destructions.end() && (it->second.cell != 0 || it->second.worldspace != 0);
+			const auto& at = placed ? it->second : entry;
+			if (!nearPlayer(a_player, at.cell, at.worldspace, at.x, at.y, at.z, DESTRUCTION_RANGE)) {
+				continue;
+			}
 			const auto armed = destructionsArmed.find(entry.refId);
 			const bool mayExplode = attacked || (armed != destructionsArmed.end() && now < armed->second);
 			if (attacked) {
 				destructionsArmed[entry.refId] = now + DESTRUCTION_ARMED_FOR;
 			}
-			auto it = destructions.find(entry.refId);
 			if (it == destructions.end()) {
 				if (destructions.size() >= maxWorldEntries || !withinShare(a_player, kDestructions)) {
 					continue;
 				}
 				++budgetOf(a_player).added[kDestructions];
 				noteFill(kDestructions, destructions.size() + 1);
-				it = destructions.emplace(entry.refId, Protocol::Destruction{ entry.refId, entry.health, entry.destroyed, false }).first;
+				it = destructions.emplace(entry.refId, Protocol::Destruction{ entry.refId, entry.health, entry.destroyed, false, entry.cell, entry.worldspace, entry.x, entry.y, entry.z }).first;
 			} else {
 				auto& stored = it->second;
 				const bool lower = entry.health < stored.health;
 				const bool newlyDestroyed = entry.destroyed && !stored.destroyed;
+				if (!placed) {
+					// Known from the session file, which keeps no positions: where it stands from now on.
+					stored.cell = entry.cell, stored.worldspace = entry.worldspace, stored.x = entry.x, stored.y = entry.y, stored.z = entry.z;
+				}
 				if (!lower && !newlyDestroyed) {
 					continue;
 				}
@@ -2238,10 +2267,11 @@ void Server::Run()
 		}
 	};
 
-	// A world trap spent in the reporter's game (TrapState): kept, first come first kept (a take still replaces a spring or a
-	// disarm), and passed on to everyone else live, so each game whose copy is still armed sets it off there. Only one near
-	// where the reporter is: a report is otherwise a way to set off any mine at anyone. (Each game judges it again:
-	// TrapRules::Live, from where the trap and the reporter's stand-in are there.)
+	// A world trap spent in the reporter's game (TrapState): kept, first come first kept (a take still replaces a disarm),
+	// and passed on to everyone else live, so each game whose copy is still armed sets it off there. Only one near where
+	// the reporter is (where the session has it, once it has it): a report is otherwise a way to set off any mine at
+	// anyone. One taken or disarmed is one the reporter stood at. (Each game judges it again: TrapRules::Live, from where
+	// the trap and the reporter's stand-in are there.)
 	const auto handleTrap = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2250,13 +2280,12 @@ void Server::Run()
 		if (!trap || !a_player.hasState) {
 			return;
 		}
-		const float dx = trap->x - a_player.state.x;
-		const float dy = trap->y - a_player.state.y;
-		const float dz = trap->z - a_player.state.z;
-		if (!(dx * dx + dy * dy + dz * dz <= TRAP_RANGE * TRAP_RANGE)) {
+		const auto  known = traps.find(trap->refId);
+		const auto& at = known != traps.end() ? known->second : *trap;
+		const float reach = trap->state == Protocol::TrapState::kFired ? TRAP_RANGE : TRAP_REACH;
+		if (!nearPlayer(a_player, at.cell, at.worldspace, at.x, at.y, at.z, reach)) {
 			return;
 		}
-		const auto known = traps.find(trap->refId);
 		if (!Protocol::TrapSupersedes(trap->state, known != traps.end() ? std::optional{ known->second.state } : std::nullopt)) {
 			return;
 		}
@@ -2266,6 +2295,8 @@ void Server::Run()
 			}
 			++budgetOf(a_player).added[kTraps];
 			noteFill(kTraps, traps.size() + 1);
+		} else {
+			trap->cell = at.cell, trap->worldspace = at.worldspace, trap->x = at.x, trap->y = at.y, trap->z = at.z;  // where it is stays where it was
 		}
 		trap->playerId = a_player.id;
 		traps[trap->refId] = *trap;

@@ -289,7 +289,7 @@ namespace TrapRules
 		return false;
 	}
 
-	// The session's state of the traps, as this game knows it: first come first kept, a take replacing a spring or a
+	// The session's state of the traps, as this game knows it: first come first kept, a take replacing a
 	// disarm (Protocol::TrapSupersedes), as the server keeps it.
 	struct Known
 	{
