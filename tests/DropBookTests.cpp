@@ -293,3 +293,59 @@ TEST("drop book: an item with no reference named is looked for only when it can 
 	CHECK(!DropBook::MayScan(5u, 6u, 1, false));
 	CHECK(!DropBook::MayScan(5u, 5u, 0, false));
 }
+
+TEST("drop book: our copy taken away in workshop mode is scrapped; gone otherwise it is lost or still standing")
+{
+	using DropBook::CopyGone;
+	// (shown, resolves, inWorld, named, workshop)
+	CHECK(DropBook::JudgeCopy(true, true, true, true, false) == CopyGone::kScrapped);    // the workshop's event named it
+	CHECK(DropBook::JudgeCopy(true, false, false, false, true) == CopyGone::kScrapped);  // went while workshop mode was up
+	CHECK(DropBook::JudgeCopy(true, true, false, false, true) == CopyGone::kScrapped);   // switched off there, not yet deleted
+	CHECK(DropBook::JudgeCopy(true, true, true, false, true) == CopyGone::kStanding);    // workshop mode, but it lies there
+	CHECK(DropBook::JudgeCopy(false, true, false, false, true) == CopyGone::kStanding);  // still hidden (placed disabled)
+	CHECK(DropBook::JudgeCopy(false, false, false, false, true) == CopyGone::kLost);     // never shown: nobody could scrap it
+	CHECK(DropBook::JudgeCopy(true, false, false, false, false) == CopyGone::kLost);     // its cell went: placed again
+	CHECK(DropBook::JudgeCopy(true, true, false, false, false) == CopyGone::kStanding);
+}
+
+TEST("drop book: a scrap is claimed once, ours if the server grants it to us, else lost to whoever had it first")
+{
+	using Outcome = DropBook::Scraps::Outcome;
+	DropBook::Scraps scraps;
+	CHECK(scraps.Scrapped(7));
+	CHECK(!scraps.Scrapped(7));  // the event and the frame's look both saw it: one claim
+	CHECK(!scraps.Scrapped(0));
+	CHECK(scraps.Waiting(7));
+	CHECK((scraps.Unanswered() == std::vector<std::uint32_t>{ 7 }));
+	CHECK(scraps.Answered(9, 2, 2) == Outcome::kNotScrapped);  // the answer to something else
+	CHECK(scraps.Answered(7, 2, 2) == Outcome::kOurs);
+	CHECK(!scraps.Waiting(7));
+	CHECK(scraps.Answered(7, 2, 2) == Outcome::kNotScrapped);  // answered already: a later word is another matter
+
+	CHECK(scraps.Scrapped(8));
+	CHECK(scraps.Answered(8, 3, 2) == Outcome::kLost);  // player 3 took it a moment before
+	CHECK(scraps.Scrapped(10));
+	CHECK(scraps.Answered(10, 0, 2) == Outcome::kLost);  // back with its owner: not ours either
+
+	for (std::uint32_t id = 100; id < 100 + DropBook::Scraps::MAX; ++id) {
+		CHECK(scraps.Scrapped(id));
+	}
+	CHECK(!scraps.Scrapped(999));  // full
+	CHECK(scraps.Size() == DropBook::Scraps::MAX);
+	scraps.Clear();
+	CHECK(scraps.Size() == 0u);
+}
+
+TEST("drop book: a scrap is recorded as taken at once, and taken back out of the record if it was lost")
+{
+	DropBook::Record record;
+	record.Bind(0xA);
+	record.Took(5);
+	record.Took(6);
+	record.Untook(5);
+	CHECK(!record.HasTaken(5));
+	CHECK(record.HasTaken(6));
+	CHECK((record.ForServer().taken == std::vector<std::uint32_t>{ 6 }));
+	record.Untook(42);  // never taken: nothing changes
+	CHECK((record.ForServer().taken == std::vector<std::uint32_t>{ 6 }));
+}

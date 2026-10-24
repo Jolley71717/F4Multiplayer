@@ -219,6 +219,11 @@
     again every 15 s rather than every 3 s, and at once when he is released: `NpcClaims`, `refusals=`);
   - a player who hits or talks to an NPC takes it over, unless it is someone's companion or changed
     hands in the last 5 s.
+  - a player in workshop mode takes over the settlers of that workbench (`SettlerCommand`: those linked to it by
+    `WorkshopItemKeyword`; four a round, every 2 s, each at most every 5 s) and claims again the ones they run, which
+    are not handed off meanwhile (`commanding=`, `settlerTakeovers=`). Giving a settler a job runs on the settler's
+    own AI in the commanding player's game, and a mirrored settler has none. Settlers made at runtime (most
+    recruits) are not shared, so every game runs its own.
 - The owner sends its NPCs' cell/worldspace, position, heading, speed, moveMode and weapon-drawn at
   20 Hz when they're in combat or within 3000 units of any player, else 10 Hz (unreliable). The
   others register the NPC as a `Puppets::Kind::kNpc` puppet: AI off, movement copied with
@@ -645,6 +650,17 @@ So players give each other items by dropping them, and the server decides who ha
   host's server restarting.
 - A weapon or armor put in a container tells the player once a session that friends won't see it there
   and to drop it near them instead.
+- Workshop mode can scrap (or store) a loose item lying in a settlement, copies included: the player gets its
+  components and the game takes the reference away. That is our world consuming the item, so it is our player's
+  take (`DropBook::Scraps`; no new message). Our copy goes as the workshop's destroyed event names it
+  (`Drops::OnScrapped`), or as it is found gone, or switched off, while workshop mode is up or within 1 s of it
+  closing (`DropBook::JudgeCopy`); its drop is claimed (`kClaimDrop` kTake), recorded as taken at once (a link lost
+  before the answer is settled by the next record), never given back to our world as we leave, and not placed
+  again. Granted, every friend's copy goes and no list or saved session lays it down again (`scrapped=`). Lost to a
+  claim that came first, the item is that friend's, our record forgets it (`Record::Untook`), and our player keeps
+  the components of the copy (`scrapLost=`, the one residue: components, never the item twice). Our own drop
+  scrapped before the server offered it is gone, not swapped for a copy (`kKept`). Neither kind is reported as a
+  workshop piece of ours.
 
 Left open, counted in the log and `net status` (`drops:`): a giver who reloads a save from before a drop
 a friend already took has the item again (the server can't take it back from the friend's inventory:
@@ -1148,6 +1164,16 @@ classic corrupt-grid save. Three layers, outermost first:
    the grid's ID still names it and nothing else. Copies waiting in the graveyard count as copies for the
    audit.
 
+**Our own pieces are never taken for copies.** A copy an earlier session left in the save (a crash) is adopted at
+its builder's piece's spot (`FindExisting`): the same object, made at runtime, within 4 units. Two saves that share
+a past (one save, played on by both) hold the same built pieces at the same spots, and the old guard (the
+workshop's own extra data, which only a workbench carries) let our own pass: adopted, it was blocked from workshop
+mode, unlinked from our workbench by the audit (its settler's job with it) and deleted when the session ended. A
+piece linked to a workbench as its workshop item is ours and is never adopted; a friend's report of the same object
+at its spot makes no copy over it (`OursAt`, `oursThere=`), and their scrap of theirs leaves ours standing.
+Friends' copies stay out of workshop mode's reach by design (above), so a friend's crop or post can't be a job for
+our settlers; each player assigns jobs at their own pieces.
+
 Rejected: stripping copies' links before every save and putting them back after. A save happens at any moment
 (autosaves, quicksaves, the game's own on sleep and fast travel); a put-back would re-run grid code mid-session,
 fire the game's power events into scripts, and would need wires that were never ours. Blocking the wire in the
@@ -1219,7 +1245,7 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
 | `kReportDrop` | any game, of an item its player dropped | the giver's welcome first; a known base and count 1..32767, mods and name within the wire's caps, the place in the world; 1024 lying in the session, 256 a player (past them refused to the giver only), one report per nonce | a copy only of an item whose base and every mod this game has, within 5000 units of our player, 2 a frame; it can't be picked up without the server's grant | yes |
-| `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take | yes |
+| `kClaimDrop` | anyone, of an item lying about | kTake: the first claim wins, the rest are told who has it; kGiveBack: only the taker | our player takes only a copy of ours, only after the grant, as their own Take; a copy scrapped in workshop mode is claimed the same way | yes |
 | `kDropRecord` | each game, of its own world | at most 4 a second (the last one is answered too); another session's counts as empty; a player's own drops and takes only | | no |
 | `kWorkshopItem` | anyone | caps of 20000 built and 20000 scrapped | the anchor must be a workbench (`anchorRefused`); scale clamped to [0.1, 10]; a scrap must be buildable, unscripted, not a quest or enable-parent item, in the same space and in its build area: while some of the area's volumes are not loaded, a scrap outside the loaded ones waits (`scrapRefused`, `scrapDeferred`; a waiting scrap is tried again as cells near it attach, so `scrapDeferred` can stay above 0 until a player walks there); a wire's shape must be numbers, its ends within 4096 units of its middle, its slack in [0, 2] and its thickness in (0, 16] (the item is refused whole), and a wire without one is not drawn (`unplaceable`); a moved piece of the world itself moves only the receiver's own one, and only one linked to that workbench as its workshop item, of the same object, within its cell (`ownRefused`) | yes |
 | `kWorkshopPower` | anyone, of their own pieces | the event budget; at least one entry, each a reference from the runtime range and a state of 0 or 1; the sender stamped | shown only on a copy we made of that player's piece (keyed by builder and their reference), never on a piece of our own or of the world; at most 8192 pieces kept; shown without the game's power events, so no script of ours runs on it | no |

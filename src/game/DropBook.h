@@ -10,6 +10,7 @@
 #include <cstring>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -141,6 +142,90 @@ namespace DropBook
 		std::unordered_map<std::uint32_t, Clock::time_point> out;
 	};
 
+	// ---- a copy scrapped in workshop mode ----------------------------------------------------------------------
+
+	// Workshop mode scraps a loose item lying in a settlement (its pick test lets loose weapons, armor and junk through):
+	// the player gets its components and the game takes the reference away. Our copy of an item lying in the session
+	// went that way without a word to anyone: the server still had it lying there, every friend's copy stood on, and
+	// ours was placed again as soon as its handle let go, or after the next save, load or walk away. The components and
+	// the item both, as often as the player liked. A scrap is our world consuming the item, so it is our player's take.
+	enum class CopyGone : std::uint8_t
+	{
+		kStanding,  // still there as far as we can tell (or hidden, its activation not yet blocked)
+		kScrapped,  // taken away in workshop mode: claimed as our take (Scraps)
+		kLost,      // its handle names nothing, outside workshop mode: the game took it (its cell went); placed again
+	};
+
+	// How long after workshop mode closes a copy found gone still counts as scrapped there (the menu may close in the
+	// frame of the scrap).
+	inline constexpr auto SCRAP_GRACE = std::chrono::seconds(1);
+
+	// Our copy, looked at in a frame: a_shown (a copy is placed disabled until its activation is blocked), a_resolves (its
+	// handle still names a reference), a_inWorld (that reference is enabled, not deleted and in a cell), a_named (the
+	// workshop's own event said it was scrapped), a_workshop (workshop mode is up, or was within SCRAP_GRACE). Nothing but
+	// the workshop takes a lying copy away while workshop mode is up: our player can't pick anything up there, and our
+	// own removals forget the copy first. Gone outside workshop mode, it is as before: lost if its handle went (placed
+	// again), else left alone.
+	constexpr CopyGone JudgeCopy(bool a_shown, bool a_resolves, bool a_inWorld, bool a_named, bool a_workshop)
+	{
+		if (a_named) {
+			return CopyGone::kScrapped;
+		}
+		if (a_resolves && (a_inWorld || !a_shown)) {
+			return CopyGone::kStanding;
+		}
+		if (a_workshop && a_shown) {
+			return CopyGone::kScrapped;
+		}
+		return a_resolves ? CopyGone::kStanding : CopyGone::kLost;
+	}
+
+	// Drops our player scrapped (their copy taken away in workshop mode), until the server says who has each. The scrap is
+	// claimed as a take (kClaimDrop kTake: no new message): granted, every game removes its copy and the server keeps it as
+	// ours, so nobody takes it and no list or saved session lays it down again. Our record says we took it from the moment
+	// of the scrap (Record::Took), so a link lost before the answer still settles it as ours with our next record. Lost to
+	// a claim that came first (someone took it a moment before), it is theirs, and our record says we never had it.
+	class Scraps
+	{
+	public:
+		static constexpr std::size_t MAX = 64;
+
+		enum class Outcome : std::uint8_t
+		{
+			kNotScrapped,  // not one of ours: the answer is for something else
+			kOurs,         // granted: the item is gone for everyone, its components are ours
+			kLost,         // someone else had it first: only our copy went; the item is theirs
+		};
+
+		// a_dropId's copy was scrapped here. True the first time: claim it now (a second scrap of it is the same one).
+		bool Scrapped(std::uint32_t a_dropId)
+		{
+			if (a_dropId == 0 || out.contains(a_dropId) || out.size() >= MAX) {
+				return false;
+			}
+			out.insert(a_dropId);
+			return true;
+		}
+
+		// The server says who has a_dropId now (0: nobody it remembers, its owner's world has it again).
+		Outcome Answered(std::uint32_t a_dropId, std::uint32_t a_takerId, std::uint32_t a_localId)
+		{
+			if (!out.erase(a_dropId)) {
+				return Outcome::kNotScrapped;
+			}
+			return a_takerId != 0 && a_takerId == a_localId ? Outcome::kOurs : Outcome::kLost;
+		}
+
+		// Not placed again while its claim waits (the server still lists it).
+		[[nodiscard]] bool Waiting(std::uint32_t a_dropId) const { return out.contains(a_dropId); }
+		[[nodiscard]] std::vector<std::uint32_t> Unanswered() const { return { out.begin(), out.end() }; }
+		[[nodiscard]] std::size_t Size() const { return out.size(); }
+		void Clear() { out.clear(); }
+
+	private:
+		std::set<std::uint32_t> out;
+	};
+
 	// ---- our drops the server hasn't confirmed ---------------------------------------------------------------
 
 	// Our drops our game swapped for a copy (kPlaced sent) that the server hasn't yet said lie there. The server forgets
@@ -235,6 +320,15 @@ namespace DropBook
 			if (auto* session = Find(current); session && !std::ranges::contains(session->taken, a_dropId)) {
 				Trim(session->taken);
 				session->taken.push_back(a_dropId);
+			}
+		}
+
+		// An item we recorded as taken is not in our world after all: our copy was scrapped, but someone else was granted it
+		// (DropBook::Scraps).
+		void Untook(std::uint32_t a_dropId)
+		{
+			if (auto* session = Find(current)) {
+				std::erase(session->taken, a_dropId);
 			}
 		}
 

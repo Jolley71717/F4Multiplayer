@@ -1857,6 +1857,21 @@ namespace DevCommands
 			return ref ? WorkshopSync::DescribeRef(ref) : "error: usage: wsinfo <refHex>";
 		}
 
+		// wslink <refHex> <benchHex>: links the reference to the workbench as one of its workshop items, as workshop mode's
+		// build does (so a console-placed piece passes for one built here: two saves that share a past hold the same).
+		std::string WsLink(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto bench = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
+			if (!ref || !bench || !keyword || !WorkshopSync::IsWorkbenchAnchor(bench)) {
+				return "error: usage: wslink <refHex> <benchHex> (a workbench)";
+			}
+			ref->SetLinkedRef(bench, keyword);
+			return WorkshopSync::DescribeRef(ref);
+		}
+
 		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this one), and
 		// whether you stand in each one's build area; for any other reference, what the walk makes of it.
 		std::string WsBenches(std::string_view a_args)
@@ -3524,6 +3539,7 @@ namespace DevCommands
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },
 			Entry{ "wsbenches", WsBenches },
+			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },

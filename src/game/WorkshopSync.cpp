@@ -1,6 +1,7 @@
 #include "game/WorkshopSync.h"
 
 #include "game/BuiltWalk.h"
+#include "game/Drops.h"
 #include "game/EngineRefs.h"
 #include "game/RemoteEdits.h"
 #include "game/SavedScraps.h"
@@ -214,8 +215,8 @@ namespace WorkshopSync
 		bool ReportRef(RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_workshop, std::uint8_t a_op)
 		{
 			const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-			if (!base || IsCopy(a_ref)) {
-				return false;
+			if (!base || IsCopy(a_ref) || Drops::IsCopyRef(a_ref->GetFormID())) {
+				return false;  // a copy of a friend's piece, or of a friend's drop: theirs, not something we built
 			}
 			if ((base->GetFormID() >> 24) == 0xFF) {
 				return false;  // a base made at runtime exists only here
@@ -408,6 +409,11 @@ namespace WorkshopSync
 				const auto ref = a_event.objectDestroyed.get();
 				LogEvent("destroyed", ref, a_event.workshop.get());
 				const auto id = ref ? ref->GetFormID() : 0;
+				// Our copy of a friend's drop, scrapped: the item is our player's take now (they have its components), so it
+				// goes for everyone. Not a workshop piece of ours to report.
+				if (Drops::OnScrapped(id)) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
 				// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.
 				if (ref && !IsWire(ref->GetObjectReference())) {
 					for (const auto& wire : WiresOf(*ref)) {
@@ -901,16 +907,18 @@ namespace WorkshopSync
 			}
 		}
 
-		// A real workshop object of this game (ours, or one we scrapped/moved ourselves): it carries the
-		// workshop's own extra data, which a plain copy never has.
+		// A real workshop object of this game: a piece built here, linked to its workbench as one of its workshop items (a
+		// plain copy never is: the power audit unlinks any the game links), or a workbench (the workshop's own extra data,
+		// which only a workbench carries: alone, it let our built pieces pass for copies).
 		bool IsWorkshopObject(const RE::TESObjectREFR* a_ref)
 		{
-			return a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop);
+			return BenchOf(*a_ref) != nullptr || (a_ref->extraList && a_ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kWorkshop));
 		}
 
-		// A copy left in this save by an earlier session: the same object at the same spot, still standing
-		// (not one deleted already, waiting for the save to drop it: taken over, it would be removed twice).
-		RE::TESObjectREFR* FindExisting(const Protocol::WorkshopItem& a_item)
+		// The first reference made at runtime of the item's base at its spot, still standing (not one deleted already,
+		// waiting for the save to drop it), none of our copies, that a_pick takes.
+		template <class Pick>
+		RE::TESObjectREFR* AtSpot(const Protocol::WorkshopItem& a_item, Pick a_pick)
 		{
 			const auto tes = RE::TES::GetSingleton();
 			if (!tes) {
@@ -921,13 +929,26 @@ namespace WorkshopSync
 			tes->ForEachReferenceInRange(at, ADOPT_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
 				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !a_ref->IsDisabled() && !a_ref->IsDeleted() && !IsCopy(a_ref) &&
-					!InGraveyard(a_ref) && !IsWorkshopObject(a_ref)) {
+					!InGraveyard(a_ref) && !Drops::IsCopyRef(a_ref->GetFormID()) && a_pick(a_ref)) {
 					found = a_ref;
 					return RE::BSContainer::ForEachResult::kStop;
 				}
 				return RE::BSContainer::ForEachResult::kContinue;
 			});
 			return found;
+		}
+
+		// A copy left in this save by an earlier session: the same object at the same spot (taken over, a deleted one would
+		// be removed twice), and none of ours.
+		RE::TESObjectREFR* FindExisting(const Protocol::WorkshopItem& a_item)
+		{
+			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return !IsWorkshopObject(a_ref); });
+		}
+
+		// A piece of ours, the same object, at the friend's piece's spot: their save and ours share a past.
+		bool OursAt(const Protocol::WorkshopItem& a_item)
+		{
+			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr; }) != nullptr;
 		}
 
 		// What workshop mode can build: furniture, walls, lights, containers, crops, turrets... A
@@ -1184,6 +1205,8 @@ namespace WorkshopSync
 				const auto existing = WorkshopSync::FindExisting(a_item);
 				return existing ? std::optional<Copy>{ Copy{ existing->GetHandle(), Clock::now() } } : std::nullopt;
 			}
+
+			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }
 		};
 
 		// Tries again what waits in, or next to, a cell that just attached (in line with the rest: a cell
@@ -2131,8 +2154,8 @@ namespace WorkshopSync
 			droppedNow = dropped;
 			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
-			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} oursThere={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.oursThere, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +
