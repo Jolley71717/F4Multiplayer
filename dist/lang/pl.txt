@@ -173,7 +173,7 @@ menu.mods_ask = Zapytaj hosta ponownie
 menu.host_controls = Ustawienia hosta
 menu.hc_waiting = Czekam na odpowiedź twojego serwera. Spróbuj ponownie za chwilę.
 menu.hc_open = Sesja jest otwarta: znajomi mogą dołączyć.
-menu.hc_locked = Sesja jest zamknięta: nikt nowy nie może dołączyć (obecni zostają).
+menu.hc_locked = Sesja jest zamknięta: nikt nowy nie może dołączyć. Osoby, które już w niej są, mogą dołączyć ponownie, jeśli ich gra się zawiesi lub zerwie się połączenie; wyrzuceni i zbanowani gracze nie mogą.
 menu.hc_no_password = Brak hasła: każdy, kto dotrze do sesji, może dołączyć.
 menu.hc_password = Hasło: {password} (znajomi wpisują sPassword = {password} w swoim F4Multiplayer.ini)
 menu.hc_banned = Zbanowani gracze: {n}

@@ -282,6 +282,109 @@ TEST("host controls: a locked session lets nobody new in, but keeps those in it"
 	CHECK(JoinAs(f, 6, "Carol", 0xCA201));
 }
 
+TEST("host controls: a locked session takes back a player who dropped out, and still refuses a new one")
+{
+	Fixture f{ HostedOptions() };
+	JoinHost(f);
+	const auto bob = JoinBob(f, 2);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+
+	// His game crashes (or his connection breaks, or times out): the server is rid of him...
+	f.fake->Drop(2);
+	REQUIRE(f.fake->Settle());
+	const auto left = f.fake->WaitFor(HOST_PEER, Type(MT::kPlayerLeft));
+	REQUIRE(left);
+	CHECK(Protocol::DecodePlayerLeft(*left)->playerId == bob);
+
+	// ... a stranger is still turned away ...
+	f.fake->SetIdentity(3, 76561198000000003ull);
+	const auto carol = JoinRefused(f, 3, Fixture::MakeHello("Carol", 0xCA201));
+	REQUIRE(carol);
+	CHECK(carol->reason == Protocol::REJECT_LOCKED);
+
+	// ... and he comes back, as himself, however many times his game drops.
+	CHECK(JoinBob(f, 4) == bob);
+	f.fake->Drop(4);
+	REQUIRE(f.fake->Settle());
+	CHECK(JoinBob(f, 5) == bob);
+	CHECK(f.Logged(std::format("player {} came back", bob)));
+	CheckLogNamesNobody(f);
+}
+
+TEST("host controls: a locked session doesn't take back a player the host kicked, until it is open to them again")
+{
+	Fixture f{ HostedOptions() };
+	JoinHost(f);
+	const auto bob = JoinBob(f, 2);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kKick, bob }));
+	REQUIRE(WaitRemoved(f, 2));
+	REQUIRE(f.fake->Settle());
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+
+	// Kicked is removed, not dropped: refused, by his game's identity and by his account alone.
+	f.fake->SetIdentity(3, BOB_STEAM);
+	const auto again = JoinRefused(f, 3, Fixture::MakeHello("Bob", BOB_GAME));
+	REQUIRE(again);
+	CHECK(again->reason == Protocol::REJECT_LOCKED);
+	f.fake->SetIdentity(4, BOB_STEAM);
+	const auto account = JoinRefused(f, 4, Fixture::MakeHello("Bob", 0xFEED));
+	REQUIRE(account);
+	CHECK(account->reason == Protocol::REJECT_LOCKED);
+	const auto game = JoinRefused(f, 5, Fixture::MakeHello("Bob", BOB_GAME));
+	REQUIRE(game);
+	CHECK(game->reason == Protocol::REJECT_LOCKED);
+
+	// Unlocked, he joins as before (a kick isn't a ban); a member again, a later lock takes him back after a drop.
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kUnlock }));
+	CHECK(JoinBob(f, 6) == bob);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+	f.fake->Drop(6);
+	REQUIRE(f.fake->Settle());
+	CHECK(JoinBob(f, 7) == bob);
+}
+
+TEST("host controls: a locked session doesn't take back a banned player, nor one unbanned while it was locked")
+{
+	Fixture f{ HostedOptions() };
+	JoinHost(f);
+	const auto bob = JoinBob(f, 2);
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kBan, bob }));
+	REQUIRE(WaitRemoved(f, 2));
+	REQUIRE(f.fake->Settle());
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+
+	f.fake->SetIdentity(3, BOB_STEAM);
+	const auto banned = JoinRefused(f, 3, Fixture::MakeHello("Bob", BOB_GAME));
+	REQUIRE(banned);
+	CHECK(banned->reason == Protocol::REJECT_BANNED);
+
+	// The ban lifted, the lock still holds him out: he was removed, not dropped.
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kUnban, 0, 0 }));
+	f.fake->SetIdentity(4, BOB_STEAM);
+	const auto locked = JoinRefused(f, 4, Fixture::MakeHello("Bob", BOB_GAME));
+	REQUIRE(locked);
+	CHECK(locked->reason == Protocol::REJECT_LOCKED);
+}
+
+TEST("host controls: a player turned away from a full server was never in the session, so a lock refuses them")
+{
+	Server::Options options = HostedOptions();
+	options.maxPlayers = 2;
+	Fixture f{ options };
+	JoinHost(f);
+	JoinBob(f, 2);
+	f.fake->SetIdentity(3, 76561198000000003ull);
+	const auto full = JoinRefused(f, 3, Fixture::MakeHello("Carol", 0xCA201));
+	REQUIRE(full);
+	CHECK(full->reason == "Server is full");
+
+	REQUIRE(Command(f, HOST_PEER, { Protocol::HostAction::kLock }));
+	f.fake->SetIdentity(4, 76561198000000003ull);
+	const auto locked = JoinRefused(f, 4, Fixture::MakeHello("Carol", 0xCA201));
+	REQUIRE(locked);
+	CHECK(locked->reason == Protocol::REJECT_LOCKED);
+}
+
 TEST("host controls: the host changes and removes the password, and the log never has it")
 {
 	Server::Options options = HostedOptions();

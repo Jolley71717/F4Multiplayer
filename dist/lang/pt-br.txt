@@ -171,7 +171,7 @@ menu.mods_ask = Perguntar de novo
 menu.host_controls = Controles do anfitrião
 menu.hc_waiting = Esperando a resposta do seu servidor. Tente de novo daqui a pouco.
 menu.hc_open = A sessão está aberta: amigos podem entrar.
-menu.hc_locked = A sessão está trancada: ninguém novo pode entrar (quem já está fica).
+menu.hc_locked = A sessão está trancada: ninguém novo pode entrar. Quem já está nela pode voltar a entrar se o jogo travar ou a conexão cair; jogadores expulsos e banidos não podem.
 menu.hc_no_password = Sem senha: qualquer um que alcance a sessão pode entrar.
 menu.hc_password = Senha: {password} (os amigos colocam sPassword = {password} no F4Multiplayer.ini deles)
 menu.hc_banned = Jogadores banidos: {n}
