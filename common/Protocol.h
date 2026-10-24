@@ -1311,6 +1311,11 @@ namespace Protocol
 	// A ping's name on the wire: what the sender's game calls the target ("Raider"), for a game with no copy of it.
 	inline constexpr std::size_t MAX_PING_NAME_LENGTH = 64;
 
+	// The least time between two of a player's pings the server passes on, by when they arrive. Less than a game's own
+	// spacing (PingRules::MIN_GAP, 1 s by key press): pings pressed a second apart reach the server a little sooner or later
+	// than that with the network's jitter, and one dropped here would show on the pinger's compass and on no friend's.
+	inline constexpr auto PING_SERVER_GAP = std::chrono::milliseconds{ 800 };
+
 	// A ping: "look at this". playerId: who pinged (ignored client -> server). The spot is where the target was in the
 	// sender's game, inside (cell) or outside (worldspace). target: for kActor the id the session knows the NPC by
 	// (NpcSync::SessionId: a plugin's reference, or a spawn id; 0 for one the session does not share), for kItem its

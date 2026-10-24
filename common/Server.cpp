@@ -2021,7 +2021,7 @@ void Server::Run()
 
 	const auto handlePing = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
-		if (!allowEvent(a_player) || now - a_player.lastPing < std::chrono::seconds(1)) {
+		if (!allowEvent(a_player) || now - a_player.lastPing < Protocol::PING_SERVER_GAP) {
 			return;
 		}
 		auto ping = Protocol::DecodePing(a_data);
