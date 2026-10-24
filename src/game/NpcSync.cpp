@@ -19,6 +19,7 @@
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
 #include "game/SaveGuard.h"
+#include "game/SettlerCommand.h"
 #include "game/Spawns.h"
 #include "game/StandInRange.h"
 #include "game/Story.h"
@@ -97,6 +98,10 @@ namespace NpcSync
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
+		// Workshop mode (SettlerCommand): the workbench our player is at, and its shared settlers as of the last scan.
+		std::uint32_t                                        commandBench = 0;
+		std::vector<SettlerCommand::Judged>                  commanding;
+		std::uint32_t                                        settlerTakeovers = 0;
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
@@ -212,6 +217,22 @@ namespace NpcSync
 		}
 
 		// NPCs we can share: loaded, alive, from a plugin file, and not a player or a stand-in.
+		// The workbench a settler is linked to as one of its workshop's (the keyword WorkshopNPCScript links them with); 0 if none.
+		std::uint32_t BenchIdOf(const RE::TESObjectREFR& a_ref)
+		{
+			constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
+			const auto linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+			if (!linked) {
+				return 0;
+			}
+			for (const auto& link : linked->linkedRefs) {
+				if (link.keyword && link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && link.REFR) {
+					return link.REFR->GetFormID();
+				}
+			}
+			return 0;
+		}
+
 		bool IsCandidate(RE::Actor* a_actor)
 		{
 			return a_actor && !a_actor->IsPlayerRef() && Protocol::IsShareableRef(a_actor->GetFormID()) && !Puppets::IsPuppet(a_actor) &&
@@ -284,6 +305,9 @@ namespace NpcSync
 			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
 				return false;
 			}
+			if (std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; })) {
+				return false;  // a settler of the workbench our player commands at
+			}
 			const auto& at = a_actor->data.location;
 			const float ours = at.GetDistance(player->data.location);
 			if (ours < HANDOFF_FROM) {
@@ -308,6 +332,15 @@ namespace NpcSync
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
 			holding.clear();
+			commanding.clear();
+			// The workbench our player is in workshop mode at, found as the mode opens (the nearest, as the game picks it).
+			if (!OpenMenus::Open(OpenMenus::Menu::kWorkshop)) {
+				commandBench = 0;
+			} else if (commandBench == 0) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto bench = player ? RE::Workshop::FindNearestValidWorkshop(*player) : nullptr;
+				commandBench = bench ? bench->GetFormID() : 0;
+			}
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			if (lists) {
@@ -334,6 +367,13 @@ namespace NpcSync
 					}
 
 					const auto owner = OwnerOf(id);
+					if (commandBench != 0) {
+						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
+						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
+						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !lastTakeover.contains(id))) {
+							commanding.push_back({ id, step });
+						}
+					}
 					if (owner == localId) {
 						if (ShouldHandOff(actor, id, a_now)) {
 							handOff.push_back(id);
@@ -442,6 +482,8 @@ namespace NpcSync
 			mirrors.clear();
 			talkingTo = 0;
 			holding.clear();
+			commanding.clear();
+			commandBench = 0;
 			sentFrames.clear();
 			frameBrings.Clear();
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
@@ -1391,11 +1433,25 @@ namespace NpcSync
 		}
 		// The NPC we talk to, and those holding us (the conversation's speaker, the others in our scene), are claimed
 		// again while that lasts when we run them, so nobody takes them over mid-scene; else they're taken over.
-		if ((talkingTo || !holding.empty()) && now >= nextTalkClaim) {
+		// So are the settlers of the workbench our player is in workshop mode at: a job is given to one our game runs
+		// (SettlerCommand).
+		if ((talkingTo || !holding.empty() || !commanding.empty()) && now >= nextTalkClaim) {
 			nextTalkClaim = now + TALK_CLAIM_INTERVAL;
 			auto keep = holding;
 			if (talkingTo && !std::ranges::contains(keep, talkingTo)) {
 				keep.push_back(talkingTo);
+			}
+			const auto round = SettlerCommand::Plan(commanding);
+			for (const auto id : round.keep) {
+				if (!std::ranges::contains(keep, id)) {
+					keep.push_back(id);
+				}
+			}
+			for (const auto id : round.takeOver) {
+				if (!std::ranges::contains(keep, id)) {
+					keep.push_back(id);
+					++settlerTakeovers;
+				}
 			}
 			std::vector<Protocol::ActorClaim> claims;
 			for (const auto id : keep) {
@@ -1464,6 +1520,8 @@ namespace NpcSync
 		handedOffAt.clear();
 		talkingTo = 0;
 		holding.clear();
+		commanding.clear();
+		commandBench = 0;
 		owned.clear();
 		switchOns.Clear();
 		bringIns.Clear();
@@ -1548,8 +1606,8 @@ namespace NpcSync
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
 		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
 		const auto sharedMade = std::ranges::count_if(owned, [](const auto& a_entry) { return Protocol::IsSpawnRef(a_entry.first) && MadeFrameRef(Spawns::LocalOf(a_entry.first)) != nullptr; });
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={}", owned.size(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
 			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp());
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), commandBench, commanding.size(), settlerTakeovers);
 	}
 }
