@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/HeldCopy.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -35,8 +37,18 @@ namespace SaveGuard
 	void KeepUnpromoted(RE::Actor* a_actor);
 
 	// A reference of ours (Track) whose handle stopped resolving: the game took it from under us, and its form may
-	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is.
+	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is. One whose form
+	// is gone (the engine unloaded it with its cell) has its record dropped at once: the engine keeps that record under the
+	// cell, and loading the cell again would bring the reference back (see SaveStrays::Book::KeepForgotten, HeldCopy.h).
 	void Forget(std::uint32_t a_id);
+
+	// A copy of ours (Track) held by a_handle, placed under a_ids (see HeldCopy), once its handle stops resolving: the same
+	// copy back under its id with its cell is held again (a_handle set to it); otherwise it is forgotten (Forget) and a_ids
+	// cleared. What was done (kNone while the handle still resolves, or nothing is held).
+	HeldCopy::Lost Refresh(RE::ObjectRefHandle& a_handle, HeldCopy::Ids& a_ids);
+
+	// The ids a copy just placed is held under (see HeldCopy).
+	[[nodiscard]] HeldCopy::Ids IdsOf(const RE::TESObjectREFR* a_ref);
 
 	// A reference of ours (Track) the player took into their inventory (a copy of a friend's dropped item): not ours any
 	// more, and its id may soon name an item of the game's (SaveStrays::Book::Release).

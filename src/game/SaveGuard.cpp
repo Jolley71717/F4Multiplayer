@@ -36,6 +36,7 @@ namespace SaveGuard
 		std::uint32_t doomedLoaded = 0;      // of straysLoaded, likewise
 		std::uint32_t foreignDoomed = 0;     // doomed ones with a record, not ours, seen by a sweep (each one each time)
 		std::uint32_t excludedAtDelete = 0;  // records of ours dropped as they were deleted or lost their cell (ExcludeOurs)
+		std::uint32_t orphansDropped = 0;     // records of ours whose form the engine had unloaded with its cell (see SaveStrays::Book::KeepForgotten)
 		std::uint32_t lastStray = 0;
 		std::uint32_t searches = 0;          // of all forms, for strays
 
@@ -141,6 +142,18 @@ namespace SaveGuard
 			}
 			const auto base = ref->GetObjectReference();
 			return base ? base->GetFormID() : 0;
+		}
+
+		// One of ours the engine unloaded with its cell, its form gone and its record kept under the cell, which would bring it
+		// back when the cell loads again (see SaveStrays::Book::KeepForgotten): the record is dropped. Only with no form of
+		// any kind under the id (BaseNow looks for a reference): a runtime form of another kind there now owns any record.
+		void DropOrphan(std::uint32_t a_id)
+		{
+			if (RE::TESForm::GetFormByID(a_id) || !ExcludeId(a_id)) {
+				return;
+			}
+			++orphansDropped;
+			REX::INFO("SaveGuard: {:08X}, ours, was unloaded with its cell; its record is dropped, so the cell never brings it back", a_id);
 		}
 
 		// Whether a reference carries the faction change every stand-in gets (see SaveStrays::STAND_IN_FACTION).
@@ -309,7 +322,46 @@ namespace SaveGuard
 
 	void Forget(std::uint32_t a_id)
 	{
-		book.Forget(a_id);
+		// Gone already (unloaded with its cell): its record goes now, before the cell could load again and bring it back.
+		if (book.Forget(a_id)) {
+			DropOrphan(a_id);
+		}
+	}
+
+	HeldCopy::Lost Refresh(RE::ObjectRefHandle& a_handle, HeldCopy::Ids& a_ids)
+	{
+		const bool resolves = static_cast<bool>(a_handle.get());
+		if (resolves || a_ids.id == 0) {
+			return HeldCopy::Lost::kNone;
+		}
+		HeldCopy::Facts facts;
+		const auto      ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_ids.id);
+		if (ref) {
+			const auto base = ref->GetObjectReference();
+			facts.baseNow = base ? base->GetFormID() : 0;
+			facts.deleted = ref->IsDeleted();
+			facts.ours = Placed(ref);
+		} else if (RE::TESForm::GetFormByID(a_ids.id)) {
+			facts.baseNow = 0;  // a form of another kind under the id now
+		}
+		const auto lost = HeldCopy::Look(a_ids, resolves, facts);
+		if (lost == HeldCopy::Lost::kBack) {
+			a_handle = ref->GetHandle();
+		} else if (lost == HeldCopy::Lost::kForget) {
+			Forget(a_ids.id);
+			a_handle = {};
+			a_ids = {};
+		}
+		return lost;
+	}
+
+	HeldCopy::Ids IdsOf(const RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return {};
+		}
+		const auto base = a_ref->GetObjectReference();
+		return { a_ref->GetFormID(), base ? base->GetFormID() : 0 };
 	}
 
 	void Release(std::uint32_t a_id)
@@ -334,7 +386,7 @@ namespace SaveGuard
 			return;
 		}
 		forgottenCheckAt = now + FORGOTTEN_CHECK_INTERVAL;
-		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); });
+		book.KeepForgotten(BaseNow, [](std::uint32_t a_id) { excludedAtDelete += ExcludeId(a_id); }, DropOrphan);
 		LetGoOfGone();
 	}
 
@@ -350,7 +402,7 @@ namespace SaveGuard
 					REX::INFO("SaveGuard: {:08X}, ours, was taken from us by the game; keeping it out of the save", a_id);
 				}
 			},
-			Sweep(), StandIn);
+			DropOrphan, Sweep(), StandIn);
 		LetGoOfGone();
 		for (const auto& [c, verdict] : strays) {
 			const bool doomed = SaveStrays::Doomed(c.seen);
@@ -450,8 +502,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
-			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
 			unpromoted.Refused());
 	}
 }

@@ -788,6 +788,19 @@ Dev command `fade` (state), `fade in`, `fade stuck` (fades out to stay, as the s
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
+  One copy per friend's frame (`HeldCopy.h`): every frame copy (the worn one, the one left where they got out, the
+  parked one, a spawn's) is held by its handle beside the id and base it was placed under. The engine unloads a
+  reference it never made persistent with its cell (the player walks or travels off): the form is freed, the handle
+  stops resolving, and the record of changes stays under the cell, bringing the copy back under the same id when the
+  cell loads again. Up to 0.9.1 the copy was only let go of: it came back on the player's return beside the one
+  placed for the friend's frame then, and every save kept it (the 0.9.1 report: frames piling up where friends had
+  parked, got out or walked in their armor in Sanctuary). Now the id is looked up again once the handle fails
+  (`HeldCopy::Look`): the same copy back is held again; otherwise it is forgotten and its record dropped at once
+  (`SaveGuard::Forget`, `SaveStrays::Book::KeepForgotten`'s orphans, counted as `orphansDropped`). And before a copy
+  is placed, one an earlier session left at that very spot (within 2 units: made at runtime, the same frame, enabled,
+  emptied, held by no quest, nobody's to use here and not one this run placed; `HeldCopy::Leftover`) is taken over
+  instead, so what 0.9.1 left in a save goes with the friend this time. `net status` counts them: `framesUnloaded`,
+  `framesBack`, `leftoversTaken` (stand-ins), `unloaded` and `back` (spawns).
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The

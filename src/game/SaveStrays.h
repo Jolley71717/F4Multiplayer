@@ -206,15 +206,16 @@ namespace SaveStrays
 		}
 
 		// Keeps the ones whose form is still there with the base it was placed from: a_baseNow(id) gives the base of
-		// the form under the id now, or nothing when there is none. Calls a_kept(id) for each one kept, and a_gone(id, base)
-		// for each one let go of, with the base it was placed from.
+		// the form under the id now, or nothing when there is none. Calls a_kept(id) for each one kept, and a_gone(id, base,
+		// orphaned) for each one let go of, with the base it was placed from: orphaned when no form is under the id at all
+		// (see Book::KeepForgotten), not when the id names another form.
 		template <class F, class G, class H>
 		void Keep(F&& a_baseNow, G&& a_kept, H&& a_gone)
 		{
 			std::erase_if(entries, [&](const std::pair<std::uint32_t, std::uint32_t>& a_entry) {
 				const std::optional<std::uint32_t> base = a_baseNow(a_entry.first);
 				if (!base || *base != a_entry.second) {
-					a_gone(a_entry.first, a_entry.second);
+					a_gone(a_entry.first, a_entry.second, !base.has_value());
 					return true;
 				}
 				a_kept(a_entry.first);
@@ -225,7 +226,7 @@ namespace SaveStrays
 		template <class F, class G>
 		void Keep(F&& a_baseNow, G&& a_kept)
 		{
-			Keep(a_baseNow, a_kept, [](std::uint32_t, std::uint32_t) {});
+			Keep(a_baseNow, a_kept, [](std::uint32_t, std::uint32_t, bool) {});
 		}
 
 		void Clear() { entries.clear(); }
@@ -270,23 +271,40 @@ namespace SaveStrays
 		// which is not ours. So it is let go of at once (not forgotten: that keeps the id out of saves while its base is).
 		void Release(std::uint32_t a_id) { placed.Erase(a_id); }
 
-		// One of ours whose handle stopped resolving (see Forgotten).
-		void Forget(std::uint32_t a_id)
+		// One of ours whose handle stopped resolving (see Forgotten). Whether it is ours (placed this run).
+		bool Forget(std::uint32_t a_id)
 		{
 			if (const auto base = placed.BaseOf(a_id)) {
 				forgotten.Add(a_id, *base);
+				return true;
 			}
+			return false;
 		}
 
 		// The forgotten ones still there (a_kept(id) for each, its record to be dropped); one whose form is gone is let
 		// go of, and is not ours any more (its id may be handed out again; see TakeGone).
-		template <class B, class K>
-		void KeepForgotten(B&& a_baseNow, K&& a_kept)
+		// a_orphaned(id) for each one with no form under its id at all: its record is to be dropped as it is let go of. The
+		// engine unloads a reference it never made persistent with its cell: the form is freed and its record of changes kept
+		// under that cell, which brings the reference back when the cell loads again. A friend's frame copy left in Sanctuary
+		// as the player walked or travelled off so came back beside the one placed for them on their return, and every save
+		// from then on kept it. The id stays taken while that record is there (the engine hands out only ids with none), so
+		// the record is ours; one whose id names another form now is left alone.
+		template <class B, class K, class O>
+		void KeepForgotten(B&& a_baseNow, K&& a_kept, O&& a_orphaned)
 		{
-			forgotten.Keep(a_baseNow, a_kept, [&](std::uint32_t a_id, std::uint32_t a_base) {
+			forgotten.Keep(a_baseNow, a_kept, [&](std::uint32_t a_id, std::uint32_t a_base, bool a_orphan) {
+				if (a_orphan) {
+					a_orphaned(a_id);
+				}
 				placed.Erase(a_id);
 				gone.emplace_back(a_id, a_base);
 			});
+		}
+
+		template <class B, class K>
+		void KeepForgotten(B&& a_baseNow, K&& a_kept)
+		{
+			KeepForgotten(a_baseNow, a_kept, [](std::uint32_t) {});
 		}
 
 		// The ids let go of since the last call (KeepForgotten, BeforeSave), their forms gone, with the base each was placed
@@ -307,12 +325,19 @@ namespace SaveStrays
 			return a_found;
 		}
 
-		// Before a save: the forgotten ones still there (a_kept), then each stray with what the save does with it.
+		// Before a save: the forgotten ones still there (a_kept), the records of those whose form is gone (a_orphaned, see
+		// KeepForgotten), then each stray with what the save does with it.
+		template <class B, class K, class O, class S>
+		std::vector<Judged> BeforeSave(B&& a_baseNow, K&& a_kept, O&& a_orphaned, std::vector<Found> a_found, S&& a_standIn)
+		{
+			KeepForgotten(a_baseNow, a_kept, a_orphaned);
+			return JudgeAll(Strays(std::move(a_found), a_standIn), When::kSave);
+		}
+
 		template <class B, class K, class S>
 		std::vector<Judged> BeforeSave(B&& a_baseNow, K&& a_kept, std::vector<Found> a_found, S&& a_standIn)
 		{
-			KeepForgotten(a_baseNow, a_kept);
-			return JudgeAll(Strays(std::move(a_found), a_standIn), When::kSave);
+			return BeforeSave(a_baseNow, a_kept, [](std::uint32_t) {}, std::move(a_found), a_standIn);
 		}
 
 		// Right after a load, or a new game: what was placed and forgotten before it is let go of first (see
