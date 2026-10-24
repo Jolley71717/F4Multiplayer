@@ -734,6 +734,11 @@ namespace WorldSync
 					pickupInbox.push_back(a_event.baseObjectFormID);
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				if (a_event.oldContainerFormID == 0 && a_event.newContainerFormID != 0) {
+					// From nothing into a container: in workshop mode, maybe a scrap's components in its workbench (Drops).
+					Drops::OnAddedFromNowhere(a_event.newContainerFormID, a_event.baseObjectFormID, count);
+					return RE::BSEventNotifyControl::kContinue;
+				}
 				if (a_event.oldContainerFormID == PLAYER_REF_ID && a_event.newContainerFormID == 0) {
 					// Dropped (or used up: Drops tells them apart): an item that may be given to a friend.
 					Drops::OnLeftInventory(a_event.baseObjectFormID, count, a_event.referenceFormID);

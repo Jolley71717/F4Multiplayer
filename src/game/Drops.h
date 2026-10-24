@@ -36,9 +36,14 @@ namespace Drops
 	// Any thread: a_ref is one of our copies of a friend's drop (never reported as a workshop piece of ours).
 	bool IsCopyRef(std::uint32_t a_ref);
 
-	// Any thread: workshop mode scrapped a_ref. True if it was one of our copies: the item is claimed as our player's take,
-	// so it goes for everyone (they have its components), or, if someone else's claim came first, it is theirs alone.
-	bool OnScrapped(std::uint32_t a_ref);
+	// Any thread: workshop mode scrapped (or stored) a_ref, from a_bench's settlement. True if it was one of our copies:
+	// the item is claimed as our player's take, so it goes for everyone (they have its components), or, if someone else's
+	// claim came first, it is theirs alone and what the scrap put in a_bench is taken back out.
+	bool OnScrapped(std::uint32_t a_ref, std::uint32_t a_bench);
+
+	// The engine's event (any thread): a_count of a_base came into a_container from nothing (a scrap's components in its
+	// workbench, among others). Noted only while workshop mode is up.
+	void OnAddedFromNowhere(std::uint32_t a_container, std::uint32_t a_base, std::int32_t a_count);
 
 	// Dev only (the dropitem command): the next item our player loses to nothing is taken as dropped, as from the Pip-Boy
 	// (the console's drop runs with no menu open).

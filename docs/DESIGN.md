@@ -688,15 +688,18 @@ So players give each other items by dropping them, and the server decides who ha
   and to drop it near them instead.
 - Workshop mode can scrap (or store) a loose item lying in a settlement, copies included: the player gets its
   components and the game takes the reference away. That is our world consuming the item, so it is our player's
-  take (`DropBook::Scraps`; no new message). Our copy goes as the workshop's destroyed event names it
-  (`Drops::OnScrapped`), or as it is found gone, or switched off, while workshop mode is up or within 1 s of it
-  closing (`DropBook::JudgeCopy`); its drop is claimed (`kClaimDrop` kTake), recorded as taken at once (a link lost
-  before the answer is settled by the next record), never given back to our world as we leave, and not placed
-  again. Granted, every friend's copy goes and no list or saved session lays it down again (`scrapped=`). Lost to a
-  claim that came first, the item is that friend's, our record forgets it (`Record::Untook`), and our player keeps
-  the components of the copy (`scrapLost=`, the one residue: components, never the item twice). Our own drop
-  scrapped before the server offered it is gone, not swapped for a copy (`kKept`). Neither kind is reported as a
-  workshop piece of ours.
+  take (`DropBook::Scraps`; no new message). Only the workshop's destroyed event (`Drops::OnScrapped`) makes it a
+  scrap: a copy merely found gone, in workshop mode or not, is taken for lost and placed again
+  (`DropBook::JudgeCopy`). Its drop is claimed (`kClaimDrop` kTake), recorded as taken at once (a link lost before the
+  answer is settled by the next record), never given back to our world as we leave, and not placed again; the claim
+  is never refused for want of room. Granted, every friend's copy goes and no list or saved session lays it down
+  again (`scrapped=`). Lost to a claim that came first, the item is that friend's, our record forgets it
+  (`Record::Untook`), and what the scrap put in the workbench is taken back out of it (`scrapLost=`,
+  `scrapTakenBack=`): the things that came into that workbench from nothing while workshop mode was up, within
+  0.5 s of the event, each given to the nearest scrap of it in time so our player's own scraps beside it keep theirs
+  (`DropBook::ScrapYields`). With nothing seen coming in, our player keeps the components (`scrapShort=`). Our own
+  drop scrapped before the server offered it is gone, not swapped for a copy (`kKept`). Neither kind is reported as
+  a workshop piece of ours.
 
 Left open, counted in the log and `net status` (`drops:`): a giver who reloads a save from before a drop
 a friend already took has the item again (the server can't take it back from the friend's inventory:
