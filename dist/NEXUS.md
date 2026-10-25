@@ -10,12 +10,12 @@ docs/RELEASING.md.
 - **Category:** Gameplay
 - **Short description** (350 characters max):
 
-Co-op for up to 4 players through Steam: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default (the host can keep it separate). F4SE plugin, early alpha.
+Co-op for 4 or more players through Steam: invite friends from the overlay, no port forwarding. Shared NPCs, combat, loot, doors, side quests, map and time of day. Voice chat, revive a downed friend, teleport to friends, player list. Everyone keeps their own save; the main story moves together by default (the host can keep it separate). F4SE plugin, early alpha.
 
 ## Description (BBCode)
 
 ```
-[size=5][b]Play Fallout 4 with up to 3 friends[/b][/size]
+[size=5][b]Play Fallout 4 with your friends: 4 players by default, more if the host allows it[/b][/size]
 
 One player hosts, the others join through Steam: Shift+Tab, right-click a friend, [b]Invite to Game[/b] (or [b]Join Game[/b] on the host). No port forwarding, no VPN, no IP addresses. Everyone keeps their own save, character and inventory.
 

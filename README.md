@@ -2,7 +2,7 @@
 
 Multiplayer mod for Fallout 4, built as an F4SE plugin using [CommonLibF4](https://github.com/libxse/commonlibf4).
 
-**Status:** alpha. Up to 4 players share one world, over Steam or a LAN. Each player keeps their own save. Friends see each other with their own face, gear and name. NPC AI is shared between games, and enemies can fight any player. Deaths, loot, pickups, doors, locks and side quests are synced, and so is the main story unless the host gives each player their own. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
+**Status:** alpha. Four players (or more, if the host allows it) share one world, over Steam or a LAN. Each player keeps their own save. Friends see each other with their own face, gear and name. NPC AI is shared between games, and enemies can fight any player. Deaths, loot, pickups, doors, locks and side quests are synced, and so is the main story unless the host gives each player their own. See [INSTALL](dist/INSTALL.md) to play and [DESIGN](docs/DESIGN.md) for how it works.
 
 ## Playing together
 

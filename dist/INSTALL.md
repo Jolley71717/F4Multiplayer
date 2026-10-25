@@ -1,6 +1,6 @@
 ﻿# F4Multiplayer: install and play
 
-Up to 4 players. Everyone needs:
+Four players by default; the host can allow more (`iMaxPlayers`, see [Settings](#settings)). Everyone needs:
 
 - Fallout 4 **1.11.240** on Steam
 - Windows, or Linux / Steam Deck through Proton (see [Linux and Steam Deck](#linux-and-steam-deck): start the game through Steam there)
@@ -68,6 +68,10 @@ bHost = true
 The host's game starts hosting once it is in the world (not at the main menu, and for a new
 character not until it is out of Vault 111). Friends who try to join earlier are told the host isn't
 in the game yet, and their game tries again by itself.
+
+The host also sets how many players can be in the session at once, themselves included (`iMaxPlayers = 4` by
+default). More is allowed, but each extra player adds traffic and NPC work for the host, and sessions of more than
+two players have been tested less.
 
 Everyone else keeps the defaults. Players are named after the character they play (`sPlayerName = character`;
 your Steam name stands in until a new character has a name). Set `sPlayerName` to a name of your own, or leave it
