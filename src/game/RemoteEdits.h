@@ -154,9 +154,11 @@ namespace RemoteEdits
 	// Our copies of NPCs another game runs are the exception: made ghosts while it goes off (BlastShield), as their
 	// owner's game deals its damage to them.
 	//
-	// Only what a throw makes is set off. A grenade is about 500 units across, a Fat Man's shell 850; nothing
-	// bigger is thrown (a nuke or an artillery strike reaches thousands), and a radius of 0 or one that isn't
-	// a number is no explosion of a throw.
+	// Only what a throw or a shot makes is set off. A grenade is about 500 units across, a Fat Man's shell 850, and what
+	// a shot sets off no more (Fallout4.esm's explosions, read from the records: a car's first blast 128, its big one
+	// 900, a vehicle's small or large alike; an explosive barrel 350, a gas canister 120); nothing bigger is thrown or
+	// shot (a nuke or an artillery strike reaches thousands), and a radius of 0 or one that isn't a number is no
+	// explosion of a throw.
 	constexpr float MAX_EXPLOSION_RADIUS = 1024.0f;
 	constexpr float EXPLOSION_RANGE = 6000.0f;  // from us: farther, nothing we'd see or feel
 

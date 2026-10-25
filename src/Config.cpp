@@ -3,6 +3,7 @@
 #include "IniFile.h"
 #include "Log.h"
 #include "Platform.h"
+#include "StorySetting.h"
 
 namespace Config
 {
@@ -83,7 +84,11 @@ namespace Config
 			} else if (key == "bFriendlyFire") {
 				settings.friendlyFire = ParseBool(value);
 			} else if (key == "sStory") {
-				settings.sharedStory = value == "shared";
+				if (const auto shared = StorySetting::Parse(value)) {
+					settings.sharedStory = *shared;
+				} else {
+					REX::WARN("Config: sStory = '{}' is neither shared nor own; the story stays {}", value, StorySetting::Name(settings.sharedStory));
+				}
 			} else if (key == "sIgnoredPlugins") {
 				settings.ignoredPlugins.clear();
 				for (std::size_t start = 0; start <= value.size();) {
@@ -211,7 +216,8 @@ namespace Config
 		if (!Log::SetLevel(settings.logLevel)) {
 			REX::WARN("Config: sLogLevel '{}' is not info or debug; keeping {}", settings.logLevel, Log::Level());
 		}
-		REX::INFO("Config: loaded {}", PATH);
+		// Whether the story is shared decides what a host's session shares; said here so a log shows it without hosting.
+		REX::INFO("Config: loaded {} (sStory: {})", PATH, StorySetting::Name(settings.sharedStory));
 	}
 
 	const Settings& Get()

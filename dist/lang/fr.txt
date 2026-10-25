@@ -175,7 +175,7 @@ menu.mods_ask = Redemander à l'hôte
 menu.host_controls = Contrôles de l'hôte
 menu.hc_waiting = En attente de la réponse de votre serveur. Réessayez dans un instant.
 menu.hc_open = La session est ouverte : vos amis peuvent la rejoindre.
-menu.hc_locked = La session est verrouillée : personne de nouveau ne peut la rejoindre (ceux qui sont là restent).
+menu.hc_locked = La session est verrouillée : personne de nouveau ne peut la rejoindre. Ceux qui y sont déjà peuvent la rejoindre à nouveau si leur jeu plante ou si leur connexion est coupée ; les joueurs exclus et bannis ne le peuvent pas.
 menu.hc_no_password = Pas de mot de passe : quiconque peut atteindre la session peut la rejoindre.
 menu.hc_password = Mot de passe : {password} (vos amis mettent sPassword = {password} dans leur F4Multiplayer.ini)
 menu.hc_banned = Joueurs bannis : {n}

@@ -312,7 +312,8 @@ namespace
 			return;
 		}
 		const bool enabled = setting->GetBinary();
-		const bool front = !enabled || Hotkeys::GameInFront();
+		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame).
+		const bool front = (enabled || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
 		const auto step = inputGate.Frame(enabled, front, front && enabled && MouseButtonDown());
 		if (step.polling) {
 			input->pollingEnabled = *step.polling;

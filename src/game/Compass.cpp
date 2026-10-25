@@ -285,6 +285,7 @@ namespace Compass
 		std::atomic<bool>           hookedArmorHud{ false };
 		std::mutex                  targetsLock;
 		std::vector<Target>         latestTargets;  // from the frame task, for the next HUD update
+		Stopped                     armorStopped;   // main thread
 
 		// After the menu's own update: the update queued for this compass, if any. One queued before a load (or its
 		// loading screen) names a HUD that is being torn down and rebuilt; it is dropped, and Frame queues a fresh one
@@ -411,6 +412,10 @@ namespace Compass
 			return;  // the HUD is being torn down or rebuilt (loading screen, or a game load just finished)
 		}
 		Seen(frameThreads);
+		// Out of power armor its HUD is gone and shows nothing: its count of markers is set so (Stopped).
+		if (armorStopped.Frame(hudCompass.advances.load(), armorCompass.advances.load())) {
+			armorCompass.shown = 0;
+		}
 		if (OtherMenuOpen()) {
 			++skippedMenus;
 			return;  // the markers stay where they were until the menu has closed

@@ -62,6 +62,9 @@ namespace
 		case MT::kPlayerLeft:
 			add(DecodePlayerLeft(a_packet));
 			break;
+		case MT::kPlayerReloaded:
+			add(DecodePlayerReloaded(a_packet));
+			break;
 		case MT::kPlayerStates:
 			if (const auto states = DecodePlayerStates(a_packet)) {
 				for (const auto& entry : states->players) {
@@ -136,6 +139,9 @@ namespace
 		case MT::kNpcEquipment:
 			add(DecodeNpcEquipment(a_packet));
 			break;
+		case MT::kNpcIdentity:
+			add(DecodeNpcIdentity(a_packet));
+			break;
 		case MT::kPlayerFace:
 			add(DecodeFace(a_packet));
 			break;
@@ -156,6 +162,9 @@ namespace
 			break;
 		case MT::kExplosion:
 			add(DecodeExplosion(a_packet));
+			break;
+		case MT::kDestructions:
+			add(DecodeDestructions(a_packet));
 			break;
 		case MT::kActivation:
 			add(DecodeActivation(a_packet));
@@ -279,7 +288,7 @@ TEST("server: a joiner sending broken, cut-short or server-only packets of every
 		// Not by passing nothing on: some of each kind that names a player got through.
 		const auto relayed = TypesNaming(bobDuring, mallory->playerId);
 		for (const auto type : { MT::kVoiceRelay, MT::kWorkshopItem, MT::kWorkshopPower, MT::kActivation, MT::kLineSpoken, MT::kPinged, MT::kPlayerFace,
-				 MT::kPlayerEquipment, MT::kPlayerStatus, MT::kShotFired, MT::kQuestDone, MT::kDropPlaced }) {
+				 MT::kPlayerEquipment, MT::kPlayerStatus, MT::kShotFired, MT::kQuestDone, MT::kDropPlaced, MT::kDestructions }) {
 			if (!relayed.contains(Type(type))) {
 				Test::Fail(__FILE__, __LINE__, std::format("Bob was sent no type {} packet from Mallory", Type(type)));
 			}

@@ -162,7 +162,7 @@ TEST("input gate: playing alone (bAlwaysActive off) the game pauses and stops it
 	CHECK(game.gate.swallowedClicks == 0);
 }
 
-TEST("input gate: the session ending while alt-tabbed hands input back to the game's own handling")
+TEST("input gate: the session ending while alt-tabbed keeps input closed until the window is in front, then hands it back to the game")
 {
 	Game game;
 	game.Focus(false);
@@ -170,11 +170,26 @@ TEST("input gate: the session ending while alt-tabbed hands input back to the ga
 	CHECK(!game.polling);
 	game.alwaysActive = false;  // out of the session: Background puts the player's setting back
 	game.Frame(false);
-	CHECK(game.gate.Now() == InputGate::Gate::State::kOpen);
-	CHECK(game.polling);  // as the game left it at the last focus change
+	// The game took its last focus change as "active" (bAlwaysActive was on): it would read the clicks meant for the
+	// other window.
+	CHECK(game.gate.Now() == InputGate::Gate::State::kClosed);
+	CHECK(!game.polling);
+	game.Click();
+	for (int i = 0; i < 5; ++i) {
+		game.Frame(false);
+	}
+	CHECK(game.attacks == 0);
+	// Back in front: the game's own focus change, and the gate opens with nothing from meanwhile pressed.
 	game.Focus(true);
 	game.Frame(false);
+	CHECK(game.gate.Now() == InputGate::Gate::State::kOpen);
 	CHECK(game.polling);
+	CHECK(game.attacks == 0);
+	// From then on it is the game's own: out of front, it stops its input itself.
+	game.Focus(false);
+	game.Frame(false);
+	CHECK(!game.polling);
+	CHECK(game.gate.Now() == InputGate::Gate::State::kOpen);
 }
 
 TEST("input gate: it says what it is doing")

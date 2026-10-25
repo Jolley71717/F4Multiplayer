@@ -7,6 +7,8 @@
 #include "game/DoorShare.h"
 
 #include <map>
+#include <set>
+#include <string_view>
 
 using namespace TestServer;
 
@@ -20,6 +22,8 @@ namespace
 	constexpr std::uint32_t CAR = 0x000A9E29;       // its car
 	constexpr std::uint32_t SCRIPTED = 0x0003D002;  // a door with a script on it
 	constexpr std::uint32_t AUTOMATIC = 0x0003D003; // a door that opens itself
+	constexpr std::uint32_t CHAINED = 0x000645DA;   // UtilMetalDoor01 chained shut from one side (ChainedDoor)
+	constexpr std::uint32_t LOAD = 0x0003D004;      // a door to another cell
 
 	// One game's doors, judged as WorldSync judges them: what it reads of a door (ReadRefState), what it
 	// reports when that changes (WatchRefStates), and what it takes from the server (OfferRefState and
@@ -42,8 +46,10 @@ namespace
 			doors[DOOR] = { { .door = true } };
 			doors[ELEVATOR] = { { .door = false } };
 			doors[CAR] = { { .door = false } };
-			doors[SCRIPTED] = { { .door = true, .scripted = true } };
+			doors[SCRIPTED] = { { .door = true, .scripts = 1 } };
 			doors[AUTOMATIC] = { { .door = true, .doorFlags = DoorShare::DOOR_AUTOMATIC } };
+			doors[CHAINED] = { { .door = true, .scripts = 1, .quietScripts = 1 } };
+			doors[LOAD] = { { .door = true } };
 		}
 
 		RS Read(std::uint32_t a_ref) const
@@ -117,7 +123,7 @@ TEST("door share: only a plain door's open state is a player's; locks are shared
 {
 	CHECK(DoorShare::SharesOpen({ .door = true }));
 	CHECK(!DoorShare::SharesOpen({ .door = false }));
-	CHECK(!DoorShare::SharesOpen({ .door = true, .scripted = true }));
+	CHECK(!DoorShare::SharesOpen({ .door = true, .scripts = 1 }));
 	CHECK(!DoorShare::SharesOpen({ .door = true, .doorFlags = DoorShare::DOOR_AUTOMATIC }));
 	CHECK(DoorShare::SharesOpen({ .door = true, .doorFlags = 0x08 }));  // minimal use: NPCs seldom use it, a player opens it
 
@@ -258,8 +264,129 @@ TEST("door share: a reference nothing is known of does not share its open state"
 	// Facts left as they come (not a door, no flags, no script) say nothing a player opens.
 	CHECK(!DoorShare::SharesOpen(DoorShare::Facts{}));
 	CHECK(!DoorShare::SharesOpen({ .doorFlags = 0x08 }));
-	CHECK(!DoorShare::SharesOpen({ .scripted = true }));
+	CHECK(!DoorShare::SharesOpen({ .scripts = 1, .quietScripts = 1 }));
 	CHECK(!DoorShare::Facts{}.door);
-	CHECK(!DoorShare::Facts{}.scripted);
+	CHECK(DoorShare::Facts{}.scripts == 0);
+	CHECK(!DoorShare::Facts{}.listedOut);
 	CHECK(DoorShare::Facts{}.doorFlags == 0);
+}
+
+TEST("door share: a door whose scripts are all quiet shares its open state; any other script, or the story's, doesn't")
+{
+	CHECK(DoorShare::SharesOpen({ .door = true, .scripts = 1, .quietScripts = 1 }));                  // ChainedDoor
+	CHECK(DoorShare::SharesOpen({ .door = true, .scripts = 2, .quietScripts = 2 }));                  // DefaultRefEnableLinkedRefOnActivate and DefaultRefOnActivate
+	CHECK(!DoorShare::SharesOpen({ .door = true, .scripts = 2, .quietScripts = 1 }));                 // POI_OnOpenActivateAmbush beside PulowskShelterScript
+	CHECK(!DoorShare::SharesOpen({ .door = true, .scripts = 1, .quietScripts = 1, .listedOut = true }));  // Mass Fusion's
+	CHECK(!DoorShare::SharesOpen({ .door = true, .doorFlags = DoorShare::DOOR_AUTOMATIC, .scripts = 1, .quietScripts = 1 }));
+	CHECK(!DoorShare::SharesOpen({ .door = false, .scripts = 1, .quietScripts = 1 }));  // an activator with such a script
+
+	// By the VM's names, whatever their case (a reference's copy is often lower case in the game's files).
+	CHECK(DoorShare::IsQuiet("ChainedDoor"));
+	CHECK(DoorShare::IsQuiet("defaultrefonactivate"));
+	CHECK(DoorShare::IsQuiet("DefaultRefEnableLinkedRefOnActivate"));
+	CHECK(DoorShare::IsQuiet("DefaultActivateLinkOnUnlock"));
+	CHECK(DoorShare::IsQuiet("defaultblockfolloweractivation"));
+	// Scripts that answer the door opening, open or close it themselves, block it or are each player's own.
+	for (const auto loud : { "DefaultRefOnOpen", "POI_OnOpenActivateAmbush", "DLC04:DLC04_GauntletMonkeyTrapScript", "PulowskShelterScript", "Vault111LeverScript",
+			 "loadelevatordoorscript", "LoadElevatorDoorScript", "ElevatorDoorForwardActivationScript", "InvisibleDoorBlockActivationScript", "DefaultBlockActivationOnLoad",
+			 "DisableEnableLinkOnActivateOnce", "StimObjectScript", "SentinelSiteDoorBlockAfterActivate", "MS17CovenantDoor", "MS17DoorLockOnLoadScript",
+			 "DN130_CambridgePDDoorStateToggle", "DLC01:DLC01Lair_SecurityDoorScript", "DLC03:DLC03POI04LockedBunkerDoorScript", "REObject02FakeDoorScript",
+			 "CharGenFridgeDoorScript", "ChainedDoorX", "" }) {
+		CHECK(!DoorShare::IsQuiet(loud));
+	}
+}
+
+TEST("door share: the quiet scripts and the never list name each once, with a reason")
+{
+	std::set<std::string_view> names;
+	for (const auto& quiet : DoorShare::QUIET_SCRIPTS) {
+		CHECK(!quiet.why.empty());
+		CHECK(names.insert(quiet.script).second);
+	}
+	std::set<std::uint32_t> ids;
+	for (const auto& form : DoorShare::NEVER) {
+		CHECK(form.file == "Fallout4.esm");
+		CHECK(form.id != 0 && form.id < 0x01000000);
+		CHECK(!form.what.empty());
+		CHECK(ids.insert(form.id).second);
+	}
+	CHECK(ids.contains(0x0009D568));
+}
+
+TEST("door share: a chained door the host opens from its unchained side opens for the friend")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DoorGame host, friendGame;
+	host.doors[CHAINED].locked = RS::kYes;
+	friendGame.doors[CHAINED].locked = RS::kYes;
+
+	// The chain (an activator) unlocks it, then the host opens it.
+	host.doors[CHAINED].locked = RS::kNo;
+	host.doors[CHAINED].open = RS::kYes;
+	const auto report = host.Report(CHAINED);
+	REQUIRE(report);
+	f.fake->Deliver(1, *report);
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[CHAINED].locked == RS::kNo);
+	CHECK(friendGame.doors[CHAINED].open == RS::kYes);
+	CHECK(friendGame.applied == 2);
+}
+
+TEST("door share: only a plain door near our player that an NPC our game runs opens is watched")
+{
+	const DoorShare::NpcOpen ours{ .runsHere = true, .sharesOpen = true, .loadDoor = false, .playerDistance = 400.0f };
+	CHECK(DoorShare::WatchesNpcOpen(ours));
+	auto open = ours;
+	open.runsHere = false;  // a friend's NPC (our copy has its AI off), or a stand-in
+	CHECK(!DoorShare::WatchesNpcOpen(open));
+	open = ours;
+	open.sharesOpen = false;  // an elevator's door, an automatic door, a scripted one
+	CHECK(!DoorShare::WatchesNpcOpen(open));
+	open = ours;
+	open.loadDoor = true;
+	CHECK(!DoorShare::WatchesNpcOpen(open));
+	open = ours;
+	open.playerDistance = DoorShare::NPC_REACH + 1.0f;  // the friend would refuse our report of it
+	CHECK(!DoorShare::WatchesNpcOpen(open));
+	open.playerDistance = DoorShare::NPC_REACH;
+	CHECK(DoorShare::WatchesNpcOpen(open));
+	CHECK(DoorShare::NPC_REACH < 1500.0f);
+	CHECK(!DoorShare::WatchesNpcOpen(DoorShare::NpcOpen{}));
+}
+
+TEST("door share: a door an NPC the host's game runs walks through opens and closes behind it in the friend's game")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	DoorGame host, friendGame;
+
+	// Our NPC opens the door; the door goes on watch.
+	REQUIRE(DoorShare::WatchesNpcOpen({ .runsHere = true, .sharesOpen = DoorShare::SharesOpen(host.doors[DOOR].facts), .playerDistance = 300.0f }));
+	host.doors[DOOR].open = RS::kYes;
+	f.fake->Deliver(1, *host.Report(DOOR));
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[DOOR].open == RS::kYes);
+
+	// It closes behind the NPC a moment later: still watched, so the friend's closes too.
+	host.doors[DOOR].open = RS::kNo;
+	f.fake->Deliver(1, *host.Report(DOOR));
+	friendGame.Take(Received(f, 2));
+	CHECK(friendGame.doors[DOOR].open == RS::kNo);
+	CHECK(friendGame.applied == 2);
+
+	// The friend's own NPC opens it later: the host takes it the same way, and doesn't report it back.
+	friendGame.doors[DOOR].open = RS::kYes;
+	f.fake->Deliver(2, *friendGame.Report(DOOR));
+	host.Take(Received(f, 1));
+	CHECK(host.doors[DOOR].open == RS::kYes);
+	CHECK(!host.Report(DOOR));
+
+	// An NPC through a load door or a scripted door: not watched, nothing sent.
+	CHECK(!DoorShare::WatchesNpcOpen({ .runsHere = true, .sharesOpen = true, .loadDoor = true, .playerDistance = 300.0f }));
+	CHECK(!DoorShare::WatchesNpcOpen({ .runsHere = true, .sharesOpen = DoorShare::SharesOpen(host.doors[SCRIPTED].facts), .playerDistance = 300.0f }));
 }

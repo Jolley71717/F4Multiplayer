@@ -119,8 +119,9 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), a layout to come (34), and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 34 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (36),
+	// and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 36 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -528,4 +529,40 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 	for (const std::uint16_t layout : { SessionFile::BEFORE_PLUGIN_TABLE, SessionFile::DROPS_ONLY, SessionFile::WIRES_ONLY }) {
 		CHECK(!as(SessionFile::Encode(withTable), layout));
 	}
+}
+
+// Layout 34 adds the destructible objects damaged in the session to 33 (with the spent traps): they come back whole,
+// never to go off again, and in a file of an older layout they are damage.
+TEST("session file: destructible objects come back from layout 34 as wrecks alone")
+{
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+	auto in = MakeSnapshot();
+	in.destructions = { { 0x0001B8AA, 249.5f, true, false }, { 0x000A1B2C, 380.0f, false, false } };
+	for (std::uint32_t i = 0; i < 300; ++i) {
+		in.destructions.push_back({ 0x00100000 + i, 0.0f, true, false });  // more than one packet holds
+	}
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->destructions == in.destructions);
+	CHECK(!out->Empty());
+
+	// One saved as it went off (a build's mistake, or a hand-edited file) is the wreck alone all the same.
+	auto live = MakeSnapshot();
+	live.destructions = { { 0x0001B8AA, 100.0f, true, true } };
+	const auto calm = SessionFile::Decode(SessionFile::Encode(live));
+	REQUIRE(calm);
+	REQUIRE(calm->destructions.size() == 1);
+	CHECK(!calm->destructions[0].explode);
+
+	CHECK(!as(SessionFile::Encode(in), SessionFile::ALL_THREE));
+	auto none = MakeSnapshot();
+	const auto older = as(SessionFile::Encode(none), SessionFile::ALL_THREE);
+	REQUIRE(older);
+	CHECK(older->destructions.empty());
+	SessionFile::Snapshot only;
+	only.destructions = { { 0x0001B8AA, 0.0f, true, false } };
+	CHECK(!only.Empty());
 }

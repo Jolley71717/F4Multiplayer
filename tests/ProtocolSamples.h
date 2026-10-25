@@ -167,6 +167,7 @@ namespace ProtocolSamples
 		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
 		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
 		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
+		s.push_back({ "PlayerReloaded", Encode(PlayerReloaded{ 4 }), D(DecodePlayerReloaded), false });
 		s.push_back({ "PlayerStates", Encode(PlayerStates{ 99, { { 1, MakeState(1) }, { 2, MakeState(2) } } }), D(DecodePlayerStates) });
 		for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
@@ -248,6 +249,14 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportNpcEquipment, MT::kNpcEquipment }) {
 			s.push_back({ "NpcEquipment", Encode(NpcEquipment{ 2, REF_A, { 0x00024F55, 0x000B3F4E } }, type), D(DecodeNpcEquipment) });
 		}
+		for (const auto type : { MT::kReportNpcIdentity, MT::kNpcIdentity }) {
+			NpcIdentity roll{ .playerId = 2, .refId = REF_A, .originalBase = 0x0002A1B4, .level = 21, .flags = NpcIdentity::kLegendary, .mask = 0b0000'1000'1001 };
+			roll.templates[0] = 0x0002A1B5;
+			roll.templates[3] = 0x0002A1B6;
+			roll.templates[7] = 0x0002A1B5;
+			s.push_back({ "NpcIdentity", Encode(roll, type), D(DecodeNpcIdentity) });
+			s.push_back({ "NpcIdentityFactions", Encode(NpcIdentity{ .playerId = 2, .refId = RUNTIME_REF, .level = 8, .flags = NpcIdentity::kFactions, .factions = { { 0x0001BCC0, 0 }, { 0x00058302, 1 } } }, type), D(DecodeNpcIdentity) });
+		}
 		for (const auto type : { MT::kReportFace, MT::kPlayerFace }) {
 			s.push_back({ "Face", Encode(MakeFace(), type), D(DecodeFace) });
 		}
@@ -261,12 +270,19 @@ namespace ProtocolSamples
 		for (const auto type : { MT::kReportWorkshopPower, MT::kWorkshopPower }) {
 			s.push_back({ "PowerStates", Encode(PowerStates{ 2, { { 0xFF000042, true }, { RUNTIME_REF, false } } }, type), D(DecodePowerStates) });
 		}
+		for (const auto type : { MT::kReportDestruction, MT::kDestructions }) {
+			s.push_back({ "Destructions", Encode(Destructions{ 2, { { 0x0001B8AA, 249.5f, true, true }, { 0x000A1B2C, 0.0f, false, false } } }, type), D(DecodeDestructions) });
+		}
 		for (const auto type : { MT::kReportExplosion, MT::kExplosion }) {
 			s.push_back({ "Explosion", Encode(Explosion{ 3, 0x0001D2EE, -59420.5f, 72560.25f, 6174.0f, 0, 0x0000003C }, type), D(DecodeExplosion) });
 		}
 		for (const auto type : { MT::kReportActivation, MT::kActivation }) {
 			s.push_back({ "Activation", Encode(Activation{ 2, 0x000A1B2C }, type), D(DecodeActivation) });
 		}
+		s.push_back({ "TrapState", Encode(TrapState{ 2, 0x00181819, TrapState::kFired, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f }), D(DecodeTrapState) });
+		s.push_back({ "TrapStates(live)", Encode(TrapStates{ true, { TrapState{ 2, 0x00181819, TrapState::kDisarmed, 0x0001A2B3, 0, 120.0f, -40.5f, 6.0f } } }), D(DecodeTrapStates) });
+		s.push_back({ "TrapStates", Encode(TrapStates{ false, { TrapState{ 0, 0x00181819, TrapState::kFired, 0, 0x0000003C, -59420.5f, 72560.25f, 6174.0f },
+			TrapState{ 3, 0x0010BE7F, TrapState::kTaken, 0x0001A2B3, 0, 1.0f, 2.0f, 3.0f } } }), D(DecodeTrapStates) });
 		for (const auto type : { MT::kReportObjectHold, MT::kObjectHeld }) {
 			s.push_back({ "ObjectHold", Encode(ObjectHold{ 2, 0x000A1B2C, 77, { 4.5f, 95.0f, 110.25f }, { 0.1f, -0.2f, 1.5f } }, type), D(DecodeObjectHold) });
 		}
@@ -353,6 +369,7 @@ namespace ProtocolSamples
 		case MT::kReportMarkers:
 		case MT::kReportLine:
 		case MT::kReportNpcEquipment:
+		case MT::kReportNpcIdentity:
 		case MT::kReportFace:
 		case MT::kReportWorkshopItem:
 		case MT::kReportExplosion:
@@ -360,6 +377,7 @@ namespace ProtocolSamples
 		case MT::kReportSpawn:
 		case MT::kRename:
 		case MT::kRequestLoadOrder:
+		case MT::kReportDestruction:
 		case MT::kReportDrop:
 		case MT::kClaimDrop:
 		case MT::kDropRecord:
@@ -370,10 +388,12 @@ namespace ProtocolSamples
 		case MT::kReportObjectRest:
 		case MT::kReportRadiantStart:
 		case MT::kReportRadiantStage:
+		case MT::kReportTrap:
 		case MT::kWelcome:
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:
+		case MT::kPlayerReloaded:
 		case MT::kPlayerStates:
 		case MT::kActorDied:
 		case MT::kWorldState:
@@ -399,6 +419,7 @@ namespace ProtocolSamples
 		case MT::kMarkersFound:
 		case MT::kLineSpoken:
 		case MT::kNpcEquipment:
+		case MT::kNpcIdentity:
 		case MT::kPlayerFace:
 		case MT::kWorkshopItem:
 		case MT::kWorkshopItems:
@@ -409,6 +430,7 @@ namespace ProtocolSamples
 		case MT::kRadiantStarted:
 		case MT::kRadiantStage:
 		case MT::kLoadOrder:
+		case MT::kDestructions:
 		case MT::kDropPlaced:
 		case MT::kDropGone:
 		case MT::kDropList:
@@ -418,6 +440,7 @@ namespace ProtocolSamples
 		case MT::kObjectHeld:
 		case MT::kObjectRested:
 		case MT::kPluginTable:
+		case MT::kTraps:
 			return true;
 		}
 		return false;

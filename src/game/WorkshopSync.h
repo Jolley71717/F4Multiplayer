@@ -33,6 +33,9 @@ namespace WorkshopSync
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
+	// The workbench the reference is linked to as one of its settlement's workshop items (a piece built there), if any.
+	[[nodiscard]] RE::TESObjectREFR* WorkbenchOf(const RE::TESObjectREFR& a_ref);
+
 	// Dev: whether workshop mode lets the player scrap the reference (the game's own test).
 	[[nodiscard]] bool WorkshopModeScraps(RE::TESObjectREFR& a_ref);
 
@@ -71,6 +74,9 @@ namespace WorkshopSync
 
 	// Someone joined: all our pieces' power goes to them.
 	void OnPlayerJoined();
+
+	// Someone left: their copies keep what they show, and are not shown again until their game says so (main thread).
+	void OnPlayerLeft(std::uint32_t a_playerId);
 
 	// A save is about to be written: no grid of ours may name a copy (main thread).
 	void BeforeSave();

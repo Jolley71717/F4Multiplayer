@@ -2099,7 +2099,7 @@ namespace RemotePlayers
 		return npc && !npc->IsUnique();
 	}
 
-	void DespawnAll(bool a_deleteNow)
+	void DespawnAll()
 	{
 		// A frame of ours hidden while a friend wears theirs stays hidden: only its 3D was touched, which no save keeps.
 		// Shown here, it stood in the world again until the next check put it away, and counted as hidden anew.
@@ -2143,7 +2143,7 @@ namespace RemotePlayers
 				Disable(a_grave, ref.get(), now);
 			}
 			++flushedBeforeSave;
-			if (!a_deleteNow && !DeferredDelete::MayDelete(now - *a_grave.disabledAt)) {
+			if (!DeferredDelete::MayDelete(now - *a_grave.disabledAt)) {
 				SaveGuard::Exclude(ref.get());
 				return false;
 			}

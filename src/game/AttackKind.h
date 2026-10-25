@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 // How a reported attack (a shot, a swing or a punch) is replayed on a stand-in, by what it holds.
@@ -7,7 +8,8 @@ namespace AttackKind
 {
 	constexpr std::int32_t GUN_TYPE = 9;  // RE::WEAPON_TYPE::kGun
 
-	// Guns replay through the animation graph ("attackStart": the firing animation, no bullet).
+	// Guns replay through the animation graph ("attackStart": the firing animation; its bullet is kept from the engine,
+	// HoldsOwnFire).
 	// Melee weapons, and fists when nothing is held, refuse that event: they perform the engine's
 	// own attack action instead.
 	constexpr bool ReplaysAsGun(std::int32_t a_weaponType, bool a_holdsWeapon)
@@ -27,6 +29,37 @@ namespace AttackKind
 			}
 		}
 		return false;
+	}
+
+	// What the attacker's own animation graph announced: "WeaponFire" (a shot leaving the gun) or "weaponSwing" (the hit
+	// frame of a melee swing, a punch, or a gun's bash).
+	enum class Event
+	{
+		kFire,
+		kSwing,
+	};
+
+	// Whether an attack the attacker's graph announced goes to the others as a shot (ShotAction::kShot). A gun's bash
+	// ("weaponSwing" with a gun in hand) does not: the receiver replays whatever a friend holding a gun reports as a shot
+	// (ReplayShot: the firing animation, the muzzle flash and the gunshot), so every bash was heard as a gunshot. It has
+	// no replay of its own on the wire; what it hits takes its damage in the attacker's game, and health sync carries it.
+	constexpr bool ReportsAsShot(Event a_event, bool a_holdsGun)
+	{
+		return a_event == Event::kFire || !a_holdsGun;
+	}
+
+	// Whether a stand-in's own "WeaponFire" is kept from the engine: a gun's (a throw's, payload "2", is held by
+	// ThrowReplays) within HOLD_FIRE_FOR of a shot replayed on it. The replay's "attackStart" plays the firing animation,
+	// and the animation's "WeaponFire" had the engine fire a real bullet from the stand-in (seen on the rig: a 10mm round
+	// of the stand-in's hit our player on every replayed shot, whichever way it faced, so a friend's every shot showed
+	// the other player a hit's flash, blood and damage marker). The friend's shot is fired in their game, not here. A
+	// stand-in never attacks on its own (Puppets), so a window after the last replay is enough: an automatic gun's next
+	// replay renews it.
+	inline constexpr std::chrono::milliseconds HOLD_FIRE_FOR{ 1500 };
+
+	constexpr bool HoldsOwnFire(Event a_event, bool a_throw, std::chrono::steady_clock::duration a_sinceReplay)
+	{
+		return a_event == Event::kFire && !a_throw && a_sinceReplay >= std::chrono::steady_clock::duration::zero() && a_sinceReplay <= HOLD_FIRE_FOR;
 	}
 
 	enum class Replay

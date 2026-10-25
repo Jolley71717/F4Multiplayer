@@ -497,3 +497,163 @@ TEST("loot sync: a friend who reloads a save from before the emptying, or joins 
 	CHECK(carol.In(CHEST_REF, STEEL) == 0);
 	CHECK(carol.In(CHEST_REF, AMMO_38) == 5);
 }
+
+TEST("loot scope: a chest that respawns and an NPC hold a roll of loot; a container that keeps things, a workbench and a frame don't")
+{
+	CHECK(Rolled(CHEST));
+	CHECK(Rolled(CORPSE));
+	CHECK(!Rolled(HolderFacts{ .kind = Holder::kContainer, .storage = true }));
+	CHECK(!Rolled(FRAME));
+	CHECK(!Rolled(HolderFacts{ .kind = Holder::kPlayer }));
+	// Storage changes nothing about what a take or a put shares.
+	CHECK(Every(HolderFacts{ .kind = Holder::kContainer, .storage = true }, JUNK, Scope::kShared));
+}
+
+TEST("loot scope: storage is what the player made their own: owned, a settlement's workshop, or in a settlement they own")
+{
+	CHECK(IsStorage({ .playerOwned = true }));        // a home bought (its cell is PlayerFaction's), or a container they own
+	CHECK(IsStorage({ .workshopItem = true }));       // a workbench, or a chest built there
+	CHECK(IsStorage({ .inOwnedSettlement = true }));  // a Sanctuary house's dresser once Sanctuary is theirs
+	// A dungeon's one-off loot that never respawns (DN035_EasyCityDownsWallSafe), and a settlement's dresser before the
+	// settlement is anyone's, are a roll of loot: neither says storage on its own.
+	CHECK(!IsStorage({}));
+}
+
+TEST("loot sync: a friend's stash in the same home container stays when the other player takes its only item, or only a gun, or an older build sends an emptying")
+{
+	constexpr std::uint32_t HOME_CHEST = 0x0002C003;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B }, carol{ 3, 0xCA401 };
+	for (auto* game : { &alice, &bob, &carol }) {
+		Describe(*game);
+		game->holderFacts[HOME_CHEST] = { .kind = Holder::kContainer, .storage = true };  // a Sanctuary house's dresser, Sanctuary theirs
+		game->Join(f, "P");
+	}
+	// Each player keeps their own things in it, in their own world.
+	alice.holders[HOME_CHEST] = { { STEEL, 1 } };
+	bob.holders[HOME_CHEST] = { { CAPS, 50 }, { AMMO_38, 30 }, { STEEL, 2 }, { PIPE_PISTOL, 1 } };
+
+	alice.Take(f, HOME_CHEST, STEEL, 1);
+	CHECK(alice.loot.Stats().sent == 1);
+	CHECK(alice.loot.Stats().emptiedSent == 0);  // hers is bare, but it keeps things: Bob's may hold his stash
+	bob.Receive(f);
+	CHECK(bob.In(HOME_CHEST, STEEL) == 1);  // the one she took
+	CHECK(bob.In(HOME_CHEST, CAPS) == 50);
+	CHECK(bob.In(HOME_CHEST, AMMO_38) == 30);
+
+	// Only a gun from it: nothing goes out at all.
+	alice.holders[HOME_CHEST] = { { PIPE_PISTOL, 1 } };
+	alice.Take(f, HOME_CHEST, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 0);
+
+	// A build from before this sends the emptying anyway: Bob's game leaves his stash.
+	const auto leftOut = bob.LeftOut();
+	f.fake->Deliver(carol.peer, EmptiedOf(HOME_CHEST));
+	bob.Receive(f);
+	CHECK(bob.In(HOME_CHEST, CAPS) == 50);
+	CHECK(bob.In(HOME_CHEST, AMMO_38) == 30);
+	CHECK(bob.In(HOME_CHEST, STEEL) == 1);
+	CHECK(bob.LeftOut() == leftOut + 1);
+	CHECK(bob.loot.Stats().emptiedApplied == 0);
+}
+
+TEST("loot sync: what a friend puts in a chest just as another player takes it bare stays in both games, whichever the server orders first")
+{
+	constexpr std::uint32_t JET = 0x0004A008;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->items[JET] = { .kind = Item::kAid };
+		game->Join(f, "P");
+	}
+	// Bob's put reaches the server first; Alice hadn't seen it when she took her copy bare.
+	alice.holders[CHEST_REF] = { { AMMO_38, 20 } };
+	bob.holders[CHEST_REF] = { { CAPS, 12 } };
+	bob.carried[JET] = 1;
+	bob.Put(f, CHEST_REF, JET, 1);
+	alice.Take(f, CHEST_REF, AMMO_38, 20);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	alice.Receive(f);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);  // his own roll goes
+	CHECK(bob.In(CHEST_REF, JET) == 1);   // his put stays
+	CHECK(alice.In(CHEST_REF, JET) == 1);
+	CHECK(bob.loot.Stats().emptiedKept == 1);
+
+	// Alice's emptying reaches the server first; Bob put his in before it came.
+	alice.holders[CHEST_2] = { { STEEL, 3 } };
+	bob.holders[CHEST_2] = { { CAPS, 7 } };
+	bob.carried[JET] = 1;
+	alice.Take(f, CHEST_2, STEEL, 3);
+	bob.Put(f, CHEST_2, JET, 1);
+	bob.Receive(f);
+	alice.Receive(f);
+	CHECK(bob.In(CHEST_2, CAPS) == 0);
+	CHECK(bob.In(CHEST_2, JET) == 1);
+	CHECK(alice.In(CHEST_2, JET) == 1);
+
+	// Once taken, what was put in is the friend's to lose like anything else: Alice takes the jet, and hers is bare again.
+	alice.Take(f, CHEST_2, JET, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 3);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_2, JET) == 0);
+}
+
+TEST("loot sync: a friend's take of the chest's own roll doesn't use up what another friend put in the same moment, of the same item")
+{
+	constexpr std::uint32_t STIM = 0x0004A009;
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->items[STIM] = { .kind = Item::kAid };
+		game->Join(f, "P");
+	}
+	// A raider's chest: each game rolled two stimpaks in it. Bob puts three of his in just as Alice takes her copy's two
+	// and leaves it bare, before his put has reached her.
+	alice.holders[CHEST_REF] = { { STIM, 2 } };
+	bob.holders[CHEST_REF] = { { STIM, 2 }, { CAPS, 9 } };
+	bob.carried[STIM] = 3;
+	bob.Put(f, CHEST_REF, STIM, 3);
+	alice.Take(f, CHEST_REF, STIM, 2);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	alice.Receive(f);
+	// Her take is taken from his copy's own two first; his three stay, as they are in hers.
+	CHECK(bob.In(CHEST_REF, STIM) == 3);
+	CHECK(alice.In(CHEST_REF, STIM) == 3);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.loot.Stats().emptiedKept == 3);
+}
+
+TEST("loot sync: a chest told bare whose loot respawns is told again when only a gun is taken from it; a gun put back and taken again is not")
+{
+	Fixture f;
+	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
+	for (auto* game : { &alice, &bob }) {
+		Describe(*game);
+		game->Join(f, "P");
+	}
+	alice.holders[CHEST_REF] = { { PIPE_PISTOL, 1 } };
+	bob.holders[CHEST_REF] = { { PIPE_PISTOL, 1 }, { STEEL, 5 } };
+	alice.Take(f, CHEST_REF, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, STEEL) == 0);
+
+	// She puts the gun back and takes it again: nothing new in it, nothing new goes out.
+	alice.Put(f, CHEST_REF, PIPE_PISTOL, 1);
+	alice.Take(f, CHEST_REF, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 1);
+
+	// Days later the cell resets: each game rolls the chest again.
+	alice.holders[CHEST_REF] = { { PIPE_PISTOL, 1 } };
+	bob.holders[CHEST_REF] = { { PIPE_PISTOL, 1 }, { STEEL, 2 }, { CAPS, 9 } };
+	alice.Take(f, CHEST_REF, PIPE_PISTOL, 1);
+	CHECK(alice.loot.Stats().emptiedSent == 2);
+	bob.Receive(f);
+	CHECK(bob.In(CHEST_REF, STEEL) == 0);
+	CHECK(bob.In(CHEST_REF, CAPS) == 0);
+	CHECK(bob.In(CHEST_REF, PIPE_PISTOL) == 1);
+}

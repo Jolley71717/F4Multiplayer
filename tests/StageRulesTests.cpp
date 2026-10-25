@@ -201,7 +201,7 @@ TEST("stage rules: the fades and the endings' slides move the player")
 	CHECK(Hold(Find(0x0229EE, 850)) == 26s);
 }
 
-TEST("stage rules: nothing that moves the player is set while a game in the session is in the opening")
+TEST("stage rules: nothing that moves the player is set while this game is in the opening; a friend in it holds nothing here")
 {
 	using namespace StageRules;
 	const Rule plain{ 0, 0x1, 10, 0, 0 };
@@ -217,10 +217,32 @@ TEST("stage rules: nothing that moves the player is set while a game in the sess
 	// ... and once the opening is over, as before.
 	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = false }) == Verdict::kSet);
 	CHECK(Judge(&bridge, { .live = false, .opening = false }) == Verdict::kWarn);
+	// A friend still in the vault (three or more in the session): the others, side by side, go on as ever; their own game
+	// holds what moves them.
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .friendInOpening = true }) == Verdict::kSet);
+	CHECK(Judge(&moves, { .live = false, .friendInOpening = true }) == Verdict::kSkip);
+	CHECK(Judge(&bridge, { .live = false, .friendInOpening = true }) == Verdict::kWarn);
+	CHECK(Judge(&moves, { .live = true, .nearFriend = true, .opening = true, .friendInOpening = true }) == Verdict::kOpeningWaits);
 	// What doesn't move the player goes on; a payment is never made.
 	CHECK(Judge(&plain, { .live = true, .opening = true }) == Verdict::kSet);
 	CHECK(Judge(nullptr, { .live = false, .opening = true }) == Verdict::kSet);
 	CHECK(Judge(&pays, { .live = true, .nearFriend = true, .opening = true }) == Verdict::kSkip);
 	// A stuck story's MQ105 (QuestSync::RepairStory) waits too: its start moves the player.
 	CHECK(Judge(Find(0x0229E6, 0), { .sharedStory = true, .opening = true }) == Verdict::kOpeningWaits);
+}
+
+TEST("stage rules: the stages that set another quest's are sorted, once each, and are the fragments' (Codsworth's talk and search)")
+{
+	for (auto it = std::next(std::begin(StageRules::SETS_ANOTHER)); it != std::end(StageRules::SETS_ANOTHER); ++it) {
+		const auto& before = *std::prev(it);
+		CHECK((std::tuple{ before.file, before.quest, before.stage } < std::tuple{ it->file, it->quest, it->stage }));
+	}
+	CHECK(StageRules::SetsAnother(File::kFallout4, 0x01E64E, 50));    // DialogueCodsworthPostWar: the talk sets MQ102's 30
+	CHECK(StageRules::SetsAnother(File::kFallout4, 0x01E64E, 200));   // ... back with him: MQ102's 50
+	CHECK(StageRules::SetsAnother(File::kFallout4, 0x01CC2A, 40));    // MQ102: the search over stops his (DialogueCodsworthPostWar 100)
+	CHECK(StageRules::SetsAnother(File::kFallout4, 0x01CC2A, 38));    // ... through the 40 it sets
+	CHECK(StageRules::SetsAnother(File::kFallout4, 0x01CC2A, 150));   // MQ102 starts MQ103 at 10
+	CHECK(!StageRules::SetsAnother(File::kFallout4, 0x01CC2A, 30));   // objectives only
+	CHECK(!StageRules::SetsAnother(File::kFallout4, 0x01E64E, 100));  // stops his search scene, sets nothing
+	CHECK(!StageRules::SetsAnother(File::kCoast, 0x01E64E, 50));
 }

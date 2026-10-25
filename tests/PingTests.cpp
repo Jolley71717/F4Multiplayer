@@ -225,7 +225,8 @@ TEST("ping rules: one ping a second, as the server passes them on")
 	CHECK(limit.Try(start + 2 * PingRules::MIN_GAP));
 	limit.Reset();
 	CHECK(limit.Try(start + 2 * PingRules::MIN_GAP + 1ms));  // a new session starts afresh
-	CHECK(PingRules::MIN_GAP == 1s);                          // Server.cpp's handlePing holds pings to this too
+	CHECK(PingRules::MIN_GAP == 1s);
+	CHECK(PingRules::MIN_GAP - Protocol::PING_SERVER_GAP >= 200ms);  // Server.cpp's handlePing passes on any of them, a little early or not
 }
 
 TEST("ping rules: the look ray follows the heading and the look angle")

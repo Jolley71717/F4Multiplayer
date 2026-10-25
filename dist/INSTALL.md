@@ -115,8 +115,8 @@ the game with F4SE, then join again.
 
 The host's F1 menu has **Host controls**: kick a player (they are dropped and told the host removed
 them; they can join again), ban one (kicked, and refused every later join with "The host has banned
-you from this session"), lift bans, lock the session (nobody new can join, and a player who leaves
-can't come back until it is unlocked; those in it stay) and unlock it, and make up or remove the
+you from this session"), lift bans, lock the session (nobody new can join; those in it stay, and a player
+whose game crashes or whose connection drops can rejoin, but not one who was kicked or banned) and unlock it, and make up or remove the
 password. A new password is shown on the page and saved to your `sPassword`; friends put the same
 in theirs. Bans are kept by Steam account in `Documents\My Games\Fallout4\F4SE\F4Multiplayer.bans`,
 so they survive restarts; the file holds salted hashes, never names or Steam IDs, and the log calls a
@@ -223,6 +223,9 @@ from you or puts on you any item, and a friend paying for something in a convers
   ground, doors opened/closed and locks picked. Not a settlement's workbench or your own companion:
   each game keeps its own, so junk a friend puts in the workbench is not in yours to build with, and
   what a friend gives your companion stays with the companion in their game.
+- **Cars, barrels and other things that blow up:** a car, an explosive barrel, a fuel tank or a gas pump one of you
+  shoots goes off in every game, once, and stays wrecked in every game: a friend who arrives later, or a reload, finds
+  the burnt-out hulk, and it can't blow up a second time. A mine one of you shoots goes off for everyone too.
 - **Giving items:** drop it from your Pip-Boy near your friend and they pick it up; it moves from
   your game to theirs, with its mods, legendary effect and name, and only one of you can take it.
   Weapons and armor put in a container stay in your game only, so drop them instead. Keys, notes,

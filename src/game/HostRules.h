@@ -44,8 +44,8 @@ namespace HostRules
 
 	// The game's side (HostRules.cpp), main thread.
 
-	// Welcomed into a session with these rules.
-	void Set(const Protocol::SessionRules& a_rules);
+	// Welcomed into a_session (the server's session ID) with these rules.
+	void Set(const Protocol::SessionRules& a_rules, std::uint64_t a_session);
 
 	// The session ended (disconnected, left, stopped hosting).
 	void Clear();

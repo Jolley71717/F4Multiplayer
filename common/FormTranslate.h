@@ -325,6 +325,7 @@ namespace FormTranslate
 		case MessageType::kWelcome:
 		case MessageType::kReject:
 		case MessageType::kPlayerLeft:
+		case MessageType::kPlayerReloaded:
 		case MessageType::kPartyXp:
 		case MessageType::kHeartbeatAck:
 		case MessageType::kRevived:
@@ -463,6 +464,25 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportNpcIdentity:
+		case MessageType::kNpcIdentity:
+			// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the
+			// NPC it was placed as there is no roll to make: the slots go. A faction it lacks is left out.
+			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) {
+				if (!ctx.Key(m.refId)) {
+					return false;
+				}
+				if (m.originalBase != 0 && !ctx.Detail(m.originalBase)) {
+					m.mask = 0;
+					m.templates = {};
+				}
+				for (auto& slot : m.templates) {
+					ctx.Detail(slot);
+				}
+				ctx.Entries(m.factions, [&](FactionRank& a_entry) { return ctx.Key(a_entry.faction); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportFace:
 		case MessageType::kPlayerFace:
 			Apply<Face>(a_packet, ctx, DecodeFace, [&](Face& m) { return detail::MapFace(ctx, m); }, typed);
@@ -484,6 +504,15 @@ namespace FormTranslate
 		case MessageType::kReportActivation:
 		case MessageType::kActivation:
 			Apply<Activation>(a_packet, ctx, DecodeActivation, [&](Activation& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kReportTrap:
+			Apply<TrapState>(a_packet, ctx, DecodeTrapState, [&](TrapState& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, plain);
+			break;
+		case MessageType::kTraps:
+			Apply<TrapStates>(a_packet, ctx, DecodeTrapStates, [&](TrapStates& m) {
+				ctx.Entries(m.traps, [&](TrapState& a_trap) { return ctx.Key(a_trap.refId) && ctx.Place(a_trap.cell, a_trap.worldspace); });
+				return !m.traps.empty();  // a live one whose trap has no ID here is about nothing
+			}, plain);
 			break;
 		case MessageType::kReportSpawn:
 		case MessageType::kSpawned:
@@ -508,6 +537,13 @@ namespace FormTranslate
 		case MessageType::kReportObjectRest:
 		case MessageType::kObjectRested:
 			Apply<ObjectRest>(a_packet, ctx, DecodeObjectRest, [&](ObjectRest& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, typed);
+			break;
+		case MessageType::kReportDestruction:
+		case MessageType::kDestructions:
+			Apply<Destructions>(a_packet, ctx, DecodeDestructions, [&](Destructions& m) {
+				ctx.Entries(m.entries, [&](Destruction& a_entry) { return ctx.Key(a_entry.refId); });
+				return !m.entries.empty();
+			}, typed);
 			break;
 		case MessageType::kReportWorkshopPower:
 		case MessageType::kWorkshopPower:

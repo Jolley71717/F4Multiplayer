@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 // Radiant quests: the ones the game hands out again and again, each time picking its own targets (the
@@ -268,6 +269,15 @@ namespace RadiantRules
 	inline constexpr std::uint32_t ALIAS_BY_OTHERS = 1u << 11;
 	inline constexpr std::uint32_t ALIAS_ALLOW_RESERVED = 1u << 9;
 
+	// A forced alias's flags for a friend's start: no longer filled by the others, and, only where its conditions are lifted
+	// (an optional pick that follows this game's state: a settlement owned here and not there), allowed a reference another
+	// quest of this game reserves. A needed alias keeps the reservations: a target a story or companion quest holds here
+	// fails the start, and the run stays each player's own.
+	constexpr std::uint32_t ForcedFlags(std::uint32_t a_flags, bool a_lifted)
+	{
+		return (a_flags & ~ALIAS_BY_OTHERS) | (a_lifted ? ALIAS_ALLOW_RESERVED : 0u);
+	}
+
 	// How a reference alias is filled, by BGSRefAlias::FILL_TYPE: 0 conditions, 1 forced, 2 from another alias, 3
 	// from the start's event, 4 made at runtime, 5 another quest's alias, 6 a unique actor, 7 near another alias.
 	inline Fill RefFill(std::uint16_t a_fillType, std::uint32_t a_flags)
@@ -476,17 +486,52 @@ namespace RadiantRules
 		kIgnore,   // a run known here already, one finished or turned down here, or a start under way
 		kStart,    // start the quest here with their fills
 		kCompare,  // the quest runs here: share it if its fills are theirs
+		kDone,     // a run with its targets finished here (shared again under another number): never started again
 	};
+
+	// The fills that name a run's targets, to know the run again under another number (a game that loaded a save from
+	// inside it, or came back, shares it again as a new run): its locations, or where it has none its references, but
+	// those no other game names (empty, made at runtime). In order, so two runs' compare equal.
+	inline std::vector<Protocol::RadiantFill> TargetsOf(std::span<const Protocol::RadiantFill> a_fills)
+	{
+		const auto named = [](const Protocol::RadiantFill& a_fill) { return a_fill.form != 0 && (a_fill.form >> 24) != 0xFF; };
+		const auto place = [](const Protocol::RadiantFill& a_fill) { return a_fill.kind == static_cast<std::uint8_t>(Kind::kLoc); };
+		const bool places = std::ranges::any_of(a_fills, [&](const Protocol::RadiantFill& a_fill) { return named(a_fill) && place(a_fill); });
+		std::vector<Protocol::RadiantFill> out;
+		for (const auto& fill : a_fills) {
+			if (named(fill) && place(fill) == places) {
+				out.push_back(fill);
+			}
+		}
+		std::ranges::sort(out, {}, [](const Protocol::RadiantFill& a_fill) { return std::tuple{ a_fill.kind, a_fill.alias, a_fill.form }; });
+		return out;
+	}
+
+	// Where a game's run numbers start: a number of its own start (the seconds since 1970 then), so a game that restarts,
+	// whose player the server gives back their id, never numbers a run as one of its last (its friends may still hold
+	// that one, running or finished). A game makes far fewer runs than one a second.
+	constexpr std::uint32_t SerialSeed(std::uint64_t a_unixSeconds)
+	{
+		return static_cast<std::uint32_t>(a_unixSeconds);
+	}
 
 	// The radiants' runs in this game: which run of each quest is shared here, and with it the rule that pays a run's
 	// reward once in each game. The reward is the quest's own stage (MinRecruit's 400), so a game must set each stage
 	// of a run at most once and never start a run it has finished: a run's start that comes again (a friend's game
 	// resends its runs when someone joins; a repeated packet) is ignored once that run is known, finished or turned
 	// down here, and each stage of it is taken or reported once. A stage taken from a friend is never reported back.
-	// A new run of the same quest (it is handed out again) is another run, and pays again.
+	// A new run of the same quest (it is handed out again) is another run, and pays again, but one with the targets of a
+	// run finished here is never started here: a friend's game that loaded a save from inside a run, or came back, shares
+	// it again under a new number (kDone). The runs and targets finished here are kept through loads and sessions.
 	class Book
 	{
 	public:
+		Book() = default;
+		// a_seed: where this game's run numbers start (SerialSeed).
+		explicit Book(std::uint32_t a_seed) :
+			serial(a_seed)
+		{}
+
 		enum class State : std::uint8_t
 		{
 			kStarting,  // started here with a friend's fills; not yet seen running
@@ -494,7 +539,8 @@ namespace RadiantRules
 		};
 
 		// This game started the quest in a session (the player has it): a run of ours, with the stages done so far.
-		Run Begin(std::uint32_t a_quest, std::uint32_t a_self, std::span<const std::uint16_t> a_done)
+		// a_fills: its fills here (FillsOf), which name its targets.
+		Run Begin(std::uint32_t a_quest, std::uint32_t a_self, std::span<const std::uint16_t> a_done, std::span<const Protocol::RadiantFill> a_fills = {})
 		{
 			const Run run{ a_self, ++serial };
 			auto&     instance = quests[a_quest];
@@ -502,10 +548,12 @@ namespace RadiantRules
 			instance.state = State::kShared;
 			instance.runs.push_back(run);
 			instance.reported.insert(a_done.begin(), a_done.end());
+			instance.targets = TargetsOf(a_fills);
 			return run;
 		}
 
-		[[nodiscard]] Answer OnStart(std::uint32_t a_quest, const Run& a_run, bool a_running) const
+		// a_fills: the start's.
+		[[nodiscard]] Answer OnStart(std::uint32_t a_quest, const Run& a_run, bool a_running, std::span<const Protocol::RadiantFill> a_fills = {}) const
 		{
 			if (finished.contains(a_run) || refused.contains(a_run)) {
 				return Answer::kIgnore;
@@ -516,26 +564,47 @@ namespace RadiantRules
 				}
 				return Answer::kCompare;
 			}
-			return a_running ? Answer::kCompare : Answer::kStart;
+			if (a_running) {
+				return Answer::kCompare;
+			}
+			return FinishedHere(a_quest, a_fills) ? Answer::kDone : Answer::kStart;
 		}
 
-		// Started here from a friend's run, the stages they had done to come.
-		void Starting(std::uint32_t a_quest, const Run& a_run)
+		// Whether a run of the quest with these fills' targets was finished here.
+		[[nodiscard]] bool FinishedHere(std::uint32_t a_quest, std::span<const Protocol::RadiantFill> a_fills) const
+		{
+			const auto it = done.find(a_quest);
+			if (it == done.end()) {
+				return false;
+			}
+			const auto targets = TargetsOf(a_fills);
+			return !targets.empty() && std::ranges::find(it->second, targets) != it->second.end();
+		}
+
+		// Started here from a friend's run, the stages they had done to come (a_fills: the start's).
+		void Starting(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills = {})
 		{
 			auto& instance = quests[a_quest];
 			instance = Instance{};
 			instance.state = State::kStarting;
 			instance.runs.push_back(a_run);
+			instance.targets = TargetsOf(a_fills);
 		}
 
 		// The quest runs here with the run's fills (started from it, or found running with them): the run is shared.
-		void Join(std::uint32_t a_quest, const Run& a_run)
+		// Whether it was shared here already, under another run (one shared again under a new number).
+		bool Join(std::uint32_t a_quest, const Run& a_run, std::span<const Protocol::RadiantFill> a_fills = {})
 		{
-			auto& instance = quests[a_quest];
+			auto&      instance = quests[a_quest];
+			const bool again = instance.state == State::kShared && !instance.runs.empty() && std::ranges::find(instance.runs, a_run) == instance.runs.end();
 			instance.state = State::kShared;
 			if (std::ranges::find(instance.runs, a_run) == instance.runs.end()) {
 				instance.runs.push_back(a_run);
 			}
+			if (instance.targets.empty()) {
+				instance.targets = TargetsOf(a_fills);
+			}
+			return again;
 		}
 
 		// The run can't be shared here (its fills can't be matched, the start failed): each player's own. Its start is
@@ -598,6 +667,15 @@ namespace RadiantRules
 		{
 			if (const auto it = quests.find(a_quest); it != quests.end()) {
 				finished.insert(it->second.runs.begin(), it->second.runs.end());
+				if (!it->second.targets.empty()) {
+					auto& targets = done[a_quest];
+					if (std::ranges::find(targets, it->second.targets) == targets.end()) {
+						if (targets.size() >= MAX_DONE) {
+							targets.erase(targets.begin());
+						}
+						targets.push_back(std::move(it->second.targets));
+					}
+				}
 				quests.erase(it);
 			}
 		}
@@ -633,7 +711,17 @@ namespace RadiantRules
 		// again never starts one here twice.
 		void EndSession() { quests.clear(); }
 
-		// Another server, or a save loaded: nothing of the last is known.
+		// A save loaded: the runs going are the loaded world's (each game shares its own again). Those turned down here may
+		// be taken now; those finished here never start here again, nor do their targets (a save from before the reward
+		// would pay it twice).
+		void Reloaded()
+		{
+			quests.clear();
+			refused.clear();
+		}
+
+		// Another server: nothing of the last is known but the targets finished here, which are this game's (and run
+		// numbers go on).
 		void Clear()
 		{
 			quests.clear();
@@ -648,11 +736,15 @@ namespace RadiantRules
 			std::vector<Run>        runs;      // the run (ours or a friend's) and any other found to have the same fills
 			std::set<std::uint16_t> taken;     // friends' stages taken for it
 			std::set<std::uint16_t> reported;  // stages that need no report from here (reported, sent with the start, or taken)
+			std::vector<Protocol::RadiantFill> targets;  // TargetsOf its fills
 		};
 
-		std::map<std::uint32_t, Instance> quests;
-		std::set<Run>                     finished;
-		std::set<Run>                     refused;
-		std::uint32_t                     serial = 0;
+		static constexpr std::size_t MAX_DONE = 32;  // targets kept for each quest, the oldest forgotten
+
+		std::map<std::uint32_t, Instance>                                        quests;
+		std::set<Run>                                                            finished;
+		std::set<Run>                                                            refused;
+		std::map<std::uint32_t, std::vector<std::vector<Protocol::RadiantFill>>> done;  // the targets of runs finished here, by quest
+		std::uint32_t                                                            serial = 0;
 	};
 }

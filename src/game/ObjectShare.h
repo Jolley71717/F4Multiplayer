@@ -576,11 +576,143 @@ namespace ObjectShare
 		return dx * dx + dy * dy <= NEAR_DISTANCE * NEAR_DISTANCE && std::fabs(a_object[2] - a_player[2]) <= NEAR_HEIGHT;
 	}
 
+	// An NPC our game runs: one of its own that close (across), alive, walked or fell into an object and shoved it. Wider
+	// than Near: its body is bigger round than our player's feet.
+	inline constexpr float       NPC_NEAR_DISTANCE = 200.0f;
+	inline constexpr float       NPC_NEAR_HEIGHT = 200.0f;
+	inline constexpr std::size_t MAX_SHOVERS = 64;  // NPCs of ours looked at in one scan (a crowd's)
+
+	// Whether an NPC at a_npc is close enough to an object at a_object to have shoved it.
+	inline bool NpcNear(const Vec3& a_npc, const Vec3& a_object)
+	{
+		const float dx = a_npc[0] - a_object[0], dy = a_npc[1] - a_object[1];
+		return dx * dx + dy * dy <= NPC_NEAR_DISTANCE * NPC_NEAR_DISTANCE && std::fabs(a_object[2] - a_npc[2]) <= NPC_NEAR_HEIGHT;
+	}
+
+	// Whether our game answers for an actor (an NPC that shoves, or the cause of a blast): the session knows it (a_id,
+	// NpcSync::SessionId: 0 is never shared) and the server made our player its owner. Another player's NPC, one nobody
+	// runs yet and one that is not shared are not ours. So the game that runs an NPC is the only one that reports what it
+	// shoves, and two games never report the same object.
+	constexpr bool Answers(std::uint32_t a_id, std::uint32_t a_owner, std::uint32_t a_local)
+	{
+		return a_id != 0 && a_local != 0 && a_owner == a_local;
+	}
+
+	// --- blasts ---------------------------------------------------------------------------------------------------------
+
+	inline constexpr auto        BLAST_REACH_FOR = std::chrono::seconds(4);    // a blast's reach holds that long after our scan first sees it
+	inline constexpr auto        BLAST_KEY_MEMORY = std::chrono::seconds(20);  // ... and the explosion is not noted again while it lingers
+	inline constexpr float       BLAST_MARGIN = 128.0f;                        // objects beyond its radius are thrown by it still (bodies, not centres)
+	inline constexpr float       BLAST_MAX_RADIUS = 1500.0f;                   // a nuke's reach is the scan's
+	inline constexpr std::size_t MAX_BLASTS = 16;
+	inline constexpr std::size_t BLAST_MAX_REPORTS = 16;                       // rests one blast may have reported (the server's burst is 24)
+	inline constexpr auto        BLAST_DEFER = std::chrono::seconds(6);        // a rest the budget had no room for waits that long
+
+	// Whose blast it is. The cause decides, so the game that threw the grenade (or shot the barrel, or runs the NPC that
+	// did) is the one that reports what it threw about; every other game sets off the same explosion on its own, and what
+	// that one throws about is the first game's to say.
+	enum class BlastRole : std::uint8_t
+	{
+		kOurs,    // our player's, or an NPC we run's
+		kTheirs,  // a friend's or their NPC's, or one set off here for a friend's throw
+	};
+
+	// What caused an explosion, as our game knows it.
+	enum class Cause : std::uint8_t
+	{
+		kNobody,   // a hazard, a trap, a script: no game claims what it throws about
+		kPlayer,   // our player
+		kStandIn,  // a friend's stand-in
+		kNpc,      // an NPC (ours or not: a_npcAnswered)
+	};
+
+	// a_placed: our game set the explosion off for a friend's throw. No role: nobody's.
+	inline std::optional<BlastRole> RoleOf(bool a_placed, Cause a_cause, bool a_npcAnswered)
+	{
+		if (a_placed) {
+			return BlastRole::kTheirs;
+		}
+		switch (a_cause) {
+		case Cause::kPlayer:
+			return BlastRole::kOurs;
+		case Cause::kStandIn:
+			return BlastRole::kTheirs;
+		case Cause::kNpc:
+			return a_npcAnswered ? BlastRole::kOurs : BlastRole::kTheirs;
+		default:
+			return std::nullopt;
+		}
+	}
+
+	// The blasts our scans saw lately, and which objects they reach.
+	class BlastBook
+	{
+	public:
+		struct Reach
+		{
+			std::uint32_t serial = 0;      // the nearest blast of ours that reaches it (0: none)
+			bool          theirs = false;  // a friend's blast reaches it too: not ours to report, whatever else moved it
+		};
+
+		// An explosion seen at a_at (a_key: its handle, the same only while it is the same explosion). Whether it is new.
+		bool Note(std::uint32_t a_key, const Vec3& a_at, float a_radius, BlastRole a_role, Clock::time_point a_now)
+		{
+			std::erase_if(blasts, [&](const Blast& a_blast) { return a_now - a_blast.noted >= BLAST_KEY_MEMORY; });
+			if (!Finite(a_at) || !std::isfinite(a_radius) || a_radius <= 0.0f || blasts.size() >= MAX_BLASTS) {
+				return false;
+			}
+			if (std::ranges::any_of(blasts, [&](const Blast& a_blast) { return a_blast.key == a_key; })) {
+				return false;
+			}
+			blasts.push_back({ .key = a_key, .serial = ++lastSerial, .at = a_at, .radius = (std::min)(a_radius, BLAST_MAX_RADIUS), .role = a_role, .noted = a_now });
+			return true;
+		}
+
+		[[nodiscard]] Reach Reaching(const Vec3& a_object, Clock::time_point a_now) const
+		{
+			Reach reach;
+			float nearest = (std::numeric_limits<float>::max)();
+			for (const auto& blast : blasts) {
+				const float d = Distance(a_object, blast.at);
+				if (a_now - blast.noted >= BLAST_REACH_FOR || d > blast.radius + BLAST_MARGIN) {
+					continue;
+				}
+				if (blast.role == BlastRole::kTheirs) {
+					reach.theirs = true;
+				} else if (d < nearest) {
+					nearest = d;
+					reach.serial = blast.serial;
+				}
+			}
+			return reach;
+		}
+
+		[[nodiscard]] std::size_t Size() const { return blasts.size(); }
+		void                      Reset() { blasts.clear(); }
+
+	private:
+		struct Blast
+		{
+			std::uint32_t     key = 0;
+			std::uint32_t     serial = 0;
+			Vec3              at{};
+			float             radius = 0.0f;
+			BlastRole         role = BlastRole::kOurs;
+			Clock::time_point noted{};
+		};
+
+		std::vector<Blast> blasts;
+		std::uint32_t      lastSerial = 0;
+	};
+
 	// The objects our game sees moving, by a scan of those near our player (a few times a second). One moved with no
-	// hand on it and come to rest is reported when our player moved it (walked into it, shot it: the game says so in
-	// byUs, while it moves), and a friend is near enough to have it loaded too (friendNear); the friend's game reports
-	// the ones their player moves. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying
-	// from them (busy), is never ours to report.
+	// hand on it and come to rest is reported when our game is the one to say who moved it, and a friend is near enough to
+	// have it loaded too (friendNear): our player did (walked into it, shot it: byUs), an NPC our game runs did (byNpc:
+	// one of ours stood by it), or a blast of ours threw it (blast: BlastBook's serial). The friend's game reports the
+	// ones their player, their NPCs and their blasts move; an object a friend's blast reaches (theirs) is never ours,
+	// whatever else moved it. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying from
+	// them (busy), is never ours to report either. A blast is reported for at most BLAST_MAX_REPORTS objects; one the
+	// budget has no room for yet waits BLAST_DEFER for it.
 	class KnockWatch
 	{
 	public:
@@ -590,6 +722,9 @@ namespace ObjectShare
 			Pose          pose{};
 			bool          byUs = false;
 			bool          busy = false;
+			bool          byNpc = false;
+			std::uint32_t blast = 0;
+			bool          theirs = false;
 		};
 
 		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, bool a_friendNear, Clock::time_point a_now)
@@ -612,19 +747,37 @@ namespace ObjectShare
 				if (seen.busy) {
 					w.rest = w.last = seen.pose;
 					w.moving = false;
+					w.owed = false;
 					w.quietUntil = (std::max)(w.quietUntil, a_now + QUIET_AFTER_PLACED);
 					continue;
 				}
 				if (!w.moving) {
 					if (Distance(seen.pose.position, w.rest.position) > MOVE_DISTANCE || Turned(seen.pose.angles, w.rest.angles) > MOVE_TURN) {
 						w.moving = true;
+						w.owed = false;
 						w.byUs = seen.byUs;
+						w.byNpc = seen.byNpc;
+						w.blast = seen.blast;
+						w.theirs = seen.theirs;
 						w.movingSince = w.stillSince = a_now;
 						w.last = seen.pose;
+					} else if (w.owed) {
+						// Came to rest while the budget had no room: say so now if it has, or give up.
+						if (a_now >= w.owedUntil) {
+							w.owed = false;
+						} else if (a_friendNear && a_now >= w.quietUntil && Take(w.blast, a_now)) {
+							out.push_back(Rest(seen));
+							w.owed = false;
+						}
 					}
 					continue;
 				}
 				w.byUs = w.byUs || seen.byUs;
+				w.byNpc = w.byNpc || seen.byNpc;
+				w.theirs = w.theirs || seen.theirs;
+				if (w.blast == 0) {
+					w.blast = seen.blast;
+				}
 				if (Distance(seen.pose.position, w.last.position) > STILL_DISTANCE || Turned(seen.pose.angles, w.last.angles) > STILL_TURN) {
 					w.stillSince = a_now;
 				}
@@ -634,16 +787,19 @@ namespace ObjectShare
 				}
 				w.moving = false;
 				w.rest = seen.pose;
-				if (w.byUs && a_friendNear && a_now >= w.quietUntil && budget.Take(a_now)) {
-					Protocol::ObjectRest rest{ .refId = seen.refId, .kind = Protocol::ObjectRestKind::kRest, .cell = seen.pose.cell, .worldspace = seen.pose.worldspace,
-						.position = seen.pose.position };
-					for (std::size_t i = 0; i < 3; ++i) {
-						rest.rotation[i] = Wrap(seen.pose.angles[i]);
+				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0) && a_friendNear && a_now >= w.quietUntil) {
+					if (Take(w.blast, a_now)) {
+						out.push_back(Rest(seen));
+					} else if (w.blast != 0 && BlastRoom(w.blast)) {
+						// A blast moves dozens at once: the rest come as the budget fills again.
+						w.owed = true;
+						w.owedUntil = a_now + BLAST_DEFER;
 					}
-					out.push_back(rest);
-					++reported;
 				}
-				w.byUs = false;
+				w.byUs = w.byNpc = w.theirs = false;
+				if (!w.owed) {
+					w.blast = 0;
+				}
 			}
 			std::erase_if(watched, [&](const auto& a_entry) { return a_now - a_entry.second.seenAt >= FORGET_AFTER; });
 			return out;
@@ -656,7 +812,9 @@ namespace ObjectShare
 			auto& w = watched[a_ref];
 			w.rest = w.last = a_pose;
 			w.moving = false;
-			w.byUs = false;
+			w.owed = false;
+			w.byUs = w.byNpc = w.theirs = false;
+			w.blast = 0;
 			w.seenAt = a_now;
 			w.quietUntil = a_now + QUIET_AFTER_PLACED;
 		}
@@ -668,7 +826,11 @@ namespace ObjectShare
 		}
 		[[nodiscard]] std::uint64_t Reported() const { return reported; }
 
-		void Reset() { watched.clear(); }
+		void Reset()
+		{
+			watched.clear();
+			blastReports.clear();
+		}
 
 	private:
 		struct Watch
@@ -677,15 +839,57 @@ namespace ObjectShare
 			Pose              last{};
 			bool              moving = false;
 			bool              byUs = false;
+			bool              byNpc = false;
+			bool              theirs = false;
+			bool              owed = false;  // at rest, to be reported when the budget has room
+			std::uint32_t     blast = 0;
 			Clock::time_point movingSince{};
 			Clock::time_point stillSince{};
 			Clock::time_point seenAt{};
 			Clock::time_point quietUntil{};
+			Clock::time_point owedUntil{};
 		};
 
-		std::unordered_map<std::uint32_t, Watch> watched;
-		TokenBucket                              budget{ KNOCK_BURST, KNOCKS_PER_SECOND };
-		std::uint64_t                            reported = 0;
+		// Whether the blast (0: none) may have another rest reported.
+		[[nodiscard]] bool BlastRoom(std::uint32_t a_blast) const
+		{
+			if (a_blast == 0) {
+				return true;
+			}
+			const auto it = blastReports.find(a_blast);
+			return it == blastReports.end() || it->second < BLAST_MAX_REPORTS;
+		}
+
+		// A rest to report, by the budget (the same as every knock's) and the blast's own cap.
+		bool Take(std::uint32_t a_blast, Clock::time_point a_now)
+		{
+			if (!BlastRoom(a_blast) || !budget.Take(a_now)) {
+				return false;
+			}
+			if (a_blast != 0) {
+				if (blastReports.size() >= 64 && !blastReports.contains(a_blast)) {
+					blastReports.clear();  // old blasts' counts: a blast does not last this many others
+				}
+				++blastReports[a_blast];
+			}
+			return true;
+		}
+
+		Protocol::ObjectRest Rest(const Seen& a_seen)
+		{
+			Protocol::ObjectRest rest{ .refId = a_seen.refId, .kind = Protocol::ObjectRestKind::kRest, .cell = a_seen.pose.cell, .worldspace = a_seen.pose.worldspace,
+				.position = a_seen.pose.position };
+			for (std::size_t i = 0; i < 3; ++i) {
+				rest.rotation[i] = Wrap(a_seen.pose.angles[i]);
+			}
+			++reported;
+			return rest;
+		}
+
+		std::unordered_map<std::uint32_t, Watch>       watched;
+		std::unordered_map<std::uint32_t, std::size_t> blastReports;  // by BlastBook's serial: rests reported for each
+		TokenBucket                                    budget{ KNOCK_BURST, KNOCKS_PER_SECOND };
+		std::uint64_t                                  reported = 0;
 	};
 
 	// --- what a friend's message may do ---------------------------------------------------------------------------

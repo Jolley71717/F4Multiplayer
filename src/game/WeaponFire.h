@@ -19,11 +19,12 @@ namespace WeaponFire
 	// Hooks NPCs' animation events (all NPCs share the hook), using any loaded NPC.
 	void InstallForNpcs(RE::Actor* a_npc);
 
-	// Shots by the local player since the last call.
+	// Shots (and swings or punches) by the local player since the last call. A gun's bash is left out
+	// (AttackKind::ReportsAsShot): friends would replay it as a gunshot. Main thread.
 	[[nodiscard]] std::uint32_t TakeShots();
 
-	// NPCs (form IDs) that fired since the last call, one entry per shot. Includes NPCs we don't
-	// run; the caller filters.
+	// NPCs (form IDs) that fired since the last call, one entry per shot, a gun's bash left out as for
+	// TakeShots. Includes NPCs we don't run; the caller filters. Main thread.
 	[[nodiscard]] std::vector<std::uint32_t> TakeNpcShots();
 
 	// The sound the game picked for the actor's gun when it was equipped (a keyword sound mapping's
@@ -50,8 +51,9 @@ namespace WeaponFire
 	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
-	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), for the
-	// others to set off too. Frame() scans while a watch is armed; ArmExplosionWatch() arms it.
+	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), or a shot of ours that hit
+	// a destructible object (a mine, a car: Destructibles), for the others to set off too. Frame() scans while a watch is
+	// armed; ArmExplosionWatch() arms it. A destructible object's own (its stage's) goes with its wreck instead.
 	void ArmExplosionWatch();
 
 	// Whether our game reports the explosions around our player now (a throw's watch is on), so each goes off in the
@@ -69,6 +71,18 @@ namespace WeaponFire
 	// of NPCs another game runs are made ghosts while it goes off (BlastShield): their owner's game deals its damage.
 	// The copies go by the session's ids (NpcSync::SessionId): our copy of a friend's spawn by its spawn id.
 	void ApplyExplosion(const Protocol::Explosion& a_explosion);
+
+	// Whether this explosion is one our game set off for a friend's throw (ApplyExplosion) or trap (SetOffTrapExplosion):
+	// theirs, never ours to report what it throws about (MovedObjects).
+	[[nodiscard]] bool SetOffForFriend(RE::TESObjectREFR* a_explosion);
+
+	// A world mine's blast, set off here because the mine went off in a_from's game (Traps): placed as their explosion
+	// would be, our copies of NPCs other games run made ghosts while it goes off, and never reported back as ours.
+	void SetOffTrapExplosion(RE::BGSExplosion* a_explosion, const RE::NiPoint3& a_at, std::uint32_t a_from);
+
+	// Our copies of NPCs other games run near a_at are made ghosts a moment (BlastShield; called again to keep them so):
+	// a trap set off here for a friend's (its grenades, its shots) is their owners' to deal.
+	void ShieldCopiesNear(const RE::NiPoint3& a_at, float a_radius, std::uint32_t a_from);
 
 	// Our copy of this NPC (the session's id) stops being mirrored: a ghost of ours against a friend's explosion
 	// comes off now.

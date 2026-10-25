@@ -46,6 +46,9 @@ namespace
 	constexpr auto DROP_LIST_INTERVAL = std::chrono::seconds(10);
 	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
+	// The others are told a player loaded a save (kPlayerReloaded) at most this often: each time, every game sends its
+	// radiant runs going again. A load takes longer than this.
+	constexpr auto RELOAD_TOLD_EVERY = std::chrono::seconds(2);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
@@ -59,8 +62,18 @@ namespace
 	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
 	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
 	constexpr float MAX_HIT_DAMAGE_PER_SECOND = 1500.0f;     // per reporter, across all victims
-	constexpr auto  EXPLOSION_AFTER_THROW = std::chrono::seconds(10);  // explosions are reported only after a throw
+	// Explosions are reported only after a throw, or a shot (at a mine, a car: WeaponFire arms its watch on a hit).
+	constexpr auto  EXPLOSION_AFTER_ATTACK = std::chrono::seconds(10);
+	// A destructible object a player damaged goes off in the others' games only for this long after their last shot or
+	// throw: a car set on fire burns for some 10 s before its big explosion, longer if it was shot only lightly.
+	constexpr auto  DESTRUCTION_EXPLODES_AFTER_ATTACK = std::chrono::seconds(30);
+	// And for this long after such a report of it, from whoever reports it next: each game's copy of a burning car burns
+	// on its own, so the stage the attacker set going can be passed first in a friend's game, who never shot.
+	constexpr auto  DESTRUCTION_ARMED_FOR = std::chrono::seconds(30);
 	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
+	// A trap is reported by a game that has it loaded: it lies within the loaded cells around the reporter (a mine can be
+	// shot from the far side of them), never across the map.
+	constexpr float TRAP_RANGE = 16000.0f;
 	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
 	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
 	constexpr double EXPLOSION_BURST = 16.0;
@@ -139,11 +152,13 @@ namespace
 		kQuestStages,
 		kContainers,
 		kWorkshop,
+		kTraps,
+		kDestructions,
 		kTables
 	};
 	// For log lines: "the session's {} table", "{} sharing".
-	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object" };
-	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building" };
+	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object" };
+	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction" };
 
 	// Whose budget: the transport's own name for the peer (a Steam ID, which a client can't choose), else
 	// the identity their game says hello with, else the connection itself.
@@ -180,6 +195,7 @@ namespace
 		Clock::time_point xpRefilled{};
 		Clock::time_point lastFace{};
 		Clock::time_point lastThrow{};  // explosions are believed only for a while after one
+		Clock::time_point lastShot{};   // any shot, theirs or an NPC's they run: the same, for what it hit
 		Clock::time_point lastLine{};
 		bool              floodLogged = false;
 		RateBudget        rates;  // explosions and deaths
@@ -242,6 +258,7 @@ namespace
 		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
+		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
 		// Its last request for the world isn't answered yet (owed while its budget refills, or dropped for flooding):
 		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
 		// a world state is sent to it.
@@ -304,8 +321,9 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	stopRequested = false;
 	running = true;
 	thread = std::thread([this] { Run(); });
-	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports)", options.port,
-		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size()));
+	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
+	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
+		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
 	return true;
 }
 
@@ -338,8 +356,23 @@ void Server::Run()
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
 	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
-	// Host controls: nobody new joins while locked (not saved: a restart opens it again), and the host's bans.
+	// Host controls: nobody new joins while locked (not saved: a restart opens it again) but those who joined during
+	// this server run and dropped out, and the host's bans.
 	bool                        locked = false;
+	// Who a locked session takes back: the hello identities that joined during this server run, each with the Steam
+	// account (Player::transportId, 0 on any direct connection) it joined over and when it was last here. Only in memory:
+	// not saved, so a restart forgets them (the saved identities above only give a returning player their old number,
+	// and every player who ever joined is in them). At the cap the one gone longest makes room, never a new member.
+	struct Member
+	{
+		std::uint64_t     account = 0;
+		Clock::time_point lastSeen{};
+	};
+	std::unordered_map<std::uint64_t, Member> members;
+	// Hello identities and accounts of players the host kicked or banned this run: a locked session takes back those
+	// that dropped out, not these (or another identity of the same account). Forgotten when they are let in again.
+	std::unordered_set<std::uint64_t> removed;
+	std::unordered_set<std::uint64_t> removedAccounts;
 	BanList                     bans;
 	const std::filesystem::path banPath{ options.banFile };
 	if (!options.banFile.empty()) {
@@ -370,12 +403,23 @@ void Server::Run()
 	std::vector<Protocol::IndexedContainerChange>         containerChanges;  // index = session index
 	std::unordered_set<std::uint32_t>                     pickedUp;
 	std::unordered_map<std::uint32_t, Protocol::RefState> refStates;
+	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
+	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
+	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
+	// The objects one of those reports came for lately (DESTRUCTION_ARMED_FOR): their explosions are let through from
+	// anyone. Not saved: over in seconds.
+	std::unordered_map<std::uint32_t, Clock::time_point>    destructionsArmed;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
 	std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> npcEquipment;  // each run NPC's gear, from its owner
+	// What each run NPC was rolled as (a leveled one's templates, a spawn's factions), from the first game to run it in its
+	// life here: the session's roll, which the others make theirs. playerId is that game's player. A later runner whose
+	// game still has its own roll (it could not make the session's) does not replace it, so nobody's NPC changes again
+	// when a fight hands it over. Gone with the NPC (dead, or nobody runs it) and with that player.
+	std::unordered_map<std::uint32_t, Protocol::NpcIdentity> npcIdentities;
 	WorkshopStore                                         workshop{ MAX_WORKSHOP_ITEMS, MAX_WORLD_SCRAPS };  // built and scrapped at settlements, kept while the players are away too
 	bool                                                  builtFullLogged = false;
 	bool                                                  scrapsFullLogged = false;
@@ -452,6 +496,12 @@ void Server::Run()
 			for (const auto& state : saved->refStates) {
 				refStates[state.refId] = state;
 			}
+			for (const auto& trap : saved->traps) {
+				auto& kept = traps[trap.refId];
+				if (Protocol::TrapSupersedes(trap.state, kept.refId != 0 ? std::optional{ kept.state } : std::nullopt)) {
+					kept = trap;
+				}
+			}
 			questStages = saved->questStages;
 			questStageKeys.clear();
 			for (const auto& stage : questStages) {
@@ -467,13 +517,18 @@ void Server::Run()
 			for (const auto& drop : saved->drops) {
 				drops.Restore(drop);
 			}
+			for (const auto& destruction : saved->destructions) {
+				destructions[destruction.refId] = destruction;
+			}
 			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
 				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
 			noteFill(kDeaths, deadActors.size());
 			noteFill(kPickups, pickedUp.size());
 			noteFill(kRefStates, refStates.size());
+			noteFill(kTraps, traps.size());
 			noteFill(kQuestStages, questStages.size());
 			noteFill(kContainers, containerChanges.size());
+			noteFill(kDestructions, destructions.size());
 		}
 	}
 	// Counts every change to what is saved, so one that leaves the counts as they were (a door closed again, a
@@ -501,6 +556,9 @@ void Server::Run()
 		for (const auto& [id, state] : refStates) {
 			snapshot.refStates.push_back(state);
 		}
+		for (const auto& [id, trap] : traps) {
+			snapshot.traps.push_back(trap);
+		}
 		snapshot.questStages = questStages;
 		snapshot.worldTime = worldTime;
 		for (const auto& [ref, flags] : markers) {
@@ -508,6 +566,9 @@ void Server::Run()
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		snapshot.drops = drops.All();
+		for (const auto& [id, destruction] : destructions) {
+			snapshot.destructions.push_back(destruction);
+		}
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
@@ -532,9 +593,13 @@ void Server::Run()
 		diedAt.clear();
 		pickedUp.clear();
 		refStates.clear();
+		traps.clear();
 		actorOwners.clear();
+		destructions.clear();
+		destructionsArmed.clear();
 		spawns.clear();
 		npcEquipment.clear();
+		npcIdentities.clear();
 		workshop.Clear();
 		drops.Clear();
 		questStages.clear();
@@ -754,6 +819,18 @@ void Server::Run()
 	// already in the receiver's world.
 	const auto sendWorldState = [&](ConnectionKey a_to, std::uint32_t a_containerFrom) {
 		sendMarkers(a_to);
+		// The spent traps before the world state that ends the catching up, so a game holds the whole list by then.
+		Protocol::TrapStates spent;
+		for (const auto& [id, trap] : traps) {
+			spent.traps.push_back(trap);
+			if (spent.traps.size() == Protocol::MAX_TRAPS_PER_PACKET) {
+				send(a_to, Protocol::Encode(spent), true);
+				spent.traps.clear();
+			}
+		}
+		if (!spent.traps.empty()) {
+			send(a_to, Protocol::Encode(spent), true);
+		}
 		// Deaths with a known place go first, one by one with the place; the list that follows then finds
 		// them already dead, so each copy lies where the killer saw it fall.
 		std::size_t placed = 0;
@@ -798,6 +875,18 @@ void Server::Run()
 			send(a_to, Protocol::Encode(world), true);
 			offset += Protocol::WORLD_STATE_CHUNK;
 		} while (offset < longest);
+		// Wrecks as they are, with nobody named: the receiver sets none of them off.
+		Protocol::Destructions wrecks;
+		for (const auto& [id, destruction] : destructions) {
+			wrecks.entries.push_back(destruction);
+			if (wrecks.entries.size() == Protocol::MAX_DESTRUCTION_ENTRIES) {
+				send(a_to, Protocol::Encode(wrecks, Protocol::MessageType::kDestructions), true);
+				wrecks.entries.clear();
+			}
+		}
+		if (!wrecks.entries.empty()) {
+			send(a_to, Protocol::Encode(wrecks, Protocol::MessageType::kDestructions), true);
+		}
 	};
 
 	// A player gets the world state they need (on joining, after loading a save) now if their budget
@@ -860,15 +949,21 @@ void Server::Run()
 			}
 			released.push_back({ a_entry.first, 0 });
 			npcEquipment.erase(a_entry.first);
+			npcIdentities.erase(a_entry.first);
 			spawns.erase(a_entry.first);  // nobody else's game has it to run: the others' copies go
 			return true;
 		});
+		// The rolls they gave NPCs someone else runs now: that runner's report is the session's from here on.
+		std::erase_if(npcIdentities, [&](const auto& a_entry) { return a_entry.second.playerId == a_playerId; });
 		sendOwners(released, 0);
 	};
 
 	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
+			if (const auto member = members.find(a_player.helloId); member != members.end()) {
+				member->second.lastSeen = Clock::now();
+			}
 			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
@@ -902,14 +997,16 @@ void Server::Run()
 				reject(a_player, Protocol::REJECT_BANNED);
 				return;
 			}
-			// Locked: nobody new. Someone in the session whose game restarted (a hello again, or a new connection while
-			// the old one is still here) is not new.
-			const bool inSession = a_again || (hello->identity != 0 && [&] {
-				const auto known = identities.find(hello->identity);
-				return known != identities.end() && std::ranges::any_of(players, [&](const auto& a_entry) {
-					return a_entry.first != a_player.key && a_entry.second.welcomed && !a_entry.second.kicked && a_entry.second.id == known->second;
-				});
-			}());
+			// Locked: nobody new. Someone who joined during this server run is not new: their game restarted (a hello
+			// again, or a new connection while the old one is still here), or it crashed or their connection dropped and
+			// they come back. They must come by the Steam account they joined with (a game identity isn't a secret), and
+			// not be someone the host kicked or banned, by identity or by account: that is being removed, not dropping out.
+			// (Not the saved identities: those hold everyone who ever joined, before a restart too.)
+			const bool inSession = a_again || [&] {
+				const auto member = hello->identity != 0 ? members.find(hello->identity) : members.end();
+				return member != members.end() && member->second.account == a_player.transportId && !removed.contains(hello->identity) &&
+				       (a_player.transportId == 0 || !removedAccounts.contains(a_player.transportId));
+			}();
 			if (locked && !inSession) {
 				log(std::format("server: refused {}: the session is locked", describe(a_player.key)));
 				reject(a_player, Protocol::REJECT_LOCKED);
@@ -969,6 +1066,7 @@ void Server::Run()
 		// Someone coming back gets their old ID. If their old connection is still here, their game
 		// restarted before it timed out: that one is stale, so it goes.
 		bool returning = false;
+		bool newIdentity = false;
 		if (hello->identity != 0) {
 			if (const auto known = identities.find(hello->identity); known != identities.end()) {
 				const auto stale = std::ranges::find_if(players, [&](const auto& a_entry) {
@@ -983,15 +1081,37 @@ void Server::Run()
 				}
 				a_player.id = known->second;
 				returning = true;
-			} else if (identities.size() < MAX_IDENTITIES) {
-				identities[hello->identity] = a_player.id;
-				touched();
+			} else {
+				newIdentity = identities.size() < MAX_IDENTITIES;
 			}
 		}
 		// (After dropping a stale connection: it doesn't take up a place.)
 		if (welcomedCount() >= options.maxPlayers) {
 			reject(a_player, "Server is full");
 			return;
+		}
+		// Only now: someone turned away for a full server was never in the session, which a locked one goes by.
+		if (newIdentity) {
+			identities[hello->identity] = a_player.id;
+			touched();
+		}
+		removed.erase(hello->identity);
+		removedAccounts.erase(a_player.transportId);
+		if (hello->identity != 0) {
+			if (!members.contains(hello->identity) && members.size() >= MAX_IDENTITIES) {
+				// Full: the member gone longest makes room (one in the session now is never the one).
+				auto oldest = members.end();
+				for (auto it = members.begin(); it != members.end(); ++it) {
+					const bool here = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.helloId == it->first; });
+					if (!here && (oldest == members.end() || it->second.lastSeen < oldest->second.lastSeen)) {
+						oldest = it;
+					}
+				}
+				if (oldest != members.end()) {
+					members.erase(oldest);
+				}
+			}
+			members[hello->identity] = { a_player.transportId, Clock::now() };
 		}
 
 		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
@@ -1061,6 +1181,12 @@ void Server::Run()
 		for (const auto& [ref, items] : npcEquipment) {
 			if (const auto owner = actorOwners.find(ref); owner != actorOwners.end()) {
 				send(a_player.key, Protocol::Encode(Protocol::NpcEquipment{ owner->second.playerId, ref, items }, Protocol::MessageType::kNpcEquipment), true);
+			}
+		}
+		// ... and what they were rolled as.
+		for (const auto& [ref, identity] : npcIdentities) {
+			if (actorOwners.contains(ref)) {
+				send(a_player.key, Protocol::Encode(identity, Protocol::MessageType::kNpcIdentity), true);
 			}
 		}
 		sendWorkshop(a_player);
@@ -1154,6 +1280,7 @@ void Server::Run()
 		spawns.erase(it);
 		actorOwners.erase(a_death.refId);
 		npcEquipment.erase(a_death.refId);
+		npcIdentities.erase(a_death.refId);
 		a_death.playerId = a_player.id;
 		broadcast(Protocol::Encode(a_death, Protocol::MessageType::kActorDied), true, a_player.key);
 		sendOwners({ { a_death.refId, 0 } }, 0);
@@ -1253,6 +1380,7 @@ void Server::Run()
 			sendOwners({ { death->refId, 0 } }, 0);
 		}
 		npcEquipment.erase(death->refId);
+		npcIdentities.erase(death->refId);
 		death->playerId = a_player.id;
 		broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
 	};
@@ -1736,6 +1864,29 @@ void Server::Run()
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kNpcEquipment), true, a_player.key);
 	};
 
+	// What an NPC was rolled as, from the player whose game runs it: kept (the first runner's, see npcIdentities) and
+	// passed on. The same report again, or another runner's while the first one's stands, goes no further.
+	const auto handleNpcIdentity = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto identity = Protocol::DecodeNpcIdentity(a_data);
+		if (!identity) {
+			return;
+		}
+		const auto owner = actorOwners.find(identity->refId);
+		if (owner == actorOwners.end() || owner->second.playerId != a_player.id) {
+			return;
+		}
+		identity->playerId = a_player.id;
+		const auto known = npcIdentities.find(identity->refId);
+		if (known != npcIdentities.end() && (known->second.playerId != a_player.id || known->second == *identity)) {
+			return;
+		}
+		npcIdentities[identity->refId] = *identity;
+		broadcast(Protocol::Encode(*identity, Protocol::MessageType::kNpcIdentity), true, a_player.key);
+	};
+
 	const auto handleRelease = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -1750,6 +1901,7 @@ void Server::Run()
 			if (const auto it = actorOwners.find(ref); it != actorOwners.end() && it->second.playerId == a_player.id) {
 				actorOwners.erase(it);
 				npcEquipment.erase(ref);  // its next runner reports its gear (NpcSync forgets what it sent on a release)
+				npcIdentities.erase(ref);  // nobody runs it: whoever runs it next has it as it is there (the roll made the session's, if it took)
 				spawns.erase(ref);        // a spawn its owner's game let go of (unloaded) is gone: the copies go
 				noteFighting(a_player, ref, now);  // it ran in their game until now (see noteRan)
 				released.push_back({ ref, 0 });
@@ -1873,6 +2025,9 @@ void Server::Run()
 				return;
 			}
 		}
+		if (shot->action == Protocol::ShotAction::kShot) {
+			budgetOf(a_player).lastShot = Clock::now();  // not a reload or an aim: nothing goes off of those
+		}
 		if (shot->action == static_cast<std::uint8_t>(Protocol::ShotAction::kThrow)) {
 			budgetOf(a_player).lastThrow = Clock::now();
 		}
@@ -1913,7 +2068,7 @@ void Server::Run()
 
 	const auto handlePing = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
-		if (!allowEvent(a_player) || now - a_player.lastPing < std::chrono::seconds(1)) {
+		if (!allowEvent(a_player) || now - a_player.lastPing < Protocol::PING_SERVER_GAP) {
 			return;
 		}
 		auto ping = Protocol::DecodePing(a_data);
@@ -2024,11 +2179,12 @@ void Server::Run()
 		if (!explosion) {
 			return;
 		}
-		// Only what follows one of the reporter's throws, and near where they are: an explosion report
-		// is otherwise a way to set off anything at anyone. A player who hasn't said where they are yet
-		// is near nothing. (Each game also judges the explosion itself: WeaponFire's ApplyExplosion.)
+		// Only what follows one of the reporter's throws or shots (a mine or a car they shot goes off), and near where they
+		// are: an explosion report is otherwise a way to set off anything at anyone. A player who hasn't said where they are
+		// yet is near nothing. (Each game also judges the explosion itself: WeaponFire's ApplyExplosion.)
 		const auto now = Clock::now();
-		if (now - budgetOf(a_player).lastThrow > EXPLOSION_AFTER_THROW || !a_player.hasState) {
+		const auto& attacks = budgetOf(a_player);
+		if (now - (std::max)(attacks.lastThrow, attacks.lastShot) > EXPLOSION_AFTER_ATTACK || !a_player.hasState) {
 			return;
 		}
 		const float dx = explosion->x - a_player.state.x;
@@ -2050,6 +2206,108 @@ void Server::Run()
 		}
 		explosion->playerId = a_player.id;
 		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);
+	};
+
+	// Destructible objects the player's game damaged past a stage (a car they shot, a barrel their grenade blew). The
+	// session keeps each one's lowest health and destroyed for good; only news is relayed (one a friend's report already
+	// took further is dropped), so a wreck is never mended and the same stage never comes twice. Each new object takes a
+	// place in the table, and from the player's share. Its explosion is let through only after one of the player's shots
+	// or throws, and within their explosion budget (as kReportExplosion): else the others get the wreck alone. Such a
+	// report arms its object for a while, so that the next stage's explosion goes through from whoever passes it first
+	// (a friend's copy, burning on its own, can get there before the attacker's).
+	const auto handleDestruction = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeDestructions(a_data);
+		if (!report) {
+			return;
+		}
+		const auto  now = Clock::now();
+		const auto& attacks = budgetOf(a_player);
+		const bool  attacked = now - (std::max)(attacks.lastThrow, attacks.lastShot) <= DESTRUCTION_EXPLODES_AFTER_ATTACK;
+		if (destructionsArmed.size() > 4096) {
+			std::erase_if(destructionsArmed, [&](const auto& a_entry) { return now >= a_entry.second; });
+		}
+		Protocol::Destructions relayed{ a_player.id, {} };
+		for (const auto& entry : report->entries) {
+			const auto armed = destructionsArmed.find(entry.refId);
+			const bool mayExplode = attacked || (armed != destructionsArmed.end() && now < armed->second);
+			if (attacked) {
+				destructionsArmed[entry.refId] = now + DESTRUCTION_ARMED_FOR;
+			}
+			auto it = destructions.find(entry.refId);
+			if (it == destructions.end()) {
+				if (destructions.size() >= maxWorldEntries || !withinShare(a_player, kDestructions)) {
+					continue;
+				}
+				++budgetOf(a_player).added[kDestructions];
+				noteFill(kDestructions, destructions.size() + 1);
+				it = destructions.emplace(entry.refId, Protocol::Destruction{ entry.refId, entry.health, entry.destroyed, false }).first;
+			} else {
+				auto& stored = it->second;
+				const bool lower = entry.health < stored.health;
+				const bool newlyDestroyed = entry.destroyed && !stored.destroyed;
+				if (!lower && !newlyDestroyed) {
+					continue;
+				}
+				stored.health = (std::min)(stored.health, entry.health);
+				stored.destroyed = stored.destroyed || entry.destroyed;
+			}
+			touched();
+			auto out = it->second;
+			if (entry.explode && mayExplode) {
+				out.explode = a_player.local || spend(a_player, &RateBudget::explosions, now);
+				if (!out.explode) {
+					auto& budget = budgetOf(a_player);
+					++budget.explosionsDropped;
+					if (now - budget.explosionsLogged >= BUDGET_LOG_INTERVAL) {
+						budget.explosionsLogged = now;
+						log(std::format("server: player {} sets off destructible objects faster than anyone throws; the others get them wrecked, not going off, until their budget refills ({} since the last such line)",
+							a_player.id, std::exchange(budget.explosionsDropped, 0)));
+					}
+				}
+			}
+			relayed.entries.push_back(out);
+		}
+		if (!relayed.entries.empty()) {
+			broadcast(Protocol::Encode(relayed, Protocol::MessageType::kDestructions), true, a_player.key);
+		}
+	};
+
+	// A world trap spent in the reporter's game (TrapState): kept, first come first kept (a take still replaces a spring or a
+	// disarm), and passed on to everyone else live, so each game whose copy is still armed sets it off there. Only one near
+	// where the reporter is: a report is otherwise a way to set off any mine at anyone. (Each game judges it again:
+	// TrapRules::Live, from where the trap and the reporter's stand-in are there.)
+	const auto handleTrap = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!allowEvent(a_player)) {
+			return;
+		}
+		auto trap = Protocol::DecodeTrapState(a_data);
+		if (!trap || !a_player.hasState) {
+			return;
+		}
+		const float dx = trap->x - a_player.state.x;
+		const float dy = trap->y - a_player.state.y;
+		const float dz = trap->z - a_player.state.z;
+		if (!(dx * dx + dy * dy + dz * dz <= TRAP_RANGE * TRAP_RANGE)) {
+			return;
+		}
+		const auto known = traps.find(trap->refId);
+		if (!Protocol::TrapSupersedes(trap->state, known != traps.end() ? std::optional{ known->second.state } : std::nullopt)) {
+			return;
+		}
+		if (known == traps.end()) {
+			if (traps.size() >= maxWorldEntries || !withinShare(a_player, kTraps)) {
+				return;
+			}
+			++budgetOf(a_player).added[kTraps];
+			noteFill(kTraps, traps.size() + 1);
+		}
+		trap->playerId = a_player.id;
+		traps[trap->refId] = *trap;
+		touched();
+		broadcast(Protocol::Encode(Protocol::TrapStates{ true, { *trap } }), true, a_player.key);
 	};
 
 	const auto handleLine = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -2242,6 +2500,12 @@ void Server::Run()
 		}
 		a_player.worldAskedAt = Clock::now();
 		a_player.worldStale = true;
+		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
+		// RELOAD_TOLD_EVERY for a player (a game asking over and over has every other game resend its runs).
+		if (const auto now = Clock::now(); a_player.reloadToldAt == Clock::time_point{} || now - a_player.reloadToldAt >= RELOAD_TOLD_EVERY) {
+			a_player.reloadToldAt = now;
+			broadcast(Protocol::Encode(Protocol::PlayerReloaded{ a_player.id }), true, a_player.key);
+		}
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
@@ -2296,6 +2560,13 @@ void Server::Run()
 		}
 		auto& target = it->second;
 		auto  result = HostResult::kDone;
+		// Removed, not dropped: a locked session doesn't take them back (see handleHello).
+		if (target.helloId != 0) {
+			removed.insert(target.helloId);
+		}
+		if (target.transportId != 0) {
+			removedAccounts.insert(target.transportId);
+		}
 		if (!a_ban) {
 			log(std::format("server: player {} was kicked by {}", target.id, a_by));
 		} else if (const auto entry = bans.Add(target.transportId, target.helloId, nowUnix(), target.name); !entry) {
@@ -2557,6 +2828,9 @@ void Server::Run()
 		case MessageType::kReportNpcEquipment:
 			handleNpcEquipment(a_player, a_data);
 			break;
+		case MessageType::kReportNpcIdentity:
+			handleNpcIdentity(a_player, a_data);
+			break;
 		case MessageType::kReportFace:
 			handleFace(a_player, a_data);
 			break;
@@ -2609,6 +2883,12 @@ void Server::Run()
 			break;
 		case MessageType::kReportExplosion:
 			handleExplosion(a_player, a_data);
+			break;
+		case MessageType::kReportDestruction:
+			handleDestruction(a_player, a_data);
+			break;
+		case MessageType::kReportTrap:
+			handleTrap(a_player, a_data);
 			break;
 		case MessageType::kReportActivation:
 			handleActivation(a_player, a_data);

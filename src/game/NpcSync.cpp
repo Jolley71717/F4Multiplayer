@@ -18,7 +18,9 @@
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
 #include "game/RetryBudget.h"
+#include "game/Rolls.h"
 #include "game/SaveGuard.h"
+#include "game/SettlerCommand.h"
 #include "game/Spawns.h"
 #include "game/StandInRange.h"
 #include "game/Story.h"
@@ -97,6 +99,10 @@ namespace NpcSync
 		std::uint32_t                                        talkingTo = 0;  // the NPC in our conversation
 		std::vector<std::uint32_t>                           holding;        // loaded NPCs holding our player (Dialogue::Holds), as of the last scan
 		Clock::time_point                                    nextTalkClaim{};
+		// Workshop mode (SettlerCommand): the workbench our player is at, and its shared settlers as of the last scan.
+		std::uint32_t                                        commandBench = 0;
+		std::vector<SettlerCommand::Judged>                  commanding;
+		std::uint32_t                                        settlerTakeovers = 0;
 		std::uint32_t                                        conversations = 0;
 		std::uint32_t                                        localFallbacks = 0;  // mirrors handed to local AI (owner far, quiet or elsewhere)
 		std::uint32_t                                        broughtOver = 0;     // mirrors teleported after their owner's copy outdoors
@@ -122,6 +128,11 @@ namespace NpcSync
 		std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> knownGear;  // mirrored NPCs: what their owner reported
 		std::uint32_t                                                 gearSent = 0;
 		std::uint32_t                                                 gearApplied = 0;
+		// Rolls: each game rolls a leveled NPC (and its legendary chance) on its own, so owners report what theirs was
+		// rolled as and the others make theirs that roll (NpcRoll.h); a spawn's copy takes its factions too.
+		NpcRoll::Sent                                                 sentRolls;  // owned NPCs: what was last reported
+		NpcRoll::Book                                                 rolls;      // mirrored NPCs: their owners' reports
+		std::uint32_t                                                 rollsSent = 0, rollsWritten = 0, rollsKept = 0, factionsSet = 0;
 		std::uint32_t                                        lastActivated = 0;
 		Clock::time_point                                    lastActivatedAt{};
 		constexpr auto                                       ACTIVATION_TO_TALK = 5s;
@@ -212,6 +223,22 @@ namespace NpcSync
 		}
 
 		// NPCs we can share: loaded, alive, from a plugin file, and not a player or a stand-in.
+		// The workbench a settler is linked to as one of its workshop's (the keyword WorkshopNPCScript links them with); 0 if none.
+		std::uint32_t BenchIdOf(const RE::TESObjectREFR& a_ref)
+		{
+			constexpr std::uint32_t WORKSHOP_ITEM_KEYWORD = 0x00054BA6;
+			const auto linked = a_ref.extraList ? a_ref.extraList->GetByType<RE::ExtraLinkedRef>() : nullptr;
+			if (!linked) {
+				return 0;
+			}
+			for (const auto& link : linked->linkedRefs) {
+				if (link.keyword && link.keyword->GetFormID() == WORKSHOP_ITEM_KEYWORD && link.REFR) {
+					return link.REFR->GetFormID();
+				}
+			}
+			return 0;
+		}
+
 		bool IsCandidate(RE::Actor* a_actor)
 		{
 			return a_actor && !a_actor->IsPlayerRef() && Protocol::IsShareableRef(a_actor->GetFormID()) && !Puppets::IsPuppet(a_actor) &&
@@ -284,6 +311,9 @@ namespace NpcSync
 			if (a_id == talkingTo || Dialogue::Holds(a_actor) || IsOurCompanion(a_actor) || a_actor->currentCombatTarget.get().get() == player || hold.FoughtLately(a_id, a_now)) {
 				return false;
 			}
+			if (std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; })) {
+				return false;  // a settler of the workbench our player commands at
+			}
 			const auto& at = a_actor->data.location;
 			const float ours = at.GetDistance(player->data.location);
 			if (ours < HANDOFF_FROM) {
@@ -308,6 +338,15 @@ namespace NpcSync
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
 			holding.clear();
+			commanding.clear();
+			// The workbench our player is in workshop mode at, found as the mode opens (the nearest, as the game picks it).
+			if (!OpenMenus::Open(OpenMenus::Menu::kWorkshop)) {
+				commandBench = 0;
+			} else if (commandBench == 0) {
+				const auto player = RE::PlayerCharacter::GetSingleton();
+				const auto bench = player ? RE::Workshop::FindNearestValidWorkshop(*player) : nullptr;
+				commandBench = bench ? bench->GetFormID() : 0;
+			}
 
 			const auto lists = RE::ProcessLists::GetSingleton();
 			if (lists) {
@@ -334,6 +373,13 @@ namespace NpcSync
 					}
 
 					const auto owner = OwnerOf(id);
+					if (commandBench != 0) {
+						// One taken over lately, or refused, waits out its cooldown so the others get their turn.
+						const auto step = SettlerCommand::Decide(BenchIdOf(*actor), commandBench, owner, localId);
+						if (step == SettlerCommand::Step::kKeep || (step == SettlerCommand::Step::kTakeOver && !lastTakeover.contains(id))) {
+							commanding.push_back({ id, step });
+						}
+					}
 					if (owner == localId) {
 						if (ShouldHandOff(actor, id, a_now)) {
 							handOff.push_back(id);
@@ -372,6 +418,7 @@ namespace NpcSync
 				owners.erase(id);
 				owned.erase(id);
 				sentGear.erase(id);
+				sentRolls.Forget(id);
 				hold.Forget(id);
 				handedOffAt[id] = a_now;
 				released.push_back(id);
@@ -389,6 +436,7 @@ namespace NpcSync
 					released.push_back(it->first);
 					owners.erase(it->first);
 					sentGear.erase(it->first);
+					sentRolls.Forget(it->first);
 					it = owned.erase(it);
 				} else {
 					++it;
@@ -442,6 +490,8 @@ namespace NpcSync
 			mirrors.clear();
 			talkingTo = 0;
 			holding.clear();
+			commanding.clear();
+			commandBench = 0;
 			sentFrames.clear();
 			frameBrings.Clear();
 			SendList(released, [](const std::vector<std::uint32_t>& a) { return Protocol::EncodeRelease(a); }, true);
@@ -608,6 +658,70 @@ namespace NpcSync
 				outgoing.push_back({ Protocol::Encode(Protocol::NpcEquipment{ 0, id, items }, Protocol::MessageType::kReportNpcEquipment), true });
 				sentGear[id] = std::move(items);
 				++gearSent;
+			}
+		}
+
+		// Reports what the NPCs we run were rolled as whenever it changes (and once when we start running one): a leveled
+		// one's templates and level, and a spawn of ours's factions. A dead one is reported once, then left alone.
+		void SendOwnedRolls()
+		{
+			if (GamePaused()) {
+				return;
+			}
+			for (const auto& [id, track] : owned) {
+				const auto actor = LoadedActor(id);
+				if (!actor || (actor->IsDead(false) && sentRolls.Has(id))) {
+					continue;
+				}
+				const auto identity = Rolls::Read(actor, id, Protocol::IsSpawnRef(id));
+				if (!identity || !sentRolls.Changed(*identity)) {
+					continue;
+				}
+				outgoing.push_back({ Protocol::Encode(*identity, Protocol::MessageType::kReportNpcIdentity), true });
+				++rollsSent;
+			}
+		}
+
+		// Our copies of NPCs a friend's game runs, made what their report says they are (NpcRoll::Decide): only while we
+		// mirror them (never our companion, our conversation's partner or one holding us), alive, and a few tries each.
+		void CheckRolls(Clock::time_point a_now)
+		{
+			for (const auto id : rolls.Due()) {
+				const auto theirs = rolls.Find(id);
+				const auto actor = LoadedActor(id);
+				const auto mirror = mirrors.find(id);
+				if (!theirs) {
+					rolls.Settled(id);
+					continue;
+				}
+				if (!actor || actor->IsDead(false) || mirror == mirrors.end() || mirror->second.registered != actor) {
+					continue;  // checked once it is mirrored (Check)
+				}
+				const bool copy = Spawns::CopyIdOf(actor->GetFormID()) != 0;
+				const auto ours = Rolls::ReadOurs(actor, copy);
+				const auto plan = NpcRoll::Decide(ours, *theirs, [&](std::uint32_t a_npc) { return Rolls::ReachOf(ours.originalBase).Has(a_npc); });
+				if (!plan.Any()) {
+					rolls.Settled(id);
+					if (plan.roll != NpcRoll::Roll::kSame) {
+						++rollsKept;
+						REX::INFO("NpcSync: {:08X} keeps our game's roll, not player {}'s: {}", id, theirs->playerId, Rolls::Name(plan.roll));
+					}
+					continue;
+				}
+				switch (rolls.Ask(id, a_now)) {
+				case NpcRoll::Book::Go::kWait:
+					break;
+				case NpcRoll::Book::Go::kGiveUp:
+					rolls.Settled(id);
+					++rollsKept;
+					REX::INFO("NpcSync: {:08X} is still not player {}'s roll after {} tries; left as our game has it ({})", id, theirs->playerId, NpcRoll::Book::TRIES, Rolls::Describe(actor));
+					break;
+				case NpcRoll::Book::Go::kTry:
+					meter.Count(Rolls::Apply(actor, *theirs, plan));
+					rollsWritten += plan.templates || plan.level;
+					factionsSet += !plan.add.empty() || !plan.remove.empty();
+					break;
+				}
 			}
 		}
 
@@ -1173,6 +1287,7 @@ namespace NpcSync
 						meter.Count(Equipment::Wear(actor, gear->second));
 						++gearApplied;
 					}
+					rolls.Check(id);  // is it their roll? (CheckRolls, within the second)
 				}
 				AdjustDelay(mirror);
 				if (const auto motion = Sample(mirror, a_now)) {
@@ -1205,16 +1320,20 @@ namespace NpcSync
 				owners.erase(entry.refId);
 				owned.erase(entry.refId);
 				sentGear.erase(entry.refId);  // the server forgot its gear with its runner: report it afresh when we run it
+				sentRolls.Forget(entry.refId);  // and its roll
+				rolls.Forget(entry.refId);
 				StopMirroring(entry.refId);
 				continue;
 			}
 			owners[entry.refId] = entry.playerId;
 			if (entry.playerId == localId) {
 				owned.try_emplace(entry.refId);
+				rolls.Forget(entry.refId);  // ours runs now: what it is here is what we report (the session's, if it took)
 				StopMirroring(entry.refId);
 			} else {
 				owned.erase(entry.refId);
 				sentGear.erase(entry.refId);  // when we run it again, report its gear afresh
+				sentRolls.Forget(entry.refId);
 			}
 		}
 	}
@@ -1369,6 +1488,8 @@ namespace NpcSync
 		if (now >= nextGear) {
 			nextGear = now + GEAR_INTERVAL;
 			SendOwnedGear();
+			SendOwnedRolls();
+			CheckRolls(now);
 			std::vector<std::uint32_t> ids;
 			for (const auto& [id, track] : owned) {
 				if (const auto local = LocalId(id)) {
@@ -1391,11 +1512,25 @@ namespace NpcSync
 		}
 		// The NPC we talk to, and those holding us (the conversation's speaker, the others in our scene), are claimed
 		// again while that lasts when we run them, so nobody takes them over mid-scene; else they're taken over.
-		if ((talkingTo || !holding.empty()) && now >= nextTalkClaim) {
+		// So are the settlers of the workbench our player is in workshop mode at: a job is given to one our game runs
+		// (SettlerCommand).
+		if ((talkingTo || !holding.empty() || !commanding.empty()) && now >= nextTalkClaim) {
 			nextTalkClaim = now + TALK_CLAIM_INTERVAL;
 			auto keep = holding;
 			if (talkingTo && !std::ranges::contains(keep, talkingTo)) {
 				keep.push_back(talkingTo);
+			}
+			const auto round = SettlerCommand::Plan(commanding);
+			for (const auto id : round.keep) {
+				if (!std::ranges::contains(keep, id)) {
+					keep.push_back(id);
+				}
+			}
+			for (const auto id : round.takeOver) {
+				if (!std::ranges::contains(keep, id)) {
+					keep.push_back(id);
+					++settlerTakeovers;
+				}
 			}
 			std::vector<Protocol::ActorClaim> claims;
 			for (const auto id : keep) {
@@ -1448,6 +1583,20 @@ namespace NpcSync
 		}
 	}
 
+	void ApplyIdentity(const Protocol::NpcIdentity& a_identity)
+	{
+		// Not for one we run: what our game has is what we report.
+		if (OwnerOf(a_identity.refId) == localId && localId != 0) {
+			return;
+		}
+		rolls.Learn(a_identity, localId);
+	}
+
+	const Protocol::NpcIdentity* RollOf(std::uint32_t a_refId)
+	{
+		return rolls.Find(a_refId);
+	}
+
 	void Reset()
 	{
 		ReleaseMirrors();
@@ -1457,6 +1606,8 @@ namespace NpcSync
 		localId = 0;
 		sentGear.clear();
 		knownGear.clear();
+		sentRolls.Clear();
+		rolls.Clear();
 		owners.clear();
 		claimBook.Clear();
 		hold.Clear();
@@ -1464,6 +1615,8 @@ namespace NpcSync
 		handedOffAt.clear();
 		talkingTo = 0;
 		holding.clear();
+		commanding.clear();
+		commandBench = 0;
 		owned.clear();
 		switchOns.Clear();
 		bringIns.Clear();
@@ -1502,6 +1655,17 @@ namespace NpcSync
 		const auto it = mirrors.find(a_refId);
 		const auto actor = LoadedActor(a_refId);
 		std::string out = std::format("owner={} owned={} mirror={} loaded={}", OwnerOf(a_refId), owned.contains(a_refId), it != mirrors.end(), actor != nullptr);
+		// Its roll here, and the one its owner's game reported (NpcRoll.h).
+		if (actor) {
+			out += " ours: " + Rolls::Describe(actor);
+		}
+		if (const auto theirs = rolls.Find(a_refId)) {
+			out += std::format(" theirs: player={} level={} legendary={} original={:08X} templates=", theirs->playerId, theirs->level, (theirs->flags & Protocol::NpcIdentity::kLegendary) != 0, theirs->originalBase);
+			for (std::size_t i = 0; i < theirs->templates.size(); ++i) {
+				out += std::format("{}{:08X}", i ? "," : "", theirs->templates[i]);
+			}
+			out += std::format(" factions={} due={}", theirs->factions.size(), rolls.IsDue(a_refId));
+		}
 		if (it == mirrors.end()) {
 			return out;
 		}
@@ -1548,8 +1712,8 @@ namespace NpcSync
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
 		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
 		const auto sharedMade = std::ranges::count_if(owned, [](const auto& a_entry) { return Protocol::IsSpawnRef(a_entry.first) && MadeFrameRef(Spawns::LocalOf(a_entry.first)) != nullptr; });
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
-			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp());
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), commandBench, commanding.size(), settlerTakeovers);
 	}
 }

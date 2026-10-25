@@ -7,6 +7,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SpawnBook.h"
 #include "game/Story.h"
@@ -33,9 +34,21 @@ namespace Spawns
 		{
 			RE::ObjectRefHandle handle;
 			Clock::time_point   placedAt{};
+			std::uint32_t       from = 0;  // the NPC it was placed from (NpcRoll::PlaceFrom)
 			HeldCopy::Ids       ids;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
+
+		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
+		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
+
+		// What our copy of a friend's spawn is placed from: the NPC their game placed it as, which ours rolls and their
+		// roll then makes theirs, when their roll of it came and that is a leveled NPC here; else the spawn's base.
+		std::uint32_t PlaceBase(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			const auto roll = NpcSync::RollOf(a_id);
+			return NpcRoll::PlaceFrom(roll, a_base, roll && Rolls::IsLeveledNpc(roll->originalBase));
+		}
 
 		// Our NPCs killed for another game's report (a friend's kill of ours, or our copy's death in its owner's game):
 		// their deaths here are not reported back.
@@ -164,9 +177,9 @@ namespace Spawns
 		}
 
 		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space).
-		RE::ObjectRefHandle PlaceCopy(const SpawnBook::Theirs::Copy& a_copy, RE::TESObjectCELL* a_cell)
+		RE::ObjectRefHandle PlaceCopy(const SpawnBook::Theirs::Copy& a_copy, std::uint32_t a_base, RE::TESObjectCELL* a_cell)
 		{
-			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_copy.spawn.base);
+			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 			if (!npc) {
 				return {};
 			}
@@ -277,7 +290,7 @@ namespace Spawns
 						REX::WARN("Spawns: could not place a copy of player {}'s frame {:08X} (base {:08X})", playerId, a_id, base);
 						break;
 					}
-					placed[a_id] = { handle, a_now, SaveGuard::IdsOf(placedRef.get()) };
+					placed[a_id] = { handle, a_now, 0, SaveGuard::IdsOf(placedRef.get()) };
 					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
 					++frameCopiesPlaced;
 					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
@@ -514,16 +527,29 @@ namespace Spawns
 			if (const auto state = RemotePlayers::LastStateOf(copy->spawn.playerId)) {
 				facts.owner = RemoteEdits::SpotOf(*state);
 			}
+			const auto from = PlaceBase(id, copy->spawn.base);
 			if (copy->local != 0) {
 				const auto ref = CopyOf(id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
+				const auto it = placed.find(id);
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT): not taken for one that unloaded.
 				if (facts.copyThere && ref->GetParentCell()) {
 					facts.copyAt = SpotOf(ref.get());
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
+				// Their roll came after our copy was placed from the spawn's base: placed again, from the NPC it is a roll of.
+				if (facts.copyThere && it != placed.end() && !copy->dead && it->second.from != from && BaseOk(from)) {
+					if (logged < LOGGED) {
+						++logged;
+						REX::INFO("Spawns: placing our copy of player {}'s {:08X} again, from {:08X} (their roll of it came)", copy->spawn.playerId, id, from);
+					}
+					Discard(id);
+					continue;
+				}
 			} else {
-				facts.baseOk = BaseOk(copy->spawn.base);
+				facts.baseOk = BaseOk(from);
+				const auto seen = seenAt.try_emplace(id, now).first->second;
+				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
 			switch (theirs.Decide(id, facts, now)) {
 			case SpawnBook::Act::kPlace:
@@ -534,15 +560,15 @@ namespace Spawns
 					++placedNow;
 					const auto playerId = copy->spawn.playerId;
 					const auto base = copy->spawn.base;
-					const auto handle = PlaceCopy(*copy, cell);
+					const auto handle = PlaceCopy(*copy, from, cell);
 					const auto ref = handle.get();
 					if (!ref) {
 						theirs.Placed(id, 0, now);
 						++placeFailed;
-						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X})", playerId, id, base);
+						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X}, from {:08X})", playerId, id, base, from);
 						break;
 					}
-					placed[id] = { handle, now, SaveGuard::IdsOf(ref.get()) };
+					placed[id] = { handle, now, from, SaveGuard::IdsOf(ref.get()) };
 					theirs.Placed(id, ref->GetFormID(), now);
 					++copiesPlaced;
 					if (logged < LOGGED) {
@@ -562,6 +588,7 @@ namespace Spawns
 				break;
 			case SpawnBook::Act::kForget:
 				theirs.Forget(id);
+				seenAt.erase(id);
 				break;
 			case SpawnBook::Act::kMove:     // a frame's (UpdateFrameCopy): never an NPC's
 			case SpawnBook::Act::kAbandon:
@@ -612,6 +639,7 @@ namespace Spawns
 	{
 		DiscardCopies();
 		placed.clear();
+		seenAt.clear();
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();

@@ -25,6 +25,7 @@
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
+#include "game/Destructibles.h"
 #include "game/MovedObjects.h"
 #include "game/FrameStats.h"
 #include "game/GpuWatch.h"
@@ -40,7 +41,9 @@
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
+#include "game/SharedGates.h"
 #include "game/StateBuffer.h"
+#include "game/Traps.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
 #include "game/RadiantSync.h"
@@ -1082,6 +1085,17 @@ namespace DevCommands
 			return Drops::List();
 		}
 
+		// traps [refHex]: the world traps around our player we watch, and what the session holds of them (Traps); with a
+		// reference, what it was taken for and the scripts bound to it now.
+		std::string TrapsList(std::string_view a_args)
+		{
+			if (!a_args.empty()) {
+				const auto id = ParseHex(a_args);
+				return id ? Traps::Why(*id) : "error: usage: traps [refHex]";
+			}
+			return Traps::List() + " | " + Traps::Describe();
+		}
+
 		// dropitem <baseHex> [count]: our player drops that item, as from the Pip-Boy (the console's drop, which the
 		// engine runs with no menu open, so Drops is told to take the next item lost as dropped).
 		std::string DropItem(std::string_view a_args)
@@ -1518,6 +1532,38 @@ namespace DevCommands
 			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
 		}
 
+		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked
+		// twice, the visitor answering kContinue and then kStop each time, so the visit counts show which of the two the
+		// engine takes as "go on" (WorldSync counts the scripts on doors and gates this way).
+		std::string ScriptsCommand(std::string_view a_args)
+		{
+			const auto ref = LookupRef(a_args);
+			const auto game = RE::GameVM::GetSingleton();
+			const auto vm = game ? game->GetVM() : nullptr;
+			if (!ref || !vm) {
+				return "error: usage: scripts <refHex>";
+			}
+			const auto& handles = vm->GetObjectHandlePolicy();
+			const auto  handle = handles.GetHandleForObject(RE::BSScript::GetVMTypeID<RE::TESObjectREFR>(), ref);
+			if (handle == handles.EmptyHandle()) {
+				return std::format("{:08X} no handle", ref->GetFormID());
+			}
+			const auto walk = [&](RE::BSContainer::ForEachResult a_answer) {
+				std::string names;
+				int         visits = 0;
+				const RE::BSTThreadScrapFunction<RE::BSContainer::ForEachResult(RE::BSScript::Object*)> visit{ [&](RE::BSScript::Object* a_object) {
+					const auto  type = a_object ? a_object->type.get() : nullptr;
+					const char* name = type ? type->GetName() : nullptr;
+					names += std::format("{}{}", visits++ ? "," : "", name && *name ? name : "?");
+					return a_answer;
+				} };
+				vm->ForEachBoundObject(handle, visit);
+				return std::format("{} [{}]", visits, names);
+			};
+			return std::format("{:08X} 3d={} continue={} stop={}", ref->GetFormID(), ref->Get3D() != nullptr, walk(RE::BSContainer::ForEachResult::kContinue),
+				walk(RE::BSContainer::ForEachResult::kStop));
+		}
+
 		// gate <refHex>: what a two-state gate's script (Default2StateActivator, SharedGates) says of it.
 		std::string Gate(std::string_view a_args)
 		{
@@ -1525,9 +1571,13 @@ namespace DevCommands
 			if (!ref) {
 				return "error: no such reference";
 			}
-			const auto object = Papyrus::BoundObject(ref, "Default2StateActivator", false);
+			// The two-state script itself, or one of the scripts that extend it which SharedGates shares (CHILDREN).
+			auto object = Papyrus::BoundObject(ref, SharedGates::SCRIPT, false);
+			for (std::size_t i = 0; !object && i < SharedGates::CHILDREN.size(); ++i) {
+				object = Papyrus::BoundObject(ref, SharedGates::CHILDREN[i].script, false);
+			}
 			if (!object) {
-				return std::format("{:08X} 3d={} no Default2StateActivator object", ref->GetFormID(), ref->Get3D() != nullptr);
+				return std::format("{:08X} 3d={} no Default2StateActivator object (nor one extending it)", ref->GetFormID(), ref->Get3D() != nullptr);
 			}
 			const auto flag = [&](const char* a_name) {
 				const auto var = object->GetProperty(RE::BSFixedString{ a_name });
@@ -1806,6 +1856,21 @@ namespace DevCommands
 		{
 			const auto ref = LookupRef(a_args);
 			return ref ? WorkshopSync::DescribeRef(ref) : "error: usage: wsinfo <refHex>";
+		}
+
+		// wslink <refHex> <benchHex>: links the reference to the workbench as one of its workshop items, as workshop mode's
+		// build does (so a console-placed piece passes for one built here: two saves that share a past hold the same).
+		std::string WsLink(std::string_view a_args)
+		{
+			const auto args = SplitArgs(a_args);
+			const auto ref = args.size() == 2 ? LookupRef(args[0]) : nullptr;
+			const auto bench = args.size() == 2 ? LookupRef(args[1]) : nullptr;
+			const auto keyword = RE::TESForm::GetFormByID<RE::BGSKeyword>(0x00054BA6);  // WorkshopItemKeyword
+			if (!ref || !bench || !keyword || !WorkshopSync::IsWorkbenchAnchor(bench)) {
+				return "error: usage: wslink <refHex> <benchHex> (a workbench)";
+			}
+			ref->SetLinkedRef(bench, keyword);
+			return WorkshopSync::DescribeRef(ref);
 		}
 
 		// wsbenches [refHex]: the workbenches the host's walk for scrapped junk found (or this one), and
@@ -3299,6 +3364,18 @@ namespace DevCommands
 			return MovedObjects::Command(joined);
 		}
 
+		// destruct: what is shared of destructible objects (Destructibles: cars, barrels); `near [radius]` lists those around the
+		// player with their health and stages, `probe <ref>` one.
+		std::string DestructCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Destructibles::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -3394,6 +3471,7 @@ namespace DevCommands
 			Entry{ "inventory", Inventory },
 			Entry{ "contents", Contents },
 			Entry{ "drops", DropsList },
+			Entry{ "traps", TrapsList },
 			Entry{ "dropitem", DropItem },
 			Entry{ "activate", ActivateCommand },
 			Entry{ "itemmods", ItemModsCommand },
@@ -3402,6 +3480,7 @@ namespace DevCommands
 			Entry{ "findgear", FindGear },
 			Entry{ "refinfo", RefInfo },
 			Entry{ "gate", Gate },
+			Entry{ "scripts", ScriptsCommand },
 			Entry{ "setpos", SetPos },
 			Entry{ "puppet", Puppet },
 			Entry{ "seat", Seat },
@@ -3461,6 +3540,7 @@ namespace DevCommands
 			Entry{ "saveguard", SaveGuardCommand },
 			Entry{ "fade", FadeCommand },
 			Entry{ "wsbenches", WsBenches },
+			Entry{ "wslink", WsLink },
 			Entry{ "wsinfo", WsInfo },
 			Entry{ "wswire", WsWire },
 			Entry{ "wsgrid", WsGrid },
@@ -3471,6 +3551,7 @@ namespace DevCommands
 			Entry{ "controls", Controls },
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
+			Entry{ "destruct", DestructCommand },
 		};
 	}
 
