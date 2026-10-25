@@ -272,10 +272,15 @@ namespace TrapRules
 		Clock::time_point when;
 	};
 
-	// Whether an explosion at a_at is a trap's: near one that went off here lately, or at a mine we watch (one going
-	// off: the watcher may not have looked since).
-	inline bool Claims(const std::vector<Fired>& a_fired, const std::vector<Spot>& a_mines, const Spot& a_at, Clock::time_point a_now)
+	// Whether an explosion at a_at is a trap's own: near one that went off here lately, or at a mine we watch (one going
+	// off: the watcher may not have looked since), and set off by no actor (a_byActor: the explosion names an owner). A
+	// trap's own blast has none; one an actor set off (our grenade or missile beside a mine, a raider's beside a bouquet
+	// that just went off) is that actor's, whoever runs it reports it (docs/DESIGN.md, "Who sets off an explosion").
+	inline bool Claims(const std::vector<Fired>& a_fired, const std::vector<Spot>& a_mines, const Spot& a_at, Clock::time_point a_now, bool a_byActor)
 	{
+		if (a_byActor) {
+			return false;
+		}
 		for (const auto& fired : a_fired) {
 			if (a_now - fired.when <= CLAIM_WINDOW && DistanceSquared(fired.at, a_at) <= CLAIM_RADIUS * CLAIM_RADIUS) {
 				return true;
@@ -289,7 +294,7 @@ namespace TrapRules
 		return false;
 	}
 
-	// The session's state of the traps, as this game knows it: first come first kept, a take replacing a spring or a
+	// The session's state of the traps, as this game knows it: first come first kept, a take replacing a
 	// disarm (Protocol::TrapSupersedes), as the server keeps it.
 	struct Known
 	{

@@ -22,7 +22,8 @@ namespace Rolls
 	// What a roll of a_original can give (cached: the lists are the game's data).
 	[[nodiscard]] const NpcRoll::Reach& ReachOf(std::uint32_t a_original);
 
-	// Makes our NPC what a_plan says. The console commands it ran (CommandMeter).
+	// Makes our NPC what a_plan says (NpcRoll::StepsFor: the roll is only written, for its next load).
+	// The console commands it ran (CommandMeter).
 	std::uint32_t Apply(RE::Actor* a_actor, const Protocol::NpcIdentity& a_theirs, const NpcRoll::Plan& a_plan);
 
 	// Whether a_base is a leveled NPC here (an NPC whose traits come from a template): placing it rolls it.

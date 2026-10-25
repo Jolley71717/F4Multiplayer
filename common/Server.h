@@ -66,6 +66,10 @@ public:
 		// one per this. Past it, theirs is sent when the bucket refills. Tests shorten it.
 		std::chrono::milliseconds worldStateRefill{ 10000 };
 
+		// The others are told a player loaded a save (kPlayerReloaded) at most this often: each time, every game sends its
+		// radiant runs going again. One asked for sooner goes when the time is up. Tests shorten it.
+		std::chrono::milliseconds reloadToldEvery{ 2000 };
+
 		// A player's face goes to the others at most this often (each change makes a new base form in
 		// every game); the latest one follows when the time is up. Tests shorten it.
 		std::chrono::milliseconds faceInterval{ 5000 };

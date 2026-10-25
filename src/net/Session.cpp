@@ -429,6 +429,7 @@ namespace Session
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
+					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
@@ -1283,11 +1284,12 @@ namespace Session
 			}
 		}
 
-		// Explosions after our throws: the others set them off at the same spot (unreliable, like shots).
+		// The explosions our player and our NPCs set off: the others set them off at the same spot. Reliable, unlike shots:
+		// the game that runs an NPC one reaches deals its blow there, and a lost report was a blow dealt nowhere.
 		WeaponFire::Frame();
 		for (const auto& explosion : WeaponFire::TakeExplosions()) {
 			if (welcomed) {
-				SendOut(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), false);
+				SendOut(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), true);
 			}
 		}
 
