@@ -4,6 +4,7 @@
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -214,12 +215,20 @@ namespace
 	constexpr std::uint32_t DROP_VERSION = 1;
 	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
 
+	constexpr std::uint32_t RADIANT_RECORD = 'RADI';
+	constexpr std::uint32_t RADIANT_VERSION = 1;
+	constexpr std::uint32_t RADIANT_MAX_LENGTH = 1u << 18;  // RadiantRules::Encode writes at most about 80 KB
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
 		WorldSync::SaveResyncPoint(a_intfc);
 		// What our world holds of the items given between players (Drops): read back with the save.
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
 			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
+		}
+		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
+		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
+			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
 		}
 	}
 
@@ -236,6 +245,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
 				}
+			} else if (type == RADIANT_RECORD && version == RADIANT_VERSION && length <= RADIANT_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					RadiantSync::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -244,6 +258,7 @@ namespace
 	{
 		WorldSync::RevertResyncPoint();
 		Drops::RevertRecord();
+		RadiantSync::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),

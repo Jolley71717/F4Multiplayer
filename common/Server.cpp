@@ -46,9 +46,6 @@ namespace
 	constexpr auto DROP_LIST_INTERVAL = std::chrono::seconds(10);
 	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
-	// The others are told a player loaded a save (kPlayerReloaded) at most this often: each time, every game sends its
-	// radiant runs going again. A load takes longer than this.
-	constexpr auto RELOAD_TOLD_EVERY = std::chrono::seconds(2);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
@@ -259,6 +256,7 @@ namespace
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
 		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
+		bool                       reloadOwed = false;  // it loaded again sooner: the others are told once Options::reloadToldEvery is up
 		// Its last request for the world isn't answered yet (owed while its budget refills, or dropped for flooding):
 		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
 		// a world state is sent to it.
@@ -2493,6 +2491,17 @@ void Server::Run()
 		broadcast(Protocol::Encode(*equipment, Protocol::MessageType::kPlayerEquipment), true, a_player.key);
 	};
 
+	// Tells the others a player loaded a save (kPlayerReloaded), or owes it until Options::reloadToldEvery after the last.
+	const auto tellReloaded = [&](Player& a_player, Clock::time_point a_now) {
+		if (a_player.reloadToldAt != Clock::time_point{} && a_now - a_player.reloadToldAt < options.reloadToldEvery) {
+			a_player.reloadOwed = true;
+			return;
+		}
+		a_player.reloadOwed = false;
+		a_player.reloadToldAt = a_now;
+		broadcast(Protocol::Encode(Protocol::PlayerReloaded{ a_player.id }), true, a_player.key);
+	};
+
 	const auto handleWorldRequest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		// Its world was just loaded, and is stale until a world state is sent to it (see handleClaims).
 		if (!a_player.welcomed) {
@@ -2501,11 +2510,9 @@ void Server::Run()
 		a_player.worldAskedAt = Clock::now();
 		a_player.worldStale = true;
 		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
-		// RELOAD_TOLD_EVERY for a player (a game asking over and over has every other game resend its runs).
-		if (const auto now = Clock::now(); a_player.reloadToldAt == Clock::time_point{} || now - a_player.reloadToldAt >= RELOAD_TOLD_EVERY) {
-			a_player.reloadToldAt = now;
-			broadcast(Protocol::Encode(Protocol::PlayerReloaded{ a_player.id }), true, a_player.key);
-		}
+		// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked for
+		// sooner goes when that time is up (a second load at once threw away what the first had resent).
+		tellReloaded(a_player, Clock::now());
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.
@@ -3056,6 +3063,9 @@ void Server::Run()
 				broadcast(Protocol::Encode(*player.face, Protocol::MessageType::kPlayerFace), true, key);
 			}
 			flushRename(player, now);
+			if (player.welcomed && player.reloadOwed && now - player.reloadToldAt >= options.reloadToldEvery) {
+				tellReloaded(player, now);
+			}
 			if (player.welcomed && player.heldDropRecord && now - player.dropRecordAt >= DROP_RECORD_INTERVAL) {
 				const auto record = std::exchange(player.heldDropRecord, std::nullopt);
 				answerDropRecord(player, *record, now);

@@ -1466,7 +1466,9 @@ TEST("server workshop: a friend who loads a save from another session, or from b
 // games send their runs going again. Not over and over, for a game asking without pause.
 TEST("server: a friend who loads a save has the others told, once in a while, so their games send their radiant runs again")
 {
-	Fixture    f;
+	Server::Options options;
+	options.reloadToldEvery = std::chrono::milliseconds{ 400 };
+	Fixture    f{ options };
 	JoinAs(f, 1, "Alice");
 	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
 	REQUIRE(welcome);
@@ -1481,6 +1483,15 @@ TEST("server: a friend who loads a save has the others told, once in a while, so
 	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 0 }));
 	Received(f, 2);
 	CHECK(Count(Received(f, 1), MT::kPlayerReloaded) == 0);  // asked again at once
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 0 }));  // and once more
+	Received(f, 2);
+	CHECK(Count(Received(f, 1), MT::kPlayerReloaded) == 0);
+	// Owed, it goes once the time is up: once for both (what the first load's told games resent went with the world).
+	std::vector<std::vector<std::uint8_t>> later;
+	REQUIRE(Await(f, 1, MT::kPlayerReloaded, later));
+	std::ranges::move(During(f, 1, std::chrono::milliseconds{ 600 }), std::back_inserter(later));
+	CHECK(Count(later, MT::kPlayerReloaded) == 1);
+	CHECK(Count(Received(f, 2), MT::kPlayerReloaded) == 0);
 }
 
 // ---- the saved session --------------------------------------------------------------------

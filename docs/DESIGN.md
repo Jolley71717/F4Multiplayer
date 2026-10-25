@@ -535,6 +535,9 @@ session put less what was taken of them since; a take is counted against the hol
 who took their copy's roll of the same item before the put reached them doesn't use the put up. Once a holder's loot
 respawns (it holds more of something than when it was emptied) it may be told empty again. An older build sees the player's ref as no item and leaves it.
 `net status` counts `emptied=` sent/applied/stacks taken and `emptiedKept=`, the items a marker left for the session's puts.
+Storage skips only the marker: puts and takes there go between the games as anywhere else, as in 0.9.1, so a friend's take
+from their copy takes as many of the item from ours, whether ours got them from the session or not. Shared storage, the
+owner's game holding the one true copy of a stash and the others seeing that, is planned.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
 shareable ref, goes out as a pickup (kReportPickup, no new message). A receiver whose ref is flora runs
