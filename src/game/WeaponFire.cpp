@@ -869,6 +869,7 @@ namespace WeaponFire
 		// The actors that died in the last DEATH_BLAST_WINDOW (NoteDying, from whichever thread the death event comes on).
 		std::mutex                                                     recentDeathLock;
 		std::vector<std::pair<std::uint32_t, Clock::time_point>>       recentDeaths;
+		std::atomic<std::uint32_t>                                     deathsNoted = 0;
 
 		// Whether an explosion no actor set off is beside an actor that died just now: its death blast. Main thread.
 		bool BesideFreshDeath(const RE::NiPoint3& a_at, Clock::time_point a_now)
@@ -1152,9 +1153,9 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}/{}", blasts.Size(),
 			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
-			shotsChecked, explosionsNearFriends, deathBlasts);
+			shotsChecked, explosionsNearFriends, deathBlasts, deathsNoted.load());
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)
@@ -1811,8 +1812,12 @@ namespace WeaponFire
 		}
 	}
 
-	void NoteDying(std::uint32_t a_refId)
+	void NoteDying(std::uint32_t a_refId, bool a_dead)
 	{
+		if (const auto n = ++deathsNoted; n <= 10) {
+			REX::INFO("WeaponFire: {:08X} {}: an unowned explosion beside it in the next {} s is its death blast", a_refId, a_dead ? "is dead" : "is dying",
+				RemoteEdits::DEATH_BLAST_WINDOW.count());
+		}
 		std::scoped_lock d{ recentDeathLock };
 		const auto now = Clock::now();
 		std::erase_if(recentDeaths, [&](const auto& a_death) { return now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });

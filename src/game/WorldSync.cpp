@@ -411,6 +411,11 @@ namespace WorldSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent& a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override
 			{
 				const auto ref = a_event.actorDying.get();
+				// The dying event (dead false) comes as it starts to die, the dead one when it is done: a death blast goes off
+				// between them (a Sentry Bot's cascade, on the rig), so either notes it.
+				if (const auto dying = ref ? ref->As<RE::Actor>() : nullptr; dying && !Puppets::IsPuppet(dying)) {
+					WeaponFire::NoteDying(dying->GetFormID(), a_event.dead);
+				}
 				if (!a_event.dead || !ref) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -421,9 +426,6 @@ namespace WorldSync
 				const bool byPlayer = killer && killer->IsPlayerRef() && !ref->IsPlayerRef();
 				if (actor && Puppets::IsPuppet(actor)) {
 					return RE::BSEventNotifyControl::kContinue;
-				}
-				if (actor) {
-					WeaponFire::NoteDying(id);
 				}
 				if (byPlayer) {
 					++playerKills;

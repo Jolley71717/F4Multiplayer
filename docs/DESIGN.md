@@ -481,7 +481,7 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   - A client can have an explosion relayed beside any player in its space without being near them, within the
     explosion budget and each receiver's own checks (its reported position was its own word anyway).
 - `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`,
-  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=`, the blast counters above; the log names each explosion's owner and
+  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=blasts/deaths noted`, the blast counters above; the log names each explosion's owner and
   what became of it, and each hit on a copy names its source.
 
 To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, a companion blowing a
