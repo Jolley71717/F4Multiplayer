@@ -2262,6 +2262,18 @@ namespace RemotePlayers
 			return middle ? middle->occupiedFurniture.get() : nullptr;
 		}
 
+		// The power armor frame the actor is in, or none: the one the engine has them in (ExtraPowerArmor's), else the one
+		// they sit in as furniture. Once an NPC is all the way in, the engine no longer has them in it as furniture (on
+		// the rig a companion ordered in was then never sent out, and the copy it wore was taken for one without its 3D).
+		RE::NiPointer<RE::TESObjectREFR> FrameOf(RE::Actor* a_actor)
+		{
+			if (auto worn = Equipment::PowerArmorFrameOf(a_actor)) {
+				return worn;
+			}
+			auto in = FurnitureOf(a_actor);
+			return in && Equipment::IsPowerArmorFrame(in->GetObjectReference()) ? in : nullptr;
+		}
+
 		// Whether our game sends this actor out of a frame kept from our player for a_owner (FriendFrame::SendsOut).
 		bool SendsOut(RE::Actor* a_actor, std::uint32_t a_owner)
 		{
@@ -2294,7 +2306,7 @@ namespace RemotePlayers
 			std::vector<std::uint32_t> stillIn;
 			for (const auto& handle : lists->highActorHandles) {
 				const auto actor = handle.get();
-				const auto frame = actor ? FurnitureOf(actor.get()) : nullptr;
+				const auto frame = actor ? FrameOf(actor.get()) : nullptr;
 				if (players.empty() || !frame || !Equipment::IsPowerArmorFrame(frame->GetObjectReference()) || !Equipment::InPowerArmor(actor.get()) ||
 					!SendsOut(actor.get(), FriendOf(frame.get()).owner)) {
 					continue;
@@ -2367,12 +2379,18 @@ namespace RemotePlayers
 		if (!a_frame || !lists || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
-		if (settling.contains(a_frame->GetFormID())) {
+		const auto id = a_frame->GetFormID();
+		if (settling.contains(id)) {
 			return true;  // just got out of: its 3D is on its way back
+		}
+		// Someone sent out of it last frame: the frame they get out the engine takes its 3D away, before
+		// SendOutOfFriendsFrames (later in the frame than Spawns) sees them out and starts it settling.
+		if (std::ranges::any_of(sendingOut, [&](const auto& a_entry) { return a_entry.second.frame == id; })) {
+			return true;
 		}
 		for (const auto& handle : lists->highActorHandles) {
 			const auto actor = handle.get();
-			if (actor && FurnitureOf(actor.get()).get() == a_frame && SendsOut(actor.get(), FriendOf(a_frame).owner)) {
+			if (actor && FrameOf(actor.get()).get() == a_frame && SendsOut(actor.get(), FriendOf(a_frame).owner)) {
 				return true;
 			}
 		}

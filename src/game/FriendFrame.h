@@ -60,11 +60,12 @@ namespace FriendFrame
 		return a_keptOutFor != 0 && !a_occupant.player && !a_occupant.standIn && a_occupant.runsHere;
 	}
 
-	// A frame has no 3D while someone is in it. Got out of, it gets it back only once their way out is over, some seconds
-	// on. Until then the copy is left as it is (RemotePlayers::BeingSentOut): without its 3D it would be taken for one that
-	// never loaded and placed again. For a moment at least, so whatever looks at it next sees the 3D that came back; never
-	// longer than SETTLE_LIMIT, so one that never gets it back is placed again in the end.
-	constexpr auto SETTLE_MIN = std::chrono::seconds(1);
+	// As someone gets out of a frame, the engine builds its 3D again: on the rig it was gone for a moment a second or two
+	// after the companion was out, and a 3D seen back as they got out was the old one. Until the new one is in, the copy is
+	// left as it is (RemotePlayers::BeingSentOut): without its 3D it would be taken for one that never loaded and placed
+	// again. SETTLE_MIN at least, whatever its 3D, and while it has none never longer than SETTLE_LIMIT, so one that never
+	// gets it back is placed again in the end.
+	constexpr auto SETTLE_MIN = std::chrono::seconds(10);
 	constexpr auto SETTLE_LIMIT = std::chrono::seconds(30);
 
 	// Whether a frame copy got out of a_since ago is still left as it is. a_back: its 3D is in (or the frame is gone).

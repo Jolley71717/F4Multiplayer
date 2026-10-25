@@ -118,8 +118,8 @@ namespace RemotePlayers
 	// frame (see FriendFrame). The HUD tells our player whose it is. Someone else is sent out of it again (each frame:
 	// Actor.SwitchToPowerArmor with None, FriendFrame::SendsOut).
 	[[nodiscard]] bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by);
-	// Whether someone here is in this frame who is to be sent out of it, or just got out and its 3D is not back yet
-	// (FriendFrame::Settling): the frame is not theirs, and Spawns' and our own frame copies are left as they are meanwhile
+	// Whether someone here is in this frame who is to be sent out of it, or just got out of it (its 3D being built again,
+	// FriendFrame::Settling): the frame is not theirs, and Spawns' and our own frame copies are left as they are meanwhile
 	// (not "it is theirs now", nor taken for a copy that never loaded).
 	[[nodiscard]] bool BeingSentOut(RE::TESObjectREFR* a_frame);
 	// A save was loaded: forgets handles and runtime forms from before it.

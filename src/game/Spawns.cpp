@@ -305,6 +305,11 @@ namespace Spawns
 				++frameCopiesMoved;
 				break;
 			case SpawnBook::Act::kDiscard:
+				if (ref) {
+					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, off);
+				}
 				Discard(a_id);
 				break;
 			case SpawnBook::Act::kLost:
@@ -439,6 +444,7 @@ namespace Spawns
 	void Add(const Protocol::Spawn& a_spawn)
 	{
 		if (const auto known = theirs.Find(a_spawn.refId); known && known->local != 0) {
+			REX::INFO("Spawns: player {} shared {:08X} again; our copy {:08X} of it goes", a_spawn.playerId, a_spawn.refId, known->local);
 			Discard(a_spawn.refId);  // an old one under the same id: it is over
 		}
 		if (theirs.Add(a_spawn, LocalPlayer())) {

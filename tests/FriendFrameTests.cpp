@@ -63,14 +63,15 @@ TEST("friend frame: a companion ordered into a friend's frame copy is sent out a
 	CHECK(!SendsOut({}, FRIEND));                                            // an NPC a friend's game runs: their game says
 }
 
-TEST("friend frame: a copy got out of is left as it is until its 3D is back, for a moment at least and 30 s at most")
+TEST("friend frame: a copy got out of is left as it is for 10 s, and while its 3D is not back for 30 s at most")
 {
 	using FriendFrame::Settling;
 	using namespace std::chrono_literals;
 	CHECK(Settling(false, 0s));
-	CHECK(Settling(false, 8s));    // the rig's companion: its frame's 3D still not back 8 s after it was sent out
+	CHECK(Settling(true, 2s));     // the rig's companion: its frame's 3D, seen as they got out, went a second or two later
+	CHECK(Settling(true, 10s));
+	CHECK(!Settling(true, 11s));   // back: Spawns and the parked copy see its 3D again
+	CHECK(Settling(false, 20s));   // still not back
 	CHECK(Settling(false, 30s));
 	CHECK(!Settling(false, 31s));  // never back: placed again in the end
-	CHECK(Settling(true, 500ms));  // back at once: whoever looks next in this moment still leaves it
-	CHECK(!Settling(true, 2s));    // back: Spawns and the parked copy see its 3D again
 }
