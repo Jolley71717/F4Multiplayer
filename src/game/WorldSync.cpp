@@ -106,6 +106,8 @@ namespace WorldSync
 			float         damage;
 			bool          byPlayer;  // we hit them, rather than an NPC in our world
 			std::uint32_t attacker;  // the NPC that hit them (0 when byPlayer)
+			bool          explosion = false;  // an explosion's blow (judged in Frame: RemoteEdits::PassStandInHit)
+			std::uint32_t sourceRef = 0;      // the reference the hit names as its source (CopyWatch::SourceOf)
 		};
 		std::vector<StandInHit> standInHits;
 		std::atomic<bool>       friendlyFire{ false };
@@ -411,11 +413,6 @@ namespace WorldSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent& a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override
 			{
 				const auto ref = a_event.actorDying.get();
-				// The dying event (dead false) comes as it starts to die, the dead one when it is done: a death blast goes off
-				// between them (a Sentry Bot's cascade, on the rig), so either notes it.
-				if (const auto dying = ref ? ref->As<RE::Actor>() : nullptr; dying && !Puppets::IsPuppet(dying)) {
-					WeaponFire::NoteDying(dying->GetFormID(), a_event.dead);
-				}
 				if (!a_event.dead || !ref) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
@@ -657,6 +654,7 @@ namespace WorldSync
 		}
 
 		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
+		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
 
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
@@ -702,7 +700,7 @@ namespace WorldSync
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker });
+							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) });
 						}
 					}
 				}
@@ -2256,6 +2254,15 @@ namespace WorldSync
 			if (!hit.byPlayer && attacker == 0) {
 				continue;
 			}
+			// An explosion that goes off in their game too hurts them there (RemoteEdits::PassStandInHit).
+			if (hit.explosion) {
+				const auto standIn = RE::TESForm::GetFormByID<RE::TESObjectREFR>(hit.actor);
+				const auto seen = standIn ? WeaponFire::BlastAt(standIn, hit.sourceRef) : std::nullopt;
+				if (!RemoteEdits::PassStandInHit(true, seen ? &*seen : nullptr)) {
+					++standInBlowsThere;
+					continue;
+				}
+			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
 				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
 			}
@@ -2474,6 +2481,6 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" puppetHitsOnUs={}", hitsOnUsByPuppets.load());
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={}", hitsOnUsByPuppets.load(), standInBlowsThere);
 	}
 }

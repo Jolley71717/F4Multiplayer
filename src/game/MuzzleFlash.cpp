@@ -300,10 +300,24 @@ namespace MuzzleFlash
 		return ProjectileOf(EquippedGun(a_actor));
 	}
 
-	bool GunEnchanted(RE::Actor* a_actor)
+	bool GunEnchantmentExplodes(RE::Actor* a_actor)
 	{
 		const auto gun = EquippedGun(a_actor);
-		return gun.instance && gun.instance->enchantments && !gun.instance->enchantments->empty();
+		const auto instance = gun.instance ? gun.instance : gun.weapon ? &gun.weapon->weaponData : nullptr;
+		if (!instance || !instance->enchantments) {
+			return false;
+		}
+		for (const auto enchantment : *instance->enchantments) {
+			if (!enchantment) {
+				continue;
+			}
+			for (const auto effect : enchantment->listOfEffects) {
+				if (effect && effect->effectSetting && effect->effectSetting->data.explosion) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	void OnShot(RE::Actor* a_actor, bool a_animated)

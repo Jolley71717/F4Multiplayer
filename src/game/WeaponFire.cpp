@@ -147,7 +147,7 @@ namespace WeaponFire
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
 			return (projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0)) ||
-			       MuzzleFlash::GunEnchanted(a_actor);
+			       MuzzleFlash::GunEnchantmentExplodes(a_actor);
 		}
 
 		// Whether the stand-in's gun fires a shot to keep from the engine (AttackKind::HoldsShotOf): a plain one, a bullet or a
@@ -865,26 +865,26 @@ namespace WeaponFire
 		std::uint32_t            explosionsKept = 0;       // ours, but the server might not pass it on: not sent, ours alone
 		std::uint32_t            explosionsNearFriends = 0;  // ours, found around a friend far from our player
 		std::uint32_t            deathBlasts = 0;            // an actor's death blast: every game's copy sets its own off
+		std::unordered_map<std::uint32_t, bool> deathBlastBases;  // RemoteEdits::DEATH_BLASTS by the IDs this game has them under: unowned only
+		bool                              deathBlastsResolved = false;
 
-		// The actors that died in the last DEATH_BLAST_WINDOW (NoteDying, from whichever thread the death event comes on).
-		std::mutex                                                     recentDeathLock;
-		std::vector<std::pair<std::uint32_t, Clock::time_point>>       recentDeaths;
-		std::atomic<std::uint32_t>                                     deathsNoted = 0;
-
-		// Whether an explosion no actor set off is beside an actor that died just now: its death blast. Main thread.
-		bool BesideFreshDeath(const RE::NiPoint3& a_at, Clock::time_point a_now)
+		// Whether an explosion's base is a death blast's (RemoteEdits::DEATH_BLASTS). Main thread.
+		bool DeathBlastBase(const RE::TESForm* a_base, bool a_owned)
 		{
-			std::vector<std::pair<std::uint32_t, Clock::time_point>> deaths;
-			{
-				std::scoped_lock l{ recentDeathLock };
-				std::erase_if(recentDeaths, [&](const auto& a_death) { return a_now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
-				deaths = recentDeaths;
+			if (!deathBlastsResolved) {
+				if (const auto handler = RE::TESDataHandler::GetSingleton()) {
+					for (const auto& base : RemoteEdits::DEATH_BLASTS) {
+						if (const auto id = handler->LookupFormID(base.id, base.file)) {
+							deathBlastBases.emplace(id, base.unownedOnly);
+						}
+					}
+					deathBlastsResolved = !deathBlastBases.empty();  // else asked again: the game's data may not be loaded yet
+				}
 			}
-			return std::ranges::any_of(deaths, [&](const auto& a_death) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_death.first);
-				return actor && RemoteEdits::DiedBeside(a_at.GetDistance(actor->data.location), a_now - a_death.second);
-			});
+			const auto found = a_base ? deathBlastBases.find(a_base->GetFormID()) : deathBlastBases.end();
+			return found != deathBlastBases.end() && (!found->second || !a_owned);
 		}
+
 		std::uint32_t            blastsNamed = 0;          // blows on copies put down to the explosion their hit names
 		std::uint32_t            blastsNearest = 0;        // ... to the nearest that reached them, the hit naming none we saw
 		std::uint32_t            blastsAmbiguous = 0;      // ... where two reached them that fared differently: taken as ours
@@ -950,9 +950,10 @@ namespace WeaponFire
 		// off an explosion"). A destructible object's stage's own (by its base: a car we shot) is the object's: every game
 		// sets its own off with the stage (Destructibles). A world trap's own (a mine, a grenade bouquet's grenades, near a
 		// trap that went off and set off by no actor): every game sets its own off (Traps), so reported too it would go off
-		// twice. An actor's death blast (set off by one already dead, beside it): every game's copy sets its own off as it
-		// dies. Ours (our player's or an NPC's we run: the explosion's owner, or, with none named, one while a throw's
-		// watch is on or within a destructible object's watch) is reported for each friend's game to set off, when the
+		// twice. A death blast (by its base: RemoteEdits::DEATH_BLASTS, a robot's or a turret's self-destruct and the limbs it
+		// blows apart): every game's copy of its NPC sets its own off as it dies. Ours (our player's or an NPC's we run:
+		// the explosion's owner, or, with none named, one while a throw's watch is on or within a destructible object's
+		// watch) is reported for each friend's game to set off, when the
 		// server is sure to pass it on (ReportGate, from the nearest player); else it is ours alone, and so are its blows on
 		// copies. A friend's stand-in's own, or a mirrored NPC's, should never go off here (their shots that may go off
 		// are held, and so are their throws): their own game reports it.
@@ -976,9 +977,9 @@ namespace WeaponFire
 			} else if (Traps::Claims(a_ref->data.location, by != nullptr)) {
 				seen.fate = RemoteEdits::Fate::kEachOwn;  // near a trap that went off, and no actor's
 				what = "a trap's: every game sets its own off";
-			} else if (by ? RemoteEdits::DeathBlast(by->IsDead(false), a_ref->data.location.GetDistance(by->data.location)) : BesideFreshDeath(a_ref->data.location, a_now)) {
-				seen.fate = RemoteEdits::Fate::kEachOwn;
-				what = "an actor's death blast: every game's copy of it sets its own off";
+			} else if (DeathBlastBase(base, by != nullptr)) {
+				seen.fate = RemoteEdits::Fate::kEachOwn;  // by its base: a robot's or a turret's self-destruct, or a limb it blows apart
+				what = "a death blast: every game's copy of its NPC sets its own off";
 				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
 				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
@@ -1153,9 +1154,9 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}/{}", blasts.Size(),
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
 			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
-			shotsChecked, explosionsNearFriends, deathBlasts, deathsNoted.load());
+			shotsChecked, explosionsNearFriends, deathBlasts);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)
@@ -1809,20 +1810,6 @@ namespace WeaponFire
 			for (const auto id : shields.Due(BlastShield::Clock::now(), frames)) {
 				Unshield(id, "the explosion is over");
 			}
-		}
-	}
-
-	void NoteDying(std::uint32_t a_refId, bool a_dead)
-	{
-		if (const auto n = ++deathsNoted; n <= 10) {
-			REX::INFO("WeaponFire: {:08X} {}: an unowned explosion beside it in the next {} s is its death blast", a_refId, a_dead ? "is dead" : "is dying",
-				RemoteEdits::DEATH_BLAST_WINDOW.count());
-		}
-		std::scoped_lock d{ recentDeathLock };
-		const auto now = Clock::now();
-		std::erase_if(recentDeaths, [&](const auto& a_death) { return now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
-		if (recentDeaths.size() < 64) {
-			recentDeaths.emplace_back(a_refId, now);
 		}
 	}
 

@@ -283,7 +283,9 @@
   it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
-  NPC. Hits by NPCs made at runtime are sent only for one the attacker's game shares (see Spawns), under its spawn id; the victim ignores hits
+  NPC. An explosion's hit is not, when the explosion goes off in their game too (one reported, a trap's,
+  a death blast: `RemoteEdits::PassStandInHit`, `standInBlowsThere=`): it hurts them there, and forwarded as well it
+  hurt them twice. Hits by NPCs made at runtime are sent only for one the attacker's game shares (see Spawns), under its spawn id; the victim ignores hits
   from an NPC that isn't loaded, alive and within 140 m in their world, and any while a menu pauses
   their game (`UI::menuMode`; `Main::freezeTime` stays false). The damage was resisted by the
   stand-in's copy of the victim's armor; the victim scales it by their own difficulty
@@ -431,11 +433,12 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
 | Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
 |---|---|---|---|
 | Thrown grenade or Molotov (our player's, or an NPC our game runs, our companion among them, one made here at runtime too) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after its thrower's watch, if every blast of that thrower's watch was reported (`ThrowWatches`: each thrower's own) |
-| Missile, shell, explosive bullet, a beam with a blast, a legendary Explosive round | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's is never fired (`ShotGoesOff`: the projectile names an explosion, or the gun is enchanted; the same test the shooter's game watches by; `firesHeld=`), so friends see the flash and the blast, nothing in flight | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
+| Missile, shell, explosive bullet, a beam with a blast, a legendary Explosive round | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's is never fired (`ShotGoesOff`: the projectile names an explosion, or one of the gun's enchantments has an effect that does, which none of the game's legendaries has; the same test the shooter's game watches by; `firesHeld=`), so friends see the flash and the blast, nothing in flight | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
 | Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`). Only one with no owner near the trap is the trap's: our grenade beside a mine is ours | never | the NPC's own game's (`Fate::kEachOwn`) |
 | Car or barrel (a destructible object's own stage, by its explosion's base) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |
 | An NPC's own, one another game runs | that NPC's game; once in each other game, from that game's report, wherever a player could be hit. Our copy's throw and explosive shot are held | by the NPC's own game only | the NPC's own game's (our copy's hits are nobody's) |
-| An NPC's death blast (a Sentry Bot's, a Mr. Gutsy's, a suicider's nuke: set off by an actor already dead within 512 units of it, or by no one within 512 units of an actor that died in the last 3 s, as a Sentry Bot's cascade is) | every game's copy sets its own off as it dies (the NPC's game's death report kills the copies; on the rig a Sentry Bot's cascade went off in both games, the copy's a moment later) | never (`deathBlasts=`) | the NPC's own game's (`Fate::kEachOwn`) |
+| A robot's or a turret's death blast, told by its explosion's base alone (`RemoteEdits::DEATH_BLASTS`, from the game data: the self-destruct its race's script sets off, a Sentry Bot's, an Assaultron's, a Robobrain's, a Mr. Handy's or Gutsy's, a Protectron's, an Eyebot's, a turret's, a Vertibird's, a Fog Crawler's, and the limbs its body part data blows apart, with no damage of their own) | every game's copy sets its own off as it dies (the NPC's game's death report kills the copies; on the rig a Sentry Bot's whole cascade went off in both games, the copy's a moment later) | never (`deathBlasts=`) | the NPC's own game's (`Fate::kEachOwn`) |
+| A suicider's nuke (its script's `FatManExplosion` with no owner; a Fat Man's, the same base, names its shooter and is a missile's case) | every game's copy sets its own off: on the rig, armed and swinging at a friend's stand-in, it went off in both games, the copy's replayed swing setting off its own, and named no owner. Killed outright (a console kill) it went off in neither | never (`deathBlasts=`) | the NPC's own game's (`Fate::kEachOwn`) |
 | A stand-in's | never here: its shots that may go off and its throws are held. One that goes off anyway is not reported (`standInExplosions=`) | never | nobody's: given back |
 
 - Sure to arrive: our game sends a report only when `RemoteEdits::ReportGate` says the server passes it on: within 7000
@@ -470,9 +473,9 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
     explosion of the last 3 s with it: when two share an id that fast and fared differently, the blow goes by the older.
   - Friends don't see explosive rounds and missiles in flight: a stand-in's or a copy's shot that may go off is held,
     and only the flash and the shooter's reported blast show.
-  - A grenade or a missile that goes off within 512 units of its thrower or shooter after they died, or an explosion
-    with no owner within 512 units of an actor that died in the last 3 s, is taken for a death blast: every game sets
-    its own off, so one that only that game sees goes off there alone.
+  - A living robot's limb blown off goes off in its runner's game alone (it has no damage of its own). A Sentry Bot's
+    `RobotModExplosion` pieces (no damage) go the normal way, as a turret's shots share that base: in a throw's
+    watch one can show twice.
   - An explosion with no owner that our game keeps during a throw's watch unshares every thrower's watch, so a
     reported Molotov's fire is then dealt from our copies too (a rare double fire).
   - The gate takes a friend's space and place from their last relayed state, the server from its fresher one: an NPC's
@@ -481,7 +484,7 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   - A client can have an explosion relayed beside any player in its space without being near them, within the
     explosion budget and each receiver's own checks (its reported position was its own word anyway).
 - `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`,
-  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=blasts/deaths noted`, the blast counters above; the log names each explosion's owner and
+  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=`, `standInBlowsThere=` (an explosion's hits on a friend's stand-in not passed on), the blast counters above; the log names each explosion's owner and
   what became of it, and each hit on a copy names its source.
 
 To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, a companion blowing a

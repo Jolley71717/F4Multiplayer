@@ -461,23 +461,36 @@ TEST("remote edits: each thrower's watch is its own; a settler's grenade never m
 	CHECK(!watches.Shared(SETTLER, t0 + 14s, 20s));  // ended first, gone
 }
 
-TEST("remote edits: an explosion set off by an actor already dead, beside it, is its death blast; every game sets its own off")
+TEST("remote edits: a death blast is told by its explosion's base alone; every game sets its own off")
 {
-	CHECK(DeathBlast(true, 0.0f));
-	CHECK(DeathBlast(true, 300.0f));  // a Sentry Bot's cascade, about its body
-	CHECK(DeathBlast(true, DEATH_BLAST_REACH));
-	CHECK(!DeathBlast(true, DEATH_BLAST_REACH + 1.0f));  // a missile it fired before it died, landing far off: its shooter's
-	CHECK(!DeathBlast(false, 0.0f));                     // a living NPC's grenade at its feet
-	CHECK(!DeathBlast(true, NaN));
-	CHECK(!DeathBlast(true, -1.0f));
-	// A Sentry Bot's cascade names no owner: one beside an actor that died just now.
-	using namespace std::chrono_literals;
-	CHECK(DiedBeside(300.0f, 0ms));
-	CHECK(DiedBeside(300.0f, 1500ms));  // the copy's, a moment after its death
-	CHECK(DiedBeside(DEATH_BLAST_REACH, DEATH_BLAST_WINDOW));
-	CHECK(!DiedBeside(300.0f, DEATH_BLAST_WINDOW + 1ms));  // a grenade on a corpse
-	CHECK(!DiedBeside(DEATH_BLAST_REACH + 1.0f, 0ms));
-	CHECK(!DiedBeside(NaN, 0ms));
-	CHECK(!DiedBeside(300.0f, -1ms));
+	CHECK(IsDeathBlast("Fallout4.esm", 0x001A673A, false));  // a Sentry Bot's self-destruct, seen on the rig in both games
+	CHECK(IsDeathBlast("Fallout4.esm", 0x001AF075, true));  // a Mr. Gutsy's
+	CHECK(IsDeathBlast("Fallout4.esm", 0x0023E912, true));  // a Sentry Bot's leg, in its cascade
+	CHECK(IsDeathBlast("DLCCoast.esm", 0x00053DFE, true));  // a Fog Crawler's
+	CHECK(!IsDeathBlast("DLCRobot.esm", 0x001A673A, true));  // the plugin counts
+	CHECK(!IsDeathBlast("Fallout4.esm", 0x001A7FF2, true));  // FatManExplosion naming its shooter: a Fat Man's, the normal way
+	CHECK(IsDeathBlast("Fallout4.esm", 0x001A7FF2, false));  // ... naming no owner: a suicider's nuke, set off in both games on the rig
+	CHECK(IsDeathBlast("Fallout4.esm", 0x001A673A, true));   // a self-destruct, owned or not
+	CHECK(!IsDeathBlast("Fallout4.esm", 0x000E19EF, true));  // RobotModExplosion: a turret's shot's impact too
+	CHECK(!IsDeathBlast("Fallout4.esm", 0x000FD3AA, true));  // a missile
+	CHECK(!IsDeathBlast("Fallout4.esm", 0x00216359, true));  // a Sentry Bot's own missile, fired alive
+	for (std::size_t i = 0; i < DEATH_BLASTS.size(); ++i) {
+		CHECK((DEATH_BLASTS[i].id >> 24) == 0);  // no load-order byte
+		for (std::size_t j = i + 1; j < DEATH_BLASTS.size(); ++j) {
+			CHECK(DEATH_BLASTS[i].id != DEATH_BLASTS[j].id || DEATH_BLASTS[i].file != DEATH_BLASTS[j].file);
+		}
+	}
 	CHECK(DealtThere(Seen{ {}, 300.0f, Fate::kEachOwn, {} }));  // its blow on a copy is the NPC's own game's
+}
+
+TEST("remote edits: an explosion's hit on a friend's stand-in is passed on only when it goes off in our game alone")
+{
+	const Seen reported{ {}, 300.0f, Fate::kShared, {} };  // an NPC's grenade at them: it goes off beside them there
+	const Seen trap{ {}, 300.0f, Fate::kEachOwn, {} };
+	const Seen ours{ {}, 300.0f, Fate::kOurs, {} };  // kept: too big, or past the budget
+	CHECK(!PassStandInHit(true, &reported));
+	CHECK(!PassStandInHit(true, &trap));
+	CHECK(PassStandInHit(true, &ours));
+	CHECK(PassStandInHit(true, nullptr));  // one we never saw: passed on, as before
+	CHECK(PassStandInHit(false, &reported));  // a bullet's
 }

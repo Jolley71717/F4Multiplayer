@@ -6,11 +6,13 @@
 #include "TokenBucket.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 // What a game believes of another player's changes to its world. The server only passes on what each
@@ -303,25 +305,60 @@ namespace RemoteEdits
 		kEachOwn,  // a world trap's, a destructible object's own (its stage's), or an NPC's death blast: every game sets its own off
 	};
 
-	// An NPC's death blast (a Sentry Bot's, a Mr. Gutsy's, a suicider's nuke): set off by an actor already dead, beside it,
-	// or by no one beside an actor that died just now (a Sentry Bot's cascade of a dozen names no owner: seen on the rig).
-	// Every game's copy of the NPC sets off its own as it dies (the runner's death report kills the copies; on the rig
-	// the cascade went off in both games, the copy's a moment after the runner's), so it is never reported: reported as
-	// well (a kill by our missile or grenade has a watch on), it went off twice in the copy's game, and taken as ours
-	// alone its blows on copies were dealt twice. A grenade beside its thrower after they died, or an unowned blast
-	// beside one who just died, is taken for one too (a known limit, docs/DESIGN.md).
-	inline constexpr float DEATH_BLAST_REACH = 512.0f;
-	inline constexpr auto  DEATH_BLAST_WINDOW = std::chrono::seconds(3);
-
-	constexpr bool DeathBlast(bool a_byDead, float a_fromBy)
+	// The death blasts, by their explosion's base (in its plugin, no load-order byte): what a robot's or a turret's death
+	// sets off, from its race's script (abSentryBotRaceEffect and the like: the self-destruct) or its body part data (the
+	// limbs it blows apart as it goes, with no damage of their own). Every game's copy of the NPC sets off its own as it
+	// dies (the runner's death report kills the copies: on the rig a Sentry Bot's whole cascade went off in both games,
+	// the copy's a moment after the runner's), so it is never reported: reported as well, it went off twice there. Found
+	// in the game data (each base's uses: docs/DESIGN.md, "Who sets off an explosion"). Not here: RobotModExplosion
+	// (0E19EF), a turret's shot's impact too, which goes the normal way. A living robot's limb blown off (no damage) goes
+	// off in its runner's game alone. A suicider's nuke is its script's FatManExplosion, a Fat Man's base too: only one
+	// naming no owner is the suicider's (on the rig it went off in both games, the copy's replayed swing setting off its
+	// own, and named no owner; a Fat Man's, like a missile's, names its shooter).
+	struct DeathBlastBase
 	{
-		return a_byDead && a_fromBy >= 0.0f && a_fromBy <= DEATH_BLAST_REACH;
-	}
+		std::string_view file;
+		std::uint32_t    id;  // in that file, no load-order byte
+		std::string_view what;
+		bool             unownedOnly = false;  // only one that names no owner: the base is a weapon's too, whose blast names its shooter
+	};
+	inline constexpr std::array DEATH_BLASTS{
+		DeathBlastBase{ "Fallout4.esm", 0x001A673A, "robotSelfDestructExplosion: a Sentry Bot's, an Assaultron's, a Robobrain's (DLCRobot) self-destruct" },
+		DeathBlastBase{ "Fallout4.esm", 0x001AF074, "robotSelfDestructExplosionLarge: a Sentry Bot's" },
+		DeathBlastBase{ "Fallout4.esm", 0x001AF075, "robotSelfDestructExplosionSmall: a Mr. Handy's or Mr. Gutsy's, a Protectron's, an Eyebot's (DLCRobot)" },
+		DeathBlastBase{ "Fallout4.esm", 0x0022B6EE, "RobotSelfDestructShockExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000C32DB, "EyebotExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000CAB97, "TurretStandingExplosion: a tripod turret's" },
+		DeathBlastBase{ "Fallout4.esm", 0x000CAB96, "TurretMountedExplosion: a mounted or bubble turret's" },
+		DeathBlastBase{ "Fallout4.esm", 0x00020023, "VertibirdDeathExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x002301C6, "RobotLargeModExplosion: a Sentry Bot's or a Mr. Handy's limb" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B95A3, "SentryBotBLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B36AD, "SentryBotRLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B36AC, "SentryBotLLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E912, "SentryBotBLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E913, "SentryBotLLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E914, "SentryBotRLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E5087, "RobotArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E5088, "RobotArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E910, "MrhandyArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E911, "MrhandyArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E90F, "ProtectronHeadExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7314, "AssaultronArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7315, "AssaultronArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7316, "AssaultronLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7317, "AssaultronLegExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7318, "AssaultronHeadExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7319, "AssaultronHeadExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E731A, "AssaultronTorsoExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000EA83B, "AssaultronTorsoExplosion" },
+		DeathBlastBase{ "DLCCoast.esm", 0x00053DFE, "DLC03FogCrawlerDeathExplosion: a Fog Crawler's" },
+		DeathBlastBase{ "Fallout4.esm", 0x001A7FF2, "FatManExplosion with no owner: a suicider's nuke, its script's (a Fat Man's names its shooter)", true },
+	};
 
-	constexpr bool DiedBeside(float a_fromDead, std::chrono::steady_clock::duration a_sinceDeath)
+	// Whether an explosion of this base (in its plugin, no load-order byte), naming an owner or not, is a death blast.
+	constexpr bool IsDeathBlast(std::string_view a_file, std::uint32_t a_id, bool a_owned)
 	{
-		return a_fromDead >= 0.0f && a_fromDead <= DEATH_BLAST_REACH && a_sinceDeath >= std::chrono::steady_clock::duration::zero() &&
-		       a_sinceDeath <= DEATH_BLAST_WINDOW;
+		return std::ranges::any_of(DEATH_BLASTS, [&](const DeathBlastBase& a_base) { return a_base.id == a_id && a_base.file == a_file && (!a_base.unownedOnly || !a_owned); });
 	}
 
 	struct Seen
@@ -338,6 +375,14 @@ namespace RemoteEdits
 	constexpr bool DealtThere(const Seen& a_seen)
 	{
 		return a_seen.fate != Fate::kOurs;
+	}
+
+	// Whether a hit on a friend's stand-in is passed on to them (a PlayerHit): not an explosion's that goes off in their
+	// game too (DealtThere: one we reported, a trap's, a death blast), as it hurts them there; passed on as well, it
+	// hurt them twice (an NPC's grenade or missile at them). An explosion we can't tell (a_seen null) is passed on.
+	constexpr bool PassStandInHit(bool a_explosion, const Seen* a_seen)
+	{
+		return !a_explosion || !a_seen || !DealtThere(*a_seen);
 	}
 
 	// The explosions our game saw lately and what became of each (main thread).
