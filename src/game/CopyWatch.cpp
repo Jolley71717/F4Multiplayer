@@ -238,6 +238,12 @@ namespace CopyWatch
 		};
 	}
 
+	std::uint32_t SourceOf(const RE::TESHitEvent& a_event)
+	{
+		const auto ref = a_event.hitData.sourceRef.get();
+		return ref ? ref->GetFormID() : 0u;
+	}
+
 	// An explosion's blow on a copy is the NPC's own game's to deal when that explosion goes off there too (RemoteEdits::
 	// DealtThere: one we reported, a trap's, a destructible object's own), told by the explosion the hit names (a_sourceRef)
 	// or else the nearest that reached it (WeaponFire::BlastAt).
@@ -276,10 +282,7 @@ namespace CopyWatch
 			.blow = blow,
 			.inHand = blow.inHand,
 			.flags = a_event.hitData.flags.underlying(),
-			.sourceRef = [&] {
-				const auto ref = a_event.hitData.sourceRef.get();
-				return ref ? ref->GetFormID() : 0u;
-			}(),
+			.sourceRef = SourceOf(a_event),
 			.at = Clock::now(),
 		};
 		std::scoped_lock l{ inboxLock };
