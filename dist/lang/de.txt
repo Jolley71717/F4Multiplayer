@@ -171,7 +171,7 @@ menu.mods_ask = Host erneut fragen
 menu.host_controls = Host-Steuerung
 menu.hc_waiting = Warte auf die Antwort deines Servers. Versuch es gleich noch einmal.
 menu.hc_open = Die Sitzung ist offen: Freunde können beitreten.
-menu.hc_locked = Die Sitzung ist gesperrt: Niemand Neues kann beitreten (wer schon da ist, bleibt).
+menu.hc_locked = Die Sitzung ist gesperrt: Niemand Neues kann beitreten. Wer schon in der Sitzung ist, kann wieder beitreten, wenn sein Spiel abstürzt oder seine Verbindung abbricht; entfernte und verbannte Spieler nicht.
 menu.hc_no_password = Kein Passwort: Jeder, der die Sitzung erreicht, kann beitreten.
 menu.hc_password = Passwort: {password} (Freunde tragen sPassword = {password} in ihre F4Multiplayer.ini ein)
 menu.hc_banned = Verbannte Spieler: {n}

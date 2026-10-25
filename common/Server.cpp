@@ -356,8 +356,23 @@ void Server::Run()
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
 	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
-	// Host controls: nobody new joins while locked (not saved: a restart opens it again), and the host's bans.
+	// Host controls: nobody new joins while locked (not saved: a restart opens it again) but those who joined during
+	// this server run and dropped out, and the host's bans.
 	bool                        locked = false;
+	// Who a locked session takes back: the hello identities that joined during this server run, each with the Steam
+	// account (Player::transportId, 0 on any direct connection) it joined over and when it was last here. Only in memory:
+	// not saved, so a restart forgets them (the saved identities above only give a returning player their old number,
+	// and every player who ever joined is in them). At the cap the one gone longest makes room, never a new member.
+	struct Member
+	{
+		std::uint64_t     account = 0;
+		Clock::time_point lastSeen{};
+	};
+	std::unordered_map<std::uint64_t, Member> members;
+	// Hello identities and accounts of players the host kicked or banned this run: a locked session takes back those
+	// that dropped out, not these (or another identity of the same account). Forgotten when they are let in again.
+	std::unordered_set<std::uint64_t> removed;
+	std::unordered_set<std::uint64_t> removedAccounts;
 	BanList                     bans;
 	const std::filesystem::path banPath{ options.banFile };
 	if (!options.banFile.empty()) {
@@ -946,6 +961,9 @@ void Server::Run()
 	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
+			if (const auto member = members.find(a_player.helloId); member != members.end()) {
+				member->second.lastSeen = Clock::now();
+			}
 			log(std::format("server: player {} left", a_player.id));
 			broadcast(Protocol::Encode(Protocol::PlayerLeft{ a_player.id }), true, a_player.key);
 		}
@@ -979,14 +997,16 @@ void Server::Run()
 				reject(a_player, Protocol::REJECT_BANNED);
 				return;
 			}
-			// Locked: nobody new. Someone in the session whose game restarted (a hello again, or a new connection while
-			// the old one is still here) is not new.
-			const bool inSession = a_again || (hello->identity != 0 && [&] {
-				const auto known = identities.find(hello->identity);
-				return known != identities.end() && std::ranges::any_of(players, [&](const auto& a_entry) {
-					return a_entry.first != a_player.key && a_entry.second.welcomed && !a_entry.second.kicked && a_entry.second.id == known->second;
-				});
-			}());
+			// Locked: nobody new. Someone who joined during this server run is not new: their game restarted (a hello
+			// again, or a new connection while the old one is still here), or it crashed or their connection dropped and
+			// they come back. They must come by the Steam account they joined with (a game identity isn't a secret), and
+			// not be someone the host kicked or banned, by identity or by account: that is being removed, not dropping out.
+			// (Not the saved identities: those hold everyone who ever joined, before a restart too.)
+			const bool inSession = a_again || [&] {
+				const auto member = hello->identity != 0 ? members.find(hello->identity) : members.end();
+				return member != members.end() && member->second.account == a_player.transportId && !removed.contains(hello->identity) &&
+				       (a_player.transportId == 0 || !removedAccounts.contains(a_player.transportId));
+			}();
 			if (locked && !inSession) {
 				log(std::format("server: refused {}: the session is locked", describe(a_player.key)));
 				reject(a_player, Protocol::REJECT_LOCKED);
@@ -1046,6 +1066,7 @@ void Server::Run()
 		// Someone coming back gets their old ID. If their old connection is still here, their game
 		// restarted before it timed out: that one is stale, so it goes.
 		bool returning = false;
+		bool newIdentity = false;
 		if (hello->identity != 0) {
 			if (const auto known = identities.find(hello->identity); known != identities.end()) {
 				const auto stale = std::ranges::find_if(players, [&](const auto& a_entry) {
@@ -1060,15 +1081,37 @@ void Server::Run()
 				}
 				a_player.id = known->second;
 				returning = true;
-			} else if (identities.size() < MAX_IDENTITIES) {
-				identities[hello->identity] = a_player.id;
-				touched();
+			} else {
+				newIdentity = identities.size() < MAX_IDENTITIES;
 			}
 		}
 		// (After dropping a stale connection: it doesn't take up a place.)
 		if (welcomedCount() >= options.maxPlayers) {
 			reject(a_player, "Server is full");
 			return;
+		}
+		// Only now: someone turned away for a full server was never in the session, which a locked one goes by.
+		if (newIdentity) {
+			identities[hello->identity] = a_player.id;
+			touched();
+		}
+		removed.erase(hello->identity);
+		removedAccounts.erase(a_player.transportId);
+		if (hello->identity != 0) {
+			if (!members.contains(hello->identity) && members.size() >= MAX_IDENTITIES) {
+				// Full: the member gone longest makes room (one in the session now is never the one).
+				auto oldest = members.end();
+				for (auto it = members.begin(); it != members.end(); ++it) {
+					const bool here = std::ranges::any_of(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.helloId == it->first; });
+					if (!here && (oldest == members.end() || it->second.lastSeen < oldest->second.lastSeen)) {
+						oldest = it;
+					}
+				}
+				if (oldest != members.end()) {
+					members.erase(oldest);
+				}
+			}
+			members[hello->identity] = { a_player.transportId, Clock::now() };
 		}
 
 		// Every letter of every script stays (a Cyrillic or CJK character name); what can't be shown goes (common/Name.h).
@@ -2517,6 +2560,13 @@ void Server::Run()
 		}
 		auto& target = it->second;
 		auto  result = HostResult::kDone;
+		// Removed, not dropped: a locked session doesn't take them back (see handleHello).
+		if (target.helloId != 0) {
+			removed.insert(target.helloId);
+		}
+		if (target.transportId != 0) {
+			removedAccounts.insert(target.transportId);
+		}
 		if (!a_ban) {
 			log(std::format("server: player {} was kicked by {}", target.id, a_by));
 		} else if (const auto entry = bans.Add(target.transportId, target.helloId, nowUnix(), target.name); !entry) {

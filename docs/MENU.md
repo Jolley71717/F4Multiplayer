@@ -60,8 +60,15 @@ password (as your ini has it) or that there is none, and how many players are ba
   were kicked instead; the ban list could not be saved).
 - *Lock the session* / *Unlock the session*: while locked, nobody new is let in ("The session is
   locked: the host isn't letting anyone new in"; their game tries again each minute). Those in it
-  stay, a game that restarts while still in the session gets back in, and the host's own game is
-  never locked out. The lock isn't saved: hosting again starts open.
+  stay, a game that restarts while still in the session gets back in, and so does a player who joined
+  during this server run and dropped out (their game crashed, their connection broke or timed out),
+  as long as they come back by the Steam account they joined with (a direct connection has none, so there by
+  their game identity alone; one who joined over Steam and comes back direct, or the other way round, is
+  refused). The server remembers them in
+  memory only, so a restart forgets them: after one, nobody is let through the lock until they have
+  joined again while it was open. A player the host kicked or banned is not taken back while it is
+  locked, nor is another game of the same Steam account. The host's own game is never
+  locked out. The lock isn't saved: hosting again starts open.
 - *Password*: the box can't take typing, so *New password* makes up eight letters and digits (none
   that look alike), writes it to `sPassword` in the ini and tells the server; the page shows it to
   pass on. *Remove the password* clears both. Players already in stay. The log says only that the
