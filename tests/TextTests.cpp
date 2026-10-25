@@ -275,6 +275,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.ping_something", {}, "something" },
 		{ "party.where", { { "player", "Sam" }, { "where", "240 m NE" } }, "Sam: 240 m NE" },
 		{ "party.no_emote_armor", {}, "No emotes in power armor" },
+		{ "party.friends_frame", { { "player", "Sam" } }, "This is Sam's power armor. Sharing power armor with friends is coming in a later version." },
 		{ "party.tag_pipboy", { { "name", "Sam (60%)" } }, "Sam (60%) [Pip-Boy]" },
 		{ "party.tag_menu", { { "name", "Sam" } }, "Sam [in a menu]" },
 		{ "party.killed", { { "killer", "Sam" }, { "victim", "Raider" } }, "Sam killed Raider" },

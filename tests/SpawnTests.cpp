@@ -634,6 +634,20 @@ TEST("spawns: a friend's frame is placed while it is in our sight wherever its o
 	// while this spawn lasts.
 	auto taken = there(1010.0f);
 	taken.occupied = true;
+	// One being sent out of it again (a companion ordered in): still ours, left as it is meanwhile, even out of sight.
+	auto leaving = taken;
+	leaving.leaving = true;
+	CHECK(theirs.DecideFrame(SPAWN, leaving, T0) == Act::kNone);
+	leaving.inView = false;
+	CHECK(theirs.DecideFrame(SPAWN, leaving, T0) == Act::kNone);
+	// Just out of it, its 3D not back yet (a frame has none while worn): not taken for a copy that never loaded.
+	auto settling = there(1010.0f);
+	settling.copyLoaded = false;
+	settling.leaving = true;
+	CHECK(theirs.DecideFrame(SPAWN, settling, T0 + SpawnBook::LOAD_WAIT) == Act::kNone);
+	settling.leaving = false;
+	CHECK(theirs.DecideFrame(SPAWN, settling, T0 + SpawnBook::LOAD_WAIT) == Act::kDiscard);  // and then placed again
+	CHECK(theirs.LocalOf(SPAWN) == COPY);
 	CHECK(theirs.DecideFrame(SPAWN, taken, T0) == Act::kAbandon);
 	taken.inView = false;
 	CHECK(theirs.DecideFrame(SPAWN, taken, T0) == Act::kAbandon);

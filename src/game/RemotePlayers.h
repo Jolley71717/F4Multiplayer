@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/Equipment.h"
 #include "game/NetSim.h"
 #include "game/RemoteEdits.h"
 
@@ -112,6 +113,21 @@ namespace RemotePlayers
 	// stands within ArmorFrames::ORIGINAL_RADIUS of a_spot and nobody is in it: Spawns' copy of the same frame, once
 	// their game shares it, takes it over rather than standing a second suit in the same spot. None otherwise.
 	RE::ObjectRefHandle TakeParkedCopy(std::uint32_t a_owner, std::uint32_t a_base, const RemoteEdits::Spot& a_spot);
+	// Our player asks to get into this frame or opens its inventory (Equipment's frame gate), or someone else here (a_by: a
+	// companion ordered into it) is found in it: whether they are kept out of it, a copy the session placed of a friend's
+	// frame (see FriendFrame). The HUD tells our player whose it is. Someone else is sent out of it again (each frame:
+	// Actor.SwitchToPowerArmor with None, FriendFrame::SendsOut).
+	[[nodiscard]] bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by);
+	// Whether someone here is in this frame who is to be sent out of it, or just got out of it (its 3D being built again,
+	// FriendFrame::Settling): the frame is not theirs, and Spawns' and our own frame copies are left as they are meanwhile
+	// (not "it is theirs now", nor taken for a copy that never loaded).
+	[[nodiscard]] bool BeingSentOut(RE::TESObjectREFR* a_frame);
+	// Whether someone our game sends out of this frame copy is in it, getting in, or on their way out: nothing buries it
+	// then (FriendFrame::ChooseLeave). A save keeps it as it is, saved with the frame they wear (Spawns' DiscardCopies too).
+	[[nodiscard]] bool SomeoneSentOutOf(RE::TESObjectREFR* a_frame);
+	// As a load comes (after DespawnAll): who was being sent out of a copy, and the copies just got out of, are forgotten
+	// (their ids name the loaded game's forms), and a send-out call still queued in the VM is not to take effect after it.
+	void BeforeLoad();
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

@@ -71,6 +71,7 @@ party.ping_you = te
 party.ping_something = qualcosa
 party.where = {player}: {where}
 party.no_emote_armor = Niente emote nell'armatura atomica
+party.friends_frame = Questa è l'armatura atomica di {player}. La condivisione delle armature atomiche con gli amici arriverà in una versione futura.
 party.tag_pipboy = {name} [Pip-Boy]
 party.tag_menu = {name} [in un menu]
 party.killed = {killer} ha ucciso {victim}

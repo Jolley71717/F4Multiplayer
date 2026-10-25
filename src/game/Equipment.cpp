@@ -1,13 +1,19 @@
 #include "game/Equipment.h"
 
+#include "MainThread.h"
 #include "Protocol.h"
 #include "game/GearPlan.h"
+#include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
 #include "game/TextureFlush.h"
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -1044,10 +1050,13 @@ namespace Equipment
 		using UseFn = bool (*)(RE::PlayerCharacter*, RE::TESObjectREFR*);
 		using MessageFn = void (*)(const char*, const char*, bool, bool);
 		UseFn                   originalUse = nullptr;
+		FrameGate               keepOut = nullptr;  // SetFrameGate
 		MessageFn               originalMessage = nullptr;
 		std::uint32_t           seatsFreed = 0;
 		std::uint32_t           framesStoodUp = 0;
 		std::uint32_t           refusals = 0;
+		std::uint32_t           keptOut = 0;          // our player kept out of a frame by the gate
+		std::uint32_t           transfersKeptOut = 0; // a frame's inventory closed again by the gate
 		std::uint32_t           enterRefusals = 0;
 		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
 		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
@@ -1057,6 +1066,11 @@ namespace Equipment
 		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
 		{
 			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
+			if (frame && keepOut && keepOut(a_ref, FrameAsk::kEnter, nullptr)) {
+				// Not seated, and no word from the engine: Activate returns true whatever the use answers (FrameUse.h).
+				++keptOut;
+				return false;
+			}
 			if (frame) {
 				lastFrame = a_ref->GetFormID();
 				const auto facts = FrameUseOf(a_ref);
@@ -1110,6 +1124,86 @@ namespace Equipment
 			}
 			return site;
 		}
+
+		// Our player opened a frame's inventory (Transfer): the container menu's own messages are hooked in its vtable
+		// (the menu is never looked up through the UI: OpenMenus). As it is shown, on the UI's thread, a copy our player is
+		// kept out of (by its handle, from the main thread's last word: SetTransfersKeptOut) has the menu closed at once,
+		// in the same pass of the UI's messages, before anything can be moved into it: items left in a copy go with it.
+		// Its target is asked of the gate on the main thread too, which tells our player whose it is and closes a menu the
+		// UI's thread did not (a copy placed that very frame).
+		constexpr std::size_t PROCESS_MESSAGE_INDEX = 0x03;
+		using ProcessMessageFn = RE::UI_MESSAGE_RESULTS (*)(RE::IMenu*, RE::UIMessage&);
+		ProcessMessageFn                 originalContainerMessage = nullptr;
+		std::mutex                       keptOutLock;
+		std::vector<RE::ObjectRefHandle> transfersKeptOutNow;  // the copies our player is kept out of
+		std::atomic<std::uint32_t>       transfersClosedAtShow{ 0 };
+
+		bool KeptOutNow(const RE::ObjectRefHandle& a_target)
+		{
+			std::scoped_lock l{ keptOutLock };
+			return static_cast<bool>(a_target) && std::ranges::find(transfersKeptOutNow, a_target) != transfersKeptOutNow.end();
+		}
+
+		void HideContainerMenu()
+		{
+			if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
+				queue->AddMessage(RE::ContainerMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide);
+			}
+		}
+
+		// Closed once the UI may be written to (Hud::IsSettled), asked again each frame for a while, while it is open.
+		void CloseTransfer(std::uint32_t a_tries)
+		{
+			if (!OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				return;
+			}
+			if (!Hud::IsSettled()) {
+				if (a_tries < 120) {
+					MainThread::Post([a_tries] { CloseTransfer(a_tries + 1); });
+				}
+				return;
+			}
+			HideContainerMenu();
+		}
+
+		void CheckTransfer(RE::ObjectRefHandle a_target, bool a_closed)
+		{
+			const auto ref = a_target.get();
+			if (!ref || !keepOut || !IsPowerArmorFrame(ref->GetObjectReference()) || !keepOut(ref.get(), FrameAsk::kTransfer, nullptr)) {
+				return;
+			}
+			++transfersKeptOut;
+			if (!a_closed) {
+				CloseTransfer(0);
+			}
+		}
+
+		RE::UI_MESSAGE_RESULTS ContainerMessageHook(RE::IMenu* a_menu, RE::UIMessage& a_message)
+		{
+			const auto result = originalContainerMessage(a_menu, a_message);
+			if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
+				const auto target = static_cast<RE::ContainerMenu*>(a_menu)->containerRef;
+				// Only the handle is compared here: no game object is read off the main thread.
+				const bool closed = KeptOutNow(target) && Hud::IsSettled();
+				if (closed) {
+					HideContainerMenu();
+					++transfersClosedAtShow;
+				}
+				MainThread::Post([target, closed] { CheckTransfer(target, closed); });
+			}
+			return result;
+		}
+	}
+
+	void InstallFrameGate()
+	{
+		if (originalContainerMessage) {
+			return;
+		}
+		const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
+		originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
+		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
+		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
 	}
 
 	void InstallFrameUse()
@@ -1135,8 +1229,20 @@ namespace Equipment
 		REX::INFO("Equipment: power armor entry watched (use {}, enter message {})", originalUse != nullptr, originalMessage != nullptr);
 	}
 
+	void SetFrameGate(FrameGate a_gate)
+	{
+		keepOut = a_gate;
+	}
+
+	void SetTransfersKeptOut(std::vector<RE::ObjectRefHandle> a_handles)
+	{
+		std::scoped_lock l{ keptOutLock };
+		transfersKeptOutNow = std::move(a_handles);
+	}
+
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={}", seatsFreed, framesStoodUp, refusals, enterRefusals);
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={} transfersClosedAtShow={}", seatsFreed, framesStoodUp,
+			refusals, enterRefusals, keptOut, transfersKeptOut, transfersClosedAtShow.load());
 	}
 }

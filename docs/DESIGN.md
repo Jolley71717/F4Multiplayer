@@ -1104,6 +1104,32 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
   id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
   (stand-ins), `unloaded` and `back` (spawns).
+  A friend's frame is theirs (`FriendFrame.h`, `RemotePlayers::KeepOutOfFrame`, through `Equipment::SetFrameGate`):
+  every frame copy the session placed here is kept from our player, whoever used it last (a friend's parked one, the
+  one their stand-in wears or got out of, and every copy of a frame their game shares), and they are told whose it is
+  (`party.friends_frame`). Getting into one made it ours while the friend's stayed theirs, and their game shared it
+  again after their next load: a second copy on the same spot. Three ways in are closed. Getting in: the frame use
+  `InstallFrameUse` patches asks first. Transfer: the container menu shown for a copy is closed again in the same pass
+  of the UI's messages, before anything can be moved into it (items left in a copy go with it): `InstallFrameGate` hooks
+  its messages in its vtable, and compares the menu's target with the handles of the copies our player is kept out of,
+  which the main thread hands it each frame (`Equipment::SetTransfersKeptOut`; no game object is read on the UI's
+  thread). A companion ordered into one: the engine's command walks them there and gets them
+  in without asking the frame, so anyone our game runs (not our player or a stand-in) found in a copy (getting in, or all the way in, when only the
+  engine's ExtraPowerArmor still says which frame it is) is sent out at once
+  (`Actor.SwitchToPowerArmor` with None). The copy is left as it is meanwhile, from the frame they get out (whose 3D the
+  engine takes away then, before `SendOutOfFriendsFrames` sees them out), and until its new 3D is in (10 s at least, at
+  most 30 s, `FriendFrame::Settling`, `RemotePlayers::BeingSentOut`): never "theirs now", nor taken for a copy that never
+  loaded. Nothing buries a copy with anyone in it (`FriendFrame::ChooseLeave`; `FrameInUse` counts the frame an NPC
+  wears too): buried, it left them in a frame that was gone, and a save then had them wear a frame it did not have,
+  which the engine fails on as it loads that save. A save or load keeps a copy someone is being sent out of as it is,
+  saved with the frame they wear (a load takes it with the old world); let go of anywhere else (the friend leaves,
+  their game shares the frame again, a copy is placed anew), it stays ours, still kept from our player, until they are
+  out, then goes (`RemotePlayers::WaitForSendOut`, `copiesWaited`). A load forgets who was being sent out (their ids
+  name the loaded game's forms); a send-out is not asked while a load is queued, and one the VM ran after a load anyway
+  is counted (`sendOutsHeld`, `sendOutsDropped`, `sendOutsAfterLoad`). A plugin's frame (each game has its own
+  reference), our player's own (a copy they are in or got out of last stays usable) and a quest's are never kept from
+  them. Counted as `framesKeptOut`, `othersSentOut` and `sendOutsFailed` (`net status`) and `keptOut`,
+  `transfersKeptOut` and `transfersClosedAtShow` (`paframes`). Borrowing a friend's suit comes later.
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The

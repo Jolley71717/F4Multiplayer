@@ -29,6 +29,10 @@ namespace Spawns
 	// (a_parked, within a_radius): it stands for that frame, and RemotePlayers places no parked copy of its own there.
 	[[nodiscard]] bool FrameCopyAt(std::uint32_t a_owner, const Protocol::ParkedFrame& a_parked, float a_radius);
 
+	// The friend whose frame (one their game made and shares) our reference a_local is a copy of, 0 if it is no copy of a
+	// friend's frame (see FriendFrame).
+	[[nodiscard]] std::uint32_t FrameCopyOwnerOf(std::uint32_t a_local);
+
 	// Our NPC under a spawn id: our own, or our copy of a friend's (0: none).
 	[[nodiscard]] std::uint32_t LocalOf(std::uint32_t a_id);
 
@@ -61,8 +65,12 @@ namespace Spawns
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near.
+	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near. A
+	// frame copy someone is being sent out of is kept as it is, saved with the frame they wear (RemotePlayers::SomeoneSentOutOf).
 	void DiscardCopies();
+
+	// Our copies of friends' frames now (RemotePlayers tells the container menu's hook which our player is kept out of).
+	[[nodiscard]] std::vector<RE::ObjectRefHandle> FrameCopies();
 
 	// A save was loaded: our NPCs' ids name the loaded game's now, and our copies went before it.
 	void OnGameLoaded();

@@ -21,6 +21,7 @@
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
+#include "game/RemotePlayers.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -381,6 +382,7 @@ namespace
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
 					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
+					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
 				},
 				"load");
 			break;
@@ -922,6 +924,8 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
+	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
+	Equipment::InstallFrameGate();  // and its Transfer
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

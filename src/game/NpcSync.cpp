@@ -887,7 +887,8 @@ namespace NpcSync
 			return ref && !ref->IsDeleted() && Equipment::IsPowerArmorFrame(ref->GetObjectReference()) ? ref : nullptr;
 		}
 
-		// An actor of ours is in this frame (a stand-in gets into a copy of its own, never a reference of our world).
+		// An actor of ours is in this frame (a stand-in gets into a copy of its own, never a reference of our world): getting
+		// in (the seat) or all the way in (ExtraPowerArmor's frame; the engine then clears the seat).
 		bool FrameInUse(const RE::TESObjectREFR* a_frame)
 		{
 			const auto lists = RE::ProcessLists::GetSingleton();
@@ -896,9 +897,12 @@ namespace NpcSync
 			}
 			for (const auto& handle : lists->highActorHandles) {
 				const auto actor = handle.get();
-				const auto middle = actor && actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
+				if (!actor) {
+					continue;
+				}
+				const auto middle = actor->currentProcess ? actor->currentProcess->middleHigh : nullptr;
 				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-				if (occupied && occupied.get() == a_frame) {
+				if ((occupied && occupied.get() == a_frame) || Equipment::PowerArmorFrameOf(actor.get()).get() == a_frame) {
 					return true;
 				}
 			}

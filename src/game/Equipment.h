@@ -167,6 +167,26 @@ namespace Equipment
 	// 1.11.240 has it. Once, at load.
 	void InstallFrameUse();
 
+	// What is asked of a frame when the gate is asked.
+	enum class FrameAsk
+	{
+		kEnter,     // our player gets in (before anything is mended or the engine starts getting them in)
+		kTransfer,  // our player opened its inventory (Transfer): the menu is closed again
+		kOther,     // someone else here got in (a companion ordered into it): they are sent out again (RemotePlayers)
+	};
+
+	// Asked as our player gets into a frame or opens its inventory, and as anyone else here is found in one: true keeps
+	// them out (RemotePlayers::KeepOutOfFrame, which says why on the HUD). a_by: who (null for our player). Main thread.
+	using FrameGate = bool (*)(RE::TESObjectREFR* a_frame, FrameAsk a_ask, const RE::Actor* a_by);
+	void SetFrameGate(FrameGate a_gate);
+
+	// The copies our player is kept out of now, by their handles, each frame from the main
+	// thread: the container menu's hook closes Transfer on one as the menu is shown (on the UI's thread).
+	void SetTransfersKeptOut(std::vector<RE::ObjectRefHandle> a_handles);
+
+	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer). Once, at load.
+	void InstallFrameGate();
+
 	// What that hook mended and logged, for the paframes dev command.
 	std::string DescribeFrameMends();
 }

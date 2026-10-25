@@ -256,6 +256,7 @@ namespace Spawns
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				if (facts.copyThere) {
 					facts.occupied = Occupied(ref.get());
+					facts.leaving = RemotePlayers::BeingSentOut(ref.get());
 					// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT).
 					if (ref->GetParentCell()) {
 						facts.copyAt = SpotOf(ref.get());
@@ -303,6 +304,11 @@ namespace Spawns
 				++frameCopiesMoved;
 				break;
 			case SpawnBook::Act::kDiscard:
+				if (ref) {
+					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, off);
+				}
 				Discard(a_id);
 				break;
 			case SpawnBook::Act::kLost:
@@ -401,6 +407,13 @@ namespace Spawns
 		return ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->GetParentCell();
 	}
 
+	std::uint32_t FrameCopyOwnerOf(std::uint32_t a_local)
+	{
+		const auto id = theirs.IdOf(a_local);
+		const auto copy = id != 0 && placed.contains(id) ? theirs.Find(id) : nullptr;
+		return copy ? copy->spawn.playerId : 0;
+	}
+
 	std::uint32_t LocalOf(std::uint32_t a_id)
 	{
 		if (const auto local = ours.LocalOf(a_id)) {
@@ -430,6 +443,7 @@ namespace Spawns
 	void Add(const Protocol::Spawn& a_spawn)
 	{
 		if (const auto known = theirs.Find(a_spawn.refId); known && known->local != 0) {
+			REX::INFO("Spawns: player {} shared {:08X} again; our copy {:08X} of it goes", a_spawn.playerId, a_spawn.refId, known->local);
 			Discard(a_spawn.refId);  // an old one under the same id: it is over
 		}
 		if (theirs.Add(a_spawn, LocalPlayer())) {
@@ -598,10 +612,32 @@ namespace Spawns
 	void DiscardCopies()
 	{
 		for (const auto id : theirs.Ids()) {
-			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
-				Discard(id);
+			const auto copy = theirs.Find(id);
+			if (!copy || copy->local == 0) {
+				continue;
+			}
+			// A frame copy someone is being sent out of is kept as it is, saved with the frame they wear (a load takes it with
+			// the old world): buried, the save would have them wear a frame it does not have (RemotePlayers::SomeoneSentOutOf).
+			if (const auto it = placed.find(id); it != placed.end()) {
+				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
+					continue;
+				}
+			}
+			Discard(id);
+		}
+	}
+
+	std::vector<RE::ObjectRefHandle> FrameCopies()
+	{
+		std::vector<RE::ObjectRefHandle> out;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			if (spawn && Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				out.push_back(copy.handle);
 			}
 		}
+		return out;
 	}
 
 	void OnGameLoaded()
@@ -629,7 +665,13 @@ namespace Spawns
 
 	void Reset()
 	{
-		DiscardCopies();
+		// Every copy goes, as at a save, but none is kept: one someone is being sent out of waits for them in RemotePlayers
+		// (or, with the session over, is left to them).
+		for (const auto id : theirs.Ids()) {
+			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
+				Discard(id);
+			}
+		}
 		placed.clear();
 		seenAt.clear();
 		theirs.Clear();
