@@ -298,6 +298,18 @@ foreach ($site in @(@(2198054, 0x384, 2232956, 'TESFurniture::Activate calls the
 	Report ($call[0] -eq 0xE8 -and ($at + 5 + [BitConverter]::ToInt32($call, 1)) -eq $target) ('{0}+0x{1:X} (+{2:X}): {3}' -f $site[0], $site[1], $at, $site[3])
 }
 
+# Projectile::Launch, which InertShots::Install puts a jump on at its entry (src/game/InertShot.h): the function the
+# projectile classes' constructors are called from. It begins by spilling its first argument (mov [rsp+8],rcx: the five
+# bytes the jump takes, moved whole into the continuation), then reads the record's flags at +C0 and switches on the
+# motion type. The plugin checks the entry itself at load.
+$launch = Resolve 2236958
+Report ($launch -eq 0xE421E0) ('Projectile::Launch ID 2236958 is +{0:X}' -f $launch)
+if ($null -ne $launch) {
+	Report (HexMatches (BytesAt $launch 15) '48 89 4C 24 08 55 53 56 57 41 54 41 55 41 57') 'Projectile::Launch begins by spilling rcx, then pushes its registers, as read'
+	# mov rax,[rdx+18] (the record); test rax,rax; je; mov ecx,[rax+C0] (its flags); mov eax,ecx; and eax,7F0000 (the motion type).
+	Report (HexMatches (BytesAt ($launch + 0x4F) 26) '48 8B 42 18 48 85 C0 0F 84 ?? ?? ?? ?? 8B 88 C0 00 00 00 8B C1 25 00 00 7F 00') 'Projectile::Launch reads the record''s flags and its motion type at +0x4F'
+}
+
 if ($failed) {
 	"$failed check(s) failed"
 	exit 1

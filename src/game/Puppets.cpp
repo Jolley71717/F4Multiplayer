@@ -788,6 +788,11 @@ namespace Puppets
 		return Find(a_actor) != nullptr;
 	}
 
+	bool InFurniture(const RE::Actor* a_actor)
+	{
+		return a_actor && OccupiedFurniture(a_actor) != nullptr;
+	}
+
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsDeleted()) {

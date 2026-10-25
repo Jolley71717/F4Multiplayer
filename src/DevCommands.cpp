@@ -34,6 +34,7 @@
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/InjectInput.h"
+#include "game/InertShots.h"
 #include "game/MuzzleFlash.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
@@ -2438,6 +2439,24 @@ namespace DevCommands
 		}
 
 		// weapsound <actorHex>: the sound fields of the actor's equipped weapon (instance and base).
+		// proj <projectileHex|actorHex>: a projectile record (an actor's: what its gun fires), its flags, explosion, speed and
+		// model, and whether InertShots holds an inert copy of it (a stand-in's or a copy's shot of it flies with no blast).
+		std::string Proj(std::string_view a_args)
+		{
+			const auto id = ParseHex(a_args);
+			const auto form = id ? RE::TESForm::GetFormByID(*id) : nullptr;
+			const auto actor = form ? form->As<RE::Actor>() : nullptr;
+			const auto projectile = actor ? MuzzleFlash::GunProjectile(actor) : form ? form->As<RE::BGSProjectile>() : nullptr;
+			if (!projectile) {
+				return "error: usage: proj <projectileHex|actorHex> (a loaded actor holding a gun)";
+			}
+			const auto& data = projectile->data;
+			return std::format("projectile={:08X} '{}' flags={:X} motion={:X} explosion={:08X} proximity={:.1f} timer={:.2f} speed={:.0f} range={:.0f} force={:.1f} lifetime={:.1f} model='{}' goesOff={} inertCopy={} enchantmentExplodes={}",
+				projectile->GetFormID(), projectile->GetFullName() ? projectile->GetFullName() : "", data.flags, (data.flags >> 16) & 0x7F, data.explosionType ? data.explosionType->GetFormID() : 0,
+				data.explosionProximity, data.explosionTimer, data.speed, data.range, data.force, data.lifetime, projectile->GetModel() ? projectile->GetModel() : "",
+				data.explosionType != nullptr || (data.flags & 0x2) != 0, InertShots::HasCopy(projectile), actor && MuzzleFlash::GunEnchantmentExplodes(actor)) + (actor ? " " + MuzzleFlash::DescribeLoad(actor) : "");
+		}
+
 		std::string WeapSound(std::string_view a_args)
 		{
 			const auto id = ParseHex(a_args);
@@ -3520,6 +3539,7 @@ namespace DevCommands
 			Entry{ "gfx", Gfx },
 			Entry{ "gfxset", GfxSet },
 			Entry{ "weapsound", WeapSound },
+			Entry{ "proj", Proj },
 			Entry{ "muzzle", Muzzle },
 			Entry{ "playsound", PlaySoundCmd },
 			Entry{ "gs", GameSettings },

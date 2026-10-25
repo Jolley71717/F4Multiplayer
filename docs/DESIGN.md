@@ -395,7 +395,14 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   hit's flash, blood and damage marker). A stand-in's "WeaponFire" within 1.5 s of a replayed shot is
   kept from the engine (`AttackKind::HoldsOwnFire`, `firesHeld=` in the status), as a replayed
   throw's release is. The engine then draws no flash of its own for it either, so a stand-in's
-  replayed shot gets MuzzleFlash's.
+  replayed shot gets MuzzleFlash's. A shot that would go off (a missile, a shell, an explosive round) is the
+  exception, on a stand-in and on a copy alike: it leaves the gun, launched inert (`AttackKind::ShotReplay`,
+  `InertShots`, `firesInert=`; the stand-in's gun is given a few rounds first, `ammoGiven=`), so friends see it fly;
+  "Who sets off an explosion" below. A stand-in's graph can refuse "attackStart" while it says an animation drives
+  it (`bAnimationDriven`) with the stand-in in no furniture and no frame (seen on the rig right after a join: every
+  replayed shot sounded and flashed, none animated, nothing left the gun, for minutes); nothing of a stand-in's is
+  animation-driven there (we place it), so on such a refusal the flag is cleared and the replay asked once more
+  (`animDrivenCleared=`).
 - A stand-in drawn before its weapon is equipped stays empty-handed with the "drawn" flag set and
   rejects attacks, so after every equipment change it holsters and draws again.
 - Gunshot: the weapon's own attack sound fields are empty for vanilla guns. The game picks the
@@ -426,15 +433,16 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 
 One rule for every explosion: **it goes off once in every game, and each game deals its blows on its own player and
 the NPCs it runs.** A blow on a copy (an NPC another game runs) is given back, since the NPC's own game deals it. A
-stand-in's or a copy's shot that may go off is never fired, and a stand-in never throws a grenade: what its player
-set off comes as their game's report. An explosion is decided by who set it off first (the explosion's owner), then by
+stand-in's or a copy's shot that may go off is launched with no blast of its own (it flies, and goes off nowhere), and
+a stand-in never throws a grenade: what its player set off comes as their game's report. An explosion is decided by who
+set it off first (the explosion's owner), then by
 its base: a trap or a destructible object claims only its own. An explosion a game can't be sure the others get is not
 shared at all. That game deals every blow itself, a copy's too, reported as its hit's damage, like a gunshot's.
 
 | Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
 |---|---|---|---|
 | Thrown grenade or Molotov (our player's, or an NPC our game runs, our companion among them, one made here at runtime too) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after its thrower's watch, if every blast of that thrower's watch was reported (`ThrowWatches`: each thrower's own) |
-| Missile, shell, explosive bullet, a beam with a blast, a legendary Explosive round | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's is never fired (`ShotGoesOff`: the projectile names an explosion, or one of the gun's enchantments has an effect that does, which none of the game's legendaries has; the same test the shooter's game watches by; `firesHeld=`), so friends see the flash and the blast, nothing in flight | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
+| Missile, mini nuke, grenade launcher's shell, cannonball, explosive bullet, a beam with a blast, a legendary Explosive round (`ShotGoesOff`: the projectile names an explosion or has the explosion flag, or one of the gun's enchantments has an effect that does, which none of the game's legendaries has; the test the shooter's game watches by) | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's shot flies but goes off nowhere: it is launched from an inert copy of its projectile record (`InertShots`, `AttackKind::ShotReplay`, `firesInert=`, `inert=` launches swapped). The engine makes every projectile in `Projectile::Launch` (Address Library 2236958, +E421E0), whose entry is hooked: a stand-in's or a copy's launch of a record that goes off gets a runtime copy of the record (a runtime form ID, in no save; never freed, one per record: the same motion, speed, model, light and sounds; no explosion, no proximity or timer for one, no force, nothing to pin, pick up or switch off, `InertShot::InertFlags`) before the projectile class's constructor reads it, so nothing of the projectile exists that could go off, a point-blank missile and a beam included; the projectile's own explosion and damage are cleared as well once it is made. Its blast comes as the shooter's report, at the reported spot; the inert shot ends where it hits, with its impact effect and no blast. Where the entry isn't as 1.11.240 has it (another plugin's hook), nothing is hooked and such shots are held, as before (`firesHeld=`). One that would go off by an enchantment alone is held (there is no record to take a blast from). A stand-in's plain bullet or beam stays held (it hit our player); a copy's is the engine's, as before | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
 | Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`). Only one with no owner near the trap is the trap's: our grenade beside a mine is ours | never | the NPC's own game's (`Fate::kEachOwn`) |
 | Car or barrel (a destructible object's own stage, by its explosion's base) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |
 | An NPC's own, one another game runs | that NPC's game; once in each other game, from that game's report, wherever a player could be hit. Our copy's throw and explosive shot are held | by the NPC's own game only | the NPC's own game's (our copy's hits are nobody's) |
@@ -472,8 +480,14 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
     second): the objects' own explosions are trusted to whoever passes the stage.
   - The engine gives a freed explosion's id to the next one, and a hit that names an id is matched to the oldest
     explosion of the last 3 s with it: when two share an id that fast and fared differently, the blow goes by the older.
-  - Friends don't see explosive rounds and missiles in flight: a stand-in's or a copy's shot that may go off is held,
-    and only the flash and the shooter's reported blast show.
+  - A stand-in's or a copy's inert shot flies the engine's own path from here, not the shooter's: at range it lands
+    beside the reported blast, and a point-blank one can leave the gun a few frames after the blast went off (the
+    blast's report is reliable and the shot's replay is a frame or more behind it). It hurts nobody and sets off
+    nothing, but its impact is a real one: a direct hit on our player shows the hit's blood, and what the impact's
+    own effect does (a mine shot at goes off here as the engine has it) is each game's own.
+  - A record that goes off whose shot isn't the gun's `GunProjectile` (the record the replay made the copy for) gets
+    its copy made in the launch itself, on whatever thread the engine launches from (`inertOffMain=`); when no copy
+    can be made (32 at once), nothing is launched (`inertRefused=`), as the hold.
   - A living robot's limb blown off goes off in its runner's game alone (it has no damage of its own). A Sentry Bot's
     `RobotModExplosion` pieces (no damage) go the normal way, as a turret's shots share that base: in a throw's
     watch one can show twice.
@@ -485,10 +499,10 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   - A client can have an explosion relayed beside any player in its space without being near them, within the
     explosion budget and each receiver's own checks (its reported position was its own word anyway).
 - `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`,
-  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=`, `standInBlowsThere=` (an explosion's hits on a friend's stand-in not passed on), the blast counters above; the log names each explosion's owner and
+  `shotsWatched=watched/checked`, `nearFriends=`, `deathBlasts=`, `standInBlowsThere=` (an explosion's hits on a friend's stand-in not passed on), `firesInert=` (a stand-in's or a copy's shots that would go off, let fly), `inert=swapped/launches` with `inertRefused=`, `inertCopies=` and `inertOffMain=` (every launch the engine made, those made inert, those refused for want of a copy, the copies, those off the main thread), the blast counters above; the log names each explosion's owner and
   what became of it, and each hit on a copy names its source.
 
-To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, a companion blowing a
+To check live: in both directions, a missile, a mini nuke, a shell, a cannonball and an Explosive round at range and point blank (seen in flight in the friend's game, `inert=` up by one there, `explosions=` up by one on each side, each game's own counters of damage once), a grenade and then a missile within 8 s, a missile into a car, a companion blowing a
 car up, a grenade beside a mine, an NPC's missile at a player far from the NPC's game's player, and a Sentry Bot killed by a missile (its death blast
 goes off once in each game, `deathBlasts=` up on both sides and nothing reported). Each goes off once in
 each game (`explosions=` up by one on each side, `standInExplosions=0`), each NPC it hits loses its health once, the

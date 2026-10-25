@@ -45,6 +45,9 @@ namespace Puppets
 	// True for any puppet: a remote player's stand-in or a mirrored NPC.
 	[[nodiscard]] bool IsRegistered(const RE::Actor* a_actor);
 
+	// Whether the actor uses furniture (sits or lies on it, or still holds it getting off).
+	[[nodiscard]] bool InFurniture(const RE::Actor* a_actor);
+
 	// Unregisters a mirrored NPC and gives it back to its own AI.
 	void ReleaseNpc(RE::Actor* a_actor);
 

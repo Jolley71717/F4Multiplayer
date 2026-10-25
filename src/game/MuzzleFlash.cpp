@@ -320,6 +320,35 @@ namespace MuzzleFlash
 		return false;
 	}
 
+	bool LoadGun(RE::Actor* a_actor, std::uint32_t a_rounds)
+	{
+		auto       gun = EquippedGun(a_actor);
+		const auto ammo = !gun.weapon ? nullptr : gun.instance ? gun.instance->ammo : gun.weapon->weaponData.ammo;
+		if (!ammo) {
+			return false;
+		}
+		bool changed = false;
+		if (a_actor->GetInventoryObjectCount(ammo) == 0) {
+			a_actor->AddInventoryItem(ammo, nullptr, a_rounds, nullptr, nullptr, nullptr);
+			changed = true;
+			gun = EquippedGun(a_actor);  // read again: the add may have had the engine look at the equipment anew
+		}
+		if (gun.data && gun.data->ammoCount == 0) {
+			gun.data->ammo = ammo;
+			gun.data->ammoCount = a_rounds;
+			changed = true;
+		}
+		return changed;
+	}
+
+	std::string DescribeLoad(RE::Actor* a_actor)
+	{
+		const auto gun = EquippedGun(a_actor);
+		const auto ammo = !gun.weapon ? nullptr : gun.instance ? gun.instance->ammo : gun.weapon->weaponData.ammo;
+		return std::format("gun={:08X} ammo={:08X} loaded={}{} carried={}", gun.weapon ? gun.weapon->GetFormID() : 0, ammo ? ammo->GetFormID() : 0,
+			gun.data ? gun.data->ammoCount : 0, gun.data ? "" : " (no equipped data)", ammo && a_actor ? a_actor->GetInventoryObjectCount(ammo) : 0);
+	}
+
 	void OnShot(RE::Actor* a_actor, bool a_animated)
 	{
 		if (a_animated) {
