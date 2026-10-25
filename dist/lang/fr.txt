@@ -117,6 +117,7 @@ workshop.rescued = Ce que vous aviez mis dans le conteneur d'un ami est dans vot
 drops.container_hint = Les armes et armures que vous mettez dans un conteneur restent dans votre partie uniquement. Pour en donner une à un ami, lâchez-la près de lui
 drops.not_given = Vos amis ne peuvent pas ramasser cet objet : il reste au sol dans votre partie uniquement
 drops.taken_first = Un ami l'a ramassé avant vous
+save.old_leftover = Multijoueur : cette sauvegarde contient un reste d'une ancienne version du mod. Sauvegardez maintenant, puis redémarrez le jeu et continuez depuis la nouvelle sauvegarde
 menu.unavailable = Multijoueur : le menu n'est pas disponible
 menu.more = Suite ({page}/{pages})
 menu.on = Activé

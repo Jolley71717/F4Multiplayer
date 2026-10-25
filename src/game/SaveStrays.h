@@ -224,6 +224,15 @@ namespace SaveStrays
 		return a_remains.notedOn && !a_remains.off && StillOurs(once) ? Linger::kTurnOff : Linger::kNo;
 	}
 
+	// Which of the references of ours still in the book SaveGuard::BeforeLoad hands to the load: each on its way out (buried,
+	// being deleted, or lost from those lists with its form still there), each lingering from the last load, and each held
+	// with no record. A held copy with a cell always has its record; one without is adrift (it lost its cell, and its record
+	// is dropped each frame until it is buried), and kept through the load it would be in no cell and nobody's to judge.
+	constexpr bool GoesToLoad(bool a_onItsWayOut, bool a_lingering, bool a_hasRecord)
+	{
+		return a_onItsWayOut || a_lingering || !a_hasRecord;
+	}
+
 	// What SaveGuard::BeforeLoad does with a reference of ours on its way out, so the load frees it with the old world
 	// (see Remains): one with a record is left to the load; one without is given one (TESForm::AddChange), which the
 	// engine refuses for a created reference that is deleted and not persistent; that one is let go of now, as the load

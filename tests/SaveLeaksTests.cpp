@@ -301,3 +301,32 @@ TEST("save leaks: a forgotten form of ours still there keeps its id while its re
 	CHECK(book.ForgottenCount() == 0);
 	CHECK(!book.IsPlaced(0xFF000D00, FRAME));
 }
+
+TEST("save leaks: a held copy adrift, its record dropped while it waits to be buried, goes to the load too")
+{
+	using SaveStrays::GoesToLoad;
+	CHECK(GoesToLoad(true, false, false));   // buried: on its way out
+	CHECK(GoesToLoad(false, true, true));    // lingering from the last load
+	CHECK(GoesToLoad(false, false, false));  // held, with no record: adrift (lost its cell inside ADRIFT_GRACE)
+	CHECK(!GoesToLoad(false, false, true));  // held with its record: the load frees it as it is
+
+	// On the model: a frame copy adrift has no record when the load comes; handed over, it goes with the load.
+	Engine engine;
+	engine.forms[0xFF0010C0] = { .base = FRAME, .record = false };
+	CHECK(HandOver(engine, 0xFF0010C0) == SaveStrays::Handover::kGiveRecord);
+	engine.Load();
+	CHECK(engine.forms.empty());
+}
+
+TEST("save leaks: a stand-in handed to the load is no puppet of ours, so one kept all the same lingers")
+{
+	using SaveStrays::Linger;
+	using SaveStrays::LingerOf;
+	// Buried before its 3D came in: never disabled, so its holder never unregistered it, and it does so only after
+	// SaveGuard::AfterLoad. Asked then as a puppet, a stand-in the load kept all the same was left to the game.
+	SaveStrays::Remains kept{ .same = true, .actor = true, .puppet = true, .notedOn = true };
+	CHECK(LingerOf(kept) == Linger::kNo);
+	// SaveGuard::HandToLoad unregisters it as it hands it over, before the load: a puppet after the load is a new one of ours.
+	kept.puppet = false;
+	CHECK(LingerOf(kept) == Linger::kTurnOff);
+}

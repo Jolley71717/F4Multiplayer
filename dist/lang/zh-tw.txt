@@ -113,6 +113,7 @@ workshop.rescued = 你放在好友容器裡的東西已回到你的物品欄
 drops.container_hint = 放進容器的武器和護甲只留在你的遊戲裡。要送給好友，請在他們附近丟棄
 drops.not_given = 好友無法撿起這件物品：它只留在你遊戲裡的地上
 drops.taken_first = 好友先撿走了
+save.old_leftover = 多人連線：此存檔含有舊版本模組遺留的內容。請立即存檔，然後重新啟動遊戲，從新存檔繼續遊玩
 menu.unavailable = 多人連線：選單無法使用
 menu.more = 更多（{page}/{pages}）
 menu.on = 開

@@ -1,8 +1,10 @@
 #include "game/SaveGuard.h"
 #include "game/Equipment.h"
+#include "game/Hud.h"
 #include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveStrays.h"
+#include "Text.h"
 
 namespace SaveGuard
 {
@@ -193,6 +195,7 @@ namespace SaveGuard
 		std::vector<BroughtBack>  broughtBack;
 		constexpr std::size_t     BROUGHT_BACK_MAX = 256;
 		std::uint32_t             broughtBackHanded = 0;  // of those, handed to a load
+		std::uint32_t             oldSaveNotices = 0;     // loads of a save holding one of those, told on the HUD
 
 		// Somebody here is in this frame, or our player is in it or got out of it last.
 		bool Worn(const RE::TESObjectREFR* a_frame)
@@ -326,6 +329,12 @@ namespace SaveGuard
 			const auto base = a_ref->GetObjectReference();
 			const auto baseId = base ? base->GetFormID() : 0;
 			unpromoted.Remove(id, baseId);
+			// A stand-in or mirrored NPC handed over is no puppet of ours from here on. Its holder unregisters it only after
+			// the load (RemotePlayers::OnGameLoaded, after AfterLoad), and one buried before its 3D came in was never
+			// disabled, so never unregistered: kept by the load all the same, it would read as ours in use, not as lingering.
+			if (const auto actor = a_ref->As<RE::Actor>()) {
+				Puppets::Unregister(actor, id);
+			}
 			// An actor is freed some frames after the load lets go of it (DeferredDeleter), and reads its base as it goes; a
 			// created base with a record (a stand-in's face copy) the load frees at once. Freed so, the load after it crashed
 			// in memory the base had held (Actor::Revert on another actor). So the base keeps no record: the load leaves it
@@ -637,13 +646,14 @@ namespace SaveGuard
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			// Only one on its way out can outlive the load as a leak: a copy handed to someone here is released (Release), and one
-			// still held but not buried is not ours to judge after the load. One lingering from the last load is on its way out
+			// still held keeps its record, so the load frees it (but see below). One lingering from the last load is on its way out
 			// too, though no longer in RemotePlayers' lists (cleared at that load): without its note, a second load in a row
 			// would leave it to the game, and the next save would write it. Every kind Track is told of: a friend's stand-in
 			// leaks through a load as a frame copy does, and one written into a save crashed the second load of it in a run.
 			if (base && base->GetFormID() == a_base && !noted.contains(a_id)) {
 				const bool lingering = book.IsLingering(a_id, a_base);
-				if (RemotePlayers::OnItsWayOut(ref) || lingering) {
+				// Or one held with no record: adrift, inside RemotePlayers' ADRIFT_GRACE (SaveStrays::GoesToLoad).
+				if (SaveStrays::GoesToLoad(RemotePlayers::OnItsWayOut(ref), lingering, HasChanges(a_id))) {
 					const auto& at = ref->data.location;
 					noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z, !ref->IsDisabled() && !ref->IsDeleted() };
 					wayOut.emplace_back(ref, lingering);
@@ -750,6 +760,12 @@ namespace SaveGuard
 				REX::INFO("SaveGuard: the save brought back {:08X} in no cell (a friend's stand-in saved by an earlier version?)", c.id);
 			}
 		}
+		// The save holds one of ours an earlier version wrote: loading it again in this run may crash (see DESIGN.md), and a
+		// save made now holds none. Told once a load, in plain words.
+		if (!broughtBack.empty()) {
+			++oldSaveNotices;
+			Hud::Notify(Text::Get("save.old_leftover"));
+		}
 		straysLoaded += static_cast<std::uint32_t>(strays.size());
 		return static_cast<std::uint32_t>(strays.size());
 	}
@@ -796,8 +812,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
-			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, oldSaveNotices, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
 			unpromoted.Refused());
 	}
 }

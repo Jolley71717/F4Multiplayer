@@ -113,6 +113,7 @@ workshop.rescued = 你放在好友容器里的东西已回到你的物品栏
 drops.container_hint = 放进容器的武器和护甲只留在你的游戏里。要送给好友，请在他们附近丢弃
 drops.not_given = 好友无法拾取这件物品：它只留在你游戏里的地上
 drops.taken_first = 好友先拾取了
+save.old_leftover = 多人联机：此存档含有旧版本 MOD 遗留的内容。请立即存档，然后重启游戏，从新存档继续游玩
 menu.unavailable = 多人联机：菜单不可用
 menu.more = 更多（{page}/{pages}）
 menu.on = 开
