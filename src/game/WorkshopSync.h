@@ -33,6 +33,9 @@ namespace WorkshopSync
 	// must name as its workbench, and a container no friend's loot changes.
 	[[nodiscard]] bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref);
 
+	// The workbench the reference is linked to as one of its settlement's workshop items (a piece built there), if any.
+	[[nodiscard]] RE::TESObjectREFR* WorkbenchOf(const RE::TESObjectREFR& a_ref);
+
 	// Dev: whether workshop mode lets the player scrap the reference (the game's own test).
 	[[nodiscard]] bool WorkshopModeScraps(RE::TESObjectREFR& a_ref);
 

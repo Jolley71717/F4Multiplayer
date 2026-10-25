@@ -26,6 +26,9 @@ namespace RadiantSync
 
 	// Someone joined: our runs going now are sent again, for them (the others' games ignore runs they know).
 	void OnPlayerJoined();
+	// A friend's game loaded a save: it knows none of our runs now (they went with the world it threw away), so ours going
+	// are sent again. One it finished before the load is never started there again (RadiantRules::Book keeps them).
+	void OnPlayerReloaded(std::uint32_t a_playerId);
 
 	// Whether this radiant's run here is shared with friends now (its friends' stages are set here).
 	[[nodiscard]] bool Shares(std::uint32_t a_quest);

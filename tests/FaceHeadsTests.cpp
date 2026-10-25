@@ -186,3 +186,26 @@ TEST("face heads: region sliders cover every body region the engine can read")
 	const std::vector<float> seven(7, 0.25f);
 	CHECK(FaceHeads::RegionSliders(seven) == seven);
 }
+
+TEST("face heads: a friend's tint layer is made only on a template of its own class; another class, or one unknown, is left out")
+{
+	using FaceHeads::TintClass;
+	using FaceHeads::TintFits;
+	CHECK(TintFits(0, TintClass::kMask));
+	CHECK(TintFits(1, TintClass::kPalette));
+	CHECK(TintFits(2, TintClass::kTextureSet));
+	// A mask template named by a palette or texture set layer (another mod's race, a bad client): the head build would
+	// read it as the wrong class.
+	CHECK(!TintFits(1, TintClass::kMask));
+	CHECK(!TintFits(2, TintClass::kMask));
+	CHECK(!TintFits(0, TintClass::kPalette));
+	CHECK(!TintFits(2, TintClass::kPalette));
+	CHECK(!TintFits(0, TintClass::kTextureSet));
+	CHECK(!TintFits(1, TintClass::kTextureSet));
+	// A template of none of the three, and a layer type no game sends.
+	for (const auto type : std::initializer_list<std::uint8_t>{ 0, 1, 2, 3, 255 }) {
+		CHECK(!TintFits(type, TintClass::kOther));
+	}
+	CHECK(!TintFits(3, TintClass::kTextureSet));
+	CHECK(!TintFits(static_cast<std::uint8_t>(TintClass::kOther), TintClass::kOther));
+}

@@ -468,3 +468,125 @@ TEST("radiants: a friend's run of a quest already running here is shared only if
 	CHECK(!book.IsStarting(MIN_RECRUIT01));
 	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 2, 2 }, false) == Answer::kIgnore));
 }
+
+TEST("radiants: a friend's pick whose conditions are lifted here may take a reference another quest reserves; a needed alias may not")
+{
+	// Forced, an alias no longer follows the others either way.
+	CHECK((ForcedFlags(ALIAS_BY_OTHERS | ALIAS_OPTIONAL, true) & ALIAS_BY_OTHERS) == 0);
+	CHECK((ForcedFlags(ALIAS_BY_OTHERS, false) & ALIAS_BY_OTHERS) == 0);
+	// The settlement owned here and not in the friend's game: the reservation of this game's settlement quests is passed.
+	CHECK((ForcedFlags(ALIAS_OPTIONAL, true) & ALIAS_ALLOW_RESERVED) != 0);
+	// A needed target a story or companion quest reserves here fails the start instead of being taken from it.
+	CHECK((ForcedFlags(0, false) & ALIAS_ALLOW_RESERVED) == 0);
+	// An alias whose own definition allows it keeps it.
+	CHECK((ForcedFlags(ALIAS_ALLOW_RESERVED, false) & ALIAS_ALLOW_RESERVED) != 0);
+	CHECK((ForcedFlags(ALIAS_OPTIONAL, false) & ALIAS_OPTIONAL) != 0);
+}
+
+TEST("radiants: a run finished here and shared again under another number (a friend loaded a save inside it, or came back) is never started here again")
+{
+	Book                           book;
+	const Run                      first{ 3, 7 };
+	const std::vector<RadiantFill> fills{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, CORVEGA }, { 9, 0, RUNTIME_NPC }, { 19, 0, 0 } };
+	CHECK(book.OnStart(MIN_RECRUIT01, first, false, fills) == Answer::kStart);
+	book.Starting(MIN_RECRUIT01, first, fills);
+	book.Join(MIN_RECRUIT01, first, fills);
+	CHECK(book.Accept(MIN_RECRUIT01, first, 400));  // the reward, paid here
+	book.Ended(MIN_RECRUIT01);
+
+	// Their game loaded an autosave from inside the dungeon and shares it again, a new number, its settler made again.
+	const std::vector<RadiantFill> again{ { 4, 1, CORVEGA }, { 9, 0, RUNTIME_NPC }, { 20, 0, TENPINES_WORKSHOP } };
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 8 }, false, again) == Answer::kDone));
+	// After a reconnect, and after this game loads a save too (one from before the reward would pay it twice).
+	book.EndSession();
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 9 }, false, again) == Answer::kDone));
+	book.Reloaded();
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 10 }, false, again) == Answer::kDone));
+	CHECK(book.OnStart(MIN_RECRUIT01, first, false, fills) == Answer::kIgnore);
+	// Another place is another run, with a reward of its own.
+	const std::vector<RadiantFill> lexington{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, LEXINGTON } };
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 11 }, false, lexington) == Answer::kStart));
+	// Running here, it is compared as ever (it may be this game's own run of it).
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 12 }, true, again) == Answer::kCompare));
+	// Another quest with the same place is its own.
+	CHECK((book.OnStart(MIN_RECRUIT02, Run{ 3, 13 }, false, again) == Answer::kStart));
+
+	// This game's own run, finished: the same.
+	const std::vector<RadiantFill> ours{ { 2, 1, POLICE_STATION } };
+	book.Begin(BOSR01, 5, {}, ours);
+	book.Ended(BOSR01);
+	CHECK((book.OnStart(BOSR01, Run{ 3, 14 }, false, ours) == Answer::kDone));
+
+	// One joined while it ran here (both games had the same targets), finished: the same.
+	const std::vector<RadiantFill> joined{ { 1, 1, LEXINGTON } };
+	CHECK((book.OnStart(INSTR01, Run{ 3, 15 }, true, joined) == Answer::kCompare));
+	book.Join(INSTR01, Run{ 3, 15 }, joined);
+	book.Ended(INSTR01);
+	CHECK((book.OnStart(INSTR01, Run{ 3, 16 }, false, joined) == Answer::kDone));
+}
+
+TEST("radiants: a run's targets are its places, or with none its references, but never one made at runtime or empty")
+{
+	const std::vector<RadiantFill> fills{ { 9, 0, RUNTIME_NPC }, { 4, 1, CORVEGA }, { 20, 0, TENPINES_WORKSHOP }, { 6, 0, SPAWN }, { 3, 1, LEXINGTON }, { 7, 1, 0 } };
+	CHECK((TargetsOf(fills) == std::vector<RadiantFill>{ { 3, 1, LEXINGTON }, { 4, 1, CORVEGA } }));
+	const std::vector<RadiantFill> people{ { 9, 0, RUNTIME_NPC }, { 20, 0, TENPINES_WORKSHOP }, { 6, 0, SPAWN }, { 2, 0, SANCTUARY_WORKSHOP } };
+	CHECK((TargetsOf(people) == std::vector<RadiantFill>{ { 2, 0, SANCTUARY_WORKSHOP }, { 20, 0, TENPINES_WORKSHOP } }));
+	// Nothing to know a run by: never taken for one finished here.
+	const std::vector<RadiantFill> nameless{ { 9, 0, RUNTIME_NPC }, { 6, 0, SPAWN }, { 7, 1, 0 } };
+	CHECK(TargetsOf(nameless).empty());
+	Book book;
+	book.Begin(MIN_RECRUIT01, 5, {}, nameless);
+	book.Ended(MIN_RECRUIT01);
+	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 1 }, false, nameless) == Answer::kStart));
+}
+
+TEST("radiants: a game's run numbers start at its own start, so one that restarts, its player given back their id, never numbers a run as one of its last")
+{
+	Book       before{ SerialSeed(1792000000) };
+	const auto first = before.Begin(MIN_RECRUIT01, 3, {});
+	before.Ended(MIN_RECRUIT01);
+	const auto second = before.Begin(MIN_RECRUIT01, 3, {});
+
+	// A friend's game ran the first and finished it, and still runs the second (Tenpines Bluff).
+	Book friends;
+	friends.Starting(MIN_RECRUIT01, first);
+	friends.Join(MIN_RECRUIT01, first);
+	friends.Ended(MIN_RECRUIT01);
+	friends.Starting(MIN_RECRUIT01, second);
+	friends.Join(MIN_RECRUIT01, second);
+
+	// The game crashes and comes back a minute later as player 3 again, and its quest is handed out for Corvega.
+	Book       after{ SerialSeed(1792000060) };
+	const auto next = after.Begin(MIN_RECRUIT01, 3, {});
+	CHECK(next != first);
+	CHECK(next != second);
+	CHECK(next.serial > second.serial);
+	CHECK(!friends.Accept(MIN_RECRUIT01, next, 400));  // its stages aren't the Tenpines run's
+	CHECK(friends.Accept(MIN_RECRUIT01, second, 400));
+	friends.Ended(MIN_RECRUIT01);
+	CHECK(friends.OnStart(MIN_RECRUIT01, next, false) == Answer::kStart);  // nor is it the first, finished there
+
+	// They go on through a load and another server.
+	after.Reloaded();
+	after.Clear();
+	CHECK(after.Begin(MIN_RECRUIT01, 3, {}).serial > next.serial);
+}
+
+TEST("radiants: a run shared here and shared again under a new number is joined as the same, and said to be (its game is sent the stages done here)")
+{
+	Book                           book;
+	const std::vector<RadiantFill> fills{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, CORVEGA } };
+	const Run                      first{ 3, 7 };
+	CHECK(!book.Join(MIN_RECRUIT01, first, fills));  // found running here with their fills: the first share
+	CHECK(book.Report(MIN_RECRUIT01, 100).size() == 1);
+	CHECK(!book.Join(MIN_RECRUIT01, first, fills));  // the same run again
+	// Their game loaded a save from before this game's 100 and shares it again: this game's stages go to the new number.
+	const Run again{ 3, 8 };
+	CHECK(book.OnStart(MIN_RECRUIT01, again, true, fills) == Answer::kCompare);
+	CHECK(book.Join(MIN_RECRUIT01, again, fills));
+	CHECK(book.Report(MIN_RECRUIT01, 200).size() == 2);
+	// One started here from a friend's run is a first share.
+	CHECK(book.OnStart(MIN_RECRUIT02, again, false, fills) == Answer::kStart);
+	book.Starting(MIN_RECRUIT02, again, fills);
+	CHECK(!book.Join(MIN_RECRUIT02, again, fills));
+}

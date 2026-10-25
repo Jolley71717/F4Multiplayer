@@ -167,6 +167,7 @@ namespace ProtocolSamples
 		s.push_back({ "Reject", Encode(Reject{ "Server is full" }), D(DecodeReject), false });
 		s.push_back({ "PlayerJoined", Encode(PlayerJoined{ 4, "Bob", 0x0001ABCD }), D(DecodePlayerJoined), false });
 		s.push_back({ "PlayerLeft", Encode(PlayerLeft{ 4 }), D(DecodePlayerLeft), false });
+		s.push_back({ "PlayerReloaded", Encode(PlayerReloaded{ 4 }), D(DecodePlayerReloaded), false });
 		s.push_back({ "PlayerStates", Encode(PlayerStates{ 99, { { 1, MakeState(1) }, { 2, MakeState(2) } } }), D(DecodePlayerStates) });
 		for (const auto type : { MT::kReportDeath, MT::kActorDied }) {
 			s.push_back({ "ActorDeath", Encode(ActorDeath{ REF_A, 3, true }, type), D(DecodeActorDeath) });
@@ -392,6 +393,7 @@ namespace ProtocolSamples
 		case MT::kReject:
 		case MT::kPlayerJoined:
 		case MT::kPlayerLeft:
+		case MT::kPlayerReloaded:
 		case MT::kPlayerStates:
 		case MT::kActorDied:
 		case MT::kWorldState:

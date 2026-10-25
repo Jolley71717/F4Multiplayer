@@ -70,6 +70,7 @@ namespace
 		bool              withFriends = true;
 		bool              paused = false;  // the pause menu is open
 		bool              fighting = false;  // in combat
+		bool              console = false;   // the console is open (or just was)
 		int               downNotices = 0;
 		int               kills = 0;
 		int               lastRevives = 0;
@@ -77,6 +78,7 @@ namespace
 		int               stoodUp = 0;
 		int               backDown = 0;
 		int               stayedUp = 0;
+		int               upByCommand = 0;
 		std::vector<int>  reminders;
 
 		void GameFrame()
@@ -109,7 +111,7 @@ namespace
 
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
-			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting };
+			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -129,6 +131,7 @@ namespace
 			stoodUp += step.stoodUp;
 			backDown += step.backDown;
 			stayedUp += step.stayedUp;
+			upByCommand += step.upByCommand;
 			if (step.trimHealth) {
 				body.fullHealth = false;
 				++body.trims;
@@ -1194,4 +1197,73 @@ TEST("downed rules: a downed friend's stand-in that will not get up is placed ag
 	CHECK(again.Lying());
 	// A stand-in it laid down is not broken for it; any other down one still is.
 	CHECK(DownRules::StandInBroken(DownRules::LIFE_ESSENTIAL_DOWN, false, false));
+}
+
+TEST("downed rules: a welcome back into the same session keeps the revives used and the cooldown; another session starts them over")
+{
+	constexpr std::uint64_t SESSION = 0x0000000100000000ull, OTHER = 0x0000000200000000ull;
+	Protocol::SessionRules session;
+	session.maxRevives = 1;
+	session.downCooldownSeconds = 30;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(session), SESSION);
+	game.fighting = true;
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	CHECK(!game.body.essential);
+	CHECK(game.self.InCooldown(now));
+	// The link drops (the session ends: the defaults, out of a session) and they join the same session again.
+	game.self.SetRules(DownRules::Rules{}, 0);
+	game.self.SetRules(DownRules::Rules::From(session), SESSION);
+	game.Run(now, 1s);
+	CHECK(!game.body.essential);  // out of revives still
+	CHECK(game.self.InCooldown(now));
+	CHECK(game.self.RevivesLeft(now) == 0);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.body.dead);
+
+	// Another session: a new count.
+	Game other;
+	now = Start();
+	other.self.SetRules(DownRules::Rules::From(session), SESSION);
+	other.fighting = true;
+	other.Run(now, 1s);
+	DownAndUp(other, now);
+	other.Run(now, 31s);
+	CHECK(!other.body.essential);
+	other.self.SetRules(DownRules::Rules::From(session), OTHER);
+	other.Run(now, 1s);
+	CHECK(other.body.essential);
+	CHECK(other.self.RevivesLeft(now) == 1);
+}
+
+TEST("downed: stood up with the console open (player.resurrect, a heal) while waiting for help, up it is: no putting down again")
+{
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	game.console = true;
+	game.body.StoodUpByGame();
+	game.Frame(now);
+	now += FRAME;
+	CHECK(game.upByCommand == 1);
+	CHECK(game.stoodUp == 0);
+	CHECK(game.body.putDowns == 0);
+	CHECK(!game.body.down);
+	CHECK(!game.body.stayDown);
+	CHECK(game.self.Now() == Phase::kUp);
+	game.console = false;
+	game.Run(now, 6s);
+	CHECK(game.body.putDowns == 0);
+	CHECK(game.self.Now() == Phase::kUp);
+	CHECK(game.kills == 0);
+	// The next lethal hit puts them down as usual.
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.self.Now() == Phase::kDown);
 }

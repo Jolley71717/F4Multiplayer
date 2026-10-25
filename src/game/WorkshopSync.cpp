@@ -1871,6 +1871,11 @@ namespace WorkshopSync
 		return CanScrap(a_ref);
 	}
 
+	RE::TESObjectREFR* WorkbenchOf(const RE::TESObjectREFR& a_ref)
+	{
+		return BenchOf(a_ref);
+	}
+
 	bool IsWorkbenchAnchor(const RE::TESObjectREFR* a_ref)
 	{
 		if (!a_ref || a_ref->As<RE::Actor>()) {

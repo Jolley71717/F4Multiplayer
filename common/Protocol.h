@@ -208,6 +208,7 @@ namespace Protocol
 		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
 		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
 		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
+		kPlayerReloaded = 160,    // another player loaded a save (asked for the world state again): their game knows no radiant run of ours
 		kPluginTable = 145,       // the session's plugin table, which numbers every form ID on the wire: before the welcome, and when it grows
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
@@ -483,6 +484,13 @@ namespace Protocol
 	};
 
 	struct PlayerLeft
+	{
+		std::uint32_t playerId = 0;
+	};
+
+	// Another player's game loaded a save (kRequestWorldState): what it knew of the others' radiant runs went with the
+	// world it threw away, so each game sends its runs going again (RadiantSync).
+	struct PlayerReloaded
 	{
 		std::uint32_t playerId = 0;
 	};
@@ -1310,6 +1318,11 @@ namespace Protocol
 
 	// A ping's name on the wire: what the sender's game calls the target ("Raider"), for a game with no copy of it.
 	inline constexpr std::size_t MAX_PING_NAME_LENGTH = 64;
+
+	// The least time between two of a player's pings the server passes on, by when they arrive. Less than a game's own
+	// spacing (PingRules::MIN_GAP, 1 s by key press): pings pressed a second apart reach the server a little sooner or later
+	// than that with the network's jitter, and one dropped here would show on the pinger's compass and on no friend's.
+	inline constexpr auto PING_SERVER_GAP = std::chrono::milliseconds{ 800 };
 
 	// A ping: "look at this". playerId: who pinged (ignored client -> server). The spot is where the target was in the
 	// sender's game, inside (cell) or outside (worldspace). target: for kActor the id the session knows the NPC by
@@ -2180,6 +2193,25 @@ namespace Protocol
 		Reader r{ a_data };
 		r.U8();
 		PlayerLeft msg;
+		msg.playerId = r.U32();
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const PlayerReloaded& a_msg)
+	{
+		Writer w{ MessageType::kPlayerReloaded };
+		w.U32(a_msg.playerId);
+		return w.Data();
+	}
+
+	inline std::optional<PlayerReloaded> DecodePlayerReloaded(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerReloaded msg;
 		msg.playerId = r.U32();
 		if (!r.Ok()) {
 			return std::nullopt;

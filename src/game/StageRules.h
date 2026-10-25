@@ -664,7 +664,7 @@ namespace StageRules
 		kLater,       // not yet; nothing that came after it is set either
 		kWarn,        // not yet: tell the player first that it will move them
 		kQuestWaits,  // not yet: its quest waits for the stage that frees the player; other quests go on
-		kOpeningWaits,  // not yet: it moves the player, and a game in the session is still in the opening; other quests go on
+		kOpeningWaits,  // not yet: it moves the player, and this game is still in the opening; other quests go on
 	};
 
 	struct Situation
@@ -674,7 +674,8 @@ namespace StageRules
 		bool                           nearFriend = false;    // a friend is close by
 		bool                           held = false;          // caught-up stages wait now (the player is fighting)
 		bool                           releaseComing = true;  // a stage that takes the controls away: the one that gives them back is coming too
-		bool                           opening = false;       // this game or a friend's is still in the opening (Story::InOpening)
+		bool                           opening = false;       // this game is still in the opening (Story::InOpening)
+		bool                           friendInOpening = false;  // a friend's is (their status): it holds nothing here
 		std::optional<Clock::duration> warned;                // since the player was told a stage would move them
 	};
 
@@ -691,8 +692,9 @@ namespace StageRules
 	// as it moved the friend), and skipped otherwise, unless nothing else would start what it starts:
 	// then the player is warned first, and it waits while they fight. A friend's payment is never made
 	// here, and without a shared story a side quest doesn't move the player's own story on. Nothing that moves
-	// the player is set while any game in the session is in the opening: the vault's own scripts fade the screen and
-	// take the controls there, and a friend's stage moving the player meanwhile breaks the scripts that give them back.
+	// the player is set while this game is in the opening: the vault's own scripts fade the screen and take the controls
+	// there, and a friend's stage moving the player meanwhile breaks the scripts that give them back. A friend still in
+	// the vault holds nobody else's: their own game holds them (with three or more, the others go on together).
 	inline Verdict Judge(const Rule* a_rule, const Situation& a_now)
 	{
 		const std::uint8_t flags = a_rule ? a_rule->flags : 0;

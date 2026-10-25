@@ -1462,6 +1462,27 @@ TEST("server workshop: a friend who loads a save from another session, or from b
 	}
 }
 
+// A game that loads a save knows none of the others' radiant runs then: the others are told (kPlayerReloaded), so their
+// games send their runs going again. Not over and over, for a game asking without pause.
+TEST("server: a friend who loads a save has the others told, once in a while, so their games send their radiant runs again")
+{
+	Fixture    f;
+	JoinAs(f, 1, "Alice");
+	const auto welcome = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(welcome);
+	Clear(f, { 1, 2 });
+
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 0 }));
+	CHECK(Count(Received(f, 2), MT::kPlayerReloaded) == 0);  // not Bob himself
+	const auto told = Decoded(Received(f, 1), MT::kPlayerReloaded, Protocol::DecodePlayerReloaded);
+	REQUIRE(told.size() == 1);
+	CHECK(told[0].playerId == welcome->playerId);
+
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ welcome->sessionId, 0 }));
+	Received(f, 2);
+	CHECK(Count(Received(f, 1), MT::kPlayerReloaded) == 0);  // asked again at once
+}
+
 // ---- the saved session --------------------------------------------------------------------
 
 TEST("server session file: the world survives a server restart with the same load order")

@@ -4,7 +4,7 @@
 #include <cstdint>
 
 // The time a frame of the engine's is at: the last frame's plus the frame time the engine's timer measured for it
-// (BSTimer's delta; FrameClock.h reads it), kept near the wall clock.
+// (BSTimer's, before the time multiplier: see FrameSeconds; FrameClock.h reads it), kept near the wall clock.
 //
 // The engine moves everything by its speed times that frame time. That is not the time between the moments our work
 // runs in two frames: those come earlier or later with the work before them, and a game that skips frames unevenly
@@ -13,7 +13,7 @@
 // the place goes evenly, and a stand-in placed at it steps as far each frame as the engine moves all else.
 //
 // Pulled toward the wall clock a little each frame, so it never wanders from it, and set to it when it is more than
-// SNAP off (a long hitch the engine clamps, a game slowed in VATS, the first frame).
+// SNAP off (a long hitch the engine clamps, the first frame).
 namespace EngineClock
 {
 	using Clock = std::chrono::steady_clock;
@@ -22,6 +22,15 @@ namespace EngineClock
 	inline constexpr float PULL = 0.02f;  // of the way to the wall clock each frame
 	inline constexpr auto  SNAP = 100ms;
 	inline constexpr float MAX_FRAME = 0.25f;  // seconds: a longer frame time is not one (the first, or a stall)
+
+	// The frame time to step by, from BSTimer: its realTimeDelta, the frame's time before the game's time multiplier.
+	// Its delta has the multiplier in it: under Jet (about 0.3), or in VATS without real time, the clock fell behind the wall
+	// clock by most of each frame and was set to it every SNAP, a stand and a leap again for friends. A real time that is
+	// not one (none, or not a number) falls back to delta.
+	constexpr float FrameSeconds(float a_delta, float a_realDelta)
+	{
+		return a_realDelta > 0.0f ? a_realDelta : a_delta;
+	}
 
 	struct Timeline
 	{

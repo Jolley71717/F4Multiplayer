@@ -4,6 +4,7 @@
 
 #include "game/CharacterBinding.h"
 
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -186,6 +187,48 @@ TEST("character binding: a session file named after the whole ID (up to 0.9.0-rc
 	write(CharacterBinding::FileName(0x0000000100000000, true), "the rig's coc character");
 	CHECK(CharacterBinding::PrepareFile(folder, 0, true, 0, say) == folder / CharacterBinding::FileName(0, true));
 	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(0, true)));
+
+	std::error_code error;
+	std::filesystem::remove_all(folder, error);
+}
+
+TEST("character binding: of two files under whole IDs, the one of the session the loaded save was played in becomes the character's, however old")
+{
+	const auto folder = std::filesystem::temp_directory_path() / std::format("f4mp-bind-{:016X}", (std::uint64_t{ std::random_device{}() } << 32) | std::random_device{}());
+	std::filesystem::create_directories(folder);
+	std::vector<std::string> log;
+	const auto               say = [&](const std::string& a_line) { log.push_back(a_line); };
+	const auto               save = [&](std::uint64_t a_wholeId, std::uint64_t a_session) {
+		SessionFile::Snapshot snapshot;
+		snapshot.sessionId = a_session;
+		REQUIRE(SessionFile::Save(folder / CharacterBinding::FileName(a_wholeId, false), snapshot));
+	};
+	// 0.9.0 hosted the character under one whole ID (the friends' progress, session 5E55); a quickload restarted
+	// hosting under another, into a fresh file (session 7777), written last.
+	save(0x00000001D8F04348, 0x5E55);
+	save(0x00000002D8F04348, 0x7777);
+	const auto now = std::filesystem::file_time_type::clock::now();
+	std::filesystem::last_write_time(folder / CharacterBinding::FileName(0x00000001D8F04348, false), now - std::chrono::hours{ 2 });
+	std::filesystem::last_write_time(folder / CharacterBinding::FileName(0x00000002D8F04348, false), now);
+
+	// The loaded save names 5E55: that one is the character's.
+	auto whole = CharacterBinding::FileUnderWholeId(folder, 0xD8F04348, false, 0x5E55);
+	REQUIRE(whole);
+	CHECK(whole->filename() == CharacterBinding::FileName(0x00000001D8F04348, false));
+	// A save with no record, or one of neither: the newest, as before.
+	whole = CharacterBinding::FileUnderWholeId(folder, 0xD8F04348, false, 0);
+	REQUIRE(whole);
+	CHECK(whole->filename() == CharacterBinding::FileName(0x00000002D8F04348, false));
+	whole = CharacterBinding::FileUnderWholeId(folder, 0xD8F04348, false, 0x1234);
+	REQUIRE(whole);
+	CHECK(whole->filename() == CharacterBinding::FileName(0x00000002D8F04348, false));
+
+	// PrepareFile goes by the save's: the older file is the one renamed.
+	const auto path = CharacterBinding::PrepareFile(folder, 0xD8F04348, false, 0x5E55, say);
+	const auto kept = SessionFile::Load(path);
+	REQUIRE(kept);
+	CHECK(kept->sessionId == 0x5E55);
+	CHECK(std::filesystem::exists(folder / CharacterBinding::FileName(0x00000002D8F04348, false)));
 
 	std::error_code error;
 	std::filesystem::remove_all(folder, error);

@@ -290,12 +290,6 @@ namespace QuestSync
 			return file && StageRules::IsOpening(*file, a_quest->GetFormID() & 0x00FFFFFF, a_stage);
 		}
 
-		// This game or a friend's is still in the opening: nothing that moves the player is set (StageRules::Judge).
-		bool AnyoneInOpening()
-		{
-			return Story::InOpening() || Party::FriendInOpening();
-		}
-
 		// Whether a stage of this quest goes on from a lock stage set here (MQ206's 1000, 1050 and 1200
 		// after its 500): without a combat hold, since the player can't fight anyway, and without
 		// another warning, since they were warned before the lock.
@@ -496,7 +490,8 @@ namespace QuestSync
 			if (rule && (rule->flags & StageRules::kMoves) && now.live) {
 				now.nearFriend = NearFriend(live->second.playerId);
 			}
-			now.opening = AnyoneInOpening();
+			now.opening = Story::InOpening();
+			now.friendInOpening = Party::FriendInOpening();
 			switch (StageRules::Judge(rule, now)) {
 			case StageRules::Verdict::kSkip:
 				++skipped;
@@ -517,8 +512,7 @@ namespace QuestSync
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kOpeningWaits:
 				if (openingWaitLogged.insert(Key(a_quest, a_stage)).second) {
-					REX::INFO("QuestSync: {:08X} '{}' stage {} moves the player; waiting while {} in the opening", a_quest, name ? name : "", a_stage,
-						Story::InOpening() ? "this game is" : "a friend's game is");
+					REX::INFO("QuestSync: {:08X} '{}' stage {} moves the player; waiting while this game is in the opening", a_quest, name ? name : "", a_stage);
 				}
 				return StageLog::Set::kQuestWaits;
 			case StageRules::Verdict::kSet:
@@ -640,7 +634,8 @@ namespace QuestSync
 			StageRules::Situation now;
 			now.sharedStory = true;
 			now.held = combatHold;
-			now.opening = AnyoneInOpening();
+			now.opening = Story::InOpening();
+			now.friendInOpening = Party::FriendInOpening();
 			if (warnedAt && a_now - *warnedAt < WARNING_COVERS) {
 				now.warned = a_now - *warnedAt;
 			}

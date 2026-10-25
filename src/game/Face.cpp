@@ -57,6 +57,8 @@ namespace Face
 			return usesPreprocessed(a_npc);
 		}
 
+		std::atomic<std::uint32_t> tintsMisfit{ 0 };  // friends' tint layers left out: not of their template's class (the first logged)
+
 		std::uint32_t IdOf(const RE::TESForm* a_form)
 		{
 			return a_form ? a_form->GetFormID() : 0;
@@ -81,6 +83,22 @@ namespace Face
 				}
 			}
 			return nullptr;
+		}
+
+		// The class of a tint template entry, by its vtable.
+		FaceHeads::TintClass ClassOf(const Tint::Template::Entry* a_template)
+		{
+			const auto vtable = *reinterpret_cast<const std::uintptr_t*>(a_template);
+			if (vtable == RE::VTABLE::BGSCharacterTint__Template__Mask[0].address()) {
+				return FaceHeads::TintClass::kMask;
+			}
+			if (vtable == RE::VTABLE::BGSCharacterTint__Template__Palette[0].address()) {
+				return FaceHeads::TintClass::kPalette;
+			}
+			if (vtable == RE::VTABLE::BGSCharacterTint__Template__TextureSet[0].address()) {
+				return FaceHeads::TintClass::kTextureSet;
+			}
+			return FaceHeads::TintClass::kOther;
 		}
 
 		// A tint layer as the game would make it: the right class (by vtable), pointing at its template.
@@ -360,6 +378,15 @@ namespace Face
 				const auto templ = FindTemplate(race, a_face.female, t.templateId);
 				if (!templ) {
 					continue;  // a template from a mod the receiver doesn't have
+				}
+				if (const auto kind = ClassOf(templ); !FaceHeads::TintFits(t.type, kind)) {
+					// Its class isn't the template's (another mod's race here, a bad client): made on it, the head build
+					// would read the template as the wrong class.
+					if (tintsMisfit++ < 10) {
+						REX::WARN("Face: a friend's tint layer of class {} names template {}, which is of class {} here; left out", t.type, t.templateId,
+							static_cast<int>(kind));
+					}
+					continue;
 				}
 				if (const auto entry = MakeTint(t, templ)) {
 					tints->entriesA.push_back(entry);

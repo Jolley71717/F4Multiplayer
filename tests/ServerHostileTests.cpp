@@ -62,6 +62,9 @@ namespace
 		case MT::kPlayerLeft:
 			add(DecodePlayerLeft(a_packet));
 			break;
+		case MT::kPlayerReloaded:
+			add(DecodePlayerReloaded(a_packet));
+			break;
 		case MT::kPlayerStates:
 			if (const auto states = DecodePlayerStates(a_packet)) {
 				for (const auto& entry : states->players) {

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -91,6 +92,7 @@ namespace LootSync
 			std::uint32_t emptiedSent = 0;     // holders the player took the last shared stack from (CONTAINER_EMPTIED)
 			std::uint32_t emptiedApplied = 0;  // other players' emptied holders emptied here
 			std::uint32_t emptiedStacks = 0;   // stacks those took out of our world
+			std::uint32_t emptiedKept = 0;     // items those left: the session put them in and nobody took them out since
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -104,6 +106,7 @@ namespace LootSync
 		{
 			std::vector<std::vector<std::uint8_t>> packets;
 			std::vector<std::uint32_t>             takenFrom;
+			Restocked(a_moves, a_world);
 			for (const auto& move : a_moves) {
 				const auto direction = move.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
 				// Here a living NPC is pickpocketing or a companion's trade: never the session's.
@@ -125,20 +128,28 @@ namespace LootSync
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
+				Track(change, CountOf(move.holder, move.item, a_world) - move.count);  // ours is made: what it held before
 				toldBare.erase(move.holder);  // it holds something shared again (a put), or is about to be asked
 				if (direction == LootScope::Direction::kTake && std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
 					takenFrom.push_back(move.holder);
 				}
 			}
 			for (const auto holder : takenFrom) {
-				if (HoldsShared(holder, a_world)) {
+				// A container that keeps what is put in it (a home's, a settlement's) may hold a friend's stash in their copy:
+				// only the takes go out, and take what was taken.
+				if (!LootScope::Rolled(a_world.Holder(holder)) || HoldsShared(holder, a_world)) {
 					continue;
 				}
 				const Protocol::ContainerChange change{ holder, Protocol::CONTAINER_EMPTIED, -1 };
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.emptiedSent;
-				toldBare.insert(holder);
+				sessionPut.erase(holder);  // ours holds nothing shared
+				auto& told = toldBare[holder];
+				told.clear();
+				for (const auto& stack : a_world.Stacks(holder)) {
+					told[stack.item] += stack.count;
+				}
 			}
 			return packets;
 		}
@@ -153,6 +164,7 @@ namespace LootSync
 			liveId = a_localId;
 			if (receiver.OnWelcome(a_session, a_localId)) {
 				pending.clear();  // a different session: none of its changes are in our world yet
+				sessionPut.clear();
 			}
 		}
 
@@ -163,6 +175,7 @@ namespace LootSync
 		void LoadRecord(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending)
 		{
 			toldBare.clear();  // the world is the save's: a chest looted bare since may hold its things again
+			sessionPut.clear();
 			receiver.Load(a_session, a_next);
 			pending = std::move(a_pending);
 			// In session order, whatever order the record holds them in: a container's changes go in in that order.
@@ -175,6 +188,7 @@ namespace LootSync
 		Protocol::WorldRequest AfterLoad(std::uint64_t a_session, std::uint32_t a_localId, Clock::time_point a_now)
 		{
 			toldBare.clear();
+			sessionPut.clear();
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
 			}
@@ -346,8 +360,11 @@ namespace LootSync
 			});
 		}
 
-		// Another player emptied a holder of what the session shares: ours gives up every such stack it has, whatever
-		// its own roll put there. Weapons, armor, keys, notes, quest items stay, as they would for a take of each.
+		// Another player emptied a holder of what the session shares: ours gives up every such stack its own roll put
+		// there. Weapons, armor, keys, notes, quest items stay, as they would for a take of each, and so does what the
+		// session put in and nobody has taken since (a friend's put the sender hadn't seen yet: the server may order it
+		// first, and the sender's copy gets it after). A container that keeps things (a home's, a settlement's) is left
+		// alone: our copy may hold our player's stash, which the friend never saw.
 		Applied TryEmpty(const Protocol::ContainerChange& a_change, World& a_world)
 		{
 			if (!a_world.Stocked(a_change.container)) {
@@ -359,20 +376,101 @@ namespace LootSync
 			if (scope == LootScope::Scope::kNotYetDead) {
 				return Applied::kNotYetDead;
 			}
-			if (scope != LootScope::Scope::kShared) {
-				++counts.keptApplied[static_cast<std::size_t>(scope)];
+			if (scope != LootScope::Scope::kShared || !LootScope::Rolled(holder)) {
+				++counts.keptApplied[static_cast<std::size_t>(scope != LootScope::Scope::kShared ? scope : LootScope::Scope::kPerPlayer)];
 				return Applied::kDone;
 			}
+			const auto put = sessionPut.find(a_change.container);
 			for (const auto& stack : a_world.Stacks(a_change.container)) {
 				auto item = a_world.Item(stack.item);
 				item.questAlias = stack.questAlias;
-				if (stack.count > 0 && LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
-					a_world.Apply({ a_change.container, stack.item, -stack.count });
+				if (stack.count <= 0 || LootScope::Of(holder, item, LootScope::Direction::kTake) != LootScope::Scope::kShared) {
+					continue;
+				}
+				std::int64_t kept = 0;
+				if (put != sessionPut.end()) {
+					const auto it = put->second.find(stack.item);
+					kept = it != put->second.end() ? (std::min<std::int64_t>)(it->second, stack.count) : 0;
+				}
+				if (kept > 0) {
+					counts.emptiedKept += static_cast<std::uint32_t>(kept);
+				}
+				if (stack.count > kept) {
+					a_world.Apply({ a_change.container, stack.item, -static_cast<std::int32_t>(stack.count - kept) });
 					++counts.emptiedStacks;
 				}
 			}
 			++counts.emptiedApplied;
 			return Applied::kDone;
+		}
+
+		// What the session put into a holder and hasn't taken out since, each item's count (another player's change put
+		// in here, or our player's own reported): an emptying leaves it. a_before: how many of the item the holder had
+		// before the change. A take is taken from the holder's own roll first: only what it took beyond that was a put of
+		// the session's (a friend taking their copy's roll while another's put races the marker leaves the put kept).
+		void Track(const Protocol::ContainerChange& a_change, std::int64_t a_before)
+		{
+			if (a_change.item == Protocol::CONTAINER_EMPTIED || a_change.count == 0) {
+				return;
+			}
+			if (a_change.count > 0) {
+				sessionPut[a_change.container][a_change.item] += a_change.count;
+				return;
+			}
+			const auto holder = sessionPut.find(a_change.container);
+			if (holder == sessionPut.end()) {
+				return;
+			}
+			if (const auto it = holder->second.find(a_change.item); it != holder->second.end()) {
+				const auto roll = (std::max)(std::int64_t{ 0 }, a_before - it->second);
+				const auto fromPut = (std::max)(std::int64_t{ 0 }, -std::int64_t{ a_change.count } - roll);
+				if ((it->second -= fromPut) <= 0) {
+					holder->second.erase(it);
+				}
+			}
+			if (holder->second.empty()) {
+				sessionPut.erase(holder);
+			}
+		}
+
+		static std::int64_t CountOf(std::uint32_t a_holder, std::uint32_t a_item, World& a_world)
+		{
+			std::int64_t count = 0;
+			for (const auto& stack : a_world.Stacks(a_holder)) {
+				if (stack.item == a_item) {
+					count += stack.count;
+				}
+			}
+			return count;
+		}
+
+		// A holder told bare follows our player's moves (what ours holds should be what it held then, give or take
+		// them). One that holds more than that, or gave more of something than that, had its loot respawned (a cell
+		// reset) and is told again when it is taken bare.
+		void Restocked(std::span<const Move> a_moves, World& a_world)
+		{
+			std::vector<std::uint32_t> touched;
+			for (const auto& move : a_moves) {
+				const auto told = toldBare.find(move.holder);
+				if (told == toldBare.end()) {
+					continue;
+				}
+				told->second[move.item] += move.count;
+				if (std::ranges::find(touched, move.holder) == touched.end()) {
+					touched.push_back(move.holder);
+				}
+			}
+			for (const auto holder : touched) {
+				const auto& told = toldBare.at(holder);
+				const auto  more = std::ranges::any_of(told, [](const auto& a_item) { return a_item.second < 0; }) ||
+				                   std::ranges::any_of(a_world.Stacks(holder), [&](const Stack& a_stack) {
+					const auto it = told.find(a_stack.item);
+					return a_stack.count > (it != told.end() ? it->second : 0);
+				});
+				if (more) {
+					toldBare.erase(holder);
+				}
+			}
 		}
 
 		Applied TryApply(const Protocol::ContainerChange& a_change, World& a_world)
@@ -395,6 +493,7 @@ namespace LootSync
 				++counts.keptApplied[static_cast<std::size_t>(scope)];
 				return Applied::kDone;
 			}
+			Track(a_change, CountOf(a_change.container, a_change.item, a_world));
 			a_world.Apply(a_change);
 			return Applied::kDone;
 		}
@@ -442,7 +541,11 @@ namespace LootSync
 		std::uint64_t             live = 0;    // the session we are welcomed into (0: none, or the connection went)
 		std::uint32_t             liveId = 0;  // our player ID in it
 		std::vector<Pending>      pending;
-		std::unordered_set<std::uint32_t> toldBare;  // holders reported emptied (CONTAINER_EMPTIED) and not stocked with anything shared since
+		// Holders reported emptied (CONTAINER_EMPTIED) and not stocked with anything shared since: what ours held then, each
+		// item's count, moved on by our player's moves since (see Restocked).
+		std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, std::int64_t>> toldBare;
+		// What the session put into each holder and nobody took out since (see Track).
+		std::unordered_map<std::uint32_t, std::unordered_map<std::uint32_t, std::int64_t>> sessionPut;
 		Counts                    counts;
 	};
 }

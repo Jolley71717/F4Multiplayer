@@ -903,6 +903,51 @@ namespace WorldSync
 			return facts;
 		}
 
+		constexpr std::uint32_t PLAYER_BASE = 0x00000007;     // the player's NPC
+		constexpr std::uint32_t PLAYER_FACTION = 0x0001C21C;  // PlayerFaction
+
+		bool OwnedByPlayer(const RE::TESForm* a_owner)
+		{
+			return a_owner && (a_owner->GetFormID() == PLAYER_BASE || a_owner->GetFormID() == PLAYER_FACTION);
+		}
+
+		// A container that keeps what the player puts in it (LootScope::IsStorage), so a friend's copy of it may hold their
+		// stash: one the player owns, or whose cell they own (a home bought: FFDiamondCity02 gives Home Plate's cell to
+		// PlayerFaction); a settlement's workbench or a piece built there; or one in the build area of a settlement the
+		// player owns (WorkshopScript.SetOwnedByPlayer makes the player's NPC the workbench's owner). A Sanctuary house's
+		// dresser is a roll of loot until Sanctuary is the player's.
+		bool IsStorage(RE::TESObjectREFR* a_ref)
+		{
+			LootScope::StorageFacts facts;
+			const auto              cell = a_ref->GetParentCell();
+			facts.playerOwned = OwnedByPlayer(a_ref->GetOwner()) || (cell && OwnedByPlayer(cell->GetOwner()));
+			facts.workshopItem = WorkshopSync::IsWorkbenchAnchor(a_ref) || WorkshopSync::WorkbenchOf(*a_ref) != nullptr;
+			if (!facts.playerOwned && !facts.workshopItem) {
+				const auto bench = RE::Workshop::FindNearestValidWorkshop(*a_ref);
+				facts.inOwnedSettlement = bench && OwnedByPlayer(bench->GetOwner()) && RE::Workshop::IsLocationWithinBuildableArea(*bench, a_ref->data.location);
+			}
+			return LootScope::IsStorage(facts);
+		}
+
+		// IsStorage, looked up again after STORAGE_FOR (a settlement taken, a home bought): each move and each friend's change
+		// asks it, and the nearest workbench is a search.
+		constexpr auto STORAGE_FOR = std::chrono::seconds{ 5 };
+		std::unordered_map<std::uint32_t, std::pair<bool, Clock::time_point>> storageSeen;  // main thread
+
+		bool StorageOf(RE::TESObjectREFR* a_ref)
+		{
+			const auto now = Clock::now();
+			if (const auto it = storageSeen.find(a_ref->GetFormID()); it != storageSeen.end() && now - it->second.second < STORAGE_FOR) {
+				return it->second.first;
+			}
+			if (storageSeen.size() >= 256) {
+				std::erase_if(storageSeen, [&](const auto& a_entry) { return now - a_entry.second.second >= STORAGE_FOR; });
+			}
+			const bool storage = IsStorage(a_ref);
+			storageSeen[a_ref->GetFormID()] = { storage, now };
+			return storage;
+		}
+
 		// What holds the items, for LootScope: a reference ID from either end of a move.
 		LootScope::HolderFacts ReadHolderFacts(std::uint32_t a_id)
 		{
@@ -930,6 +975,7 @@ namespace WorldSync
 			const auto base = ref->GetObjectReference();
 			if (base && base->Is(RE::ENUM_FORM_ID::kCONT)) {
 				facts.kind = Holder::kContainer;
+				facts.storage = StorageOf(ref);
 			} else if (base && base->Is(RE::ENUM_FORM_ID::kFURN)) {
 				facts.kind = Holder::kFurniture;  // a power armor frame
 			}
@@ -2456,10 +2502,10 @@ namespace WorldSync
 		// personal= means what it did in 0.8.5: other players' personal items left alone (pickups and loot).
 		// The player's own moves kept here are personalSent= and, by what held the item, holderDropped=.
 		const auto  holderDropped = loot.KeptSent(Scope::kPerPlayer) + loot.KeptSent(Scope::kVendor) + loot.KeptSent(Scope::kNotYetDead) + loot.KeptSent(Scope::kUnsupported);
-		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={} flora={}/{} emptied={}/{}/{}",
+		return std::format("dead={} pending={} reported={} applied={} containerNext={} gap={} gaps={} rerequests={} rewound={} dupChanges={} pendingLoot={} pendingDropped={} pendingFull={} lootSent={} weaponArmor={} vendor={} barter={} perPlayer={} notYetDead={} unsupported={} holderDropped={} pendingPickups={} watched={} linked={} acts={}/{}/{} states={}/{} corpses={} pendingDoors={} personal={} personalSent={} ownSkipped={} dupRisk={} offThread={} foundDead={} ownStoryDead={} leftToEvent={} loadedActors={} flora={}/{} emptied={}/{}/{} emptiedKept={}",
 			dead.Size(), reports.Size(), reported, applied, numbers.Next(), numbers.Waiting(), counts.gaps, counts.asked, counts.rewinds, counts.duplicates, loot.Waiting().size(), stats.pendingDropped, stats.pendingFull, stats.sent, kept(Scope::kWeaponArmor), kept(Scope::kVendor), barterMoves.load(),
 			kept(Scope::kPerPlayer), kept(Scope::kNotYetDead), kept(Scope::kUnsupported), holderDropped, pendingPickups.size(), watched.size(), linkedWatched, activationsSent, activationsApplied, activationsRefused, refStatesApplied, refStatesRefused, corpsesMoved, pendingRefStates.size(),
-			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks) +
+			personalSkipped + loot.KeptApplied(Scope::kPersonal), loot.KeptSent(Scope::kPersonal), receiver.OwnSkipped(), receiver.DupRisk(), MainThread::OffThread(), foundDead, ownStoryDead, leftToEvent, loadedActors.size(), harvestsSent, harvestsApplied, stats.emptiedSent, stats.emptiedApplied, stats.emptiedStacks, stats.emptiedKept) +
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +

@@ -46,6 +46,9 @@ namespace
 	constexpr auto DROP_LIST_INTERVAL = std::chrono::seconds(10);
 	// The session's load order goes to a player who asks (kRequestLoadOrder) at most this often: it is up to 150 KB.
 	constexpr auto LOAD_ORDER_INTERVAL = std::chrono::seconds(5);
+	// The others are told a player loaded a save (kPlayerReloaded) at most this often: each time, every game sends its
+	// radiant runs going again. A load takes longer than this.
+	constexpr auto RELOAD_TOLD_EVERY = std::chrono::seconds(2);
 	constexpr int  MAX_VOICE_BYTES_PER_SECOND = 16000;  // Steam voice needs about 2 KB/s
 	// A world state is big (up to a megabyte), so asking for it again (hello again, a loaded save)
 	// has its own small budget: the outgoing queue would otherwise grow without limit.
@@ -255,6 +258,7 @@ namespace
 		// MAX_FIGHTING.
 		std::unordered_map<std::uint32_t, Clock::time_point> fighting;
 		Clock::time_point          worldAskedAt{};  // its hello, or its last request for the world (after loading a save)
+		Clock::time_point          reloadToldAt{};  // when the others were last told it loaded a save (kPlayerReloaded)
 		// Its last request for the world isn't answered yet (owed while its budget refills, or dropped for flooding):
 		// its game may have anything alive from the save it loaded, so it brings nobody back (see handleClaims) until
 		// a world state is sent to it.
@@ -2021,7 +2025,7 @@ void Server::Run()
 
 	const auto handlePing = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		const auto now = Clock::now();
-		if (!allowEvent(a_player) || now - a_player.lastPing < std::chrono::seconds(1)) {
+		if (!allowEvent(a_player) || now - a_player.lastPing < Protocol::PING_SERVER_GAP) {
 			return;
 		}
 		auto ping = Protocol::DecodePing(a_data);
@@ -2453,6 +2457,12 @@ void Server::Run()
 		}
 		a_player.worldAskedAt = Clock::now();
 		a_player.worldStale = true;
+		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
+		// RELOAD_TOLD_EVERY for a player (a game asking over and over has every other game resend its runs).
+		if (const auto now = Clock::now(); a_player.reloadToldAt == Clock::time_point{} || now - a_player.reloadToldAt >= RELOAD_TOLD_EVERY) {
+			a_player.reloadToldAt = now;
+			broadcast(Protocol::Encode(Protocol::PlayerReloaded{ a_player.id }), true, a_player.key);
+		}
 		// Not counted against the event budget: its game asks once after a load and never again, so one dropped
 		// in a busy second (a scrap-all, a big "take all") left its world without the session's changes and
 		// the others' building until it rejoined. The world-state budget holds a game asking too often.

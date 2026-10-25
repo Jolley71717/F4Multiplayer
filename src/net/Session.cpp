@@ -429,7 +429,7 @@ namespace Session
 					Drops::OnWelcome(msg->sessionId, msg->playerId);
 					Equipment::OnSessionStart();
 					Story::SetShared(msg->sharedStory);
-					HostRules::Set(msg->rules);
+					HostRules::Set(msg->rules, msg->sessionId);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -512,6 +512,11 @@ namespace Session
 					MovedObjects::OnPlayerLeft(msg->playerId);
 					REX::INFO("Session: player {} left", msg->playerId);
 					Hud::Notify(name.empty() ? Text::Get("session.someone_left") : Text::Format("session.player_left", { { "player", name } }));
+				}
+				break;
+			case MessageType::kPlayerReloaded:
+				if (const auto msg = Protocol::DecodePlayerReloaded(a_data)) {
+					RadiantSync::OnPlayerReloaded(msg->playerId);  // our radiants' runs, which their game knows no more
 				}
 				break;
 			case MessageType::kExplosion:

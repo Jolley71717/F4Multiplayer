@@ -1335,6 +1335,30 @@ TEST("server session: pings are passed on at most once a second")
 	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
 }
 
+TEST("server session: a ping pressed a second after the last that arrives a little early is passed on too")
+{
+	// The game spaces pings a second apart by key press (PingRules::MIN_GAP); the network brings one sooner or later.
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	f.fake->Take(1);
+
+	Protocol::Ping ping;
+	ping.worldspace = 0x3C;
+	const auto first = std::chrono::steady_clock::now();
+	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
+	REQUIRE(OfType(Settle(f, 2), MT::kPinged).size() == 1);
+
+	// The next, its press a second later, comes 150 ms early (the first was slow on the way).
+	std::this_thread::sleep_until(first + 1s - 150ms);
+	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
+	CHECK(OfType(Settle(f, 2), MT::kPinged).size() == 1);
+
+	// One sooner than the server's gap is still dropped.
+	f.fake->Deliver(1, Protocol::Encode(ping, MT::kPing));
+	CHECK(OfType(Settle(f, 2), MT::kPinged).empty());
+}
+
 TEST("server session: a ping reaches the others with what it names, as the sender's, and a malformed one goes nowhere")
 {
 	Fixture f;
