@@ -866,7 +866,7 @@ namespace WeaponFire
 		std::uint32_t            explosionsNearFriends = 0;  // ours, found around a friend far from our player
 		std::uint32_t            deathBlasts = 0;            // an actor's death blast: every game's copy sets its own off
 
-		// The actors that died in the last DEATH_BLAST_WINDOW (NoteDeath, from whichever thread the death event comes on).
+		// The actors that died in the last DEATH_BLAST_WINDOW (NoteDying, from whichever thread the death event comes on).
 		std::mutex                                                     recentDeathLock;
 		std::vector<std::pair<std::uint32_t, Clock::time_point>>       recentDeaths;
 
@@ -1811,16 +1811,18 @@ namespace WeaponFire
 		}
 	}
 
+	void NoteDying(std::uint32_t a_refId)
+	{
+		std::scoped_lock d{ recentDeathLock };
+		const auto now = Clock::now();
+		std::erase_if(recentDeaths, [&](const auto& a_death) { return now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
+		if (recentDeaths.size() < 64) {
+			recentDeaths.emplace_back(a_refId, now);
+		}
+	}
+
 	void NoteDeath(std::uint32_t a_refId)
 	{
-		{
-			std::scoped_lock d{ recentDeathLock };
-			const auto now = Clock::now();
-			std::erase_if(recentDeaths, [&](const auto& a_death) { return now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
-			if (recentDeaths.size() < 64) {
-				recentDeaths.emplace_back(a_refId, now);
-			}
-		}
 		std::scoped_lock l{ deathLock };
 		if (deathsSeen.size() < 256) {
 			deathsSeen.push_back(a_refId);

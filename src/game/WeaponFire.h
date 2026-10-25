@@ -134,6 +134,10 @@ namespace WeaponFire
 	// spawn): a copy that was a ghost of ours then is counted and logged (the explosion reached it).
 	void NoteDeath(std::uint32_t a_refId);
 
+	// Any actor died in our world (a stand-in aside), whatever its form id: an explosion with no owner beside it in the next
+	// moments is its death blast (RemoteEdits::DiedBeside). Any thread.
+	void NoteDying(std::uint32_t a_refId);
+
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
 	// Our companions no other game runs (NpcSync's scan; one made at runtime too): their throws and shots arm the watches,

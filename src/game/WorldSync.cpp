@@ -422,6 +422,9 @@ namespace WorldSync
 				if (actor && Puppets::IsPuppet(actor)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
+				if (actor) {
+					WeaponFire::NoteDying(id);
+				}
 				if (byPlayer) {
 					++playerKills;
 				}
