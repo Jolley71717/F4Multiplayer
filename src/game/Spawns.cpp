@@ -313,6 +313,7 @@ namespace Spawns
 				break;
 			case SpawnBook::Act::kAbandon:
 				REX::INFO("Spawns: someone here got into {:08X}, our copy of player {}'s frame {:08X}; it is theirs now", ref->GetFormID(), playerId, a_id);
+				SaveGuard::Release(ref->GetFormID());  // no longer ours: never kept out of a save, nor noted at a load
 				placed.erase(a_id);
 				theirs.Taken(a_id);
 				++frameCopiesTaken;

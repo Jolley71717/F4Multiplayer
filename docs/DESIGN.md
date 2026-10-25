@@ -990,7 +990,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   cell loads again. Up to 0.9.1 the copy was only let go of: it came back on the player's return beside the one
   placed for the friend's frame then, and every save kept it (the 0.9.1 report: frames piling up where friends had
   parked, got out or walked in their armor in Sanctuary). Now the id is looked up again once the handle fails
-  (`HeldCopy::Look`): the same copy back is held again; otherwise it is forgotten, and one whose form is gone is taken
+  (`HeldCopy::Look`): the same copy back is held again (the same id and base, standing where it was last seen while
+  held: a record dropped while the copy was still held frees its id, and a new frame of that base could be made under it);
+  otherwise it is forgotten, and one whose form is gone is taken
   off the books at once and its record dropped (`SaveGuard::Forget`, `SaveStrays::Book::ForgetGone`, counted as
   `orphansDropped`): dropping the record frees the id, and the engine may hand it to the next frame it makes. A frame already
   standing where a copy is placed is never taken over: nothing tells a copy an earlier session left from a suit of the
@@ -1001,7 +1003,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   Now `SaveGuard::BeforeLoad` notes each frame copy of ours just before a load (its address, extra data, ownership,
   base and spot). After the load the game counts ids on from the save's, so an old id may name a frame the loaded game
   made since (a raider's, disabled while worn); only the very form noted, at the very spot, lingers
-  (`SaveStrays::Remains`), and only while it is off (disabled or deleted), nobody is in it or got out of it last, it
+  (`SaveStrays::Remains`), and only while it is off (disabled or deleted), nobody is in it or got out of it last (in the furniture it uses, or the frame the engine holds as
+  worn, which is all there is right after a load), it
   has no owner it did not have when noted (the copy a friend's stand-in wears has the stand-in's base for its owner)
   and nothing in it. It
   is asked again each second and before each save, kept out of saves while all of that holds and left to the game for

@@ -16,10 +16,26 @@
 // Kept free of the game so the rules can be tested.
 namespace HeldCopy
 {
+	struct Spot
+	{
+		std::uint32_t cell = 0;  // its parent cell (0: none)
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
+	};
+
+	// A copy back from its record stands where it was when its cell unloaded it: where it was last seen, to within this.
+	constexpr float SAME_SPOT = 8.0f;
+
+	constexpr bool SameSpot(const Spot& a_was, const Spot& a_now)
+	{
+		const float dx = a_was.x - a_now.x, dy = a_was.y - a_now.y, dz = a_was.z - a_now.z;
+		return a_was.cell == a_now.cell && dx * dx + dy * dy + dz * dz <= SAME_SPOT * SAME_SPOT;
+	}
+
 	struct Ids
 	{
 		std::uint32_t id = 0;    // the copy's form ID (0: none held)
 		std::uint32_t base = 0;  // the base it was placed from
+		std::optional<Spot> at;  // where it was last seen while its handle resolved (kept up by SaveGuard::Refresh)
 	};
 
 	// What is under the id now, once the handle no longer resolves.
@@ -28,6 +44,7 @@ namespace HeldCopy
 		std::optional<std::uint32_t> baseNow;  // the base of the reference under the id (0 for a form that is no reference); none when no form is there
 		bool                         deleted = false;  // that reference is marked for deletion
 		bool                         ours = false;     // the session's book still has it as placed this run, under that id and base (SaveGuard::Placed)
+		std::optional<Spot>          atNow;            // where that reference stands, when it has a cell
 	};
 
 	enum class Lost
@@ -42,7 +59,10 @@ namespace HeldCopy
 		if (a_held.id == 0 || a_resolves) {
 			return Lost::kNone;
 		}
-		if (a_facts.baseNow && *a_facts.baseNow == a_held.base && a_facts.ours && !a_facts.deleted) {
+		// The id and base alone are no proof: a record dropped while the copy was still held frees its id, and a new frame of
+		// the same base can be made under it. Only one standing where ours was last seen is ours back.
+		if (a_facts.baseNow && *a_facts.baseNow == a_held.base && a_facts.ours && !a_facts.deleted && a_held.at && a_facts.atNow &&
+			SameSpot(*a_held.at, *a_facts.atNow)) {
 			return Lost::kBack;
 		}
 		return Lost::kForget;

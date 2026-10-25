@@ -171,7 +171,8 @@ namespace SaveGuard
 			const auto inIt = [&](RE::Actor* a_actor) {
 				const auto middle = a_actor && a_actor->currentProcess ? a_actor->currentProcess->middleHigh : nullptr;
 				const auto occupied = middle ? middle->occupiedFurniture.get() : nullptr;
-				return occupied && occupied.get() == a_frame;
+				// After a load the furniture it uses is not set yet (as for our player): the frame the engine holds as worn is.
+				return (occupied && occupied.get() == a_frame) || (a_actor && Equipment::PowerArmorFrameOf(a_actor).get() == a_frame);
 			};
 			if (inIt(player)) {
 				return true;
@@ -186,6 +187,14 @@ namespace SaveGuard
 				}
 			}
 			return false;
+		}
+
+		// Where a held copy stands (see HeldCopy::Spot).
+		HeldCopy::Spot SpotOf(const RE::TESObjectREFR* a_ref)
+		{
+			const auto  cell = a_ref->GetParentCell();
+			const auto& at = a_ref->data.location;
+			return { cell ? cell->GetFormID() : 0, at.x, at.y, at.z };
 		}
 
 		// Its ownership extra data (the owner it was given: SetOwner), compared by address only; none when it has no owner of its own.
@@ -447,7 +456,11 @@ namespace SaveGuard
 
 	HeldCopy::Lost Refresh(RE::ObjectRefHandle& a_handle, HeldCopy::Ids& a_ids)
 	{
-		const bool resolves = static_cast<bool>(a_handle.get());
+		const auto held = a_handle.get();
+		const bool resolves = static_cast<bool>(held);
+		if (resolves && held->GetFormID() == a_ids.id) {
+			a_ids.at = SpotOf(held.get());  // where it stands now: a copy back from its record will stand there (HeldCopy::Look)
+		}
 		if (resolves || a_ids.id == 0) {
 			return HeldCopy::Lost::kNone;
 		}
@@ -458,6 +471,9 @@ namespace SaveGuard
 			facts.baseNow = base ? base->GetFormID() : 0;
 			facts.deleted = ref->IsDeleted();
 			facts.ours = Placed(ref);
+			if (ref->GetParentCell()) {
+				facts.atNow = SpotOf(ref);
+			}
 		} else if (RE::TESForm::GetFormByID(a_ids.id)) {
 			facts.baseNow = 0;  // a form of another kind under the id now
 		}
@@ -478,7 +494,7 @@ namespace SaveGuard
 			return {};
 		}
 		const auto base = a_ref->GetObjectReference();
-		return { a_ref->GetFormID(), base ? base->GetFormID() : 0 };
+		return { a_ref->GetFormID(), base ? base->GetFormID() : 0, SpotOf(a_ref) };
 	}
 
 	void Release(std::uint32_t a_id)
@@ -514,7 +530,9 @@ namespace SaveGuard
 		book.ForEachHeld([](std::uint32_t a_id, std::uint32_t a_base) {
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
-			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base)) {
+			// Only one on its way out can outlive the load as a leak: a copy handed to someone here is released (Release), and one
+			// still held but not buried is not ours to judge after the load.
+			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base) && RemotePlayers::OnItsWayOut(ref)) {
 				const auto& at = ref->data.location;
 				noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z };
 			}

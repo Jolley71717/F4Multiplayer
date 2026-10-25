@@ -737,6 +737,7 @@ namespace RemotePlayers
 				// is drawn and solid (a hidden one has no collision to aim at).
 				if (OurFrame(frame.get()) || FrameInUse(frame.get(), a_standIn)) {
 					REX::INFO("RemotePlayers: someone here is in player {}'s frame copy {:08X}; leaving it", a_player.id, frame->GetFormID());
+					SaveGuard::Release(frame->GetFormID());  // theirs now: never kept out of a save, nor noted at a load
 				} else {
 					BuryFrame(frame.get(), a_player.framePlacedAt, a_wearer);
 				}
@@ -1236,6 +1237,7 @@ namespace RemotePlayers
 			case ArmorFrames::Copy::kAbandon:
 				// Someone here got into it while it stood where they got out: theirs now (see DeleteFrame).
 				REX::INFO("RemotePlayers: someone here got into player {}'s frame copy {:08X}; it is theirs now", a_player.id, frame->GetFormID());
+				SaveGuard::Release(frame->GetFormID());
 				a_player.frame = {};
 				a_player.frameCollisionOff = nullptr;
 				break;
@@ -1585,6 +1587,7 @@ namespace RemotePlayers
 			if (const auto copy = a_player.parkedCopy.get()) {
 				if (OurFrame(copy.get()) || FrameInUse(copy.get())) {
 					REX::INFO("RemotePlayers: someone here is in player {}'s parked frame copy {:08X}; leaving it", a_player.id, copy->GetFormID());
+					SaveGuard::Release(copy->GetFormID());
 				} else {
 					BuryFrame(copy.get(), a_player.parkedPlacedAt);
 				}
@@ -1684,6 +1687,7 @@ namespace RemotePlayers
 				break;
 			case ArmorFrames::Park::kAbandon:
 				REX::INFO("RemotePlayers: someone here got into player {}'s parked frame copy {:08X}; it is theirs now", a_player.id, copy->GetFormID());
+				SaveGuard::Release(copy->GetFormID());
 				a_player.parkedTaken = parked;
 				a_player.parkedCopy = {};
 				a_player.parkedCollisionOff = nullptr;
@@ -2152,6 +2156,18 @@ namespace RemotePlayers
 			deleting.push_back({ a_grave.actor, a_grave.id });
 			return true;
 		});
+	}
+
+	bool OnItsWayOut(const RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return false;
+		}
+		// By id too: a reference marked for deletion may no longer resolve through its handle while the engine still holds it.
+		const auto id = a_ref->GetFormID();
+		const auto is = [&](const RE::ObjectRefHandle& a_handle, std::uint32_t a_id) { return a_id == id || a_handle.get().get() == a_ref; };
+		return std::ranges::any_of(graveyard, [&](const Grave& a_grave) { return is(a_grave.actor, a_grave.id); }) ||
+		       std::ranges::any_of(deleting, [&](const Deleting& a_deleting) { return is(a_deleting.ref, a_deleting.id); });
 	}
 
 	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)

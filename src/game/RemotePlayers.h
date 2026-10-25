@@ -101,6 +101,9 @@ namespace RemotePlayers
 	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
 	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
 	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
+	// Whether the reference is one of ours on its way out: buried (waiting to be disabled or deleted) or marked for deletion and
+	// not yet let go of by the engine. Only those can outlive a load (SaveGuard::BeforeLoad).
+	bool OnItsWayOut(const RE::TESObjectREFR* a_ref);
 	// Places an empty copy of a power armor frame (as the one a stand-in gets into), kept out of saves: Spawns' copy of a
 	// frame a friend's game made. In our player's cell (a_cell: an interior, or outside in its worldspace). Deleted with
 	// Discard.

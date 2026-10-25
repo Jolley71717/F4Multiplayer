@@ -15,6 +15,7 @@ namespace
 {
 	constexpr std::uint32_t FRAME = 0x0017F6E4;  // a power armor frame every game has
 	constexpr std::uint32_t OTHER = 0x0020A578;  // anything else
+	constexpr HeldCopy::Spot AT{ .cell = 0x0000DD9F, .x = -68367.0f, .y = 81042.0f, .z = 7357.0f };  // where a copy stands
 }
 
 TEST("held copy: nothing held, or a handle that still resolves, is left alone")
@@ -29,13 +30,36 @@ TEST("held copy: the same copy back under its id with its cell is held again; an
 {
 	using HeldCopy::Look;
 	using HeldCopy::Lost;
-	const HeldCopy::Ids held{ .id = 0xFF000F00, .base = FRAME };
-	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = false, .ours = true }) == Lost::kBack);
+	const HeldCopy::Ids held{ .id = 0xFF000F00, .base = FRAME, .at = AT };
+	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = false, .ours = true, .atNow = AT }) == Lost::kBack);
 	CHECK(Look(held, false, { .baseNow = std::nullopt }) == Lost::kForget);                           // unloaded: no form under the id
 	CHECK(Look(held, false, { .baseNow = OTHER, .ours = false }) == Lost::kForget);                  // the id names something else now
 	CHECK(Look(held, false, { .baseNow = 0 }) == Lost::kForget);                                      // a form that is no reference
 	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = true, .ours = true }) == Lost::kForget);   // on its way out
 	CHECK(Look(held, false, { .baseNow = FRAME, .deleted = false, .ours = false }) == Lost::kForget);  // a frame not ours under the id
+}
+
+TEST("held copy: the same id and base are no proof on their own: only a frame standing where ours was last seen is ours back")
+{
+	using HeldCopy::Look;
+	using HeldCopy::Lost;
+	const HeldCopy::Ids held{ .id = 0xFF000F00, .base = FRAME, .at = AT };
+	const HeldCopy::Facts back{ .baseNow = FRAME, .ours = true, .atNow = AT };
+	CHECK(Look(held, false, back) == Lost::kBack);
+	auto moved = back;
+	moved.atNow->x += 2.0f;  // within a few units: the record's own spot
+	CHECK(Look(held, false, moved) == Lost::kBack);
+	// A raider's frame of the same base made under the freed id, elsewhere in the cell or in another cell.
+	auto raider = back;
+	raider.atNow->x += 300.0f;
+	CHECK(Look(held, false, raider) == Lost::kForget);
+	auto elsewhere = back;
+	elsewhere.atNow->cell = 0x0000DDFF;
+	CHECK(Look(held, false, elsewhere) == Lost::kForget);
+	auto noCell = back;
+	noCell.atNow.reset();  // in no cell: nothing to compare
+	CHECK(Look(held, false, noCell) == Lost::kForget);
+	CHECK(Look({ .id = 0xFF000F00, .base = FRAME }, false, back) == Lost::kForget);  // never seen standing anywhere
 }
 
 TEST("save strays: a forgotten one is orphaned only when no form is under its id, not when the id names another")
@@ -166,7 +190,8 @@ namespace
 			const bool resolves = held.id != 0 && loaded.contains(held.id);
 			if (fixed) {
 				const auto base = BaseNow(held.id);
-				const HeldCopy::Facts facts{ .baseNow = base, .ours = base && book.IsPlaced(held.id, *base) };
+				// A copy back from its record stands where it was last seen (the sim's copies never move).
+				const HeldCopy::Facts facts{ .baseNow = base, .ours = base && book.IsPlaced(held.id, *base), .atNow = base ? std::optional{ AT } : std::nullopt };
 				if (HeldCopy::Look(held, resolves, facts) == HeldCopy::Lost::kForget) {
 					Forget(held.id);
 					held = {};
@@ -183,7 +208,7 @@ namespace
 					}
 				});
 			if (cellLoaded && held.id == 0) {
-				held = { .id = PlaceCopy(), .base = FRAME };
+				held = { .id = PlaceCopy(), .base = FRAME, .at = AT };
 			}
 		}
 
@@ -374,4 +399,16 @@ TEST("save strays: the copy a friend's stand-in wears as a load comes lingers to
 	auto taken = worn;
 	taken.newOwner = true;  // somebody got out of it since, and owns it now
 	CHECK(!SaveStrays::StillOurs(taken));
+}
+
+TEST("held copy: a copy handed to someone here (a companion got into it) is off the books, so no load notes it as ours")
+{
+	SaveStrays::Book book;
+	book.Track(0xFF000F10, FRAME);  // the copy left where a friend got out
+	book.Track(0xFF000F11, FRAME);  // their parked copy
+	book.Release(0xFF000F10);       // "someone here is in it; leaving it" (RemotePlayers, Spawns: SaveGuard::Release)
+	std::set<std::uint32_t> held;
+	book.ForEachHeld([&](std::uint32_t a_id, std::uint32_t) { held.insert(a_id); });
+	CHECK(held == std::set<std::uint32_t>{ 0xFF000F11 });
+	CHECK(!book.IsPlaced(0xFF000F10, FRAME));
 }
