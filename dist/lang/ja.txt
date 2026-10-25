@@ -190,7 +190,7 @@ menu.mods_ask = ホストにもう一度確認
 menu.host_controls = ホスト設定
 menu.hc_waiting = サーバーの応答を待っています。少し待ってからもう一度お試しください。
 menu.hc_open = セッションは公開中です：フレンドが参加できます。
-menu.hc_locked = セッションはロック中です：新しい参加はできません（参加中の人はそのままです）。
+menu.hc_locked = セッションはロック中です：新しい参加はできません。すでに参加中の人は、ゲームがクラッシュしたり接続が切れたりした場合は再参加できます。キックされた人と追放された人は再参加できません。
 menu.hc_no_password = パスワードなし：セッションに届く人は誰でも参加できます。
 menu.hc_password = パスワード：{password}（フレンドは F4Multiplayer.ini に sPassword = {password} と書きます）
 menu.hc_banned = 追放したプレイヤー：{n}

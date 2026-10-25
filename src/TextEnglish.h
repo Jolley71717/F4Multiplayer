@@ -204,7 +204,7 @@ namespace Text
 		{ "menu.host_controls", "Host controls" },
 		{ "menu.hc_waiting", "Waiting for your server to answer. Try again in a moment." },
 		{ "menu.hc_open", "The session is open: friends can join." },
-		{ "menu.hc_locked", "The session is locked: nobody new can join (those here stay)." },
+		{ "menu.hc_locked", "The session is locked: new players can't join. Players already in it can rejoin if their game crashes or their connection drops; kicked and banned players can't." },
 		{ "menu.hc_no_password", "No password: anyone who can reach the session can join." },
 		{ "menu.hc_password", "Password: {password} (friends set sPassword = {password} in their F4Multiplayer.ini)" },
 		{ "menu.hc_banned", "Banned players: {n}" },

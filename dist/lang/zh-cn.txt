@@ -171,7 +171,7 @@ menu.mods_ask = 再次询问主机
 menu.host_controls = 主机管理
 menu.hc_waiting = 正在等待你的服务器回应。请稍后再试。
 menu.hc_open = 房间已开放：好友可以加入。
-menu.hc_locked = 房间已锁定：新玩家不能加入（已在房间里的人留下）。
+menu.hc_locked = 房间已锁定：新玩家不能加入。已在房间里的玩家若游戏崩溃或连接中断，可以重新加入；被踢出或被封禁的玩家不能。
 menu.hc_no_password = 没有密码：能连到房间的任何人都可以加入。
 menu.hc_password = 密码：{password}（好友在自己的 F4Multiplayer.ini 中设置 sPassword = {password}）
 menu.hc_banned = 已封禁玩家：{n}
