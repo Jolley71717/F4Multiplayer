@@ -7,8 +7,8 @@
 // while the friend's own frame stayed theirs in their game, and their game shared it again after their next load or
 // rejoin: a second copy was placed on the same spot, two suits where the friend has one. Until borrowing a friend's
 // suit is made (the frame staying the owner's, the friend only using it), our player is told whose it is instead
-// (Equipment's frame gate: getting in, before the engine starts getting them in; Transfer, whose menu is closed again;
-// a companion ordered into it, which stays where it is).
+// (Equipment's frame gate: getting in, before the engine starts getting them in; Transfer, whose menu is closed again).
+// A companion ordered into one is sent out of it again (SendsOut, RemotePlayers).
 // Every copy the session placed is kept out, whoever used it last: each game makes its own runtime frames (an
 // encounter's, a script's), a joiner's game shares a frame only when its player used it, and Spawns places only copies
 // of what a friend's game shared, so a frame our own world made is never one of these copies. What our player loses is
@@ -41,5 +41,21 @@ namespace FriendFrame
 			return a_facts.leftFor;
 		}
 		return a_facts.sharedBy;
+	}
+
+	// Who is in a frame our player is kept out of, as far as sending them out goes.
+	struct Occupant
+	{
+		bool player = false;    // our player (kept out as they get in: never found in one)
+		bool standIn = false;   // a friend's stand-in, switched into its frame copy by the plugin
+		bool runsHere = false;  // our game runs the actor (no friend's game drives it here)
+	};
+
+	// Whether someone in a frame is sent out of it again (Actor.SwitchToPowerArmor with None) rather than the frame given to
+	// them as theirs: a companion ordered into a friend's frame copy, mostly. The engine's command walks them to it and has
+	// them get in without asking the frame, so it cannot be turned down beforehand. a_keptOutFor: KeptOutFor's answer.
+	constexpr bool SendsOut(const Occupant& a_occupant, std::uint32_t a_keptOutFor)
+	{
+		return a_keptOutFor != 0 && !a_occupant.player && !a_occupant.standIn && a_occupant.runsHere;
 	}
 }

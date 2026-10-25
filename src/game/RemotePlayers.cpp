@@ -29,6 +29,7 @@
 #include "Text.h"
 #include "game/Equipment.h"
 #include "game/NpcSync.h"
+#include "game/Papyrus.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/Spawns.h"
@@ -1208,7 +1209,10 @@ namespace RemotePlayers
 				facts.sinceOut = a_played - a_player.frameActionAt;
 				facts.sameBase = frame->GetObjectReference() == base;
 			}
-			const auto copy = ArmorFrames::ChooseCopy(facts);
+			auto copy = ArmorFrames::ChooseCopy(facts);
+			if (frame && BeingSentOut(frame.get())) {
+				copy = ArmorFrames::Copy::kNone;  // a companion ordered into it is on its way out (SendOutOfFriendsFrames): left as it is
+			}
 			switch (copy) {
 			case ArmorFrames::Copy::kNone:
 				break;
@@ -1635,7 +1639,11 @@ namespace RemotePlayers
 				facts.leftCopy = !engaged && left->GetObjectReference() == base && !OurFrame(left.get()) && !FrameInUse(left.get());
 			}
 
-			switch (ArmorFrames::ChoosePark(facts)) {
+			auto park = ArmorFrames::ChoosePark(facts);
+			if (copy && BeingSentOut(copy.get())) {
+				park = ArmorFrames::Park::kNone;  // as for the left copy (UpdatePowerArmor)
+			}
+			switch (park) {
 			case ArmorFrames::Park::kNone:
 				break;
 			case ArmorFrames::Park::kPlace:
@@ -2221,31 +2229,123 @@ namespace RemotePlayers
 		return handle;
 	}
 
+	namespace
+	{
+		struct FrameFriend
+		{
+			std::uint32_t owner = 0;     // the friend whose frame it is, when our player is kept out of it (KeptOutFor)
+			const char*   kind = "";     // which copy of ours it is
+		};
+
+		FrameFriend FriendOf(RE::TESObjectREFR* a_frame)
+		{
+			FriendFrame::Facts facts;
+			facts.ours = OurFrame(a_frame);
+			facts.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
+			facts.created = a_frame->IsCreated();
+			for (const auto& [id, player] : players) {
+				if (player.parkedCopy.get().get() == a_frame) {
+					facts.parkedFor = id;
+				}
+				if (player.frame.get().get() == a_frame) {
+					facts.leftFor = id;
+				}
+			}
+			facts.sharedBy = Spawns::FrameCopyOwnerOf(a_frame->GetFormID());
+			return { FriendFrame::KeptOutFor(facts), facts.parkedFor ? "parked" : facts.leftFor ? "their stand-in's" : "their game's" };
+		}
+
+		// The furniture the actor is in, or none.
+		RE::NiPointer<RE::TESObjectREFR> FurnitureOf(RE::Actor* a_actor)
+		{
+			const auto middle = a_actor && a_actor->currentProcess ? a_actor->currentProcess->middleHigh : nullptr;
+			return middle ? middle->occupiedFurniture.get() : nullptr;
+		}
+
+		// Whether our game sends this actor out of a frame kept from our player for a_owner (FriendFrame::SendsOut).
+		bool SendsOut(RE::Actor* a_actor, std::uint32_t a_owner)
+		{
+			const auto runner = NpcSync::Owner(a_actor->GetFormID());
+			const FriendFrame::Occupant occupant{ .player = a_actor->IsPlayerRef(), .standIn = Puppets::IsPuppet(a_actor),
+				.runsHere = runner == 0 || runner == NpcSync::LocalPlayer() };
+			return FriendFrame::SendsOut(occupant, a_owner);
+		}
+
+		struct SendingOut
+		{
+			std::uint32_t     frame = 0;  // the frame copy they are in
+			Clock::time_point askedAt{};  // when they were last asked to get out
+		};
+		std::unordered_map<std::uint32_t, SendingOut>        sendingOut;  // actors being sent out of a friend's frame copy
+		std::unordered_map<std::uint32_t, Clock::time_point> settling;    // frame copies just got out of, and when
+		std::uint32_t                                         othersSentOut = 0;
+		std::uint32_t                                         sendOutsFailed = 0;
+		constexpr auto                                        SEND_OUT_AGAIN = 3s;  // asked again while they are still in it
+		// A frame has no 3D while someone is in it; got out of, it gets it back over the next moments. Until then it is left
+		// as it is: without its 3D, a copy would be taken for one that never loaded and placed again.
+		constexpr auto SETTLE = 5s;
+
+		// Anyone our game runs found in a friend's frame copy (a companion ordered into it) is sent out once they are in:
+		// Actor.SwitchToPowerArmor with None, which has them out at once, the frame left standing where it was. Told and
+		// counted once each time; asked again while they are still in it (a call made as they finish getting in is lost).
+		void SendOutOfFriendsFrames(Clock::time_point a_now)
+		{
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!lists) {
+				return;
+			}
+			std::vector<std::uint32_t> stillIn;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto actor = handle.get();
+				const auto frame = actor ? FurnitureOf(actor.get()) : nullptr;
+				if (players.empty() || !frame || !Equipment::IsPowerArmorFrame(frame->GetObjectReference()) || !Equipment::InPowerArmor(actor.get()) ||
+					!SendsOut(actor.get(), FriendOf(frame.get()).owner)) {
+					continue;
+				}
+				const auto id = actor->GetFormID();
+				stillIn.push_back(id);
+				const auto [it, fresh] = sendingOut.try_emplace(id);
+				it->second.frame = frame->GetFormID();
+				if (fresh) {
+					static_cast<void>(KeepOutOfFrame(frame.get(), Equipment::FrameAsk::kOther, actor.get()));  // counted, logged and told
+					++othersSentOut;
+				} else if (a_now - it->second.askedAt < SEND_OUT_AGAIN) {
+					continue;
+				}
+				it->second.askedAt = a_now;
+				const auto self = Papyrus::BoundObject(actor.get(), "Actor", actor->IsCreated());
+				const bool asked = self && Papyrus::CallOn(self, "SwitchToPowerArmor", [](RE::BSScrapArray<RE::BSScript::Variable>& a_out) {
+					a_out = RE::BSScrapArray<RE::BSScript::Variable>{ 1 };
+					a_out[0] = nullptr;  // None: out of the one they are in
+				});
+				if (!asked) {
+					++sendOutsFailed;
+					REX::WARN("RemotePlayers: could not send {:08X} out of {:08X}", id, frame->GetFormID());
+				}
+			}
+			std::erase_if(sendingOut, [&](const auto& a_entry) {
+				if (std::ranges::find(stillIn, a_entry.first) != stillIn.end()) {
+					return false;
+				}
+				settling[a_entry.second.frame] = a_now;
+				return true;
+			});
+			std::erase_if(settling, [&](const auto& a_entry) { return a_now - a_entry.second > SETTLE; });
+		}
+	}
+
 	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
 		}
-		FriendFrame::Facts facts;
-		facts.ours = OurFrame(a_frame);
-		facts.quest = a_frame->extraList && a_frame->extraList->HasType(RE::EXTRA_DATA_TYPE::kAliasInstanceArray);
-		facts.created = a_frame->IsCreated();
-		for (const auto& [id, player] : players) {
-			if (player.parkedCopy.get().get() == a_frame) {
-				facts.parkedFor = id;
-			}
-			if (player.frame.get().get() == a_frame) {
-				facts.leftFor = id;
-			}
-		}
-		const auto local = a_frame->GetFormID();
-		facts.sharedBy = Spawns::FrameCopyOwnerOf(local);
-		const auto owner = FriendFrame::KeptOutFor(facts);
+		const auto [owner, kind] = FriendOf(a_frame);
 		if (owner == 0) {
 			return false;
 		}
 		++framesKeptOut;
-		// Told once a while per frame: a companion ordered in asks again and again as it stands there.
+		// Told once a while per frame: a companion is asked about again while it is still in it.
+		const auto local = a_frame->GetFormID();
 		const auto now = Clock::now();
 		if (a_by && local == lastKeptOut && now - lastKeptOutAt < KEPT_OUT_RETELL) {
 			return true;
@@ -2253,11 +2353,28 @@ namespace RemotePlayers
 		lastKeptOut = local;
 		lastKeptOutAt = now;
 		const auto who = a_by ? std::format("{:08X}", a_by->GetFormID()) : std::string{ "our player" };
-		REX::INFO("RemotePlayers: {} {} {:08X}, our copy of player {}'s frame ({}); kept out", who,
-			a_ask == Equipment::FrameAsk::kTransfer ? "opened the inventory of" : "tried to get into", local, owner,
-			facts.parkedFor ? "parked" : facts.leftFor ? "their stand-in's" : "their game's");
+		const auto what = a_ask == Equipment::FrameAsk::kTransfer ? "opened the inventory of" : a_ask == Equipment::FrameAsk::kOther ? "got into" : "tried to get into";
+		REX::INFO("RemotePlayers: {} {} {:08X}, our copy of player {}'s frame ({}); {}", who, what, local, owner, kind, a_ask == Equipment::FrameAsk::kOther ? "sent out" : "kept out");
 		Hud::Notify(Text::Format("party.friends_frame", { { "player", NameOf(owner) } }));
 		return true;
+	}
+
+	bool BeingSentOut(RE::TESObjectREFR* a_frame)
+	{
+		const auto lists = RE::ProcessLists::GetSingleton();
+		if (!a_frame || !lists || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
+			return false;
+		}
+		if (settling.contains(a_frame->GetFormID())) {
+			return true;  // just got out of: its 3D is on its way back
+		}
+		for (const auto& handle : lists->highActorHandles) {
+			const auto actor = handle.get();
+			if (actor && FurnitureOf(actor.get()).get() == a_frame && SendsOut(actor.get(), FriendOf(a_frame).owner)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
@@ -2450,6 +2567,9 @@ namespace RemotePlayers
 
 		const auto now = Clock::now();
 		ReleaseNetSim(now);
+		if (!loading) {
+			SendOutOfFriendsFrames(now);  // a companion ordered into a friend's frame copy
+		}
 		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
 		const bool oursGone = player && !loading && player->Get3D() && !Face::HasHead(player);
@@ -2945,6 +3065,9 @@ namespace RemotePlayers
 		}
 		if (framesKeptOut) {
 			out += std::format(" framesKeptOut={}", framesKeptOut);
+		}
+		if (othersSentOut || sendOutsFailed) {
+			out += std::format(" othersSentOut={} sendOutsFailed={}", othersSentOut, sendOutsFailed);
 		}
 		if (seatsEntered || seatsMissed || seatsLeft) {
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);

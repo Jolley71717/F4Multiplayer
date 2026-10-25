@@ -50,3 +50,15 @@ TEST("friend frame: our player's own frame, an unowned frame, a plugin's frame a
 	CHECK(with([](auto& f) { f.quest = true; }) == 0);     // a quest alias of ours holds it
 	CHECK(with([](auto& f) { f.created = false; }) == 0);  // every game has its own reference of it
 }
+
+TEST("friend frame: a companion ordered into a friend's frame copy is sent out again; our player, a stand-in and a friend's NPC are not")
+{
+	using FriendFrame::Occupant;
+	using FriendFrame::SendsOut;
+	constexpr Occupant COMPANION{ .runsHere = true };
+	CHECK(SendsOut(COMPANION, FRIEND));
+	CHECK(!SendsOut(COMPANION, 0));                                          // a frame our player may use: theirs to be in
+	CHECK(!SendsOut({ .standIn = true, .runsHere = true }, FRIEND));         // a friend's stand-in in its own frame copy
+	CHECK(!SendsOut({ .player = true, .runsHere = true }, FRIEND));          // our player is kept out as they get in
+	CHECK(!SendsOut({}, FRIEND));                                            // an NPC a friend's game runs: their game says
+}

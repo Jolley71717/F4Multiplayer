@@ -909,7 +909,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
 	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
-	Equipment::InstallFrameGate();  // and its Transfer, and companions ordered into one
+	Equipment::InstallFrameGate();  // and its Transfer
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

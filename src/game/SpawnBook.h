@@ -254,6 +254,7 @@ namespace SpawnBook
 		float               copyHeading = 0.0f;
 		bool                copyLoaded = true;  // its 3D is in
 		bool                occupied = false;   // somebody here is in our copy, or it is the frame our player left last
+		bool                leaving = false;    // who is in it is being sent out of it, or just was (RemotePlayers::BeingSentOut)
 		bool                baseOk = true;      // its base is a power armor frame here
 	};
 
@@ -362,8 +363,9 @@ namespace SpawnBook
 		// owner is (their suit stands at home while they roam), while where it stands is in our sight. Moved in place when
 		// its owner's game has it a little way off (the physics nudged it), placed again when it is far off or in another
 		// place, gone once out of our sight or over. A frame never dies: one its owner's game let go of (worn, gone, left in
-		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into is theirs
-		// from then on: neither moved nor deleted, and none placed again while this spawn lasts.
+		// a cell since unloaded) is over, and shared afresh when it stands again. A copy somebody here got into (but one being
+		// sent out of it again, RemotePlayers::BeingSentOut) is theirs from then on: neither moved nor deleted, and none placed
+		// again while this spawn lasts.
 		[[nodiscard]] Act DecideFrame(std::uint32_t a_id, const FrameFacts& a_facts, Clock::time_point a_now) const
 		{
 			const auto it = copies.find(a_id);
@@ -374,6 +376,9 @@ namespace SpawnBook
 			if (copy.local != 0) {
 				if (!a_facts.copyThere) {
 					return Act::kLost;
+				}
+				if (a_facts.leaving) {
+					return Act::kNone;  // still ours while they are on their way out, and until its 3D is back
 				}
 				if (a_facts.occupied) {
 					return Act::kAbandon;

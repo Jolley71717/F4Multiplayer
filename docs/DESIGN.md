@@ -1015,13 +1015,15 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   every frame copy the session placed here is kept from our player, whoever used it last (a friend's parked one, the
   one their stand-in wears or got out of, and every copy of a frame their game shares), and they are told whose it is
   (`party.friends_frame`). Getting into one made it ours while the friend's stayed theirs, and their game shared it
-  again after their next load: a second copy on the same spot. Three ways in are closed: getting in (the frame use
-  `InstallFrameUse` patches), Transfer (the container menu shown for a copy is closed again) and a companion ordered
-  into it (the furniture's `Activate`; the companion stays where it is). `InstallFrameGate` hooks the last two in their
-  vtables.
-  A plugin's frame (each game has its own reference), our player's own (a copy they are in or got out of last stays
-  usable) and a quest's are never kept from them. Counted as `framesKeptOut` (`net status`) and `keptOut`,
-  `transfersKeptOut` and `othersKeptOut` (`paframes`). Borrowing a friend's suit comes later.
+  again after their next load: a second copy on the same spot. Three ways in are closed. Getting in: the frame use
+  `InstallFrameUse` patches asks first. Transfer: the container menu shown for a copy is closed again (`InstallFrameGate`
+  hooks its messages in its vtable). A companion ordered into one: the engine's command walks them there and gets them
+  in without asking the frame, so anyone our game runs (not our player or a stand-in) found in a copy is sent out at once
+  (`Actor.SwitchToPowerArmor` with None). The copy is left as it is meanwhile, and until its 3D is back
+  (`RemotePlayers::BeingSentOut`): never "theirs now", nor taken for a copy that never loaded. A plugin's frame (each game has its own reference), our player's own (a copy they are in or got out
+  of last stays usable) and a quest's are never kept from them. Counted as `framesKeptOut`, `othersSentOut` and
+  `sendOutsFailed` (`net status`) and `keptOut` and `transfersKeptOut` (`paframes`). Borrowing a friend's suit comes
+  later.
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The

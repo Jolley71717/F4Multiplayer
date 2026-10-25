@@ -1054,7 +1054,6 @@ namespace Equipment
 		std::uint32_t           refusals = 0;
 		std::uint32_t           keptOut = 0;          // our player kept out of a frame by the gate
 		std::uint32_t           transfersKeptOut = 0; // a frame's inventory closed again by the gate
-		std::uint32_t           othersKeptOut = 0;    // someone else here kept out by the gate (a companion ordered in)
 		std::uint32_t           enterRefusals = 0;
 		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
 		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
@@ -1123,23 +1122,6 @@ namespace Equipment
 			return site;
 		}
 
-		// TESFurniture::Activate, slot 0x40 of its vtable (TESForm::Activate): what every actor's getting into furniture
-		// starts with, a companion ordered into a frame among them. Our player's way in goes on to UseHook; stand-ins never
-		// come here (the engine switches them in: SwitchIntoPowerArmor).
-		constexpr std::size_t ACTIVATE_INDEX = 0x40;
-		using ActivateFn = bool (*)(RE::TESForm*, RE::TESObjectREFR*, RE::TESObjectREFR*, RE::TESBoundObject*, std::int32_t);
-		ActivateFn originalActivate = nullptr;
-
-		bool ActivateHook(RE::TESForm* a_this, RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_by, RE::TESBoundObject* a_get, std::int32_t a_count)
-		{
-			const auto actor = a_by && !a_by->IsPlayerRef() ? a_by->As<RE::Actor>() : nullptr;
-			if (actor && a_ref && keepOut && !Puppets::IsPuppet(actor) && IsPowerArmorFrame(a_this) && keepOut(a_ref, FrameAsk::kOther, actor)) {
-				++othersKeptOut;
-				return false;  // as the engine answers a frame it would not let them into: they stay where they are
-			}
-			return originalActivate(a_this, a_ref, a_by, a_get, a_count);
-		}
-
 		// Our player opened a frame's inventory (Transfer): the container menu's own messages are hooked in its vtable
 		// (the menu is never looked up through the UI: OpenMenus), and as it is shown its target is asked of the gate, on
 		// the main thread. When the gate says so it is closed again at once: nothing can be moved in that moment.
@@ -1187,25 +1169,13 @@ namespace Equipment
 
 	void InstallFrameGate()
 	{
-		if (!originalContainerMessage) {
-			const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
-			originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
-			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
-			REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
-		}
-		if (originalActivate) {
+		if (originalContainerMessage) {
 			return;
 		}
-		// Only where the slot holds 1.11.240's own TESFurniture::Activate: another plugin's patch there is left alone.
-		const auto slot = RE::VTABLE::TESFurniture[0].address() + sizeof(void*) * ACTIVATE_INDEX;
-		const auto current = *reinterpret_cast<std::uintptr_t*>(slot);
-		if (current != FURNITURE_ACTIVATE.address()) {
-			REX::WARN("Equipment: TESFurniture's Activate is not the game's ({:X}); companions are not kept out of friends' frames", current);
-			return;
-		}
-		originalActivate = reinterpret_cast<ActivateFn>(current);
-		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ActivateHook));
-		REX::INFO("Equipment: furniture activation watched (frames others get into)");
+		const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
+		originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
+		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
+		REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
 	}
 
 	void InstallFrameUse()
@@ -1238,7 +1208,7 @@ namespace Equipment
 
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={} othersKeptOut={} activateHooked={}", seatsFreed, framesStoodUp,
-			refusals, enterRefusals, keptOut, transfersKeptOut, othersKeptOut, originalActivate != nullptr);
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={}", seatsFreed, framesStoodUp,
+			refusals, enterRefusals, keptOut, transfersKeptOut);
 	}
 }

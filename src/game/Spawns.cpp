@@ -257,6 +257,7 @@ namespace Spawns
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				if (facts.copyThere) {
 					facts.occupied = Occupied(ref.get());
+					facts.leaving = RemotePlayers::BeingSentOut(ref.get());
 					// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT).
 					if (ref->GetParentCell()) {
 						facts.copyAt = SpotOf(ref.get());
