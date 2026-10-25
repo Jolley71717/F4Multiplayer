@@ -1,7 +1,10 @@
 #include "game/SaveGuard.h"
 #include "game/Equipment.h"
+#include "game/Hud.h"
+#include "game/Puppets.h"
 #include "game/RemotePlayers.h"
 #include "game/SaveStrays.h"
+#include "Text.h"
 
 namespace SaveGuard
 {
@@ -13,7 +16,18 @@ namespace SaveGuard
 		// g_BGSSaveLoadGame (+32A85A8), BGSSaveLoadGame::ClearChanges(form ID) (+BECCC0) and
 		// BGSSaveLoadGame::IsFormIDInUse(form ID) (+BEDEB0), which says whether the list of changes holds a
 		// record for the id. CommonLibF4 names 2697789 BGSCreatedObjectManager::Singleton; the game's
-		// symbols say otherwise.
+		// symbols say otherwise. Dropping the record of a form still there never frees its id: the engine's
+		// allocator of created ids (TESDataHandler::GetNextID, +2E6C40) passes over an id while a form is under
+		// it (TESForm::GetFormByNumericID), before it asks about a record (IsFormIDInUse) or an unloaded form
+		// (TESForm::IsUnloadedFormID).
+		// A load frees what has a record and nothing else: BGSSaveLoadGame::RevertAllChanges (+BECD20) walks the
+		// list of changes (+BEB700) and lets go of each created form with a record, a reference through
+		// +BEDC70: TESDataHandler::ReleaseForm, demoted if it persists, out of its cell, then
+		// DeferredDeleter::Add (which takes it out of the forms' map and destroys its handle at once). A created
+		// form of ours whose record was dropped (they all are, as they go: DespawnAll) stays in memory through the
+		// load, and a stand-in so kept points at its base, a face copy with a record, which the load frees: the
+		// next load crashed on it (Actor::LoadGame, the process lists, RevertAllChanges). See BeforeLoad.
+		constexpr REL::ID RELEASE_CREATED_REFERENCE{ 2227909 };
 		// Not RemoveChanges(TESForm*) (+BECB60): it leaves a record alone once the form's cell has unloaded
 		// and the record was written out to a buffer (UnloadForm), so a stand-in whose cell had unloaded
 		// was saved all the same. ClearChanges takes the record out whether buffered or not, frees the
@@ -145,8 +159,8 @@ namespace SaveGuard
 			return base ? base->GetFormID() : 0;
 		}
 
-		// Each power armor frame of ours as SaveGuard noted it just before a load (BeforeLoad): what tells the form under its
-		// id after the load from one the loaded game made since under the same id (see SaveStrays::Remains). The address
+		// Each reference of ours on its way out as SaveGuard noted it just before a load (BeforeLoad): what tells the form under
+		// its id after the load from one the loaded game made since under the same id (see SaveStrays::Remains). The address
 		// and extra data are only compared, never read through.
 		struct Noted
 		{
@@ -155,11 +169,33 @@ namespace SaveGuard
 			const void*   ownership = nullptr;  // its ownership extra data, if it had one (a stand-in's copy: see SaveStrays::Remains)
 			std::uint32_t base = 0;
 			float         x = 0.0f, y = 0.0f, z = 0.0f;
+			bool          on = false;           // neither disabled nor deleted (see SaveStrays::LingerOf)
 		};
 		std::unordered_map<std::uint32_t, Noted> noted;
 
-		std::uint32_t lingered = 0;         // copies of ours from before a load found still there after it (see SaveStrays::Book::AfterLoad)
+		std::uint32_t lingered = 0;         // ours from before a load found still there after it (see SaveStrays::Book::AfterLoad)
 		std::uint32_t lingeringDropped = 0; // of those, let go of later: no longer provably ours and nobody's (see SaveStrays::Remains)
+		std::uint32_t turnedOff = 0;        // of those, disabled after the load: buried before their 3D came in (SaveStrays::LingerOf)
+
+		// What BeforeLoad did with ours on their way out (SaveStrays::Handover).
+		std::uint32_t leftToLoad = 0;     // had a record: the load frees them
+		std::uint32_t recordsGiven = 0;   // given their record back, so the load frees them
+		std::uint32_t releasedAtLoad = 0; // refused one: let go of just before the load, as the load does
+		std::uint32_t basesKept = 0;      // created bases of actors so handed over, kept in memory through the load (see HandToLoad)
+
+		// Strays of ours a save brought back (a friend's stand-in an earlier version wrote), their record dropped after that
+		// load (AfterLoad): kept in memory by that, and pointing at a base the next load frees, so each is handed to the next
+		// load (BeforeLoad) while it is still the same form. Cleared at each load and new game.
+		struct BroughtBack
+		{
+			std::uint32_t id = 0;
+			std::uint32_t base = 0;
+			const void*   ref = nullptr;
+		};
+		std::vector<BroughtBack>  broughtBack;
+		constexpr std::size_t     BROUGHT_BACK_MAX = 256;
+		std::uint32_t             broughtBackHanded = 0;  // of those, handed to a load
+		std::uint32_t             oldSaveNotices = 0;     // loads of a save holding one of those, told on the HUD
 
 		// Somebody here is in this frame, or our player is in it or got out of it last.
 		bool Worn(const RE::TESObjectREFR* a_frame)
@@ -230,22 +266,100 @@ namespace SaveGuard
 				return remains;
 			}
 			remains.frame = Equipment::IsPowerArmorFrame(base);
+			const auto actor = ref->As<RE::Actor>();
+			remains.actor = actor != nullptr;
+			remains.puppet = actor && Puppets::IsRegistered(actor);
 			remains.off = ref->IsDeleted() || ref->IsDisabled();
-			remains.worn = Worn(ref);
-			remains.newOwner = OwnershipOf(ref) != was.ownership;  // one it had when noted is the stand-in's; a new or another one is not ours
-			remains.holdsItems = HoldsItems(ref);
+			remains.notedOn = was.on;
+			if (remains.frame) {
+				remains.worn = Worn(ref);
+				remains.newOwner = OwnershipOf(ref) != was.ownership;  // one it had when noted is the stand-in's; a new or another one is not ours
+				remains.holdsItems = HoldsItems(ref);
+			}
 			return remains;
 		}
 
-		// Right after a load: one of ours from before it, still there on its way out (see SaveStrays::Book::AfterLoad).
+		std::string_view KindOf(const SaveStrays::Remains& a_remains)
+		{
+			return a_remains.frame ? "frame copy" : (a_remains.actor ? "stand-in or NPC copy" : "light or copy");
+		}
+
+		// Right after a load: one of ours from before it, still there on its way out (see SaveStrays::Book::AfterLoad). One
+		// buried before its 3D came in is disabled now (SaveStrays::LingerOf).
 		bool Lingers(std::uint32_t a_id, std::uint32_t a_base)
 		{
-			if (!SaveStrays::StillOurs(RemainsOf(a_id, a_base))) {
+			auto       remains = RemainsOf(a_id, a_base);
+			const auto linger = SaveStrays::LingerOf(remains);
+			if (linger == SaveStrays::Linger::kNo) {
 				return false;
 			}
+			if (linger == SaveStrays::Linger::kTurnOff) {
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id)) {
+					ref->Disable();
+				}
+				noted[a_id].on = false;
+				++turnedOff;
+				REX::INFO("SaveGuard: {:08X}, ours from before the load, was buried before its 3D came in, so never disabled; disabled now", a_id);
+			}
 			++lingered;
-			REX::INFO("SaveGuard: {:08X} (frame {:08X}), our copy from before the load, is still there on its way out; kept out of saves while it stays so", a_id, a_base);
+			// An actor's base is a face copy the load may have freed (see RELEASE_CREATED_REFERENCE): worth a line of its own.
+			if (remains.actor) {
+				REX::WARN("SaveGuard: {:08X} (base {:08X}), our {} from before the load, is still there on its way out; kept out of saves while it stays so", a_id, a_base, KindOf(remains));
+			} else {
+				REX::INFO("SaveGuard: {:08X} (base {:08X}), our {} from before the load, is still there on its way out; kept out of saves while it stays so", a_id, a_base, KindOf(remains));
+			}
 			return true;
+		}
+
+		// The engine's own letting go of a created reference at a load (see RELEASE_CREATED_REFERENCE).
+		void ReleaseNow(RE::TESObjectREFR* a_ref)
+		{
+			static REL::Relocation<void (*)(void*, RE::TESObjectREFR*)> release{ RELEASE_CREATED_REFERENCE };
+			if (const auto game = SaveLoadGame()) {
+				release(game, a_ref);
+			}
+		}
+
+		// Just before a load: a reference of ours on its way out, so the load frees it with the old world (SaveStrays::Handover).
+		void HandToLoad(RE::TESObjectREFR* a_ref, std::string_view a_what)
+		{
+			const auto id = a_ref->GetFormID();
+			// The load demotes a persistent one as it lets go of it; a stand-in told no (KeepUnpromoted) stayed listed as
+			// persistent once freed, and the load after that crashed (Actor::Revert). It is let go of from here on.
+			const auto base = a_ref->GetObjectReference();
+			const auto baseId = base ? base->GetFormID() : 0;
+			unpromoted.Remove(id, baseId);
+			// A stand-in or mirrored NPC handed over is no puppet of ours from here on. Its holder unregisters it only after
+			// the load (RemotePlayers::OnGameLoaded, after AfterLoad), and one buried before its 3D came in was never
+			// disabled, so never unregistered: kept by the load all the same, it would read as ours in use, not as lingering.
+			if (const auto actor = a_ref->As<RE::Actor>()) {
+				Puppets::Unregister(actor, id);
+			}
+			// An actor is freed some frames after the load lets go of it (DeferredDeleter), and reads its base as it goes; a
+			// created base with a record (a stand-in's face copy) the load frees at once. Freed so, the load after it crashed
+			// in memory the base had held (Actor::Revert on another actor). So the base keeps no record: the load leaves it
+			// in memory, nobody's (a face copy is used by its stand-in alone), and no save writes it.
+			if (a_ref->As<RE::Actor>() && SaveStrays::IsCreatedId(baseId) && ExcludeId(baseId)) {
+				++basesKept;
+			}
+			const bool had = HasChanges(id);
+			if (!had) {
+				a_ref->AddChange(1);  // the change of its form flags; the load drops the record, whatever it holds
+			}
+			switch (SaveStrays::HandoverOf(had, !had && HasChanges(id))) {
+			case SaveStrays::Handover::kHasRecord:
+				++leftToLoad;
+				break;
+			case SaveStrays::Handover::kGiveRecord:
+				++recordsGiven;
+				REX::INFO("SaveGuard: {:08X}, {}, is given its record back, so the load frees it", id, a_what);
+				break;
+			case SaveStrays::Handover::kRelease:
+				++releasedAtLoad;
+				REX::INFO("SaveGuard: {:08X}, {} (deleted={}), takes no record; let go of now, as the load would", id, a_what, a_ref->IsDeleted());
+				ReleaseNow(a_ref);
+				break;
+			}
 		}
 
 		bool StillLingers(std::uint32_t a_id, std::uint32_t a_base)
@@ -527,19 +641,44 @@ namespace SaveGuard
 	void BeforeLoad()
 	{
 		noted.clear();
-		book.ForEachHeld([](std::uint32_t a_id, std::uint32_t a_base) {
+		std::vector<std::pair<RE::TESObjectREFR*, bool>> wayOut;  // and whether it lingers from the last load
+		book.ForEachHeld([&](std::uint32_t a_id, std::uint32_t a_base) {
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			// Only one on its way out can outlive the load as a leak: a copy handed to someone here is released (Release), and one
-			// still held but not buried is not ours to judge after the load. One lingering from the last load is on its way out
+			// still held keeps its record, so the load frees it (but see below). One lingering from the last load is on its way out
 			// too, though no longer in RemotePlayers' lists (cleared at that load): without its note, a second load in a row
-			// would leave it to the game, and the next save would write it.
-			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base)
-				&& (RemotePlayers::OnItsWayOut(ref) || book.IsLingering(a_id, a_base))) {
-				const auto& at = ref->data.location;
-				noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z };
+			// would leave it to the game, and the next save would write it. Every kind Track is told of: a friend's stand-in
+			// leaks through a load as a frame copy does, and one written into a save crashed the second load of it in a run.
+			if (base && base->GetFormID() == a_base && !noted.contains(a_id)) {
+				const bool lingering = book.IsLingering(a_id, a_base);
+				// Or one held with no record: adrift, inside RemotePlayers' ADRIFT_GRACE (SaveStrays::GoesToLoad).
+				if (SaveStrays::GoesToLoad(RemotePlayers::OnItsWayOut(ref), lingering, HasChanges(a_id))) {
+					const auto& at = ref->data.location;
+					noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z, !ref->IsDisabled() && !ref->IsDeleted() };
+					wayOut.emplace_back(ref, lingering);
+				}
 			}
 		});
+		// Each is handed to the load (see RELEASE_CREATED_REFERENCE), after the walk: letting go of one changes no book here,
+		// but the engine's events run as it goes. One that lingers from the last load is handed over too, unless it is an
+		// actor: that load may have freed its base already, and the engine reads an actor's base as it lets go of it (the
+		// crash in RevertAllChanges on such a stand-in). That one stays noted only.
+		for (const auto& [ref, lingering] : wayOut) {
+			if (lingering && ref->As<RE::Actor>()) {
+				continue;
+			}
+			HandToLoad(ref, "ours on its way out");
+		}
+		// A stray of ours the last load brought back, still the same form: its base is the save's, freed by this load.
+		for (const auto& stray : std::exchange(broughtBack, {})) {
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(stray.id);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (ref == stray.ref && base && base->GetFormID() == stray.base) {
+				++broughtBackHanded;
+				HandToLoad(ref, "a stray the last load brought back");
+			}
+		}
 	}
 
 	std::uint32_t BeforeSave()
@@ -600,11 +739,19 @@ namespace SaveGuard
 			doomedLoaded += doomed;
 			if (verdict == SaveStrays::Verdict::kExclude) {
 				ExcludeId(c.id);
-				REX::WARN("SaveGuard: the save brought back {}, a stand-in or one of its things; its record is dropped", Describe(c, hasChanges));
+				REX::WARN("SaveGuard: the save brought back {}, a stand-in or one of its things; its record is dropped, and the next load frees it", Describe(c, hasChanges));
 				// An earlier version's stand-in comes back promoted when the save kept it so: its holder letting go would unload it
 				// in no cell (see SaveStrays::Unpromoted), so it is told no from now on and stays as it is, kept out of every save.
 				if (const auto actor = c.actor ? RE::TESForm::GetFormByID<RE::Actor>(c.id) : nullptr) {
 					KeepUnpromoted(actor);
+				}
+				// With no record, the next load would keep it in memory as it is (left so, the next load of the same save crashed
+				// on the VM, in TESPackage::Revert from the process lists), so it goes to that load (BeforeLoad), as one of ours.
+				// That load lets go of it, and the save brings it back again. A save that holds one is still not safe to load
+				// again and again in one run (the third load crashed, on a settler's Actor::Revert): a save made after the first
+				// load holds none, and one loaded after a restart of the game is.
+				if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(c.id); ref && broughtBack.size() < BROUGHT_BACK_MAX) {
+					broughtBack.push_back({ c.id, c.base, ref });
 				}
 			} else if (doomed) {
 				foreignDoomed += hasChanges;
@@ -613,6 +760,12 @@ namespace SaveGuard
 				REX::INFO("SaveGuard: the save brought back {:08X} in no cell (a friend's stand-in saved by an earlier version?)", c.id);
 			}
 		}
+		// The save holds one of ours an earlier version wrote: loading it again in this run may crash (see DESIGN.md), and a
+		// save made now holds none. Told once a load, in plain words.
+		if (!broughtBack.empty()) {
+			++oldSaveNotices;
+			Hud::Notify(Text::Get("save.old_leftover"));
+		}
 		straysLoaded += static_cast<std::uint32_t>(strays.size());
 		return static_cast<std::uint32_t>(strays.size());
 	}
@@ -620,6 +773,7 @@ namespace SaveGuard
 	void NewGame()
 	{
 		unpromoted.Clear();
+		broughtBack.clear();
 		book.AfterLoad({}, StandIn, Lingers);  // what was placed before it is gone, as after a load (or on its way out: Lingers)
 	}
 
@@ -658,8 +812,8 @@ namespace SaveGuard
 
 	std::string Describe()
 	{
-		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
-			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
+		return std::format("save: excluded={} straysSaved={} straysLoaded={} doomedSaved={} doomedLoaded={} foreignDoomed={} excludedAtDelete={} orphansDropped={} lingered={} lingeringDropped={} lingering={} turnedOff={} leftToLoad={} recordsGiven={} releasedAtLoad={} basesKept={} broughtBack={} broughtBackHanded={} oldSaveNotices={} lastStray={:08X} placed={} forgotten={} searches={} unpromoted={} promotionsRefused={}",
+			excluded, straysSaved, straysLoaded, doomedSaved, doomedLoaded, foreignDoomed, excludedAtDelete, orphansDropped, lingered, lingeringDropped, book.LingeringCount(), turnedOff, leftToLoad, recordsGiven, releasedAtLoad, basesKept, broughtBack.size(), broughtBackHanded, oldSaveNotices, lastStray, book.PlacedCount(), book.ForgottenCount(), searches, unpromoted.Size(),
 			unpromoted.Refused());
 	}
 }

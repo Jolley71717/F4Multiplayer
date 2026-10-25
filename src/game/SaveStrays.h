@@ -159,23 +159,30 @@ namespace SaveStrays
 		bool                                             any = false;
 	};
 
-	// A load does not always free a copy of ours that was on its way out as it came (see Book::AfterLoad): its form stays
-	// in memory under its id, nobody's from then on, and the next save writes it. After the load the game counts ids on
-	// from the save's last one, so the id may just as well name a reference the loaded game made since, often of the very
-	// base ours had (a raider's frame, disabled while worn). So the form under the id is taken for our old copy only when
-	// it is provably the same form SaveGuard noted before the load (the same address and extra data, which the copy held
-	// the whole time it was in memory, under the same base, at the very spot to the bit: a form made since at that
-	// address is placed where its maker placed it), and only while it stays a power armor frame on its way out that
-	// nobody could want: disabled or deleted, nobody in it or last out of it, with no owner it did not have when noted,
-	// and nothing in it. Every copy of ours is emptied as it is placed; the one a friend's stand-in got into has had the
-	// stand-in's base for its owner since then (Equipment::SwitchIntoPowerArmor), so an owner noted before the load is
-	// ours; the engine gives a frame to whoever gets out of it. Asked again at every check (each second, and before each
-	// save): one that fails once is left to the game for good.
+	// A load does not always free a reference of ours that was on its way out as it came (see Book::AfterLoad): its form
+	// stays in memory under its id, nobody's from then on, and the next save writes it. The engine's load frees only what
+	// has a record of changes (BGSSaveLoadGame::RevertAllChanges walks the records, and lets go of each created form it finds
+	// there), and every one of ours on its way out had its record dropped before the load, so SaveGuard::BeforeLoad gives
+	// each one its record back (see Handover); this is for one the engine would not take a record for. After the load the
+	// game counts ids on from the save's last one, so the id may just as well name a reference the loaded game made since,
+	// often of the very base ours had (a raider's frame, disabled while worn). So the form under the id is taken for our
+	// old one only when it is provably the same form SaveGuard noted before the load (the same address and extra data,
+	// which it held the whole time it was in memory, under the same base, at the very spot to the bit: a form made since
+	// at that address is placed where its maker placed it), and only while it stays on its way out and nobody could want
+	// it: disabled or deleted, and for a power armor frame, nobody in it or last out of it, with no owner it did not have
+	// when noted, and nothing in it; for an actor (a friend's stand-in, a copy of a friend's NPC), not a puppet of ours.
+	// Every frame copy of ours is emptied as it is placed; the one a friend's stand-in got into has had the stand-in's base
+	// for its owner since then (Equipment::SwitchIntoPowerArmor), so an owner noted before the load is ours; the engine
+	// gives a frame to whoever gets out of it. Asked again at every check (each second, and before each save): one that
+	// fails once is left to the game for good.
 	struct Remains
 	{
 		bool same = false;        // the very form noted before the load
 		bool frame = false;       // a power armor frame
+		bool actor = false;       // an actor (a stand-in, or a copy of a friend's NPC)
+		bool puppet = false;      // an actor that is one of our puppets (a stand-in in use, or a mirrored NPC)
 		bool off = false;         // disabled, or marked for deletion
+		bool notedOn = false;     // it was neither when noted: buried while its 3D was still on its way (see LingerOf)
 		bool worn = false;        // the player is in it or left it last, or an actor here is in it
 		bool newOwner = false;    // it has an owner of its own, and had none when noted (or another ownership since)
 		bool holdsItems = false;  // its inventory holds anything
@@ -183,8 +190,108 @@ namespace SaveStrays
 
 	constexpr bool StillOurs(const Remains& a_remains)
 	{
-		return a_remains.same && a_remains.frame && a_remains.off && !a_remains.worn && !a_remains.newOwner && !a_remains.holdsItems;
+		if (!a_remains.same || !a_remains.off) {
+			return false;
+		}
+		if (a_remains.frame) {
+			return !a_remains.worn && !a_remains.newOwner && !a_remains.holdsItems;
+		}
+		if (a_remains.actor) {
+			return !a_remains.puppet;
+		}
+		return true;  // a light, or anything else Track was told of: nothing of the game's is ever the same form
 	}
+
+	// What SaveGuard does with what is under the id right after a load (see Remains).
+	enum class Linger
+	{
+		kNo,       // not ours, or wanted: left to the game
+		kYes,      // our old one, on its way out: kept out of saves while it stays so
+		kTurnOff,  // our old one, buried before its 3D came in, so never disabled: disabled now, then as kYes
+	};
+
+	// One buried while its 3D was still on its way is not disabled (deleting or disabling a reference whose 3D is loading
+	// crashes the loader as it finishes: DeferredDelete::Safe), and a load can come in that moment (a friend's parked
+	// frame coming into view as the player quickloads, or dies and the game reloads). The loader is done with the old
+	// world once the load is over, so it is disabled then, if it is otherwise all StillOurs asks.
+	constexpr Linger LingerOf(const Remains& a_remains)
+	{
+		if (StillOurs(a_remains)) {
+			return Linger::kYes;
+		}
+		Remains once = a_remains;
+		once.off = true;
+		return a_remains.notedOn && !a_remains.off && StillOurs(once) ? Linger::kTurnOff : Linger::kNo;
+	}
+
+	// Which of the references of ours still in the book SaveGuard::BeforeLoad hands to the load: each on its way out (buried,
+	// being deleted, or lost from those lists with its form still there), each lingering from the last load, and each held
+	// with no record. A held copy with a cell always has its record; one without is adrift (it lost its cell, and its record
+	// is dropped each frame until it is buried), and kept through the load it would be in no cell and nobody's to judge.
+	constexpr bool GoesToLoad(bool a_onItsWayOut, bool a_lingering, bool a_hasRecord)
+	{
+		return a_onItsWayOut || a_lingering || !a_hasRecord;
+	}
+
+	// What SaveGuard::BeforeLoad does with a reference of ours on its way out, so the load frees it with the old world
+	// (see Remains): one with a record is left to the load; one without is given one (TESForm::AddChange), which the
+	// engine refuses for a created reference that is deleted and not persistent; that one is let go of now, as the load
+	// would have (kRelease), and noted all the same.
+	enum class Handover
+	{
+		kHasRecord,
+		kGiveRecord,
+		kRelease,
+	};
+
+	constexpr Handover HandoverOf(bool a_hasRecord, bool a_recordGiven)
+	{
+		if (a_hasRecord) {
+			return Handover::kHasRecord;
+		}
+		return a_recordGiven ? Handover::kGiveRecord : Handover::kRelease;
+	}
+
+	// References of ours on their way out whose handle stopped resolving while their form was still there (a reference
+	// marked for deletion may no longer resolve through its handle while the engine still holds it). RemotePlayers' lists
+	// let go of an entry whose handle fails, so these are kept here, by id and address, for RemotePlayers::OnItsWayOut to
+	// still say yes at the load; an entry goes once the form under its id is gone or another, or at a load. Past MAX the
+	// oldest go.
+	class LostOnWayOut
+	{
+	public:
+		static constexpr std::size_t MAX = 64;
+
+		void Add(std::uint32_t a_id, const void* a_ref)
+		{
+			if (a_id == 0 || !a_ref || Has(a_id, a_ref)) {
+				return;
+			}
+			if (entries.size() >= MAX) {
+				entries.erase(entries.begin());
+			}
+			entries.emplace_back(a_id, a_ref);
+		}
+
+		[[nodiscard]] bool Has(std::uint32_t a_id, const void* a_ref) const
+		{
+			return a_ref && std::ranges::find(entries, std::pair{ a_id, a_ref }) != entries.end();
+		}
+
+		// a_now(id): the address of the form under the id now, or null when there is none.
+		template <class F>
+		void Keep(F&& a_now)
+		{
+			std::erase_if(entries, [&](const std::pair<std::uint32_t, const void*>& a_entry) { return a_now(a_entry.first) != a_entry.second; });
+		}
+
+		void Clear() { entries.clear(); }
+
+		[[nodiscard]] std::size_t Size() const { return entries.size(); }
+
+	private:
+		std::vector<std::pair<std::uint32_t, const void*>> entries;
+	};
 
 	// When SaveGuard looks for strays: before a save, or right after a load.
 	enum class When
@@ -346,8 +453,10 @@ namespace SaveStrays
 		// engine unloads a reference it never made persistent with its cell: the form is freed and its record of changes kept
 		// under that cell, which brings the reference back when the cell loads again. A friend's frame copy left in Sanctuary
 		// as the player walked or travelled off so came back beside the one placed for them on their return, and every save
-		// from then on kept it. The id stays taken while that record is there (the engine hands out only ids with none), so
-		// the record is ours; one whose id names another form now is left alone.
+		// from then on kept it. The id stays taken while that record is there (TESDataHandler::GetNextID hands out an id only
+		// when no form is under it, no record is, and it is no unloaded form's), so the record is ours; one whose id names
+		// another form now is left alone. A forgotten one still there has its record dropped each second (a_kept): that
+		// never frees its id, as the form itself still holds it; the id is free only once the form is gone.
 		template <class B, class K, class O>
 		void KeepForgotten(B&& a_baseNow, K&& a_kept, O&& a_orphaned)
 		{

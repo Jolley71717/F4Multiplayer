@@ -113,6 +113,7 @@ workshop.rescued = O que você guardou no contêiner de um amigo está no seu in
 drops.container_hint = Armas e armaduras que você guarda em um contêiner ficam só no seu jogo. Para dar uma a um amigo, largue-a perto dele
 drops.not_given = Seus amigos não podem pegar este item: ele fica no chão só no seu jogo
 drops.taken_first = Um amigo pegou primeiro
+save.old_leftover = Multijogador: este save tem um resto de uma versão antiga do mod. Salve agora, reinicie o jogo e continue jogando a partir do novo save
 menu.unavailable = Multijogador: o menu não está disponível
 menu.more = Mais ({page}/{pages})
 menu.on = Ligado
