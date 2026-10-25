@@ -136,7 +136,9 @@ namespace Papyrus
 
 	// Calls a method on a script object (from BoundObject) with the arguments a_args fills in: script objects among them,
 	// which the VM's own packing of a form would make through the wrong slot (see above). False if it could not be queued.
-	inline bool CallOn(const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, std::string_view a_function, const std::function<void(RE::BSScrapArray<RE::BSScript::Variable>&)>& a_args)
+	// a_callback, if any, is told once the call has run, or that the VM cancelled it, on one of the VM's threads.
+	inline bool CallOn(const RE::BSTSmartPointer<RE::BSScript::Object>& a_self, std::string_view a_function, const std::function<void(RE::BSScrapArray<RE::BSScript::Variable>&)>& a_args,
+		const detail::Callback& a_callback = {})
 	{
 		const auto game = RE::GameVM::GetSingleton();
 		const auto vm = game ? game->GetVM() : nullptr;
@@ -147,7 +149,7 @@ namespace Papyrus
 			a_args(a_out);
 			return true;
 		} };
-		return detail::DispatchMethodCall(vm.get(), a_self, RE::BSFixedString{ a_function }, args);
+		return detail::DispatchMethodCall(vm.get(), a_self, RE::BSFixedString{ a_function }, args, a_callback);
 	}
 
 	// As CallMethod, and a_callback (if any) is told once the call has run (or that the VM cancelled it), later on one of

@@ -75,3 +75,27 @@ TEST("friend frame: a copy got out of is left as it is for 10 s, and while its 3
 	CHECK(Settling(false, 30s));
 	CHECK(!Settling(false, 31s));  // never back: placed again in the end
 }
+
+TEST("friend frame: a copy let go of while a companion is being sent out of it stays the friend's until they are out")
+{
+	using FriendFrame::KeptOutFor;
+	auto waiting = COPY;
+	waiting.waitingFor = FRIEND;  // the friend left, or their game shared the frame again, with the companion still in it
+	CHECK(KeptOutFor(waiting) == FRIEND);  // our player is still kept out, and the companion still sent out
+	waiting.ours = true;
+	CHECK(KeptOutFor(waiting) == 0);
+}
+
+TEST("friend frame: nothing buries a copy with anyone in it; a save keeps one a companion is being sent out of, with them")
+{
+	using FriendFrame::ChooseLeave;
+	using FriendFrame::Leave;
+	CHECK(ChooseLeave({}) == Leave::kBury);  // nobody in it: it goes, and no save has it
+	// A companion getting in, all the way in (the engine disabled the frame and cleared the seat), or asked out last frame:
+	// it stays ours and as it is. Buried, a save had them wear a frame the save did not have.
+	CHECK(ChooseLeave({ .sendingOut = true }) == Leave::kWait);
+	CHECK(ChooseLeave({ .sendingOut = true, .inUse = true }) == Leave::kWait);  // never "theirs now": the friend's frame stays theirs
+	CHECK(ChooseLeave({ .inUse = true }) == Leave::kRelease);                   // someone not ours to send out (a friend's NPC)
+	CHECK(ChooseLeave({ .ours = true }) == Leave::kRelease);                    // our player's own suit, from before this build
+	CHECK(ChooseLeave({ .ours = true, .sendingOut = true }) == Leave::kRelease);
+}

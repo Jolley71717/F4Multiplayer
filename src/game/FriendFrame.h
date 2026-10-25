@@ -27,6 +27,7 @@ namespace FriendFrame
 		std::uint32_t parkedFor = 0;    // the friend whose parked frame this is our copy of (RemotePlayers' parked copy)
 		std::uint32_t leftFor = 0;      // the friend whose stand-in this copy was placed for: worn by it, or left where they got out
 		std::uint32_t sharedBy = 0;     // the friend whose game shares the frame this is our copy of (Spawns)
+		std::uint32_t waitingFor = 0;   // the friend whose copy this was, let go of by its holder while someone was being sent out of it
 	};
 
 	// The friend whose frame it is, when our player is kept out of it; 0 lets them in.
@@ -40,6 +41,9 @@ namespace FriendFrame
 		}
 		if (a_facts.leftFor != 0) {
 			return a_facts.leftFor;
+		}
+		if (a_facts.waitingFor != 0) {
+			return a_facts.waitingFor;
 		}
 		return a_facts.sharedBy;
 	}
@@ -72,5 +76,34 @@ namespace FriendFrame
 	constexpr bool Settling(bool a_back, std::chrono::steady_clock::duration a_since)
 	{
 		return a_since <= SETTLE_MIN || (!a_back && a_since <= SETTLE_LIMIT);
+	}
+
+	// Who is in a frame copy as it is to go (a save or load, the friend leaving, their game sharing the frame again, a
+	// copy placed anew), and what is done with it then. Nothing buries a copy with anyone in it: an NPC all the way in
+	// wears it (the engine disabled it and cleared the seat), and burying it left them in a frame that was gone, or wrote
+	// a save whose companion wears a frame the save does not have, which the engine fails on as it loads that save.
+	struct Holders
+	{
+		bool ours = false;        // our player is in it, getting in, or got out of it last
+		bool sendingOut = false;  // someone our game sends out of it (SendsOut) is in it, getting in, or on their way out
+		bool inUse = false;       // anyone else here is in it or getting in (a friend's NPC, say)
+	};
+
+	enum class Leave
+	{
+		kBury,     // nobody is in it: it goes, as every copy of ours does
+		kWait,     // it stays ours, as it is, until the one sent out of it is out; then it goes
+		kRelease,  // it is theirs now: left to the game, and saved as the game's
+	};
+
+	constexpr Leave ChooseLeave(const Holders& a_holders)
+	{
+		if (a_holders.ours) {
+			return Leave::kRelease;
+		}
+		if (a_holders.sendingOut) {
+			return Leave::kWait;
+		}
+		return a_holders.inUse ? Leave::kRelease : Leave::kBury;
 	}
 }

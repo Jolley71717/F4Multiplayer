@@ -180,6 +180,10 @@ namespace Equipment
 	using FrameGate = bool (*)(RE::TESObjectREFR* a_frame, FrameAsk a_ask, const RE::Actor* a_by);
 	void SetFrameGate(FrameGate a_gate);
 
+	// The copies our player is kept out of now, by their handles, each frame from the main
+	// thread: the container menu's hook closes Transfer on one as the menu is shown (on the UI's thread).
+	void SetTransfersKeptOut(std::vector<RE::ObjectRefHandle> a_handles);
+
 	// Hooks the container menu's messages in its vtable, for a frame's Transfer (kTransfer). Once, at load.
 	void InstallFrameGate();
 

@@ -65,8 +65,12 @@ namespace Spawns
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing();
 
-	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near.
+	// Before a save or a load: our copies are deleted (never saved), and placed again afterwards while we stand near. A
+	// frame copy someone is being sent out of is kept as it is, saved with the frame they wear (RemotePlayers::SomeoneSentOutOf).
 	void DiscardCopies();
+
+	// Our copies of friends' frames now (RemotePlayers tells the container menu's hook which our player is kept out of).
+	[[nodiscard]] std::vector<RE::ObjectRefHandle> FrameCopies();
 
 	// A save was loaded: our NPCs' ids name the loaded game's now, and our copies went before it.
 	void OnGameLoaded();

@@ -612,10 +612,32 @@ namespace Spawns
 	void DiscardCopies()
 	{
 		for (const auto id : theirs.Ids()) {
-			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
-				Discard(id);
+			const auto copy = theirs.Find(id);
+			if (!copy || copy->local == 0) {
+				continue;
+			}
+			// A frame copy someone is being sent out of is kept as it is, saved with the frame they wear (a load takes it with
+			// the old world): buried, the save would have them wear a frame it does not have (RemotePlayers::SomeoneSentOutOf).
+			if (const auto it = placed.find(id); it != placed.end()) {
+				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
+					continue;
+				}
+			}
+			Discard(id);
+		}
+	}
+
+	std::vector<RE::ObjectRefHandle> FrameCopies()
+	{
+		std::vector<RE::ObjectRefHandle> out;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			if (spawn && Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				out.push_back(copy.handle);
 			}
 		}
+		return out;
 	}
 
 	void OnGameLoaded()
@@ -643,7 +665,13 @@ namespace Spawns
 
 	void Reset()
 	{
-		DiscardCopies();
+		// Every copy goes, as at a save, but none is kept: one someone is being sent out of waits for them in RemotePlayers
+		// (or, with the session over, is left to them).
+		for (const auto id : theirs.Ids()) {
+			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
+				Discard(id);
+			}
+		}
 		placed.clear();
 		seenAt.clear();
 		theirs.Clear();
