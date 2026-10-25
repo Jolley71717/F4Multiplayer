@@ -441,7 +441,9 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   units of the nearest player, ours or a friend in our space (the server's 8000 less a state's age), a radius in
   (0, 1024], and a budget of 8 at once, then 3 a second (the server's 16 and 4, less two seconds of a burst bunching up
   on the way). An NPC's missile far from its own game's player but beside a friend is reported, as only the friend's
-  game can deal the friend's blow; the server passes one near the reporter or any other player in that space. Reports
+  game can deal the friend's blow: the scan looks around each friend in our space too (within 2024 units of them,
+  only an explosion an actor of ours set off: `nearFriends=`), and the server passes one near the reporter or any
+  other player in that space. Reports
   go reliably both ways. The server keeps no window after a shot or a throw. All joiners' explosions together have room
   for every seat's own budget at once (what another game spends can't be seen from ours), so only a client that rejoins
   as someone new runs out.
@@ -466,9 +468,10 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
   - The engine gives a freed explosion's id to the next one, and a hit that names an id is matched to the oldest
     explosion of the last 3 s with it: when two share an id that fast and fared differently, the blow goes by the older.
   - A stand-in's shot is defused as it leaves the gun (looked at each frame): one that hits within a frame of firing
-    goes off here too (`standInExplosions=`).
+    goes off here too (`standInExplosions=`). A stand-in has its player's gun but not their ammunition, and the engine
+    fires no gun without it: one with none is given 3 before an explosive shot is replayed (`defused=defused/ammo given`).
 - `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`, `defused=`,
-  `shotsWatched=watched/checked`, the blast counters above; the log names each explosion's owner and what became of
+  `shotsWatched=watched/checked`, `nearFriends=`, the blast counters above; the log names each explosion's owner and what became of
   it, and each hit on a copy names its source.
 
 To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, a companion blowing a

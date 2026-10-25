@@ -306,6 +306,15 @@ namespace MuzzleFlash
 		return gun.instance && gun.instance->enchantments && !gun.instance->enchantments->empty();
 	}
 
+	RE::TESAmmo* GunAmmo(RE::Actor* a_actor)
+	{
+		const auto gun = EquippedGun(a_actor);
+		if (!gun.weapon) {
+			return nullptr;
+		}
+		return gun.instance ? gun.instance->ammo : gun.weapon->weaponData.ammo;
+	}
+
 	void OnShot(RE::Actor* a_actor, bool a_animated)
 	{
 		if (a_animated) {

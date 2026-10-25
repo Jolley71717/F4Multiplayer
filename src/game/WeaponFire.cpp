@@ -220,6 +220,22 @@ namespace WeaponFire
 			}
 		}
 
+		// A stand-in is given its player's gun, not their ammunition, and the engine fires no gun without it: a missile
+		// replayed on a stand-in with none left its gun with nothing (seen on the rig). One with none is given a few
+		// before its replay, enough for the shot: it is defused as it flies (DefuseStandInShots).
+		constexpr std::uint32_t SHOT_AMMO = 3;
+		std::uint32_t           ammoGiven = 0;
+
+		void GiveShotAmmo(RE::Actor* a_actor)
+		{
+			const auto ammo = MuzzleFlash::GunAmmo(a_actor);
+			if (!ammo || a_actor->GetInventoryObjectCount(ammo) > 0) {
+				return;
+			}
+			a_actor->AddInventoryItem(ammo, nullptr, SHOT_AMMO, nullptr, nullptr, nullptr);
+			++ammoGiven;
+		}
+
 		void ForgetReplayedFire(std::uint32_t a_actorId)
 		{
 			std::scoped_lock l{ fireLock };
@@ -694,6 +710,7 @@ namespace WeaponFire
 			++firesLetGo;
 			if (explodes) {
 				ArmDefuse(a_actor->GetFormID());
+				GiveShotAmmo(a_actor);
 			}
 		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
@@ -842,6 +859,7 @@ namespace WeaponFire
 		using namespace std::chrono_literals;
 		constexpr auto  EXPLOSION_WATCH = 8s;         // a frag grenade goes off within about 3 s; a mine when stepped on
 		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
+		constexpr float FRIEND_REACH = RemoteEdits::MAX_EXPLOSION_RADIUS + 1000.0f;  // around a friend: a blast that can reach them, and their walk since they said where they were
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		std::atomic<Clock::time_point>         shotWatchUntil{};  // after a shot of ours or of an NPC we run: its missile or shell goes off a little later
 		std::mutex                             throwLock;
@@ -929,6 +947,7 @@ namespace WeaponFire
 		std::uint32_t            explosionsOfStandIns = 0; // a friend's stand-in's own: it fired one after all (it holds them)
 		std::uint32_t            explosionsOfOthers = 0;   // an NPC's another game runs, or nobody does: never reported from here
 		std::uint32_t            explosionsKept = 0;       // ours, but the server might not pass it on: not sent, ours alone
+		std::uint32_t            explosionsNearFriends = 0;  // ours, found around a friend far from our player
 		std::uint32_t            blastsNamed = 0;          // blows on copies put down to the explosion their hit names
 		std::uint32_t            blastsNearest = 0;        // ... to the nearest that reached them, the hit naming none we saw
 		std::uint32_t            blastsAmbiguous = 0;      // ... where two reached them that fared differently: taken as ours
@@ -1166,13 +1185,35 @@ namespace WeaponFire
 		for (const auto ref : fresh) {
 			Decide(ref, player->data.location, now);
 		}
+		// An NPC of ours can set one off far from our player but beside a friend's (it fights them there, and the copies
+		// in their game hold its explosive shots): looked for around each friend in our space too. Only one an actor of
+		// ours set off is taken from there; any other there is the friend's game's to see.
+		for (const auto& info : RemotePlayers::List()) {
+			const auto at = RemotePlayers::PositionOf(info.id);
+			if (!at || at->GetDistance(player->data.location) + FRIEND_REACH <= EXPLOSION_RANGE) {
+				continue;  // within our own walk
+			}
+			std::vector<RE::TESObjectREFR*> near;
+			RE::TES::GetSingleton()->ForEachReferenceInRange(*at, FRIEND_REACH, [&](RE::TESObjectREFR* a_ref) {
+				const auto explosion = Fresh(a_ref) ? RE::fallout_cast<RE::Explosion*>(a_ref) : nullptr;
+				const auto by = explosion ? explosion->GetActorOwner() : nullptr;
+				if (by && !Puppets::IsPuppet(by) && OursSetItOff(by)) {
+					near.push_back(a_ref);
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			});
+			for (const auto ref : near) {
+				Decide(ref, player->data.location, now);
+				++explosionsNearFriends;
+			}
+		}
 	}
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} defused={} shotsWatched={}/{}", blasts.Size(),
-			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, defused, shotsWatched,
-			shotsChecked);
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} defused={}/{} shotsWatched={}/{} nearFriends={}", blasts.Size(),
+			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, defused, ammoGiven, shotsWatched,
+			shotsChecked, explosionsNearFriends);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)

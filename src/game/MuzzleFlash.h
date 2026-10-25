@@ -29,6 +29,8 @@ namespace MuzzleFlash
 	[[nodiscard]] RE::BGSProjectile* GunProjectile(RE::Actor* a_actor);
 	// Whether the gun the actor holds carries an enchantment (a legendary's effect: an explosive round may go off by one).
 	[[nodiscard]] bool GunEnchanted(RE::Actor* a_actor);
+	// The ammunition the actor's equipped gun takes (its mods' say included), or null.
+	[[nodiscard]] RE::TESAmmo* GunAmmo(RE::Actor* a_actor);
 
 	// Keeps showing flashes drawn and takes down those that are due. Call every frame.
 	void Frame();
