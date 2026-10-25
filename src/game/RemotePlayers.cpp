@@ -6,6 +6,7 @@
 #include "game/EngineRefs.h"
 #include "game/FriendLight.h"
 #include "game/GraphInfo.h"
+#include "game/HeldCopy.h"
 #include "game/Hud.h"
 #include "game/MoveSync.h"
 #include "game/NetSim.h"
@@ -52,6 +53,21 @@ namespace RemotePlayers
 			return { a_parked.cell, a_parked.worldspace, { a_parked.x, a_parked.y, a_parked.z } };
 		}
 
+		// A frame copy of ours, by its handle, with the form ID and base it was placed under (see HeldCopy): for when the
+		// engine unloads it with its cell and the handle stops resolving (Refresh).
+		struct HeldFrame
+		{
+			RE::ObjectRefHandle handle;
+			HeldCopy::Ids       ids;
+
+			HeldFrame() = default;
+			HeldFrame(RE::ObjectRefHandle a_handle) :
+				handle(a_handle), ids(SaveGuard::IdsOf(a_handle.get().get()))
+			{}
+
+			[[nodiscard]] RE::NiPointer<RE::TESObjectREFR> get() const { return handle.get(); }
+		};
+
 		struct RemotePlayer
 		{
 			std::uint32_t        id = 0;  // their player ID: what the log calls them (never by name)
@@ -84,7 +100,7 @@ namespace RemotePlayers
 			std::uint32_t        powerArmorFrame = 0;    // the base form of their frame
 			std::uint32_t        powerArmorFrameRef = 0; // their frame itself when every game has it (a pre-placed one), else 0
 			bool                 inPowerArmor = false;   // they are in a frame here: the stand-in goes into its copy as soon as it can (see ArmorFrames)
-			RE::ObjectRefHandle  frame;                  // the frame we placed for it: the stand-in's to get into, the engine's while it is in, or where they got out
+			HeldFrame            frame;                  // the frame we placed for it: the stand-in's to get into, the engine's while it is in, or where they got out
 			Clock::time_point    framePlacedAt{};
 			ArmorFrames::PlayTime framePlacedPlayed{};    // the same, in the time the game ran (see ArmorFrames::PlayClock)
 			ArmorFrames::PlayTime frameActionAt{};        // when they last got out (the copy stands where they did a while)
@@ -119,7 +135,7 @@ namespace RemotePlayers
 			bool                 originalAway = false;   // in this wear, they got into theirs where it stood parked away from ours, hidden then (see ArmorFrames::OriginalFacts::away)
 			bool                 originalParked = false; // ours was last looked at for the frame they left parked, not one they wear
 			std::optional<Protocol::ParkedFrame> parked; // out of power armor: the frame they got out of last, where it stands in their world
-			RE::ObjectRefHandle  parkedCopy;             // our copy of it there (see ArmorFrames::ChoosePark)
+			HeldFrame            parkedCopy;             // our copy of it there (see ArmorFrames::ChoosePark)
 			Clock::time_point    parkedPlacedAt{};
 			const RE::NiAVObject* parkedCollisionOff = nullptr;  // its 3D whose collision we turned off; only compared
 			std::optional<Protocol::ParkedFrame> parkedTaken;    // the parked frame whose copy somebody here got into: none placed for it again
@@ -280,6 +296,31 @@ namespace RemotePlayers
 			}
 			SaveGuard::ExcludeOurs(a_ref);
 			return a_now - a_placedAt >= ADRIFT_GRACE;
+		}
+
+		// Frame copies the engine unloaded with their cell (see HeldCopy): back with it, or forgotten.
+		std::uint32_t framesBack = 0;      // held again, back under their id with their cell
+		std::uint32_t framesUnloaded = 0;  // let go of, their record dropped (SaveGuard::Forget)
+
+		// What a_held holds, kept true once its handle stops resolving (see HeldCopy::Look): the same copy back under its
+		// id is held again, never a second placed beside it; otherwise it is let go of and forgotten, so SaveGuard drops the
+		// record the engine keeps of it under its cell, which would bring it back when the cell loads again.
+		void Refresh(HeldFrame& a_held, std::uint32_t a_player, std::string_view a_what)
+		{
+			const auto id = a_held.ids.id;
+			switch (SaveGuard::Refresh(a_held.handle, a_held.ids)) {
+			case HeldCopy::Lost::kNone:
+				break;
+			case HeldCopy::Lost::kBack:
+				++framesBack;
+				REX::INFO("RemotePlayers: player {}'s {} {:08X} came back with its cell; held again, no second one placed", a_player, a_what, id);
+				break;
+			case HeldCopy::Lost::kForget:
+				++framesUnloaded;
+				REX::INFO("RemotePlayers: player {}'s {} {:08X} is gone from under us (unloaded with its cell); forgotten, its record dropped", a_player, a_what, id);
+				a_held = {};
+				break;
+			}
 		}
 
 		// The first stand-in waits this long for the player's face, instead of being placed and then
@@ -686,6 +727,7 @@ namespace RemotePlayers
 		// got out, it is never someone here who got into it.
 		void DeleteFrame(RemotePlayer& a_player, const RE::Actor* a_standIn = nullptr, RE::ObjectRefHandle a_wearer = {})
 		{
+			Refresh(a_player.frame, a_player.id, "frame copy");  // one the engine unloaded is forgotten, its record dropped
 			if (const auto frame = a_player.frame.get()) {
 				// Someone here may have got into the friend's frame copy (it stands drawn and solid where they got out):
 				// our own player, or anyone else. Then it stays (deleting it would leave them in nothing) and is simply
@@ -695,6 +737,7 @@ namespace RemotePlayers
 				// is drawn and solid (a hidden one has no collision to aim at).
 				if (OurFrame(frame.get()) || FrameInUse(frame.get(), a_standIn)) {
 					REX::INFO("RemotePlayers: someone here is in player {}'s frame copy {:08X}; leaving it", a_player.id, frame->GetFormID());
+					SaveGuard::Release(frame->GetFormID());  // theirs now: never kept out of a save, nor noted at a load
 				} else {
 					BuryFrame(frame.get(), a_player.framePlacedAt, a_wearer);
 				}
@@ -1194,6 +1237,7 @@ namespace RemotePlayers
 			case ArmorFrames::Copy::kAbandon:
 				// Someone here got into it while it stood where they got out: theirs now (see DeleteFrame).
 				REX::INFO("RemotePlayers: someone here got into player {}'s frame copy {:08X}; it is theirs now", a_player.id, frame->GetFormID());
+				SaveGuard::Release(frame->GetFormID());
 				a_player.frame = {};
 				a_player.frameCollisionOff = nullptr;
 				break;
@@ -1539,9 +1583,11 @@ namespace RemotePlayers
 		// The parked copy goes, unless someone here is in it (as DeleteFrame).
 		void DeleteParked(RemotePlayer& a_player)
 		{
+			Refresh(a_player.parkedCopy, a_player.id, "parked frame copy");  // one the engine unloaded is forgotten, its record dropped
 			if (const auto copy = a_player.parkedCopy.get()) {
 				if (OurFrame(copy.get()) || FrameInUse(copy.get())) {
 					REX::INFO("RemotePlayers: someone here is in player {}'s parked frame copy {:08X}; leaving it", a_player.id, copy->GetFormID());
+					SaveGuard::Release(copy->GetFormID());
 				} else {
 					BuryFrame(copy.get(), a_player.parkedPlacedAt);
 				}
@@ -1641,6 +1687,7 @@ namespace RemotePlayers
 				break;
 			case ArmorFrames::Park::kAbandon:
 				REX::INFO("RemotePlayers: someone here got into player {}'s parked frame copy {:08X}; it is theirs now", a_player.id, copy->GetFormID());
+				SaveGuard::Release(copy->GetFormID());
 				a_player.parkedTaken = parked;
 				a_player.parkedCopy = {};
 				a_player.parkedCollisionOff = nullptr;
@@ -2111,6 +2158,18 @@ namespace RemotePlayers
 		});
 	}
 
+	bool OnItsWayOut(const RE::TESObjectREFR* a_ref)
+	{
+		if (!a_ref) {
+			return false;
+		}
+		// By id too: a reference marked for deletion may no longer resolve through its handle while the engine still holds it.
+		const auto id = a_ref->GetFormID();
+		const auto is = [&](const RE::ObjectRefHandle& a_handle, std::uint32_t a_id) { return a_id == id || a_handle.get().get() == a_ref; };
+		return std::ranges::any_of(graveyard, [&](const Grave& a_grave) { return is(a_grave.actor, a_grave.id); }) ||
+		       std::ranges::any_of(deleting, [&](const Deleting& a_deleting) { return is(a_deleting.ref, a_deleting.id); });
+	}
+
 	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)
 	{
 		// A frame copy (Spawns' copy of a friend's frame) goes as every frame of ours does: one taken over from the parked
@@ -2151,7 +2210,7 @@ namespace RemotePlayers
 		SetShown(copy.get(), true);
 		RestoreCollision(player.parkedCollisionOff, copy.get());
 		REX::INFO("RemotePlayers: player {}'s parked frame copy {:08X} is now our copy of the frame their game shares", a_owner, copy->GetFormID());
-		const auto handle = player.parkedCopy;
+		const auto handle = player.parkedCopy.handle;
 		player.parkedCopy = {};
 		player.parkedCollisionOff = nullptr;
 		return handle;
@@ -2406,6 +2465,11 @@ namespace RemotePlayers
 			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
 			aheadFrames += sampled && sampled->ahead && now - remote.states.arrived < 1s;
 			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
+
+			// A frame copy the engine unloaded with its cell (we walked or travelled off): back under its id with the cell, it
+			// is held again; gone, it is forgotten and its record dropped, so the cell never brings it back beside a new one.
+			Refresh(remote.frame, remote.id, "frame copy");
+			Refresh(remote.parkedCopy, remote.id, "parked frame copy");
 
 			// A light or frame copy the cells were cleared under (a door, a coc, a fast travel) goes, its record first: the
 			// engine unloading it would write the record out and crash on the cell it no longer has. A frame copy the
@@ -2831,6 +2895,9 @@ namespace RemotePlayers
 		}
 		if (parkedPlaced) {
 			out += std::format(" parkedFrames={}", parkedPlaced);
+		}
+		if (framesBack || framesUnloaded) {
+			out += std::format(" framesUnloaded={} framesBack={}", framesUnloaded, framesBack);
 		}
 		if (seatsEntered || seatsMissed || seatsLeft) {
 			out += std::format(" seatsIn={} seatsMissed={} seatsLeft={}", seatsEntered, seatsMissed, seatsLeft);

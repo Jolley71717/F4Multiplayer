@@ -28,10 +28,13 @@ namespace Spawns
 		SpawnBook::Theirs theirs;
 
 		// Our copies of friends' spawns, by spawn id: the handle (its id alone may name something else once it is gone).
+		// The id and base it was placed under go with it (see HeldCopy): the engine unloads a copy with its cell, its handle
+		// stops resolving and the cell keeps its record, which brought it back beside the next copy placed (Refresh).
 		struct Placed
 		{
 			RE::ObjectRefHandle handle;
 			Clock::time_point   placedAt{};
+			HeldCopy::Ids       ids;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
 
@@ -78,11 +81,43 @@ namespace Spawns
 		std::uint32_t reported = 0, granted = 0, refused = 0, received = 0;
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
+		std::uint32_t copiesUnloaded = 0, copiesBack = 0;  // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
 		{
 			return NpcSync::LocalPlayer();
+		}
+
+		// Our copy of spawn a_id, kept true once its handle stops resolving (see HeldCopy): the same copy back under its id
+		// with its cell is held again; one gone is forgotten (SaveGuard drops the record its cell keeps, so the cell never
+		// brings it back beside a new copy), and the book then finds no copy there (kLost).
+		void Refresh(std::uint32_t a_id, Placed& a_placed)
+		{
+			const auto local = a_placed.ids.id;
+			switch (SaveGuard::Refresh(a_placed.handle, a_placed.ids)) {
+			case HeldCopy::Lost::kNone:
+				break;
+			case HeldCopy::Lost::kBack:
+				++copiesBack;
+				REX::INFO("Spawns: {:08X}, our copy of spawn {:08X}, came back with its cell; held again, no second one placed", local, a_id);
+				break;
+			case HeldCopy::Lost::kForget:
+				++copiesUnloaded;
+				REX::INFO("Spawns: {:08X}, our copy of spawn {:08X}, is gone from under us (unloaded with its cell); forgotten, its record dropped", local, a_id);
+				break;
+			}
+		}
+
+		// Our copy of spawn a_id, if one is placed and still there (see Refresh).
+		RE::NiPointer<RE::TESObjectREFR> CopyOf(std::uint32_t a_id)
+		{
+			const auto it = placed.find(a_id);
+			if (it == placed.end()) {
+				return {};
+			}
+			Refresh(a_id, it->second);
+			return it->second.handle.get();
 		}
 
 		RemoteEdits::Spot SpotOf(const RE::TESObjectREFR* a_ref)
@@ -168,6 +203,7 @@ namespace Spawns
 		{
 			NpcSync::DropMirror(a_id);
 			if (const auto it = placed.find(a_id); it != placed.end()) {
+				Refresh(a_id, it->second);  // one the engine unloaded is forgotten here, its record dropped
 				if (const auto local = theirs.LocalOf(a_id)) {
 					if (leaving.size() >= MAX_LEAVING) {
 						std::erase_if(leaving, [](const auto& a_entry) { return !a_entry.second.get(); });
@@ -216,8 +252,7 @@ namespace Spawns
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
 			RE::NiPointer<RE::TESObjectREFR> ref;
 			if (copy->local != 0) {
-				const auto it = placed.find(a_id);
-				ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				ref = CopyOf(a_id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				if (facts.copyThere) {
 					facts.occupied = Occupied(ref.get());
@@ -254,7 +289,7 @@ namespace Spawns
 						REX::WARN("Spawns: could not place a copy of player {}'s frame {:08X} (base {:08X})", playerId, a_id, base);
 						break;
 					}
-					placed[a_id] = { handle, a_now };
+					placed[a_id] = { handle, a_now, SaveGuard::IdsOf(placedRef.get()) };
 					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
 					++frameCopiesPlaced;
 					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
@@ -277,6 +312,7 @@ namespace Spawns
 				break;
 			case SpawnBook::Act::kAbandon:
 				REX::INFO("Spawns: someone here got into {:08X}, our copy of player {}'s frame {:08X}; it is theirs now", ref->GetFormID(), playerId, a_id);
+				SaveGuard::Release(ref->GetFormID());  // no longer ours: never kept out of a save, nor noted at a load
 				placed.erase(a_id);
 				theirs.Taken(a_id);
 				++frameCopiesTaken;
@@ -493,8 +529,7 @@ namespace Spawns
 			}
 			const auto from = PlaceBase(id, copy->spawn.base);
 			if (copy->local != 0) {
-				const auto it = placed.find(id);
-				const auto ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				const auto ref = CopyOf(id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT): not taken for one that unloaded.
 				if (facts.copyThere && ref->GetParentCell()) {
@@ -523,7 +558,7 @@ namespace Spawns
 						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X}, from {:08X})", playerId, id, base, from);
 						break;
 					}
-					placed[id] = { handle, now };
+					placed[id] = { handle, now, SaveGuard::IdsOf(ref.get()) };
 					theirs.Placed(id, ref->GetFormID(), now);
 					++copiesPlaced;
 					if (logged < LOGGED) {
@@ -606,8 +641,8 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken);
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack);
 	}
 }

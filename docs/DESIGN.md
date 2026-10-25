@@ -1023,7 +1023,11 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   Receivers announce deaths (health 0) and put the health on the stand-in's name tag. In power
   armor it carries the frame's base form and, when every game has that frame (one a plugin placed,
   such as the museum's suit in Concord; a runtime 0xFF reference is sent as 0), the frame reference
-  itself. The stand-in wears the pieces they wear from the moment the status says they are in
+  itself. The frame is the furniture they sat in as the armor went on or, in a game loaded with them
+  already in the armor (a save made in it, a reload, a relaunch before hosting or joining), the frame
+  the engine keeps as worn (`ExtraPowerArmor`, `ArmorFrames::WornSeat`): learnt only from getting in,
+  such a player was told as in power armor with no frame, and friends saw them out of their suit
+  until they got out and in again. The stand-in wears the pieces they wear from the moment the status says they are in
   power armor (`RemotePlayers.cpp`, `ArmorFrames.h`), and the receiver keeps a copy of the base
   (only a power armor frame: furniture with the engine's power armor furniture keyword) under it,
   placed at once, hidden and without collision from the moment its 3D is in, and moved along with
@@ -1072,6 +1076,34 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   at once after a load. It is drawn again once the friend is out and their copy is clear of it (when
   several friends wear their copies of it, once the last of them is), and solid again once nobody
   stands within 70 units of it.
+  One copy per friend's frame (`HeldCopy.h`): every frame copy (the worn one, the one left where they got out, the
+  parked one, a spawn's) is held by its handle beside the id and base it was placed under. The engine unloads a
+  reference it never made persistent with its cell (the player walks or travels off): the form is freed, the handle
+  stops resolving, and the record of changes stays under the cell, bringing the copy back under the same id when the
+  cell loads again. Up to 0.9.1 the copy was only let go of: it came back on the player's return beside the one
+  placed for the friend's frame then, and every save kept it (the 0.9.1 report: frames piling up where friends had
+  parked, got out or walked in their armor in Sanctuary). Now the id is looked up again once the handle fails
+  (`HeldCopy::Look`): the same copy back is held again (the same id and base, standing where it was last seen while
+  held: a record dropped while the copy was still held frees its id, and a new frame of that base could be made under it);
+  otherwise it is forgotten, and one whose form is gone is taken
+  off the books at once and its record dropped (`SaveGuard::Forget`, `SaveStrays::Book::ForgetGone`, counted as
+  `orphansDropped`): dropping the record frees the id, and the engine may hand it to the next frame it makes. A frame already
+  standing where a copy is placed is never taken over: nothing tells a copy an earlier session left from a suit of the
+  player's own (stripped, so empty, and with no owner if they never got in), so what 0.9.1 left in a save stays. The
+  leak the rig showed (2026-10-24): a load does not free every copy DespawnAll had just disabled or deleted for it; one
+  stayed in memory, nobody's once the load had emptied the book, the next save wrote it, and a game started afresh from
+  that save had it back drawn and whole beside the copy placed for the friend, and the host shared it as its own frame.
+  Now `SaveGuard::BeforeLoad` notes each frame copy of ours just before a load (its address, extra data, ownership,
+  base and spot). After the load the game counts ids on from the save's, so an old id may name a frame the loaded game
+  made since (a raider's, disabled while worn); only the very form noted, at the very spot, lingers
+  (`SaveStrays::Remains`), and only while it is off (disabled or deleted), nobody is in it or got out of it last (in the furniture it uses, or the frame the engine holds as
+  worn, which is all there is right after a load), it
+  has no owner it did not have when noted (the copy a friend's stand-in wears has the stand-in's base for its owner)
+  and nothing in it. It
+  is asked again each second and before each save, kept out of saves while all of that holds and left to the game for
+  good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
+  id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
+  (stand-ins), `unloaded` and `back` (spawns).
 - Menus (`MenuKinds.h`, `StandInPipboy.h`, `MenuIconPlace.h`, `MenuIcons.cpp`; protocol 48): the status carries the kind
   of menu the player is in (`PlayerStatus::menu`: none, the Pip-Boy, paused, looting, a terminal, crafting, talking or
   another), read from the open-menu book, never from the UI, and never what the menu shows. VATS is no menu here. The
