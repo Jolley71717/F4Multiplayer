@@ -166,22 +166,24 @@ namespace SaveStrays
 	// it is provably the same form SaveGuard noted before the load (the same address and extra data, which the copy held
 	// the whole time it was in memory, under the same base, at the very spot to the bit: a form made since at that
 	// address is placed where its maker placed it), and only while it stays a power armor frame on its way out that
-	// nobody could want: disabled or deleted, nobody in it or last out of it, with no owner and nothing in it (every copy
-	// of ours is emptied as it is placed, and the engine gives a frame to whoever gets out of it). Asked again at every
-	// check (each second, and before each save): one that fails once is left to the game for good.
+	// nobody could want: disabled or deleted, nobody in it or last out of it, with no owner it did not have when noted,
+	// and nothing in it. Every copy of ours is emptied as it is placed; the one a friend's stand-in got into has had the
+	// stand-in's base for its owner since then (Equipment::SwitchIntoPowerArmor), so an owner noted before the load is
+	// ours; the engine gives a frame to whoever gets out of it. Asked again at every check (each second, and before each
+	// save): one that fails once is left to the game for good.
 	struct Remains
 	{
 		bool same = false;        // the very form noted before the load
 		bool frame = false;       // a power armor frame
 		bool off = false;         // disabled, or marked for deletion
 		bool worn = false;        // the player is in it or left it last, or an actor here is in it
-		bool owned = false;       // it has an owner of its own
+		bool newOwner = false;    // it has an owner of its own, and had none when noted (or another ownership since)
 		bool holdsItems = false;  // its inventory holds anything
 	};
 
 	constexpr bool StillOurs(const Remains& a_remains)
 	{
-		return a_remains.same && a_remains.frame && a_remains.off && !a_remains.worn && !a_remains.owned && !a_remains.holdsItems;
+		return a_remains.same && a_remains.frame && a_remains.off && !a_remains.worn && !a_remains.newOwner && !a_remains.holdsItems;
 	}
 
 	// When SaveGuard looks for strays: before a save, or right after a load.
@@ -311,6 +313,22 @@ namespace SaveStrays
 		// deletes the reference, and the game hands its id out again, often to the item of that base the player drops next,
 		// which is not ours. So it is let go of at once (not forgotten: that keeps the id out of saves while its base is).
 		void Release(std::uint32_t a_id) { placed.Erase(a_id); }
+
+		// One of ours whose form is gone already (the engine unloaded it with its cell): let go of at once, not forgotten
+		// (Forgotten is for a form that may still be there). Its record is about to be dropped, which frees the id, and the
+		// engine hands a freed id out again, often at once: one more second on the books here would take whatever gets it
+		// next (a raider's frame of the same base) for ours. Whether it was ours (placed this run); what else holds it as
+		// ours lets go of it too (TakeGone).
+		bool ForgetGone(std::uint32_t a_id)
+		{
+			const auto base = placed.BaseOf(a_id);
+			if (!base) {
+				return false;
+			}
+			placed.Erase(a_id);
+			gone.emplace_back(a_id, *base);
+			return true;
+		}
 
 		// One of ours whose handle stopped resolving (see Forgotten). Whether it is ours (placed this run).
 		bool Forget(std::uint32_t a_id)

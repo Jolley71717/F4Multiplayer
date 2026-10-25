@@ -152,6 +152,7 @@ namespace SaveGuard
 		{
 			const void*   ref = nullptr;
 			const void*   extra = nullptr;
+			const void*   ownership = nullptr;  // its ownership extra data, if it had one (a stand-in's copy: see SaveStrays::Remains)
 			std::uint32_t base = 0;
 			float         x = 0.0f, y = 0.0f, z = 0.0f;
 		};
@@ -187,6 +188,12 @@ namespace SaveGuard
 			return false;
 		}
 
+		// Its ownership extra data (the owner it was given: SetOwner), compared by address only; none when it has no owner of its own.
+		const void* OwnershipOf(const RE::TESObjectREFR* a_ref)
+		{
+			return a_ref->extraList ? a_ref->extraList->GetByType(RE::EXTRA_DATA_TYPE::kOwnership) : nullptr;
+		}
+
 		bool HoldsItems(RE::TESObjectREFR* a_ref)
 		{
 			const auto list = a_ref->inventoryList;
@@ -216,7 +223,7 @@ namespace SaveGuard
 			remains.frame = Equipment::IsPowerArmorFrame(base);
 			remains.off = ref->IsDeleted() || ref->IsDisabled();
 			remains.worn = Worn(ref);
-			remains.owned = ref->extraList && ref->extraList->HasType(RE::EXTRA_DATA_TYPE::kOwnership);
+			remains.newOwner = OwnershipOf(ref) != was.ownership;  // one it had when noted is the stand-in's; a new or another one is not ours
 			remains.holdsItems = HoldsItems(ref);
 			return remains;
 		}
@@ -427,10 +434,15 @@ namespace SaveGuard
 
 	void Forget(std::uint32_t a_id)
 	{
-		// Gone already (unloaded with its cell): its record goes now, before the cell could load again and bring it back.
-		if (book.Forget(a_id)) {
-			DropOrphan(a_id);
+		// Gone already (unloaded with its cell): off the books at once, and its record goes now, before the cell could load
+		// again and bring it back (see SaveStrays::Book::ForgetGone).
+		if (!RE::TESForm::GetFormByID(a_id)) {
+			if (book.ForgetGone(a_id)) {
+				DropOrphan(a_id);
+			}
+			return;
 		}
+		book.Forget(a_id);
 	}
 
 	HeldCopy::Lost Refresh(RE::ObjectRefHandle& a_handle, HeldCopy::Ids& a_ids)
@@ -504,7 +516,7 @@ namespace SaveGuard
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base)) {
 				const auto& at = ref->data.location;
-				noted[a_id] = { ref, ref->extraList.get(), a_base, at.x, at.y, at.z };
+				noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z };
 			}
 		});
 	}
@@ -522,6 +534,7 @@ namespace SaveGuard
 				}
 			},
 			DropOrphan, Sweep(), StandIn);
+		KeepLingering();  // asked again at the save itself: a change since the last second's check would be written
 		LetGoOfGone();
 		for (const auto& [c, verdict] : strays) {
 			const bool doomed = SaveStrays::Doomed(c.seen);

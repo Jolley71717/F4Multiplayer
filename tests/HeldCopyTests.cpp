@@ -147,12 +147,17 @@ namespace
 			return it != loaded.end() ? std::optional{ it->second.base } : std::nullopt;
 		}
 
-		// SaveGuard::Forget: and, now, the record of one whose form is gone dropped at once (DropOrphan).
+		// SaveGuard::Forget: and, now, one whose form is gone taken off the books and its record dropped at once
+		// (ForgetGone, DropOrphan).
 		void Forget(std::uint32_t a_id)
 		{
-			if (book.Forget(a_id) && fixed && !loaded.contains(a_id)) {
-				records.erase(a_id);
+			if (fixed && !loaded.contains(a_id)) {
+				if (book.ForgetGone(a_id)) {
+					records.erase(a_id);
+				}
+				return;
 			}
+			book.Forget(a_id);
 		}
 
 		// A frame of RemotePlayers::Update with the friend parked here (UpdateParked, after Refresh).
@@ -260,7 +265,7 @@ TEST("save strays: a reference under an id from before a load is our old copy on
 	CHECK(!with([](auto& r) { r.frame = false; }));     // a stand-in, a light, an item copy: left as the game has it
 	CHECK(!with([](auto& r) { r.off = false; }));       // enabled
 	CHECK(!with([](auto& r) { r.worn = true; }));       // the player's or a companion's suit now
-	CHECK(!with([](auto& r) { r.owned = true; }));      // somebody got out of it
+	CHECK(!with([](auto& r) { r.newOwner = true; }));   // somebody got out of it since: an owner it did not have when noted
 	CHECK(!with([](auto& r) { r.holdsItems = true; })); // pieces or a core in it
 }
 
@@ -340,4 +345,33 @@ TEST("save strays: the review's case: a raider's frame under our old id, strippe
 	book.BeforeSave([](std::uint32_t) -> std::optional<std::uint32_t> { return FRAME; }, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {},
 		[](std::uint32_t, std::uint32_t) { return false; });
 	CHECK(excluded.empty());
+}
+
+TEST("save strays: a copy unloaded with its cell is off the books at once, so a frame handed its freed id next is never taken for ours")
+{
+	SaveStrays::Book book;
+	book.Track(0xFF000C40, FRAME);  // a friend's parked copy; the player walks off and the engine unloads it
+	CHECK(book.ForgetGone(0xFF000C40));
+	CHECK(!book.ForgetGone(0xFF000C41));  // never ours
+	CHECK(!book.IsPlaced(0xFF000C40, FRAME));
+	CHECK(book.ForgottenCount() == 0);
+	CHECK(book.TakeGone().size() == 1);  // what else holds it as ours lets go of it too
+	// The next cell attaches and a raider in power armor gets the freed id, on the same frame: nothing keeps it out.
+	std::vector<std::uint32_t> excluded;
+	book.KeepForgotten([](std::uint32_t) -> std::optional<std::uint32_t> { return FRAME; }, [&](std::uint32_t a_id) { excluded.push_back(a_id); });
+	book.BeforeSave([](std::uint32_t) -> std::optional<std::uint32_t> { return FRAME; }, [&](std::uint32_t a_id) { excluded.push_back(a_id); }, [](std::uint32_t) {}, {},
+		[](std::uint32_t, std::uint32_t) { return false; });
+	CHECK(excluded.empty());
+	CHECK(!book.IsPlaced(0xFF000C40, FRAME));
+}
+
+TEST("save strays: the copy a friend's stand-in wears as a load comes lingers too: the owner it was given before the load is ours")
+{
+	// Equipment::SwitchIntoPowerArmor gives the copy the stand-in's base for its owner; DespawnAll buries it before the
+	// load, and a load that leaves it in memory would have the next save write it.
+	const SaveStrays::Remains worn{ .same = true, .frame = true, .off = true, .newOwner = false };
+	CHECK(SaveStrays::StillOurs(worn));
+	auto taken = worn;
+	taken.newOwner = true;  // somebody got out of it since, and owns it now
+	CHECK(!SaveStrays::StillOurs(taken));
 }
