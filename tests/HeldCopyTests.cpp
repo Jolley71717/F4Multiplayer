@@ -329,9 +329,14 @@ TEST("save strays: a copy still on its way out as a load came is kept out of sav
 	CHECK((excluded == std::vector<std::uint32_t>{ 0xFF001814, 0xFF001814 }));  // at every check and save while it is so
 	CHECK(dropped.empty());
 
-	// A second load with it still there: it lingers on, once.
+	// A second load with it still there: it lingers on, once. It is noted before that load too (SaveGuard::BeforeLoad asks
+	// IsLingering, since RemotePlayers' lists were cleared at the first load), so the second load does not let go of it.
+	CHECK(book.IsLingering(0xFF001814, FRAME));
+	CHECK(!book.IsLingering(0xFF001814, FRAME + 1));
+	CHECK(!book.IsLingering(0xFF001993, FRAME));
 	book.AfterLoad({}, [](std::uint32_t, std::uint32_t) { return false; }, still);
 	CHECK(book.LingeringCount() == 1);
+	CHECK(book.IsLingering(0xFF001814, FRAME));
 
 	// The player gets into it (or it is enabled, filled, owned): left to the game from then on, never excluded again, and
 	// no record under its id is ever dropped for it (KeepForgotten has nothing of it).

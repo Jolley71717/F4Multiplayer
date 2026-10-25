@@ -456,6 +456,13 @@ namespace SaveStrays
 
 		[[nodiscard]] std::size_t LingeringCount() const { return lingering.size(); }
 
+		// Whether the id lingers under that base (see AfterLoad): off and on its way out by definition, so noted again
+		// before the next load as well (SaveGuard::BeforeLoad), or a second load in a row would let go of it.
+		[[nodiscard]] bool IsLingering(std::uint32_t a_id, std::uint32_t a_base) const
+		{
+			return std::ranges::find(lingering, std::pair{ a_id, a_base }) != lingering.end();
+		}
+
 		template <class S>
 		std::vector<Judged> AfterLoad(std::vector<Found> a_found, S&& a_standIn)
 		{
