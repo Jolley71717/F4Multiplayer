@@ -356,7 +356,7 @@ void Server::Run()
 	// this server run and dropped out, and the host's bans.
 	bool                        locked = false;
 	// Who a locked session takes back: the hello identities that joined during this server run, each with the Steam
-	// account (Player::transportId, 0 on a LAN connection) it joined over and when it was last here. Only in memory:
+	// account (Player::transportId, 0 on any direct connection) it joined over and when it was last here. Only in memory:
 	// not saved, so a restart forgets them (the saved identities above only give a returning player their old number,
 	// and every player who ever joined is in them). At the cap the one gone longest makes room, never a new member.
 	struct Member

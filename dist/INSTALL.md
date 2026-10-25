@@ -115,8 +115,8 @@ the game with F4SE, then join again.
 
 The host's F1 menu has **Host controls**: kick a player (they are dropped and told the host removed
 them; they can join again), ban one (kicked, and refused every later join with "The host has banned
-you from this session"), lift bans, lock the session (nobody new can join, and a player who leaves
-can't come back until it is unlocked; those in it stay) and unlock it, and make up or remove the
+you from this session"), lift bans, lock the session (nobody new can join; those in it stay, and a player
+whose game crashes or whose connection drops can rejoin, but not one who was kicked or banned) and unlock it, and make up or remove the
 password. A new password is shown on the page and saved to your `sPassword`; friends put the same
 in theirs. Bans are kept by Steam account in `Documents\My Games\Fallout4\F4SE\F4Multiplayer.bans`,
 so they survive restarts; the file holds salted hashes, never names or Steam IDs, and the log calls a
