@@ -59,11 +59,11 @@ namespace
 	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
 	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
 	constexpr float MAX_HIT_DAMAGE_PER_SECOND = 1500.0f;     // per reporter, across all victims
-	// An explosion is passed on from near where its reporter is, within their budget, and nothing else: no window after a
-	// shot or a throw. The game that runs an NPC it reaches deals its blow there, and its reporter gave that blow back on
+	// An explosion is passed on from near where its reporter (or another player) is, within their budget, and nothing
+	// else: no window after a shot or a throw. The game that runs an NPC it reaches deals its blow there, and its reporter gave that blow back on
 	// its own copy (docs/DESIGN.md, "Who sets off an explosion"): one dropped here was a blow dealt nowhere. Each game judges
 	// its reports by stricter numbers before it sends them (RemoteEdits::ReportGate), so none it sends is dropped.
-	constexpr float EXPLOSION_RANGE = Protocol::REPORTED_EXPLOSION_RANGE;  // from the reporter's last position
+	constexpr float EXPLOSION_RANGE = Protocol::REPORTED_EXPLOSION_RANGE;  // from the reporter's last position, or another player's
 	// A trap is reported by a game that has it loaded: it lies within the loaded cells around the reporter (a mine can be
 	// shot from the far side of them), never across the map.
 	constexpr float TRAP_RANGE = 16000.0f;
@@ -73,6 +73,10 @@ namespace
 	// A destructible object is reported by a game that has it loaded, as a trap is: within the loaded cells around the
 	// reporter (a car can be shot from the far side of them), never across the map.
 	constexpr float DESTRUCTION_RANGE = 16000.0f;
+	// A destructible stage's own explosion goes with it, a burst and then this many a second per player: far past what any
+	// fight sets off (a street of cars going up), a bound on a broken or modified game setting every car near the others
+	// off at once. Past it the stage is still relayed, with no explosion (docs/DESIGN.md, known limits).
+	constexpr double STAGE_EXPLOSIONS_PER_SECOND = 64.0;
 	// Explosions one player may report: a few grenades at once, then four a second. All joiners' together have room for
 	// every seat's at once (joinersExplosions): what the others spend can't be told from the reporter's game (ReportGate).
 	constexpr double EXPLOSION_BURST = Protocol::REPORTED_EXPLOSION_BURST;
@@ -174,12 +178,14 @@ namespace
 	{
 		TokenBucket explosions;
 		TokenBucket deaths;
+		TokenBucket stageExplosions;  // destructible stages' own, relayed with the stage (handleDestruction)
 
 		RateBudget() :
 			RateBudget(1.0)
 		{}
 		explicit RateBudget(double a_share) :
-			explosions(a_share * EXPLOSION_BURST, a_share * EXPLOSIONS_PER_SECOND), deaths(a_share * DEATH_BURST, a_share * DEATHS_PER_SECOND)
+			explosions(a_share * EXPLOSION_BURST, a_share * EXPLOSIONS_PER_SECOND), deaths(a_share * DEATH_BURST, a_share * DEATHS_PER_SECOND),
+			stageExplosions(a_share * STAGE_EXPLOSIONS_PER_SECOND, a_share * STAGE_EXPLOSIONS_PER_SECOND)
 		{}
 	};
 
@@ -2137,17 +2143,26 @@ void Server::Run()
 		if (!explosion) {
 			return;
 		}
-		// Only near where the reporter is: an explosion report is otherwise a way to set off anything at anyone. A player who
-		// hasn't said where they are yet is near nothing. (Each game also judges the explosion itself: WeaponFire's
+		// Only near where the reporter is, or near another player in the same space: an explosion an NPC of the reporter's
+		// game set off far from its own player but beside a friend's hurts that friend in their game alone (only a player's
+		// own game deals their blows), so the reporter sends it wherever any player could be hit (WeaponFire's
+		// NearestPlayer). Far from everyone it is no report: one is otherwise a way to set off anything anywhere. A player
+		// who hasn't said where they are yet is near nothing. (Each game also judges the explosion itself: WeaponFire's
 		// ApplyExplosion.)
 		const auto now = Clock::now();
 		if (!a_player.hasState) {
 			return;
 		}
-		const float dx = explosion->x - a_player.state.x;
-		const float dy = explosion->y - a_player.state.y;
-		const float dz = explosion->z - a_player.state.z;
-		if (!(dx * dx + dy * dy + dz * dz <= EXPLOSION_RANGE * EXPLOSION_RANGE)) {
+		const auto near = [&](const Player& a_near, bool a_sameSpace) {
+			if (!a_near.hasState || (a_sameSpace && (a_near.state.cell != explosion->cell || a_near.state.worldspace != explosion->worldspace))) {
+				return false;
+			}
+			const float dx = explosion->x - a_near.state.x;
+			const float dy = explosion->y - a_near.state.y;
+			const float dz = explosion->z - a_near.state.z;
+			return dx * dx + dy * dy + dz * dz <= EXPLOSION_RANGE * EXPLOSION_RANGE;  // NaN fails
+		};
+		if (!near(a_player, false) && std::ranges::none_of(players, [&](const auto& a_entry) { return a_entry.first != a_player.key && a_entry.second.welcomed && near(a_entry.second, true); })) {
 			return;
 		}
 		if (!a_player.local) {
@@ -2181,9 +2196,10 @@ void Server::Run()
 	// session keeps each one's lowest health and destroyed for good; only news is relayed (one a friend's report already
 	// took further is dropped), so a wreck is never mended and the same stage never comes twice. Each new object takes a
 	// place in the table, and from the player's share. Its explosion goes with it whoever reports it, with no window after
-	// a shot and no budget: each game sets its own off with the stage, and deals its blows on the NPCs it runs, so a
-	// stage passed on without it was a blow dealt nowhere (docs/DESIGN.md, "Who sets off an explosion"). A stage comes once
-	// in the session, for an object near its reporter: that is the bound (each game's copy of a burning car burns on its
+	// a shot and the explosion budget not spent: each game sets its own off with the stage, and deals its blows on the
+	// NPCs it runs, so a stage passed on without it was a blow dealt nowhere (docs/DESIGN.md, "Who sets off an
+	// explosion"). A generous budget of its own (STAGE_EXPLOSIONS_PER_SECOND) bounds only a broken or modified game. A
+	// stage comes once in the session, for an object near its reporter (each game's copy of a burning car burns on its
 	// own, so a friend who never shot can pass a stage first).
 	const auto handleDestruction = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
@@ -2193,6 +2209,7 @@ void Server::Run()
 		if (!report || !a_player.hasState) {
 			return;
 		}
+		const auto now = Clock::now();
 		Protocol::Destructions relayed{ a_player.id, {} };
 		for (const auto& entry : report->entries) {
 			// Only an object near where the reporter is (where the session first heard it stands, once it has): a report
@@ -2226,7 +2243,7 @@ void Server::Run()
 			}
 			touched();
 			auto out = it->second;
-			out.explode = entry.explode;
+			out.explode = entry.explode && (a_player.local || budgetOf(a_player).rates.stageExplosions.Take(now));
 			relayed.entries.push_back(out);
 		}
 		if (!relayed.entries.empty()) {

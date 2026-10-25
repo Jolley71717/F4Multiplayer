@@ -226,12 +226,12 @@ TEST("traps: the explosions of a trap gone off here, or at a mine we watch, are 
 	const auto now = Clock::now();
 	const std::vector<TrapRules::Fired> fired{ { { 1000.0f, 2000.0f, 0.0f }, now - 2s } };
 	const std::vector<TrapRules::Spot>  mines{ { -5000.0f, 300.0f, 10.0f } };
-	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now));    // a bouquet's grenade, a little off
-	CHECK(!TrapRules::Claims(fired, mines, { 3000.0f, 2000.0f, 0.0f }, now));   // too far: somebody's own
-	CHECK(!TrapRules::Claims(fired, mines, { 1000.0f, 2000.0f, 0.0f }, now + 10s));
-	CHECK(TrapRules::Claims(fired, mines, { -5100.0f, 300.0f, 10.0f }, now));
-	CHECK(!TrapRules::Claims(fired, mines, { -5400.0f, 300.0f, 10.0f }, now));
-	CHECK(!TrapRules::Claims({}, {}, { 0.0f, 0.0f, 0.0f }, now));
+	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, false));    // a bouquet's grenade, a little off
+	CHECK(!TrapRules::Claims(fired, mines, { 3000.0f, 2000.0f, 0.0f }, now, false));   // too far: somebody's own
+	CHECK(!TrapRules::Claims(fired, mines, { 1000.0f, 2000.0f, 0.0f }, now + 10s, false));
+	CHECK(TrapRules::Claims(fired, mines, { -5100.0f, 300.0f, 10.0f }, now, false));
+	CHECK(!TrapRules::Claims(fired, mines, { -5400.0f, 300.0f, 10.0f }, now, false));
+	CHECK(!TrapRules::Claims({}, {}, { 0.0f, 0.0f, 0.0f }, now, false));
 }
 
 TEST("traps: the book keeps the first state, and a take after a spring or a disarm")
@@ -490,4 +490,17 @@ TEST("session file: spent traps round trip under layout 34, and are damage in a 
 	CHECK(old->traps.empty());
 	CHECK(SessionFile::HasDrops(SessionFile::FORMAT) && SessionFile::HasWires(SessionFile::FORMAT) && SessionFile::HasPluginTable(SessionFile::FORMAT));
 	CHECK(!SessionFile::HasTraps(SessionFile::ALL_THREE));
+}
+
+TEST("traps: an explosion an actor set off is never a trap's, beside a mine or a bouquet that just went off")
+{
+	const auto now = Clock::now();
+	const std::vector<TrapRules::Fired> fired{ { { 1000.0f, 2000.0f, 0.0f }, now - 2s } };
+	const std::vector<TrapRules::Spot>  mines{ { -5000.0f, 300.0f, 10.0f } };
+	// Our grenade or missile (or an NPC's) where the trap's own would be claimed: it names its owner, who reports it.
+	CHECK(!TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, true));
+	CHECK(!TrapRules::Claims(fired, mines, { -5000.0f, 300.0f, 10.0f }, now, true));
+	// The trap's own, at the same spots, with no owner: the trap's.
+	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, false));
+	CHECK(TrapRules::Claims(fired, mines, { -5000.0f, 300.0f, 10.0f }, now, false));
 }

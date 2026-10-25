@@ -419,3 +419,44 @@ TEST("token bucket: a burst, then one per refill, never more than the burst afte
 	CHECK(!bucket.Take(later - 10s));
 	CHECK(bucket.Take(later + 500ms));
 }
+
+TEST("remote edits: each thrower's watch is its own; a settler's grenade never marks our player's kept Molotov as shared")
+{
+	using RemoteEdits::ThrowWatches;
+	using namespace std::chrono_literals;
+	const auto       t0 = ThrowWatches::Clock::now();
+	constexpr std::uint32_t PLAYER = 0x14, SETTLER = 0x0001A2B3, COMPANION = 0xFF000F10;
+	ThrowWatches     watches;
+	CHECK(!watches.Shared(PLAYER, t0));
+	CHECK(!watches.Shared(0, t0));
+	// Our player's Molotov, kept ours (past the budget): its fire burns here alone.
+	watches.Arm(PLAYER, t0 + 8s);
+	CHECK(watches.Shared(PLAYER, t0));
+	watches.Unshare(PLAYER, t0 + 1s);
+	CHECK(!watches.Shared(PLAYER, t0 + 1s));
+	// A settler we run throws a grenade: its watch, not hers.
+	watches.Arm(SETTLER, t0 + 2s + 8s);
+	CHECK(watches.Shared(SETTLER, t0 + 2s));
+	CHECK(!watches.Shared(PLAYER, t0 + 2s));
+	CHECK(!watches.Shared(PLAYER, t0 + 20s, 20s));
+	// A hit that names nobody: the last to throw's.
+	CHECK(watches.Shared(0, t0 + 2s));
+	// After the watch, for a while (a Molotov's fire burns on), then no more.
+	CHECK(!watches.Shared(SETTLER, t0 + 11s));
+	CHECK(watches.Shared(SETTLER, t0 + 11s, 20s));
+	CHECK(!watches.Shared(SETTLER, t0 + 31s, 20s));
+	// An explosion that named none, kept: every watch on then is unshared, one already over is not.
+	watches.Arm(COMPANION, t0 + 12s + 8s);
+	watches.Unshare(0, t0 + 12s);
+	CHECK(!watches.Shared(COMPANION, t0 + 12s));
+	CHECK(watches.Shared(SETTLER, t0 + 12s, 20s));
+	// Armed again: shared again.
+	watches.Arm(PLAYER, t0 + 13s + 8s);
+	CHECK(watches.Shared(PLAYER, t0 + 13s));
+	// Bounded: the one ending first goes.
+	for (std::uint32_t i = 0; i < ThrowWatches::MAX; ++i) {
+		watches.Arm(0x00100000 + i, t0 + 14s + 8s + std::chrono::seconds{ i });
+	}
+	CHECK(watches.Shared(0x00100000 + ThrowWatches::MAX - 1, t0 + 14s));
+	CHECK(!watches.Shared(SETTLER, t0 + 14s, 20s));  // ended first, gone
+}

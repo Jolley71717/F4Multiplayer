@@ -141,6 +141,8 @@ namespace Drops
 		DropBook::ScrapYields                                     yields;
 		std::unordered_map<std::uint32_t, DropBook::ScrapYields::Yield> yieldsKept;
 		std::unordered_set<std::uint32_t>                         lostScraps;
+		// ... and each lost scrap's item, as the session had it: an item stored whole comes out of the workbench as that item.
+		std::unordered_map<std::uint32_t, Protocol::DroppedItem>  lostItems;
 		constexpr auto                                            SCRAP_GRACE = std::chrono::seconds(1);  // the menu may close in the frame of the scrap
 		// Our drops swapped for a copy that the server hasn't said lie there yet: given back to our world if we leave first.
 		DropBook::Unconfirmed unconfirmed;
@@ -909,63 +911,73 @@ namespace Drops
 			taking.reset();
 		}
 
+		// The stacks of a_from's items of a_object, as DropBook::PickStack reads them (stack numbers as RemoveItem takes them).
+		std::vector<DropBook::StackInfo> StacksOf(RE::TESObjectREFR* a_from, const RE::TESBoundObject* a_object)
+		{
+			std::vector<DropBook::StackInfo> out;
+			const auto                       list = a_from ? a_from->inventoryList : nullptr;
+			if (!list || !a_object) {
+				return out;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (item.object != a_object) {
+					continue;
+				}
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					DropBook::StackInfo info{ .count = stack->count };
+					const auto          extra = stack->extra.get();
+					const auto          instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
+					if (instance && instance->values) {
+						info.instanced = true;
+						for (const auto& data : instance->GetIndexData()) {
+							if (!data.disabled && data.objectID != 0) {
+								info.mods.push_back(data.objectID);
+							}
+						}
+					}
+					std::ranges::sort(info.mods);
+					const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
+					if (text && !text->displayName.empty()) {
+						info.name = text->displayName.c_str();
+					}
+					out.push_back(std::move(info));
+				}
+				break;  // one entry per base
+			}
+			return out;
+		}
+
+		// a_count of the drop taken out of a_from: from the stack that is that item (its mods and name), never another of
+		// its base (DropBook::PickStack). False, and nothing taken, when none is. a_before runs just before the removal.
+		template <class Before>
+		bool RemoveDrop(RE::TESObjectREFR* a_from, const Protocol::DroppedItem& a_drop, std::int32_t a_count, Before&& a_before)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_drop.base);
+			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+			if (!a_from || !object) {
+				return false;
+			}
+			const auto pick = DropBook::PickStack(StacksOf(a_from, object), a_drop, a_count);
+			if (pick.kind == DropBook::StackPick::Kind::kNone) {
+				return false;
+			}
+			RE::TESObjectREFR::RemoveItemData data{ object, a_count };
+			if (pick.kind == DropBook::StackPick::Kind::kStack) {
+				data.stackData.push_back(pick.index);
+			}
+			a_before();
+			a_from->RemoveItem(data);
+			return true;
+		}
+
 		// Our player has an item someone else was granted (picked up past a block that hadn't taken): it goes out of their
 		// inventory again, from the stack that is that item (its mods and name) where one is, so it is in one inventory only.
 		bool TakeBack(const Protocol::DroppedItem& a_drop)
 		{
-			const auto player = Player();
-			const auto list = player ? player->inventoryList : nullptr;
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
-			if (!list || !object || Carried(a_drop.base) < static_cast<std::uint32_t>(a_drop.count)) {
-				return false;
-			}
-			std::vector<std::uint32_t> wanted;
-			for (const auto& mod : a_drop.mods) {
-				wanted.push_back(mod.mod);
-			}
-			std::ranges::sort(wanted);
-			std::optional<std::uint32_t> stackId;
-			bool                         instanced = false;
-			{
-				RE::BSAutoReadLock l{ list->rwLock };
-				for (auto& item : list->data) {
-					if (item.object != object) {
-						continue;
-					}
-					std::uint32_t index = 0;
-					for (auto stack = item.stackData.get(); stack && !stackId; stack = stack->nextStack.get(), ++index) {
-						const auto extra = stack->extra.get();
-						const auto instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
-						std::vector<std::uint32_t> mods;
-						if (instance && instance->values) {
-							instanced = true;
-							for (const auto& data : instance->GetIndexData()) {
-								if (!data.disabled && data.objectID != 0) {
-									mods.push_back(data.objectID);
-								}
-							}
-						}
-						std::ranges::sort(mods);
-						const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
-						const std::string_view name = text && !text->displayName.empty() ? text->displayName.c_str() : "";
-						if (stack->count >= static_cast<std::uint32_t>(a_drop.count) && (a_drop.mods.empty() || mods == wanted) &&
-							(a_drop.name.empty() || Protocol::Utf8Prefix(name, Protocol::MAX_ITEM_NAME_LENGTH) == a_drop.name)) {
-							stackId = index;
-						}
-					}
-				}
-			}
-			if (!stackId && instanced) {
-				return false;  // a gun or armor of that base, but none that is that item: not another one in its place
-			}
-			RE::TESObjectREFR::RemoveItemData data{ object, a_drop.count };
-			if (stackId) {
-				data.stackData.push_back(*stackId);
-			}
-			usedNow.insert(a_drop.base);  // its leaving their inventory is no drop
-			player->RemoveItem(data);
-			return true;
+			return RemoveDrop(Player(), a_drop, a_drop.count, [&] {
+				usedNow.insert(a_drop.base);  // its leaving their inventory is no drop
+			});
 		}
 
 		void NoticeActivations(const std::vector<std::uint32_t>& a_activated, Clock::time_point a_now)
@@ -1023,6 +1035,11 @@ namespace Drops
 		// What a lost scrap put in its workbench taken back out: the item is a friend's, our player keeps nothing of it.
 		void TakeBackYield(const DropBook::ScrapYields::Yield& a_yield)
 		{
+			const auto lostIt = lostItems.find(a_yield.dropId);
+			const auto lost = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
+			if (lostIt != lostItems.end()) {
+				lostItems.erase(lostIt);
+			}
 			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_yield.bench);
 			if (!bench || a_yield.items.empty()) {
 				++scrapShort;
@@ -1030,8 +1047,8 @@ namespace Drops
 						  "our player keeps it", a_yield.dropId, a_yield.bench);
 				return;
 			}
-			// Only what has no instance of its own (DropBook::ScrapYields::PlanTakeBack): a weapon or an armor stored whole is
-			// refused, as the engine removes by base and could take our player's own modded or legendary one beside it.
+			// What has no instance of its own comes out by base; an item stored whole as its own stack, never another of
+			// its base, which may be our player's own modded or legendary one (DropBook::ScrapYields::PlanTakeBack).
 			const auto plan = DropBook::ScrapYields::PlanTakeBack(a_yield, [](std::uint32_t a_base) {
 				const auto form = RE::TESForm::GetFormByID(a_base);
 				const auto type = form ? form->GetFormType() : RE::ENUM_FORM_ID::kNONE;
@@ -1047,12 +1064,20 @@ namespace Drops
 				REX::INFO("Drops: {:08X} x{} taken back out of workbench {:08X}: the scrap of drop {} was someone else's", item.base, item.count, a_yield.bench,
 					a_yield.dropId);
 			}
-			for (const auto& item : plan.refused) {
+			bool tookWhole = false;
+			for (const auto& item : plan.whole) {
+				if (lost && lost->base == item.base && RemoveDrop(bench, *lost, item.count, [] {})) {
+					tookWhole = true;
+					REX::INFO("Drops: {:08X} x{} stored whole taken back out of workbench {:08X}, as that item: drop {} went to someone else", item.base, item.count,
+						a_yield.bench, a_yield.dropId);
+					continue;
+				}
 				++scrapRefused;
-				REX::WARN("Drops: {:08X} x{} left in workbench {:08X}, though drop {} went to someone else: an item stored whole can't be told from our "
-						  "player's own of the same base, so our player keeps it", item.base, item.count, a_yield.bench, a_yield.dropId);
+				REX::WARN("Drops: {:08X} x{} left in workbench {:08X}, though drop {} went to someone else: no stack there is that item (its mods and name), and "
+						  "our player's own of the same base is never taken",
+					item.base, item.count, a_yield.bench, a_yield.dropId);
 			}
-			if (!plan.out.empty()) {
+			if (!plan.out.empty() || tookWhole) {
 				++scrapTakenBack;
 			}
 		}
@@ -1289,6 +1314,9 @@ namespace Drops
 			++scrapLost;
 			REX::WARN("Drops: drop {} went to player {} as our player scrapped our copy of it; the item is theirs, and the components go back", a_gone.dropId,
 				a_gone.takerId);
+			if (item && lostItems.size() < DropBook::ScrapYields::MAX_SCRAPS) {
+				lostItems[a_gone.dropId] = *item;
+			}
 			if (const auto kept = yieldsKept.find(a_gone.dropId); kept != yieldsKept.end()) {
 				TakeBackYield(kept->second);
 				yieldsKept.erase(kept);
@@ -1454,6 +1482,7 @@ namespace Drops
 		yields.Clear();
 		yieldsKept.clear();
 		lostScraps.clear();
+		lostItems.clear();
 		unconfirmed.Clear();  // the loaded world's record says whether they left it
 		seenLoose.clear();
 		unplaceable.clear();

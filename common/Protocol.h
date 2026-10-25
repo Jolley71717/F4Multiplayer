@@ -734,12 +734,14 @@ namespace Protocol
 	}
 
 	// An explosion the sender's player (or an NPC its game runs) set off: a grenade, a Molotov, a missile, a shell, an
-	// explosive bullet, a mine they shot. The others set off the same explosion at the same spot, once: a stand-in fires
-	// no shot that goes off, and throws no grenade (docs/DESIGN.md, "Who sets off an explosion"). Sent reliably: the
-	// game that runs an NPC it reaches deals its blow there, so a lost report is a blow dealt nowhere.
+	// explosive bullet, a mine they shot. The others set off the same explosion at the same spot, once: a stand-in's shot
+	// that would go off flies with no blast of its own, and it throws no grenade (docs/DESIGN.md, "Who sets off an
+	// explosion"). Sent reliably: the game that runs an NPC it reaches deals its blow there, so a lost report is a blow
+	// dealt nowhere.
 	//
-	// The server passes one on from near where its reporter is (REPORTED_EXPLOSION_RANGE), within the reporter's budget
-	// (a burst, then a few a second). Each game judges its own reports by stricter numbers before it sends them
+	// The server passes one on from near where its reporter or another player is (REPORTED_EXPLOSION_RANGE: the sender
+	// reports one wherever any player could be hit by it, as only a player's own game deals their blows), within the
+	// reporter's budget (a burst, then a few a second). Each game judges its own reports by stricter numbers before it sends them
 	// (RemoteEdits::ReportGate): one it sends is sure to reach the others.
 	inline constexpr float  REPORTED_EXPLOSION_RANGE = 8000.0f;
 	inline constexpr double REPORTED_EXPLOSION_BURST = 16.0;

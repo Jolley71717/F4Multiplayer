@@ -1951,6 +1951,31 @@ TEST("server trust: an explosion is measured from the thrower in 3D, not just on
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
 }
 
+TEST("server trust: an explosion far from its reporter is relayed when another player in that space could be hit by it")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Cleo");
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 20000.0f, 0.0f));
+	f.fake->Deliver(3, StateAt(1, -20000.0f, 0.0f, 0.0f, 0x0001F00D));  // indoors
+	Clear(f, { 1, 2, 3 });
+	// A raider Alice's game runs fires a missile at Bob, 17000 from her: the blast is beside him, and only his game can
+	// deal his blow.
+	f.fake->Deliver(1, ExplosionAt(17000.0f, 0.0f, 0.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 1);  // relayed to everyone; each game judges its own reach
+	// Far from everyone: dropped. At Cleo's numbers but outdoors, not in her cell: dropped.
+	f.fake->Deliver(1, ExplosionAt(40000.0f, 40000.0f, 0.0f));
+	f.fake->Deliver(1, ExplosionAt(-19800.0f, 0.0f, 0.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 0);
+	// Beside her, in her cell: relayed.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, -19800.0f, 300.0f, 0.0f, 0x0001F00D, 0 }, MT::kReportExplosion));
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 1);
+}
+
 TEST("server trust: a joiner's explosions stop at their budget however many throws they report")
 {
 	Fixture f;

@@ -468,3 +468,23 @@ TEST("server destruction: the wrecks are saved with the session, and a joiner af
 		CHECK(Relayed(f, 2).empty());
 	}
 }
+
+TEST("server destruction: past a generous budget of stage explosions a stage is still relayed, with nothing going off")
+{
+	// A broken or modified game naming every car near the others destroyed with its explosion: bounded by a budget far
+	// past any fight (64 at once, then 64 a second), the stages themselves still relayed.
+	Fixture f;
+	JoinNear(f, 1, "Alice");
+	JoinNear(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+	std::vector<Protocol::Destruction> cars;
+	for (std::uint32_t i = 0; i < 100; ++i) {
+		cars.push_back(Report(0x00200000 + i, 0.0f, true, true));
+	}
+	f.fake->Deliver(1, Destroyed(cars));
+	const auto got = Relayed(f, 2);
+	REQUIRE(got.size() == 100);
+	const auto exploding = std::ranges::count_if(got, [](const auto& a_entry) { return a_entry.explode; });
+	CHECK(exploding >= 64);
+	CHECK(exploding <= 66);  // what refilled while the test ran
+}

@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -315,16 +316,16 @@ namespace DropBook
 			return due;
 		}
 
-		// What of a lost scrap's yield is taken back out (Drops), and what is refused. Only a thing with no instance of its
-		// own is taken (a_fungible: a component, a misc mod, ammunition, food), where any of that base in the workbench is
-		// the same thing: the amount comes out right even if our player moved some out since. An item stored whole (a
-		// weapon, an armor) can sit beside our player's own of the same base, modded or legendary, and the engine removes
-		// by base whichever it finds first: it is refused, left where it is, and our player keeps it (the friend has the
-		// drop too). Our player's own is never taken.
+		// What of a lost scrap's yield is taken back out (Drops). A thing with no instance of its own (a_fungible: a
+		// component, a misc mod, ammunition, food), where any of that base in the workbench is the same thing, comes out by
+		// base: the amount comes out right even if our player moved some out since. An item stored whole (a weapon, an
+		// armor, a key) comes out as its own stack (PickStack: the drop's mods and name), never by base, as the engine
+		// removes by base whichever it finds first, and our player's own modded or legendary one can sit beside it. Our
+		// player's own is never taken; one with no stack that is the item is refused, and the friend has it alone.
 		struct TakeBack
 		{
 			std::vector<Item> out;
-			std::vector<Item> refused;
+			std::vector<Item> whole;
 		};
 
 		template <class Fungible>
@@ -335,7 +336,7 @@ namespace DropBook
 				if (item.base == 0 || item.count <= 0) {
 					continue;
 				}
-				(a_fungible(item.base) ? plan.out : plan.refused).push_back(item);
+				(a_fungible(item.base) ? plan.out : plan.whole).push_back(item);
 			}
 			return plan;
 		}
@@ -631,4 +632,63 @@ namespace DropBook
 		std::vector<Session> sessions;
 		std::uint64_t        current = 0;
 	};
+
+	// One stack of a container's items of one base, as Drops reads it from the engine's inventory list.
+	struct StackInfo
+	{
+		std::uint32_t              count = 0;
+		bool                       instanced = false;  // it has instance data of its own (a weapon's or an armor's mods)
+		std::vector<std::uint32_t> mods;               // its mods, sorted
+		std::string                name;               // the name the player gave it; empty: the game's own
+	};
+
+	// Which stack of a container's items of the drop's base is the drop itself (its mods and name, as the friend's game
+	// reported it; a drop with no name of its own takes any name, as Drops::TakeBack does): that one comes out, never
+	// another of the same base, which may be our player's own. With none that is the item: any of them if none has an instance of its own (they are all the same thing, a key or a plain item);
+	// else nothing (refused).
+	struct StackPick
+	{
+		enum class Kind
+		{
+			kNone,   // no stack is the item: nothing is taken
+			kAny,    // all of the base are the same thing: by base
+			kStack,  // stack number index
+		};
+		Kind          kind = Kind::kNone;
+		std::uint32_t index = 0;
+
+		bool operator==(const StackPick&) const = default;
+	};
+
+	inline StackPick PickStack(const std::vector<StackInfo>& a_stacks, const Protocol::DroppedItem& a_drop, std::int32_t a_count)
+	{
+		if (a_count <= 0) {
+			return {};
+		}
+		std::vector<std::uint32_t> wanted;
+		for (const auto& mod : a_drop.mods) {
+			wanted.push_back(mod.mod);
+		}
+		std::ranges::sort(wanted);
+		bool          instanced = false;
+		std::uint64_t total = 0;
+		for (std::uint32_t i = 0; i < a_stacks.size(); ++i) {
+			const auto& stack = a_stacks[i];
+			instanced = instanced || stack.instanced;
+			total += stack.count;
+			if (stack.count < static_cast<std::uint32_t>(a_count)) {
+				continue;
+			}
+			// A drop with mods is the stack with exactly those; one with none (a plain item) is any stack with none.
+			const bool modsMatch = a_drop.mods.empty() ? !stack.instanced || stack.mods.empty() : stack.mods == wanted;
+			const bool nameMatch = a_drop.name.empty() || Protocol::Utf8Prefix(stack.name, Protocol::MAX_ITEM_NAME_LENGTH) == a_drop.name;
+			if (modsMatch && nameMatch) {
+				return { StackPick::Kind::kStack, i };
+			}
+		}
+		if (!instanced && total >= static_cast<std::uint64_t>(a_count)) {
+			return { StackPick::Kind::kAny, 0 };
+		}
+		return {};
+	}
 }

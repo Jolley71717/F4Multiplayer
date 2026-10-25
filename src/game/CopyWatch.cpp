@@ -228,13 +228,16 @@ namespace CopyWatch
 		};
 		const auto weapon = a_event.hitData.weapon.object;
 		const auto source = a_event.sourceFormID != 0 ? RE::TESForm::GetFormByID(a_event.sourceFormID) : nullptr;
+		// The thrower's own watch (our player's is PLAYER_REF_ID, its form id): another's throw says nothing of its fire.
+		const auto cause = a_event.cause.get();
+		const auto thrower = cause ? cause->GetFormID() : 0u;
 		return {
 			.explosion = a_event.hitData.flags.any(RE::HitData::Flag::kExplosion),
 			.throwable = throwable(weapon) || throwable(source),
 			.spellAlone = !weapon && source && source->IsMagicItem(),
 			.inHand = inHand(weapon) || inHand(source),
-			.explosionsShared = WeaponFire::ExplosionsShared(),
-			.threwLately = WeaponFire::ThrewLately(),
+			.explosionsShared = WeaponFire::ExplosionsShared(thrower),
+			.threwLately = WeaponFire::ThrewLately(thrower),
 		};
 	}
 

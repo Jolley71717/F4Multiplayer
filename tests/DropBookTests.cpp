@@ -408,7 +408,7 @@ TEST("drop book: what a copy's scrap put in its workbench is known, apart from o
 	CHECK(yields.Waiting() == 0u);
 }
 
-TEST("drop book: a lost scrap takes back only what has no instance of its own; an item stored whole is refused, never our player's own taken")
+TEST("drop book: a lost scrap takes back by base only what has no instance of its own; an item stored whole comes out as itself")
 {
 	using Yields = DropBook::ScrapYields;
 	using Item = Yields::Item;
@@ -419,20 +419,62 @@ TEST("drop book: a lost scrap takes back only what has no instance of its own; a
 	constexpr std::uint32_t VEST = 0x0001EED7;
 	const auto fungible = [](std::uint32_t a_base) { return a_base == STEEL || a_base == SCREW; };
 
-	// Scrapped: components alone, all taken back.
+	// Scrapped: components alone, all taken back by base.
 	const auto scrapped = Yields::PlanTakeBack({ 7, BENCH, { { STEEL, 5 }, { SCREW, 1 } } }, fungible);
 	CHECK((scrapped.out == std::vector<Item>{ { STEEL, 5 }, { SCREW, 1 } }));
-	CHECK(scrapped.refused.empty());
-	// Stored whole: refused, left in the bench, whatever else the bench holds of that base.
+	CHECK(scrapped.whole.empty());
+	// Stored whole: never by base; it comes out as its own stack (PickStack).
 	const auto stored = Yields::PlanTakeBack({ 8, BENCH, { { PISTOL, 1 } } }, fungible);
 	CHECK(stored.out.empty());
-	CHECK((stored.refused == std::vector<Item>{ { PISTOL, 1 } }));
-	// Both in one moment: the components out, the vest left.
+	CHECK((stored.whole == std::vector<Item>{ { PISTOL, 1 } }));
+	// Both in one moment: the components by base, the vest as itself.
 	const auto both = Yields::PlanTakeBack({ 9, BENCH, { { VEST, 1 }, { STEEL, 2 } } }, fungible);
 	CHECK((both.out == std::vector<Item>{ { STEEL, 2 } }));
-	CHECK((both.refused == std::vector<Item>{ { VEST, 1 } }));
+	CHECK((both.whole == std::vector<Item>{ { VEST, 1 } }));
 	// Nothing, or nothing of anything: no take.
 	const auto none = Yields::PlanTakeBack({ 10, BENCH, { { 0, 3 }, { STEEL, 0 } } }, fungible);
 	CHECK(none.out.empty());
-	CHECK(none.refused.empty());
+	CHECK(none.whole.empty());
+}
+
+TEST("drop book: an item stored whole comes out of the workbench as its own stack, never our player's own of the same base")
+{
+	using DropBook::PickStack;
+	using DropBook::StackInfo;
+	using Kind = DropBook::StackPick::Kind;
+	Protocol::DroppedItem rifle;
+	rifle.base = 0x0004822;
+	rifle.count = 1;
+	rifle.mods = { { 0x200, 0 }, { 0x100, 0 } };
+	rifle.name = "Furious Rifle";
+	const StackInfo ours{ .count = 1, .instanced = true, .mods = { 0x100, 0x300 }, .name = "Our Rifle" };  // our player's own, modded
+	const StackInfo theirs{ .count = 1, .instanced = true, .mods = { 0x100, 0x200 }, .name = "Furious Rifle" };
+	// The friend's rifle beside ours: that stack, whichever comes first.
+	CHECK((PickStack({ ours, theirs }, rifle, 1) == DropBook::StackPick{ Kind::kStack, 1 }));
+	CHECK((PickStack({ theirs, ours }, rifle, 1) == DropBook::StackPick{ Kind::kStack, 0 }));
+	// Only ours there (moved out since, or another of the same base): nothing taken.
+	CHECK((PickStack({ ours }, rifle, 1) == DropBook::StackPick{}));
+	// The same mods under another name: not it.
+	StackInfo renamed = theirs;
+	renamed.name = "Our Rifle";
+	CHECK((PickStack({ renamed }, rifle, 1) == DropBook::StackPick{}));
+	// A drop named nothing of its own takes the stack with its mods, whatever it is called.
+	Protocol::DroppedItem plainName = rifle;
+	plainName.name.clear();
+	CHECK((PickStack({ ours, renamed }, plainName, 1) == DropBook::StackPick{ Kind::kStack, 1 }));
+	// A plain item (a key, a holotape): all of its base are the same thing; by base, if there are enough.
+	Protocol::DroppedItem key;
+	key.base = 0x000A1B2C;
+	key.count = 1;
+	const StackInfo keys{ .count = 2 };
+	CHECK((PickStack({ keys }, key, 1).kind == Kind::kStack));
+	CHECK((PickStack({ StackInfo{ .count = 1 }, StackInfo{ .count = 1 } }, key, 2) == DropBook::StackPick{ Kind::kAny, 0 }));
+	CHECK((PickStack({ StackInfo{ .count = 1 } }, key, 2) == DropBook::StackPick{}));
+	// A plain drop never takes a modded one of its base.
+	Protocol::DroppedItem plainRifle;
+	plainRifle.base = rifle.base;
+	plainRifle.count = 1;
+	CHECK((PickStack({ ours }, plainRifle, 1) == DropBook::StackPick{}));
+	CHECK((PickStack({}, rifle, 1) == DropBook::StackPick{}));
+	CHECK((PickStack({ theirs }, rifle, 0) == DropBook::StackPick{}));
 }

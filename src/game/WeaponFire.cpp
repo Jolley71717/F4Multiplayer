@@ -11,6 +11,7 @@
 #include "game/NpcSync.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
+#include "game/RemotePlayers.h"
 #include "game/ThrowReplays.h"
 #include "game/Traps.h"
 
@@ -138,7 +139,7 @@ namespace WeaponFire
 		static_assert(AttackKind::PROJECTILE_MOTION_TYPES == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionTypes));
 
 		// Whether the stand-in's gun fires a shot to keep from the engine (AttackKind::HoldsShotOf): a plain one, a bullet or a
-		// beam, and every one that would go off (its blast is the shooter's report). Main thread (PlayShot).
+		// beam. One that would go off flies with no blast of its own (DefuseStandInShots). Main thread (PlayShot).
 		bool HoldsShotOf(RE::Actor* a_actor)
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
@@ -151,6 +152,72 @@ namespace WeaponFire
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
 			return projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
+		}
+
+		// A stand-in's explosive shot flies (the first review's #137: friends saw a muzzle flash, then the blast with
+		// nothing in flight between), and goes off nowhere: each projectile it fired is found as it leaves the gun and
+		// loses its explosion and its damage. The blast is the shooter's game's report, set off here once (ApplyExplosion).
+		// Main thread (PlayShot arms it, Frame looks).
+		constexpr auto        DEFUSE_WATCH = std::chrono::milliseconds{ 1500 };
+		constexpr float       DEFUSE_REACH = 3000.0f;  // a missile is this far from the gun well after the first frame
+		constexpr std::size_t MAX_DEFUSE_WATCHES = 32;
+		std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> defuseWatch;  // stand-in -> until
+		std::uint32_t                                                            defused = 0;
+		std::uint32_t                                                            defuseLogged = 0;
+
+		void ArmDefuse(std::uint32_t a_standIn)
+		{
+			const auto now = std::chrono::steady_clock::now();
+			std::erase_if(defuseWatch, [&](const auto& a_entry) { return now > a_entry.second; });
+			if (defuseWatch.size() < MAX_DEFUSE_WATCHES || defuseWatch.contains(a_standIn)) {
+				defuseWatch[a_standIn] = now + DEFUSE_WATCH;
+			}
+		}
+
+		// Every frame while a watch is on: a projectile is defused before it can reach anything.
+		void DefuseStandInShots()
+		{
+			if (defuseWatch.empty()) {
+				return;
+			}
+			const auto now = std::chrono::steady_clock::now();
+			std::erase_if(defuseWatch, [&](const auto& a_entry) { return now > a_entry.second; });
+			const auto tes = RE::TES::GetSingleton();
+			if (!tes) {
+				return;
+			}
+			for (const auto& [id, until] : defuseWatch) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (!actor || !actor->Get3D()) {
+					continue;
+				}
+				// Collected first, changed after: nothing is changed while the engine walks its lists.
+				std::vector<RE::ObjectRefHandle> live;
+				tes->ForEachReferenceInRange(actor->data.location, DEFUSE_REACH, [&](RE::TESObjectREFR* a_ref) {
+					const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
+					if (projectile && !projectile->IsDisabled() && (projectile->flags & PROJECTILE_ENDED) == 0 && projectile->explosion &&
+						projectile->shooter.get().get() == actor) {
+						live.push_back(projectile->GetHandle());
+					}
+					return RE::BSContainer::ForEachResult::kContinue;
+				});
+				for (const auto& handle : live) {
+					const auto ref = handle.get();
+					const auto projectile = ref ? ref->As<RE::Projectile>() : nullptr;
+					if (!projectile || projectile->IsDeleted() || !projectile->explosion) {
+						continue;
+					}
+					const auto explosion = projectile->explosion->GetFormID();
+					projectile->explosion = nullptr;
+					projectile->damage = 0.0f;
+					++defused;
+					if (defuseLogged < 20) {
+						++defuseLogged;
+						REX::INFO("WeaponFire: {:08X}'s own projectile {:08X} flies with no explosion of its own (was {:08X}): its player's game reports the blast", id,
+							projectile->GetFormID(), explosion);
+					}
+				}
+			}
 		}
 
 		void ForgetReplayedFire(std::uint32_t a_actorId)
@@ -215,9 +282,24 @@ namespace WeaponFire
 
 		std::mutex                 actionLock;
 		std::unordered_set<std::uint32_t> ownedNpcs;  // the NPCs we run: only their actions are worth queuing
+		// Our companions no other game runs (NpcSync's scan), one made here at runtime among them: in no list of the
+		// session's, but their throws and shots are ours to report (OursSetItOff).
+		std::unordered_set<std::uint32_t> ourCompanions;
+		// Who of ours fired a gun lately (our player: PLAYER_REF_ID), for the main thread to arm the shot watch if the gun's
+		// shot goes off (CheckShots): the walk the watch makes is no cost of every gun's every shot.
+		std::vector<std::uint32_t> shotsToCheck;
+		constexpr std::size_t      MAX_SHOTS_TO_CHECK = 64;
 		std::vector<std::uint8_t>  playerActions;
 		std::vector<std::pair<std::uint32_t, std::uint8_t>> npcActions;
 		constexpr std::size_t      MAX_PENDING_ACTIONS = 64;
+
+		// Under actionLock.
+		void QueueShotCheck(std::uint32_t a_shooter)
+		{
+			if (shotsToCheck.size() < MAX_SHOTS_TO_CHECK && std::ranges::find(shotsToCheck, a_shooter) == shotsToCheck.end()) {
+				shotsToCheck.push_back(a_shooter);
+			}
+		}
 
 		std::atomic<bool>        logging{ false };
 		std::uint32_t            explosionsReported = 0;  // explosions seen after our throws and sent
@@ -240,17 +322,20 @@ namespace WeaponFire
 			const std::string_view tag = a_event.tag.c_str() ? a_event.tag.c_str() : "";
 			const std::string_view payload = a_event.payload.c_str() ? a_event.payload.c_str() : "";
 			if (IsThrowEvent(tag, payload)) {
-				std::scoped_lock l{ actionLock };
-				if (playerActions.size() < MAX_PENDING_ACTIONS) {
-					playerActions.push_back(Protocol::ShotAction::kThrow);
+				{
+					std::scoped_lock l{ actionLock };
+					if (playerActions.size() < MAX_PENDING_ACTIONS) {
+						playerActions.push_back(Protocol::ShotAction::kThrow);
+					}
 				}
-				ArmExplosionWatch();
+				ArmExplosionWatch(Protocol::PLAYER_REF_ID);  // outside actionLock: the hooks nest no locks
 			} else if (const auto attack = AttackOf(tag)) {
 				// Which it was is kept for TakeShots: a swing with a gun in hand is a bash, never sent as a shot.
 				++(*attack == AttackKind::Event::kFire ? pending : pendingSwings);
 				++total;
 				if (*attack == AttackKind::Event::kFire) {
-					ArmShotWatch();  // a missile or a shell goes off a little later, ours to report
+					std::scoped_lock l{ actionLock };
+					QueueShotCheck(Protocol::PLAYER_REF_ID);  // a missile or a shell goes off a little later, ours to report
 				}
 			} else if (IsThrowAttachEvent(tag, payload)) {
 				ArmPlayerThrowSample();  // where the engine hangs the grenade on an actor it shows it for
@@ -308,25 +393,30 @@ namespace WeaponFire
 				std::scoped_lock l{ actionLock };
 				return ownedNpcs.contains(id);
 			}());
-			if (shared && IsThrowEvent(npcTag, npcPayload)) {
+			// Ours to report what it sets off: an NPC we run, or our companion no other game runs (one made here at runtime
+			// too, in no other game). One mirrored from a friend's game threw or fired in theirs, and their game reports
+			// what went off: watched here too, the same explosion could be reported from both games.
+			const bool ours = [&] {
 				std::scoped_lock l{ actionLock };
-				// Only an NPC we run: one mirrored from a friend's game threw in theirs, and their game reports what
-				// went off. Watched here too, the same explosion could be reported from both games.
-				if (ownedNpcs.contains(id)) {
-					if (npcActions.size() < MAX_PENDING_ACTIONS) {
+				return ownedNpcs.contains(id) || ourCompanions.contains(id);
+			}();
+			if ((shared || ours) && IsThrowEvent(npcTag, npcPayload)) {
+				{
+					std::scoped_lock l{ actionLock };
+					if (ownedNpcs.contains(id) && npcActions.size() < MAX_PENDING_ACTIONS) {
 						npcActions.push_back({ id, Protocol::ShotAction::kThrow });
 					}
-					ArmExplosionWatch();
 				}
-			} else if (const auto attack = shared ? AttackOf(npcTag) : std::nullopt) {
-				if (*attack == AttackKind::Event::kFire && [&] {
-						std::scoped_lock o{ actionLock };
-						return ownedNpcs.contains(id);
-					}()) {
-					ArmShotWatch();  // an NPC we run fired: its missile or shell is ours to report
+				if (ours) {
+					ArmExplosionWatch(id);
+				}
+			} else if (const auto attack = shared || ours ? AttackOf(npcTag) : std::nullopt) {
+				if (*attack == AttackKind::Event::kFire && ours) {
+					std::scoped_lock o{ actionLock };
+					QueueShotCheck(id);  // an NPC of ours fired: its missile or shell is ours to report
 				}
 				std::scoped_lock l{ npcLock };
-				if (npcShots.size() < MAX_PENDING_NPC_SHOTS) {
+				if (shared && npcShots.size() < MAX_PENDING_NPC_SHOTS) {
 					npcShots.push_back({ id, *attack });
 				}
 			} else if (IsThrowAttachEvent(npcTag, npcPayload)) {
@@ -400,6 +490,12 @@ namespace WeaponFire
 	{
 		std::scoped_lock l{ actionLock };
 		ownedNpcs = std::unordered_set<std::uint32_t>(a_ids.begin(), a_ids.end());
+	}
+
+	void SetOurCompanions(std::vector<std::uint32_t> a_ids)
+	{
+		std::scoped_lock l{ actionLock };
+		ourCompanions = std::unordered_set<std::uint32_t>(a_ids.begin(), a_ids.end());
 	}
 
 	namespace
@@ -477,6 +573,10 @@ namespace WeaponFire
 
 	void ScanExplosions();
 	std::string DescribeBlasts();
+	namespace
+	{
+		void CheckShots();
+	}
 	void RemoveGhostGrenades();
 	void UpdateHandThrowables();
 	namespace
@@ -495,6 +595,8 @@ namespace WeaponFire
 				++longCut;
 			}
 		});
+		CheckShots();
+		DefuseStandInShots();
 		ScanExplosions();
 		RemoveGhostGrenades();
 		UpdateHandThrowables();
@@ -578,15 +680,21 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		// A stand-in's plain or explosive shot, and a mirrored NPC's explosive one: what goes off comes as the shooter's
-		// game's report, once (docs/DESIGN.md, "Who sets off an explosion").
+		// A stand-in's plain shot, and a mirrored NPC's explosive one, are held: what they hit or set off comes as the
+		// shooter's game's report, once (docs/DESIGN.md, "Who sets off an explosion"). A stand-in's explosive shot (a
+		// missile, a shell) flies, so friends see it, with no blast of its own (DefuseStandInShots): its blast is the
+		// shooter's report too.
 		const bool puppet = Puppets::IsPuppet(a_actor);
-		const bool standIn = replay == AttackKind::Replay::kFire && (puppet ? HoldsShotOf(a_actor) : ShotExplodes(a_actor));
+		const bool explodes = replay == AttackKind::Replay::kFire && ShotExplodes(a_actor);
+		const bool standIn = replay == AttackKind::Replay::kFire && (puppet ? HoldsShotOf(a_actor) : explodes);
 		if (standIn) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
 		} else if (replay == AttackKind::Replay::kFire && puppet) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
 			++firesLetGo;
+			if (explodes) {
+				ArmDefuse(a_actor->GetFormID());
+			}
 		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
@@ -736,7 +844,8 @@ namespace WeaponFire
 		constexpr float EXPLOSION_RANGE = RemoteEdits::EXPLOSION_RANGE;  // from the player, both for reporting and for setting off
 		std::atomic<Clock::time_point>         watchUntil{};  // written from the animation hooks, read in Frame
 		std::atomic<Clock::time_point>         shotWatchUntil{};  // after a shot of ours or of an NPC we run: its missile or shell goes off a little later
-		std::atomic<bool>                      watchShared{ true };  // every explosion of the last throw's watch so far was reported
+		std::mutex                             throwLock;
+		RemoteEdits::ThrowWatches              throws;  // each thrower's watch, and whether its explosions were all reported (under throwLock)
 		Clock::time_point                      nextScan{};
 		// Explosion references we know of, each by its id and a handle: the same one only while the handle still names it,
 		// as the engine gives a freed reference's id to the next new one, often the next explosion. Kept by id alone (and
@@ -866,14 +975,30 @@ namespace WeaponFire
 			return owner == 0 || owner == NpcSync::LocalPlayer();
 		}
 
+		// How far an explosion is from the nearest player it could hurt: ours, or a friend whose game we know is in our
+		// space (RemotePlayers: where they last said they were). An explosion of ours is reported wherever any player could
+		// be hit by it, as only their own game deals their blows; the server passes on one near any player
+		// (Protocol::REPORTED_EXPLOSION_RANGE), and ReportGate::RANGE is that less a margin.
+		float NearestPlayer(const RE::NiPoint3& a_at, const RE::NiPoint3& a_player)
+		{
+			float nearest = a_at.GetDistance(a_player);
+			for (const auto& info : RemotePlayers::List()) {
+				if (const auto at = RemotePlayers::PositionOf(info.id)) {
+					nearest = (std::min)(nearest, a_at.GetDistance(*at));
+				}
+			}
+			return nearest;
+		}
+
 		// What becomes of a fresh explosion, decided once and kept (blasts), by who set it off (docs/DESIGN.md, "Who sets
-		// off an explosion"). Ours (our player's or an NPC's we run: the explosion's owner, or, with none named, one while
-		// a throw's watch is on or within a destructible object's watch) is reported for each friend's game to set off,
-		// when the server is sure to pass it on (ReportGate); else it is ours alone, and so are its blows on copies. A world
-		// trap's (a mine, a grenade bouquet's grenades): every game sets its own off (Traps), so reported too it would go
-		// off twice. One a destructible object's stage set off (a car we shot) is the object's: every game sets its own off
-		// with the stage (Destructibles). A friend's stand-in's own, or a mirrored NPC's, should never go off here (their
-		// explosive shots and throws are held): their own game reports it.
+		// off an explosion"). A destructible object's stage's own (by its base: a car we shot) is the object's: every game
+		// sets its own off with the stage (Destructibles). A world trap's own (a mine, a grenade bouquet's grenades, near a
+		// trap that went off and set off by no actor): every game sets its own off (Traps), so reported too it would go off
+		// twice. Ours (our player's or an NPC's we run: the explosion's owner, or, with none named, one while a throw's
+		// watch is on or within a destructible object's watch) is reported for each friend's game to set off, when the
+		// server is sure to pass it on (ReportGate, from the nearest player); else it is ours alone, and so are its blows on
+		// copies. A friend's stand-in's own, or a mirrored NPC's, should never go off here (a stand-in's explosive shot
+		// flies with no blast of its own, a mirrored NPC's is held, their throws are held): their own game reports it.
 		void Decide(RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_player, Clock::time_point a_now)
 		{
 			seenExplosions.Add(a_ref);
@@ -888,14 +1013,14 @@ namespace WeaponFire
 			if (by && Puppets::IsPuppet(by)) {
 				++explosionsOfStandIns;
 				what = "a stand-in's own: its player's game reports it";
-			} else if (Traps::Claims(a_ref->data.location)) {
-				seen.fate = RemoteEdits::Fate::kEachOwn;
-				what = "a trap's: every game sets its own off";
 			} else if (Destructibles::ClaimsExplosion(a_ref)) {
-				seen.fate = RemoteEdits::Fate::kEachOwn;
+				seen.fate = RemoteEdits::Fate::kEachOwn;  // by its base: the stage's own explosion
 				what = "a destructible object's own: every game sets its own off with its stage";
+			} else if (Traps::Claims(a_ref->data.location, by != nullptr)) {
+				seen.fate = RemoteEdits::Fate::kEachOwn;  // near a trap that went off, and no actor's
+				what = "a trap's: every game sets its own off";
 			} else if (by ? OursSetItOff(by) : watched) {
-				if (reportGate.Pass(a_ref->data.location.GetDistance(a_player), seen.radius, a_now)) {
+				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
 					std::scoped_lock e{ explosionLock };
@@ -905,7 +1030,8 @@ namespace WeaponFire
 					++explosionsKept;
 					what = "ours, kept: the server might not pass it on (too far, too big, or past the budget)";
 					if (thrown) {
-						watchShared = false;  // a Molotov's fire, if it was one, burns here alone
+						std::scoped_lock t{ throwLock };
+						throws.Unshare(by ? by->GetFormID() : 0, a_now);  // a Molotov's fire, if it was one, burns here alone
 					}
 				}
 			} else if (by) {
@@ -923,15 +1049,44 @@ namespace WeaponFire
 		}
 	}
 
-	void ArmExplosionWatch()
+	void ArmExplosionWatch(std::uint32_t a_thrower)
 	{
-		watchShared = true;
-		watchUntil = Clock::now() + EXPLOSION_WATCH;
+		const auto until = Clock::now() + EXPLOSION_WATCH;
+		{
+			std::scoped_lock l{ throwLock };
+			throws.Arm(a_thrower, until);
+		}
+		watchUntil = until;
 	}
 
 	void ArmShotWatch()
 	{
 		shotWatchUntil = Clock::now() + EXPLOSION_WATCH;
+	}
+
+	namespace
+	{
+		std::uint32_t shotsChecked = 0, shotsWatched = 0;
+
+		// The guns of ours that fired since the last frame (the animation hooks queue them): the shot watch is armed for
+		// one whose shot may go off (a missile, a shell, an explosive or enchanted round), not for every gun's every shot.
+		// Main thread.
+		void CheckShots()
+		{
+			std::vector<std::uint32_t> shooters;
+			{
+				std::scoped_lock l{ actionLock };
+				shooters.swap(shotsToCheck);
+			}
+			for (const auto id : shooters) {
+				++shotsChecked;
+				const auto actor = id == Protocol::PLAYER_REF_ID ? RE::PlayerCharacter::GetSingleton() : RE::TESForm::GetFormByID<RE::Actor>(id);
+				if (actor && (ShotExplodes(actor) || MuzzleFlash::GunEnchanted(actor))) {
+					++shotsWatched;
+					ArmShotWatch();
+				}
+			}
+		}
 	}
 
 	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius)
@@ -941,15 +1096,16 @@ namespace WeaponFire
 		}
 	}
 
-	bool ExplosionsShared()
+	bool ExplosionsShared(std::uint32_t a_thrower)
 	{
-		return Clock::now() <= watchUntil.load() && watchShared.load();
+		std::scoped_lock l{ throwLock };
+		return throws.Shared(a_thrower, Clock::now());
 	}
 
-	bool ThrewLately()
+	bool ThrewLately(std::uint32_t a_thrower)
 	{
-		const auto until = watchUntil.load();
-		return until != Clock::time_point{} && Clock::now() <= until + THREW_LATELY && watchShared.load();
+		std::scoped_lock l{ throwLock };
+		return throws.Shared(a_thrower, Clock::now(), THREW_LATELY);
 	}
 
 	std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target, std::uint32_t a_source)
@@ -1014,8 +1170,9 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{}", blasts.Size(),
-			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous);
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} defused={} shotsWatched={}/{}", blasts.Size(),
+			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, defused, shotsWatched,
+			shotsChecked);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)

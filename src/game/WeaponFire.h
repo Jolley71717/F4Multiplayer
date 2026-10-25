@@ -55,10 +55,11 @@ namespace WeaponFire
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
 	// The explosions our player and the NPCs our game runs set off, for the others to set off too, once (docs/DESIGN.md,
-	// "Who sets off an explosion"). Frame() scans while a watch is armed: ArmExplosionWatch() after a throw (one with no
-	// owner named is taken for the throw's then), ArmShotWatch() after a shot (a missile, a shell, an explosive bullet:
-	// one the shooter is named the owner of). A destructible object's own (its stage's) goes with its wreck instead.
-	void ArmExplosionWatch();
+	// "Who sets off an explosion"). Frame() scans while a watch is armed: ArmExplosionWatch() after a throw (a_thrower: our
+	// player as PLAYER_REF_ID, or the NPC; one with no owner named is taken for the throw's then), ArmShotWatch() after a
+	// shot that may go off (a missile, a shell, an explosive bullet: one the shooter is named the owner of; Frame asks
+	// each gun of ours that fired). A destructible object's own (its stage's) goes with its wreck instead.
+	void ArmExplosionWatch(std::uint32_t a_thrower);
 	void ArmShotWatch();
 
 	// A shot of ours hit a destructible object (a mine, a car: Destructibles) that may set off an explosion other than its
@@ -75,8 +76,10 @@ namespace WeaponFire
 	// far was reported), so each goes off in the friends' games too; and whether it did within THREW_LATELY, while the
 	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). Any thread.
 	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
-	[[nodiscard]] bool ExplosionsShared();
-	[[nodiscard]] bool ThrewLately();
+	// Each thrower's own (a_thrower: the hit's cause, our player as PLAYER_REF_ID; 0, unknown: the last to throw), so
+	// that an NPC's throw never marks our player's kept Molotov as shared.
+	[[nodiscard]] bool ExplosionsShared(std::uint32_t a_thrower);
+	[[nodiscard]] bool ThrewLately(std::uint32_t a_thrower);
 
 	// Ends any replayed sound still following this actor: called before the actor is deleted, since
 	// the sound follows its 3D root.
@@ -133,6 +136,9 @@ namespace WeaponFire
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
+	// Our companions no other game runs (NpcSync's scan; one made at runtime too): their throws and shots arm the watches,
+	// what they set off is ours to report.
+	void SetOurCompanions(std::vector<std::uint32_t> a_ids);
 
 	// Ends the gunshot sounds that would otherwise loop (automatic weapons' fire sounds loop until
 	// stopped). Call every frame.

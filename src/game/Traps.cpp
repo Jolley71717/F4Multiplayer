@@ -451,9 +451,9 @@ namespace Traps
 		return kind != Kind::kNone && kind != Kind::kMine;
 	}
 
-	bool Claims(const RE::NiPoint3& a_at)
+	bool Claims(const RE::NiPoint3& a_at, bool a_byActor)
 	{
-		if (!TrapRules::Claims(fired, mines, SpotOf(a_at), Clock::now())) {
+		if (!TrapRules::Claims(fired, mines, SpotOf(a_at), Clock::now(), a_byActor)) {
 			return false;
 		}
 		++claimed;

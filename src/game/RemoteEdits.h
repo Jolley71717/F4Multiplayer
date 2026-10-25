@@ -229,6 +229,68 @@ namespace RemoteEdits
 		TokenBucket budget{ BURST, PER_SECOND };
 	};
 
+	// Each thrower's last throw (our player, an NPC we run, our companion): until when its watch is on, and whether every
+	// explosion it decided so far was reported. The fire a Molotov leaves burning is judged by its own thrower's
+	// (CopyHealth::OwnersToDeal): a settler of ours throwing a grenade never marks our player's kept Molotov as shared.
+	class ThrowWatches
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 16;
+
+		void Arm(std::uint32_t a_thrower, Clock::time_point a_until)
+		{
+			if (const auto it = Find(a_thrower); it != entries.end()) {
+				it->until = a_until;
+				it->armed = ++armedCount;
+				it->shared = true;
+				return;
+			}
+			if (entries.size() >= MAX) {
+				entries.erase(std::ranges::min_element(entries, {}, &Entry::until));
+			}
+			entries.push_back({ a_thrower, a_until, ++armedCount, true });
+		}
+
+		// One of a_thrower's explosions was kept ours (0: an explosion that named none; every watch on then).
+		void Unshare(std::uint32_t a_thrower, Clock::time_point a_now)
+		{
+			for (auto& entry : entries) {
+				if ((a_thrower == 0 || entry.thrower == a_thrower) && a_now <= entry.until) {
+					entry.shared = false;
+				}
+			}
+		}
+
+		// Whether a_thrower's watch is on (with a_after: or was until a_after ago) and every explosion of it was
+		// reported. a_thrower 0 (a hit that names nobody): the last to throw's.
+		[[nodiscard]] bool Shared(std::uint32_t a_thrower, Clock::time_point a_now, Clock::duration a_after = Clock::duration::zero()) const
+		{
+			const Entry* entry = nullptr;
+			if (a_thrower != 0) {
+				const auto it = std::ranges::find(entries, a_thrower, &Entry::thrower);
+				entry = it != entries.end() ? &*it : nullptr;
+			} else if (!entries.empty()) {
+				entry = &*std::ranges::max_element(entries, {}, &Entry::armed);
+			}
+			return entry && a_now <= entry->until + a_after && entry->shared;
+		}
+
+	private:
+		struct Entry
+		{
+			std::uint32_t     thrower = 0;
+			Clock::time_point until{};
+			std::uint64_t     armed = 0;  // the order they were armed in
+			bool              shared = true;
+		};
+
+		std::vector<Entry>::iterator Find(std::uint32_t a_thrower) { return std::ranges::find(entries, a_thrower, &Entry::thrower); }
+
+		std::vector<Entry> entries;
+		std::uint64_t      armedCount = 0;
+	};
+
 	// What became of each explosion our game saw go off, as WeaponFire decided it once (BlastLog), and so whether the game
 	// that runs an NPC deals that explosion's blow on our copy of it itself (CopyHealth::OwnersToDeal): exactly one game
 	// deals each blow. The decision is the explosion's, made where it is reported or not, never the hit's: a hit judged by
