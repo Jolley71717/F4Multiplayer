@@ -446,13 +446,17 @@ namespace MovedObjects
 		{
 			const auto base = a_ref->GetObjectReference();
 			const auto form = base && base->Is(RE::ENUM_FORM_ID::kEXPL) ? base->As<RE::BGSExplosion>() : nullptr;
-			if (!form || a_ref->IsDeleted()) {
+			// The reference itself must be an explosion, by the game's own type info: one of an explosion base that is
+			// something else (a mod's static of it, a reference half made) has no owner to read. As<RE::Explosion>() can't
+			// tell (an explosion's form type is a plain reference's), so the cast is the engine's checked one.
+			const auto explosion = form ? RE::fallout_cast<RE::Explosion*>(a_ref) : nullptr;
+			if (!explosion || a_ref->IsDeleted()) {
 				return;
 			}
 			ObjectShare::Cause cause = ObjectShare::Cause::kNobody;
 			bool               answered = false;
 			if (!WeaponFire::SetOffForFriend(a_ref)) {
-				if (const auto actor = static_cast<RE::Explosion*>(a_ref)->GetActorOwner()) {
+				if (const auto actor = explosion->GetActorOwner()) {
 					if (actor->IsPlayerRef()) {
 						cause = ObjectShare::Cause::kPlayer;
 					} else if (Puppets::IsPuppet(actor)) {

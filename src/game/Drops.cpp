@@ -67,6 +67,24 @@ namespace Drops
 		std::vector<std::uint32_t> equippedInbox;  // bases our player equipped, or used up (food, a stim)
 		std::vector<std::uint32_t> blockedInbox;   // our copies (form IDs) whose activation is blocked now (the VM's threads)
 		std::vector<std::uint32_t> scrappedInbox;  // our copies (form IDs) the workshop's scrap event named
+		// What the workshop took away (any reference, with its workbench), and what came into a container from nothing while
+		// workshop mode was up: what a scrap of our copy put in the workbench (DropBook::ScrapYields).
+		struct Destroyed
+		{
+			std::uint32_t     ref = 0;
+			std::uint32_t     bench = 0;
+			Clock::time_point at{};
+		};
+		struct Added
+		{
+			std::uint32_t     container = 0;
+			std::uint32_t     base = 0;
+			std::int32_t      count = 0;
+			Clock::time_point at{};
+		};
+		std::vector<Destroyed>     destroyedInbox;
+		std::vector<Added>         addedInbox;
+		std::atomic<bool>          workshopUp{ false };  // workshop mode up, or closed within SCRAP_GRACE (the main thread says)
 		// Our copies' form IDs as of the last frame, for the workshop's event sinks (any thread): a copy is never reported as
 		// a workshop piece, and its scrap comes here.
 		std::unordered_set<std::uint32_t> copyRefIds;  // under inboxLock
@@ -118,6 +136,14 @@ namespace Drops
 		// Copies our player scrapped in workshop mode, claimed as their take until the server answers.
 		DropBook::Scraps  scraps;
 		Clock::time_point lastWorkshop{};  // when workshop mode was last seen up
+		// What our scraps put in their workbenches, to take back out of one lost to a friend's claim: yields known while the
+		// answer waits, and scraps lost before their yield was known.
+		DropBook::ScrapYields                                     yields;
+		std::unordered_map<std::uint32_t, DropBook::ScrapYields::Yield> yieldsKept;
+		std::unordered_set<std::uint32_t>                         lostScraps;
+		// ... and each lost scrap's item, as the session had it: an item stored whole comes out of the workbench as that item.
+		std::unordered_map<std::uint32_t, Protocol::DroppedItem>  lostItems;
+		constexpr auto                                            SCRAP_GRACE = std::chrono::seconds(1);  // the menu may close in the frame of the scrap
 		// Our drops swapped for a copy that the server hasn't said lie there yet: given back to our world if we leave first.
 		DropBook::Unconfirmed unconfirmed;
 		bool                  devLosePlaced = false;  // dev only: the next kPlaced isn't sent (as one lost with the link)
@@ -158,6 +184,8 @@ namespace Drops
 		std::uint32_t claimed = 0, taken = 0, takeFailed = 0, givenBack = 0, lost = 0, reclaimed = 0, unblocked = 0, dupRisk = 0, takenFirst = 0, foundByScan = 0;
 		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0, restored = 0, restoreFailed = 0;
 		std::uint32_t scrapped = 0, scrapLost = 0;  // copies scrapped in workshop mode: granted to us / someone else had it first
+		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
+		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -689,13 +717,16 @@ namespace Drops
 
 		// ---- our player's drops ----
 
-		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated, std::vector<std::uint32_t>& a_blocked, std::vector<std::uint32_t>& a_scrapped)
+		void TakeInbox(std::vector<Left>& a_left, std::vector<std::uint32_t>& a_activated, std::vector<std::uint32_t>& a_blocked, std::vector<std::uint32_t>& a_scrapped,
+			std::vector<Destroyed>& a_destroyed, std::vector<Added>& a_added)
 		{
 			std::scoped_lock l{ inboxLock };
 			a_left.swap(leftInbox);
 			a_activated.swap(activatedInbox);
 			a_blocked.swap(blockedInbox);
 			a_scrapped.swap(scrappedInbox);
+			a_destroyed.swap(destroyedInbox);
+			a_added.swap(addedInbox);
 			usedNow.insert(equippedInbox.begin(), equippedInbox.end());
 			equippedInbox.clear();
 		}
@@ -880,63 +911,73 @@ namespace Drops
 			taking.reset();
 		}
 
+		// The stacks of a_from's items of a_object, as DropBook::PickStack reads them (stack numbers as RemoveItem takes them).
+		std::vector<DropBook::StackInfo> StacksOf(RE::TESObjectREFR* a_from, const RE::TESBoundObject* a_object)
+		{
+			std::vector<DropBook::StackInfo> out;
+			const auto                       list = a_from ? a_from->inventoryList : nullptr;
+			if (!list || !a_object) {
+				return out;
+			}
+			RE::BSAutoReadLock l{ list->rwLock };
+			for (auto& item : list->data) {
+				if (item.object != a_object) {
+					continue;
+				}
+				for (auto stack = item.stackData.get(); stack; stack = stack->nextStack.get()) {
+					DropBook::StackInfo info{ .count = stack->count };
+					const auto          extra = stack->extra.get();
+					const auto          instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
+					if (instance && instance->values) {
+						info.instanced = true;
+						for (const auto& data : instance->GetIndexData()) {
+							if (!data.disabled && data.objectID != 0) {
+								info.mods.push_back(data.objectID);
+							}
+						}
+					}
+					std::ranges::sort(info.mods);
+					const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
+					if (text && !text->displayName.empty()) {
+						info.name = text->displayName.c_str();
+					}
+					out.push_back(std::move(info));
+				}
+				break;  // one entry per base
+			}
+			return out;
+		}
+
+		// a_count of the drop taken out of a_from: from the stack that is that item (its mods and name), never another of
+		// its base (DropBook::PickStack). False, and nothing taken, when none is. a_before runs just before the removal.
+		template <class Before>
+		bool RemoveDrop(RE::TESObjectREFR* a_from, const Protocol::DroppedItem& a_drop, std::int32_t a_count, Before&& a_before)
+		{
+			const auto form = RE::TESForm::GetFormByID(a_drop.base);
+			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
+			if (!a_from || !object) {
+				return false;
+			}
+			const auto pick = DropBook::PickStack(StacksOf(a_from, object), a_drop, a_count);
+			if (pick.kind == DropBook::StackPick::Kind::kNone) {
+				return false;
+			}
+			RE::TESObjectREFR::RemoveItemData data{ object, a_count };
+			if (pick.kind == DropBook::StackPick::Kind::kStack) {
+				data.stackData.push_back(pick.index);
+			}
+			a_before();
+			a_from->RemoveItem(data);
+			return true;
+		}
+
 		// Our player has an item someone else was granted (picked up past a block that hadn't taken): it goes out of their
 		// inventory again, from the stack that is that item (its mods and name) where one is, so it is in one inventory only.
 		bool TakeBack(const Protocol::DroppedItem& a_drop)
 		{
-			const auto player = Player();
-			const auto list = player ? player->inventoryList : nullptr;
-			const auto form = RE::TESForm::GetFormByID(a_drop.base);
-			const auto object = form ? form->As<RE::TESBoundObject>() : nullptr;
-			if (!list || !object || Carried(a_drop.base) < static_cast<std::uint32_t>(a_drop.count)) {
-				return false;
-			}
-			std::vector<std::uint32_t> wanted;
-			for (const auto& mod : a_drop.mods) {
-				wanted.push_back(mod.mod);
-			}
-			std::ranges::sort(wanted);
-			std::optional<std::uint32_t> stackId;
-			bool                         instanced = false;
-			{
-				RE::BSAutoReadLock l{ list->rwLock };
-				for (auto& item : list->data) {
-					if (item.object != object) {
-						continue;
-					}
-					std::uint32_t index = 0;
-					for (auto stack = item.stackData.get(); stack && !stackId; stack = stack->nextStack.get(), ++index) {
-						const auto extra = stack->extra.get();
-						const auto instance = extra ? extra->GetByType<RE::BGSObjectInstanceExtra>() : nullptr;
-						std::vector<std::uint32_t> mods;
-						if (instance && instance->values) {
-							instanced = true;
-							for (const auto& data : instance->GetIndexData()) {
-								if (!data.disabled && data.objectID != 0) {
-									mods.push_back(data.objectID);
-								}
-							}
-						}
-						std::ranges::sort(mods);
-						const auto text = extra ? extra->GetByType<RE::ExtraTextDisplayData>() : nullptr;
-						const std::string_view name = text && !text->displayName.empty() ? text->displayName.c_str() : "";
-						if (stack->count >= static_cast<std::uint32_t>(a_drop.count) && (a_drop.mods.empty() || mods == wanted) &&
-							(a_drop.name.empty() || Protocol::Utf8Prefix(name, Protocol::MAX_ITEM_NAME_LENGTH) == a_drop.name)) {
-							stackId = index;
-						}
-					}
-				}
-			}
-			if (!stackId && instanced) {
-				return false;  // a gun or armor of that base, but none that is that item: not another one in its place
-			}
-			RE::TESObjectREFR::RemoveItemData data{ object, a_drop.count };
-			if (stackId) {
-				data.stackData.push_back(*stackId);
-			}
-			usedNow.insert(a_drop.base);  // its leaving their inventory is no drop
-			player->RemoveItem(data);
-			return true;
+			return RemoveDrop(Player(), a_drop, a_drop.count, [&] {
+				usedNow.insert(a_drop.base);  // its leaving their inventory is no drop
+			});
 		}
 
 		void NoticeActivations(const std::vector<std::uint32_t>& a_activated, Clock::time_point a_now)
@@ -991,25 +1032,95 @@ namespace Drops
 			REX::INFO("Drops: our copy {:08X} of drop {} was scrapped in workshop mode; claimed as our take", refId, a_dropId);
 		}
 
-		// Our copies taken away in workshop mode this frame (the workshop's event named them, or they went while it was up).
-		void NoticeScraps(const std::vector<std::uint32_t>& a_named, Clock::time_point a_now)
+		// What a lost scrap put in its workbench taken back out: the item is a friend's, our player keeps nothing of it.
+		void TakeBackYield(const DropBook::ScrapYields::Yield& a_yield)
+		{
+			const auto lostIt = lostItems.find(a_yield.dropId);
+			const auto lost = lostIt != lostItems.end() ? std::optional{ lostIt->second } : std::nullopt;
+			if (lostIt != lostItems.end()) {
+				lostItems.erase(lostIt);
+			}
+			const auto bench = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_yield.bench);
+			if (!bench || a_yield.items.empty()) {
+				++scrapShort;
+				REX::WARN("Drops: drop {} went to someone else as our player scrapped our copy of it, and nothing it put in workbench {:08X} was seen; "
+						  "our player keeps it", a_yield.dropId, a_yield.bench);
+				return;
+			}
+			// What has no instance of its own comes out by base; an item stored whole as its own stack, never another of
+			// its base, which may be our player's own modded or legendary one (DropBook::ScrapYields::PlanTakeBack).
+			const auto plan = DropBook::ScrapYields::PlanTakeBack(a_yield, [](std::uint32_t a_base) {
+				const auto form = RE::TESForm::GetFormByID(a_base);
+				const auto type = form ? form->GetFormType() : RE::ENUM_FORM_ID::kNONE;
+				return type == RE::ENUM_FORM_ID::kMISC || type == RE::ENUM_FORM_ID::kAMMO || type == RE::ENUM_FORM_ID::kALCH || type == RE::ENUM_FORM_ID::kINGR;
+			});
+			for (const auto& item : plan.out) {
+				const auto object = RE::TESForm::GetFormByID<RE::TESBoundObject>(item.base);
+				if (!object) {
+					continue;
+				}
+				RE::TESObjectREFR::RemoveItemData data{ object, item.count };
+				bench->RemoveItem(data);
+				REX::INFO("Drops: {:08X} x{} taken back out of workbench {:08X}: the scrap of drop {} was someone else's", item.base, item.count, a_yield.bench,
+					a_yield.dropId);
+			}
+			bool tookWhole = false;
+			for (const auto& item : plan.whole) {
+				if (lost && lost->base == item.base && RemoveDrop(bench, *lost, item.count, [] {})) {
+					tookWhole = true;
+					REX::INFO("Drops: {:08X} x{} stored whole taken back out of workbench {:08X}, as that item: drop {} went to someone else", item.base, item.count,
+						a_yield.bench, a_yield.dropId);
+					continue;
+				}
+				++scrapRefused;
+				REX::WARN("Drops: {:08X} x{} left in workbench {:08X}, though drop {} went to someone else: no stack there is that item (its mods and name), and "
+						  "our player's own of the same base is never taken",
+					item.base, item.count, a_yield.bench, a_yield.dropId);
+			}
+			if (!plan.out.empty() || tookWhole) {
+				++scrapTakenBack;
+			}
+		}
+
+		// Our copies the workshop took away this frame (its destroyed event named them), and what our scraps put in their
+		// workbenches.
+		void NoticeScraps(const std::vector<std::uint32_t>& a_named, const std::vector<Destroyed>& a_destroyed, const std::vector<Added>& a_added, Clock::time_point a_now)
 		{
 			if (OpenMenus::Open(OpenMenus::Menu::kWorkshop)) {
 				lastWorkshop = a_now;
 			}
-			const bool workshop = lastWorkshop != Clock::time_point{} && a_now - lastWorkshop <= DropBook::SCRAP_GRACE;
-			if (workshop || !a_named.empty()) {
+			workshopUp = lastWorkshop != Clock::time_point{} && a_now - lastWorkshop <= SCRAP_GRACE;
+			for (const auto& added : a_added) {
+				yields.Added(added.container, added.base, added.count, added.at);
+			}
+			for (const auto& destroyed : a_destroyed) {
+				const auto copy = std::ranges::find_if(copies, [&](const auto& a_entry) { return a_entry.second.refId == destroyed.ref; });
+				yields.Destroyed(copy != copies.end() ? copy->first : 0, destroyed.bench, destroyed.at);
+			}
+			if (!a_named.empty()) {
 				std::vector<std::uint32_t> gone;
 				for (const auto& [id, copy] : copies) {
-					const auto ref = copy.ref.get();
 					const bool named = std::ranges::find(a_named, copy.refId) != a_named.end();
-					if (DropBook::JudgeCopy(copy.shown, static_cast<bool>(ref),ref && Lies(ref.get()), named, workshop) == DropBook::CopyGone::kScrapped) {
+					if (DropBook::JudgeCopy(static_cast<bool>(copy.ref.get()), named) == DropBook::CopyGone::kScrapped) {
 						gone.push_back(id);
 					}
 				}
 				for (const auto id : gone) {
 					ScrappedCopy(id, a_now);
 				}
+			}
+			for (auto& yield : yields.Due(a_now)) {
+				if (lostScraps.erase(yield.dropId)) {
+					TakeBackYield(yield);
+				} else if (scraps.Waiting(yield.dropId) && yieldsKept.size() < DropBook::ScrapYields::MAX_SCRAPS) {
+					yieldsKept[yield.dropId] = std::move(yield);
+				}
+			}
+			if (yields.Waiting() == 0) {
+				for (const auto id : lostScraps) {
+					TakeBackYield({ id, 0, {} });  // its scrap's event was never noted: nothing to take back
+				}
+				lostScraps.clear();
 			}
 			// A claim whose answer went with a reconnect is made again (our next record settles it too).
 			for (const auto id : scraps.Unanswered()) {
@@ -1080,9 +1191,13 @@ namespace Drops
 		return copyRefIds.contains(a_ref);
 	}
 
-	bool OnScrapped(std::uint32_t a_ref)
+	bool OnScrapped(std::uint32_t a_ref, std::uint32_t a_bench)
 	{
+		const auto now = Clock::now();
 		std::scoped_lock l{ inboxLock };
+		if (a_ref != 0 && a_bench != 0 && destroyedInbox.size() < MAX_INBOX) {
+			destroyedInbox.push_back({ a_ref, a_bench, now });  // ours or not: what it put in the workbench is its own
+		}
 		if (!copyRefIds.contains(a_ref)) {
 			return false;
 		}
@@ -1090,6 +1205,18 @@ namespace Drops
 			scrappedInbox.push_back(a_ref);
 		}
 		return true;
+	}
+
+	void OnAddedFromNowhere(std::uint32_t a_container, std::uint32_t a_base, std::int32_t a_count)
+	{
+		if (!workshopUp || a_container == 0 || a_container == Protocol::PLAYER_REF_ID || a_count <= 0) {
+			return;
+		}
+		const auto now = Clock::now();
+		std::scoped_lock l{ inboxLock };
+		if (addedInbox.size() < DropBook::ScrapYields::MAX_ADDED) {
+			addedInbox.push_back({ a_container, a_base, a_count, now });
+		}
 	}
 
 	void DevDropNext()
@@ -1172,19 +1299,30 @@ namespace Drops
 		switch (scraps.Answered(a_gone.dropId, a_gone.takerId, localId)) {
 		case DropBook::Scraps::Outcome::kOurs:
 			++scrapped;
+			yieldsKept.erase(a_gone.dropId);
 			if (Log()) {
 				REX::INFO("Drops: drop {} scrapped here is ours; gone for everyone", a_gone.dropId);
 			}
 			return;
 		case DropBook::Scraps::Outcome::kLost:
-			// Our copy went in a scrap, but someone else's claim came first: the item is theirs, and not in our world.
+			// Our copy went in a scrap, but someone else's claim came first: the item is theirs, and not in our world. What
+			// the scrap put in the workbench comes back out of it, now or once it is known (NoticeScraps).
 			{
 				std::scoped_lock l{ recordLock };
 				record.Untook(a_gone.dropId);
 			}
 			++scrapLost;
-			REX::WARN("Drops: drop {} went to player {} as our player scrapped our copy of it; the item is theirs (our player kept the components)", a_gone.dropId,
+			REX::WARN("Drops: drop {} went to player {} as our player scrapped our copy of it; the item is theirs, and the components go back", a_gone.dropId,
 				a_gone.takerId);
+			if (item && lostItems.size() < DropBook::ScrapYields::MAX_SCRAPS) {
+				lostItems[a_gone.dropId] = *item;
+			}
+			if (const auto kept = yieldsKept.find(a_gone.dropId); kept != yieldsKept.end()) {
+				TakeBackYield(kept->second);
+				yieldsKept.erase(kept);
+			} else {
+				lostScraps.insert(a_gone.dropId);
+			}
 			return;
 		case DropBook::Scraps::Outcome::kNotScrapped:
 			break;
@@ -1264,12 +1402,14 @@ namespace Drops
 		std::vector<std::uint32_t> activated;
 		std::vector<std::uint32_t> blocked;
 		std::vector<std::uint32_t> scrappedNow;
-		TakeInbox(left, activated, blocked, scrappedNow);
+		std::vector<Destroyed>     destroyed;
+		std::vector<Added>         added;
+		TakeInbox(left, activated, blocked, scrappedNow, destroyed, added);
 		NoticeDrops(left, now);
 		SettleDrops(now);
 		NoticeActivations(activated, now);
 		FinishTake(now);
-		NoticeScraps(scrappedNow, now);
+		NoticeScraps(scrappedNow, destroyed, added, now);
 		PlaceCopies(now);
 		ShowCopies(blocked, now);
 		PublishCopyIds();
@@ -1338,6 +1478,11 @@ namespace Drops
 		claims.Clear();
 		scraps.Clear();  // the loaded world's record says whether it took them
 		lastWorkshop = {};
+		workshopUp = false;
+		yields.Clear();
+		yieldsKept.clear();
+		lostScraps.clear();
+		lostItems.clear();
 		unconfirmed.Clear();  // the loaded world's record says whether they left it
 		seenLoose.clear();
 		unplaceable.clear();
@@ -1349,6 +1494,8 @@ namespace Drops
 		equippedInbox.clear();
 		blockedInbox.clear();
 		scrappedInbox.clear();
+		destroyedInbox.clear();
+		addedInbox.clear();
 		copyRefIds.clear();
 	}
 
@@ -1446,8 +1593,8 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size());
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused);
 	}
 }

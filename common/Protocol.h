@@ -741,9 +741,19 @@ namespace Protocol
 		inline constexpr std::uint8_t kScrapped = 1;
 	}
 
-	// An explosion the sender's game saw after one of its throws (a grenade, a mine, a Molotov): the
-	// others set off the same explosion at the same spot, since a thrown projectile cannot be launched
-	// for a stand-in (the engine's throw action plays the animation only).
+	// An explosion the sender's player (or an NPC its game runs) set off: a grenade, a Molotov, a missile, a shell, an
+	// explosive bullet, a mine they shot. The others set off the same explosion at the same spot, once: a stand-in's shot
+	// that would go off flies with no blast of its own, and it throws no grenade (docs/DESIGN.md, "Who sets off an
+	// explosion"). Sent reliably: the game that runs an NPC it reaches deals its blow there, so a lost report is a blow
+	// dealt nowhere.
+	//
+	// The server passes one on from near where its reporter or another player is (REPORTED_EXPLOSION_RANGE: the sender
+	// reports one wherever any player could be hit by it, as only a player's own game deals their blows), within the
+	// reporter's budget (a burst, then a few a second). Each game judges its own reports by stricter numbers before it sends them
+	// (RemoteEdits::ReportGate): one it sends is sure to reach the others.
+	inline constexpr float  REPORTED_EXPLOSION_RANGE = 8000.0f;
+	inline constexpr double REPORTED_EXPLOSION_BURST = 16.0;
+	inline constexpr double REPORTED_EXPLOSIONS_PER_SECOND = 4.0;
 	struct Explosion
 	{
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
@@ -769,7 +779,7 @@ namespace Protocol
 	// A world trap from a plugin (a placed mine, a tripwire, a tension trigger, a grenade bouquet or another of the game's
 	// TrapBase traps, a bear trap) that is spent in the sender's game: it went off, a player disarmed it, or a player took it
 	// (a mine picked up, a sprung bear trap carried off). Kept by the server, first come first kept (a take still follows a
-	// spring), and sent to everyone: live as it happens (each game whose copy is armed sets it off), and in the list a joiner
+	// disarm), and sent to everyone: live as it happens (each game whose copy is armed sets it off), and in the list a joiner
 	// or a loaded save gets (spent quietly). src/game/TrapRules.h has the rules.
 	struct TrapState
 	{
@@ -802,7 +812,9 @@ namespace Protocol
 	inline constexpr std::size_t MAX_TRAPS_PER_PACKET = 1000;
 
 	// Whether a trap's new state replaces the one the session has: none yet, or a take after a spring or a disarm (the trap is
-	// gone from the world now). Never the other way: a trap taken stays taken.
+	// gone from the world now: a sprung bear trap carried off, a disarmed mine picked up). Never the other way: a trap taken
+	// stays taken. A take is believed only from a player standing at the trap (the server's TRAP_REACH), so a report can't
+	// take away every spent trap around its sender.
 	[[nodiscard]] constexpr bool TrapSupersedes(std::uint8_t a_new, std::optional<std::uint8_t> a_old)
 	{
 		return !a_old || (a_new == TrapState::kTaken && *a_old != TrapState::kTaken);
@@ -941,6 +953,12 @@ namespace Protocol
 		float         health = 0.0f;
 		bool          destroyed = false;
 		bool          explode = false;
+		// In a report only (kReportDestruction): where the object stands in the sender's game, an interior cell (worldspace
+		// 0) or a worldspace (cell 0), for the server to hold against where the sender is (a report is otherwise a way to
+		// wreck any car, and set it off, at anyone). Never relayed nor kept: a game knows where its own copy is.
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
 
 		bool operator==(const Destruction&) const = default;
 	};
@@ -2972,6 +2990,13 @@ namespace Protocol
 			w.U32(entry.refId);
 			w.F32(entry.health);
 			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (entry.explode ? 2 : 0)));
+			if (a_type == MessageType::kReportDestruction) {
+				w.U32(entry.cell);
+				w.U32(entry.worldspace);
+				w.F32(entry.x);
+				w.F32(entry.y);
+				w.F32(entry.z);
+			}
 		}
 		return w.Data();
 	}
@@ -2980,7 +3005,7 @@ namespace Protocol
 	inline std::optional<Destructions> DecodeDestructions(std::span<const std::uint8_t> a_data)
 	{
 		Reader r{ a_data };
-		r.U8();
+		const bool report = static_cast<MessageType>(r.U8()) == MessageType::kReportDestruction;
 		Destructions msg;
 		msg.playerId = r.U32();
 		const auto count = r.U8();
@@ -2998,6 +3023,16 @@ namespace Protocol
 			}
 			entry.destroyed = (flags & 1) != 0;
 			entry.explode = (flags & 2) != 0;
+			if (report) {
+				entry.cell = r.U32();
+				entry.worldspace = r.U32();
+				entry.x = r.F32();
+				entry.y = r.F32();
+				entry.z = r.F32();
+				if (!r.Ok() || !std::isfinite(entry.x) || !std::isfinite(entry.y) || !std::isfinite(entry.z)) {
+					return std::nullopt;
+				}
+			}
 		}
 		if (!r.AtEnd()) {
 			return std::nullopt;

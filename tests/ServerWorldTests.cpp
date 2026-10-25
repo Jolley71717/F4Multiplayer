@@ -1912,17 +1912,11 @@ TEST("server trust: a second face within five seconds isn't passed on straight a
 	CHECK(Count(Received(f, 2), MT::kPlayerFace) == 1);
 }
 
-TEST("server trust: an explosion is relayed only after a throw and near the thrower")
+TEST("server trust: an explosion is relayed near its reporter, reliably, with no throw or shot before it")
 {
 	Fixture f;
 	JoinAs(f, 1, "Alice");
 	JoinAs(f, 2, "Bob");
-	Clear(f, { 1, 2 });
-
-	f.fake->Deliver(1, Explosion(100.0f, 100.0f));  // no throw yet
-	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
-
-	f.fake->Deliver(1, Throw());
 	Protocol::PlayerState state;
 	state.sequence = 1;
 	state.worldspace = 0x0000003C;
@@ -1931,8 +1925,14 @@ TEST("server trust: an explosion is relayed only after a throw and near the thro
 	Clear(f, { 1, 2 });
 	f.fake->Deliver(1, Explosion(100000.0f, 100000.0f));  // far from Alice
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
-	f.fake->Deliver(1, Explosion(600.0f, 300.0f));  // near her, after her throw
-	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+	// Near her, with no throw or shot: a car her companion set burning, a mine her grenade set off long after. The game
+	// that runs an NPC it reaches deals its blow there; a report dropped was a blow dealt nowhere.
+	f.fake->Deliver(1, Explosion(600.0f, 300.0f));
+	Sync(f, 1);  // handled in order: by the answer to this, the explosion was handled too
+	auto sent = f.fake->TakeSent(2);
+	std::erase_if(sent, [](const auto& a_sent) { return a_sent.data.empty() || a_sent.data[0] != Type(MT::kExplosion); });
+	REQUIRE(sent.size() == 1);
+	CHECK(sent[0].reliable);
 }
 
 namespace
@@ -1983,6 +1983,31 @@ TEST("server trust: an explosion is measured from the thrower in 3D, not just on
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
 }
 
+TEST("server trust: an explosion far from its reporter is relayed when another player in that space could be hit by it")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Cleo");
+	f.fake->Deliver(1, StateAt(1, 0.0f, 0.0f));
+	f.fake->Deliver(2, StateAt(1, 20000.0f, 0.0f));
+	f.fake->Deliver(3, StateAt(1, -20000.0f, 0.0f, 0.0f, 0x0001F00D));  // indoors
+	Clear(f, { 1, 2, 3 });
+	// A raider Alice's game runs fires a missile at Bob, 17000 from her: the blast is beside him, and only his game can
+	// deal his blow.
+	f.fake->Deliver(1, ExplosionAt(17000.0f, 0.0f, 0.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 1);  // relayed to everyone; each game judges its own reach
+	// Far from everyone: dropped. At Cleo's numbers but outdoors, not in her cell: dropped.
+	f.fake->Deliver(1, ExplosionAt(40000.0f, 40000.0f, 0.0f));
+	f.fake->Deliver(1, ExplosionAt(-19800.0f, 0.0f, 0.0f));
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 0);
+	// Beside her, in her cell: relayed.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, -19800.0f, 300.0f, 0.0f, 0x0001F00D, 0 }, MT::kReportExplosion));
+	CHECK(Count(Received(f, 3), MT::kExplosion) == 1);
+}
+
 TEST("server trust: a joiner's explosions stop at their budget however many throws they report")
 {
 	Fixture f;
@@ -1998,6 +2023,28 @@ TEST("server trust: a joiner's explosions stop at their budget however many thro
 	}
 	CHECK(Count(Received(f, 2), MT::kExplosion) == 16);
 	CHECK(f.Logged("reports explosions faster than anyone throws"));
+}
+
+TEST("server trust: each joiner's explosions have a budget of their own, whatever the others spend")
+{
+	// A report a game sends is one its own budget allows (RemoteEdits::ReportGate): what three friends throw at once can't
+	// be told from one game, so no share of all joiners' together can drop it.
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	JoinAs(f, 3, "Carol");
+	JoinAs(f, 4, "Dave");
+	for (PeerId peer = 1; peer <= 3; ++peer) {
+		f.fake->Deliver(peer, StateAt(1, 100.0f, 100.0f));
+	}
+	Clear(f, { 1, 2, 3, 4 });
+	for (PeerId peer = 1; peer <= 3; ++peer) {
+		for (int i = 0; i < 16; ++i) {
+			f.fake->Deliver(peer, Explosion(100.0f + static_cast<float>(i), 100.0f));
+		}
+	}
+	CHECK(Count(Received(f, 4), MT::kExplosion) == 48);
+	CHECK(!f.Logged("reports explosions faster than anyone throws"));
 }
 
 TEST("server trust: the host's own game has no explosion budget")
@@ -2415,23 +2462,23 @@ TEST("host authority: a friend's game making up grenades at your feet sets off n
 	f.fake->Deliver(1, StateAt(1, hostAt.x, hostAt.y));
 	const auto  start = std::chrono::steady_clock::now();
 	std::size_t setOff = 0;
-	for (PeerId mallory = 2; mallory < 6; ++mallory) {  // she leaves and comes back, as someone new each time
+	for (PeerId mallory = 2; mallory < 10; ++mallory) {  // she leaves and comes back, as someone new each time
 		REQUIRE(f.Join(mallory, Fixture::MakeHello("Mallory", 0x0BAD0000 + mallory)));
 		f.fake->Deliver(mallory, StateAt(1, 0.0f, 0.0f));
 		for (int i = 0; i < 20; ++i) {
 			f.fake->Deliver(mallory, Throw());
 			f.fake->Deliver(mallory, ExplosionAt(hostAt.x, hostAt.y, 0.0f));
 		}
-		for (const auto blast : BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS)) {
-			setOff += blast == RemoteEdits::Blast::kSetOff;
-		}
-		f.fake->Drop(mallory);
-		Sync(f, 1);
+		f.fake->Drop(mallory);  // handled after her explosions: the server takes what comes in order
 	}
-	// Each comes with 16 of its own, but all joiners share 32 at once: not 16 for every rejoin.
+	for (const auto blast : BlastsAt(Received(f, 1), hostAt, FRAG_RADIUS)) {  // one look: a sync is answered 10 times a second at most
+		setOff += blast == RemoteEdits::Blast::kSetOff;
+	}
+	// Each comes with 16 of its own, but all joiners share room for every seat's at once (4 x 16, so that what the others
+	// spend never drops a report a game sent: RemoteEdits::ReportGate): not 16 for every rejoin.
 	const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-	CHECK(setOff >= 32);
-	CHECK(setOff <= 32 + static_cast<std::size_t>(8.0 * seconds) + 1);
+	CHECK(setOff >= 64);
+	CHECK(setOff <= 64 + static_cast<std::size_t>(16.0 * seconds) + 1);
 }
 
 namespace

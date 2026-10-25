@@ -411,7 +411,8 @@ namespace WorkshopSync
 				const auto id = ref ? ref->GetFormID() : 0;
 				// Our copy of a friend's drop, scrapped: the item is our player's take now (they have its components), so it
 				// goes for everyone. Not a workshop piece of ours to report.
-				if (Drops::OnScrapped(id)) {
+				const auto bench = a_event.workshop.get();
+				if (Drops::OnScrapped(id, bench ? bench->GetFormID() : 0)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				// The wires strung to it go with it: the game takes them away and tells of no scrap of theirs.

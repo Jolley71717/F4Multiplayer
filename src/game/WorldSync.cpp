@@ -78,7 +78,8 @@ namespace WorldSync
 		{
 			std::uint32_t target = 0;
 			std::uint32_t cause = 0;
-			bool          ownersToDeal = false;  // a throw's blow (CopyHealth::OwnersToDeal)
+			CopyHealth::Blow blow;                // what it was (CopyHealth::OwnersToDeal, its explosion judged in Frame)
+			std::uint32_t    sourceRef = 0;       // the reference the hit names as its source (CopyWatch::SourceOf)
 		};
 		constexpr std::size_t MAX_HIT_INBOX = 512;  // other actors' hits a frame (a big fight); our player's are always kept
 		std::vector<Hit>      hitInbox;
@@ -105,6 +106,8 @@ namespace WorldSync
 			float         damage;
 			bool          byPlayer;  // we hit them, rather than an NPC in our world
 			std::uint32_t attacker;  // the NPC that hit them (0 when byPlayer)
+			bool          explosion = false;  // an explosion's blow (judged in Frame: RemoteEdits::PassStandInHit)
+			std::uint32_t sourceRef = 0;      // the reference the hit names as its source (CopyWatch::SourceOf)
 		};
 		std::vector<StandInHit> standInHits;
 		std::atomic<bool>       friendlyFire{ false };
@@ -651,6 +654,7 @@ namespace WorldSync
 		}
 
 		std::atomic<std::uint32_t> hitsOnUsByPuppets{ 0 };  // hits on our player by a friend's stand-in (HitWatcher)
+		std::uint32_t              standInBlowsThere = 0;  // explosions' hits on stand-ins not passed on: they go off in that game too
 
 		class HitWatcher :
 			public RE::BSTEventSink<RE::TESHitEvent>
@@ -696,7 +700,7 @@ namespace WorldSync
 						const float damage = a_event.hitData.healthDamage > 0.0f ? a_event.hitData.healthDamage : a_event.hitData.totalDamage;
 						if (damage > 0.0f) {
 							std::scoped_lock l{ inboxLock };
-							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker });
+							standInHits.push_back({ victim->GetFormID(), damage, byPlayer, attacker, a_event.hitData.flags.any(RE::HitData::Flag::kExplosion), CopyWatch::SourceOf(a_event) });
 						}
 					}
 				}
@@ -707,7 +711,7 @@ namespace WorldSync
 				if (actor && target != cause && (byPlayer || cause->As<RE::Actor>()) && (IsShareableRef(target->GetFormID()) || Protocol::IsSpawnRef(target->GetFormID())) && !Puppets::IsPuppet(actor)) {
 					std::scoped_lock l{ inboxLock };
 					if (byPlayer || hitInbox.size() < MAX_HIT_INBOX) {
-						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID(), CopyHealth::OwnersToDeal(CopyWatch::BlowOf(a_event)) });
+						hitInbox.push_back({ target->GetFormID(), byPlayer ? Protocol::PLAYER_REF_ID : cause->GetFormID(), CopyWatch::BlowOf(a_event), CopyWatch::SourceOf(a_event) });
 					}
 				}
 				return RE::BSEventNotifyControl::kContinue;
@@ -732,6 +736,11 @@ namespace WorldSync
 					// so Frame() pairs it with the item the player just activated.
 					std::scoped_lock l{ inboxLock };
 					pickupInbox.push_back(a_event.baseObjectFormID);
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				if (a_event.oldContainerFormID == 0 && a_event.newContainerFormID != 0) {
+					// From nothing into a container: in workshop mode, maybe a scrap's components in its workbench (Drops).
+					Drops::OnAddedFromNowhere(a_event.newContainerFormID, a_event.baseObjectFormID, count);
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				if (a_event.oldContainerFormID == PLAYER_REF_ID && a_event.newContainerFormID == 0) {
@@ -2263,7 +2272,7 @@ namespace WorldSync
 			                                                           CopyHealth::Hitter::kNotOurs;
 			const auto target = hitter != CopyHealth::Hitter::kNotOurs ? RE::TESForm::GetFormByID<RE::Actor>(hit.target) : nullptr;
 			const bool killed = dead.Contains(hit.target) || (target && target->IsDead(false));
-			const auto after = CopyHealth::After(hitter, owner, local, killed, hit.ownersToDeal);
+			const auto after = CopyHealth::After(hitter, owner, local, killed, copy && hitter != CopyHealth::Hitter::kNotOurs && CopyWatch::OwnersToDeal(hit.blow, hit.target, owner, hit.sourceRef));
 			// On a copy what the hit took goes as damage (CopyWatch books it: TakeDamage below), not as the copy's health.
 			if (after.report && !copy) {
 				hitLastFrame.insert(hit.target);
@@ -2290,6 +2299,15 @@ namespace WorldSync
 			const auto attacker = hit.byPlayer || IsShareableRef(hit.attacker) ? hit.attacker : Spawns::OwnIdOf(hit.attacker);
 			if (!hit.byPlayer && attacker == 0) {
 				continue;
+			}
+			// An explosion that goes off in their game too hurts them there (RemoteEdits::PassStandInHit).
+			if (hit.explosion) {
+				const auto standIn = RE::TESForm::GetFormByID<RE::TESObjectREFR>(hit.actor);
+				const auto seen = standIn ? WeaponFire::BlastAt(standIn, hit.sourceRef) : std::nullopt;
+				if (!RemoteEdits::PassStandInHit(true, seen ? &*seen : nullptr)) {
+					++standInBlowsThere;
+					continue;
+				}
 			}
 			if (const auto playerId = RemotePlayers::PlayerIdFor(hit.actor)) {
 				Queue(Protocol::Encode(Protocol::PlayerHit{ playerId, hit.damage, hit.byPlayer, attacker }, Protocol::MessageType::kPlayerHit));
@@ -2509,6 +2527,6 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" puppetHitsOnUs={}", hitsOnUsByPuppets.load());
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={}", hitsOnUsByPuppets.load(), standInBlowsThere);
 	}
 }

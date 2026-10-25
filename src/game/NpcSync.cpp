@@ -349,6 +349,25 @@ namespace NpcSync
 			}
 
 			const auto lists = RE::ProcessLists::GetSingleton();
+			// Our companions no other game runs (one made here at runtime too, in no list of the session's): what they throw
+			// and fire is ours to report (WeaponFire: their throws and shots arm its watches).
+			std::vector<std::uint32_t> companions;
+			if (lists) {
+				for (const auto& handle : lists->highActorHandles) {
+					const auto ptr = handle.get();
+					const auto actor = ptr.get();
+					if (!actor || actor->IsDead(false) || Puppets::IsPuppet(actor) || !IsOurCompanion(actor)) {
+						continue;
+					}
+					const auto session = NpcSync::SessionId(actor->GetFormID());
+					const auto owner = session ? NpcSync::Owner(session) : 0;
+					if (owner == 0 || owner == NpcSync::LocalPlayer()) {
+						WeaponFire::InstallForNpcs(actor);  // no-op once hooked
+						companions.push_back(actor->GetFormID());
+					}
+				}
+			}
+			WeaponFire::SetOurCompanions(std::move(companions));
 			if (lists) {
 				for (const auto& handle : lists->highActorHandles) {
 					const auto ptr = handle.get();

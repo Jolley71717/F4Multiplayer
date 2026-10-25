@@ -32,7 +32,6 @@ namespace Spawns
 		{
 			RE::ObjectRefHandle handle;
 			Clock::time_point   placedAt{};
-			std::uint32_t       from = 0;  // the NPC it was placed from (NpcRoll::PlaceFrom)
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
 
@@ -502,15 +501,6 @@ namespace Spawns
 					facts.copyAt = SpotOf(ref.get());
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
-				// Their roll came after our copy was placed from the spawn's base: placed again, from the NPC it is a roll of.
-				if (facts.copyThere && !copy->dead && it->second.from != from && BaseOk(from)) {
-					if (logged < LOGGED) {
-						++logged;
-						REX::INFO("Spawns: placing our copy of player {}'s {:08X} again, from {:08X} (their roll of it came)", copy->spawn.playerId, id, from);
-					}
-					Discard(id);
-					continue;
-				}
 			} else {
 				facts.baseOk = BaseOk(from);
 				const auto seen = seenAt.try_emplace(id, now).first->second;
@@ -533,7 +523,7 @@ namespace Spawns
 						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X}, from {:08X})", playerId, id, base, from);
 						break;
 					}
-					placed[id] = { handle, now, from };
+					placed[id] = { handle, now };
 					theirs.Placed(id, ref->GetFormID(), now);
 					++copiesPlaced;
 					if (logged < LOGGED) {
@@ -561,6 +551,8 @@ namespace Spawns
 				break;
 			}
 		}
+		// A spawn forgotten some other way (its player gone, the server's word) takes its first sighting with it.
+		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()

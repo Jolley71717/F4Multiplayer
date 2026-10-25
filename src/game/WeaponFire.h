@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Protocol.h"
+#include "game/RemoteEdits.h"
+
+#include <optional>
 
 // Weapon shots: the local player's and those of NPCs we run are reported, so other players see
 // the shooter's firing animation. Only the animation is replayed (no projectile, no damage):
@@ -51,17 +54,32 @@ namespace WeaponFire
 	const char* EmoteIdleName(std::uint8_t a_action);
 	[[nodiscard]] std::vector<std::pair<std::uint32_t, std::uint8_t>> TakeNpcActions();
 
-	// Explosions seen near the player in the seconds after one of our throws (a grenade landing), or a shot of ours that hit
-	// a destructible object (a mine, a car: Destructibles), for the others to set off too. Frame() scans while a watch is
-	// armed; ArmExplosionWatch() arms it. A destructible object's own (its stage's) goes with its wreck instead.
-	void ArmExplosionWatch();
+	// The explosions our player and the NPCs our game runs set off, for the others to set off too, once (docs/DESIGN.md,
+	// "Who sets off an explosion"). Frame() scans while a watch is armed: ArmExplosionWatch() after a throw (a_thrower: our
+	// player as PLAYER_REF_ID, or the NPC; one with no owner named is taken for the throw's then), ArmShotWatch() after a
+	// shot that may go off (a missile, a shell, an explosive bullet: one the shooter is named the owner of; Frame asks
+	// each gun of ours that fired). A destructible object's own (its stage's) goes with its wreck instead.
+	void ArmExplosionWatch(std::uint32_t a_thrower);
+	void ArmShotWatch();
 
-	// Whether our game reports the explosions around our player now (a throw's watch is on), so each goes off in the
-	// friends' games too; and whether it did within THREW_LATELY, while the fire a Molotov left may still burn there
-	// (CopyHealth::OwnersToDeal). Any thread.
+	// A shot of ours hit a destructible object (a mine, a car: Destructibles) that may set off an explosion other than its
+	// stage's own: one within a_radius of it is reported for the next few seconds, as after a throw (no other one).
+	void ArmBlastWatch(RE::TESObjectREFR* a_object, float a_radius);
+
+	// The explosion that dealt a blow on a_target just now (the one the hit names, a_source: its HitData's source
+	// reference; else the nearest that reaches it), and what became of it: reported, each game's own, or ours alone
+	// (RemoteEdits::Fate, RemoteEdits::BlastLog::At). One not looked at yet is decided now, as the scan would have.
+	// Main thread.
+	[[nodiscard]] std::optional<RemoteEdits::Seen> BlastAt(RE::TESObjectREFR* a_target, std::uint32_t a_source = 0);
+
+	// Whether our game reports the explosions around our player now (a throw's watch is on, and each of its explosions so
+	// far was reported), so each goes off in the friends' games too; and whether it did within THREW_LATELY, while the
+	// fire a Molotov left may still burn there (CopyHealth::OwnersToDeal). Any thread.
 	inline constexpr auto THREW_LATELY = std::chrono::seconds{ 20 };
-	[[nodiscard]] bool ExplosionsShared();
-	[[nodiscard]] bool ThrewLately();
+	// Each thrower's own (a_thrower: the hit's cause, our player as PLAYER_REF_ID; 0, unknown: the last to throw), so
+	// that an NPC's throw never marks our player's kept Molotov as shared.
+	[[nodiscard]] bool ExplosionsShared(std::uint32_t a_thrower);
+	[[nodiscard]] bool ThrewLately(std::uint32_t a_thrower);
 
 	// Ends any replayed sound still following this actor: called before the actor is deleted, since
 	// the sound follows its 3D root.
@@ -118,6 +136,9 @@ namespace WeaponFire
 
 	// The NPCs this game runs (their reloads and aiming are queued; other NPCs' are not ours to report).
 	void SetOwnedNpcs(std::vector<std::uint32_t> a_ids);
+	// Our companions no other game runs (NpcSync's scan; one made at runtime too): their throws and shots arm the watches,
+	// what they set off is ours to report.
+	void SetOurCompanions(std::vector<std::uint32_t> a_ids);
 
 	// Ends the gunshot sounds that would otherwise loop (automatic weapons' fire sounds loop until
 	// stopped). Call every frame.
