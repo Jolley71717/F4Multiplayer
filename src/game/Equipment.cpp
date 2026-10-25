@@ -1,7 +1,10 @@
 #include "game/Equipment.h"
 
+#include "MainThread.h"
 #include "Protocol.h"
 #include "game/GearPlan.h"
+#include "game/Hud.h"
+#include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
 #include "game/TextureFlush.h"
@@ -1049,7 +1052,9 @@ namespace Equipment
 		std::uint32_t           seatsFreed = 0;
 		std::uint32_t           framesStoodUp = 0;
 		std::uint32_t           refusals = 0;
-		std::uint32_t           keptOut = 0;  // asks the gate turned down
+		std::uint32_t           keptOut = 0;          // our player kept out of a frame by the gate
+		std::uint32_t           transfersKeptOut = 0; // a frame's inventory closed again by the gate
+		std::uint32_t           othersKeptOut = 0;    // someone else here kept out by the gate (a companion ordered in)
 		std::uint32_t           enterRefusals = 0;
 		std::uint32_t           lastFrame = 0;  // the frame our player last asked to get into, for the enter's message
 		constexpr std::uint32_t MAX_REFUSALS_LOGGED = 20;
@@ -1059,7 +1064,7 @@ namespace Equipment
 		bool UseHook(RE::PlayerCharacter* a_player, RE::TESObjectREFR* a_ref)
 		{
 			const bool frame = a_player && a_ref && IsPowerArmorFrame(a_ref->GetObjectReference());
-			if (frame && keepOut && keepOut(a_ref)) {
+			if (frame && keepOut && keepOut(a_ref, FrameAsk::kEnter, nullptr)) {
 				// Not seated, and no word from the engine: Activate returns true whatever the use answers (FrameUse.h).
 				++keptOut;
 				return false;
@@ -1117,6 +1122,90 @@ namespace Equipment
 			}
 			return site;
 		}
+
+		// TESFurniture::Activate, slot 0x40 of its vtable (TESForm::Activate): what every actor's getting into furniture
+		// starts with, a companion ordered into a frame among them. Our player's way in goes on to UseHook; stand-ins never
+		// come here (the engine switches them in: SwitchIntoPowerArmor).
+		constexpr std::size_t ACTIVATE_INDEX = 0x40;
+		using ActivateFn = bool (*)(RE::TESForm*, RE::TESObjectREFR*, RE::TESObjectREFR*, RE::TESBoundObject*, std::int32_t);
+		ActivateFn originalActivate = nullptr;
+
+		bool ActivateHook(RE::TESForm* a_this, RE::TESObjectREFR* a_ref, RE::TESObjectREFR* a_by, RE::TESBoundObject* a_get, std::int32_t a_count)
+		{
+			const auto actor = a_by && !a_by->IsPlayerRef() ? a_by->As<RE::Actor>() : nullptr;
+			if (actor && a_ref && keepOut && !Puppets::IsPuppet(actor) && IsPowerArmorFrame(a_this) && keepOut(a_ref, FrameAsk::kOther, actor)) {
+				++othersKeptOut;
+				return false;  // as the engine answers a frame it would not let them into: they stay where they are
+			}
+			return originalActivate(a_this, a_ref, a_by, a_get, a_count);
+		}
+
+		// Our player opened a frame's inventory (Transfer): the container menu's own messages are hooked in its vtable
+		// (the menu is never looked up through the UI: OpenMenus), and as it is shown its target is asked of the gate, on
+		// the main thread. When the gate says so it is closed again at once: nothing can be moved in that moment.
+		constexpr std::size_t PROCESS_MESSAGE_INDEX = 0x03;
+		using ProcessMessageFn = RE::UI_MESSAGE_RESULTS (*)(RE::IMenu*, RE::UIMessage&);
+		ProcessMessageFn originalContainerMessage = nullptr;
+
+		// Closed once the UI may be written to (Hud::IsSettled), asked again each frame for a while, while it is open.
+		void CloseTransfer(std::uint32_t a_tries)
+		{
+			if (!OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+				return;
+			}
+			if (!Hud::IsSettled()) {
+				if (a_tries < 120) {
+					MainThread::Post([a_tries] { CloseTransfer(a_tries + 1); });
+				}
+				return;
+			}
+			if (const auto queue = RE::UIMessageQueue::GetSingleton()) {
+				queue->AddMessage(RE::ContainerMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide);
+			}
+		}
+
+		void CheckTransfer(RE::ObjectRefHandle a_target)
+		{
+			const auto ref = a_target.get();
+			if (!ref || !keepOut || !IsPowerArmorFrame(ref->GetObjectReference()) || !keepOut(ref.get(), FrameAsk::kTransfer, nullptr)) {
+				return;
+			}
+			++transfersKeptOut;
+			CloseTransfer(0);
+		}
+
+		RE::UI_MESSAGE_RESULTS ContainerMessageHook(RE::IMenu* a_menu, RE::UIMessage& a_message)
+		{
+			const auto result = originalContainerMessage(a_menu, a_message);
+			if (a_message.type == RE::UI_MESSAGE_TYPE::kShow) {
+				const auto target = static_cast<RE::ContainerMenu*>(a_menu)->containerRef;
+				MainThread::Post([target] { CheckTransfer(target); });
+			}
+			return result;
+		}
+	}
+
+	void InstallFrameGate()
+	{
+		if (!originalContainerMessage) {
+			const auto slot = RE::VTABLE::ContainerMenu[0].address() + sizeof(void*) * PROCESS_MESSAGE_INDEX;
+			originalContainerMessage = *reinterpret_cast<ProcessMessageFn*>(slot);
+			REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ContainerMessageHook));
+			REX::INFO("Equipment: the container menu watched (a friend's frame's Transfer)");
+		}
+		if (originalActivate) {
+			return;
+		}
+		// Only where the slot holds 1.11.240's own TESFurniture::Activate: another plugin's patch there is left alone.
+		const auto slot = RE::VTABLE::TESFurniture[0].address() + sizeof(void*) * ACTIVATE_INDEX;
+		const auto current = *reinterpret_cast<std::uintptr_t*>(slot);
+		if (current != FURNITURE_ACTIVATE.address()) {
+			REX::WARN("Equipment: TESFurniture's Activate is not the game's ({:X}); companions are not kept out of friends' frames", current);
+			return;
+		}
+		originalActivate = reinterpret_cast<ActivateFn>(current);
+		REL::WriteSafeData(slot, reinterpret_cast<std::uintptr_t>(&ActivateHook));
+		REX::INFO("Equipment: furniture activation watched (frames others get into)");
 	}
 
 	void InstallFrameUse()
@@ -1149,6 +1238,7 @@ namespace Equipment
 
 	std::string DescribeFrameMends()
 	{
-		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={}", seatsFreed, framesStoodUp, refusals, enterRefusals, keptOut);
+		return std::format("seatsFreed={} framesStoodUp={} refusals={} enterRefusals={} keptOut={} transfersKeptOut={} othersKeptOut={} activateHooked={}", seatsFreed, framesStoodUp,
+			refusals, enterRefusals, keptOut, transfersKeptOut, othersKeptOut, originalActivate != nullptr);
 	}
 }

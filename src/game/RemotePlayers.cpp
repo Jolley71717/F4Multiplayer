@@ -948,6 +948,9 @@ namespace RemotePlayers
 		constexpr float FRAME_FOLLOW_DISTANCE = 1.0f;
 		constexpr float FRAME_FOLLOW_TURN = 0.02f;  // radians
 		std::uint32_t   framesKeptOut = 0; // times our player was kept out of a copy of a friend's frame (KeepOutOfFrame)
+		std::uint32_t   lastKeptOut = 0;   // the frame last kept out of, and when the HUD said so
+		Clock::time_point lastKeptOutAt{};
+		constexpr auto  KEPT_OUT_RETELL = 5s;
 		std::uint32_t   switchesIn = 0;    // stand-ins the engine took into their frame copy
 		std::uint32_t   switchesOut = 0;   // stand-ins replaced as their friend got out
 		std::uint32_t   switchFails = 0;   // switch-ins that did not take
@@ -2218,7 +2221,7 @@ namespace RemotePlayers
 		return handle;
 	}
 
-	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame)
+	bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by)
 	{
 		if (!a_frame || !Equipment::IsPowerArmorFrame(a_frame->GetObjectReference())) {
 			return false;
@@ -2237,17 +2240,22 @@ namespace RemotePlayers
 		}
 		const auto local = a_frame->GetFormID();
 		facts.sharedBy = Spawns::FrameCopyOwnerOf(local);
-		if (const auto it = facts.sharedBy ? players.find(facts.sharedBy) : players.end(); it != players.end()) {
-			const auto& parked = it->second.parked;
-			facts.sharedUsed = !it->second.powerArmorOn && parked && parked->ref == 0 && Spawns::FrameCopyLocalAt(facts.sharedBy, *parked, ArmorFrames::ORIGINAL_RADIUS) == local;
-		}
 		const auto owner = FriendFrame::KeptOutFor(facts);
 		if (owner == 0) {
 			return false;
 		}
 		++framesKeptOut;
-		REX::INFO("RemotePlayers: our player tried to get into {:08X}, our copy of player {}'s frame ({}); kept out", local, owner,
-			facts.parkedFor ? "parked" : facts.leftFor ? "their stand-in's" : "their game's, which they used last");
+		// Told once a while per frame: a companion ordered in asks again and again as it stands there.
+		const auto now = Clock::now();
+		if (a_by && local == lastKeptOut && now - lastKeptOutAt < KEPT_OUT_RETELL) {
+			return true;
+		}
+		lastKeptOut = local;
+		lastKeptOutAt = now;
+		const auto who = a_by ? std::format("{:08X}", a_by->GetFormID()) : std::string{ "our player" };
+		REX::INFO("RemotePlayers: {} {} {:08X}, our copy of player {}'s frame ({}); kept out", who,
+			a_ask == Equipment::FrameAsk::kTransfer ? "opened the inventory of" : "tried to get into", local, owner,
+			facts.parkedFor ? "parked" : facts.leftFor ? "their stand-in's" : "their game's");
 		Hud::Notify(Text::Format("party.friends_frame", { { "player", NameOf(owner) } }));
 		return true;
 	}
