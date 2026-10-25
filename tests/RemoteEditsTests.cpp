@@ -460,3 +460,15 @@ TEST("remote edits: each thrower's watch is its own; a settler's grenade never m
 	CHECK(watches.Shared(0x00100000 + ThrowWatches::MAX - 1, t0 + 14s));
 	CHECK(!watches.Shared(SETTLER, t0 + 14s, 20s));  // ended first, gone
 }
+
+TEST("remote edits: an explosion set off by an actor already dead, beside it, is its death blast; every game sets its own off")
+{
+	CHECK(DeathBlast(true, 0.0f));
+	CHECK(DeathBlast(true, 300.0f));  // a Sentry Bot's cascade, about its body
+	CHECK(DeathBlast(true, DEATH_BLAST_REACH));
+	CHECK(!DeathBlast(true, DEATH_BLAST_REACH + 1.0f));  // a missile it fired before it died, landing far off: its shooter's
+	CHECK(!DeathBlast(false, 0.0f));                     // a living NPC's grenade at its feet
+	CHECK(!DeathBlast(true, NaN));
+	CHECK(!DeathBlast(true, -1.0f));
+	CHECK(DealtThere(Seen{ {}, 300.0f, Fate::kEachOwn, {} }));  // its blow on a copy is the NPC's own game's
+}

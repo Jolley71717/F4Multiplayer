@@ -864,6 +864,7 @@ namespace WeaponFire
 		std::uint32_t            explosionsOfOthers = 0;   // an NPC's another game runs, or nobody does: never reported from here
 		std::uint32_t            explosionsKept = 0;       // ours, but the server might not pass it on: not sent, ours alone
 		std::uint32_t            explosionsNearFriends = 0;  // ours, found around a friend far from our player
+		std::uint32_t            deathBlasts = 0;            // an actor's death blast: every game's copy sets its own off
 		std::uint32_t            blastsNamed = 0;          // blows on copies put down to the explosion their hit names
 		std::uint32_t            blastsNearest = 0;        // ... to the nearest that reached them, the hit naming none we saw
 		std::uint32_t            blastsAmbiguous = 0;      // ... where two reached them that fared differently: taken as ours
@@ -929,11 +930,12 @@ namespace WeaponFire
 		// off an explosion"). A destructible object's stage's own (by its base: a car we shot) is the object's: every game
 		// sets its own off with the stage (Destructibles). A world trap's own (a mine, a grenade bouquet's grenades, near a
 		// trap that went off and set off by no actor): every game sets its own off (Traps), so reported too it would go off
-		// twice. Ours (our player's or an NPC's we run: the explosion's owner, or, with none named, one while a throw's
+		// twice. An actor's death blast (set off by one already dead, beside it): every game's copy sets its own off as it
+		// dies. Ours (our player's or an NPC's we run: the explosion's owner, or, with none named, one while a throw's
 		// watch is on or within a destructible object's watch) is reported for each friend's game to set off, when the
 		// server is sure to pass it on (ReportGate, from the nearest player); else it is ours alone, and so are its blows on
-		// copies. A friend's stand-in's own, or a mirrored NPC's, should never go off here (a stand-in's explosive shot
-		// flies with no blast of its own, a mirrored NPC's is held, their throws are held): their own game reports it.
+		// copies. A friend's stand-in's own, or a mirrored NPC's, should never go off here (their shots that may go off
+		// are held, and so are their throws): their own game reports it.
 		void Decide(RE::TESObjectREFR* a_ref, const RE::NiPoint3& a_player, Clock::time_point a_now)
 		{
 			seenExplosions.Add(a_ref);
@@ -954,6 +956,10 @@ namespace WeaponFire
 			} else if (Traps::Claims(a_ref->data.location, by != nullptr)) {
 				seen.fate = RemoteEdits::Fate::kEachOwn;  // near a trap that went off, and no actor's
 				what = "a trap's: every game sets its own off";
+			} else if (by && RemoteEdits::DeathBlast(by->IsDead(false), a_ref->data.location.GetDistance(by->data.location))) {
+				seen.fate = RemoteEdits::Fate::kEachOwn;
+				what = "an actor's death blast: every game's copy of it sets its own off";
+				++deathBlasts;
 			} else if (by ? OursSetItOff(by) : watched) {
 				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
 					seen.fate = RemoteEdits::Fate::kShared;
@@ -1127,9 +1133,9 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={}", blasts.Size(),
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
 			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
-			shotsChecked, explosionsNearFriends);
+			shotsChecked, explosionsNearFriends, deathBlasts);
 	}
 
 	void ArmGhostWatch(std::uint32_t a_actorId)

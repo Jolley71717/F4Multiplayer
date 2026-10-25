@@ -300,8 +300,20 @@ namespace RemoteEdits
 	{
 		kOurs,     // not shared: it goes off in no other game, so its blows on copies are ours to report
 		kShared,   // ours, reported (ReportGate passed it): each friend's game near it sets it off once
-		kEachOwn,  // a world trap's, or a destructible object's own (its stage's): every game sets its own off
+		kEachOwn,  // a world trap's, a destructible object's own (its stage's), or an NPC's death blast: every game sets its own off
 	};
+
+	// An NPC's death blast (a Sentry Bot's, a Mr. Gutsy's, a suicider's nuke): set off by an actor already dead, beside it.
+	// Every game's copy of the NPC sets off its own as it dies (the runner's death report kills the copies; seen on the
+	// rig: a Sentry Bot's cascade went off in both games, the copy's a moment after the runner's), so it is never
+	// reported: reported as well, it went off twice in the copy's game. A thrower's grenade landing beside them after
+	// they died is taken for one too (a known limit, docs/DESIGN.md).
+	inline constexpr float DEATH_BLAST_REACH = 512.0f;
+
+	constexpr bool DeathBlast(bool a_byDead, float a_fromBy)
+	{
+		return a_byDead && a_fromBy >= 0.0f && a_fromBy <= DEATH_BLAST_REACH;
+	}
 
 	struct Seen
 	{
