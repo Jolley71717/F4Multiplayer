@@ -24,6 +24,15 @@ namespace CopyWatch
 	// What the hit's blow was (an explosion's, a throw's, a spell's alone), for CopyHealth::OwnersToDeal. Any thread.
 	[[nodiscard]] CopyHealth::Blow BlowOf(const RE::TESHitEvent& a_event);
 
+	// The form id of the reference the hit names as its source (an explosion's names it: WeaponFire::BlastAt), 0 for none.
+	// Any thread.
+	[[nodiscard]] std::uint32_t SourceOf(const RE::TESHitEvent& a_event);
+
+	// Whether a_owner's game deals the blow on our copy a_target (our form id) itself (CopyHealth::OwnersToDeal): an
+	// explosion's, by what became of the explosion that dealt it, the one the hit names (a_sourceRef: SourceOf) if we saw it
+	// (WeaponFire::BlastAt, RemoteEdits::DealtThere). Main thread.
+	[[nodiscard]] bool OwnersToDeal(CopyHealth::Blow a_blow, std::uint32_t a_target, std::uint32_t a_owner, std::uint32_t a_sourceRef);
+
 	// A hit in our world (WorldSync's hit sink, on whatever thread the engine sends it).
 	void NoteHit(const RE::TESHitEvent& a_event);
 

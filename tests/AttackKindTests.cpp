@@ -69,3 +69,29 @@ TEST("AttackKind: a stand-in's own bullet after a replayed shot is kept from the
 	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, AttackKind::HOLD_FIRE_FOR + 1ms));
 	CHECK(!AttackKind::HoldsOwnFire(Event::kFire, false, -1ms));
 }
+
+TEST("attack kind: a stand-in's shot that would go off or fly straight is held from the engine, a stream or a harpoon leaves the gun")
+{
+	using AttackKind::HoldsShotOf;
+	// A bullet (with no motion type set too) and a laser's beam: held, they would hit our player.
+	CHECK(HoldsShotOf(true, 0, false));
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_BEAM, false));
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_MISSILE, false));  // most bullets: the missile motion, no blast
+	// Whatever goes off: held, its blast comes as the shooter's report, once (fired here too, it went off twice).
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_EXPLOSION, false));
+	CHECK(HoldsShotOf(true, 0, true));
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_MISSILE | AttackKind::PROJECTILE_EXPLOSION, true));  // a missile, a mini nuke
+	CHECK(HoldsShotOf(true, 0x20000 | AttackKind::PROJECTILE_EXPLOSION, true));                            // a grenade launcher's shell
+	CHECK(HoldsShotOf(true, AttackKind::PROJECTILE_MOTION_BEAM, true));                                     // a beam with a blast: it lands within the frame
+	CHECK(HoldsShotOf(true, 0x80000, true));                                                              // an enchanted gun's stream (a legendary Explosive)
+	// What neither goes off nor flies straight: a lobbed one with no blast, a flamer's or cryolator's stream, a cone, a
+	// barrier, a harpoon: fired.
+	CHECK(!HoldsShotOf(true, 0x20000, false));
+	CHECK(!HoldsShotOf(true, 0x80000, false));
+	CHECK(!HoldsShotOf(true, 0x100000, false));
+	CHECK(!HoldsShotOf(true, 0x200000, false));
+	CHECK(!HoldsShotOf(true, 0x400000, false));
+	// What the gun fires unknown: held, as every shot was.
+	CHECK(HoldsShotOf(false, 0x80000, false));
+	CHECK(HoldsShotOf(false, AttackKind::PROJECTILE_EXPLOSION, true));
+}

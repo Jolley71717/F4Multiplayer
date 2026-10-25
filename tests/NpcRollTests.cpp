@@ -303,6 +303,39 @@ TEST("npc roll: forgotten when the NPC dies, when its runner lets it go and when
 	CHECK(!Told(*f.fake, 3, 300ms));
 }
 
+TEST("npc roll: one taken over keeps its first runner's roll when they leave, as its runner's now")
+{
+	Fixture f;
+	REQUIRE(f.Join(1, Fixture::MakeHello("Alice")));
+	const auto bob = f.Join(2, Fixture::MakeHello("Bob"));
+	REQUIRE(bob);
+	f.fake->Deliver(1, Claim(BLOATFLY));
+	f.fake->Deliver(1, Report(Rolled(GLOWING, LEGENDARY)));
+	REQUIRE(Told(*f.fake, 2));
+	f.fake->Deliver(2, Claim(BLOATFLY, Protocol::ClaimReason::kCompanion));
+	REQUIRE(f.fake->WaitFor(1, Type(MT::kActorOwners)));
+	f.fake->Deliver(2, Report(Rolled(PLAIN, PLAIN)));  // refused: hers is the session's
+	Sync(f, 2);
+
+	// Alice leaves: Bob runs it still, and her roll stays the session's under him (his game won't report it again).
+	f.fake->Drop(1);
+	REQUIRE(f.fake->WaitFor(2, Type(MT::kPlayerLeft)));
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	const auto told = Told(*f.fake, 3);
+	REQUIRE(told);
+	CHECK(told->refId == BLOATFLY);
+	CHECK(told->playerId == bob->playerId);
+	CHECK(told->templates[0] == GLOWING);
+	CHECK(told->templates[3] == LEGENDARY);
+
+	// His next change is the session's.
+	f.fake->Deliver(2, Report(Rolled(PLAIN, PLAIN)));
+	const auto changed = Told(*f.fake, 3);
+	REQUIRE(changed);
+	CHECK(changed->playerId == bob->playerId);
+	CHECK(changed->templates[0] == PLAIN);
+}
+
 // ---- factions ------------------------------------------------------------------------------------------------------
 
 TEST("npc roll: an actor's factions are its base's with its changes over them, the players' own left out")
@@ -370,6 +403,22 @@ TEST("npc roll: ours is made their legendary roll at their level")
 	// A level of none (or past the most) isn't given.
 	CHECK(!NpcRoll::Decide(OursPlain(), Rolled(GLOWING, GLOWING, 0), Reachable).level);
 	CHECK(!NpcRoll::Decide(OursPlain(), Rolled(GLOWING, GLOWING, Protocol::MAX_IDENTITY_LEVEL + 1), Reachable).level);
+}
+
+TEST("npc roll: a roll is written for the actor's next load, never put together under it; the level is given")
+{
+	// A roll comes only for an actor with its 3D in (NpcSync::CheckRolls): written on the reference, and the engine puts
+	// the NPC together from it at its next load. Nothing builds it in place (no step for it is left).
+	const auto plan = NpcRoll::Decide(OursPlain(), Rolled(GLOWING, LEGENDARY, 20), Reachable);
+	const auto steps = NpcRoll::StepsFor(plan);
+	CHECK(steps.write);
+	CHECK(steps.level);
+	static_assert(sizeof(NpcRoll::Steps) == 2 * sizeof(bool));  // the roll and the level, and nothing put together
+
+	// Only their level: nothing written.
+	const auto level = NpcRoll::StepsFor(NpcRoll::Decide(OursPlain(), Rolled(PLAIN, PLAIN, 30), Reachable));
+	CHECK(!level.write);
+	CHECK(level.level);
 }
 
 TEST("npc roll: a roll ours can't be is left as our game has it, and says why")

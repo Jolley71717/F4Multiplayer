@@ -41,8 +41,9 @@ namespace Traps
 	// Whether a loaded reference is a scripted trap (not a mine: a mine is no activator).
 	bool IsTrap(RE::TESObjectREFR* a_ref);
 
-	// Whether an explosion here is a trap's (WeaponFire's explosion watch leaves it out: every game sets off its own).
-	bool Claims(const RE::NiPoint3& a_at);
+	// Whether an explosion here is a trap's own (WeaponFire's explosion watch leaves it out: every game sets off its own):
+	// never one an actor set off (a_byActor: TrapRules::Claims).
+	bool Claims(const RE::NiPoint3& a_at, bool a_byActor);
 
 	// A save was loaded: our traps are the save's (the session's list stays, and is applied again).
 	void OnGameLoaded();

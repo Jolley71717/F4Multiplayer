@@ -531,8 +531,11 @@ namespace SaveGuard
 			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
 			const auto base = ref ? ref->GetObjectReference() : nullptr;
 			// Only one on its way out can outlive the load as a leak: a copy handed to someone here is released (Release), and one
-			// still held but not buried is not ours to judge after the load.
-			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base) && RemotePlayers::OnItsWayOut(ref)) {
+			// still held but not buried is not ours to judge after the load. One lingering from the last load is on its way out
+			// too, though no longer in RemotePlayers' lists (cleared at that load): without its note, a second load in a row
+			// would leave it to the game, and the next save would write it.
+			if (base && base->GetFormID() == a_base && Equipment::IsPowerArmorFrame(base)
+				&& (RemotePlayers::OnItsWayOut(ref) || book.IsLingering(a_id, a_base))) {
 				const auto& at = ref->data.location;
 				noted[a_id] = { ref, ref->extraList.get(), OwnershipOf(ref), a_base, at.x, at.y, at.z };
 			}

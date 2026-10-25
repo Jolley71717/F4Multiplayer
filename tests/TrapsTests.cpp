@@ -185,11 +185,12 @@ TEST("traps: only a trap seen armed is reported, once, and a mine gone went off 
 	CHECK(!Change(Kind::kBearTrap, Phase::kFired, Phase::kGone, false, none));
 	CHECK(!Change(Kind::kTripwire, Phase::kArmed, Phase::kGone, false, none));
 	// What the session holds already isn't sent again (what a friend's report did here isn't reported back); a take
-	// still is, after a spring.
+	// still is, after a spring or a disarm.
 	CHECK(!Change(Kind::kTripwire, Phase::kArmed, Phase::kFired, false, TS::kFired));
 	CHECK(!Change(Kind::kMine, Phase::kArmed, Phase::kGone, false, TS::kFired));
 	CHECK(!Change(Kind::kBearTrap, Phase::kArmed, Phase::kFired, false, TS::kDisarmed));
-	CHECK(Change(Kind::kBearTrap, Phase::kFired, Phase::kGone, true, TS::kFired) == TS::kTaken);
+	CHECK(Change(Kind::kBearTrap, Phase::kFired, Phase::kGone, true, TS::kFired) == TS::kTaken);  // a sprung bear trap carried off
+	CHECK(Change(Kind::kMine, Phase::kDisarmed, Phase::kGone, true, TS::kDisarmed) == TS::kTaken);
 	CHECK(!Change(Kind::kMine, Phase::kArmed, Phase::kGone, true, TS::kTaken));
 }
 
@@ -225,12 +226,12 @@ TEST("traps: the explosions of a trap gone off here, or at a mine we watch, are 
 	const auto now = Clock::now();
 	const std::vector<TrapRules::Fired> fired{ { { 1000.0f, 2000.0f, 0.0f }, now - 2s } };
 	const std::vector<TrapRules::Spot>  mines{ { -5000.0f, 300.0f, 10.0f } };
-	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now));    // a bouquet's grenade, a little off
-	CHECK(!TrapRules::Claims(fired, mines, { 3000.0f, 2000.0f, 0.0f }, now));   // too far: somebody's own
-	CHECK(!TrapRules::Claims(fired, mines, { 1000.0f, 2000.0f, 0.0f }, now + 10s));
-	CHECK(TrapRules::Claims(fired, mines, { -5100.0f, 300.0f, 10.0f }, now));
-	CHECK(!TrapRules::Claims(fired, mines, { -5400.0f, 300.0f, 10.0f }, now));
-	CHECK(!TrapRules::Claims({}, {}, { 0.0f, 0.0f, 0.0f }, now));
+	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, false));    // a bouquet's grenade, a little off
+	CHECK(!TrapRules::Claims(fired, mines, { 3000.0f, 2000.0f, 0.0f }, now, false));   // too far: somebody's own
+	CHECK(!TrapRules::Claims(fired, mines, { 1000.0f, 2000.0f, 0.0f }, now + 10s, false));
+	CHECK(TrapRules::Claims(fired, mines, { -5100.0f, 300.0f, 10.0f }, now, false));
+	CHECK(!TrapRules::Claims(fired, mines, { -5400.0f, 300.0f, 10.0f }, now, false));
+	CHECK(!TrapRules::Claims({}, {}, { 0.0f, 0.0f, 0.0f }, now, false));
 }
 
 TEST("traps: the book keeps the first state, and a take after a spring or a disarm")
@@ -241,9 +242,17 @@ TEST("traps: the book keeps the first state, and a take after a spring or a disa
 	CHECK(!TrapRules::Take(book, Trap(TRIPWIRE, TS::kDisarmed), true, now));
 	CHECK(!TrapRules::Take(book, Trap(TRIPWIRE, TS::kFired), false, now));  // a world state's repeat
 	CHECK(book.at(TRIPWIRE).live);
-	CHECK(TrapRules::Take(book, Trap(TRIPWIRE, TS::kTaken), false, now));
+	CHECK(TrapRules::Take(book, Trap(TRIPWIRE, TS::kTaken), false, now));  // gone from the world now
 	CHECK(book.at(TRIPWIRE).state.state == TS::kTaken);
 	CHECK(!TrapRules::Take(book, Trap(TRIPWIRE, TS::kTaken), false, now));
+	CHECK(!TrapRules::Take(book, Trap(TRIPWIRE, TS::kFired), false, now));  // taken stays taken
+	CHECK(TrapRules::Take(book, Trap(MINE, TS::kDisarmed), true, now));
+	CHECK(TrapRules::Take(book, Trap(MINE, TS::kTaken), false, now));
+	CHECK(book.at(MINE).state.state == TS::kTaken);
+	CHECK(!TrapRules::Take(book, Trap(MINE, TS::kTaken), false, now));
+	CHECK(!TrapRules::Take(book, Trap(MINE, TS::kFired), false, now));
+	CHECK(Protocol::TrapSupersedes(TS::kTaken, std::nullopt));
+	CHECK(!Protocol::TrapSupersedes(TS::kFired, TS::kTaken));
 }
 
 TEST("traps: a tripwire the host trips sets off the friend's, its bouquet goes too, and nothing comes back")
@@ -356,6 +365,11 @@ TEST("traps: the server keeps the first report, a take after it, and only from a
 	// A trap far from its reporter: dropped.
 	f.fake->Deliver(2, Protocol::Encode(Trap(MINE, TS::kFired)));
 	CHECK(TrapLists(Received(f, 1)).empty());
+	// One in another space, at the same numbers: dropped.
+	auto inside = Trap(MINE, TS::kFired);
+	inside.cell = 0x0001F00F, inside.worldspace = 0;
+	f.fake->Deliver(1, Protocol::Encode(inside));
+	CHECK(TrapLists(Received(f, 2)).empty());
 
 	f.fake->Deliver(1, Protocol::Encode(Trap(MINE, TS::kFired)));
 	auto lists = TrapLists(Received(f, 2));
@@ -363,14 +377,37 @@ TEST("traps: the server keeps the first report, a take after it, and only from a
 	CHECK(lists[0].traps[0].refId == MINE);
 	CHECK(lists[0].traps[0].state == TS::kFired);
 
-	// Another spring or a disarm of it isn't news; a take is.
+	// Another spring or a disarm of it isn't news; a take is, from one standing at it (the reach: a report is otherwise
+	// a way to take away every mine around its sender).
 	f.fake->Deliver(1, Protocol::Encode(Trap(MINE, TS::kFired)));
 	f.fake->Deliver(1, Protocol::Encode(Trap(MINE, TS::kDisarmed)));
-	CHECK(TrapLists(Received(f, 2)).empty());
 	f.fake->Deliver(1, Protocol::Encode(Trap(MINE, TS::kTaken)));
+	lists = TrapLists(Received(f, 2));  // one look for all three: the server answers a test's sync 10 times a second at most
+	REQUIRE(lists.size() == 1);
+	CHECK(lists[0].traps[0].state == TS::kTaken);
+
+	// A disarm and a take are done standing at the trap: 1500 units off, dropped; a spring that far is believed.
+	f.fake->Deliver(1, Protocol::Encode(Trap(BEAR, TS::kTaken, 1000.0f, 3500.0f)));
+	f.fake->Deliver(1, Protocol::Encode(Trap(BEAR, TS::kDisarmed, 1000.0f, 3500.0f)));
+	CHECK(TrapLists(Received(f, 2)).empty());
+	f.fake->Deliver(1, Protocol::Encode(Trap(BEAR, TS::kFired, 1000.0f, 3500.0f)));
+	lists = TrapLists(Received(f, 2));
+	REQUIRE(lists.size() == 1);
+	CHECK(lists[0].traps[0].state == TS::kFired);
+
+	// A disarm, then a take: news. A known trap is where the session has it, whatever a report says: Bob's take of it
+	// "at his feet" across the map is dropped.
+	f.fake->Deliver(1, Protocol::Encode(Trap(TRIPWIRE, TS::kDisarmed)));
+	lists = TrapLists(Received(f, 2));
+	REQUIRE(lists.size() == 1);
+	CHECK(lists[0].traps[0].state == TS::kDisarmed);
+	f.fake->Deliver(2, Protocol::Encode(Trap(TRIPWIRE, TS::kTaken, 90000.0f, 2000.0f)));
+	CHECK(TrapLists(Received(f, 1)).empty());
+	f.fake->Deliver(1, Protocol::Encode(Trap(TRIPWIRE, TS::kTaken, 90000.0f, 2000.0f)));  // the host stands at it
 	lists = TrapLists(Received(f, 2));
 	REQUIRE(lists.size() == 1);
 	CHECK(lists[0].traps[0].state == TS::kTaken);
+	CHECK(lists[0].traps[0].x == 1000.0f);  // where it is stays where it was
 
 	// A joiner gets the list (as no news) before the world state that ends their catching up.
 	const auto welcome = f.Join(3, Fixture::MakeHello("Carol"));
@@ -379,9 +416,14 @@ TEST("traps: the server keeps the first report, a take after it, and only from a
 	lists = TrapLists(packets);
 	REQUIRE(lists.size() == 1);
 	CHECK(!lists[0].live);
-	REQUIRE(lists[0].traps.size() == 1);
-	CHECK(lists[0].traps[0].refId == MINE);
-	CHECK(lists[0].traps[0].state == TS::kTaken);
+	REQUIRE(lists[0].traps.size() == 3);
+	std::map<std::uint32_t, std::uint8_t> states;
+	for (const auto& trap : lists[0].traps) {
+		states[trap.refId] = trap.state;
+	}
+	CHECK(states[MINE] == TS::kTaken);
+	CHECK(states[BEAR] == TS::kFired);
+	CHECK(states[TRIPWIRE] == TS::kTaken);
 	std::size_t trapsAt = packets.size(), worldAt = 0;
 	for (std::size_t i = 0; i < packets.size(); ++i) {
 		const auto type = Protocol::PeekType(packets[i]);
@@ -448,4 +490,17 @@ TEST("session file: spent traps round trip under layout 34, and are damage in a 
 	CHECK(old->traps.empty());
 	CHECK(SessionFile::HasDrops(SessionFile::FORMAT) && SessionFile::HasWires(SessionFile::FORMAT) && SessionFile::HasPluginTable(SessionFile::FORMAT));
 	CHECK(!SessionFile::HasTraps(SessionFile::ALL_THREE));
+}
+
+TEST("traps: an explosion an actor set off is never a trap's, beside a mine or a bouquet that just went off")
+{
+	const auto now = Clock::now();
+	const std::vector<TrapRules::Fired> fired{ { { 1000.0f, 2000.0f, 0.0f }, now - 2s } };
+	const std::vector<TrapRules::Spot>  mines{ { -5000.0f, 300.0f, 10.0f } };
+	// Our grenade or missile (or an NPC's) where the trap's own would be claimed: it names its owner, who reports it.
+	CHECK(!TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, true));
+	CHECK(!TrapRules::Claims(fired, mines, { -5000.0f, 300.0f, 10.0f }, now, true));
+	// The trap's own, at the same spots, with no owner: the trap's.
+	CHECK(TrapRules::Claims(fired, mines, { 1500.0f, 2500.0f, 0.0f }, now, false));
+	CHECK(TrapRules::Claims(fired, mines, { -5000.0f, 300.0f, 10.0f }, now, false));
 }

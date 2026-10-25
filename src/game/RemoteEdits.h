@@ -3,11 +3,17 @@
 #include "game/FoundDead.h"
 
 #include "Protocol.h"
+#include "TokenBucket.h"
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string_view>
+#include <vector>
 
 // What a game believes of another player's changes to its world. The server only passes on what each
 // player says (it can't see anyone's world), so each game judges what arrives by what it can see: its
@@ -145,14 +151,18 @@ namespace RemoteEdits
 
 	// ---- Explosions (WeaponFire) ----------------------------------------------------------------
 	//
+	// Who sets off an explosion, and who deals its blows (docs/DESIGN.md, "Who sets off an explosion"): every explosion
+	// goes off once in every game that has a player or an NPC it runs near it, and each game deals the blows on its own:
+	// its player, and the NPCs it runs. A copy's blow (of an NPC another game runs) is given back, as that NPC's own game
+	// deals it. An explosion a game cannot be sure goes off in the others' games is not shared at all: its own game deals
+	// every blow, a copy's too (reported as our hit's damage, like a gunshot's).
+	//
 	// A friend's explosion is set off in our game where their game says it went off. It is what does the
-	// damage here: the stand-in's own grenade is removed, a death their game reports for an NPC ours runs is
-	// not taken, and no health comes for one already dead in theirs. So it goes off whoever stands beside it,
-	// and with friendly fire off too: the enemies next to us or our companion die here as they did for the
-	// thrower, and a grenade at our feet hurts us as the thrower's own would have. (A copy that only looks
-	// like the explosion, hurting nobody but the enemies, is not done yet.)
-	// Our copies of NPCs another game runs are the exception: made ghosts while it goes off (BlastShield), as their
-	// owner's game deals its damage to them.
+	// damage here: the stand-in's own grenade is removed and its explosive shot held, a death their game reports for an
+	// NPC ours runs is not taken, and no health comes for one already dead in theirs. So it goes off whoever stands
+	// beside it, and with friendly fire off too: the enemies next to us or our companion die here as they did for the
+	// thrower, and a grenade at our feet hurts us as the thrower's own would have. Our copies of NPCs another game runs
+	// are the exception: made ghosts while it goes off (BlastShield), as their owner's game deals its damage to them.
 	//
 	// Only what a throw or a shot makes is set off. A grenade is about 500 units across, a Fat Man's shell 850, and what
 	// a shot sets off no more (Fallout4.esm's explosions, read from the records: a car's first blast 128, its big one
@@ -161,6 +171,9 @@ namespace RemoteEdits
 	// explosion of a throw.
 	constexpr float MAX_EXPLOSION_RADIUS = 1024.0f;
 	constexpr float EXPLOSION_RANGE = 6000.0f;  // from us: farther, nothing we'd see or feel
+	// From an NPC our game runs: its blow is ours to deal, wherever our player is (the reporter left it to us). An NPC
+	// within the radius and this of it is found, give or take where the reporter's copy of it stood.
+	constexpr float OURS_NEAR_MARGIN = 1024.0f;
 
 	inline Spot SpotOf(const Protocol::Explosion& a_explosion)
 	{
@@ -170,22 +183,331 @@ namespace RemoteEdits
 	enum class Blast
 	{
 		kSetOff,
-		kAway,      // in another space than ours, or too far to matter
+		kAway,      // in another space than ours, or too far to matter, with no NPC of ours beside it
 		kNotThrown, // no throw makes an explosion that size
 	};
 
-	// a_at: where the friend's game says it went off; a_us: where we stand; a_radius: the explosion record's,
-	// as our game has it.
-	inline Blast SetOff(const Spot& a_at, const Spot& a_us, float a_radius)
+	constexpr bool Throwable(float a_radius)
 	{
-		if (!Within(Distance(a_at, a_us), EXPLOSION_RANGE)) {
+		return a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS;
+	}
+
+	// a_at: where the friend's game says it went off; a_us: where we stand; a_radius: the explosion record's,
+	// as our game has it; a_oursNear: an NPC our game runs is within its reach (a_radius + OURS_NEAR_MARGIN), in our
+	// space. The reporter left that NPC's blow to us however far our player is: it goes off for it.
+	inline Blast SetOff(const Spot& a_at, const Spot& a_us, float a_radius, bool a_oursNear = false)
+	{
+		if (!Within(Distance(a_at, a_us), EXPLOSION_RANGE) && !(a_oursNear && SameSpace(a_at, a_us))) {
 			return Blast::kAway;
 		}
-		if (!(a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS)) {
+		if (!Throwable(a_radius)) {
 			return Blast::kNotThrown;
 		}
 		return Blast::kSetOff;
 	}
+
+	// Whether our game sends an explosion our player (or an NPC we run) set off: only when the server is sure to pass it
+	// on, so that the blows it leaves to the NPCs' own games are dealt there. The server's numbers (Protocol's
+	// REPORTED_EXPLOSION_*) less a margin: our position as the server has it is a state or two old, and a burst of
+	// reports can reach it closer together than they left (half its budget is two seconds of that).
+	class ReportGate
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr float  RANGE = Protocol::REPORTED_EXPLOSION_RANGE - 1000.0f;
+		static constexpr double BURST = Protocol::REPORTED_EXPLOSION_BURST / 2.0;
+		static constexpr double PER_SECOND = Protocol::REPORTED_EXPLOSIONS_PER_SECOND * 0.75;
+
+		// a_distance: from our player; a_radius: the explosion record's. Spends from the budget when it passes.
+		bool Pass(float a_distance, float a_radius, Clock::time_point a_now)
+		{
+			if (!Within(a_distance, RANGE) || !Throwable(a_radius)) {
+				return false;
+			}
+			return budget.Take(a_now);
+		}
+
+	private:
+		TokenBucket budget{ BURST, PER_SECOND };
+	};
+
+	// Each thrower's last throw (our player, an NPC we run, our companion): until when its watch is on, and whether every
+	// explosion it decided so far was reported. The fire a Molotov leaves burning is judged by its own thrower's
+	// (CopyHealth::OwnersToDeal): a settler of ours throwing a grenade never marks our player's kept Molotov as shared.
+	class ThrowWatches
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 16;
+
+		void Arm(std::uint32_t a_thrower, Clock::time_point a_until)
+		{
+			if (const auto it = Find(a_thrower); it != entries.end()) {
+				it->until = a_until;
+				it->armed = ++armedCount;
+				it->shared = true;
+				return;
+			}
+			if (entries.size() >= MAX) {
+				entries.erase(std::ranges::min_element(entries, {}, &Entry::until));
+			}
+			entries.push_back({ a_thrower, a_until, ++armedCount, true });
+		}
+
+		// One of a_thrower's explosions was kept ours (0: an explosion that named none; every watch on then).
+		void Unshare(std::uint32_t a_thrower, Clock::time_point a_now)
+		{
+			for (auto& entry : entries) {
+				if ((a_thrower == 0 || entry.thrower == a_thrower) && a_now <= entry.until) {
+					entry.shared = false;
+				}
+			}
+		}
+
+		// Whether a_thrower's watch is on (with a_after: or was until a_after ago) and every explosion of it was
+		// reported. a_thrower 0 (a hit that names nobody): the last to throw's.
+		[[nodiscard]] bool Shared(std::uint32_t a_thrower, Clock::time_point a_now, Clock::duration a_after = Clock::duration::zero()) const
+		{
+			const Entry* entry = nullptr;
+			if (a_thrower != 0) {
+				const auto it = std::ranges::find(entries, a_thrower, &Entry::thrower);
+				entry = it != entries.end() ? &*it : nullptr;
+			} else if (!entries.empty()) {
+				entry = &*std::ranges::max_element(entries, {}, &Entry::armed);
+			}
+			return entry && a_now <= entry->until + a_after && entry->shared;
+		}
+
+	private:
+		struct Entry
+		{
+			std::uint32_t     thrower = 0;
+			Clock::time_point until{};
+			std::uint64_t     armed = 0;  // the order they were armed in
+			bool              shared = true;
+		};
+
+		std::vector<Entry>::iterator Find(std::uint32_t a_thrower) { return std::ranges::find(entries, a_thrower, &Entry::thrower); }
+
+		std::vector<Entry> entries;
+		std::uint64_t      armedCount = 0;
+	};
+
+	// What became of each explosion our game saw go off, as WeaponFire decided it once (BlastLog), and so whether the game
+	// that runs an NPC deals that explosion's blow on our copy of it itself (CopyHealth::OwnersToDeal): exactly one game
+	// deals each blow. The decision is the explosion's, made where it is reported or not, never the hit's: a hit judged by
+	// a watch of its own, while the explosion went unreported (out of the scan's range, or at the watch's very end), was
+	// dealt in neither game, and the owner's next health report healed the copy back.
+	enum class Fate : std::uint8_t
+	{
+		kOurs,     // not shared: it goes off in no other game, so its blows on copies are ours to report
+		kShared,   // ours, reported (ReportGate passed it): each friend's game near it sets it off once
+		kEachOwn,  // a world trap's, a destructible object's own (its stage's), or an NPC's death blast: every game sets its own off
+	};
+
+	// The death blasts, by their explosion's base (in its plugin, no load-order byte): what a robot's or a turret's death
+	// sets off, from its race's script (abSentryBotRaceEffect and the like: the self-destruct) or its body part data (the
+	// limbs it blows apart as it goes, with no damage of their own). Every game's copy of the NPC sets off its own as it
+	// dies (the runner's death report kills the copies: on the rig a Sentry Bot's whole cascade went off in both games,
+	// the copy's a moment after the runner's), so it is never reported: reported as well, it went off twice there. Found
+	// in the game data (each base's uses: docs/DESIGN.md, "Who sets off an explosion"). Not here: RobotModExplosion
+	// (0E19EF), a turret's shot's impact too, which goes the normal way. A living robot's limb blown off (no damage) goes
+	// off in its runner's game alone. A suicider's nuke is its script's FatManExplosion, a Fat Man's base too: only one
+	// naming no owner is the suicider's (on the rig it went off in both games, the copy's replayed swing setting off its
+	// own, and named no owner; a Fat Man's, like a missile's, names its shooter).
+	struct DeathBlastBase
+	{
+		std::string_view file;
+		std::uint32_t    id;  // in that file, no load-order byte
+		std::string_view what;
+		bool             unownedOnly = false;  // only one that names no owner: the base is a weapon's too, whose blast names its shooter
+	};
+	inline constexpr std::array DEATH_BLASTS{
+		DeathBlastBase{ "Fallout4.esm", 0x001A673A, "robotSelfDestructExplosion: a Sentry Bot's, an Assaultron's, a Robobrain's (DLCRobot) self-destruct" },
+		DeathBlastBase{ "Fallout4.esm", 0x001AF074, "robotSelfDestructExplosionLarge: a Sentry Bot's" },
+		DeathBlastBase{ "Fallout4.esm", 0x001AF075, "robotSelfDestructExplosionSmall: a Mr. Handy's or Mr. Gutsy's, a Protectron's, an Eyebot's (DLCRobot)" },
+		DeathBlastBase{ "Fallout4.esm", 0x0022B6EE, "RobotSelfDestructShockExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000C32DB, "EyebotExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000CAB97, "TurretStandingExplosion: a tripod turret's" },
+		DeathBlastBase{ "Fallout4.esm", 0x000CAB96, "TurretMountedExplosion: a mounted or bubble turret's" },
+		DeathBlastBase{ "Fallout4.esm", 0x00020023, "VertibirdDeathExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x002301C6, "RobotLargeModExplosion: a Sentry Bot's or a Mr. Handy's limb" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B95A3, "SentryBotBLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B36AD, "SentryBotRLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000B36AC, "SentryBotLLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E912, "SentryBotBLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E913, "SentryBotLLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E914, "SentryBotRLegExplosion_lite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E5087, "RobotArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E5088, "RobotArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E910, "MrhandyArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E911, "MrhandyArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x0023E90F, "ProtectronHeadExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7314, "AssaultronArmExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7315, "AssaultronArmExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7316, "AssaultronLegExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7317, "AssaultronLegExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7318, "AssaultronHeadExplosion" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E7319, "AssaultronHeadExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000E731A, "AssaultronTorsoExplosionLite" },
+		DeathBlastBase{ "Fallout4.esm", 0x000EA83B, "AssaultronTorsoExplosion" },
+		DeathBlastBase{ "DLCCoast.esm", 0x00053DFE, "DLC03FogCrawlerDeathExplosion: a Fog Crawler's" },
+		DeathBlastBase{ "Fallout4.esm", 0x001A7FF2, "FatManExplosion with no owner: a suicider's nuke, its script's (a Fat Man's names its shooter)", true },
+	};
+
+	// Whether an explosion of this base (in its plugin, no load-order byte), naming an owner or not, is a death blast.
+	constexpr bool IsDeathBlast(std::string_view a_file, std::uint32_t a_id, bool a_owned)
+	{
+		return std::ranges::any_of(DEATH_BLASTS, [&](const DeathBlastBase& a_base) { return a_base.id == a_id && a_base.file == a_file && (!a_base.unownedOnly || !a_owned); });
+	}
+
+	struct Seen
+	{
+		Spot                                  at;
+		float                                 radius = 0.0f;
+		Fate                                  fate = Fate::kOurs;
+		std::chrono::steady_clock::time_point when{};
+		std::uint32_t                         source = 0;  // the explosion reference's form id (0: not known)
+	};
+
+	// Whether the game that runs an NPC deals the blow this explosion dealt our copy of it: it goes off there too (a
+	// reported one beside that game's NPC wherever its player is: SetOff's a_oursNear).
+	constexpr bool DealtThere(const Seen& a_seen)
+	{
+		return a_seen.fate != Fate::kOurs;
+	}
+
+	// Whether a hit on a friend's stand-in is passed on to them (a PlayerHit): not an explosion's that goes off in their
+	// game too (DealtThere: one we reported, a trap's, a death blast), as it hurts them there; passed on as well, it
+	// hurt them twice (an NPC's grenade or missile at them). An explosion we can't tell (a_seen null) is passed on.
+	constexpr bool PassStandInHit(bool a_explosion, const Seen* a_seen)
+	{
+		return !a_explosion || !a_seen || !DealtThere(*a_seen);
+	}
+
+	// The explosions our game saw lately and what became of each (main thread).
+	class BlastLog
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 64;
+		static constexpr auto        KEPT = std::chrono::seconds(3);  // an explosion's blows land in the frames after it
+		static constexpr float       REACH = 256.0f;                 // a blow lands on an actor within its radius, give or take the actor's size
+
+		void Note(const Seen& a_seen)
+		{
+			if (seen.size() >= MAX) {
+				seen.erase(seen.begin());
+			}
+			seen.push_back(a_seen);
+		}
+
+		// The explosion a blow on an actor at a_at came from, seen within KEPT before a_now: the one the hit names
+		// (a_source, the explosion reference in its HitData), else the nearest that reaches it. When two reach it that
+		// fared differently and the hit names neither, which dealt it is not known: the blow is taken as ours (its fate
+		// read kOurs), dealt here and reported, and a_ambiguous is set.
+		[[nodiscard]] std::optional<Seen> At(const Spot& a_at, Clock::time_point a_now, std::uint32_t a_source = 0, bool* a_ambiguous = nullptr) const
+		{
+			if (a_ambiguous) {
+				*a_ambiguous = false;
+			}
+			std::optional<Seen> best;
+			float               bestDistance = std::numeric_limits<float>::max();
+			bool                mixed = false;
+			for (const auto& entry : seen) {
+				if (a_now - entry.when > KEPT) {
+					continue;
+				}
+				if (a_source != 0 && entry.source == a_source) {
+					return entry;
+				}
+				const float distance = Distance(entry.at, a_at);
+				if (!Within(distance, entry.radius + REACH)) {
+					continue;
+				}
+				if (best && DealtThere(*best) != DealtThere(entry)) {
+					mixed = true;
+				}
+				if (distance < bestDistance) {
+					best = entry;
+					bestDistance = distance;
+				}
+			}
+			if (best && mixed) {
+				best->fate = Fate::kOurs;
+				if (a_ambiguous) {
+					*a_ambiguous = true;
+				}
+			}
+			return best;
+		}
+
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(seen, [&](const Seen& a_entry) { return a_now - a_entry.when > KEPT; });
+		}
+
+		[[nodiscard]] std::size_t Size() const { return seen.size(); }
+		void Clear() { seen.clear(); }
+
+	private:
+		std::vector<Seen> seen;
+	};
+
+	// Where a hit of ours on a destructible object may set off an explosion that isn't the object's own stage's (a
+	// mine's) for a while (Destructibles): only an explosion within that object's blast radius is reported for it, not
+	// every one around our player (a raider's grenade there went off twice in each friend's game).
+	class AreaWatches
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr std::size_t MAX = 16;
+
+		void Arm(const Spot& a_at, float a_radius, Clock::time_point a_until)
+		{
+			if (!(a_radius > 0.0f)) {
+				return;
+			}
+			for (auto& watch : watches) {
+				if (SameSpace(watch.at, a_at) && Within(Distance(watch.at, a_at), 1.0f)) {
+					watch.radius = (std::max)(watch.radius, a_radius);
+					watch.until = (std::max)(watch.until, a_until);
+					return;
+				}
+			}
+			if (watches.size() >= MAX) {
+				watches.erase(std::ranges::min_element(watches, {}, &Watch::until));
+			}
+			watches.push_back({ a_at, a_radius, a_until });
+		}
+
+		[[nodiscard]] bool Covers(const Spot& a_at, Clock::time_point a_now) const
+		{
+			return std::ranges::any_of(watches, [&](const Watch& a_watch) { return a_now <= a_watch.until && Within(Distance(a_watch.at, a_at), a_watch.radius); });
+		}
+
+		[[nodiscard]] bool Any(Clock::time_point a_now) const
+		{
+			return std::ranges::any_of(watches, [&](const Watch& a_watch) { return a_now <= a_watch.until; });
+		}
+
+		void Prune(Clock::time_point a_now)
+		{
+			std::erase_if(watches, [&](const Watch& a_watch) { return a_now > a_watch.until; });
+		}
+
+		[[nodiscard]] std::size_t Size() const { return watches.size(); }
+		void Clear() { watches.clear(); }
+
+	private:
+		struct Watch
+		{
+			Spot              at;
+			float             radius = 0.0f;
+			Clock::time_point until{};
+		};
+		std::vector<Watch> watches;
+	};
 
 	// ---- Workshop (WorkshopSync) ----------------------------------------------------------------
 

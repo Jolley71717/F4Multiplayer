@@ -4,8 +4,11 @@
 // "attackStart" on its graph (WeaponFire::PlayShot). The engine draws the gun's own flash and its light when the
 // firing animation's "WeaponFire" fires the gun: it keeps a flash of its own on the equipped gun (seen on the rig for
 // pistols, shotguns, laser and automatic guns). That fire also launched a real bullet from the stand-in, which hit
-// our player, so a stand-in's is kept from the engine (AttackKind::HoldsOwnFire), and the engine draws no flash for
-// it either (seen on the rig). A stand-in's replayed shot, and any replay the graph refuses (a new attack while the
+// our player, so a stand-in's plain one (a bullet or a beam, AttackKind::HoldsShotOf) is kept from the engine
+// (AttackKind::HoldsOwnFire), and the engine draws no flash for it either (seen on the rig), and so is one that may go
+// off (a missile, a shell, an explosive round: its blast is the shooter's report); a flamer's stream still leaves the
+// stand-in's gun as before, with the engine's flash. A stand-in's held shot, and any
+// replay the graph refuses (a new attack while the
 // last one still plays), gets this flash instead: the gun's flash model at the gun's ProjectileNode, for the
 // projectile's muzzle flash time, as a temporary art effect (MuzzleFlashBook.h keeps the times and the limits).
 // Main thread only.
@@ -22,6 +25,13 @@ namespace MuzzleFlash
 	// A replayed shot of this actor's (its gun out); a_animated: the graph took the shot's "attackStart", so the engine
 	// draws the flash itself.
 	void OnShot(RE::Actor* a_actor, bool a_animated);
+
+	// What the actor's equipped gun fires (its mods' and its ammunition's say included), or null.
+	[[nodiscard]] RE::BGSProjectile* GunProjectile(RE::Actor* a_actor);
+	// Whether the gun the actor holds carries an enchantment one of whose effects sets off an explosion. None of the
+	// game's legendaries does (Wounding, Instigating and the like are plain effects; Explosive swaps the projectile for
+	// one that names its explosion, GunProjectile), so a legendary's shot is held only when its projectile goes off.
+	[[nodiscard]] bool GunEnchantmentExplodes(RE::Actor* a_actor);
 
 	// Keeps showing flashes drawn and takes down those that are due. Call every frame.
 	void Frame();
