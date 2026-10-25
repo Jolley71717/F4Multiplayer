@@ -303,16 +303,25 @@ namespace RemoteEdits
 		kEachOwn,  // a world trap's, a destructible object's own (its stage's), or an NPC's death blast: every game sets its own off
 	};
 
-	// An NPC's death blast (a Sentry Bot's, a Mr. Gutsy's, a suicider's nuke): set off by an actor already dead, beside it.
-	// Every game's copy of the NPC sets off its own as it dies (the runner's death report kills the copies; seen on the
-	// rig: a Sentry Bot's cascade went off in both games, the copy's a moment after the runner's), so it is never
-	// reported: reported as well, it went off twice in the copy's game. A thrower's grenade landing beside them after
-	// they died is taken for one too (a known limit, docs/DESIGN.md).
+	// An NPC's death blast (a Sentry Bot's, a Mr. Gutsy's, a suicider's nuke): set off by an actor already dead, beside it,
+	// or by no one beside an actor that died just now (a Sentry Bot's cascade of a dozen names no owner: seen on the rig).
+	// Every game's copy of the NPC sets off its own as it dies (the runner's death report kills the copies; on the rig
+	// the cascade went off in both games, the copy's a moment after the runner's), so it is never reported: reported as
+	// well (a kill by our missile or grenade has a watch on), it went off twice in the copy's game, and taken as ours
+	// alone its blows on copies were dealt twice. A grenade beside its thrower after they died, or an unowned blast
+	// beside one who just died, is taken for one too (a known limit, docs/DESIGN.md).
 	inline constexpr float DEATH_BLAST_REACH = 512.0f;
+	inline constexpr auto  DEATH_BLAST_WINDOW = std::chrono::seconds(3);
 
 	constexpr bool DeathBlast(bool a_byDead, float a_fromBy)
 	{
 		return a_byDead && a_fromBy >= 0.0f && a_fromBy <= DEATH_BLAST_REACH;
+	}
+
+	constexpr bool DiedBeside(float a_fromDead, std::chrono::steady_clock::duration a_sinceDeath)
+	{
+		return a_fromDead >= 0.0f && a_fromDead <= DEATH_BLAST_REACH && a_sinceDeath >= std::chrono::steady_clock::duration::zero() &&
+		       a_sinceDeath <= DEATH_BLAST_WINDOW;
 	}
 
 	struct Seen

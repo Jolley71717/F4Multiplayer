@@ -865,6 +865,25 @@ namespace WeaponFire
 		std::uint32_t            explosionsKept = 0;       // ours, but the server might not pass it on: not sent, ours alone
 		std::uint32_t            explosionsNearFriends = 0;  // ours, found around a friend far from our player
 		std::uint32_t            deathBlasts = 0;            // an actor's death blast: every game's copy sets its own off
+
+		// The actors that died in the last DEATH_BLAST_WINDOW (NoteDeath, from whichever thread the death event comes on).
+		std::mutex                                                     recentDeathLock;
+		std::vector<std::pair<std::uint32_t, Clock::time_point>>       recentDeaths;
+
+		// Whether an explosion no actor set off is beside an actor that died just now: its death blast. Main thread.
+		bool BesideFreshDeath(const RE::NiPoint3& a_at, Clock::time_point a_now)
+		{
+			std::vector<std::pair<std::uint32_t, Clock::time_point>> deaths;
+			{
+				std::scoped_lock l{ recentDeathLock };
+				std::erase_if(recentDeaths, [&](const auto& a_death) { return a_now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
+				deaths = recentDeaths;
+			}
+			return std::ranges::any_of(deaths, [&](const auto& a_death) {
+				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(a_death.first);
+				return actor && RemoteEdits::DiedBeside(a_at.GetDistance(actor->data.location), a_now - a_death.second);
+			});
+		}
 		std::uint32_t            blastsNamed = 0;          // blows on copies put down to the explosion their hit names
 		std::uint32_t            blastsNearest = 0;        // ... to the nearest that reached them, the hit naming none we saw
 		std::uint32_t            blastsAmbiguous = 0;      // ... where two reached them that fared differently: taken as ours
@@ -956,7 +975,7 @@ namespace WeaponFire
 			} else if (Traps::Claims(a_ref->data.location, by != nullptr)) {
 				seen.fate = RemoteEdits::Fate::kEachOwn;  // near a trap that went off, and no actor's
 				what = "a trap's: every game sets its own off";
-			} else if (by && RemoteEdits::DeathBlast(by->IsDead(false), a_ref->data.location.GetDistance(by->data.location))) {
+			} else if (by ? RemoteEdits::DeathBlast(by->IsDead(false), a_ref->data.location.GetDistance(by->data.location)) : BesideFreshDeath(a_ref->data.location, a_now)) {
 				seen.fate = RemoteEdits::Fate::kEachOwn;
 				what = "an actor's death blast: every game's copy of it sets its own off";
 				++deathBlasts;
@@ -1794,6 +1813,14 @@ namespace WeaponFire
 
 	void NoteDeath(std::uint32_t a_refId)
 	{
+		{
+			std::scoped_lock d{ recentDeathLock };
+			const auto now = Clock::now();
+			std::erase_if(recentDeaths, [&](const auto& a_death) { return now - a_death.second > RemoteEdits::DEATH_BLAST_WINDOW; });
+			if (recentDeaths.size() < 64) {
+				recentDeaths.emplace_back(a_refId, now);
+			}
+		}
 		std::scoped_lock l{ deathLock };
 		if (deathsSeen.size() < 256) {
 			deathsSeen.push_back(a_refId);

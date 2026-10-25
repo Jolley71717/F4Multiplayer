@@ -470,5 +470,14 @@ TEST("remote edits: an explosion set off by an actor already dead, beside it, is
 	CHECK(!DeathBlast(false, 0.0f));                     // a living NPC's grenade at its feet
 	CHECK(!DeathBlast(true, NaN));
 	CHECK(!DeathBlast(true, -1.0f));
+	// A Sentry Bot's cascade names no owner: one beside an actor that died just now.
+	using namespace std::chrono_literals;
+	CHECK(DiedBeside(300.0f, 0ms));
+	CHECK(DiedBeside(300.0f, 1500ms));  // the copy's, a moment after its death
+	CHECK(DiedBeside(DEATH_BLAST_REACH, DEATH_BLAST_WINDOW));
+	CHECK(!DiedBeside(300.0f, DEATH_BLAST_WINDOW + 1ms));  // a grenade on a corpse
+	CHECK(!DiedBeside(DEATH_BLAST_REACH + 1.0f, 0ms));
+	CHECK(!DiedBeside(NaN, 0ms));
+	CHECK(!DiedBeside(300.0f, -1ms));
 	CHECK(DealtThere(Seen{ {}, 300.0f, Fate::kEachOwn, {} }));  // its blow on a copy is the NPC's own game's
 }
