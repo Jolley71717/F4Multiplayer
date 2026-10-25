@@ -382,6 +382,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
+					InertShots::BeforeSaveOrLoad();  // after DespawnAll: no inert shot of a stand-in's is left for the load
 					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
 					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
 				},
@@ -397,6 +398,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
+					InertShots::BeforeSaveOrLoad();  // no inert shot, whose base exists at runtime only, is written into the save
 					SaveGuard::BeforeSave();
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},
@@ -528,6 +530,7 @@ namespace
 				PERF_SCOPE("HavokGuard");
 				HavokGuard::Frame();
 			}
+			InertShots::Frame();  // inert shots that are stale or in a cell no longer attached are ended
 			PERF_SCOPE("Menu");
 			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 		}

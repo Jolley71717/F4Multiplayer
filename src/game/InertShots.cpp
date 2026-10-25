@@ -2,13 +2,17 @@
 
 #include "game/InertShot.h"
 #include "game/Puppets.h"
+#include "game/SaveGuard.h"
+#include "game/WeaponFire.h"
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace InertShots
 {
@@ -26,6 +30,52 @@ namespace InertShots
 		std::atomic<std::uint32_t> refused{ 0 };   // ... that got no copy (none could be made): nothing launched
 		std::atomic<std::uint32_t> offMain{ 0 };   // ... swapped or refused on a thread other than the main one
 		std::atomic<std::uint32_t> logged{ 0 };
+		std::atomic<std::uint32_t> spawnedSwapped{ 0 };  // ... unowned children of a relayed explosion, swapped (ExpectSpawned)
+		std::uint32_t              endedStale = 0;       // live shots ended by Frame: stale, or in a cell no longer attached
+		std::uint32_t              endedForSave = 0;     // ... ended before a save or a load
+		std::uint32_t              dropped = 0;          // ... let go of: the engine deleted them (they hit something)
+		std::uint32_t              droppedEarlyLogged = 0;
+
+		using Clock = std::chrono::steady_clock;
+
+		// Every inert shot in flight (InertShot.h, "what becomes of an inert shot"): its handle and when it was launched.
+		// Pushed by the launch hook on whatever thread it runs; read and ended on the main thread (Frame, BeforeSaveOrLoad).
+		struct Live
+		{
+			RE::ProjectileHandle handle;  // the engine's own, from the launch
+			Clock::time_point    launched;
+		};
+		std::mutex            liveLock;
+		std::vector<Live>     live;  // under liveLock
+		constexpr std::size_t MAX_LIVE = 64;
+
+		// The spawn record of a relayed explosion placed just now (ExpectSpawned), for the window its children are launched in.
+		std::mutex         spawnLock;
+		RE::BGSProjectile* expectedSpawn = nullptr;  // under spawnLock
+		Clock::time_point  expectedAt{};             // under spawnLock
+
+		// Ends an inert shot now, the way a projectile that hit something ends: disabled, deleted, and its record dropped
+		// at once (SaveGuard::ExcludeOurs), so no save writes it and no load is left it. Main thread.
+		void End(RE::TESObjectREFR* a_ref)
+		{
+			a_ref->Disable();
+			a_ref->SetDelete(true);
+			SaveGuard::ExcludeOurs(a_ref);
+		}
+
+		std::vector<Live> TakeLive()
+		{
+			std::scoped_lock l{ liveLock };
+			return std::exchange(live, {});
+		}
+
+		void Keep(const Live& a_live)
+		{
+			std::scoped_lock l{ liveLock };
+			if (live.size() < MAX_LIVE) {
+				live.push_back(a_live);
+			}
+		}
 
 		// The inert copies, one per projectile record, never freed (forms live as long as the game, as MuzzleFlash's art
 		// objects do). The engine gives each a runtime form ID (FF...), kept in no save: a projectile of one caught in a save
@@ -75,9 +125,23 @@ namespace InertShots
 			const auto base = a_data ? a_data->projectileBase : nullptr;
 			const auto shooter = a_data ? a_data->shooter : nullptr;
 			const auto actor = shooter ? shooter->As<RE::Actor>() : nullptr;
-			if (!base || !actor || !Puppets::IsRegistered(actor) || !InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr)) {
+			if (!base) {
 				return continuation(a_out, a_data);
 			}
+			// A stand-in's or a copy's shot that goes off; or an unowned launch of the spawn record of a relayed explosion
+			// placed just now (its children: a MIRV pack's, a Sentry Bot's cluster), which the shooter's game reports as
+			// well (InertShot::SwapsSpawned).
+			bool spawned = false;
+			if (!actor) {
+				std::scoped_lock l{ spawnLock };
+				spawned = expectedSpawn == base &&
+				          InertShot::SwapsSpawned(false, true, std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - expectedAt));
+			}
+			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr);
+			if (!puppets && !spawned) {
+				return continuation(a_out, a_data);
+			}
+			const auto shooterId = actor ? actor->GetFormID() : 0;
 			const bool onMain = std::this_thread::get_id() == mainThread;
 			if (!onMain) {
 				++offMain;
@@ -90,7 +154,7 @@ namespace InertShots
 					a_out->reset();
 				}
 				if (logged.fetch_add(1) < 20) {
-					REX::WARN("InertShots: {:08X}'s launch of {:08X} refused: no inert copy of the record to be had", actor->GetFormID(), base->GetFormID());
+					REX::WARN("InertShots: {:08X}'s launch of {:08X} refused: no inert copy of the record to be had", shooterId, base->GetFormID());
 				}
 				return a_out;
 			}
@@ -98,6 +162,9 @@ namespace InertShots
 			const auto result = continuation(a_out, a_data);
 			a_data->projectileBase = base;  // the caller's own data again: nothing of ours is left for it to read
 			++swapped;
+			if (spawned) {
+				++spawnedSwapped;
+			}
 			// What the copy's record already says, said again on the projectile itself: no blast, no damage of its own.
 			RE::NiPointer<RE::Projectile> made;
 			if (a_out) {
@@ -107,10 +174,11 @@ namespace InertShots
 			if (projectile) {
 				projectile->explosion = nullptr;
 				projectile->damage = 0.0f;
+				Keep({ .handle = *a_out, .launched = Clock::now() });
 			}
 			if (logged.fetch_add(1) < 20) {
-				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{} as projectile {:08X}{}: its blast comes as its shooter's game's report", actor->GetFormID(),
-					base->GetFormID(), onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
+				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
+					spawned ? " (a relayed explosion's child)" : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
 			}
 			return result;
 		}
@@ -168,6 +236,61 @@ namespace InertShots
 		return copies.contains(a_base);
 	}
 
+	void Frame()
+	{
+		if (!installed) {
+			return;
+		}
+		auto       shots = TakeLive();
+		const auto now = Clock::now();
+		std::erase_if(shots, [&](const Live& a_live) {
+			const auto ref = a_live.handle.get();
+			if (!ref || ref->IsDeleted()) {
+				++dropped;
+				if (const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - a_live.launched); age < std::chrono::milliseconds(500) && droppedEarlyLogged++ < 10) {
+					REX::INFO("InertShots: an inert shot was gone {} ms after its launch ({})", age.count(), ref ? "deleted" : "its handle no longer resolves");
+				}
+				return true;
+			}
+			const auto cell = ref->GetParentCell();
+			if (InertShot::Stale(std::chrono::duration_cast<std::chrono::milliseconds>(now - a_live.launched), cell && cell->IsAttached())) {
+				End(ref.get());
+				++endedStale;
+				return true;
+			}
+			return false;
+		});
+		for (const auto& shot : shots) {
+			Keep(shot);  // what the hook pushed meanwhile stays too
+		}
+	}
+
+	std::uint32_t BeforeSaveOrLoad()
+	{
+		std::uint32_t ended = 0;
+		for (const auto& shot : TakeLive()) {
+			if (const auto ref = shot.handle.get(); ref && !ref->IsDeleted()) {
+				End(ref.get());
+				++ended;
+			}
+		}
+		if (ended) {
+			endedForSave += ended;
+			REX::INFO("InertShots: {} inert shot{} in flight ended before the save or load: none goes into it", ended, ended == 1 ? "" : "s");
+		}
+		return ended;
+	}
+
+	void ExpectSpawned(RE::BGSProjectile* a_spawn)
+	{
+		if (!a_spawn) {
+			return;
+		}
+		std::scoped_lock l{ spawnLock };
+		expectedSpawn = a_spawn;
+		expectedAt = Clock::now();
+	}
+
 	std::string Describe()
 	{
 		std::size_t made = 0;
@@ -175,6 +298,12 @@ namespace InertShots
 			std::scoped_lock l{ copyLock };
 			made = copies.size();
 		}
-		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={}", swapped.load(), launches.load(), refused.load(), made, offMain.load());
+		std::size_t flying = 0;
+		{
+			std::scoped_lock l{ liveLock };
+			flying = live.size();
+		}
+		return std::format("inert={}/{} inertRefused={} inertCopies={} inertOffMain={} inertLive={} inertEnded={}/{} inertDropped={} inertSpawned={}", swapped.load(), launches.load(), refused.load(), made, offMain.load(),
+			flying, endedStale, endedForSave, dropped, spawnedSwapped.load());
 	}
 }

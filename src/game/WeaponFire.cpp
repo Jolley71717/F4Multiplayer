@@ -2033,6 +2033,9 @@ namespace WeaponFire
 			// was reported back as ours, and went off a second time for everyone.
 			setOffExplosions.Add(ref.get());
 		}
+		// One whose record spawns projectiles (a MIRV pack's children, a Sentry Bot's cluster) spawns them here too, with
+		// no shooter; the shooter's game reports their blasts, so the ones spawned here fly inert (InertShots).
+		InertShots::ExpectSpawned(base->data.spawnProjectile);
 		++explosionsSetOff;
 	}
 

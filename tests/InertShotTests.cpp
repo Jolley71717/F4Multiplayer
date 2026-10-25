@@ -59,3 +59,27 @@ TEST("InertShot: the continuation does what the jump overwrote, then jumps to th
 	CHECK(!Continuation(0x7FF000000000, function).has_value());
 	CHECK(TRAMPOLINE_NEEDED == 24);
 }
+
+TEST("InertShot: an inert shot is ended when it is stale, or settled in a cell that is no longer attached")
+{
+	using namespace InertShot;
+	using namespace std::chrono_literals;
+	CHECK(!Stale(0ms, true));
+	CHECK(!Stale(3000ms, true));                 // a missile's flight
+	CHECK(!Stale(MAX_LIFE, true));
+	CHECK(Stale(MAX_LIFE + 1ms, true));          // a shell at rest for good
+	CHECK(!Stale(500ms, false));                 // just launched: its cell may not have it yet
+	CHECK(Stale(SETTLE + 1ms, false));           // its cell unloaded under it
+}
+
+TEST("InertShot: an unowned launch of a relayed explosion's spawn record is swapped for a moment after the explosion is placed")
+{
+	using namespace InertShot;
+	using namespace std::chrono_literals;
+	CHECK(SwapsSpawned(false, true, 0ms));
+	CHECK(SwapsSpawned(false, true, SPAWN_WINDOW));
+	CHECK(!SwapsSpawned(false, true, SPAWN_WINDOW + 1ms));  // long after: the game's own, whatever it is
+	CHECK(!SwapsSpawned(false, true, -1ms));
+	CHECK(!SwapsSpawned(true, true, 0ms));   // our own MIRV's children name our player: the engine's, reported
+	CHECK(!SwapsSpawned(false, false, 0ms));  // an unowned launch of some other record: a trap's, a script's
+}

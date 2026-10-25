@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -104,4 +105,30 @@ namespace InertShot
 	// What the trampoline is asked for: the continuation, and the 14-byte branch the jump at the entry goes through.
 	inline constexpr std::size_t BRANCH_STUB = 14;
 	inline constexpr std::size_t TRAMPOLINE_NEEDED = CONTINUATION_SIZE + BRANCH_STUB;
+
+	// --- what becomes of an inert shot once it exists ---
+	//
+	// Its base is a form that exists at runtime only, and the game saves projectile references (one in flight, or a
+	// lobbed shell at rest: with its explosion, proximity and timer gone it never ends on its own). A reference whose
+	// base is gone is what crashed loads before. So every inert shot is kept a handle to, and ended (disabled, deleted,
+	// its record dropped: SaveGuard::ExcludeOurs) before every save and every load, when it is stale (older than any
+	// shot's flight), and when the cell it is in is no longer attached (a cell unloading writes out its references).
+	// The engine deletes one that hits something itself, as it does every projectile.
+	inline constexpr std::chrono::milliseconds MAX_LIFE{ 12000 };  // a missile flies 3 s; a cannonball rolls a while
+	inline constexpr std::chrono::milliseconds SETTLE{ 1000 };     // a cell is asked about only once the shot has settled in one
+
+	constexpr bool Stale(std::chrono::milliseconds a_age, bool a_cellAttached)
+	{
+		return a_age > MAX_LIFE || (a_age > SETTLE && !a_cellAttached);
+	}
+
+	// A relayed explosion placed from its record spawns that record's projectiles (a MIRV pack's children, a Sentry Bot's
+	// shoulder cluster), with no shooter: real, so they went off in the receiver's game alongside the shooter's reported
+	// child blasts. For a moment after one is placed, an unowned launch of its spawn record is swapped too.
+	inline constexpr std::chrono::milliseconds SPAWN_WINDOW{ 2000 };
+
+	constexpr bool SwapsSpawned(bool a_owned, bool a_expected, std::chrono::milliseconds a_sincePlaced)
+	{
+		return !a_owned && a_expected && a_sincePlaced >= std::chrono::milliseconds::zero() && a_sincePlaced <= SPAWN_WINDOW;
+	}
 }
