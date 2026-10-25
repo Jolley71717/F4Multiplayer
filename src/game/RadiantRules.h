@@ -517,10 +517,11 @@ namespace RadiantRules
 		return static_cast<std::uint32_t>(a_unixSeconds);
 	}
 
-	// What a save keeps of the book (Book::Save; the co-save's record): the session it played in, the runs shared then
-	// (so a game that loads it shares its run again under the same run, which a friend who finished it knows, and not as
-	// a new one) and the runs finished here (so one is never started again after the game restarts). Run ids are the
-	// session's, so it is read back only in that session.
+	// What a save keeps of the book (Book::Save; the co-save's record): the session its world shared runs in last and the
+	// runs shared then (so a game that loads it shares its run again under the same run, which a friend who finished it
+	// knows, and not as a new one), and the runs finished here in each of its last sessions (so one is never started
+	// again after the game restarts, or comes back from another server). Run ids are a session's: the runs shared are
+	// shared again only in that session, and a run finished is known only in its own.
 	struct Saved
 	{
 		struct Quest
@@ -532,9 +533,17 @@ namespace RadiantRules
 			bool operator==(const Quest&) const = default;
 		};
 
-		std::uint64_t      session = 0;
-		std::vector<Quest> shared;
-		std::vector<Run>   finished;  // the most recent last
+		struct Finished
+		{
+			std::uint64_t    session = 0;
+			std::vector<Run> runs;  // the most recent last
+
+			bool operator==(const Finished&) const = default;
+		};
+
+		std::uint64_t         session = 0;
+		std::vector<Quest>    shared;
+		std::vector<Finished> finished;  // by session, the one played most recently last
 
 		bool operator==(const Saved&) const = default;
 	};
@@ -542,27 +551,11 @@ namespace RadiantRules
 	inline constexpr std::uint16_t SAVED_VERSION = 1;
 	inline constexpr std::size_t   MAX_SAVED_QUESTS = 64;     // RADIANTS has fewer
 	inline constexpr std::size_t   MAX_SAVED_RUNS = 8;        // of one quest's (the latest kept)
-	inline constexpr std::size_t   MAX_SAVED_FINISHED = 256;  // the oldest forgotten
+	inline constexpr std::size_t   MAX_SAVED_FINISHED = 256;  // of one session's (the oldest forgotten)
+	inline constexpr std::size_t   MAX_SAVED_SESSIONS = 4;    // the one played longest ago forgotten
 
-	// More of a session's record (another of the same world's): its runs not in a_into added, within the bounds.
-	inline void Merge(Saved& a_into, const Saved& a_more)
-	{
-		for (const auto& quest : a_more.shared) {
-			if (a_into.shared.size() < MAX_SAVED_QUESTS && std::ranges::find(a_into.shared, quest.quest, &Saved::Quest::quest) == a_into.shared.end()) {
-				a_into.shared.push_back(quest);
-			}
-		}
-		for (const auto& run : a_more.finished) {
-			if (std::ranges::find(a_into.finished, run) == a_into.finished.end()) {
-				a_into.finished.push_back(run);
-			}
-		}
-		if (a_into.finished.size() > MAX_SAVED_FINISHED) {
-			a_into.finished.erase(a_into.finished.begin(), a_into.finished.end() - MAX_SAVED_FINISHED);
-		}
-	}
-
-	// The co-save's bytes: the version, the session, each shared quest's runs and targets, then the finished runs.
+	// The co-save's bytes: the version, the session, each shared quest's runs and targets, then each session's finished
+	// runs.
 	inline std::vector<std::uint8_t> Encode(const Saved& a_saved)
 	{
 		std::vector<std::uint8_t> out;
@@ -594,10 +587,15 @@ namespace RadiantRules
 				put(quest.targets[j].form);
 			}
 		}
-		const auto finished = (std::min)(a_saved.finished.size(), MAX_SAVED_FINISHED);
-		put(static_cast<std::uint16_t>(finished));
-		for (auto it = a_saved.finished.end() - static_cast<std::ptrdiff_t>(finished); it != a_saved.finished.end(); ++it) {
-			putRun(*it);
+		const auto sessions = (std::min)(a_saved.finished.size(), MAX_SAVED_SESSIONS);
+		put(static_cast<std::uint8_t>(sessions));
+		for (auto session = a_saved.finished.end() - static_cast<std::ptrdiff_t>(sessions); session != a_saved.finished.end(); ++session) {
+			const auto finished = (std::min)(session->runs.size(), MAX_SAVED_FINISHED);
+			put(session->session);
+			put(static_cast<std::uint16_t>(finished));
+			for (auto it = session->runs.end() - static_cast<std::ptrdiff_t>(finished); it != session->runs.end(); ++it) {
+				putRun(*it);
+			}
 		}
 		return out;
 	}
@@ -645,21 +643,36 @@ namespace RadiantRules
 			}
 			saved.shared.push_back(std::move(quest));
 		}
-		std::uint16_t finished = 0;
-		if (!take(finished) || finished > MAX_SAVED_FINISHED) {
+		std::uint8_t sessions = 0;
+		if (!take(sessions) || sessions > MAX_SAVED_SESSIONS) {
 			return std::nullopt;
 		}
-		saved.finished.resize(finished);
-		for (auto& run : saved.finished) {
-			if (!takeRun(run)) {
+		for (std::uint8_t i = 0; i < sessions; ++i) {
+			Saved::Finished session;
+			std::uint16_t   finished = 0;
+			if (!take(session.session) || !take(finished) || finished > MAX_SAVED_FINISHED) {
 				return std::nullopt;
 			}
+			session.runs.resize(finished);
+			for (auto& run : session.runs) {
+				if (!takeRun(run)) {
+					return std::nullopt;
+				}
+			}
+			saved.finished.push_back(std::move(session));
 		}
 		if (offset != a_bytes.size()) {
 			return std::nullopt;
 		}
 		return saved;
 	}
+
+	// A quest running in this world, for Book::Restore: its stages done, and its fills (FillsOf), which name its targets.
+	struct QuestHere
+	{
+		std::vector<std::uint16_t>         done;
+		std::vector<Protocol::RadiantFill> fills;
+	};
 
 	// The radiants' runs in this game: which run of each quest is shared here, and with it the rule that pays a run's
 	// reward once in each game. The reward is the quest's own stage (MinRecruit's 400), so a game must set each stage
@@ -672,7 +685,9 @@ namespace RadiantRules
 	// the runs finished here are kept with the save. A run shared again under a new number all the same (a save from
 	// before its share, or one made before this was kept) is known by its targets, but only for a while after a run with
 	// them finished here (SAME_RUN_WINDOW): later, the same targets are a new run handed out again (kDone otherwise).
-	// The runs finished here are kept through loads and sessions.
+	// That window is the only guard for such a save: one older than the run's share, loaded more than 15 minutes after
+	// a friend finished the run (or after their game restarted, as the window isn't saved), starts it there again.
+	// The runs finished here are kept through loads, sessions and servers, each known in its own session (Bind).
 	class Book
 	{
 	public:
@@ -710,7 +725,7 @@ namespace RadiantRules
 		// a_fills: the start's.
 		[[nodiscard]] Answer OnStart(std::uint32_t a_quest, const Run& a_run, bool a_running, std::span<const Protocol::RadiantFill> a_fills = {}, Time a_now = {}) const
 		{
-			if (finished.contains(a_run) || refused.contains(a_run)) {
+			if (FinishedRun(a_run) || refused.contains(a_run)) {
 				return Answer::kIgnore;
 			}
 			if (const auto it = quests.find(a_quest); it != quests.end()) {
@@ -823,55 +838,61 @@ namespace RadiantRules
 		{
 			if (const auto it = quests.find(a_quest); it != quests.end()) {
 				for (const auto& run : it->second.runs) {
-					Finish(run);
+					Finish(run, current);
 				}
-				if (!it->second.targets.empty()) {
-					auto& targets = done[a_quest];
-					std::erase_if(targets, [&](const Done& a_done) { return a_done.targets == it->second.targets; });
-					if (targets.size() >= MAX_DONE) {
-						targets.erase(targets.begin());
-					}
-					targets.push_back({ std::move(it->second.targets), a_now });
-				}
+				NoteDone(a_quest, std::move(it->second.targets), a_now);
 				quests.erase(it);
 			}
 		}
 
-		// What a save keeps of the book in a_session (Saved): the runs shared now and those finished here.
+		// What a save keeps of the book (Saved): the runs shared now, as runs of a_session, and those finished here in the
+		// last sessions.
 		[[nodiscard]] Saved Save(std::uint64_t a_session) const
 		{
-			Saved out{ a_session, {}, recent };
+			Saved out{ a_session, {}, {} };
 			for (const auto& [quest, instance] : quests) {
 				if (instance.state == State::kShared && out.shared.size() < MAX_SAVED_QUESTS) {
 					out.shared.push_back({ quest, instance.runs, instance.targets });
 				}
 			}
+			for (const auto& past : pasts) {
+				if (!past.recent.empty()) {
+					out.finished.push_back({ past.session, past.recent });
+				}
+			}
+			if (out.finished.size() > MAX_SAVED_SESSIONS) {
+				out.finished.erase(out.finished.begin(), out.finished.end() - MAX_SAVED_SESSIONS);
+			}
 			return out;
 		}
 
-		// A save's record of this session, its world loaded (or the one kept when the session ended, the player back): its
-		// runs finished are finished here, and its runs shared are shared again where the quest still runs. a_running(quest):
-		// the stages done of the quest in this world, or nothing if it doesn't run (a run over since). Its stages done count
-		// as reported (they went under the run when they were done, or with its start). Returns the runs shared again.
-		template <class Running>
-		std::size_t Restore(const Saved& a_saved, Running&& a_running)
+		// A save's record (or the one kept when the session ended), its world here now: each run it shared is shared
+		// again, if a_share and the record is of the session bound now, where its quest runs with the run's targets.
+		// a_here(quest): the quest in this world (QuestHere), or nothing if it doesn't run. Its stages done count as
+		// reported (they went under the run when they were done, or with its start). A run whose quest doesn't run here
+		// now, or runs with other targets (handed out again), is over in this world: finished here at a_now, in its
+		// session, whichever it is (one finished while the player was out of the session, or on another server, must
+		// never start here again when they come back). Returns the runs shared again.
+		template <class Here>
+		std::size_t Restore(const Saved& a_saved, Here&& a_here, bool a_share = true, Time a_now = {})
 		{
-			for (const auto& run : a_saved.finished) {
-				Finish(run);
-			}
 			std::size_t shared = 0;
 			for (const auto& saved : a_saved.shared) {
-				if (saved.runs.empty() || quests.contains(saved.quest)) {
+				const std::optional<QuestHere> here = a_here(saved.quest);
+				if (!here || TargetsOf(here->fills) != saved.targets) {
+					for (const auto& run : saved.runs) {
+						Finish(run, a_saved.session);
+					}
+					NoteDone(saved.quest, saved.targets, a_now);
 					continue;
 				}
-				const std::optional<std::vector<std::uint16_t>> stages = a_running(saved.quest);
-				if (!stages) {
+				if (!a_share || a_saved.session != current || saved.runs.empty() || quests.contains(saved.quest)) {
 					continue;
 				}
 				auto& instance = quests[saved.quest];
 				instance.state = State::kShared;
 				instance.runs = saved.runs;
-				instance.reported.insert(stages->begin(), stages->end());
+				instance.reported.insert(here->done.begin(), here->done.end());
 				instance.targets = saved.targets;
 				++shared;
 			}
@@ -916,7 +937,11 @@ namespace RadiantRules
 		}
 
 		[[nodiscard]] std::size_t Size() const { return quests.size(); }
-		[[nodiscard]] std::size_t Finished() const { return finished.size(); }
+		[[nodiscard]] std::size_t Finished() const
+		{
+			const auto* past = PastOf(current);
+			return past ? past->runs.size() : 0;
+		}
 
 		// The session ended: no run is shared any more (the quests go on, each player's own). The runs finished or
 		// turned down here stay known (a player keeps their id in a session when they come back), so a start sent
@@ -932,14 +957,33 @@ namespace RadiantRules
 			refused.clear();
 		}
 
-		// Another server: nothing of the last is known but the targets finished here, which are this game's (and run
-		// numbers go on).
+		// Another server: nothing of the last is going here. The runs finished in each session stay known in it (a player who
+		// comes back to the first server finds them there), as do the targets finished here, and run numbers go on.
 		void Clear()
 		{
 			quests.clear();
-			finished.clear();
-			recent.clear();
 			refused.clear();
+		}
+
+		// The session the runs are of now (its welcome): a run finished is known in its own session only.
+		void Bind(std::uint64_t a_session)
+		{
+			current = a_session;
+			if (const auto it = std::ranges::find(pasts, a_session, &Past::session); it != pasts.end()) {
+				std::rotate(it, it + 1, pasts.end());  // the one played most recently last
+			} else {
+				pasts.push_back(Past{ a_session, {}, {} });
+			}
+		}
+
+		// A loaded save's runs finished (its record), in their sessions: known here from now on, with those known already.
+		void Remember(const Saved& a_saved)
+		{
+			for (auto session = a_saved.finished.rbegin(); session != a_saved.finished.rend(); ++session) {
+				for (const auto& run : session->runs) {
+					Finish(run, session->session);
+				}
+			}
 		}
 
 	private:
@@ -949,14 +993,53 @@ namespace RadiantRules
 			Time                               at;  // when its run finished here
 		};
 
-		void Finish(const Run& a_run)
+		// The runs finished here in one session.
+		struct Past
 		{
-			if (finished.insert(a_run).second) {
-				if (recent.size() >= MAX_SAVED_FINISHED) {
-					recent.erase(recent.begin());
-				}
-				recent.push_back(a_run);
+			std::uint64_t    session = 0;
+			std::set<Run>    runs;
+			std::vector<Run> recent;  // the latest of them, the most recent last (saved)
+		};
+
+		[[nodiscard]] const Past* PastOf(std::uint64_t a_session) const
+		{
+			const auto it = std::ranges::find(pasts, a_session, &Past::session);
+			return it != pasts.end() ? &*it : nullptr;
+		}
+
+		[[nodiscard]] bool FinishedRun(const Run& a_run) const
+		{
+			const auto* past = PastOf(current);
+			return past && past->runs.contains(a_run);
+		}
+
+		// A run of a_session over here. A session not known here yet is taken for one played before the others (a save's).
+		void Finish(const Run& a_run, std::uint64_t a_session)
+		{
+			auto it = std::ranges::find(pasts, a_session, &Past::session);
+			if (it == pasts.end()) {
+				it = pasts.insert(pasts.begin(), Past{ a_session, {}, {} });
 			}
+			if (it->runs.insert(a_run).second) {
+				if (it->recent.size() >= MAX_SAVED_FINISHED) {
+					it->recent.erase(it->recent.begin());
+				}
+				it->recent.push_back(a_run);
+			}
+		}
+
+		// A run of the quest with these targets finished here at a_now (FinishedHere).
+		void NoteDone(std::uint32_t a_quest, std::vector<Protocol::RadiantFill> a_targets, Time a_now)
+		{
+			if (a_targets.empty()) {
+				return;
+			}
+			auto& targets = done[a_quest];
+			std::erase_if(targets, [&](const Done& a_done) { return a_done.targets == a_targets; });
+			if (targets.size() >= MAX_DONE) {
+				targets.erase(targets.begin());
+			}
+			targets.push_back({ std::move(a_targets), a_now });
 		}
 
 		struct Instance
@@ -971,8 +1054,8 @@ namespace RadiantRules
 		static constexpr std::size_t MAX_DONE = 32;  // targets kept for each quest, the oldest forgotten
 
 		std::map<std::uint32_t, Instance>                                        quests;
-		std::set<Run>                                                            finished;
-		std::vector<Run>                                                         recent;  // the runs finished here latest, the most recent last (saved)
+		std::vector<Past>                                                        pasts;  // the runs finished here, by session, the one played most recently last
+		std::uint64_t                                                            current = 0;  // the session bound (Bind)
 		std::set<Run>                                                            refused;
 		std::map<std::uint32_t, std::vector<Done>>                               done;  // the targets of runs finished here, by quest
 		std::uint32_t                                                            serial = 0;

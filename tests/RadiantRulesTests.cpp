@@ -559,63 +559,184 @@ TEST("radiants: the same targets are a run shared again only for a while after o
 TEST("radiants: a save keeps the runs shared and finished, so a game that restarts never starts a run it finished, and one that loads a save inside a run shares it as the same run")
 {
 	constexpr std::uint64_t        SESSION = 0x1234'5678'9ABC'DEF0;
+	constexpr std::uint64_t        OTHER = 0x0FED'CBA9'8765'4321;
 	const std::vector<RadiantFill> fills{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, CORVEGA } };
-	const auto running = [](std::uint32_t a_quest) -> std::optional<std::vector<std::uint16_t>> {
+	const auto running = [&](std::uint32_t a_quest) -> std::optional<QuestHere> {
 		if (a_quest == MIN_RECRUIT01) {
-			return std::vector<std::uint16_t>{ 10, 100 };
+			return QuestHere{ { 10, 100 }, fills };
 		}
 		return std::nullopt;  // not running in the loaded world
 	};
 
 	// Bob's game shares a run of raider troubles; Alice's starts it, and both play it.
-	Book       bob{ SerialSeed(1792000000) };
+	Book bob{ SerialSeed(1792000000) };
+	bob.Bind(SESSION);
 	const auto run = bob.Begin(MIN_RECRUIT01, 2, std::vector<std::uint16_t>{ 10 }, fills);
-	bob.Begin(BOSR01, 2, {});  // and another of his, which runs in his save no more
-	const auto bobSave = bob.Save(SESSION);  // he saves inside it
+	const auto bos = bob.Begin(BOSR01, 2, {});  // and another of his, over in his save
+	const auto bobSave = bob.Save(SESSION);       // he saves inside it
 	CHECK(bobSave.session == SESSION);
 	CHECK(bobSave.shared.size() == 2);
 
 	Book alice;
+	alice.Bind(SESSION);
 	CHECK((alice.OnStart(MIN_RECRUIT01, run, false, fills) == Answer::kStart));
 	alice.Starting(MIN_RECRUIT01, run, fills);
 	alice.Join(MIN_RECRUIT01, run, fills);
 	CHECK(alice.Accept(MIN_RECRUIT01, run, 400));  // paid
 	alice.Ended(MIN_RECRUIT01);
 	const auto aliceSave = alice.Save(SESSION);
-	CHECK((aliceSave.finished == std::vector<Run>{ run }));
+	CHECK((aliceSave.finished == std::vector<Saved::Finished>{ { SESSION, { run } } }));
 	CHECK(aliceSave.shared.empty());
 
 	// Alice's game restarts, loads her save and joins again: the run is finished there, by its id, however late.
-	Book       restarted;
-	const auto none = [](std::uint32_t) -> std::optional<std::vector<std::uint16_t>> { return std::nullopt; };
-	CHECK(restarted.Restore(aliceSave, none) == 0);
+	Book restarted;
+	restarted.Remember(aliceSave);
+	restarted.Bind(SESSION);
 	CHECK(restarted.Finished() == 1);
 	CHECK((restarted.OnStart(MIN_RECRUIT01, run, false, fills, Book::Time{} + std::chrono::hours{ 5 }) == Answer::kIgnore));
+	// In another session the ids are others' runs.
+	restarted.Bind(OTHER);
+	CHECK(restarted.Finished() == 0);
+	CHECK((restarted.OnStart(MIN_RECRUIT01, run, false) == Answer::kStart));
 
 	// Bob's game loads his save from inside the run (his game restarted too): the same run, shared again as it was, not
 	// a new number; his stages done there need no report, and a friend's are taken.
 	Book bobAgain{ SerialSeed(1792003600) };
+	bobAgain.Bind(SESSION);
+	bobAgain.Remember(bobSave);
 	CHECK(bobAgain.Restore(bobSave, running) == 1);
 	CHECK(bobAgain.Shares(MIN_RECRUIT01));
-	CHECK(!bobAgain.Knows(BOSR01));
 	CHECK((bobAgain.Ours(2) == std::vector<std::pair<std::uint32_t, Run>>{ { MIN_RECRUIT01, run } }));
 	CHECK((bobAgain.Shared() == std::vector<std::pair<std::uint32_t, Run>>{ { MIN_RECRUIT01, run } }));
 	CHECK(bobAgain.Report(MIN_RECRUIT01, 100).empty());
 	CHECK((bobAgain.Report(MIN_RECRUIT01, 200) == std::vector<Run>{ run }));
 	CHECK(bobAgain.Accept(MIN_RECRUIT01, run, 150));
+	// The other is over in his world: finished there, never started again.
+	CHECK(!bobAgain.Knows(BOSR01));
+	CHECK((bobAgain.OnStart(BOSR01, bos, false) == Answer::kIgnore));
 	// Its targets are kept with it: finished, a share of it under a new number soon after is known.
 	bobAgain.Ended(MIN_RECRUIT01);
 	CHECK((bobAgain.OnStart(MIN_RECRUIT01, Run{ 3, 1 }, false, fills) == Answer::kDone));
-	// A restore never takes over a quest known here already.
+
+	// A restore never takes over a quest known here already, nor shares one not asked to, nor one of another session.
 	Book busy;
+	busy.Bind(SESSION);
 	busy.Begin(MIN_RECRUIT01, 2, {}, fills);
 	CHECK(busy.Restore(bobSave, running) == 0);
+	Book unshared;
+	unshared.Bind(SESSION);
+	CHECK(unshared.Restore(bobSave, running, false) == 0);
+	CHECK(!unshared.Knows(MIN_RECRUIT01));
+	Book elsewhere;
+	elsewhere.Bind(OTHER);
+	CHECK(elsewhere.Restore(bobSave, running) == 0);
+	CHECK(!elsewhere.Knows(MIN_RECRUIT01));
+	elsewhere.Bind(SESSION);
+	CHECK((elsewhere.OnStart(BOSR01, bos, false) == Answer::kIgnore));  // over in that world: finished in its session
 
 	// Kept through the bytes.
-	const auto bytes = Encode(bobSave);
-	CHECK((Decode(bytes) == std::optional<Saved>{ bobSave }));
-	const auto aliceBytes = Encode(aliceSave);
-	CHECK((Decode(aliceBytes) == std::optional<Saved>{ aliceSave }));
+	CHECK((Decode(Encode(bobSave)) == std::optional<Saved>{ bobSave }));
+	CHECK((Decode(Encode(aliceSave)) == std::optional<Saved>{ aliceSave }));
+}
+
+TEST("radiants: a shared run the player finished alone after leaving the session is finished here, so a friend still on it never starts it here again")
+{
+	constexpr std::uint64_t        SESSION = 77;
+	const std::vector<RadiantFill> fills{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, CORVEGA } };
+	const Run                      theirs{ 2, 40 };
+	Book                           alice;
+	alice.Bind(SESSION);
+	alice.Starting(MIN_RECRUIT01, theirs, fills);
+	alice.Join(MIN_RECRUIT01, theirs, fills);
+
+	// The connection drops mid-run: what was shared is kept (RadiantSync holds it), and the session's runs go.
+	const auto kept = alice.Save(SESSION);
+	alice.EndSession();
+	CHECK(!alice.Knows(MIN_RECRUIT01));
+	// She clears Corvega alone, paid in her own world, and joins again.
+	const auto over = [](std::uint32_t) -> std::optional<QuestHere> { return std::nullopt; };
+	alice.Bind(SESSION);
+	CHECK(alice.Restore(kept, over) == 0);
+	// Bob, still on it, sends its start again: ignored, by its id, however late.
+	CHECK((alice.OnStart(MIN_RECRUIT01, theirs, false, fills, Book::Time{} + std::chrono::hours{ 3 }) == Answer::kIgnore));
+	CHECK((alice.Save(SESSION).finished == std::vector<Saved::Finished>{ { SESSION, { theirs } } }));
+}
+
+TEST("radiants: a save's run is given back only to the quest running with its targets; one handed out again for another place is a new run")
+{
+	constexpr std::uint64_t        SESSION = 77;
+	const std::vector<RadiantFill> corvega{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, CORVEGA } };
+	const std::vector<RadiantFill> lexington{ { 20, 0, TENPINES_WORKSHOP }, { 4, 1, LEXINGTON } };
+	const Run                      theirs{ 2, 40 };
+	Book                           alice;
+	alice.Bind(SESSION);
+	alice.Starting(MIN_RECRUIT01, theirs, corvega);
+	alice.Join(MIN_RECRUIT01, theirs, corvega);
+	const auto kept = alice.Save(SESSION);
+	alice.EndSession();
+
+	// Alone, she finished Corvega and Preston sent her to Lexington: the quest runs, but for another run.
+	const auto again = [&](std::uint32_t) -> std::optional<QuestHere> { return QuestHere{ { 10 }, lexington }; };
+	alice.Bind(SESSION);
+	CHECK(alice.Restore(kept, again) == 0);
+	CHECK(!alice.Knows(MIN_RECRUIT01));  // her new run is begun as her own and shared
+	CHECK((alice.OnStart(MIN_RECRUIT01, theirs, true, corvega) == Answer::kIgnore));
+	CHECK(alice.Report(MIN_RECRUIT01, 100).empty());  // nothing of it goes under Bob's run
+	// The same targets: the same run.
+	Book bob;
+	bob.Bind(SESSION);
+	const auto same = [&](std::uint32_t) -> std::optional<QuestHere> { return QuestHere{ { 10 }, corvega }; };
+	CHECK(bob.Restore(kept, same) == 1);
+	CHECK(bob.Shares(MIN_RECRUIT01));
+}
+
+TEST("radiants: runs finished in a session stay known there after a visit to another server")
+{
+	const std::vector<RadiantFill> fills{ { 4, 1, CORVEGA } };
+	const Run                      first{ 2, 40 };
+	Book                           alice;
+	alice.Bind(1);
+	alice.Starting(MIN_RECRUIT01, first, fills);
+	alice.Join(MIN_RECRUIT01, first, fills);
+	alice.Ended(MIN_RECRUIT01);
+
+	// Another friend's server: its player 2 is someone else, whose runs are new here.
+	alice.Clear();
+	alice.Bind(2);
+	CHECK((alice.OnStart(MIN_RECRUIT01, first, false) == Answer::kStart));
+	alice.Starting(MIN_RECRUIT01, first);
+	alice.Join(MIN_RECRUIT01, first);
+	alice.Ended(MIN_RECRUIT01);
+
+	// Back on the first: its run is still finished here, and so in her save.
+	alice.Clear();
+	alice.Bind(1);
+	CHECK((alice.OnStart(MIN_RECRUIT01, first, false, fills, Book::Time{} + std::chrono::hours{ 2 }) == Answer::kIgnore));
+	const auto save = alice.Save(1);
+	CHECK((save.finished == std::vector<Saved::Finished>{ { 2, { first } }, { 1, { first } } }));  // the one played last, last
+
+	// A game that restarted and loaded that save knows both, each in its own session.
+	Book restarted;
+	restarted.Remember(save);
+	restarted.Bind(1);
+	CHECK((restarted.OnStart(MIN_RECRUIT01, first, false) == Answer::kIgnore));
+	restarted.Bind(2);
+	CHECK((restarted.OnStart(MIN_RECRUIT01, first, false) == Answer::kIgnore));
+	restarted.Bind(3);
+	CHECK((restarted.OnStart(MIN_RECRUIT01, first, false) == Answer::kStart));
+
+	// The save keeps the last sessions played.
+	Book many;
+	for (std::uint64_t session = 1; session <= MAX_SAVED_SESSIONS + 2; ++session) {
+		many.Bind(session);
+		many.Starting(MIN_RECRUIT01, first);
+		many.Join(MIN_RECRUIT01, first);
+		many.Ended(MIN_RECRUIT01);
+	}
+	const auto last = many.Save(0);
+	CHECK(last.finished.size() == MAX_SAVED_SESSIONS);
+	CHECK(last.finished.front().session == 3);
+	CHECK(last.finished.back().session == MAX_SAVED_SESSIONS + 2);
 }
 
 TEST("radiants: a save's record of the runs reads back only whole, and within its bounds")
@@ -629,8 +750,12 @@ TEST("radiants: a save's record of the runs reads back only whole, and within it
 		quest.targets.push_back({ 4, 1, CORVEGA });
 		saved.shared.push_back(std::move(quest));
 	}
-	for (std::uint32_t i = 0; i < MAX_SAVED_FINISHED + 10; ++i) {
-		saved.finished.push_back({ 3, i });
+	for (std::uint64_t session = 1; session <= MAX_SAVED_SESSIONS + 1; ++session) {
+		Saved::Finished finished{ session, {} };
+		for (std::uint32_t i = 0; i < MAX_SAVED_FINISHED + 10; ++i) {
+			finished.runs.push_back({ 3, i });
+		}
+		saved.finished.push_back(std::move(finished));
 	}
 	const auto read = Decode(Encode(saved));
 	CHECK(read.has_value());
@@ -638,12 +763,14 @@ TEST("radiants: a save's record of the runs reads back only whole, and within it
 	CHECK(read->shared.size() == MAX_SAVED_QUESTS);
 	CHECK(read->shared.front().runs.size() == MAX_SAVED_RUNS);
 	CHECK((read->shared.front().runs.back() == Run{ 2, 100 + MAX_SAVED_RUNS + 2 }));  // the latest kept
-	CHECK(read->finished.size() == MAX_SAVED_FINISHED);
-	CHECK((read->finished.back() == Run{ 3, MAX_SAVED_FINISHED + 9 }));  // the most recent kept
-	CHECK((read->finished.front() == Run{ 3, 10 }));
+	CHECK(read->finished.size() == MAX_SAVED_SESSIONS);
+	CHECK(read->finished.front().session == 2);  // the most recent kept
+	CHECK(read->finished.front().runs.size() == MAX_SAVED_FINISHED);
+	CHECK((read->finished.front().runs.back() == Run{ 3, MAX_SAVED_FINISHED + 9 }));
+	CHECK((read->finished.front().runs.front() == Run{ 3, 10 }));
 
 	// Damaged: cut short, a byte too many, another version.
-	auto bytes = Encode(Saved{ 7, { { MIN_RECRUIT01, { { 2, 5 } }, { { 4, 1, CORVEGA } } } }, { { 3, 4 } } });
+	auto bytes = Encode(Saved{ 7, { { MIN_RECRUIT01, { { 2, 5 } }, { { 4, 1, CORVEGA } } } }, { { 7, { { 3, 4 } } } } });
 	CHECK(Decode(bytes).has_value());
 	CHECK(!Decode(std::span{ bytes }.first(bytes.size() - 1)).has_value());
 	auto longer = bytes;
@@ -661,17 +788,11 @@ TEST("radiants: a save's record of the runs reads back only whole, and within it
 		book.Ended(MIN_RECRUIT01);
 	}
 	const auto save = book.Save(7);
-	CHECK(save.finished.size() == MAX_SAVED_FINISHED);
-	CHECK((save.finished.front() == Run{ 3, 4 }));
+	CHECK(save.finished.size() == 1);
+	CHECK(save.finished.front().runs.size() == MAX_SAVED_FINISHED);
+	CHECK((save.finished.front().runs.front() == Run{ 3, 4 }));
 	CHECK(book.Finished() == MAX_SAVED_FINISHED + 4);
 	CHECK((book.OnStart(MIN_RECRUIT01, Run{ 3, 0 }, false) == Answer::kIgnore));
-
-	// Merged with a later one of the same world: its runs added once, the bound kept.
-	Saved into{ 7, { { MIN_RECRUIT01, { { 2, 5 } }, {} } }, { { 3, 1 } } };
-	Merge(into, Saved{ 7, { { MIN_RECRUIT01, { { 2, 6 } }, {} }, { BOSR01, { { 2, 7 } }, {} } }, { { 3, 1 }, { 3, 2 } } });
-	CHECK(into.shared.size() == 2);
-	CHECK((into.shared.front().runs == std::vector<Run>{ { 2, 5 } }));
-	CHECK((into.finished == std::vector<Run>{ { 3, 1 }, { 3, 2 } }));
 }
 
 TEST("radiants: a run's targets are its places, or with none its references, but never one made at runtime or empty")

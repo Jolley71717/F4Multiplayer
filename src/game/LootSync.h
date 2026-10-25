@@ -93,7 +93,6 @@ namespace LootSync
 			std::uint32_t emptiedApplied = 0;  // other players' emptied holders emptied here
 			std::uint32_t emptiedStacks = 0;   // stacks those took out of our world
 			std::uint32_t emptiedKept = 0;     // items those left: the session put them in and nobody took them out since
-			std::uint32_t storageKept = 0;     // items other players took from their copy of a holder that is storage here, left in ours: not put by the session
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -494,35 +493,8 @@ namespace LootSync
 				++counts.keptApplied[static_cast<std::size_t>(scope)];
 				return Applied::kDone;
 			}
-			if (direction == LootScope::Direction::kTake && a_world.Holder(a_change.container).storage) {
-				return TakeFromStorage(a_change, a_world);
-			}
 			Track(a_change, CountOf(a_change.container, a_change.item, a_world));
 			a_world.Apply(a_change);
-			return Applied::kDone;
-		}
-
-		// A friend's take from a container this game keeps a stash in (storage here, LootScope::IsStorage): only what the
-		// session put there and nobody took out since is theirs to take. The rest of what their copy held was their roll of
-		// loot (or their own stash), not ours: what ours holds of it is this player's.
-		Applied TakeFromStorage(const Protocol::ContainerChange& a_change, World& a_world)
-		{
-			const std::int64_t wanted = -std::int64_t{ a_change.count };
-			const auto         holder = sessionPut.find(a_change.container);
-			if (holder == sessionPut.end() || !holder->second.contains(a_change.item)) {
-				counts.storageKept += static_cast<std::uint32_t>(wanted);
-				return Applied::kDone;
-			}
-			const auto it = holder->second.find(a_change.item);
-			const auto taken = (std::min)(wanted, std::int64_t{ it->second });
-			counts.storageKept += static_cast<std::uint32_t>(wanted - taken);
-			if ((it->second -= taken) <= 0) {
-				holder->second.erase(it);
-				if (holder->second.empty()) {
-					sessionPut.erase(holder);
-				}
-			}
-			a_world.Apply({ a_change.container, a_change.item, -static_cast<std::int32_t>(taken) });
 			return Applied::kDone;
 		}
 

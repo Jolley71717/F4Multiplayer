@@ -529,14 +529,15 @@ whose cell they own (a home bought), a settlement's workbench or a piece built t
 of a settlement whose workbench they own (`LootScope::IsStorage`). Not a chest that only never respawns (a dungeon's
 one-off loot) nor one in a settlement nobody owns yet (the Sanctuary houses at the start): those are rolls of loot. Each game
 judges its own copy: none is sent for storage, and one that comes for it (from a game where it isn't storage yet, or
-from an older build) is not applied, so a friend's stash there stays. Nor is a friend's take there more than the session put
-in and nobody took out since: the rest of what their copy held was their roll (or their own stash), and what this
-game's copy holds of it is this player's (`LootSync::TakeFromStorage`, counted as `storageKept=`). What the session put into the holder (a friend's
+from an older build) is not applied, so a friend's stash there stays. What the session put into the holder (a friend's
 put at the same moment, which the server may order either side of the marker) stays too, as many of each as the
 session put less what was taken of them since; a take is counted against the holder's own roll first, so a friend
 who took their copy's roll of the same item before the put reached them doesn't use the put up. Once a holder's loot
 respawns (it holds more of something than when it was emptied) it may be told empty again. An older build sees the player's ref as no item and leaves it.
 `net status` counts `emptied=` sent/applied/stacks taken and `emptiedKept=`, the items a marker left for the session's puts.
+Storage skips only the marker: puts and takes there go between the games as anywhere else, as in 0.9.1, so a friend's take
+from their copy takes as many of the item from ours, whether ours got them from the session or not. Shared storage, the
+owner's game holding the one true copy of a stash and the others seeing that, is planned.
 
 Picked plants (flora) are harvested in every game: TESHarvestEvent's ItemHarvested, by our player, of a
 shareable ref, goes out as a pickup (kReportPickup, no new message). A receiver whose ref is flora runs

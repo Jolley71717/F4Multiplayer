@@ -537,8 +537,7 @@ TEST("loot sync: a friend's stash in the same home container stays when the othe
 	CHECK(alice.loot.Stats().sent == 1);
 	CHECK(alice.loot.Stats().emptiedSent == 0);  // hers is bare, but it keeps things: Bob's may hold his stash
 	bob.Receive(f);
-	CHECK(bob.In(HOME_CHEST, STEEL) == 2);  // hers came out of her stash, not his: his stays whole
-	CHECK(bob.loot.Stats().storageKept == 1);
+	CHECK(bob.In(HOME_CHEST, STEEL) == 1);  // the one she took
 	CHECK(bob.In(HOME_CHEST, CAPS) == 50);
 	CHECK(bob.In(HOME_CHEST, AMMO_38) == 30);
 
@@ -553,52 +552,9 @@ TEST("loot sync: a friend's stash in the same home container stays when the othe
 	bob.Receive(f);
 	CHECK(bob.In(HOME_CHEST, CAPS) == 50);
 	CHECK(bob.In(HOME_CHEST, AMMO_38) == 30);
-	CHECK(bob.In(HOME_CHEST, STEEL) == 2);
+	CHECK(bob.In(HOME_CHEST, STEEL) == 1);
 	CHECK(bob.LeftOut() == leftOut + 1);
 	CHECK(bob.loot.Stats().emptiedApplied == 0);
-}
-
-TEST("loot sync: a friend's takes from their own roll of a container that is storage here leave this player's stash; what the session put there they may take")
-{
-	constexpr std::uint32_t HOUSE_DRESSER = 0x0005E2AC;
-	Fixture f;
-	Game    alice{ 1, 0xA11CE }, bob{ 2, 0xB0B };
-	for (auto* game : { &alice, &bob }) {
-		Describe(*game);
-		game->Join(f, "P");
-	}
-	// Alice owns Sanctuary: the dresser is storage in her game, with her stash in it. Bob's is a new game's, where it is a
-	// roll of loot.
-	alice.holderFacts[HOUSE_DRESSER] = { .kind = Holder::kContainer, .storage = true };
-	alice.holders[HOUSE_DRESSER] = { { AMMO_38, 300 }, { STEEL, 4 } };
-	bob.holders[HOUSE_DRESSER] = { { AMMO_38, 10 }, { STEEL, 2 } };
-
-	// Bob takes his roll: none of it comes out of Alice's stash.
-	bob.Take(f, HOUSE_DRESSER, AMMO_38, 10);
-	bob.Take(f, HOUSE_DRESSER, STEEL, 2);
-	CHECK(bob.loot.Stats().emptiedSent == 1);  // bare in his game, a roll of loot there
-	alice.Receive(f);
-	CHECK(alice.In(HOUSE_DRESSER, AMMO_38) == 300);
-	CHECK(alice.In(HOUSE_DRESSER, STEEL) == 4);
-	CHECK(alice.loot.Stats().storageKept == 12);
-	CHECK(alice.loot.Stats().emptiedApplied == 0);  // nor does his emptying
-
-	// What he puts in goes into hers, and he may take it out again: only that, though he takes more of it.
-	bob.carried[AMMO_38] = 25;
-	bob.Put(f, HOUSE_DRESSER, AMMO_38, 25);
-	alice.Receive(f);
-	CHECK(alice.In(HOUSE_DRESSER, AMMO_38) == 325);
-	bob.holders[HOUSE_DRESSER][AMMO_38] += 5;  // and his game had five more there by then (a respawn)
-	bob.Take(f, HOUSE_DRESSER, AMMO_38, 30);
-	alice.Receive(f);
-	CHECK(alice.In(HOUSE_DRESSER, AMMO_38) == 300);
-	CHECK(alice.loot.Stats().storageKept == 17);
-
-	// Her own takes from it go to Bob's copy as ever: it is a roll there, his to lose.
-	bob.holders[HOUSE_DRESSER] = { { STEEL, 3 } };
-	alice.Take(f, HOUSE_DRESSER, STEEL, 1);
-	bob.Receive(f);
-	CHECK(bob.In(HOUSE_DRESSER, STEEL) == 2);
 }
 
 TEST("loot sync: what a friend puts in a chest just as another player takes it bare stays in both games, whichever the server orders first")
