@@ -207,6 +207,21 @@ namespace RemotePlayers
 		};
 		std::vector<Deleting> deleting;
 		std::uint32_t      heldForConversation = 0;
+		// Graveyard and deleting entries whose handle stopped resolving while their form was still there: still on their way
+		// out (OnItsWayOut), though the lists above let go of them (see SaveStrays::LostOnWayOut).
+		SaveStrays::LostOnWayOut lostOnWayOut;
+		std::uint32_t            lostKept = 0;  // entries so kept
+
+		// An entry whose handle no longer resolves: let go of (SaveGuard::Forget), and kept as lost while a reference of ours
+		// is still under its id.
+		void LetGoOfLost(std::uint32_t a_id)
+		{
+			if (const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id); ref && SaveGuard::Placed(ref) && !lostOnWayOut.Has(a_id, ref)) {
+				lostOnWayOut.Add(a_id, ref);
+				++lostKept;
+			}
+			SaveGuard::Forget(a_id);
+		}
 
 		// The stand-in is being taken out of the world (a_ref; null when it is gone already): no longer one of our
 		// puppets, and a conversation it leaves open as its speaker is ours to end (Dialogue::Removed).
@@ -2167,7 +2182,7 @@ namespace RemotePlayers
 		std::erase_if(deleting, [](const Deleting& a_deleting) {
 			const auto ref = a_deleting.ref.get();
 			if (!ref) {
-				SaveGuard::Forget(a_deleting.id);
+				LetGoOfLost(a_deleting.id);
 				return true;
 			}
 			SaveGuard::Exclude(ref.get());
@@ -2186,7 +2201,7 @@ namespace RemotePlayers
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto ref = a_grave.actor.get();
 			if (!ref) {
-				SaveGuard::Forget(a_grave.id);
+				LetGoOfLost(a_grave.id);
 				Release(a_grave, nullptr);
 				return true;
 			}
@@ -2217,8 +2232,10 @@ namespace RemotePlayers
 		// By id too: a reference marked for deletion may no longer resolve through its handle while the engine still holds it.
 		const auto id = a_ref->GetFormID();
 		const auto is = [&](const RE::ObjectRefHandle& a_handle, std::uint32_t a_id) { return a_id == id || a_handle.get().get() == a_ref; };
+		// And one the lists let go of as its handle failed, its form still there (LetGoOfLost).
 		return std::ranges::any_of(graveyard, [&](const Grave& a_grave) { return is(a_grave.actor, a_grave.id); }) ||
-		       std::ranges::any_of(deleting, [&](const Deleting& a_deleting) { return is(a_deleting.ref, a_deleting.id); });
+		       std::ranges::any_of(deleting, [&](const Deleting& a_deleting) { return is(a_deleting.ref, a_deleting.id); }) ||
+		       lostOnWayOut.Has(id, a_ref);
 	}
 
 	void Discard(RE::ObjectRefHandle a_ref, Clock::time_point a_placedAt)
@@ -2695,6 +2712,7 @@ namespace RemotePlayers
 		}
 		graveyard.clear();
 		deleting.clear();
+		lostOnWayOut.Clear();
 		pendingSolid.clear();
 		// Who was being sent out of which copy, the copies just got out of and the copies waited on name the old world's
 		// forms (or the loaded game's, under the same ids): a copy kept through the load went with the old world.
@@ -2860,10 +2878,11 @@ namespace RemotePlayers
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
 		// each frame: any change the engine makes to it makes a new one, and the engine unloading it would write that
 		// out and crash on the cell it no longer has.
+		lostOnWayOut.Keep([](std::uint32_t a_id) { return static_cast<const void*>(RE::TESForm::GetFormByID(a_id)); });
 		std::erase_if(graveyard, [&](Grave& a_grave) {
 			const auto actor = a_grave.actor.get();
 			if (!actor) {
-				SaveGuard::Forget(a_grave.id);
+				LetGoOfLost(a_grave.id);
 				Release(a_grave, nullptr);
 				return true;
 			}
@@ -2894,7 +2913,7 @@ namespace RemotePlayers
 		std::erase_if(deleting, [](const Deleting& a_deleting) {
 			const auto ref = a_deleting.ref.get();
 			if (!ref) {
-				SaveGuard::Forget(a_deleting.id);
+				LetGoOfLost(a_deleting.id);
 				return true;
 			}
 			if (!ref->GetParentCell()) {
@@ -3387,6 +3406,9 @@ namespace RemotePlayers
 		}
 		if (const auto puppets = Puppets::Describe(); !puppets.empty()) {
 			out += " " + puppets;
+		}
+		if (lostKept) {
+			out += std::format(" lostOnWayOut={}/{}", lostOnWayOut.Size(), lostKept);
 		}
 		if (heldForConversation) {
 			out += std::format(" heldForTalk={}", heldForConversation);

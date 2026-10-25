@@ -287,7 +287,7 @@ TEST("save strays: a reference under an id from before a load is our old copy on
 		return StillOurs(remains);
 	};
 	CHECK(!with([](auto& r) { r.same = false; }));      // a form the loaded game made since under the id (a raider's frame, disabled while worn)
-	CHECK(!with([](auto& r) { r.frame = false; }));     // a stand-in, a light, an item copy: left as the game has it
+	CHECK(with([](auto& r) { r.frame = false; }));      // a light or another copy of ours: the same form, off, is still ours (SaveLeaksTests)
 	CHECK(!with([](auto& r) { r.off = false; }));       // enabled
 	CHECK(!with([](auto& r) { r.worn = true; }));       // the player's or a companion's suit now
 	CHECK(!with([](auto& r) { r.newOwner = true; }));   // somebody got out of it since: an owner it did not have when noted
