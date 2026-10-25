@@ -260,24 +260,24 @@ namespace
 	}
 }
 
-TEST("server destruction: a car a player shot is relayed as theirs, going off only after their shot")
+TEST("server destruction: a car a player's game blew is relayed as theirs, going off with it whoever shot it")
 {
 	Fixture    f;
 	const auto alice = JoinNear(f, 1, "Alice");
 	JoinNear(f, 2, "Bob");
 	Clear(f, { 1, 2 });
 
-	// No shot of hers: the others get the wreck, not its explosion.
+	// No shot of hers (her companion's, or a fire that spread): it goes off for the others all the same. Each game sets
+	// its own off with the stage and deals its blows on the NPCs it runs; the wreck alone was a blow dealt nowhere.
 	f.fake->Deliver(1, Destroyed({ Report(WAGON, 360.0f, false, true) }));
 	std::uint32_t from = 0;
 	auto          got = Relayed(f, 2, &from);
 	REQUIRE(got.size() == 1);
 	CHECK(from == alice);
 	CHECK(got[0].health == 360.0f);
-	CHECK(!got[0].explode);
+	CHECK(got[0].explode);
 	CHECK(Relayed(f, 1).empty());  // not back to her
 
-	// After a shot of hers, it goes off for them too.
 	f.fake->Deliver(1, Shot());
 	f.fake->Deliver(1, Destroyed({ Report(WAGON, 240.0f, true, true) }));
 	got = Relayed(f, 2);
@@ -285,7 +285,7 @@ TEST("server destruction: a car a player shot is relayed as theirs, going off on
 	CHECK(got[0].explode);
 	CHECK(got[0].destroyed);
 
-	// A stage her game didn't set anything off for asks for nothing, shot or not.
+	// A stage her game didn't set anything off for asks for nothing.
 	f.fake->Deliver(1, Destroyed({ Report(WAGON, 100.0f, true, false) }));
 	got = Relayed(f, 2);
 	REQUIRE(got.size() == 1);
@@ -309,11 +309,11 @@ TEST("server destruction: a car the shooter set burning goes off from the friend
 	REQUIRE(got.size() == 1);
 	CHECK(got[0].explode);
 
-	// An object nobody attacked lately stays as it was: Bob's explosion for it is the wreck alone.
+	// An object nobody attacked lately goes off too: a barrel the car's blast set off.
 	f.fake->Deliver(2, Destroyed({ Report(BARREL_REF, 0.0f, true, true) }));
 	got = Relayed(f, 1);
 	REQUIRE(got.size() == 1);
-	CHECK(!got[0].explode);
+	CHECK(got[0].explode);
 }
 
 TEST("server destruction: only news is relayed; a wreck is never mended, and comes once")
@@ -362,37 +362,27 @@ TEST("server destruction: a late joiner gets the wrecks alone, nobody named and 
 	CHECK((refs == std::set<std::uint32_t>{ WAGON, BARREL_REF }));
 }
 
-TEST("server destruction: a joiner's explosions stop at their budget, the wrecks don't")
+TEST("server destruction: a street of barrels going off at once goes off for everyone, beyond any explosion budget")
 {
+	// Each object's stage comes once in the session, near its reporter: that is the bound. Dropped past a budget, the
+	// barrels' blows on the others' NPCs were dealt nowhere (the reporter leaves them to each NPC's own game).
 	Fixture f;
 	JoinNear(f, 1, "Alice");
 	JoinNear(f, 2, "Bob");
-	f.fake->Deliver(1, Shot());
 	Clear(f, { 1, 2 });
 	std::vector<Protocol::Destruction> barrels;
 	for (std::uint32_t i = 0; i < 20; ++i) {
-		barrels.push_back(Report(0x00100000 + i, 0.0f, true, true));  // a street of barrels at once
+		barrels.push_back(Report(0x00100000 + i, 0.0f, true, true));
 	}
 	f.fake->Deliver(1, Destroyed(barrels));
 	const auto got = Relayed(f, 2);
 	REQUIRE(got.size() == 20);
-	CHECK(std::ranges::count_if(got, [](const auto& a_entry) { return a_entry.explode; }) == 16);
-	CHECK(f.Logged("sets off destructible objects faster than anyone throws"));
-}
-
-TEST("server destruction: an explosion report is believed after a shot, as after a throw")
-{
-	Fixture f;
-	JoinAs(f, 1, "Alice");
-	JoinAs(f, 2, "Bob");
-	f.fake->Deliver(1, StateAt(100.0f, 100.0f));
-	Clear(f, { 1, 2 });
-	const auto blast = Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, 150.0f, 100.0f, 0.0f, 0, 0x0000003C }, MT::kReportExplosion);
-	f.fake->Deliver(1, blast);
-	CHECK(Count(Received(f, 2), MT::kExplosion) == 0);
-	f.fake->Deliver(1, Shot());  // she shot a mine
-	f.fake->Deliver(1, blast);
-	CHECK(Count(Received(f, 2), MT::kExplosion) == 1);
+	CHECK(std::ranges::count_if(got, [](const auto& a_entry) { return a_entry.explode; }) == 20);
+	// They don't take from her budget for explosions reported apart either.
+	for (int i = 0; i < 16; ++i) {
+		f.fake->Deliver(1, Protocol::Encode(Protocol::Explosion{ 0, 0x0001D2EE, 1150.0f, 2000.0f, 0.0f, 0, COMMONWEALTH }, MT::kReportExplosion));
+	}
+	CHECK(Count(Received(f, 2), MT::kExplosion) == 16);
 }
 
 TEST("server destruction: only an object near its reporter, and where the session first had it")

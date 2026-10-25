@@ -70,18 +70,18 @@ namespace AttackKind
 	inline constexpr std::uint32_t PROJECTILE_MOTION_TYPES = 0x7F0000;
 
 	// Whether a stand-in's shot of a gun firing this projectile (a_flags; a_explodes: it names an explosion) is one to
-	// keep from the engine (HoldsOwnFire): only a plain shot, a bullet or a beam with no explosion, which hit our player
-	// and shows nothing in flight but what the replay draws (MuzzleFlash). Anything else is fired as before 0.9.2, so
-	// friends see it fly and go off: a missile, a mini nuke or a grenade launcher's shell (an explosion, or lobbed), a
-	// flamer's or a cryolator's stream, a harpoon or a railway spike. A gun whose projectile we can't read (a_known false)
-	// is taken for a plain one.
+	// keep from the engine (HoldsOwnFire). Every shot that would go off: a missile, a mini nuke, a grenade launcher's
+	// shell, a bullet with a blast of its own. Its explosion goes off in the shooter's game and comes here as that game's
+	// report (WeaponFire::ApplyExplosion), once: fired here as well, it went off twice, and the stand-in's own blast hurt
+	// the NPCs our game runs a second time (docs/DESIGN.md, "Who sets off an explosion"). And a plain one, a bullet or a
+	// beam, which hit our player and shows nothing in flight but what the replay draws (MuzzleFlash). What neither goes
+	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
+	// railway spike, which hurt nobody here (the stand-in's damage multiplier is zero, Puppets). A gun whose projectile
+	// we can't read (a_known false) is taken for a plain one.
 	constexpr bool HoldsShotOf(bool a_known, std::uint32_t a_flags, bool a_explodes)
 	{
-		if (!a_known) {
+		if (!a_known || a_explodes || (a_flags & PROJECTILE_EXPLOSION) != 0) {
 			return true;
-		}
-		if (a_explodes || (a_flags & PROJECTILE_EXPLOSION) != 0) {
-			return false;
 		}
 		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
 		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM;

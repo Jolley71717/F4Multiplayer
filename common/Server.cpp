@@ -59,15 +59,11 @@ namespace
 	// to everyone else's world: see docs/AUDIT-LIFETIME.md, network trust.
 	constexpr float MAX_HIT_DAMAGE = 500.0f;                 // a mini nuke is about 400
 	constexpr float MAX_HIT_DAMAGE_PER_SECOND = 1500.0f;     // per reporter, across all victims
-	// Explosions are reported only after a throw, or a shot (at a mine, a car: WeaponFire arms its watch on a hit).
-	constexpr auto  EXPLOSION_AFTER_ATTACK = std::chrono::seconds(10);
-	// A destructible object a player damaged goes off in the others' games only for this long after their last shot or
-	// throw: a car set on fire burns for some 10 s before its big explosion, longer if it was shot only lightly.
-	constexpr auto  DESTRUCTION_EXPLODES_AFTER_ATTACK = std::chrono::seconds(30);
-	// And for this long after such a report of it, from whoever reports it next: each game's copy of a burning car burns
-	// on its own, so the stage the attacker set going can be passed first in a friend's game, who never shot.
-	constexpr auto  DESTRUCTION_ARMED_FOR = std::chrono::seconds(30);
-	constexpr float EXPLOSION_RANGE = 8000.0f;               // from the reporter's last position
+	// An explosion is passed on from near where its reporter is, within their budget, and nothing else: no window after a
+	// shot or a throw. The game that runs an NPC it reaches deals its blow there, and its reporter gave that blow back on
+	// its own copy (docs/DESIGN.md, "Who sets off an explosion"): one dropped here was a blow dealt nowhere. Each game judges
+	// its reports by stricter numbers before it sends them (RemoteEdits::ReportGate), so none it sends is dropped.
+	constexpr float EXPLOSION_RANGE = Protocol::REPORTED_EXPLOSION_RANGE;  // from the reporter's last position
 	// A trap is reported by a game that has it loaded: it lies within the loaded cells around the reporter (a mine can be
 	// shot from the far side of them), never across the map.
 	constexpr float TRAP_RANGE = 16000.0f;
@@ -77,10 +73,10 @@ namespace
 	// A destructible object is reported by a game that has it loaded, as a trap is: within the loaded cells around the
 	// reporter (a car can be shot from the far side of them), never across the map.
 	constexpr float DESTRUCTION_RANGE = 16000.0f;
-	// Explosions one player may report: a few grenades at once, then four a second, however many throws they
-	// report (each throw opens a window; a burst of throws would otherwise buy a burst of explosions).
-	constexpr double EXPLOSION_BURST = 16.0;
-	constexpr double EXPLOSIONS_PER_SECOND = 4.0;
+	// Explosions one player may report: a few grenades at once, then four a second. All joiners' together have room for
+	// every seat's at once (joinersExplosions): what the others spend can't be told from the reporter's game (ReportGate).
+	constexpr double EXPLOSION_BURST = Protocol::REPORTED_EXPLOSION_BURST;
+	constexpr double EXPLOSIONS_PER_SECOND = Protocol::REPORTED_EXPLOSIONS_PER_SECOND;
 	// Deaths one player may report: a settlement defence or a ghoul pack at once, then two a second. A death
 	// is shared and saved with the session; a client making them up could otherwise empty the map.
 	constexpr double DEATH_BURST = 60.0;
@@ -197,8 +193,6 @@ namespace
 		float             xpReports = XP_REPORT_BURST;
 		Clock::time_point xpRefilled{};
 		Clock::time_point lastFace{};
-		Clock::time_point lastThrow{};  // explosions are believed only for a while after one
-		Clock::time_point lastShot{};   // any shot, theirs or an NPC's they run: the same, for what it hit
 		Clock::time_point lastLine{};
 		bool              floodLogged = false;
 		RateBudget        rates;  // explosions and deaths
@@ -393,9 +387,6 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::TrapState> traps;  // world traps spent: gone off, disarmed or taken (TrapState)
 	// Destructible objects damaged in the session (a car, a barrel): each one's lowest health, destroyed for good. Saved.
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
-	// The objects one of those reports came for lately (DESTRUCTION_ARMED_FOR): their explosions are let through from
-	// anyone. Not saved: over in seconds.
-	std::unordered_map<std::uint32_t, Clock::time_point>    destructionsArmed;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
@@ -420,6 +411,11 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, std::uint32_t>      containersAuthored;  // player id -> changes they made this session
 	// What all joiners together may report, on top of each one's own (Budget::rates).
 	RateBudget                                            joinersBudget{ JOINERS_SHARE };
+	// The same for explosions, with room for every seat's own budget at once: a game sends no more than its ReportGate allows,
+	// well within its own, so what the others spend never drops one it sent; a client that leaves and comes back as someone
+	// new gets no more than a full session's worth.
+	TokenBucket joinersExplosions{ static_cast<double>((std::max)(options.maxPlayers, std::size_t{ 1 })) * EXPLOSION_BURST,
+		static_cast<double>((std::max)(options.maxPlayers, std::size_t{ 1 })) * EXPLOSIONS_PER_SECOND };
 	// Where an NPC fell, by the report that killed it; a joiner gets these before the dead list so its copy
 	// lies where the killer saw it. Not saved: after a restart the list alone is what there is.
 	std::unordered_map<std::uint32_t, std::array<float, 3>> deathPositions;
@@ -583,7 +579,6 @@ void Server::Run()
 		traps.clear();
 		actorOwners.clear();
 		destructions.clear();
-		destructionsArmed.clear();
 		spawns.clear();
 		npcEquipment.clear();
 		npcIdentities.clear();
@@ -1994,12 +1989,6 @@ void Server::Run()
 				return;
 			}
 		}
-		if (shot->action == Protocol::ShotAction::kShot) {
-			budgetOf(a_player).lastShot = Clock::now();  // not a reload or an aim: nothing goes off of those
-		}
-		if (shot->action == static_cast<std::uint8_t>(Protocol::ShotAction::kThrow)) {
-			budgetOf(a_player).lastThrow = Clock::now();
-		}
 		broadcast(Protocol::Encode(Protocol::Shot{ a_player.id, shot->refId, shot->action, shot->sound }, Protocol::MessageType::kShotFired), false, a_player.key);
 	};
 
@@ -2148,12 +2137,11 @@ void Server::Run()
 		if (!explosion) {
 			return;
 		}
-		// Only what follows one of the reporter's throws or shots (a mine or a car they shot goes off), and near where they
-		// are: an explosion report is otherwise a way to set off anything at anyone. A player who hasn't said where they are
-		// yet is near nothing. (Each game also judges the explosion itself: WeaponFire's ApplyExplosion.)
+		// Only near where the reporter is: an explosion report is otherwise a way to set off anything at anyone. A player who
+		// hasn't said where they are yet is near nothing. (Each game also judges the explosion itself: WeaponFire's
+		// ApplyExplosion.)
 		const auto now = Clock::now();
-		const auto& attacks = budgetOf(a_player);
-		if (now - (std::max)(attacks.lastThrow, attacks.lastShot) > EXPLOSION_AFTER_ATTACK || !a_player.hasState) {
+		if (!a_player.hasState) {
 			return;
 		}
 		const float dx = explosion->x - a_player.state.x;
@@ -2163,7 +2151,7 @@ void Server::Run()
 			return;
 		}
 		if (!a_player.local) {
-			if (!spend(a_player, &RateBudget::explosions, now)) {
+			if (!budgetOf(a_player).rates.explosions.Take(now) || !joinersExplosions.Take(now)) {
 				auto& budget = budgetOf(a_player);
 				++budget.explosionsDropped;
 				if (now - budget.explosionsLogged >= BUDGET_LOG_INTERVAL) {
@@ -2174,7 +2162,7 @@ void Server::Run()
 			}
 		}
 		explosion->playerId = a_player.id;
-		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), false, a_player.key);
+		broadcast(Protocol::Encode(*explosion, Protocol::MessageType::kExplosion), true, a_player.key);  // reliable: see EXPLOSION_RANGE
 	};
 
 	// Whether a spot is within a_range of where the player last said they were, in the same interior cell or worldspace. A
@@ -2192,10 +2180,11 @@ void Server::Run()
 	// Destructible objects the player's game damaged past a stage (a car they shot, a barrel their grenade blew). The
 	// session keeps each one's lowest health and destroyed for good; only news is relayed (one a friend's report already
 	// took further is dropped), so a wreck is never mended and the same stage never comes twice. Each new object takes a
-	// place in the table, and from the player's share. Its explosion is let through only after one of the player's shots
-	// or throws, and within their explosion budget (as kReportExplosion): else the others get the wreck alone. Such a
-	// report arms its object for a while, so that the next stage's explosion goes through from whoever passes it first
-	// (a friend's copy, burning on its own, can get there before the attacker's).
+	// place in the table, and from the player's share. Its explosion goes with it whoever reports it, with no window after
+	// a shot and no budget: each game sets its own off with the stage, and deals its blows on the NPCs it runs, so a
+	// stage passed on without it was a blow dealt nowhere (docs/DESIGN.md, "Who sets off an explosion"). A stage comes once
+	// in the session, for an object near its reporter: that is the bound (each game's copy of a burning car burns on its
+	// own, so a friend who never shot can pass a stage first).
 	const auto handleDestruction = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2203,12 +2192,6 @@ void Server::Run()
 		const auto report = Protocol::DecodeDestructions(a_data);
 		if (!report || !a_player.hasState) {
 			return;
-		}
-		const auto  now = Clock::now();
-		const auto& attacks = budgetOf(a_player);
-		const bool  attacked = now - (std::max)(attacks.lastThrow, attacks.lastShot) <= DESTRUCTION_EXPLODES_AFTER_ATTACK;
-		if (destructionsArmed.size() > 4096) {
-			std::erase_if(destructionsArmed, [&](const auto& a_entry) { return now >= a_entry.second; });
 		}
 		Protocol::Destructions relayed{ a_player.id, {} };
 		for (const auto& entry : report->entries) {
@@ -2219,11 +2202,6 @@ void Server::Run()
 			const auto& at = placed ? it->second : entry;
 			if (!nearPlayer(a_player, at.cell, at.worldspace, at.x, at.y, at.z, DESTRUCTION_RANGE)) {
 				continue;
-			}
-			const auto armed = destructionsArmed.find(entry.refId);
-			const bool mayExplode = attacked || (armed != destructionsArmed.end() && now < armed->second);
-			if (attacked) {
-				destructionsArmed[entry.refId] = now + DESTRUCTION_ARMED_FOR;
 			}
 			if (it == destructions.end()) {
 				if (destructions.size() >= maxWorldEntries || !withinShare(a_player, kDestructions)) {
@@ -2248,18 +2226,7 @@ void Server::Run()
 			}
 			touched();
 			auto out = it->second;
-			if (entry.explode && mayExplode) {
-				out.explode = a_player.local || spend(a_player, &RateBudget::explosions, now);
-				if (!out.explode) {
-					auto& budget = budgetOf(a_player);
-					++budget.explosionsDropped;
-					if (now - budget.explosionsLogged >= BUDGET_LOG_INTERVAL) {
-						budget.explosionsLogged = now;
-						log(std::format("server: player {} sets off destructible objects faster than anyone throws; the others get them wrecked, not going off, until their budget refills ({} since the last such line)",
-							a_player.id, std::exchange(budget.explosionsDropped, 0)));
-					}
-				}
-			}
+			out.explode = entry.explode;
 			relayed.entries.push_back(out);
 		}
 		if (!relayed.entries.empty()) {

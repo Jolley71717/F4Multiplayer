@@ -315,6 +315,31 @@ namespace DropBook
 			return due;
 		}
 
+		// What of a lost scrap's yield is taken back out (Drops), and what is refused. Only a thing with no instance of its
+		// own is taken (a_fungible: a component, a misc mod, ammunition, food), where any of that base in the workbench is
+		// the same thing: the amount comes out right even if our player moved some out since. An item stored whole (a
+		// weapon, an armor) can sit beside our player's own of the same base, modded or legendary, and the engine removes
+		// by base whichever it finds first: it is refused, left where it is, and our player keeps it (the friend has the
+		// drop too). Our player's own is never taken.
+		struct TakeBack
+		{
+			std::vector<Item> out;
+			std::vector<Item> refused;
+		};
+
+		template <class Fungible>
+		static TakeBack PlanTakeBack(const Yield& a_yield, Fungible&& a_fungible)
+		{
+			TakeBack plan;
+			for (const auto& item : a_yield.items) {
+				if (item.base == 0 || item.count <= 0) {
+					continue;
+				}
+				(a_fungible(item.base) ? plan.out : plan.refused).push_back(item);
+			}
+			return plan;
+		}
+
 		[[nodiscard]] std::size_t Waiting() const { return scraps.size(); }
 		void Clear()
 		{

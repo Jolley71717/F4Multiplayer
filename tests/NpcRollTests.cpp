@@ -405,22 +405,19 @@ TEST("npc roll: ours is made their legendary roll at their level")
 	CHECK(!NpcRoll::Decide(OursPlain(), Rolled(GLOWING, GLOWING, Protocol::MAX_IDENTITY_LEVEL + 1), Reachable).level);
 }
 
-TEST("npc roll: a roll arriving for a loaded actor is deferred to its next load, never put together under it; the level is given")
+TEST("npc roll: a roll is written for the actor's next load, never put together under it; the level is given")
 {
+	// A roll comes only for an actor with its 3D in (NpcSync::CheckRolls): written on the reference, and the engine puts
+	// the NPC together from it at its next load. Nothing builds it in place (no step for it is left).
 	const auto plan = NpcRoll::Decide(OursPlain(), Rolled(GLOWING, LEGENDARY, 20), Reachable);
-	const auto loaded = NpcRoll::StepsFor(plan, true);
-	CHECK(loaded.write);
-	CHECK(!loaded.build);  // never put together under a loaded actor (one maybe in a fight)
-	CHECK(loaded.level);
-	const auto out = NpcRoll::StepsFor(plan, false);
-	CHECK(out.write);
-	CHECK(out.build);
-	CHECK(out.level);
+	const auto steps = NpcRoll::StepsFor(plan);
+	CHECK(steps.write);
+	CHECK(steps.level);
+	static_assert(sizeof(NpcRoll::Steps) == 2 * sizeof(bool));  // the roll and the level, and nothing put together
 
-	// Only their level: nothing written or put together.
-	const auto level = NpcRoll::StepsFor(NpcRoll::Decide(OursPlain(), Rolled(PLAIN, PLAIN, 30), Reachable), false);
+	// Only their level: nothing written.
+	const auto level = NpcRoll::StepsFor(NpcRoll::Decide(OursPlain(), Rolled(PLAIN, PLAIN, 30), Reachable));
 	CHECK(!level.write);
-	CHECK(!level.build);
 	CHECK(level.level);
 }
 

@@ -268,22 +268,22 @@ namespace NpcRoll
 		return plan;
 	}
 
-	// What Rolls::Apply does to make ours a plan's roll, by whether the actor's 3D is in or may be loading (a_loaded: its 3D
-	// is in, or its cell is attached, where the engine loads it on its own threads). The roll is written on
-	// the reference (the engine puts the NPC together from it at the actor's next load), and the level into its NPC (a
-	// number the engine reads when asked). Our copy of the NPC is put together from the roll only with no 3D in nor coming: on a
-	// loaded actor, one that may be in a fight, that and a rebuild of its 3D risk the game, and on the rig neither changed
-	// an NPC already built. Nothing rebuilds the 3D: a roll written while it is in is put together at its next load.
+	// What Rolls::Apply does to make ours a plan's roll. The roll is written on the reference, and the engine puts the NPC
+	// together from it at the actor's next load; the level goes into its NPC (a number the engine reads when asked). Our
+	// copy of the NPC is never put together from the roll in place: a roll comes only for an actor with its 3D in
+	// (NpcSync::CheckRolls), one that may be in a fight, where that and a rebuild of its 3D risk the game, and on the rig
+	// neither changed an NPC already built. So a copy keeps our engine's own roll (its name, a legendary's, its damage
+	// resistance) until its next load (a cell left and come back to, a fast travel, a save loaded); a spawn's copy, which
+	// rarely lives that long, mostly keeps ours for good. Only the level is the owner's at once.
 	struct Steps
 	{
-		bool write = false;  // the roll on the reference
-		bool build = false;  // our copy of the NPC put together from it now
+		bool write = false;  // the roll on the reference, for the actor's next load
 		bool level = false;  // their level on it
 	};
 
-	[[nodiscard]] constexpr Steps StepsFor(const Plan& a_plan, bool a_loaded)
+	[[nodiscard]] constexpr Steps StepsFor(const Plan& a_plan)
 	{
-		return { .write = a_plan.templates, .build = a_plan.templates && !a_loaded, .level = a_plan.level.has_value() };
+		return { .write = a_plan.templates, .level = a_plan.level.has_value() };
 	}
 
 	// What our copy of a friend's spawn is placed from: the NPC their game placed it as when that is a leveled NPC here

@@ -183,6 +183,7 @@ namespace Drops
 		std::uint32_t notScanned = 0, blockLate = 0, takenBack = 0, restored = 0, restoreFailed = 0;
 		std::uint32_t scrapped = 0, scrapLost = 0;  // copies scrapped in workshop mode: granted to us / someone else had it first
 		std::uint32_t scrapTakenBack = 0, scrapShort = 0;  // lost scraps whose yield was taken out of the workbench / with none seen
+		std::uint32_t scrapRefused = 0;  // items of lost scraps left in the workbench: stored whole, not to be told from our player's own
 		std::uint32_t logged = 0;
 
 		bool Log() { return logged++ < LOGGED; }
@@ -1029,7 +1030,14 @@ namespace Drops
 						  "our player keeps it", a_yield.dropId, a_yield.bench);
 				return;
 			}
-			for (const auto& item : a_yield.items) {
+			// Only what has no instance of its own (DropBook::ScrapYields::PlanTakeBack): a weapon or an armor stored whole is
+			// refused, as the engine removes by base and could take our player's own modded or legendary one beside it.
+			const auto plan = DropBook::ScrapYields::PlanTakeBack(a_yield, [](std::uint32_t a_base) {
+				const auto form = RE::TESForm::GetFormByID(a_base);
+				const auto type = form ? form->GetFormType() : RE::ENUM_FORM_ID::kNONE;
+				return type == RE::ENUM_FORM_ID::kMISC || type == RE::ENUM_FORM_ID::kAMMO || type == RE::ENUM_FORM_ID::kALCH || type == RE::ENUM_FORM_ID::kINGR;
+			});
+			for (const auto& item : plan.out) {
 				const auto object = RE::TESForm::GetFormByID<RE::TESBoundObject>(item.base);
 				if (!object) {
 					continue;
@@ -1039,7 +1047,14 @@ namespace Drops
 				REX::INFO("Drops: {:08X} x{} taken back out of workbench {:08X}: the scrap of drop {} was someone else's", item.base, item.count, a_yield.bench,
 					a_yield.dropId);
 			}
-			++scrapTakenBack;
+			for (const auto& item : plan.refused) {
+				++scrapRefused;
+				REX::WARN("Drops: {:08X} x{} left in workbench {:08X}, though drop {} went to someone else: an item stored whole can't be told from our "
+						  "player's own of the same base, so our player keeps it", item.base, item.count, a_yield.bench, a_yield.dropId);
+			}
+			if (!plan.out.empty()) {
+				++scrapTakenBack;
+			}
 		}
 
 		// Our copies the workshop took away this frame (its destroyed event named them), and what our scraps put in their
@@ -1549,8 +1564,8 @@ namespace Drops
 	{
 		return std::format("drops: lying={} copies={} dropped={} notGiven={} reported={} refused={} swapped={} received={} placed={} placeFailed={} removed={} claimed={} taken={} "
 		                   "takeFailed={} givenBack={} takenFirst={} reclaimed={} unblocked={} takenBack={} dupRisk={} lost={} byScan={} notScanned={} blockLate={} unconfirmed={} restored={} restoreFailed={} "
-		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={}",
+		                   "scrapped={} scrapLost={} scrapWaiting={} scrapTakenBack={} scrapShort={} scrapRefused={}",
 			lying.size(), copies.size(), dropped, notGiven, reported, refused, swapped, received, placed, placeFailed, removed, claimed, taken, takeFailed, givenBack, takenFirst,
-			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort);
+			reclaimed, unblocked, takenBack, dupRisk, lost, foundByScan, notScanned, blockLate, unconfirmed.Size(), restored, restoreFailed, scrapped, scrapLost, scraps.Size(), scrapTakenBack, scrapShort, scrapRefused);
 	}
 }

@@ -733,9 +733,17 @@ namespace Protocol
 		inline constexpr std::uint8_t kScrapped = 1;
 	}
 
-	// An explosion the sender's game saw after one of its throws (a grenade, a mine, a Molotov): the
-	// others set off the same explosion at the same spot, since a thrown projectile cannot be launched
-	// for a stand-in (the engine's throw action plays the animation only).
+	// An explosion the sender's player (or an NPC its game runs) set off: a grenade, a Molotov, a missile, a shell, an
+	// explosive bullet, a mine they shot. The others set off the same explosion at the same spot, once: a stand-in fires
+	// no shot that goes off, and throws no grenade (docs/DESIGN.md, "Who sets off an explosion"). Sent reliably: the
+	// game that runs an NPC it reaches deals its blow there, so a lost report is a blow dealt nowhere.
+	//
+	// The server passes one on from near where its reporter is (REPORTED_EXPLOSION_RANGE), within the reporter's budget
+	// (a burst, then a few a second). Each game judges its own reports by stricter numbers before it sends them
+	// (RemoteEdits::ReportGate): one it sends is sure to reach the others.
+	inline constexpr float  REPORTED_EXPLOSION_RANGE = 8000.0f;
+	inline constexpr double REPORTED_EXPLOSION_BURST = 16.0;
+	inline constexpr double REPORTED_EXPLOSIONS_PER_SECOND = 4.0;
 	struct Explosion
 	{
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
@@ -793,13 +801,13 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_TRAPS_PER_PACKET = 1000;
 
-	// Whether a trap's new state replaces the one the session has: none yet, or a take after a disarm (a disarmed mine picked
-	// up: it is gone from the world now). Never the other way: a trap taken stays taken; nor a take after a spring, which
-	// stands (a sprung bear trap carried off in one game stays sprung in the others: what went off is never undone by a
-	// report the server can only hold against where its sender stands).
+	// Whether a trap's new state replaces the one the session has: none yet, or a take after a spring or a disarm (the trap is
+	// gone from the world now: a sprung bear trap carried off, a disarmed mine picked up). Never the other way: a trap taken
+	// stays taken. A take is believed only from a player standing at the trap (the server's TRAP_REACH), so a report can't
+	// take away every spent trap around its sender.
 	[[nodiscard]] constexpr bool TrapSupersedes(std::uint8_t a_new, std::optional<std::uint8_t> a_old)
 	{
-		return !a_old || (a_new == TrapState::kTaken && *a_old == TrapState::kDisarmed);
+		return !a_old || (a_new == TrapState::kTaken && *a_old != TrapState::kTaken);
 	}
 
 	// A power wire's shape. The game makes a wire (a BGSBendableSpline reference) between two things the

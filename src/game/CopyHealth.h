@@ -115,10 +115,10 @@ namespace CopyHealth
 	// takeover), while a shock baton's took the NPC over: only the game that ran an NPC could hurt it, and the one who
 	// last hit it in melee became that game. The kExplosion bit (CommonLib's layout, from another game) and a hit with no
 	// weapon read are no proof of a throw. An explosion's blow is the owner's exactly when the explosion that dealt it goes
-	// off there (blastThere): one our game reported (WeaponFire's watch: a throw's, or one at a destructible object we
-	// hit), a destructible object's own (its wreck is shared), or a world trap's, and the owner's player near enough for
-	// it to be set off. Any other, a missile's with no watch on, one far from our player or too big to be set off, or a
-	// gun's hit read as an explosion's with none there, is dealt nowhere else and is ours to report. Any other blow with
+	// off there (blastThere): one our game reported (our player's or an NPC's we run, the server sure to pass it on:
+	// RemoteEdits::ReportGate; the NPC's game sets it off beside its NPC wherever its player is), a destructible object's
+	// own or a world trap's (every game sets its own off). Any other, one kept ours (too far, too big, past the budget),
+	// or a gun's hit read as an explosion's with none there, is dealt nowhere else and is ours to report. Any other blow with
 	// a weapon in hand that is no throwable is ours whatever else the event reads, and the burn a Molotov's fire leaves
 	// is the owner's for WeaponFire::THREW_LATELY after the watch.
 	constexpr bool OwnersToDeal(const Blow& a_blow)

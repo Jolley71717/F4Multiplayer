@@ -228,10 +228,7 @@ namespace Rolls
 		std::uint32_t commands = 0;
 		const auto    npc = RollCopyOf(a_actor);
 		const auto    leveled = LeveledOf(a_actor);
-		// Loaded, or maybe loading: its 3D is in, or its cell is attached (the engine loads an actor's 3D on its own
-		// threads, from the NPC this would put together).
-		const auto cell = a_actor->GetParentCell();
-		const auto steps = NpcRoll::StepsFor(a_plan, a_actor->Get3D() != nullptr || (cell && cell->IsAttached()));
+		const auto    steps = NpcRoll::StepsFor(a_plan);
 		if (steps.write && npc && leveled) {
 			std::array<RE::TESActorBase*, Protocol::IDENTITY_TEMPLATES> forms{};
 			for (std::size_t i = 0; i < forms.size(); ++i) {
@@ -250,16 +247,13 @@ namespace Rolls
 			// from it when the actor loads: on the rig, ghouls written so were the owner's roll (name, damage resistance)
 			// once their cell loaded again. The NPC already made is not put together again in place: neither
 			// CopyFromTemplateForms, nor a disable and enable, nor Reset3D changed its name, health or damage resistance,
-			// and either on an actor that is loaded (it may be in a fight) risks the game. So with its 3D in, only the
-			// roll is written, for its next load (a cell left and come back to, a fast travel, a save loaded); our copy
-			// of the NPC is put together from it at that load. Until then only the level below is
-			// the owner's.
+			// and either on an actor that is loaded (it may be in a fight) risks the game; a roll comes only for one with
+			// its 3D in (NpcSync::CheckRolls). So only the roll is written, for its next load (a cell left and come back
+			// to, a fast travel, a save loaded); our copy of the NPC is put together from it at that load. Until then only
+			// the level below is the owner's.
 			std::ranges::copy(forms, std::begin(leveled->templates));
-			if (steps.build) {
-				npc->CopyFromTemplateForms(leveled->templates);
-			}
-			REX::INFO("Rolls: {:08X} ({}) has player {}'s roll of {:08X}{} written: theirs from its next load on{} (its NPC now {}, {} health)", a_actor->GetFormID(), before,
-				a_theirs.playerId, a_theirs.originalBase, (a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "", steps.build ? ", put together now" : "",
+			REX::INFO("Rolls: {:08X} ({}) has player {}'s roll of {:08X}{} written: theirs from its next load on (its NPC now {}, {} health)", a_actor->GetFormID(), before,
+				a_theirs.playerId, a_theirs.originalBase, (a_theirs.flags & Protocol::NpcIdentity::kLegendary) ? " (legendary)" : "",
 				RE::TESFullName::GetFullName(*npc), BaseHealthOf(*npc));
 		}
 		if (steps.level && npc) {

@@ -328,7 +328,9 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   its own base when that is a plugin's. Without one it isn't shared. A copy is placed from the NPC the owner's game
   placed it as when that is a leveled NPC in ours too, so our engine rolls it and the owner's roll is then made ours
   (Shared NPC AI: Roll); it waits up to 2 s for the roll (`NpcRoll::IDENTITY_WAIT`), else it is placed from the base,
-  and a copy placed before its roll came stays as it was placed (never swapped in front of a player). The copy is put in the owner's copy's
+  and a copy placed before its roll came stays as it was placed (never swapped in front of a player). A spawn's copy keeps
+  its own roll (our engine's name, legendary and damage resistance) until its next load, as any loaded copy does (Shared
+  NPC AI: Roll): the roll is written for that load, never put together under it, and a spawn rarely lives that long. The copy is put in the owner's copy's
   factions and taken out of the rest (a random encounter's scavengers and a settlement's settlers get theirs from
   their quest at runtime: a copy of one template's NPC had that NPC's own, a friendly settler in one game, a hostile
   scavenger in the other); never our player's or our companion's faction.
@@ -416,6 +418,47 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
   stays at fade 0 otherwise) and ended at the projectile's flash time. MuzzleFlashBook keeps one flash per
   shooter (an automatic gun's next shot keeps it up), 50 ms between two, and 12 at once. `muzzle mode always`
   shows it on every shot, to try it; the status line's `flash=` counts both.
+
+### Who sets off an explosion (WeaponFire.cpp, RemoteEdits.h, CopyWatch.cpp)
+
+One rule for every explosion: **it goes off once in every game, and each game deals its blows on its own player and
+the NPCs it runs.** A blow on a copy (an NPC another game runs) is given back, since the NPC's own game deals it. A
+stand-in never fires a shot that goes off and never throws a grenade: what its player set off comes as their game's
+report. An explosion a game can't be sure the others get is not shared at all. That game deals every blow itself, a
+copy's too, reported as its hit's damage, like a gunshot's.
+
+| Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
+|---|---|---|---|
+| Thrown grenade or Molotov (our player's, or an NPC our game runs) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after the watch, if every blast of that watch was reported |
+| Missile, shell, explosive bullet | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's shot that would go off is held (`AttackKind::HoldsShotOf`, `ShotExplodes`; `firesHeld=`) | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC we run, seen by the 8 s watch every such shot arms), when `ReportGate` passes it | as a throw's |
+| Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`) | never | the NPC's own game's (`Fate::kEachOwn`) |
+| Car or barrel (a destructible object's own stage) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |
+| An NPC's own, one another game runs | that NPC's game; once in each other game, from that game's report. Our copy's throw and explosive shot are held | by the NPC's own game only | the NPC's own game's (our copy's hits are nobody's) |
+| A stand-in's | never here: its shot that would go off is held. One that goes off anyway is not reported (`standInExplosions=`) | never | nobody's: given back |
+
+- Sure to arrive: our game sends a report only when `RemoteEdits::ReportGate` says the server passes it on: within 7000
+  units of our player (the server's 8000 less a state's age), a radius in (0, 1024], and a budget of 8 at once, then 3
+  a second (the server's 16 and 4, less two seconds of a burst bunching up on the way). Reports go reliably both ways.
+  The server keeps no window after a shot or a throw. All joiners' explosions together have room for every seat's own
+  budget at once (what another game spends can't be seen from ours), so only a client that rejoins as someone new runs
+  out.
+- Set off where its NPCs are: a reported explosion goes off within 6000 units of our player, or beside an NPC our game
+  runs (our companion among them) within its radius and 1024 units, wherever our player is (`explosionsForOurs=`). Our
+  copies of NPCs other games run are made ghosts while it goes off (BlastShield).
+- The objects' own: `explode` goes with a destructible object's stage whoever reports it, with no window and no budget.
+  A stage comes once in the session, near its reporter, and that is the bound. A trap's spring is relayed from 16000 units.
+- Which explosion dealt a blow: the one its hit names (`HitData::sourceRef`, `blastsNamed=`), else the nearest that
+  reached it (`blastsNearest=`). Two that reached it and fared differently, with neither named, can't be told apart:
+  the blow is taken as ours (`blastsAmbiguous=`), dealt here and reported.
+- Known limits: an NPC whose game is in a loading screen when the report comes takes no blow from it. A copy more than
+  1024 units from where its NPC stands in its own game can be hit by a blast the NPC's game sets off out of its reach.
+  An NPC our game made at runtime and doesn't share hits copies for nobody (as before).
+- `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`, the blast
+  counters above; the log names each explosion's owner and what became of it, and each hit on a copy names its source.
+
+To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, and a companion
+blowing a car up. Each goes off once in each game (`explosions=` up by one on each side, `standInExplosions=0`), and
+each NPC it hits loses its health once, the same in both games.
 
 ## Form IDs across load orders (common/FormIds.h, common/FormTranslate.h)
 
@@ -579,7 +622,7 @@ scripts on 1.11.240 (tools: the pex dump of `Fallout4 - Misc.ba2` and `DLCCoast 
 | trap (TrapBase) | Idle | | warn, TrapFired | Disarm |
 | bear trap | Open | | Busy, Closed | Disarming |
 
-The server keeps the first report of each trap (a take still replaces a disarm, never a spring:
+The server keeps the first report of each trap (a take still replaces a spring or a disarm:
 `Protocol::TrapSupersedes`) from a player within 16000 units of it for a spring, 1024 for a disarm or a take (done
 standing at it), in the same space and where the session first had it, passes it on at once (kTraps, live),
 and sends the list (kTraps, not live) to whoever joins or loads, before the world state; it is in the
@@ -891,12 +934,11 @@ before the first whose percent is below the object's.
   taken only from a player whose position is known, in the same space and within 16000 units of where the session
   first had the object (of the report, for one it hasn't placed yet): else a report wrecks, and sets off, any car at
   anyone. `explode`
-  is let through only after one of the reporter's shots or throws in the last 30 s, or for 30 s after such a report of
-  the same object from anyone, within the reporter's explosion budget (the same as `kExplosion`'s: 16 at once, 4 a
-  second); past it, the others get the wreck alone. The second window is because each game's copy of a burning car
-  burns down on its own: on the rig the friend's copy, set burning by the replayed first blast, passed the big stage a
-  moment before the shooter's, and with the first window alone the shooter's game got the hulk with no blast. The host's
-  own game has no budget. Each player has a share of the table (`maxWorldEntriesPerPlayer`), as for doors.
+  goes with the stage whoever reports it, with no window after a shot and no budget (Weapon fire: Who sets off an
+  explosion): each game sets its own off with the stage and deals its blows on the NPCs it runs, so a stage passed on
+  without it was a blow dealt nowhere. Each game's copy of a burning car burns down on its own: on the rig the friend's
+  copy, set burning by the replayed first blast, passed the big stage a moment before the shooter's, and its report is
+  the one that goes out. Each player has a share of the table (`maxWorldEntriesPerPlayer`), as for doors.
 - A friend's (`kDestructions`): our copy takes the lower health (ExtraDataList::SetHealth), destroyed (the form flag, as
   TESForm::SetDestroyed sets it), and both are marked for the save. What the stages it passes now do in the engine is
   done to it: the last replacement model passed goes in (ExtraModelSwap, the old model's saved physics dropped, and the
@@ -912,7 +954,7 @@ before the first whose percent is below the object's.
   stage with that explosion (or the one its explosion places), and watches that object so its wreck, which sets the
   blast off in the others' games, is reported. Before that the shooter's game would have sent the car's explosion apart
   from its state, and the friend's whole car would have caught it and gone off on its own as well. Its blows on copies
-  are the owner's to deal whenever it blows, after any watch too (`CopyHealth::OwnersToDeal`). Our hit on a destructible
+  are each NPC's own game's to deal whenever it blows (`Fate::kEachOwn`, `CopyHealth::OwnersToDeal`). Our hit on a destructible
   object arms a watch of its own (so a mine we shoot is shared), and so does a report of ours with `explode`, for 8 s
   and only within the farthest its stages' explosions reach (`RemoteEdits::AreaWatches`): before, it was a throw's,
   and every explosion within 6000 units of our player was reported for the friends to set off.
@@ -1290,9 +1332,9 @@ server, in `tests/ServerWorldTests.cpp` under "host authority").
 |---|---|---|---|---|
 | `kActorDied` | the player running the actor (anyone for an actor nobody runs) | owner only; a known death is dropped; a joiner's budget of 60, 2 a second, and all joiners' of 120, 4 a second (the host's own game has none; refused or repeated deaths cost nothing; a joiner who leaves keeps theirs for when they come back as themselves, and one who comes back as someone new still shares the joiners') | own story: a unique or essential character dies only if the reporter was, or now is, within 8192 units in the same cell or worldspace (`DeathReports`, `KillsOurCopy`). A report from someone who seems nowhere near waits 2 s for their position, which can come after the death, then is refused for good. A death the session replays (on joining, after loading a save) names nobody, so our story's characters stay as our save has them. The body is moved only within 4096 | yes, so a death the server dropped is never replayed |
 | `kReportSpawn` | any game, of an NPC it made at runtime | a free spawn id only (one taken is answered with its owner); 32 a player at once, 128 in the session, a budget of 32 and 2 a second; the base must be a plugin's form and the place in the world. Nobody but its owner may claim, release, move or fire it, or hit a stand-in with it; its death is believed from the owner and a player fighting it | a copy only near our player, its owner's stand-in beside it, of a non-unique NPC that is no stand-in's base; 2 a frame, 128 at once | no: it is in no save but its owner's |
-| `kExplosion` | anyone who threw or shot in the last 10 s (a shot sets off a mine, a car: WeaponFire's watch is armed by our hit on a destructible object) | the thrower's position must be known and the explosion within 8000 units in 3D; a joiner's budget of 16, 4 a second, and all joiners' of 32, 8 a second (kept across rejoining, as for deaths) | within 6000 units of us in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
-| `kDestructions` | any game, of a plugin's destructible object (a car, a barrel) | the reporter's position must be known and the object within 16000 units of it, in the same space (where the session first had it, once it has: a report names where its object stands, a relay doesn't); the event budget; a plugin's reference, a health in [0, 1000000]; only news (lower health, or destroyed) is kept and relayed, and kept for good; each player's share of the table; `explode` only after the reporter's shot or throw in the last 30 s, within their explosion budget | a destructible object of ours, not an actor; only a lower health than ours is taken (a wreck is never mended); an explosion only for a stage our copy passes now, through `ApplyExplosion`'s checks; a catch-up sets nothing off | yes (layout 34) |
-| `kReportTrap` | a game that has the trap loaded | its position must be known and the trap (where the session has it, once it has it) within 16000 units of it, in the same space, for a spring, 1024 for a disarm or a take; the event budget; a plugin's reference, a state of 1 to 3 and a place in the world; first kept, then only a take after a disarm; past the session's table size or the player's share, dropped | done only to a trap of ours that is armed and settled; set off as it went only within 3 s and 512 units of where theirs was, else spent quietly | yes |
+| `kExplosion` | any game, of what its player or an NPC it runs set off, only what the server is sure to pass on (`RemoteEdits::ReportGate`) | the reporter's position must be known and the explosion within 8000 units in 3D; a joiner's own budget of 16, 4 a second (kept across rejoining, as for deaths; no window after a shot or a throw), and all joiners' together have room for every seat's at once; relayed reliably | within 6000 units of us, or beside an NPC our game runs, in our cell or worldspace, and the explosion's radius in (0, 1024] (`RemoteEdits::SetOff`). It goes off beside us and our companions with friendly fire off too: it is what kills the enemies there in our game (see below) | no |
+| `kDestructions` | any game, of a plugin's destructible object (a car, a barrel) | the reporter's position must be known and the object within 16000 units of it, in the same space (where the session first had it, once it has: a report names where its object stands, a relay doesn't); the event budget; a plugin's reference, a health in [0, 1000000]; only news (lower health, or destroyed) is kept and relayed, and kept for good; each player's share of the table; `explode` with any news, from whoever reports it (no window, no budget: a stage comes once) | a destructible object of ours, not an actor; only a lower health than ours is taken (a wreck is never mended); an explosion only for a stage our copy passes now, through `ApplyExplosion`'s checks; a catch-up sets nothing off | yes (layout 34) |
+| `kReportTrap` | a game that has the trap loaded | its position must be known and the trap (where the session has it, once it has it) within 16000 units of it, in the same space, for a spring, 1024 for a disarm or a take; the event budget; a plugin's reference, a state of 1 to 3 and a place in the world; first kept, then only a take (after a spring or a disarm); past the session's table size or the player's share, dropped | done only to a trap of ours that is armed and settled; set off as it went only within 3 s and 512 units of where theirs was, else spent quietly | yes |
 | `kActorStates` (NPCs) | the player running the actor | owner only | an NPC a friend's game runs is moved to where their game has it (from a cell we have not loaded, or after it went far) only while our copy of the friend is within 1500 units of that spot: a companion walks with them. This goes for every NPC their game runs, so a settler their game moved far from them runs its own AI here until they come; in the own story, our story's characters are not switched on by a friend's game | no |
 | `kNpcIdentity` | the player running the NPC | owner only; the first runner's report stands (a later runner's is ignored) until the NPC dies, nobody runs it or that player leaves; an actor id, a level of at most 1000, slots only with the NPC it was placed as, at most 32 factions, none 0 or twice | only for our copy of an NPC another game runs, while we mirror it: a roll only when ours is leveled, was placed as the same NPC and every one of the roll's NPCs is one our lists can give; factions only on our copy of a friend's spawn, never PlayerFaction or our companion's; 3 tries | no (a plugin NPC made their roll goes into our save as it) |
 | `kContainerChanged` | anyone | at most 30000 changes per player in the session | a settlement's workbench and our own companion are left alone (LootScope: per player, counted in `perPlayer=`), and so are vendors' chests (`vendor=`); other containers follow friends | yes |
@@ -1309,8 +1351,8 @@ game it is the only thing that does the damage of their throw: the stand-in's ow
 the server refuses their reports of deaths of NPCs our game runs, and no health comes for one dead in
 theirs. Leaving it out near us would leave the enemies a friend's grenade
 killed in their game alive and fighting in ours. So with friendly fire off a friend's grenade at your
-feet still hurts you, as it always has; a forged one is bounded by the server (after a throw, within
-8000 units of the thrower, 16 at once and 4 a second, and 32 at once for all joiners together). A copy of the explosion that hurts nobody but
+feet still hurts you, as it always has; a forged one is bounded by the server (within
+8000 units of the reporter, 16 at once and 4 a second for each joiner). A copy of the explosion that hurts nobody but
 the enemies is not done.
 
 To check live before this ships (the tests cannot reach the game):

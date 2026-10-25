@@ -1278,11 +1278,12 @@ namespace Session
 			}
 		}
 
-		// Explosions after our throws: the others set them off at the same spot (unreliable, like shots).
+		// The explosions our player and our NPCs set off: the others set them off at the same spot. Reliable, unlike shots:
+		// the game that runs an NPC one reaches deals its blow there, and a lost report was a blow dealt nowhere.
 		WeaponFire::Frame();
 		for (const auto& explosion : WeaponFire::TakeExplosions()) {
 			if (welcomed) {
-				SendOut(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), false);
+				SendOut(Protocol::Encode(explosion, Protocol::MessageType::kReportExplosion), true);
 			}
 		}
 

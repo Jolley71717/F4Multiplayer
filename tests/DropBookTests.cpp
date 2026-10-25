@@ -407,3 +407,32 @@ TEST("drop book: what a copy's scrap put in its workbench is known, apart from o
 	yields.Clear();
 	CHECK(yields.Waiting() == 0u);
 }
+
+TEST("drop book: a lost scrap takes back only what has no instance of its own; an item stored whole is refused, never our player's own taken")
+{
+	using Yields = DropBook::ScrapYields;
+	using Item = Yields::Item;
+	constexpr std::uint32_t BENCH = 0x0001F0A0;
+	constexpr std::uint32_t STEEL = 0x000731A4;
+	constexpr std::uint32_t SCREW = 0x00069086;
+	constexpr std::uint32_t PISTOL = 0x0004822;  // a 10mm pistol, stored whole: our player may have their own legendary one there
+	constexpr std::uint32_t VEST = 0x0001EED7;
+	const auto fungible = [](std::uint32_t a_base) { return a_base == STEEL || a_base == SCREW; };
+
+	// Scrapped: components alone, all taken back.
+	const auto scrapped = Yields::PlanTakeBack({ 7, BENCH, { { STEEL, 5 }, { SCREW, 1 } } }, fungible);
+	CHECK((scrapped.out == std::vector<Item>{ { STEEL, 5 }, { SCREW, 1 } }));
+	CHECK(scrapped.refused.empty());
+	// Stored whole: refused, left in the bench, whatever else the bench holds of that base.
+	const auto stored = Yields::PlanTakeBack({ 8, BENCH, { { PISTOL, 1 } } }, fungible);
+	CHECK(stored.out.empty());
+	CHECK((stored.refused == std::vector<Item>{ { PISTOL, 1 } }));
+	// Both in one moment: the components out, the vest left.
+	const auto both = Yields::PlanTakeBack({ 9, BENCH, { { VEST, 1 }, { STEEL, 2 } } }, fungible);
+	CHECK((both.out == std::vector<Item>{ { STEEL, 2 } }));
+	CHECK((both.refused == std::vector<Item>{ { VEST, 1 } }));
+	// Nothing, or nothing of anything: no take.
+	const auto none = Yields::PlanTakeBack({ 10, BENCH, { { 0, 3 }, { STEEL, 0 } } }, fungible);
+	CHECK(none.out.empty());
+	CHECK(none.refused.empty());
+}

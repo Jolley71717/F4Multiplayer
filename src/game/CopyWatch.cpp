@@ -29,6 +29,7 @@ namespace CopyWatch
 			CopyHealth::Blow  blow;                 // what it was, for CopyHealth::OwnersToDeal (its explosion judged in Frame)
 			bool              inHand = false;        // a weapon in hand that is no throwable (CopyHealth::Blow::inHand)
 			std::uint32_t     flags = 0;             // HitData's flags as read, for the log: what the rig checks the throw rules against
+			std::uint32_t     sourceRef = 0;         // HitData's source reference: an explosion's names it (WeaponFire::BlastAt)
 			Clock::time_point at{};
 		};
 
@@ -237,13 +238,15 @@ namespace CopyWatch
 		};
 	}
 
-	bool OwnersToDeal(CopyHealth::Blow a_blow, std::uint32_t a_target, std::uint32_t a_owner)
+	// An explosion's blow on a copy is the NPC's own game's to deal when that explosion goes off there too (RemoteEdits::
+	// DealtThere: one we reported, a trap's, a destructible object's own), told by the explosion the hit names (a_sourceRef)
+	// or else the nearest that reached it (WeaponFire::BlastAt).
+	bool OwnersToDeal(CopyHealth::Blow a_blow, std::uint32_t a_target, std::uint32_t a_owner, std::uint32_t a_sourceRef)
 	{
 		if (a_blow.explosion && a_owner != 0) {
 			const auto target = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_target);
-			const auto seen = WeaponFire::BlastAt(target);
-			const auto state = RemotePlayers::LastStateOf(a_owner);
-			a_blow.blastThere = seen && RemoteEdits::DealtThere(*seen, state ? std::optional{ RemoteEdits::SpotOf(*state) } : std::nullopt);
+			const auto seen = WeaponFire::BlastAt(target, a_sourceRef);
+			a_blow.blastThere = seen && RemoteEdits::DealtThere(*seen);
 			++(a_blow.blastThere ? blastsThere : blastsOurs);
 		}
 		return CopyHealth::OwnersToDeal(a_blow);
@@ -273,6 +276,10 @@ namespace CopyWatch
 			.blow = blow,
 			.inHand = blow.inHand,
 			.flags = a_event.hitData.flags.underlying(),
+			.sourceRef = [&] {
+				const auto ref = a_event.hitData.sourceRef.get();
+				return ref ? ref->GetFormID() : 0u;
+			}(),
 			.at = Clock::now(),
 		};
 		std::scoped_lock l{ inboxLock };
@@ -333,7 +340,7 @@ namespace CopyWatch
 			                             CopyHealth::Hitter::kNotOurs;
 			// A throw's blow on a copy: the NPC's own game deals it (the explosion goes off there too), so what it took
 			// here is given back, and that game's health follows (HealthShare).
-			const bool left = owner != 0 && hitter != CopyHealth::Hitter::kNotOurs && OwnersToDeal(hit.blow, hit.target, owner);
+			const bool left = owner != 0 && hitter != CopyHealth::Hitter::kNotOurs && OwnersToDeal(hit.blow, hit.target, owner, hit.sourceRef);
 			if (left) {
 				hitter = CopyHealth::Hitter::kNotOurs;
 				++leftToOwner;
@@ -353,7 +360,7 @@ namespace CopyWatch
 			if (hitsLogged < 100) {
 				++hitsLogged;
 				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(hit.target);
-				REX::INFO("CopyWatch: hit on our copy {:08X}{} (player {}'s) {}; health now {:.1f}, ghost {}", hit.target, SpawnNote(hit.target, wire), owner, what,
+				REX::INFO("CopyWatch: hit on our copy {:08X}{} (player {}'s) {}, source {:08X}; health now {:.1f}, ghost {}", hit.target, SpawnNote(hit.target, wire), owner, what, hit.sourceRef,
 					actor ? HealthOf(actor) : -1.0f, GhostState(actor));
 			}
 		}

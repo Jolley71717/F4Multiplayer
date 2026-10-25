@@ -3,6 +3,7 @@
 #include "game/FoundDead.h"
 
 #include "Protocol.h"
+#include "TokenBucket.h"
 
 #include <algorithm>
 #include <chrono>
@@ -148,14 +149,18 @@ namespace RemoteEdits
 
 	// ---- Explosions (WeaponFire) ----------------------------------------------------------------
 	//
+	// Who sets off an explosion, and who deals its blows (docs/DESIGN.md, "Who sets off an explosion"): every explosion
+	// goes off once in every game that has a player or an NPC it runs near it, and each game deals the blows on its own:
+	// its player, and the NPCs it runs. A copy's blow (of an NPC another game runs) is given back, as that NPC's own game
+	// deals it. An explosion a game cannot be sure goes off in the others' games is not shared at all: its own game deals
+	// every blow, a copy's too (reported as our hit's damage, like a gunshot's).
+	//
 	// A friend's explosion is set off in our game where their game says it went off. It is what does the
-	// damage here: the stand-in's own grenade is removed, a death their game reports for an NPC ours runs is
-	// not taken, and no health comes for one already dead in theirs. So it goes off whoever stands beside it,
-	// and with friendly fire off too: the enemies next to us or our companion die here as they did for the
-	// thrower, and a grenade at our feet hurts us as the thrower's own would have. (A copy that only looks
-	// like the explosion, hurting nobody but the enemies, is not done yet.)
-	// Our copies of NPCs another game runs are the exception: made ghosts while it goes off (BlastShield), as their
-	// owner's game deals its damage to them.
+	// damage here: the stand-in's own grenade is removed and its explosive shot held, a death their game reports for an
+	// NPC ours runs is not taken, and no health comes for one already dead in theirs. So it goes off whoever stands
+	// beside it, and with friendly fire off too: the enemies next to us or our companion die here as they did for the
+	// thrower, and a grenade at our feet hurts us as the thrower's own would have. Our copies of NPCs another game runs
+	// are the exception: made ghosts while it goes off (BlastShield), as their owner's game deals its damage to them.
 	//
 	// Only what a throw or a shot makes is set off. A grenade is about 500 units across, a Fat Man's shell 850, and what
 	// a shot sets off no more (Fallout4.esm's explosions, read from the records: a car's first blast 128, its big one
@@ -164,6 +169,9 @@ namespace RemoteEdits
 	// explosion of a throw.
 	constexpr float MAX_EXPLOSION_RADIUS = 1024.0f;
 	constexpr float EXPLOSION_RANGE = 6000.0f;  // from us: farther, nothing we'd see or feel
+	// From an NPC our game runs: its blow is ours to deal, wherever our player is (the reporter left it to us). An NPC
+	// within the radius and this of it is found, give or take where the reporter's copy of it stood.
+	constexpr float OURS_NEAR_MARGIN = 1024.0f;
 
 	inline Spot SpotOf(const Protocol::Explosion& a_explosion)
 	{
@@ -173,22 +181,53 @@ namespace RemoteEdits
 	enum class Blast
 	{
 		kSetOff,
-		kAway,      // in another space than ours, or too far to matter
+		kAway,      // in another space than ours, or too far to matter, with no NPC of ours beside it
 		kNotThrown, // no throw makes an explosion that size
 	};
 
-	// a_at: where the friend's game says it went off; a_us: where we stand; a_radius: the explosion record's,
-	// as our game has it.
-	inline Blast SetOff(const Spot& a_at, const Spot& a_us, float a_radius)
+	constexpr bool Throwable(float a_radius)
 	{
-		if (!Within(Distance(a_at, a_us), EXPLOSION_RANGE)) {
+		return a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS;
+	}
+
+	// a_at: where the friend's game says it went off; a_us: where we stand; a_radius: the explosion record's,
+	// as our game has it; a_oursNear: an NPC our game runs is within its reach (a_radius + OURS_NEAR_MARGIN), in our
+	// space. The reporter left that NPC's blow to us however far our player is: it goes off for it.
+	inline Blast SetOff(const Spot& a_at, const Spot& a_us, float a_radius, bool a_oursNear = false)
+	{
+		if (!Within(Distance(a_at, a_us), EXPLOSION_RANGE) && !(a_oursNear && SameSpace(a_at, a_us))) {
 			return Blast::kAway;
 		}
-		if (!(a_radius > 0.0f && a_radius <= MAX_EXPLOSION_RADIUS)) {
+		if (!Throwable(a_radius)) {
 			return Blast::kNotThrown;
 		}
 		return Blast::kSetOff;
 	}
+
+	// Whether our game sends an explosion our player (or an NPC we run) set off: only when the server is sure to pass it
+	// on, so that the blows it leaves to the NPCs' own games are dealt there. The server's numbers (Protocol's
+	// REPORTED_EXPLOSION_*) less a margin: our position as the server has it is a state or two old, and a burst of
+	// reports can reach it closer together than they left (half its budget is two seconds of that).
+	class ReportGate
+	{
+	public:
+		using Clock = std::chrono::steady_clock;
+		static constexpr float  RANGE = Protocol::REPORTED_EXPLOSION_RANGE - 1000.0f;
+		static constexpr double BURST = Protocol::REPORTED_EXPLOSION_BURST / 2.0;
+		static constexpr double PER_SECOND = Protocol::REPORTED_EXPLOSIONS_PER_SECOND * 0.75;
+
+		// a_distance: from our player; a_radius: the explosion record's. Spends from the budget when it passes.
+		bool Pass(float a_distance, float a_radius, Clock::time_point a_now)
+		{
+			if (!Within(a_distance, RANGE) || !Throwable(a_radius)) {
+				return false;
+			}
+			return budget.Take(a_now);
+		}
+
+	private:
+		TokenBucket budget{ BURST, PER_SECOND };
+	};
 
 	// What became of each explosion our game saw go off, as WeaponFire decided it once (BlastLog), and so whether the game
 	// that runs an NPC deals that explosion's blow on our copy of it itself (CopyHealth::OwnersToDeal): exactly one game
@@ -198,9 +237,8 @@ namespace RemoteEdits
 	enum class Fate : std::uint8_t
 	{
 		kOurs,     // not shared: it goes off in no other game, so its blows on copies are ours to report
-		kShared,   // reported (by our watch, or as a destructible object's own with its wreck): each friend's game sets it
-		           // off where SetOff says, its player near it
-		kEachOwn,  // a world trap's: every game sets its own off (Traps)
+		kShared,   // ours, reported (ReportGate passed it): each friend's game near it sets it off once
+		kEachOwn,  // a world trap's, or a destructible object's own (its stage's): every game sets its own off
 	};
 
 	struct Seen
@@ -209,21 +247,14 @@ namespace RemoteEdits
 		float                                 radius = 0.0f;
 		Fate                                  fate = Fate::kOurs;
 		std::chrono::steady_clock::time_point when{};
+		std::uint32_t                         source = 0;  // the explosion reference's form id (0: not known)
 	};
 
-	// Whether the game whose player is at a_owner (its last state; none: not known) deals the blow of this explosion on
-	// the NPC it runs: it goes off there by the same rule ApplyExplosion judges it by.
-	inline bool DealtThere(const Seen& a_seen, const std::optional<Spot>& a_owner)
+	// Whether the game that runs an NPC deals the blow this explosion dealt our copy of it: it goes off there too (a
+	// reported one beside that game's NPC wherever its player is: SetOff's a_oursNear).
+	constexpr bool DealtThere(const Seen& a_seen)
 	{
-		switch (a_seen.fate) {
-		case Fate::kEachOwn:
-			return true;
-		case Fate::kShared:
-			return a_owner && SetOff(a_seen.at, *a_owner, a_seen.radius) == Blast::kSetOff;
-		case Fate::kOurs:
-		default:
-			return false;
-		}
+		return a_seen.fate != Fate::kOurs;
 	}
 
 	// The explosions our game saw lately and what became of each (main thread).
@@ -243,19 +274,41 @@ namespace RemoteEdits
 			seen.push_back(a_seen);
 		}
 
-		// The explosion a blow on an actor at a_at came from: the nearest that reaches it, seen within KEPT before a_now.
-		[[nodiscard]] std::optional<Seen> At(const Spot& a_at, Clock::time_point a_now) const
+		// The explosion a blow on an actor at a_at came from, seen within KEPT before a_now: the one the hit names
+		// (a_source, the explosion reference in its HitData), else the nearest that reaches it. When two reach it that
+		// fared differently and the hit names neither, which dealt it is not known: the blow is taken as ours (its fate
+		// read kOurs), dealt here and reported, and a_ambiguous is set.
+		[[nodiscard]] std::optional<Seen> At(const Spot& a_at, Clock::time_point a_now, std::uint32_t a_source = 0, bool* a_ambiguous = nullptr) const
 		{
+			if (a_ambiguous) {
+				*a_ambiguous = false;
+			}
 			std::optional<Seen> best;
 			float               bestDistance = std::numeric_limits<float>::max();
+			bool                mixed = false;
 			for (const auto& entry : seen) {
-				if (a_now - entry.when > KEPT || !SameSpace(entry.at, a_at)) {
+				if (a_now - entry.when > KEPT) {
 					continue;
 				}
+				if (a_source != 0 && entry.source == a_source) {
+					return entry;
+				}
 				const float distance = Distance(entry.at, a_at);
-				if (Within(distance, entry.radius + REACH) && distance < bestDistance) {
+				if (!Within(distance, entry.radius + REACH)) {
+					continue;
+				}
+				if (best && DealtThere(*best) != DealtThere(entry)) {
+					mixed = true;
+				}
+				if (distance < bestDistance) {
 					best = entry;
 					bestDistance = distance;
+				}
+			}
+			if (best && mixed) {
+				best->fate = Fate::kOurs;
+				if (a_ambiguous) {
+					*a_ambiguous = true;
 				}
 			}
 			return best;

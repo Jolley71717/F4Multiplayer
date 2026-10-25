@@ -10,7 +10,9 @@
 
 #include <chrono>
 #include <limits>
+#include <algorithm>
 #include <map>
+#include <vector>
 
 using namespace RemoteEdits;
 using FoundDead::Npc;
@@ -93,7 +95,7 @@ TEST("remote edits: a corpse is moved to where it fell for the reporter only fro
 	CHECK(!MayMoveCorpse(INF));
 }
 
-TEST("remote edits: a friend's explosion goes off near us whoever stands beside it, if a throw could make it")
+TEST("remote edits: a friend's explosion goes off near us whoever stands beside it, or beside an NPC we run, if a throw could make it")
 {
 	const Spot us{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
 	CHECK(SetOff({ 0, 0x3C, 1050.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kSetOff);  // at our feet: the raiders beside us die here too
@@ -101,6 +103,11 @@ TEST("remote edits: a friend's explosion goes off near us whoever stands beside 
 	CHECK(SetOff({ 0, 0x3C, 7001.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);
 	CHECK(SetOff({ 0x1F00, 0, 1000.0f, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);  // inside somewhere, same numbers
 	CHECK(SetOff({ 0, 0x3C, NaN, 1000.0f, 0.0f }, us, 500.0f) == Blast::kAway);
+
+	// Far from our player, beside an NPC our game runs: the reporter left that NPC's blow to us, so it goes off for it.
+	CHECK(SetOff({ 0, 0x3C, 12000.0f, 1000.0f, 0.0f }, us, 500.0f, true) == Blast::kSetOff);
+	CHECK(SetOff({ 0x1F00, 0, 12000.0f, 1000.0f, 0.0f }, us, 500.0f, true) == Blast::kAway);  // never in another space
+	CHECK(SetOff({ 0, 0x3C, 12000.0f, 1000.0f, 0.0f }, us, 3000.0f, true) == Blast::kNotThrown);
 
 	// Radii no throw has: refused wherever it is.
 	CHECK(SetOff(us, us, 1024.0f) == Blast::kSetOff);
@@ -114,46 +121,99 @@ TEST("remote edits: a friend's explosion goes off near us whoever stands beside 
 TEST("remote edits: an explosion's blow on a copy is the owner's exactly when that explosion goes off in the owner's game")
 {
 	using namespace std::chrono_literals;
-	const auto       t = std::chrono::steady_clock::time_point{} + 100s;
-	const Spot       blast{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
-	const Spot       nearOwner{ 0, 0x3C, 3000.0f, 1000.0f, 0.0f };
-	const Spot       farOwner{ 0, 0x3C, 7500.0f, 1000.0f, 0.0f };
-	const Seen       reported{ blast, 500.0f, Fate::kShared, t };
-	const Seen       ours{ blast, 500.0f, Fate::kOurs, t };
-	const Seen       trap{ blast, 300.0f, Fate::kEachOwn, t };
-	const Seen       nuke{ blast, 3000.0f, Fate::kShared, t };
-	// Reported: set off where the owner's player is near enough, by the receiver's own rule (SetOff).
-	CHECK(DealtThere(reported, nearOwner));
-	CHECK(!DealtThere(reported, farOwner));        // too far there: never set off, so the blow is ours
-	CHECK(!DealtThere(reported, std::nullopt));    // the owner's player nowhere we know of
-	CHECK(!DealtThere(reported, Spot{ 0x1F00, 0, 1000.0f, 1000.0f, 0.0f }));  // inside somewhere
-	CHECK(!DealtThere(nuke, nearOwner));           // too big to be set off by anyone
-	// Ours alone (no watch, or out of its reach): dealt nowhere else.
-	CHECK(!DealtThere(ours, nearOwner));
-	// A world trap's: every game sets its own off.
-	CHECK(DealtThere(trap, farOwner));
-	CHECK(DealtThere(trap, std::nullopt));
+	const auto t = std::chrono::steady_clock::time_point{} + 100s;
+	const Spot blast{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	// Reported (the gate passed it): the owner's game sets it off beside its NPC wherever its player is.
+	CHECK(DealtThere(Seen{ blast, 500.0f, Fate::kShared, t }));
+	// A world trap's, a destructible object's own: every game sets its own off.
+	CHECK(DealtThere(Seen{ blast, 300.0f, Fate::kEachOwn, t }));
+	// Ours alone (kept: the server might not have passed it on; or no watch, no owner of ours): dealt nowhere else.
+	CHECK(!DealtThere(Seen{ blast, 500.0f, Fate::kOurs, t }));
 }
 
-TEST("remote edits: a blow is put down to the nearest explosion seen lately that reaches it")
+TEST("remote edits: each blow of an explosion is dealt in exactly one game, whichever game runs the NPC and wherever its player stands")
+{
+	using namespace std::chrono_literals;
+	const auto t = std::chrono::steady_clock::time_point{} + 100s;
+	// Alice's grenade lands beside a raider Bob's game runs. Alice's game has a copy of it; Bob's has the raider.
+	const Spot grenade{ 0, 0x3C, 1000.0f, 1000.0f, 0.0f };
+	const Spot alice{ 0, 0x3C, 1500.0f, 1000.0f, 0.0f };
+	for (const float bobAway : { 0.0f, 5000.0f, 6001.0f, 20000.0f }) {
+		const Spot bob{ 0, 0x3C, 1000.0f + bobAway, 1000.0f, 0.0f };
+		ReportGate gate;
+		const bool sent = gate.Pass(Distance(grenade, alice), 500.0f, t);
+		const Seen seen{ grenade, 500.0f, sent ? Fate::kShared : Fate::kOurs, t };
+		const bool aliceDeals = !DealtThere(seen);  // her copy's blow, reported as her hit's damage
+		const bool bobDeals = sent && SetOff(grenade, bob, 500.0f, true) == Blast::kSetOff;  // the raider beside it in his game
+		CHECK(sent);
+		CHECK(aliceDeals != bobDeals);
+	}
+	// Past her budget: not sent, so it goes off in no other game, and her game deals the copy's blow.
+	ReportGate gate;
+	int        kept = 0;
+	for (int i = 0; i < 40; ++i) {
+		const bool sent = gate.Pass(500.0f, 500.0f, t);
+		const Seen seen{ grenade, 500.0f, sent ? Fate::kShared : Fate::kOurs, t };
+		CHECK(!DealtThere(seen) != sent);
+		kept += sent ? 0 : 1;
+	}
+	CHECK(kept == 40 - static_cast<int>(ReportGate::BURST));
+}
+
+TEST("remote edits: a report is sent only where the server is sure to pass it on: nearer, rarer and smaller than its own limits")
+{
+	using namespace std::chrono_literals;
+	const auto t = std::chrono::steady_clock::time_point{} + 100s;
+	static_assert(ReportGate::RANGE < Protocol::REPORTED_EXPLOSION_RANGE);
+	static_assert(ReportGate::BURST < Protocol::REPORTED_EXPLOSION_BURST);
+	static_assert(ReportGate::PER_SECOND < Protocol::REPORTED_EXPLOSIONS_PER_SECOND);
+	{
+		ReportGate gate;
+		CHECK(gate.Pass(ReportGate::RANGE, 500.0f, t));
+		CHECK(!gate.Pass(ReportGate::RANGE + 1.0f, 500.0f, t));  // the server measures from a state a moment old
+		CHECK(!gate.Pass(NaN, 500.0f, t));
+		CHECK(!gate.Pass(100.0f, 1025.0f, t));  // nobody sets off one that big
+		CHECK(!gate.Pass(100.0f, 0.0f, t));
+	}
+	// Its burst, then its rate: a reliable run of reports arriving at the server closer together by as much as two
+	// seconds still finds the server's budget (16, then 4 a second) with room.
+	ReportGate  gate;
+	TokenBucket server{ Protocol::REPORTED_EXPLOSION_BURST, Protocol::REPORTED_EXPLOSIONS_PER_SECOND };
+	std::vector<std::chrono::steady_clock::time_point> sent;
+	for (int i = 0; i < 400; ++i) {
+		const auto at = t + std::chrono::milliseconds{ 25 * i };  // an explosive minigun: 40 a second for 10 s
+		if (gate.Pass(100.0f, 300.0f, at)) {
+			sent.push_back(at);
+		}
+	}
+	CHECK(sent.size() < 400u);
+	CHECK(sent.size() >= static_cast<std::size_t>(ReportGate::BURST));
+	// The first ones held back two seconds by the network, the rest not: they all reach the server at once.
+	for (const auto at : sent) {
+		const auto arrives = (std::max)(at, t + 2s);
+		CHECK(server.Take(arrives));
+	}
+}
+
+TEST("remote edits: a blow is put down to the explosion its hit names, else the nearest seen lately that reaches it")
 {
 	using namespace std::chrono_literals;
 	const auto t = std::chrono::steady_clock::time_point{} + 100s;
 	BlastLog   log;
 	CHECK(!log.At({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));
-	log.Note({ { 0, 0x3C, 0.0f, 0.0f, 0.0f }, 500.0f, Fate::kOurs, t });
-	log.Note({ { 0, 0x3C, 600.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t + 10ms });
-	log.Note({ { 0x1F00, 0, 100.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t });  // another space, same numbers
+	log.Note({ { 0, 0x3C, 0.0f, 0.0f, 0.0f }, 500.0f, Fate::kOurs, t, 0xFF000101 });
+	log.Note({ { 0, 0x3C, 1400.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t + 10ms, 0xFF000102 });
+	log.Note({ { 0x1F00, 0, 100.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t, 0xFF000103 });  // another space, same numbers
 
 	const auto first = log.At({ 0, 0x3C, 100.0f, 0.0f, 0.0f }, t + 20ms);
 	REQUIRE(first);
 	CHECK(first->fate == Fate::kOurs);
-	const auto second = log.At({ 0, 0x3C, 500.0f, 0.0f, 0.0f }, t + 20ms);
+	const auto second = log.At({ 0, 0x3C, 1300.0f, 0.0f, 0.0f }, t + 20ms);
 	REQUIRE(second);
 	CHECK(second->fate == Fate::kShared);
 	// Within the radius and an actor's size of it; farther, it is no blow of that explosion's.
-	CHECK(log.At({ 0, 0x3C, 600.0f + 500.0f + BlastLog::REACH, 0.0f, 0.0f }, t + 20ms));
-	CHECK(!log.At({ 0, 0x3C, 600.0f + 500.0f + BlastLog::REACH + 1.0f, 0.0f, 0.0f }, t + 20ms));
+	CHECK(log.At({ 0, 0x3C, 1400.0f + 500.0f + BlastLog::REACH, 0.0f, 0.0f }, t + 20ms));
+	CHECK(!log.At({ 0, 0x3C, 1400.0f + 500.0f + BlastLog::REACH + 1.0f, 0.0f, 0.0f }, t + 20ms));
 	const auto inside = log.At({ 0x1F00, 0, 0.0f, 0.0f, 0.0f }, t);
 	REQUIRE(inside);
 	CHECK(inside->fate == Fate::kShared);
@@ -168,6 +228,43 @@ TEST("remote edits: a blow is put down to the nearest explosion seen lately that
 	CHECK(log.Size() == BlastLog::MAX);
 	CHECK(!log.At({ 0, 0x3C, 0.0f, 0.0f, 0.0f }, t));  // the oldest went first
 	CHECK(log.At({ 0, 0x3C, (BlastLog::MAX + 9) * 2000.0f, 0.0f, 0.0f }, t));
+}
+
+TEST("remote edits: of two explosions that reach a blow and fared differently, the one the hit names is taken, never the nearer")
+{
+	using namespace std::chrono_literals;
+	const auto t = std::chrono::steady_clock::time_point{} + 100s;
+	// Two grenades a moment apart beside the same raider: the first reported, the second kept ours (past the budget).
+	BlastLog   log;
+	const Seen reported{ { 0, 0x3C, 0.0f, 0.0f, 0.0f }, 500.0f, Fate::kShared, t, 0xFF000201 };
+	const Seen kept{ { 0, 0x3C, 300.0f, 0.0f, 0.0f }, 500.0f, Fate::kOurs, t + 100ms, 0xFF000202 };
+	log.Note(reported);
+	log.Note(kept);
+	const Spot raider{ 0, 0x3C, 250.0f, 0.0f, 0.0f };  // nearer the kept one
+	bool       ambiguous = true;
+	const auto byFirst = log.At(raider, t + 200ms, reported.source, &ambiguous);
+	REQUIRE(byFirst);
+	CHECK(byFirst->fate == Fate::kShared);  // the owner's game deals it
+	CHECK(!ambiguous);
+	const auto bySecond = log.At(raider, t + 200ms, kept.source, &ambiguous);
+	REQUIRE(bySecond);
+	CHECK(bySecond->fate == Fate::kOurs);
+	CHECK(!ambiguous);
+	// Neither named (a hit whose source we can't read): not to be told apart, so it is taken as ours, whichever is nearer.
+	const auto unnamed = log.At({ 0, 0x3C, 50.0f, 0.0f, 0.0f }, t + 200ms, 0, &ambiguous);
+	REQUIRE(unnamed);
+	CHECK(unnamed->fate == Fate::kOurs);
+	CHECK(ambiguous);
+	// A name we never saw: as if none.
+	CHECK(log.At({ 0, 0x3C, 50.0f, 0.0f, 0.0f }, t + 200ms, 0xFF0009FF, &ambiguous)->fate == Fate::kOurs);
+	// Two that fared alike: the nearest, and no doubt about it.
+	log.Clear();
+	log.Note(reported);
+	log.Note({ { 0, 0x3C, 300.0f, 0.0f, 0.0f }, 300.0f, Fate::kEachOwn, t, 0xFF000203 });  // a mine beside it
+	const auto alike = log.At(raider, t + 200ms, 0, &ambiguous);
+	REQUIRE(alike);
+	CHECK(alike->fate == Fate::kEachOwn);
+	CHECK(!ambiguous);
 }
 
 TEST("remote edits: a destructible object's watch covers only its own blast radius, for its time")
