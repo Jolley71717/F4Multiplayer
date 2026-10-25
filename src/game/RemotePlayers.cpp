@@ -2281,9 +2281,6 @@ namespace RemotePlayers
 		std::uint32_t                                         othersSentOut = 0;
 		std::uint32_t                                         sendOutsFailed = 0;
 		constexpr auto                                        SEND_OUT_AGAIN = 3s;  // asked again while they are still in it
-		// A frame has no 3D while someone is in it; got out of, it gets it back over the next moments. Until then it is left
-		// as it is: without its 3D, a copy would be taken for one that never loaded and placed again.
-		constexpr auto SETTLE = 5s;
 
 		// Anyone our game runs found in a friend's frame copy (a companion ordered into it) is sent out once they are in:
 		// Actor.SwitchToPowerArmor with None, which has them out at once, the frame left standing where it was. Told and
@@ -2330,7 +2327,12 @@ namespace RemotePlayers
 				settling[a_entry.second.frame] = a_now;
 				return true;
 			});
-			std::erase_if(settling, [&](const auto& a_entry) { return a_now - a_entry.second > SETTLE; });
+			// Left as it is until its 3D is back (FriendFrame::Settling).
+			std::erase_if(settling, [&](const auto& a_entry) {
+				const auto frame = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_entry.first);
+				const bool back = !frame || frame->IsDeleted() || frame->Get3D() != nullptr;
+				return !FriendFrame::Settling(back, a_now - a_entry.second);
+			});
 		}
 	}
 

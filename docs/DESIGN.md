@@ -1019,8 +1019,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   `InstallFrameUse` patches asks first. Transfer: the container menu shown for a copy is closed again (`InstallFrameGate`
   hooks its messages in its vtable). A companion ordered into one: the engine's command walks them there and gets them
   in without asking the frame, so anyone our game runs (not our player or a stand-in) found in a copy is sent out at once
-  (`Actor.SwitchToPowerArmor` with None). The copy is left as it is meanwhile, and until its 3D is back
-  (`RemotePlayers::BeingSentOut`): never "theirs now", nor taken for a copy that never loaded. A plugin's frame (each game has its own reference), our player's own (a copy they are in or got out
+  (`Actor.SwitchToPowerArmor` with None). The copy is left as it is meanwhile, and until its 3D is back (at most 30 s,
+  `FriendFrame::Settling`, `RemotePlayers::BeingSentOut`): never "theirs now", nor taken for a copy that never loaded. A plugin's frame (each game has its own reference), our player's own (a copy they are in or got out
   of last stays usable) and a quest's are never kept from them. Counted as `framesKeptOut`, `othersSentOut` and
   `sendOutsFailed` (`net status`) and `keptOut` and `transfersKeptOut` (`paframes`). Borrowing a friend's suit comes
   later.

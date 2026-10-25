@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 // Whether our player (or a companion of theirs) is kept out of a power armor frame: one that stands in our game only
@@ -57,5 +58,18 @@ namespace FriendFrame
 	constexpr bool SendsOut(const Occupant& a_occupant, std::uint32_t a_keptOutFor)
 	{
 		return a_keptOutFor != 0 && !a_occupant.player && !a_occupant.standIn && a_occupant.runsHere;
+	}
+
+	// A frame has no 3D while someone is in it. Got out of, it gets it back only once their way out is over, some seconds
+	// on. Until then the copy is left as it is (RemotePlayers::BeingSentOut): without its 3D it would be taken for one that
+	// never loaded and placed again. For a moment at least, so whatever looks at it next sees the 3D that came back; never
+	// longer than SETTLE_LIMIT, so one that never gets it back is placed again in the end.
+	constexpr auto SETTLE_MIN = std::chrono::seconds(1);
+	constexpr auto SETTLE_LIMIT = std::chrono::seconds(30);
+
+	// Whether a frame copy got out of a_since ago is still left as it is. a_back: its 3D is in (or the frame is gone).
+	constexpr bool Settling(bool a_back, std::chrono::steady_clock::duration a_since)
+	{
+		return a_since <= SETTLE_MIN || (!a_back && a_since <= SETTLE_LIMIT);
 	}
 }
