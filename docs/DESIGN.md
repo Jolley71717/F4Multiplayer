@@ -429,7 +429,7 @@ copy's too, reported as its hit's damage, like a gunshot's.
 
 | Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
 |---|---|---|---|
-| Thrown grenade or Molotov (our player's, or an NPC our game runs) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after the watch, if every blast of that watch was reported |
+| Thrown grenade or Molotov (our player's, or an NPC our game runs, our companion among them) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after the watch, if every blast of that watch was reported |
 | Missile, shell, explosive bullet | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's shot that would go off is held (`AttackKind::HoldsShotOf`, `ShotExplodes`; `firesHeld=`) | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC we run, seen by the 8 s watch every such shot arms), when `ReportGate` passes it | as a throw's |
 | Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`) | never | the NPC's own game's (`Fate::kEachOwn`) |
 | Car or barrel (a destructible object's own stage) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |

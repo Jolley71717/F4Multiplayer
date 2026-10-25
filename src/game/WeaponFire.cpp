@@ -844,14 +844,26 @@ namespace WeaponFire
 			       !seenExplosions.Has(a_ref);
 		}
 
-		// Whether an actor that set off an explosion is ours: our player, or an NPC our game runs.
+		// Whether an actor that set off an explosion is ours: our player, or an NPC our game runs, our companion among them
+		// (our game claims it, and one made here at runtime is in no list of the session's: seen on the rig) unless another
+		// game runs it. Main thread.
 		bool OursSetItOff(RE::Actor* a_by)
 		{
 			if (a_by->IsPlayerRef()) {
 				return true;
 			}
-			std::scoped_lock l{ actionLock };
-			return ownedNpcs.contains(a_by->GetFormID());
+			{
+				std::scoped_lock l{ actionLock };
+				if (ownedNpcs.contains(a_by->GetFormID())) {
+					return true;
+				}
+			}
+			if (Puppets::IsPuppet(a_by) || !NpcSync::IsOurCompanion(a_by)) {
+				return false;
+			}
+			const auto session = NpcSync::SessionId(a_by->GetFormID());
+			const auto owner = session ? NpcSync::Owner(session) : 0;
+			return owner == 0 || owner == NpcSync::LocalPlayer();
 		}
 
 		// What becomes of a fresh explosion, decided once and kept (blasts), by who set it off (docs/DESIGN.md, "Who sets
