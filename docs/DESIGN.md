@@ -469,7 +469,8 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
     explosion of the last 3 s with it: when two share an id that fast and fared differently, the blow goes by the older.
   - A stand-in's shot is defused as it leaves the gun (looked at each frame): one that hits within a frame of firing
     goes off here too (`standInExplosions=`). A stand-in has its player's gun but not their ammunition, and the engine
-    fires no gun without it: one with none is given 3 before an explosive shot is replayed (`defused=defused/ammo given`).
+    fires no gun that is empty: before an explosive shot is replayed its gun is given 3 when it has none, and loaded when
+    empty (`defused=defused/ammo given`).
 - `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`, `defused=`,
   `shotsWatched=watched/checked`, `nearFriends=`, the blast counters above; the log names each explosion's owner and what became of
   it, and each hit on a copy names its source.

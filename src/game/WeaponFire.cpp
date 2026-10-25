@@ -220,20 +220,18 @@ namespace WeaponFire
 			}
 		}
 
-		// A stand-in is given its player's gun, not their ammunition, and the engine fires no gun without it: a missile
-		// replayed on a stand-in with none left its gun with nothing (seen on the rig). One with none is given a few
-		// before its replay, enough for the shot: it is defused as it flies (DefuseStandInShots).
+		// A stand-in is given its player's gun, not their ammunition, and the engine fires no gun that is empty: a missile
+		// replayed on a stand-in left its gun with nothing (seen on the rig, and with missiles given it after its launcher
+		// was equipped too). Its gun is given a few and loaded before the replay: the shot is defused as it flies
+		// (DefuseStandInShots).
 		constexpr std::uint32_t SHOT_AMMO = 3;
 		std::uint32_t           ammoGiven = 0;
 
 		void GiveShotAmmo(RE::Actor* a_actor)
 		{
-			const auto ammo = MuzzleFlash::GunAmmo(a_actor);
-			if (!ammo || a_actor->GetInventoryObjectCount(ammo) > 0) {
-				return;
+			if (MuzzleFlash::LoadGun(a_actor, SHOT_AMMO)) {
+				++ammoGiven;
 			}
-			a_actor->AddInventoryItem(ammo, nullptr, SHOT_AMMO, nullptr, nullptr, nullptr);
-			++ammoGiven;
 		}
 
 		void ForgetReplayedFire(std::uint32_t a_actorId)
