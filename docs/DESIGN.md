@@ -1104,6 +1104,42 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
   id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
   (stand-ins), `unloaded` and `back` (spawns).
+  Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
+  (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
+  drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it
+  too, `SetDelete` calling `RemoveChanges`, and the engine gives none back to one deleted and not persistent). Nothing
+  of ours keeps them: past a frame we hold handles and plain pointers, never a reference count. A friend's stand-in so
+  kept could be written by a later save (0.9.0 and 0.9.1 wrote them): it came back at every load of that save in no
+  cell, had its record dropped, stayed through the next load, and the second load of that save in a run crashed (on the
+  VM: the process lists, `TESPackage::Revert`). Now `SaveGuard::BeforeLoad` hands to the load each of ours on its way
+  out, each lingering from the last load, and each held with no record (one adrift, inside RemotePlayers'
+  `ADRIFT_GRACE`; `SaveStrays::GoesToLoad`), of every kind Track is told of (stand-ins, frame copies, lights, Spawns'
+  copies): one without a record is given it back (`TESForm::AddChange`), and one the engine will not give one (a created
+  reference deleted and not persistent) is let go of then as the load would (the engine's own call,
+  `SaveStrays::Handover`; `leftToLoad`, `recordsGiven`, `releasedAtLoad` in `saveguard`). An actor handed over is no
+  puppet of ours from then on (`Puppets::Unregister`), so one the load keeps all the same reads as lingering after it,
+  not as one of ours in use. A stray of ours a save brings back has its record dropped as before (no save writes it), and
+  is handed to the next load while it is still the same form (`broughtBack`, `broughtBackHanded`). Such a save is still
+  not safe to load again and again in one run: on the VM the third load of one crashed (`Actor::Revert` on a settler),
+  and so did some first loads of it, in the save's own record, before any of this runs. A save made after loading it
+  holds none (five loads of one in a run were fine). So loading one says so on the HUD, once a load
+  (`save.old_leftover`: save now, then restart the game and play from the new save; `oldSaveNotices`).
+  One kept all the same lingers by kind (`SaveStrays::StillOurs`: an actor that is no puppet of ours, a light, a frame as
+  above), one buried before its 3D came in (never disabled: disabling it then crashes the loader) is disabled after the
+  load and lingers (`SaveStrays::LingerOf`, `turnedOff`), and a graveyard or deleting entry whose handle failed with its
+  form still there is still on its way out at the load (`SaveStrays::LostOnWayOut`, `lostOnWayOut` in `net status`).
+  Dropping the record of a form still there never frees its id: `TESDataHandler::GetNextID` passes over an id while a
+  form is under it.
+  Known and left: a session ending, or the host handing over, while a companion is being sent out of a copy leaves that
+  copy to the game with the companion in it, saved, and the friend's game shares the frame again when they are back (a
+  second copy on the spot); and a save during a send-out writes that copy, worn by the companion (one extra suit after
+  loading it). Both need the few seconds of a send-out, or one that failed (`sendOutsFailed`). Each created base of an
+  actor handed over is kept in memory for the run, with no record (`basesKept`): a face copy is made again after each
+  load, so a run leaks one small `TESNPC` per friend, and per NPC copy on a leveled base, at each load. When the main
+  thread does not answer before a save or load in time, the load's thread does this work, the engine's release
+  included, as it already disabled and deleted from there. A created actor of the game's on a generic settler base,
+  deleted and in no cell, reads as a stand-in: its record is dropped (as before) and it goes to the next load, as the
+  load would take it anyway.
   A friend's frame is theirs (`FriendFrame.h`, `RemotePlayers::KeepOutOfFrame`, through `Equipment::SetFrameGate`):
   every frame copy the session placed here is kept from our player, whoever used it last (a friend's parked one, the
   one their stand-in wears or got out of, and every copy of a frame their game shares), and they are told whose it is

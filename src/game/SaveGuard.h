@@ -12,8 +12,9 @@
 namespace SaveGuard
 {
 	// Drops the form's record from the game's list of changes, so the next save does not write it. Called
-	// before a save, and before a load (DespawnAll runs at both; before a load it does no harm, the load
-	// replaces the list). Whether there was a record and it is gone now.
+	// before a save, and before a load (DespawnAll runs at both). Before a load that alone would keep the form in
+	// memory through it, as the load frees only what has a record: BeforeLoad gives each of ours on its way out its
+	// record back. Whether there was a record and it is gone now.
 	bool Exclude(RE::TESForm* a_form);
 
 	// Whether the engine's save code finds a cell or a worldspace to save the reference under (see SaveStrays::Doomed).
@@ -63,8 +64,10 @@ namespace SaveGuard
 	// mod). Every save is searched. Returns how many were kept out.
 	std::uint32_t BeforeSave();
 
-	// Just before a load, once the stand-ins and their copies are on their way out: each frame copy of ours is noted as it
-	// is, to tell it after the load from one the loaded game made since under the same id (see SaveStrays::Remains).
+	// Just before a load, once the stand-ins and their copies are on their way out: each of ours on its way out (a stand-in, a
+	// frame copy, a light) is handed to the load, which frees only what has a record of changes (SaveStrays::Handover), and
+	// noted as it is, to tell one the load kept all the same from one the loaded game made since under the same id (see
+	// SaveStrays::Remains). So is each stray of ours the last load brought back.
 	void BeforeLoad();
 
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.

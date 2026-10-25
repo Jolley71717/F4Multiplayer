@@ -113,6 +113,7 @@ workshop.rescued = Was du im Behälter eines Freundes hattest, ist jetzt in dein
 drops.container_hint = Waffen und Rüstungen, die du in einen Behälter legst, bleiben nur in deinem Spiel. Um sie einem Freund zu geben, lass sie in seiner Nähe fallen
 drops.not_given = Freunde können diesen Gegenstand nicht aufheben: Er bleibt nur in deinem Spiel liegen
 drops.taken_first = Ein Freund hat ihn zuerst aufgehoben
+save.old_leftover = Multiplayer: Dieser Spielstand enthält ein Überbleibsel einer älteren Mod-Version. Speichere jetzt, starte dann das Spiel neu und spiele mit dem neuen Spielstand weiter
 menu.unavailable = Multiplayer: Das Menü ist nicht verfügbar
 menu.more = Mehr ({page}/{pages})
 menu.on = An

@@ -318,6 +318,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "drops.container_hint", {}, "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", {}, "Friends can't pick this item up: it stays on the ground in your game only" },
 		{ "drops.taken_first", {}, "A friend picked it up first" },
+		{ "save.old_leftover", {}, "Multiplayer: this save holds a leftover from an older version of the mod. Save now, then restart the game and play from the new save" },
 		{ "menu.unavailable", {}, "Multiplayer: the menu isn't available" },
 		{ "menu.more", { { "page", 1 }, { "pages", 2 } }, "More (1/2)" },
 		{ "menu.on", {}, "On" },
