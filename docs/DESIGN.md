@@ -529,7 +529,9 @@ whose cell they own (a home bought), a settlement's workbench or a piece built t
 of a settlement whose workbench they own (`LootScope::IsStorage`). Not a chest that only never respawns (a dungeon's
 one-off loot) nor one in a settlement nobody owns yet (the Sanctuary houses at the start): those are rolls of loot. Each game
 judges its own copy: none is sent for storage, and one that comes for it (from a game where it isn't storage yet, or
-from an older build) is not applied, so a friend's stash there stays. What the session put into the holder (a friend's
+from an older build) is not applied, so a friend's stash there stays. Nor is a friend's take there more than the session put
+in and nobody took out since: the rest of what their copy held was their roll (or their own stash), and what this
+game's copy holds of it is this player's (`LootSync::TakeFromStorage`, counted as `storageKept=`). What the session put into the holder (a friend's
 put at the same moment, which the server may order either side of the marker) stays too, as many of each as the
 session put less what was taken of them since; a take is counted against the holder's own roll first, so a friend
 who took their copy's roll of the same item before the put reached them doesn't use the put up. Once a holder's loot

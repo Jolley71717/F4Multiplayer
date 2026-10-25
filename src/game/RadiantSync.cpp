@@ -11,6 +11,7 @@
 #include "game/WorldSync.h"
 
 #include <deque>
+#include <mutex>
 
 namespace RadiantSync
 {
@@ -41,12 +42,19 @@ namespace RadiantSync
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		std::deque<Protocol::RadiantStart>     pending;  // friends' runs to start or compare here, in the order they came
 		std::set<std::uint32_t>                stopped;  // shared runs' quests seen stopped at the last poll: ended at this one
+		std::uint64_t                          session = 0;  // the session welcomed into last (0: none since another server)
+		// The runs shared in the world a save loaded (its record), or when the session ended: shared again as they were on the
+		// welcome of their session (Adopt), forgotten in another.
+		std::optional<RadiantRules::Saved> held;
+		std::mutex                         loadLock;  // a load's record comes on its thread
+		std::optional<RadiantRules::Saved> loaded;
 
 		std::uint32_t begun = 0;     // runs of ours shared
 		std::uint32_t joined = 0;    // friends' runs shared here
 		std::uint32_t declined = 0;  // friends' runs left each player's own here
 		std::uint32_t sent = 0;      // stages reported under runs
 		std::uint32_t taken = 0;     // friends' stages queued here
+		std::uint32_t restored = 0;  // runs shared again as they were (a save's record, or after a reconnect)
 
 		// ---- How the game fills an alias ----------------------------------------------------------------
 
@@ -749,7 +757,7 @@ namespace RadiantSync
 				return;
 			}
 			const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
-			switch (book.OnStart(a_start.quest, run, running, a_start.fills)) {
+			switch (book.OnStart(a_start.quest, run, running, a_start.fills, Clock::now())) {
 			case Answer::kIgnore:
 				return;
 			case Answer::kDone:
@@ -805,6 +813,58 @@ namespace RadiantSync
 			outgoing.push_back(Protocol::Encode(Protocol::RadiantStart{ 0, a_quest, a_run.serial, FillsOf(quest), done }, Protocol::MessageType::kReportRadiantStart));
 		}
 
+		// For friends whose games don't know our runs going (they joined, or loaded a save), or know a run shared here only
+		// as it was (this game loaded a save inside it, or came back): our runs' starts again, and the stages done here
+		// under each run shared here. A start of a run a game knows is ignored there, and each stage is set there once
+		// (Book::Accept), so this pays nothing twice.
+		void Resend()
+		{
+			for (const auto& [quest, run] : book.Ours(self)) {
+				SendAgain(quest, run);
+			}
+			for (const auto& [id, run] : book.Shared()) {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				if (!quest || !(quest->data.flags & QUEST_RUNNING)) {
+					continue;
+				}
+				for (const auto stage : QuestStageLayout::Done(quest)) {
+					outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, id, run.origin, run.serial, stage }, Protocol::MessageType::kReportRadiantStage));
+					++sent;
+				}
+			}
+		}
+
+		// The held record's runs shared again as they were, if it is this session's (and the session shares radiants), where
+		// their quests still run here: under their own runs, which a friend who finished one knows (a new number would be a
+		// new run there, its reward paid again). Its runs finished are finished here. Forgotten in another session.
+		void Adopt()
+		{
+			if (!held) {
+				return;
+			}
+			const auto record = std::move(*held);
+			held.reset();
+			if (record.session == 0 || record.session != session || self == 0 || !Enabled()) {
+				if (!record.shared.empty()) {
+					REX::INFO("RadiantSync: {} run(s) shared in this world's last session aren't this session's; not shared again", record.shared.size());
+				}
+				return;
+			}
+			const auto shared = book.Restore(record, [](std::uint32_t a_id) -> std::optional<StageLog::Stages> {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_id);
+				if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantRules::ShareOf(a_id) != RadiantRules::Share::kShared) {
+					return std::nullopt;
+				}
+				return QuestStageLayout::Done(quest);
+			});
+			restored += static_cast<std::uint32_t>(shared);
+			REX::INFO("RadiantSync: {} of {} run(s) this world shared in the session shared again as they were; {} finished here known", shared, record.shared.size(),
+				record.finished.size());
+			if (shared != 0) {
+				Resend();
+			}
+		}
+
 		void AbortStart()
 		{
 			if (starting) {
@@ -832,6 +892,12 @@ namespace RadiantSync
 	void SetLocalPlayer(std::uint32_t a_id)
 	{
 		self = a_id;
+	}
+
+	void OnWelcome(std::uint64_t a_session)
+	{
+		session = a_session;
+		Adopt();
 	}
 
 	void OnStart(const Protocol::RadiantStart& a_start)
@@ -876,9 +942,7 @@ namespace RadiantSync
 		if (!Enabled() || self == 0) {
 			return;
 		}
-		for (const auto& [quest, run] : book.Ours(self)) {
-			SendAgain(quest, run);
-		}
+		Resend();
 	}
 
 	void OnPlayerReloaded(std::uint32_t a_playerId)
@@ -886,13 +950,10 @@ namespace RadiantSync
 		if (!Enabled() || self == 0 || a_playerId == self) {
 			return;
 		}
-		const auto ours = book.Ours(self);
-		if (!ours.empty()) {
-			REX::INFO("RadiantSync: player {} loaded a save; our {} run(s) going are sent again", a_playerId, ours.size());
+		if (const auto shared = book.Shared(); !shared.empty()) {
+			REX::INFO("RadiantSync: player {} loaded a save; our runs going and the stages done here of the {} run(s) shared are sent again", a_playerId, shared.size());
 		}
-		for (const auto& [quest, run] : ours) {
-			SendAgain(quest, run);
-		}
+		Resend();
 	}
 
 	bool Shares(std::uint32_t a_quest)
@@ -956,7 +1017,7 @@ namespace RadiantSync
 				continue;
 			}
 			stopped.erase(id);
-			book.Ended(id);
+			book.Ended(id, now);
 			REX::INFO("RadiantSync: {:08X} '{}' stopped here; its shared run is over", id, QuestName(quest));
 		}
 
@@ -999,6 +1060,9 @@ namespace RadiantSync
 	{
 		AbortStart();
 		pending.clear();
+		if (session != 0 && !held) {
+			held = book.Save(session);  // shared again as they were if the player comes back to this session (Adopt)
+		}
 		book.EndSession();
 		stopped.clear();
 		inSession = false;
@@ -1011,6 +1075,7 @@ namespace RadiantSync
 		book.Clear();
 		stopped.clear();
 		outgoing.clear();
+		session = 0;
 	}
 
 	void Rebaseline()
@@ -1021,6 +1086,13 @@ namespace RadiantSync
 		book.Reloaded();
 		stopped.clear();
 		outgoing.clear();
+		{
+			std::scoped_lock l{ loadLock };
+			held = std::exchange(loaded, std::nullopt);  // the loaded world's record (none: it shared no run)
+		}
+		if (self != 0) {
+			Adopt();
+		}
 	}
 
 	std::string DumpAliases(const RE::TESQuest* a_constQuest)
@@ -1054,7 +1126,41 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(), restarted,
-			starting ? " starting" : "");
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(),
+			restarted, restored, book.Finished(), starting ? " starting" : "");
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		// Out of a session, what this world shared in its last (a load's record, or the one kept at the session's end), with
+		// the runs finished here since; in one, the book as it is.
+		RadiantRules::Saved out;
+		if (held) {
+			out = *held;
+			if (session != 0 && held->session == session) {
+				RadiantRules::Merge(out, book.Save(session));
+			}
+		} else if (session != 0) {
+			out = book.Save(session);
+		} else {
+			return {};
+		}
+		return out.shared.empty() && out.finished.empty() ? std::vector<std::uint8_t>{} : RadiantRules::Encode(out);
+	}
+
+	void LoadRecord(std::span<const std::uint8_t> a_bytes)
+	{
+		auto saved = RadiantRules::Decode(a_bytes);
+		if (!saved) {
+			REX::WARN("RadiantSync: ignoring an unreadable record of radiant runs");
+		}
+		std::scoped_lock l{ loadLock };
+		loaded = std::move(saved);
+	}
+
+	void RevertRecord()
+	{
+		std::scoped_lock l{ loadLock };
+		loaded.reset();
 	}
 }
