@@ -138,100 +138,24 @@ namespace WeaponFire
 		static_assert(AttackKind::PROJECTILE_MOTION_BEAM == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionBeam));
 		static_assert(AttackKind::PROJECTILE_MOTION_TYPES == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionTypes));
 
+		// Whether an actor's gun fires a shot that may go off: its projectile names an explosion (a missile, a mini nuke, a
+		// grenade launcher's shell, a beam or a bullet with a blast), or the gun carries an enchantment (a legendary's
+		// Explosive round). One test for both ends: the game that runs the shooter watches for its blast after such a shot
+		// (CheckShots), and every other game keeps its copy's from the engine (PlayShot), so the blast is the report's alone.
+		// Main thread.
+		bool ShotGoesOff(RE::Actor* a_actor)
+		{
+			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
+			return (projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0)) ||
+			       MuzzleFlash::GunEnchanted(a_actor);
+		}
+
 		// Whether the stand-in's gun fires a shot to keep from the engine (AttackKind::HoldsShotOf): a plain one, a bullet or a
-		// beam. One that would go off flies with no blast of its own (DefuseStandInShots). Main thread (PlayShot).
+		// beam, and every one that may go off (ShotGoesOff). Main thread (PlayShot).
 		bool HoldsShotOf(RE::Actor* a_actor)
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
-			return AttackKind::HoldsShotOf(projectile != nullptr, projectile ? projectile->data.flags : 0, projectile && projectile->data.explosionType);
-		}
-
-		// Whether the gun of a mirrored NPC (one another game runs) fires a shot that goes off: kept from the engine as a
-		// stand-in's is, as its blast comes as the report of the game that runs it. Main thread (PlayShot).
-		bool ShotExplodes(RE::Actor* a_actor)
-		{
-			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
-			return projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
-		}
-
-		// A stand-in's explosive shot flies (the first review's #137: friends saw a muzzle flash, then the blast with
-		// nothing in flight between), and goes off nowhere: each projectile it fired is found as it leaves the gun and
-		// loses its explosion and its damage. The blast is the shooter's game's report, set off here once (ApplyExplosion).
-		// Main thread (PlayShot arms it, Frame looks).
-		constexpr auto        DEFUSE_WATCH = std::chrono::milliseconds{ 1500 };
-		constexpr float       DEFUSE_REACH = 3000.0f;  // a missile is this far from the gun well after the first frame
-		constexpr std::size_t MAX_DEFUSE_WATCHES = 32;
-		std::unordered_map<std::uint32_t, std::chrono::steady_clock::time_point> defuseWatch;  // stand-in -> until
-		std::uint32_t                                                            defused = 0;
-		std::uint32_t                                                            defuseLogged = 0;
-
-		void ArmDefuse(std::uint32_t a_standIn)
-		{
-			const auto now = std::chrono::steady_clock::now();
-			std::erase_if(defuseWatch, [&](const auto& a_entry) { return now > a_entry.second; });
-			if (defuseWatch.size() < MAX_DEFUSE_WATCHES || defuseWatch.contains(a_standIn)) {
-				defuseWatch[a_standIn] = now + DEFUSE_WATCH;
-			}
-		}
-
-		// Every frame while a watch is on: a projectile is defused before it can reach anything.
-		void DefuseStandInShots()
-		{
-			if (defuseWatch.empty()) {
-				return;
-			}
-			const auto now = std::chrono::steady_clock::now();
-			std::erase_if(defuseWatch, [&](const auto& a_entry) { return now > a_entry.second; });
-			const auto tes = RE::TES::GetSingleton();
-			if (!tes) {
-				return;
-			}
-			for (const auto& [id, until] : defuseWatch) {
-				const auto actor = RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (!actor || !actor->Get3D()) {
-					continue;
-				}
-				// Collected first, changed after: nothing is changed while the engine walks its lists.
-				std::vector<RE::ObjectRefHandle> live;
-				tes->ForEachReferenceInRange(actor->data.location, DEFUSE_REACH, [&](RE::TESObjectREFR* a_ref) {
-					const auto projectile = a_ref ? a_ref->As<RE::Projectile>() : nullptr;
-					if (projectile && !projectile->IsDisabled() && (projectile->flags & PROJECTILE_ENDED) == 0 && projectile->explosion &&
-						projectile->shooter.get().get() == actor) {
-						live.push_back(projectile->GetHandle());
-					}
-					return RE::BSContainer::ForEachResult::kContinue;
-				});
-				for (const auto& handle : live) {
-					const auto ref = handle.get();
-					const auto projectile = ref ? ref->As<RE::Projectile>() : nullptr;
-					if (!projectile || projectile->IsDeleted() || !projectile->explosion) {
-						continue;
-					}
-					const auto explosion = projectile->explosion->GetFormID();
-					projectile->explosion = nullptr;
-					projectile->damage = 0.0f;
-					++defused;
-					if (defuseLogged < 20) {
-						++defuseLogged;
-						REX::INFO("WeaponFire: {:08X}'s own projectile {:08X} flies with no explosion of its own (was {:08X}): its player's game reports the blast", id,
-							projectile->GetFormID(), explosion);
-					}
-				}
-			}
-		}
-
-		// A stand-in is given its player's gun, not their ammunition, and the engine fires no gun that is empty: a missile
-		// replayed on a stand-in left its gun with nothing (seen on the rig, and with missiles given it after its launcher
-		// was equipped too). Its gun is given a few and loaded before the replay: the shot is defused as it flies
-		// (DefuseStandInShots).
-		constexpr std::uint32_t SHOT_AMMO = 3;
-		std::uint32_t           ammoGiven = 0;
-
-		void GiveShotAmmo(RE::Actor* a_actor)
-		{
-			if (MuzzleFlash::LoadGun(a_actor, SHOT_AMMO)) {
-				++ammoGiven;
-			}
+			return AttackKind::HoldsShotOf(projectile != nullptr, projectile ? projectile->data.flags : 0, ShotGoesOff(a_actor));
 		}
 
 		void ForgetReplayedFire(std::uint32_t a_actorId)
@@ -610,7 +534,6 @@ namespace WeaponFire
 			}
 		});
 		CheckShots();
-		DefuseStandInShots();
 		ScanExplosions();
 		RemoveGhostGrenades();
 		UpdateHandThrowables();
@@ -694,22 +617,17 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		// A stand-in's plain shot, and a mirrored NPC's explosive one, are held: what they hit or set off comes as the
-		// shooter's game's report, once (docs/DESIGN.md, "Who sets off an explosion"). A stand-in's explosive shot (a
-		// missile, a shell) flies, so friends see it, with no blast of its own (DefuseStandInShots): its blast is the
-		// shooter's report too.
+		// A stand-in's plain shot, and any copy's shot that may go off (ShotGoesOff), are held: what they hit or set off
+		// comes as the shooter's game's report, once (docs/DESIGN.md, "Who sets off an explosion"). So friends see no
+		// missile or explosive round in flight, only the flash and the blast (a known limit: fired and defused a frame
+		// later, one that landed within the frame went off twice).
 		const bool puppet = Puppets::IsPuppet(a_actor);
-		const bool explodes = replay == AttackKind::Replay::kFire && ShotExplodes(a_actor);
-		const bool standIn = replay == AttackKind::Replay::kFire && (puppet ? HoldsShotOf(a_actor) : explodes);
+		const bool standIn = replay == AttackKind::Replay::kFire && (puppet ? HoldsShotOf(a_actor) : ShotGoesOff(a_actor));
 		if (standIn) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
 		} else if (replay == AttackKind::Replay::kFire && puppet) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
 			++firesLetGo;
-			if (explodes) {
-				ArmDefuse(a_actor->GetFormID());
-				GiveShotAmmo(a_actor);
-			}
 		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
@@ -1098,7 +1016,7 @@ namespace WeaponFire
 			for (const auto id : shooters) {
 				++shotsChecked;
 				const auto actor = id == Protocol::PLAYER_REF_ID ? RE::PlayerCharacter::GetSingleton() : RE::TESForm::GetFormByID<RE::Actor>(id);
-				if (actor && (ShotExplodes(actor) || MuzzleFlash::GunEnchanted(actor))) {
+				if (actor && ShotGoesOff(actor)) {
 					++shotsWatched;
 					ArmShotWatch();
 				}
@@ -1209,8 +1127,8 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} defused={}/{} shotsWatched={}/{} nearFriends={}", blasts.Size(),
-			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, defused, ammoGiven, shotsWatched,
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={}", blasts.Size(),
+			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
 			shotsChecked, explosionsNearFriends);
 	}
 

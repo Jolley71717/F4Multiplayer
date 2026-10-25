@@ -423,7 +423,7 @@ game had. So each one is shared as a spawn, run by the game that made it for goo
 
 One rule for every explosion: **it goes off once in every game, and each game deals its blows on its own player and
 the NPCs it runs.** A blow on a copy (an NPC another game runs) is given back, since the NPC's own game deals it. A
-stand-in's shot that would go off flies with no blast of its own, and a stand-in never throws a grenade: what its player
+stand-in's or a copy's shot that may go off is never fired, and a stand-in never throws a grenade: what its player
 set off comes as their game's report. An explosion is decided by who set it off first (the explosion's owner), then by
 its base: a trap or a destructible object claims only its own. An explosion a game can't be sure the others get is not
 shared at all. That game deals every blow itself, a copy's too, reported as its hit's damage, like a gunshot's.
@@ -431,11 +431,11 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
 | Kind | Goes off in | Reported as `kExplosion` | Its blow on a copy |
 |---|---|---|---|
 | Thrown grenade or Molotov (our player's, or an NPC our game runs, our companion among them, one made here at runtime too) | the thrower's game; once in each other game, from the report. A replayed throw launches nothing (`HoldsReplayedRelease`) | yes, when `ReportGate` passes it; else ours alone | the NPC's own game's when reported, else the thrower's. A Molotov's fire is the NPC's game's for 20 s after its thrower's watch, if every blast of that thrower's watch was reported (`ThrowWatches`: each thrower's own) |
-| Missile, shell, explosive bullet | the shooter's game; once in each other game, from the report. A stand-in's flies with no explosion or damage of its own (`DefuseStandInShots`, `defused=`); a mirrored NPC's is held (`ShotExplodes`, `firesHeld=`) | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
+| Missile, shell, explosive bullet, a beam with a blast, a legendary Explosive round | the shooter's game; once in each other game, from the report. A stand-in's or a mirrored NPC's is never fired (`ShotGoesOff`: the projectile names an explosion, or the gun is enchanted; the same test the shooter's game watches by; `firesHeld=`), so friends see the flash and the blast, nothing in flight | yes, by its owner (`Explosion::GetActorOwner`: our player or an NPC of ours, seen by the 8 s watch a shot that may go off arms, `shotsWatched=`), when `ReportGate` passes it | as a throw's |
 | Trap (a mine, a grenade bouquet, a tripwire's grenades) | every game whose copy of the trap is armed sets its own off (`kReportTrap`). Only one with no owner near the trap is the trap's: our grenade beside a mine is ours | never | the NPC's own game's (`Fate::kEachOwn`) |
 | Car or barrel (a destructible object's own stage, by its explosion's base) | every game passes the stage once, with its blast (`kDestructions` with `explode`) | never | the NPC's own game's (`Fate::kEachOwn`) |
 | An NPC's own, one another game runs | that NPC's game; once in each other game, from that game's report, wherever a player could be hit. Our copy's throw and explosive shot are held | by the NPC's own game only | the NPC's own game's (our copy's hits are nobody's) |
-| A stand-in's | never here: its shot flies defused. One that goes off anyway is not reported (`standInExplosions=`) | never | nobody's: given back |
+| A stand-in's | never here: its shots that may go off and its throws are held. One that goes off anyway is not reported (`standInExplosions=`) | never | nobody's: given back |
 
 - Sure to arrive: our game sends a report only when `RemoteEdits::ReportGate` says the server passes it on: within 7000
   units of the nearest player, ours or a friend in our space (the server's 8000 less a state's age), a radius in
@@ -467,18 +467,24 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
     second): the objects' own explosions are trusted to whoever passes the stage.
   - The engine gives a freed explosion's id to the next one, and a hit that names an id is matched to the oldest
     explosion of the last 3 s with it: when two share an id that fast and fared differently, the blow goes by the older.
-  - A stand-in's shot is defused as it leaves the gun (looked at each frame): one that hits within a frame of firing
-    goes off here too (`standInExplosions=`). A stand-in has its player's gun but not their ammunition, and the engine
-    fires no gun that is empty: before an explosive shot is replayed its gun is given 3 when it has none, and loaded when
-    empty (`defused=defused/ammo given`).
-- `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`, `defused=`,
-  `shotsWatched=watched/checked`, `nearFriends=`, the blast counters above; the log names each explosion's owner and what became of
-  it, and each hit on a copy names its source.
+  - Friends don't see explosive rounds and missiles in flight: a stand-in's or a copy's shot that may go off is held,
+    and only the flash and the shooter's reported blast show. Fired and defused a frame later, one that landed within
+    the frame (a beam, a shot at point blank) went off twice.
+  - An explosion with no owner that our game keeps during a throw's watch unshares every thrower's watch, so a
+    reported Molotov's fire is then dealt from our copies too (a rare double fire).
+  - The gate takes a friend's space and place from their last relayed state, the server from its fresher one: an NPC's
+    blast beside a friend who went through a door within about a second passes our gate and is dropped by the server,
+    its blows on copies dealt nowhere.
+  - A client can have an explosion relayed beside any player in its space without being near them, within the
+    explosion budget and each receiver's own checks (its reported position was its own word anyway).
+- `net status`: `explosions=reported/set off`, `explosionsKept=` (ours, not sent), `othersExplosions=`,
+  `shotsWatched=watched/checked`, `nearFriends=`, the blast counters above; the log names each explosion's owner and
+  what became of it, and each hit on a copy names its source.
 
 To check live: in both directions, a grenade and then a missile within 8 s, a missile into a car, a companion blowing a
 car up, a grenade beside a mine, and an NPC's missile at a player far from the NPC's game's player. Each goes off once in
 each game (`explosions=` up by one on each side, `standInExplosions=0`), each NPC it hits loses its health once, the
-same in both games, and a friend's missile is seen in flight.
+same in both games.
 
 ## Form IDs across load orders (common/FormIds.h, common/FormTranslate.h)
 

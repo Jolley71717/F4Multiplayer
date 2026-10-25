@@ -306,26 +306,6 @@ namespace MuzzleFlash
 		return gun.instance && gun.instance->enchantments && !gun.instance->enchantments->empty();
 	}
 
-	bool LoadGun(RE::Actor* a_actor, std::uint32_t a_rounds)
-	{
-		const auto gun = EquippedGun(a_actor);
-		const auto ammo = !gun.weapon ? nullptr : gun.instance ? gun.instance->ammo : gun.weapon->weaponData.ammo;
-		if (!ammo) {
-			return false;
-		}
-		bool changed = false;
-		if (a_actor->GetInventoryObjectCount(ammo) == 0) {
-			a_actor->AddInventoryItem(ammo, nullptr, a_rounds, nullptr, nullptr, nullptr);
-			changed = true;
-		}
-		if (gun.data && gun.data->ammoCount == 0) {
-			gun.data->ammo = ammo;
-			gun.data->ammoCount = a_rounds;
-			changed = true;
-		}
-		return changed;
-	}
-
 	void OnShot(RE::Actor* a_actor, bool a_animated)
 	{
 		if (a_animated) {
