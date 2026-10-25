@@ -760,6 +760,11 @@ namespace RadiantSync
 			switch (book.OnStart(a_start.quest, run, running, a_start.fills, Clock::now())) {
 			case Answer::kIgnore:
 				return;
+			case Answer::kTake:
+				// Shared here already (taken back from our save, or kept through a reconnect) and sent again by its game: its stages,
+				// and those that came with it, are what that game did since. Each is set once (Book::Accept).
+				Take(a_start.quest, run, a_start.stages, run.origin, false);
+				return;
 			case Answer::kDone:
 				// Their game shares again a run finished here (it loaded a save from inside it, or came back): started here
 				// again, its reward would be paid twice.
@@ -856,12 +861,15 @@ namespace RadiantSync
 			}
 			const auto record = std::move(*held);
 			held.reset();
-			const bool share = record.session != 0 && record.session == session && Enabled();
-			const auto shared = book.Restore(record, QuestHereOf, share, Clock::now());
+			std::vector<RadiantRules::Saved::Quest> kept;  // running still, of another session (or radiants not shared here)
+			const auto shared = book.Restore(record, QuestHereOf, Enabled(), Clock::now(), &kept);
+			if (!kept.empty()) {
+				held = RadiantRules::Saved{ record.session, std::move(kept), {} };  // finished in their session once over (Frame)
+			}
 			restored += static_cast<std::uint32_t>(shared);
 			if (!record.shared.empty()) {
-				REX::INFO("RadiantSync: {} of {} run(s) this world shared in {} shared again as they were", shared, record.shared.size(),
-					record.session == session ? "this session" : "another session");
+				REX::INFO("RadiantSync: {} of {} run(s) this world shared shared again as they were; {} of other sessions kept until over", shared, record.shared.size(),
+					held ? held->shared.size() : 0);
 			}
 			if (shared != 0) {
 				Resend();
@@ -989,12 +997,13 @@ namespace RadiantSync
 			return;
 		}
 		RestartFrame();
-		if (held && a_inSession && self != 0) {
+		if (held && a_inSession && self != 0 && Enabled() && std::ranges::contains(held->shared, session, &RadiantRules::Saved::Quest::session)) {
 			Adopt();  // welcomed before the world was loaded
 		}
-		// Out of a session, a run held for it whose quest stops here (or runs for another run) is over here, as in one
-		// (Book::Ended): finished in its session, so a friend still on it never starts it here again when the player is back.
-		if (held && !a_inSession) {
+		// A run held for its session (out of it, or in another) whose quest stops here (or runs for another run) is over
+		// here, as in one (Book::Ended): finished in its session, so a friend still on it never starts it here again when the
+		// player is back.
+		if (held) {
 			RadiantRules::Saved over{ held->session, {}, {} };
 			std::erase_if(held->shared, [&](const RadiantRules::Saved::Quest& a_quest) {
 				const auto here = QuestHereOf(a_quest.quest);
@@ -1007,6 +1016,9 @@ namespace RadiantSync
 			if (!over.shared.empty()) {
 				book.Restore(over, QuestHereOf, false, now);
 				REX::INFO("RadiantSync: {} run(s) kept for the session are over here; finished", over.shared.size());
+			}
+			if (held->shared.empty()) {
+				held.reset();
 			}
 		}
 
@@ -1086,8 +1098,13 @@ namespace RadiantSync
 	{
 		AbortStart();
 		pending.clear();
-		if (session != 0 && !held) {
-			held = book.Save(session);  // shared again as they were if the player comes back to this session (Adopt)
+		if (session != 0) {
+			// Shared again as they were if the player comes back to this session (Adopt), with any kept from another.
+			auto ending = book.Save(session);
+			if (held) {
+				ending.shared.insert(ending.shared.end(), held->shared.begin(), held->shared.end());
+			}
+			held = std::move(ending);
 		}
 		book.EndSession();
 		stopped.clear();
@@ -1161,11 +1178,15 @@ namespace RadiantSync
 
 	std::vector<std::uint8_t> SaveRecord()
 	{
-		// The runs finished here, by session; the runs shared: out of a session, those this world shared in its last (a load's
-		// record, or the one kept at the session's end), not taken in yet; in one, the book's.
-		auto out = book.Save(held ? held->session : session);
+		// The runs finished here, by session; the runs shared, each with its session: the book's, and those held (a load's
+		// record not taken in yet, the ones kept at the session's end, or another session's still running here).
+		auto out = book.Save(session);
 		if (held) {
-			out.shared = held->shared;
+			for (const auto& quest : held->shared) {
+				if (out.shared.size() < RadiantRules::MAX_SAVED_QUESTS) {
+					out.shared.push_back(quest);
+				}
+			}
 		}
 		return out.shared.empty() && out.finished.empty() ? std::vector<std::uint8_t>{} : RadiantRules::Encode(out);
 	}
