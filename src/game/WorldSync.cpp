@@ -1166,6 +1166,10 @@ namespace WorldSync
 
 			std::optional<std::uint32_t> ViewFrom(std::uint32_t a_holder) override { return Storage::ViewFrom(a_holder); }
 
+			std::uint32_t KeptSince(std::uint32_t a_holder) override { return Storage::KeptSince(a_holder); }
+
+			bool Aliased(std::uint32_t a_holder, std::uint32_t a_item) override { return Storage::Aliased(a_holder, a_item); }
+
 			bool Reporting(const Protocol::ContainerChange& a_change) override { return Storage::Reporting(a_change); }
 
 			void OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking) override { Storage::OwnStorage(a_change, a_lacking); }
@@ -2024,16 +2028,12 @@ namespace WorldSync
 
 	std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container)
 	{
-		std::map<std::uint32_t, std::int64_t> out;
-		const auto                            holder = ReadHolderFacts(a_container);
-		for (const auto& stack : engine.Stacks(a_container)) {
-			auto item = engine.Item(stack.item);
-			item.questAlias = stack.questAlias;
-			if (LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
-				out[stack.item] += stack.count;
-			}
-		}
-		return out;
+		return LootSync::SharedIn(engine, a_container);
+	}
+
+	std::set<std::uint32_t> AliasedIn(std::uint32_t a_container)
+	{
+		return LootSync::Aliased(engine, a_container);
 	}
 
 	std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container)

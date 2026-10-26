@@ -64,6 +64,8 @@ namespace Storage
 
 	[[nodiscard]] StorageView::Keeper           KeeperOf(std::uint32_t a_container);
 	[[nodiscard]] std::optional<std::uint32_t> ViewFrom(std::uint32_t a_container);
+	[[nodiscard]] std::uint32_t                 KeptSince(std::uint32_t a_container);
+	[[nodiscard]] bool                          Aliased(std::uint32_t a_container, std::uint32_t a_item);
 	[[nodiscard]] bool                          Reporting(const Protocol::ContainerChange& a_change);
 	void                                        OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking);
 	void                                        Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing);

@@ -7,6 +7,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 
 namespace LootSync
 {
@@ -37,6 +38,7 @@ namespace WorldSync
 	// order with the loot's.
 	[[nodiscard]] LootScope::HolderFacts                  HolderFactsOf(std::uint32_t a_ref);
 	[[nodiscard]] std::map<std::uint32_t, std::int64_t>   SharedIn(std::uint32_t a_container);
+	[[nodiscard]] std::set<std::uint32_t>                 AliasedIn(std::uint32_t a_container);
 	[[nodiscard]] std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container);
 	void                                                  QueueEvent(std::vector<std::uint8_t> a_packet);
 

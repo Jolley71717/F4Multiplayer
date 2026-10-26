@@ -254,19 +254,9 @@ namespace LootTest
 		}
 
 		// What our copy of a container holds of what the session shares (WorldSync::SharedIn).
-		std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_holder) override
-		{
-			std::map<std::uint32_t, std::int64_t> out;
-			const auto                            holder = Holder(a_holder);
-			for (const auto& stack : Stacks(a_holder)) {
-				auto item = Item(stack.item);
-				item.questAlias = stack.questAlias;
-				if (LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
-					out[stack.item] += stack.count;
-				}
-			}
-			return out;
-		}
+		std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_holder) override { return LootSync::SharedIn(*this, a_holder); }
+
+		std::set<std::uint32_t> Aliased(std::uint32_t a_holder) override { return LootSync::Aliased(*this, a_holder); }
 
 		// ---- StorageView::Engine -----------------------------------------------------------------------------
 
@@ -308,6 +298,10 @@ namespace LootTest
 		}
 
 		std::optional<std::uint32_t> ViewFrom(std::uint32_t a_holder) override { return storage.State().ViewFrom(a_holder); }
+
+		std::uint32_t KeptSince(std::uint32_t a_holder) override { return storage.State().KeptSince(a_holder); }
+
+		bool Aliased(std::uint32_t a_holder, std::uint32_t a_item) override { return storage.State().Aliased(a_holder, a_item); }
 
 		bool Reporting(const Protocol::ContainerChange& a_change) override { return storage.Reporting(a_change); }
 

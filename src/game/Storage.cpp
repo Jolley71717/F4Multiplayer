@@ -139,6 +139,8 @@ namespace Storage
 		public:
 			std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container) override { return WorldSync::SharedIn(a_container); }
 
+			std::set<std::uint32_t> Aliased(std::uint32_t a_container) override { return WorldSync::AliasedIn(a_container); }
+
 			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
 			{
 				return Storage::ChangeCopy(a_container, a_item, a_count);
@@ -415,6 +417,16 @@ namespace Storage
 		return side.ViewFrom(a_container);
 	}
 
+	std::uint32_t KeptSince(std::uint32_t a_container)
+	{
+		return side.KeptSince(a_container);
+	}
+
+	bool Aliased(std::uint32_t a_container, std::uint32_t a_item)
+	{
+		return side.Aliased(a_container, a_item);
+	}
+
 	bool Reporting(const Protocol::ContainerChange& a_change)
 	{
 		return client.Reporting(a_change);
@@ -448,10 +460,11 @@ namespace Storage
 		const auto& s = side.Stats();
 		const auto& c = client.Stats();
 		return std::format("storage={}{} owners={} viewing={} inFlight={} orphans={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} unanswered={} "
-						   "lateRefusals={} unsent={} overflow={} redone={} takenBack={} usedUp={} givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
+						   "lateRefusals={} unsent={} overflow={} redone={} corrected={} takenBack={} usedUp={} forfeited={} forfeits={} owed={} owedDropped={} orphansDropped={} "
+						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
-			side.Orphans(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.lateRefusals, s.unsent, s.overflow, s.redone,
-			c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed, counts.refusedOwn);
+			side.Orphans(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.lateRefusals, s.unsent, s.overflow, s.redone, s.corrected,
+			c.takenBack, c.usedUp, c.forfeited, s.forfeits, side.Owed(), s.owedDropped, s.orphansDropped, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed, counts.refusedOwn);
 	}
 
 	std::string Command(std::string_view a_args)

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,7 +77,41 @@ namespace LootSync
 		virtual void                         OwnStorage(const Protocol::IndexedContainerChange&, bool) {}
 		// A friend's numbered take (a_index) our storage held a_missing fewer of than taken.
 		virtual void                         Short(std::uint32_t, const Protocol::ContainerChange&, std::int32_t) {}
+		// The first change numbered while a friend's storage was kept: ours before it were ordinary loot, never done again.
+		virtual std::uint32_t                KeptSince(std::uint32_t) { return 0; }
+		// While our menu shows a friend's storage: an item that stays our own there for the view (a quest alias holds a stack
+		// of it in our copy: StorageView::Side::Open).
+		virtual bool                         Aliased(std::uint32_t, std::uint32_t) { return false; }
 	};
+
+	// What a holder holds of what the session shares (LootScope's: ammo, aid, junk, and no stack a quest alias holds), item
+	// by item.
+	inline std::map<std::uint32_t, std::int64_t> SharedIn(World& a_world, std::uint32_t a_holder)
+	{
+		std::map<std::uint32_t, std::int64_t> out;
+		const auto                            holder = a_world.Holder(a_holder);
+		for (const auto& stack : a_world.Stacks(a_holder)) {
+			auto item = a_world.Item(stack.item);
+			item.questAlias = stack.questAlias;
+			if (LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
+				out[stack.item] += stack.count;
+			}
+		}
+		return out;
+	}
+
+	// The items the session would share that a holder holds a stack of filling a quest alias (StorageView::Side::Open).
+	inline std::set<std::uint32_t> Aliased(World& a_world, std::uint32_t a_holder)
+	{
+		std::set<std::uint32_t> out;
+		const auto              holder = a_world.Holder(a_holder);
+		for (const auto& stack : a_world.Stacks(a_holder)) {
+			if (stack.questAlias && LootScope::Of(holder, a_world.Item(stack.item), LootScope::Direction::kTake) == LootScope::Scope::kShared) {
+				out.insert(stack.item);
+			}
+		}
+		return out;
+	}
 
 	// A change that waits to go into our world. Kept in the save (not aliveFor or alive).
 	struct Pending
@@ -130,7 +165,8 @@ namespace LootSync
 				// Storage another game keeps, with our menu not open on it (StorageView: our copy's own things then), or an item
 				// whose stack there fills a quest alias (our copy's own: it never leaves it as a view ends): the player's own.
 				const auto keeper = a_world.Keeper(move.holder);
-				if (keeper == StorageView::Keeper::kFriend && (!a_world.ViewFrom(move.holder) || a_world.QuestAlias(move.holder, move.item))) {
+				if (keeper == StorageView::Keeper::kFriend && (!a_world.ViewFrom(move.holder) || a_world.QuestAlias(move.holder, move.item) ||
+						a_world.Aliased(move.holder, move.item))) {
 					++counts.storageKept;
 					continue;
 				}
@@ -405,7 +441,8 @@ namespace LootSync
 		ContainerLedger::Receiver::Own OwnOf(World& a_world)
 		{
 			return [&a_world](const Protocol::IndexedContainerChange& a_change, bool a_lacking) {
-				if (a_change.change.item != Protocol::CONTAINER_EMPTIED && a_world.Keeper(a_change.change.container) == StorageView::Keeper::kFriend) {
+				if (a_change.change.item != Protocol::CONTAINER_EMPTIED && a_world.Keeper(a_change.change.container) == StorageView::Keeper::kFriend &&
+					a_change.index >= a_world.KeptSince(a_change.change.container)) {
 					a_world.OwnStorage(a_change, a_lacking);
 				}
 			};
@@ -566,7 +603,8 @@ namespace LootSync
 				return false;
 			}
 			const auto from = a_world.ViewFrom(a_change.container);
-			if (from && a_index >= *from && *from != StorageView::NOT_YET && a_change.item != Protocol::CONTAINER_EMPTIED && a_world.Loaded(a_change.container)) {
+			if (from && a_index >= *from && *from != StorageView::NOT_YET && a_change.item != Protocol::CONTAINER_EMPTIED && a_world.Loaded(a_change.container) &&
+				!a_world.Aliased(a_change.container, a_change.item)) {
 				return false;
 			}
 			++counts.storageSkipped;
