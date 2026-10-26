@@ -904,8 +904,8 @@ before naming in an alternate start's own room was made to leave on the next loa
 alternate start (a room of the mod's own, or the Commonwealth) is left alone until named, and a host doesn't
 start hosting (`host.err_opening_unnamed`): hosting opens the loaded ID's session file, which would have been
 the last character's, taken in whole by the new world and written into with its kills and loot. After two
-minutes held as unnamed (`kUnnamed`: anywhere but the game's own Vault 111 start, an alternate start's walk
-into the vault included), a player set to host or join is told once per new game that the session
+minutes held as unnamed (`kUnnamed`) outside the pre-war world and Vault 111 (`Story::InVaultPlaces`: a vanilla
+start is unnamed there until the Vault-Tec form, and the mirror takes most players longer), a player set to host or join is told once per new game that the session
 waits for the name, and that a save made before it has the last character's ID and would play in that
 character's session (`session.unnamed_waits`). The notice offers no load as a way out: a start that never asks
 for a name stays held until a save of it is loaded, and that save carries the old ID, which nothing can tell

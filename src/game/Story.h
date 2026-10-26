@@ -36,6 +36,10 @@ namespace Story
 	// some alternate starts make the character). Not an alternate start's walk into the vault's places (Out of Time never starts there).
 	[[nodiscard]] bool InVaultStart();
 
+	// In the pre-war world or Vault 111 before Out of Time is done, whichever start: the vanilla start names the
+	// character late (the Vault-Tec form), so no notice of a missing name is due there.
+	[[nodiscard]] bool InVaultPlaces();
+
 	struct Hold
 	{
 		Opening opening = Opening::kNone;

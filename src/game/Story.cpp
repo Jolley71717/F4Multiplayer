@@ -16,6 +16,7 @@ namespace Story
 		bool    shared = false;
 		Opening opening = Opening::kNone;
 		bool    vaultStart = false;
+		bool    vaultPlaces = false;
 
 		bool PastTheVault()
 		{
@@ -92,9 +93,15 @@ namespace Story
 		return vaultStart;
 	}
 
+	bool InVaultPlaces()
+	{
+		return vaultPlaces;
+	}
+
 	void Frame(bool a_unnamed)
 	{
 		const bool vault = Compute();
+		vaultPlaces = vault;
 		const auto hold = Decide(vault, vault && InVanillaStart(), a_unnamed);
 		vaultStart = hold.vaultStart;
 		const auto now = hold.opening;

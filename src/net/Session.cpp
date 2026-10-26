@@ -1170,8 +1170,8 @@ namespace Session
 		if (Story::InVaultStart()) {
 			binding.OnVaultOpening();  // a Vault 111 start is held as it always was, and no longer (not a walk into the vault)
 		}
-		if (Story::Why() != Story::Opening::kUnnamed) {
-			unnamedSince.reset();
+		if (Story::Why() != Story::Opening::kUnnamed || Story::InVaultPlaces()) {
+			unnamedSince.reset();  // nor in the vault's places: a vanilla start is unnamed there until the Vault-Tec form
 		} else if (!unnamedSince) {
 			unnamedSince = now;
 		} else if (now - *unnamedSince >= UNNAMED_NOTICE_AFTER && (Config::Get().host || !serverAddress.empty()) && !std::exchange(unnamedTold, true)) {
