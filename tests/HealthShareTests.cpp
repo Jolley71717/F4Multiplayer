@@ -70,8 +70,8 @@ namespace
 		}
 
 		// Our player's blow of a_damage, the hit event read as a_blow, taken as CopyWatch and WorldSync take it: on a copy,
-		// one OwnersToDeal leaves to the NPC's own game is no hit of ours (given back, not sent) and claims nothing; any
-		// other claims the raider (a takeover the server grants 5 s after it last changed hands), the claim leaving at the
+		// one OwnersToDeal leaves to the NPC's own game is no hit of ours (noted as the owner's, given back, not sent) and
+		// claims nothing; any other is our hit (its event's figure a_damage) and claims the raider (a takeover the server grants 5 s after it last changed hands), the claim leaving at the
 		// end of the frame, ahead of the damage the next frame sends (Session::Frame). a_rule090: 0.9.0's OwnersToDeal,
 		// which took any blow whose event read an explosion, a throwable or a spell with no weapon for a throw's.
 		void Strike(float a_damage, const CopyHealth::Blow& a_blow, bool a_rule090 = false)
@@ -80,8 +80,10 @@ namespace
 			const bool owners = a_rule090 ? (a_blow.explosion || a_blow.throwable || a_blow.spellAlone) : CopyHealth::OwnersToDeal(a_blow);
 			const auto after = CopyHealth::After(CopyHealth::Hitter::kOurPlayer, client.OwnerOf(RAIDER), client.Id(), false, owners);
 			health -= a_damage;
-			if (!(onCopy && owners)) {
-				copy.OurHit(RAIDER, now);
+			if (onCopy && owners) {
+				copy.OwnersBlow(RAIDER, now);
+			} else {
+				copy.OurHit(RAIDER, now, a_damage);
 			}
 			if (after.claim) {
 				client.Claim(RAIDER, Protocol::ClaimReason::kInteract);
@@ -381,6 +383,128 @@ TEST("health share: Bob's Molotov on his copy of the host's raider hurts it once
 			CHECK(f.bobGame.givenBack == 30.0f);  // the blast on Bob's copy was the host's game's to deal
 		}
 	}
+}
+
+namespace
+{
+	// Bob's Molotov on his copy as his hit events read it: its blast (reported, so set off in the host's game too), and the
+	// burn its fire leaves; and his gun.
+	constexpr CopyHealth::Blow BLAST{ .explosion = true, .throwable = true, .explosionsShared = true, .blastThere = true };
+	constexpr CopyHealth::Blow BURN{ .spellAlone = true, .threwLately = true };
+	constexpr CopyHealth::Blow GUN{ .inHand = true };
+}
+
+TEST("health share: Bob's shot and his Molotov's blast on his copy in the same frame: the host's raider loses the blast once and the shot once")
+{
+	Fight f;
+	// The blast's 30 and the shot's 10 come off Bob's copy together; the hit events say which is which.
+	f.bobGame.health -= 30.0f;
+	f.bobGame.copy.OwnersBlow(RAIDER, f.bobGame.now);
+	f.bobGame.Strike(10.0f, GUN);
+	f.Deliver();
+	f.hostGame.Burn(30.0f);  // the same explosion, set off in the host's game
+	f.Pass();
+	// Before, the whole 40 went as Bob's damage on top of the host's own blast: 20 left.
+	CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 10.0f));
+	CHECK(Near(f.bobGame.health, f.hostGame.health));
+	CHECK(f.bobGame.givenBack == 30.0f);
+}
+
+TEST("health share: Bob keeps shooting his copy while his Molotov's fire burns it: the host's raider loses each shot and each burn once, and both games agree")
+{
+	Fight f;
+	f.bobGame.Strike(30.0f, BLAST);
+	f.hostGame.Burn(30.0f);
+	for (int round = 0; round < 5; ++round) {
+		for (int tick = 0; tick < 4; ++tick) {
+			f.bobGame.Strike(1.0f, BURN);  // the fire on Bob's copy, left to the host's game
+			f.hostGame.Burn(1.0f);         // and on the raider there
+		}
+		f.bobGame.Strike(5.0f, GUN);  // within a second of the burn before and after it
+	}
+	f.Pass();
+	// Before, every burn tick inside a shot's second went as Bob's damage too.
+	CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f - 25.0f));
+	CHECK(Near(f.bobGame.health, f.hostGame.health));
+}
+
+TEST("health share: a legendary's hit event with no figure riding along with each of Bob's shots does not make his Molotov's burn his: the host's raider loses it once")
+{
+	Fight f;
+	f.bobGame.Strike(30.0f, BLAST);
+	f.hostGame.Burn(30.0f);
+	const auto burn = [&] {
+		for (int tick = 0; tick < 3; ++tick) {
+			f.bobGame.Strike(1.0f, BURN);
+			f.hostGame.Burn(1.0f);
+		}
+	};
+	for (int round = 0; round < 5; ++round) {
+		burn();
+		f.bobGame.copy.OurHit(RAIDER, f.bobGame.now);  // the effect's own hit event: no hit data
+		f.bobGame.Strike(5.0f, GUN);
+		burn();
+	}
+	f.Pass();
+	// With the first figureless event taken for the burst's, every burn tick near a shot went as Bob's damage too.
+	CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 30.0f - 25.0f));
+	CHECK(Near(f.bobGame.health, f.hostGame.health));
+}
+
+TEST("copy health: our 10-point shot and a throw's 30-point blast on a copy in the same second book 10 as ours and give the 30 back, though the blast's event comes a frame late")
+{
+	CopyHealth::Book                    book;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          t1 = t0 + FRAME;
+	book.Check(RAIDER, 100.0f, t0);
+	book.OurHit(RAIDER, t1, 10.0f);
+	book.OwnersBlow(RAIDER, t1);
+	CHECK(book.Check(RAIDER, 60.0f, t1) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(book.Check(RAIDER, 60.0f, t1 + CopyHealth::JUDGE_AFTER), 30.0f, 0.01f));
+	CHECK(book.TakeOurs(RAIDER) == 0.0f);
+	book.Set(RAIDER, 90.0f);
+
+	// The drop is seen before the blast's hit event: held, not taken for ours, then given back all the same.
+	const auto t2 = t0 + std::chrono::seconds{ 5 };
+	book.OurHit(RAIDER, t2, 10.0f);
+	CHECK(book.Check(RAIDER, 50.0f, t2) == 0.0f);
+	book.OwnersBlow(RAIDER, t2 + FRAME);
+	CHECK(book.Check(RAIDER, 50.0f, t2 + FRAME) == 0.0f);
+	CHECK(Near(book.Check(RAIDER, 50.0f, t2 + CopyHealth::JUDGE_AFTER), 30.0f, 0.01f));
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+}
+
+TEST("copy health: with no blow of the owner's around, a drop beside our hit is all ours though its event's figure says less, as is one beside a hit whose event had no figure")
+{
+	CopyHealth::Book                    book;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          t1 = t0 + FRAME;
+	book.Check(RAIDER, 100.0f, t0);
+	book.OurHit(RAIDER, t1, 10.0f);  // a sneak attack's figure short of what it took
+	CHECK(book.Check(RAIDER, 75.0f, t1) == 0.0f);
+	CHECK(book.Check(RAIDER, 75.0f, t1 + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 25.0f, 0.01f));
+
+	// No hit around it with a figure: the whole drop is ours, as before, an owner's blow beside it or not.
+	const auto t2 = t0 + std::chrono::seconds{ 5 };
+	book.OurHit(RAIDER, t2);
+	book.OwnersBlow(RAIDER, t2);
+	CHECK(book.Check(RAIDER, 45.0f, t2) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 30.0f, 0.01f));
+}
+
+TEST("copy health: a report heard between our shot and the next frame books only the shot as ours when a throw's blast landed with it")
+{
+	CopyHealth::Book                    book;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          t1 = t0 + FRAME;
+	book.Check(RAIDER, 100.0f, t0);
+	book.OurHit(RAIDER, t1, 10.0f);
+	book.OwnersBlow(RAIDER, t1);
+	book.Heard(RAIDER, 60.0f, 65.0f, t1);  // the owner's report: its own blast, and a burn
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(book.Health(RAIDER) == 65.0f);
 }
 
 TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own hit, the burn its fire leaves) is the NPC's own game's to deal: no report, a claim only for a kill")
