@@ -296,6 +296,7 @@ namespace WeaponFire
 		std::uint32_t            ghostsStuck = 0;     // ... still ghosts five frames after we took the ghost off
 		std::uint32_t            ghostsHiddenFromSaves = 0;  // ghosts of ours whose flag was turned off for a save (HideGhostsFromSave)
 		std::uint32_t            ghostsRetried = 0;  // ... and setghost 0 sent again for them (ReadBackGhosts)
+		std::uint32_t            ghostsRepaired = 0;  // ghosts a loaded save brought, taken off (RepairGhostsFromSave)
 		std::uint32_t            explosionsLogged = 0;
 		std::mutex               logLock;
 		std::vector<std::string> logged;
@@ -813,7 +814,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} ghostsRepaired={} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, ghostsRepaired, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -1602,6 +1603,8 @@ namespace WeaponFire
 		std::unordered_map<std::uint32_t, float> healthWhenShielded;
 		std::unordered_set<std::uint32_t>        unghostLater;  // ghosts of ours not loaded when they were to come off
 		std::vector<std::uint32_t>               hiddenFromSave;  // ghosts whose flag HideGhostsFromSave turned off for the save (AfterSave)
+		std::uint32_t                            repairFrames = 0;  // frames in a session left to look for ghosts a loaded save brought
+		std::unordered_set<std::uint32_t>        repaired;          // ... and those taken off since the load, once each
 
 		// Our copy under the session's id (nullptr: none here, or gone).
 		RE::Actor* CopyOf(std::uint32_t a_id)
@@ -1772,6 +1775,7 @@ namespace WeaponFire
 					continue;
 				}
 				SetGhost(id, true);
+				ghostRetries.erase(id);  // a new ghost: its setghost 0 may be sent again as many times as the first's
 				++copiesShielded;
 				healthWhenShielded[id] = HealthOf(actor);
 				made += std::format(" {}(player {}'s, health {:.0f}, ghost {})", Name(id), NpcSync::Owner(id), HealthOf(actor), CopyWatch::GhostState(actor));
@@ -1837,11 +1841,71 @@ namespace WeaponFire
 			}
 		}
 
+		// What this run knew of its ghosts, forgotten at a load: the load replaces the copies with the save's, and a form id
+		// made at runtime may name another actor after it.
+		void ForgetGhosts()
+		{
+			shields.EndAll();
+			healthWhenShielded.clear();
+			unghostLater.clear();
+			hiddenFromSave.clear();
+			ghostReadbacks.clear();
+			ghostRetries.clear();
+			repaired.clear();
+		}
+
+		// For a while after a load, once in a session, the loaded copies that look like ghosts of ours the save brought
+		// (BlastShield::RepairsOnLoad) have the ghost taken off, once each: their flag reads on, so the console's setghost 0
+		// takes it (one still a ghost five frames on is sent it again by ReadBackGhosts).
+		void RepairGhostsFromSave()
+		{
+			const auto local = NpcSync::LocalPlayer();
+			if (repairFrames == 0 || local == 0 || --repairFrames % BlastShield::REPAIR_EVERY != 0) {
+				return;
+			}
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (!player || !lists) {
+				return;
+			}
+			// Collected first, by the session's id: nothing is changed while the engine's list is walked.
+			std::vector<std::uint32_t> ids;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || actor->IsPlayerRef() || actor->IsDeleted() || Puppets::IsPuppet(actor) || !actor->Get3D() || std::string_view{ GhostData(actor) } != "on") {
+					continue;
+				}
+				const auto id = NpcSync::SessionId(actor->GetFormID());
+				if (id == 0 || repaired.contains(id)) {
+					continue;
+				}
+				const auto npc = actor->GetNPC();
+				const BlastShield::Loaded copy{
+					.actor = { .id = id, .owner = NpcSync::Owner(id), .dead = actor->IsDead(false) },
+					.ghost = true,
+					.baseGhost = npc && npc->IsGhost(),
+					.shielded = shields.Shielded(id) || std::ranges::any_of(ghostReadbacks, [&](const GhostReadback& a_readback) { return a_readback.id == id; }),
+					.hostile = actor->GetHostileToActor(player),
+				};
+				if (BlastShield::RepairsOnLoad(copy, local)) {
+					ids.push_back(id);
+				}
+			}
+			for (const auto id : ids) {
+				repaired.insert(id);
+				++ghostsRepaired;
+				REX::INFO("WeaponFire: {} (player {}'s) came from the save a ghost, its base none: the ghost is taken off (ghost {})", Name(id), NpcSync::Owner(id),
+					CopyWatch::GhostState(CopyOf(id)));
+				SetGhost(id, false);
+			}
+		}
+
 		void EndDueShields()
 		{
 			++frames;
 			if (!hiddenFromSave.empty()) {
-				AfterSave();  // the save's own message had it done already, unless it came off the main thread
+				AfterSave();  // the save is written: its ghosts' flags go back on, and setghost 0 again
 			}
 			ReadBackGhosts();
 			ReportShieldedDeaths();
@@ -1857,6 +1921,7 @@ namespace WeaponFire
 				REX::INFO("WeaponFire: {} is no ghost again, loaded once more", Name(a_id));
 				return true;
 			});
+			RepairGhostsFromSave();
 			if (shields.Size() == 0) {
 				return;
 			}
@@ -1940,6 +2005,18 @@ namespace WeaponFire
 		if (again > 0) {
 			REX::INFO("WeaponFire: after the save, setghost 0 sent again to {} cop{}", again, again == 1 ? "y" : "ies");
 		}
+	}
+
+	void BeforeLoad()
+	{
+		// No setghost 0 goes out: it would land after the load, on a form id that may name another actor by then.
+		ForgetGhosts();
+	}
+
+	void OnGameLoaded()
+	{
+		ForgetGhosts();
+		repairFrames = BlastShield::REPAIR_FRAMES;
 	}
 
 	std::vector<Protocol::Explosion> TakeExplosions()
