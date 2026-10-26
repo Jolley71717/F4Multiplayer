@@ -1,5 +1,5 @@
 // Shared storage, a game's side: who keeps a container, what a friend's copy shows while its menu is open, what a
-// refused or unanswered move undoes, and what a load does again.
+// refused move undoes, what our loaded world lacks, and how our moves settle after a load or a rejoin.
 
 #include "Test.h"
 
@@ -74,6 +74,14 @@ namespace
 			return done;
 		}
 	};
+
+	// Welcomed, and settled at once (nothing of ours to put right): the settle sent is left out of what the tests count.
+	void Welcome(StorageView::Client& a_client, Engine& a_engine)
+	{
+		a_client.OnWelcome(true, false, SESSION);
+		a_client.OnCaughtUp(1, 1, 0, false);
+		a_engine.sent.clear();
+	}
 }
 
 TEST("storage view: who keeps a container: nobody without the rule, else the owner's game; unclaimed storage is ordinary loot")
@@ -233,22 +241,29 @@ TEST("storage view: a shortfall takes back only what a numbered take of ours nev
 	CHECK(!side.Refused({ CHEST, STIMPAK, -3, 50, Protocol::StorageReason::kShort }).matched);
 }
 
-TEST("storage view: a numbered move of ours our loaded world lacks is done again on our player: a put taken, a take given")
+TEST("storage view: a numbered move of ours our loaded world lacks is left to the true copy: our player keeps what the save has")
 {
 	Side side = Friend();
-	side.OnLoad(SESSION, {}, T0);
-	const auto put = side.Own({ 20, US, { CHEST, WATER, 3 } }, true);
-	REQUIRE(put);
-	CHECK(put->player == -3);  // our loaded player still has the waters the chest holds now
-	CHECK(put->copy == 0);
-	const auto take = side.Own({ 21, US, { CHEST, STIMPAK, -2 } }, true);
-	REQUIRE(take);
-	CHECK(take->player == 2);  // the chest gave them up: our loaded player has them again
+	side.OnLoad(SESSION, {}, {}, 0, T0);
+	CHECK(!side.Own({ 20, US, { CHEST, WATER, 3 } }, true));     // nothing taken from our player: the server undoes the put
+	CHECK(!side.Own({ 21, US, { CHEST, STIMPAK, -2 } }, true));  // nothing given: the server puts the take back
 	CHECK(!side.Own({ 22, US, { CHEST, STIMPAK, -1 } }, false));  // in our world already
-	CHECK(side.Stats().redone == 2);
+	CHECK(side.Stats().lacking == 2);
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 20, 21 }));
 }
 
-TEST("storage view: a load keeps the save's unanswered moves: their numbers find them, so they aren't done twice")
+TEST("storage view: a take of ours numbered before the container was kept isn't lacking; a put then is")
+{
+	Side side = Friend();
+	side.Owners({ { { CHEST, FRIEND, 30 } } });
+	side.OnLoad(SESSION, {}, {}, 0, T0);
+	side.Own({ 10, US, { CHEST, STIMPAK, -1 } }, true);
+	side.Own({ 11, US, { CHEST, WATER, 2 } }, true);
+	side.Own({ 31, US, { CHEST, STIMPAK, -1 } }, true);
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 11, 31 }));
+}
+
+TEST("storage view: a load keeps the save's unanswered moves: their numbers find them, so they aren't lacking")
 {
 	Side side = Friend();
 	side.Reported({ CHEST, WATER, 3 }, T0);
@@ -258,68 +273,114 @@ TEST("storage view: a load keeps the save's unanswered moves: their numbers find
 	CHECK(side.MovesSession() == SESSION);
 
 	side.Reported({ CHEST, WATER, 5 }, T0);  // after the save
-	side.OnLoad(SESSION, unanswered, T0);
+	side.OnLoad(SESSION, unanswered, {}, 0, T0);
 	CHECK(side.InFlight() == 2);
 	CHECK(!side.Own({ 30, US, { CHEST, WATER, 3 } }, true));   // the save's: in our world
-	const auto later = side.Own({ 31, US, { CHEST, WATER, 5 } }, true);  // after it: done again
-	REQUIRE(later);
-	CHECK(later->player == -5);
-	// The save's take was refused before the load: it never comes, and is undone in time.
-	CHECK(side.Expired(T0 + StorageView::ANSWER_WITHIN - std::chrono::seconds{ 1 }).empty());
-	const auto undone = side.Expired(T0 + StorageView::ANSWER_WITHIN);
-	REQUIRE(undone.size() == 1);
-	CHECK(undone[0].player == -1);  // the take comes back out of our player
-	CHECK(side.InFlight() == 0);
+	CHECK(!side.Own({ 31, US, { CHEST, WATER, 5 } }, true));   // after it: lacking
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 31 }));
+	// The save's take never came back numbered: it goes late with the settle, never undone here.
+	side.Expired(T0 + StorageView::ANSWER_WITHIN);
+	CHECK(side.InFlight() == 1);
+	CHECK(side.Stats().unanswered == 1);
+	const auto settle = side.CaughtUp(1, 1, 40, false);
+	REQUIRE(settle);
+	CHECK((settle->lacking == std::vector<std::uint32_t>{ 31 }));
+	CHECK((settle->late == std::vector<Protocol::ContainerChange>{ { CHEST, STIMPAK, -1 } }));
+	CHECK(settle->next == 40);
+	CHECK(settle->lacksFrom == 0);
+	CHECK(side.InFlight() == 1);  // on its way still: its number, or a refusal, answers it
 }
 
-TEST("storage view: an unanswered move is undone in time, and done again should its number come after all")
+TEST("storage view: a take kept with a save that comes back smaller takes back the rest; a move of now never matches an older number")
+{
+	Side side = Friend();
+	side.Reported({ CHEST, STIMPAK, -4 }, T0);
+	const auto unanswered = side.Unanswered();
+	side.OnLoad(SESSION, unanswered, {}, 0, T0);
+	side.Reported({ CHEST, STIMPAK, -10 }, T0);  // made in the loaded world
+	const auto corrected = side.Own({ 50, US, { CHEST, STIMPAK, -1 } }, true);
+	REQUIRE(corrected);
+	CHECK(corrected->player == -3);
+	CHECK(side.Stats().corrected == 1);
+	// Another older take of ours, lacking: it doesn't pair with the take of 10 on its way.
+	CHECK(!side.Own({ 51, US, { CHEST, STIMPAK, -3 } }, true));
+	CHECK(side.InFlight() == 1);
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 51 }));
+}
+
+TEST("storage view: a move with no answer stays on its way, is matched when its number comes, and a late refusal undoes it")
 {
 	Side side = Friend();
 	side.Open(CHEST);
 	side.Contents({ CHEST, 1, {} });
 	side.Reported({ CHEST, WATER, 4 }, T0);
 	side.Reported({ CHEST, STIMPAK, -1 }, T0 + std::chrono::seconds{ 10 });
-	auto undone = side.Expired(T0 + StorageView::ANSWER_WITHIN);
-	REQUIRE(undone.size() == 1);
-	CHECK(undone[0].player == 4);   // the put given back
-	CHECK(undone[0].copy == -4);    // and out of the copy that shows it
-	CHECK(side.Orphans() == 1);
-	CHECK(side.Stats().unanswered == 1);
+	side.Expired(T0 + StorageView::ANSWER_WITHIN);
+	side.Expired(T0 + StorageView::ANSWER_WITHIN + std::chrono::seconds{ 10 });
+	side.Expired(T0 + StorageView::ANSWER_WITHIN + std::chrono::seconds{ 20 });
+	CHECK(side.Stats().unanswered == 2);  // once each
+	CHECK(side.InFlight() == 2);
 
-	const auto redo = side.Own({ 40, US, { CHEST, WATER, 4 } }, false);
-	REQUIRE(redo);
-	CHECK(redo->player == -4);
-	CHECK(redo->refresh);
-	CHECK(side.Orphans() == 0);
-
-	// The take is refused late, after it was undone for want of an answer: undone once.
-	undone = side.Expired(T0 + StorageView::ANSWER_WITHIN + std::chrono::seconds{ 10 });
-	REQUIRE(undone.size() == 1);
-	CHECK(!side.Refused(Refusal(CHEST, STIMPAK, -1)).matched);
-	CHECK(side.Stats().lateRefusals == 1);
+	CHECK(!side.Own({ 40, US, { CHEST, WATER, 4 } }, false));
+	CHECK(side.InFlight() == 1);
+	CHECK(side.Lacking().empty());
+	const auto undo = side.Refused(Refusal(CHEST, STIMPAK, -1));
+	CHECK(undo.matched);
+	CHECK(undo.player == -1);
+	CHECK(side.InFlight() == 0);
 }
 
-TEST("storage view: as the connection goes our unanswered moves are undone; the same session's catch-up does the numbered again")
+TEST("storage view: as the connection goes our unanswered moves stay; the rejoin settles them, and another session drops them")
 {
 	Side side = Friend();
 	side.Reported({ CHEST, WATER, 2 }, T0);
 	side.Reported({ CHEST, STIMPAK, -3 }, T0);
-	const auto undone = side.OnDisconnected();
-	REQUIRE(undone.size() == 2);
-	CHECK(undone[0].player == 2);
-	CHECK(undone[1].player == -3);
-	CHECK(side.InFlight() == 0);
+	side.OnDisconnected();
+	CHECK(side.InFlight() == 2);
+	CHECK(!side.Rule());
 
 	side.OnWelcome(true, false, SESSION, T0);
 	side.Owners(Owned(CHEST, FRIEND));
-	const auto redo = side.Own({ 60, US, { CHEST, WATER, 2 } }, false);
-	REQUIRE(redo);
-	CHECK(redo->player == -2);
+	CHECK(side.Settling());
+	CHECK(!side.Own({ 60, US, { CHEST, WATER, 2 } }, true));  // the catch-up numbered the put: in our world
+	CHECK(!side.CaughtUp(1, 2, 61, false));  // a world state for an older request: not settled yet
+	CHECK(!side.CaughtUp(1, 1, 61, true));   // changes still wait for an earlier one: the gap is asked for, and settles
+	const auto settle = side.CaughtUp(1, 1, 61, false);
+	REQUIRE(settle);
+	CHECK((settle->late == std::vector<Protocol::ContainerChange>{ { CHEST, STIMPAK, -3 } }));
+	CHECK(settle->lacking.empty());
+	CHECK(!side.Settling());
+	CHECK(!side.CaughtUp(1, 1, 61, false));  // once
+	CHECK(side.Stats().late == 1);
 
-	// Another session: nothing of the last one's is ours to answer.
+	// Another session: nothing of the last one's is ours to settle.
 	side.OnDisconnected();
 	side.OnWelcome(true, false, SESSION + 1, T0);
-	CHECK(side.Orphans() == 0);
+	CHECK(side.InFlight() == 0);
+	CHECK(side.Lacks() == 0);
+}
+
+TEST("storage view: what our world lacks is kept with a save, and a settle names those from where it remembers")
+{
+	Side side = Friend();
+	side.OnLoad(SESSION, {}, { { 3, 9, 12 } }, 5, T0);  // the save's record: 3 is before where it remembers from
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 9, 12 }));
+	CHECK(side.LacksFrom() == 5);
+	side.Own({ 20, US, { CHEST, WATER, 1 } }, true);
+	const auto settle = side.CaughtUp(1, 1, 15, false);
+	REQUIRE(settle);
+	CHECK((settle->lacking == std::vector<std::uint32_t>{ 9, 12 }));  // 20 is past where the world state ended
+	CHECK(settle->lacksFrom == 5);
+
+	// Past MAX_LACKS the oldest is forgotten, and where it remembers from moves past it.
+	Side full = Friend();
+	full.OnLoad(SESSION, {}, {}, 0, T0);
+	for (std::uint32_t i = 0; i <= Side::MAX_LACKS; ++i) {
+		full.Own({ 100 + i, US, { CHEST, WATER, 1 } }, true);
+	}
+	CHECK(full.Lacks() == Side::MAX_LACKS);
+	CHECK(full.LacksFrom() == 101);
+	CHECK(full.Stats().lacksDropped == 1);
 }
 
 TEST("storage view: a move that couldn't be sent is undone at once")
@@ -376,7 +437,7 @@ TEST("storage client: the first open sets the copy's own things aside, never to 
 {
 	Engine engine;
 	StorageView::Client client{ engine };
-	client.OnWelcome(true, false, SESSION);
+	Welcome(client, engine);
 	client.State().Owners(Owned(CHEST, FRIEND));
 	engine.copy = { { WATER, 2 }, { STIMPAK, 5 } };  // their stash, or the host's things it mirrored in an older session
 	client.Open(CHEST, true);
@@ -401,7 +462,7 @@ TEST("storage client: the server closing the view hides the menu; what was set a
 {
 	Engine engine;
 	StorageView::Client client{ engine };
-	client.OnWelcome(true, false, SESSION);
+	Welcome(client, engine);
 	client.State().Owners(Owned(CHEST, FRIEND));
 	engine.copy = { { WATER, 2 } };
 	client.Open(CHEST, true);
@@ -419,11 +480,11 @@ TEST("storage client: the server closing the view hides the menu; what was set a
 	CHECK(engine.sent.size() == 1);  // the server closed it: no close to send
 }
 
-TEST("storage client: a save or a disconnect while viewing puts the copy back as it was, and undoes what is unanswered")
+TEST("storage client: a save or a disconnect while viewing puts the copy back as it was, and leaves what is unanswered on its way")
 {
 	Engine engine;
 	StorageView::Client client{ engine };
-	client.OnWelcome(true, false, SESSION);
+	Welcome(client, engine);
 	client.State().Owners(Owned(CHEST, FRIEND));
 	engine.copy = { { WATER, 2 } };
 	engine.player = { { STIMPAK, 0 } };
@@ -437,15 +498,54 @@ TEST("storage client: a save or a disconnect while viewing puts the copy back as
 	CHECK(engine.copy[WATER] == 2);
 	CHECK(engine.player[STIMPAK] == 3);  // on its way: the answer decides
 	client.OnDisconnected();
-	CHECK(engine.player[STIMPAK] == 0);  // no answer will come: taken back
-	CHECK(client.State().Orphans() == 1);
+	CHECK(engine.player[STIMPAK] == 3);  // never taken back: the rejoin settles it
+	CHECK(client.State().InFlight() == 1);
+}
+
+TEST("storage client: until our moves have settled, a friend's storage closes as it opens; the settle goes once caught up")
+{
+	Engine engine;
+	StorageView::Client client{ engine };
+	client.OnWelcome(true, false, SESSION);
+	client.State().Owners(Owned(CHEST, FRIEND));
+	engine.copy = { { WATER, 2 } };
+	client.Open(CHEST, true);
+	CHECK(engine.hides == 1);
+	CHECK(!client.State().Viewing());
+	CHECK(engine.copy[WATER] == 2);  // nothing set aside
+	CHECK(engine.sent.empty());      // no view asked for
+	CHECK(engine.notices == std::vector{ StorageView::Notice::kClosed });
+	client.OnCaughtUp(1, 1, 5, false);
+	REQUIRE(engine.sent.size() == 1);
+	const auto settle = Protocol::DecodeStorageSettle(engine.sent[0]);
+	REQUIRE(settle);
+	CHECK(settle->asked == 1);
+	CHECK(settle->next == 5);
+	client.Open(CHEST, true);
+	CHECK(client.State().Viewing() == CHEST);
+
+	// A gap asked for again: settling again, and the menu closes as it opens until its answer has come.
+	client.MenuClosed();
+	client.Asked();
+	client.Open(CHEST, true);
+	CHECK(engine.hides == 2);
+	client.OnCaughtUp(2, 2, 5, false);
+	client.Open(CHEST, true);
+	CHECK(client.State().Viewing() == CHEST);
+
+	// With the rule off nothing settles.
+	Engine off;
+	StorageView::Client offClient{ off };
+	offClient.OnWelcome(false, false, SESSION);
+	offClient.OnCaughtUp(1, 1, 5, false);
+	CHECK(off.sent.empty());
 }
 
 TEST("storage client: notices come at most every NOTICE_EVERY, however many moves are refused")
 {
 	Engine engine;
 	StorageView::Client client{ engine };
-	client.OnWelcome(true, false, SESSION);
+	Welcome(client, engine);
 	client.State().Owners(Owned(CHEST, FRIEND));
 	client.Open(CHEST, true);
 	client.OnContents({ CHEST, 7, { { STIMPAK, 300 } } });

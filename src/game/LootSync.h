@@ -73,11 +73,12 @@ namespace LootSync
 		// now (too many unanswered), so it isn't sent, and the world has undone it.
 		virtual bool                         Reporting(const Protocol::ContainerChange&) { return true; }
 		// One of our own moves at a friend's storage came back numbered, in session order (live, or in a catch-up).
-		// a_lacking: our world doesn't have it (the save we loaded is from before it).
+		// a_lacking: our world doesn't have it (the save we loaded is from before it). Our takes there numbered before it
+		// was kept (KeptSince) don't come: they were ordinary loot.
 		virtual void                         OwnStorage(const Protocol::IndexedContainerChange&, bool) {}
 		// A friend's numbered take (a_index) our storage held a_missing fewer of than taken.
 		virtual void                         Short(std::uint32_t, const Protocol::ContainerChange&, std::int32_t) {}
-		// The first change numbered while a friend's storage was kept: ours before it were ordinary loot, never done again.
+		// The first change numbered while a friend's storage was kept: our takes before it were ordinary loot, never undone.
 		virtual std::uint32_t                KeptSince(std::uint32_t) { return 0; }
 		// While our menu shows a friend's storage: an item that stays our own there for the view (a quest alias holds a stack
 		// of it in our copy: StorageView::Side::Open).
@@ -239,7 +240,11 @@ namespace LootSync
 		}
 
 		// What to put in Hello: everything our world lacks.
-		Protocol::WorldRequest Hello(Clock::time_point a_now) { return receiver.Request(a_now); }
+		Protocol::WorldRequest Hello(Clock::time_point a_now)
+		{
+			asked = 1;
+			return receiver.Request(a_now);
+		}
 
 		// A save's record was read, before the game says the save has loaded (a_session 0: it has none).
 		void LoadRecord(std::uint64_t a_session, std::uint32_t a_next, std::vector<Pending> a_pending)
@@ -262,6 +267,7 @@ namespace LootSync
 			if (receiver.Adopt(a_session, a_localId)) {
 				pending.clear();
 			}
+			++asked;
 			return receiver.Request(a_now);
 		}
 
@@ -394,6 +400,7 @@ namespace LootSync
 			if (live == 0 || !receiver.Due(a_now, [&](const Protocol::IndexedContainerChange& a_ready) { ApplyInOrder(a_ready, a_world); }, OwnOf(a_world))) {
 				return std::nullopt;
 			}
+			++asked;
 			return receiver.Request(a_now);
 		}
 
@@ -442,7 +449,7 @@ namespace LootSync
 		{
 			return [&a_world](const Protocol::IndexedContainerChange& a_change, bool a_lacking) {
 				if (a_change.change.item != Protocol::CONTAINER_EMPTIED && a_world.Keeper(a_change.change.container) == StorageView::Keeper::kFriend &&
-					a_change.index >= a_world.KeptSince(a_change.change.container)) {
+					(a_change.change.count > 0 || a_change.index >= a_world.KeptSince(a_change.change.container))) {
 					a_world.OwnStorage(a_change, a_lacking);
 				}
 			};
@@ -456,6 +463,9 @@ namespace LootSync
 		[[nodiscard]] const ContainerLedger::Receiver&    Numbers() const { return receiver; }
 		[[nodiscard]] const Counts&                       Stats() const { return counts; }
 		[[nodiscard]] bool                                Ours(std::uint32_t a_playerId) const { return receiver.Ours(a_playerId); }
+		// How many world states we asked for on this connection: the hello's, and each request since (a load's, a gap's).
+		// The server counts the same, and says which one each world state answers (Protocol::StorageCaughtUp).
+		[[nodiscard]] std::uint32_t                       Asked() const { return asked; }
 
 		[[nodiscard]] std::uint32_t KeptSent(LootScope::Scope a_scope) const { return counts.keptSent[static_cast<std::size_t>(a_scope)]; }
 		[[nodiscard]] std::uint32_t KeptApplied(LootScope::Scope a_scope) const { return counts.keptApplied[static_cast<std::size_t>(a_scope)]; }
@@ -706,6 +716,7 @@ namespace LootSync
 		ContainerLedger::Receiver receiver;
 		std::uint64_t             live = 0;    // the session we are welcomed into (0: none, or the connection went)
 		std::uint32_t             liveId = 0;  // our player ID in it
+		std::uint32_t             asked = 0;   // world states asked for on this connection (the hello first): see Asked
 		std::vector<Pending>      pending;
 		// Holders reported emptied (CONTAINER_EMPTIED) and not stocked with anything shared since: what ours held then, each
 		// item's count, moved on by our player's moves since (see Restocked).

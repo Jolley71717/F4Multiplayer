@@ -180,6 +180,8 @@ namespace Storage
 		{
 			std::uint64_t                          session = 0;
 			std::vector<Protocol::ContainerChange> unanswered;
+			std::uint32_t                          lacksFrom = 0;
+			std::vector<std::uint32_t>             lacks;
 		} loaded;
 
 		void Scan()
@@ -282,11 +284,11 @@ namespace Storage
 	void OnDisconnected()
 	{
 		const auto unanswered = side.InFlight();
-		client.OnDisconnected();  // nobody's truth now: the session's things leave our copy, and what we sent unanswered is undone
+		client.OnDisconnected();  // nobody's truth now: the session's things leave our copy; what we sent unanswered stays on its way
 		ruleOn = false;
 		live = 0;
 		if (unanswered != 0) {
-			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: undone (done again should a reconnect number them)", unanswered);
+			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: kept, and settled when we rejoin (sent late if the session never numbered them)", unanswered);
 		}
 	}
 
@@ -305,6 +307,18 @@ namespace Storage
 		client.OnRefused(a_refusal);
 	}
 
+	void OnCaughtUp(const Protocol::StorageCaughtUp& a_caughtUp)
+	{
+		const auto& loot = WorldSync::Loot();
+		const auto  settles = side.Stats().settles;
+		const auto  lateBefore = side.Stats().late;
+		client.OnCaughtUp(a_caughtUp.asked, loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
+		if (side.Stats().settles != settles) {
+			REX::INFO("Storage: caught up (request {}): settled our moves at a friend's storage ({} our world lacks, {} still unnumbered sent late)", a_caughtUp.asked,
+				side.Lacks(), side.Stats().late - lateBefore);
+		}
+	}
+
 	void BeforeSaveOrLoad()
 	{
 		client.BeforeSaveOrLoad();
@@ -318,11 +332,14 @@ namespace Storage
 		const auto session = live != 0 ? live : record.session;
 		if (record.session != session) {
 			record.unanswered.clear();
+			record.lacks.clear();
+			record.lacksFrom = 0;
 		}
-		client.OnLoad(session, record.unanswered);
+		client.OnLoad(session, record.unanswered, record.lacks, record.lacksFrom);
 		notStorage.clear();
-		if (!record.unanswered.empty()) {
-			REX::INFO("Storage: the save was made with {} of our moves at a friend's storage unanswered", record.unanswered.size());
+		if (!record.unanswered.empty() || !record.lacks.empty()) {
+			REX::INFO("Storage: the save was made with {} of our moves at a friend's storage unanswered, and its world lacking {} of them numbered; they are settled once the catch-up has come",
+				record.unanswered.size(), record.lacks.size());
 		}
 	}
 
@@ -336,7 +353,8 @@ namespace Storage
 	{
 		std::vector<std::uint8_t> out;
 		const auto                unanswered = side.Unanswered();
-		if (unanswered.empty() || side.MovesSession() == 0) {
+		const auto                lacks = side.Lacking();
+		if ((unanswered.empty() && lacks.empty() && side.LacksFrom() == 0) || side.MovesSession() == 0) {
 			return out;
 		}
 		Put(out, side.MovesSession());
@@ -346,6 +364,11 @@ namespace Storage
 			Put(out, change.item);
 			Put(out, change.count);
 		}
+		Put(out, side.LacksFrom());
+		Put(out, static_cast<std::uint32_t>(lacks.size()));
+		for (const auto index : lacks) {
+			Put(out, index);
+		}
 		return out;
 	}
 
@@ -354,20 +377,31 @@ namespace Storage
 		loaded = {};
 		std::uint64_t session = 0;
 		std::uint32_t count = 0;
-		if (!Get(a_bytes, session) || !Get(a_bytes, count) || count > StorageView::MAX_IN_FLIGHT || a_bytes.size() != count * 12ull) {
+		if (!Get(a_bytes, session) || !Get(a_bytes, count) || count > StorageView::MAX_IN_FLIGHT || a_bytes.size() < count * 12ull + 8) {
 			REX::WARN("Storage: ignoring an unreadable record of our unanswered moves");
 			return;
 		}
-		loaded.session = session;
+		Record record{ .session = session };
 		for (std::uint32_t i = 0; i < count; ++i) {
 			Protocol::ContainerChange change{};
 			Get(a_bytes, change.container);
 			Get(a_bytes, change.item);
 			Get(a_bytes, change.count);
 			if (Protocol::IsValid(change)) {
-				loaded.unanswered.push_back(change);
+				record.unanswered.push_back(change);
 			}
 		}
+		std::uint32_t lacks = 0;
+		if (!Get(a_bytes, record.lacksFrom) || !Get(a_bytes, lacks) || lacks > Protocol::MAX_STORAGE_LACKING || a_bytes.size() != lacks * 4ull) {
+			REX::WARN("Storage: ignoring an unreadable record of our unanswered moves");
+			return;
+		}
+		for (std::uint32_t i = 0; i < lacks; ++i) {
+			std::uint32_t index = 0;
+			Get(a_bytes, index);
+			record.lacks.push_back(index);
+		}
+		loaded = std::move(record);
 	}
 
 	void RevertRecord()
@@ -448,6 +482,7 @@ namespace Storage
 	void UnlistAll()
 	{
 		side.UnlistAll();
+		client.Asked();  // and our moves at a friend's storage settle again after its answer
 	}
 
 	bool Applying()
@@ -459,12 +494,13 @@ namespace Storage
 	{
 		const auto& s = side.Stats();
 		const auto& c = client.Stats();
-		return std::format("storage={}{} owners={} viewing={} inFlight={} orphans={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} unanswered={} "
-						   "lateRefusals={} unsent={} overflow={} redone={} corrected={} takenBack={} usedUp={} forfeited={} forfeits={} owed={} owedDropped={} orphansDropped={} "
+		return std::format("storage={}{} owners={} viewing={} inFlight={} settling={} lacks={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} "
+						   "unanswered={} unsent={} overflow={} lacking={} lacksDropped={} settles={} late={} settlingClosed={} corrected={} takenBack={} usedUp={} "
 						   "givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
 			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
-			side.Orphans(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.lateRefusals, s.unsent, s.overflow, s.redone, s.corrected,
-			c.takenBack, c.usedUp, c.forfeited, s.forfeits, side.Owed(), s.owedDropped, s.orphansDropped, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed, counts.refusedOwn);
+			side.Settling() ? 1 : 0, side.Lacks(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.unsent, s.overflow, s.lacking,
+			s.lacksDropped, s.settles, s.late, s.settlingClosed, s.corrected, c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
+			counts.refusedOwn);
 	}
 
 	std::string Command(std::string_view a_args)

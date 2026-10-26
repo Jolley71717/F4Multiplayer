@@ -12,9 +12,9 @@
 // at the point it is made, whatever the code that asked for it already checked (a Nexus report had a host lose their
 // Pip-Boy and weapons as a friend joined; that was a story mod's quest stage replayed, see Official.h, and nothing of
 // the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
-// friend's shared storage that the server refused or never answered is undone, or one the server numbered that our loaded
-// world lacks is done again (Change::kStorageUndo, never on anything but our player, and only for a
-// StorageView::PlayerChange, which only StorageView::Client makes).
+// friend's shared storage that the server refused, or a take the host's chest held less of, is undone (Change::kStorageUndo,
+// never on anything but our player, and only for a StorageView::PlayerChange, which only StorageView::Client makes).
+// A move our loaded world lacks is put right in the true copy by the server, never on our player.
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
 {

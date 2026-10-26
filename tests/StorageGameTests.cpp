@@ -39,6 +39,15 @@ namespace
 		return options;
 	}
 
+	// A session whose friend loads more often than the world-state budget allows at once (a bucket of three, the hello's
+	// one of them): every world state goes at once, so each load settles before the next.
+	Server::Options Reloads()
+	{
+		auto options = Options();
+		options.worldStateRefill = std::chrono::milliseconds{ 0 };
+		return options;
+	}
+
 	void Storage(Game& a_game, std::uint32_t a_holder = CHEST)
 	{
 		a_game.holderFacts[a_holder] = { .kind = LootScope::Holder::kContainer, .storage = true };
@@ -78,6 +87,15 @@ namespace
 		}
 	}
 
+	// A raw player's game answers its catch-up (kStorageCaughtUp a_asked) with nothing to settle: until it does, with
+	// the rule on, the server shows it no storage and refuses its moves there.
+	void SettleRaw(Fixture& a_f, PeerId a_peer, std::uint32_t a_asked = 1)
+	{
+		a_f.fake->Deliver(a_peer, Protocol::Encode(Protocol::StorageSettle{ a_asked, 0, 0, {}, {} }));
+		Pace(a_peer);
+		Sync(a_f, a_peer);
+	}
+
 	// A session: the host's game (its chest holds 5 stimpaks) and a friend's (their copy holds 2 waters of their own, and
 	// they carry 3 more).
 	struct Session
@@ -87,7 +105,12 @@ namespace
 		Game    guest{ FRIEND_PEER, FRIEND_ID };
 
 		explicit Session(bool a_shared = true) :
-			f(Options(a_shared))
+			Session(Options(a_shared))
+		{
+		}
+
+		explicit Session(Server::Options a_options) :
+			f(std::move(a_options))
 		{
 			f.fake->SetLocal(HOST_PEER);
 			host.host = true;
@@ -341,9 +364,9 @@ TEST("shared storage: a take the host's chest held less of than the server knew 
 	CHECK(s.Total(STIMPAK) == 1);
 }
 
-TEST("shared storage: a friend's reload after a put: the put stands, and the loaded inventory loses it again")
+TEST("shared storage: a friend's reload after a put: the chest gives the put up, and the loaded player keeps what their save has")
 {
-	Session s;
+	Session s{ Reloads() };
 	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
 	s.guest.OpenMenu(s.f, CHEST);
 	s.Settle();
@@ -355,23 +378,40 @@ TEST("shared storage: a friend's reload after a put: the put stands, and the loa
 	s.guest.LoadGame(s.f, before);
 	CHECK(s.guest.Carried(WATER) == 3);  // the save's
 	s.Settle();
-	CHECK(s.guest.Carried(WATER) == 0);  // the catch-up brought the put, done again on the loaded player
-	CHECK(s.guest.storage.State().Stats().redone == 1);
-	CHECK(s.host.In(CHEST, WATER) == 3);
+	CHECK(s.guest.Carried(WATER) == 3);  // never taken from them again: they could have moved it away first
+	CHECK(s.guest.storage.State().Stats().lacking == 1);
+	CHECK(s.guest.storage.State().Stats().settles == 2);  // the hello's, and the load's
+	CHECK(s.host.In(CHEST, WATER) == 0);  // the true copy gave the put up
+	CHECK(s.f.Logged("storage undid 1 and did again 0 of player"));
 	CHECK(s.Total(WATER) == 5);
 
-	// The loop that duped: put, quickload, take again. The chest holds 3, and only those come out.
+	// The loop that duped: put, quickload, take again. The chest holds none of them now.
 	s.guest.OpenMenu(s.f, CHEST);
 	s.Settle();
+	CHECK(s.guest.In(CHEST, WATER) == 0);
 	s.guest.Take(s.f, CHEST, WATER, 3);
 	s.guest.CloseMenu(s.f);
 	s.Settle();
 	CHECK(s.guest.Carried(WATER) == 3);
+	CHECK(s.Total(WATER) == 5);
+
+	// And again: put, quickload. The chest gives up the second put too, once.
+	const auto again = s.guest.SaveGame(s.f);
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Put(s.f, CHEST, WATER, 3);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	s.guest.LoadGame(s.f, again);
+	s.Settle();
+	s.guest.LoadGame(s.f, again);
+	s.Settle();
 	CHECK(s.host.In(CHEST, WATER) == 0);
+	CHECK(s.guest.Carried(WATER) == 3);
 	CHECK(s.Total(WATER) == 5);
 }
 
-TEST("shared storage: a friend's reload after a take: the take stands, and the loaded inventory gets it again")
+TEST("shared storage: a friend's reload after a take: the chest has the take back, and the loaded player keeps what their save has")
 {
 	Session s;
 	const auto before = s.guest.SaveGame(s.f);
@@ -383,14 +423,52 @@ TEST("shared storage: a friend's reload after a take: the take stands, and the l
 	CHECK(s.host.In(CHEST, STIMPAK) == 3);
 
 	s.guest.LoadGame(s.f, before);
-	CHECK(s.guest.Carried(STIMPAK) == 0);
 	s.Settle();
-	CHECK(s.guest.Carried(STIMPAK) == 2);  // never lost: the chest gave them up
-	CHECK(s.host.In(CHEST, STIMPAK) == 3);
+	CHECK(s.guest.Carried(STIMPAK) == 0);   // the save's
+	CHECK(s.host.In(CHEST, STIMPAK) == 5);  // never lost: the true copy has them again
 	CHECK(s.Total(STIMPAK) == 5);
 }
 
-TEST("shared storage: a save made with a put unanswered, loaded again: the put is in it, and isn't done twice")
+TEST("shared storage: an older save then a newer one: the chest gives up the put for the first, and has it again for the second")
+{
+	Session s{ Reloads() };
+	const auto older = s.guest.SaveGame(s.f);  // carrying 3 waters
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Put(s.f, CHEST, WATER, 3);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	const auto newer = s.guest.SaveGame(s.f);  // the put made: carrying none
+	CHECK(newer.lacks.empty());
+
+	s.guest.LoadGame(s.f, older);
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 0);
+	CHECK(s.Total(WATER) == 5);
+	const auto lacking = s.guest.SaveGame(s.f);  // the older world, with the put it lacks kept in its record
+	CHECK(lacking.lacks.size() == 1);
+
+	s.guest.LoadGame(s.f, newer);
+	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 0);
+	CHECK(s.host.In(CHEST, WATER) == 3);  // done again: the newer world has the put
+	CHECK(s.f.Logged("storage undid 0 and did again 1 of player"));
+	CHECK(s.Total(WATER) == 5);
+
+	s.guest.LoadGame(s.f, lacking);  // the save made in the older world: lacking it again
+	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 3);
+	CHECK(s.host.In(CHEST, WATER) == 0);
+	CHECK(s.Total(WATER) == 5);
+
+	s.guest.LoadGame(s.f, lacking);  // the same again: nothing more to undo
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 0);
+	CHECK(s.Total(WATER) == 5);
+	CHECK(!s.f.Logged("has asked for the world too often"));  // each load settled before the next
+}
+
+TEST("shared storage: a save made with a put unanswered, loaded again: the put is in it, and the chest keeps it")
 {
 	Session s;
 	s.guest.OpenMenu(s.f, CHEST);
@@ -405,12 +483,14 @@ TEST("shared storage: a save made with a put unanswered, loaded again: the put i
 	s.guest.LoadGame(s.f, during);
 	s.Settle();
 	CHECK(s.guest.Carried(WATER) == 0);
-	CHECK(s.guest.storage.State().Stats().redone == 0);
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
+	CHECK(s.guest.storage.State().Stats().late == 0);
 	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.host.In(CHEST, WATER) == 3);
 	CHECK(s.Total(WATER) == 5);
 }
 
-TEST("shared storage: a put cut off by a disconnect is given back, and done again if the server had it")
+TEST("shared storage: moves cut off by a disconnect stay on their way: the rejoin's catch-up numbers one, the other goes late")
 {
 	Session s;
 	s.guest.OpenMenu(s.f, CHEST);
@@ -421,34 +501,65 @@ TEST("shared storage: a put cut off by a disconnect is given back, and done agai
 	Sync(s.f, FRIEND_PEER);  // numbered, and its echo sent to the connection about to go
 	s.guest.Put(s.f, CHEST, WATER, 2, false);
 	s.guest.Disconnect(s.f);
-	CHECK(s.guest.Carried(WATER) == 3);  // both given back: no answer will come
-	CHECK(s.guest.In(CHEST, WATER) == 2);
-	CHECK(s.guest.storage.State().Orphans() == 2);
+	CHECK(s.guest.Carried(WATER) == 0);  // nothing given back: neither is known lost
+	CHECK(s.guest.storage.State().InFlight() == 2);
+	CHECK(s.guest.In(CHEST, WATER) == 2);  // their own, back in the copy
 	s.host.Receive(s.f);
 	CHECK(s.host.In(CHEST, WATER) == 1);  // the first got through
 
 	s.guest.Join(s.f, "Guest");
 	s.Settle();
-	CHECK(s.guest.Carried(WATER) == 2);  // the catch-up numbered the first: done again
-	CHECK(s.guest.storage.State().Stats().redone == 1);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.guest.storage.State().Stats().late == 1);
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
+	CHECK(s.host.In(CHEST, WATER) == 3);  // the second went through late
+	CHECK(s.guest.Carried(WATER) == 0);
 	CHECK(s.Total(WATER) == 5);
 }
 
-TEST("shared storage: a put with no answer is given back after a while")
+TEST("shared storage: a move with no answer stays on its way: nothing is given back, and the next settle sends it late")
 {
 	Session s;
 	s.guest.OpenMenu(s.f, CHEST);
 	s.Settle();
 	s.guest.Put(s.f, CHEST, WATER, 3, false);
 	s.guest.FlushLoot();
-	s.guest.outbox.clear();  // lost on its way
+	s.guest.outbox.clear();  // lost on its way (as a server past its budgets answers nothing)
 	CHECK(s.guest.storage.State().InFlight() == 1);
 	s.guest.Wait(s.f, StorageView::ANSWER_WITHIN);
-	CHECK(s.guest.Carried(WATER) == 3);
-	CHECK(s.guest.In(CHEST, WATER) == 0);
-	CHECK(s.guest.Noticed(Notice::kPutRefused) == 1);
+	CHECK(s.guest.Carried(WATER) == 0);   // not given back: a number may still come
+	CHECK(s.guest.In(CHEST, WATER) == 3);  // shown on its way
+	CHECK(s.guest.storage.State().Stats().unanswered == 1);
+	CHECK(s.guest.Noticed(Notice::kPutRefused) == 0);
 	s.guest.CloseMenu(s.f);
 	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 0);
+
+	// The next settle (a rejoin here) sends it late, and the true copy has it.
+	s.guest.Disconnect(s.f);
+	s.host.Receive(s.f);
+	s.guest.Join(s.f, "Guest");
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 3);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.Total(WATER) == 5);
+}
+
+TEST("shared storage: a put whose number comes after ANSWER_WITHIN is matched when it comes: nothing given back or taken twice")
+{
+	Session s;
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Put(s.f, CHEST, WATER, 3);  // sent and numbered; its echo not read for a while
+	s.guest.Wait(s.f, StorageView::ANSWER_WITHIN);
+	CHECK(s.guest.Carried(WATER) == 0);
+	s.Stash(WATER, 3);  // nothing to move away
+	s.Settle();
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 3);
 	CHECK(s.Total(WATER) == 5);
 }
 
@@ -540,6 +651,7 @@ TEST("shared storage: storage the host's game hasn't claimed is ordinary loot wh
 TEST("shared storage: off (the default), every game keeps its own copy and moves go as before")
 {
 	Session s{ false };
+	CHECK(s.guest.caughtUp == 0);  // no settling with the rule off
 	CHECK(s.host.Keeper(CHEST) == Keeper::kNone);
 	CHECK(s.guest.Keeper(CHEST) == Keeper::kNone);
 	CHECK(s.host.storage.State().Stats().listed == 0);
@@ -586,6 +698,7 @@ TEST("shared storage: a friend's put of an item from a mod the host's game lacks
 	guestHello.contentHash = 0x9999;
 	guestHello.plugins = { "Fallout4.esm", "Mod.esp" };
 	REQUIRE(f.Join(FRIEND_PEER, guestHello));
+	SettleRaw(f, FRIEND_PEER);
 	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
 	Sync(f, HOST_PEER);
 	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
@@ -613,6 +726,7 @@ TEST("shared storage: a flood of moves at a friend's storage is bounded: past th
 	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
 	Sync(f, HOST_PEER);
 	Received(f, FRIEND_PEER);
+	SettleRaw(f, FRIEND_PEER);
 	// Not viewing: every one is refused, up to the budgets (a burst of moves, then of refusals), then nothing.
 	constexpr std::size_t FLOOD = 3 * Protocol::MAX_STORAGE_MOVES_UNANSWERED;
 	for (std::size_t i = 0; i < FLOOD; ++i) {
@@ -659,6 +773,7 @@ TEST("shared storage: who keeps each container outlasts a restart, closed to fri
 	REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
 	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
 	const auto welcome = Received(f, FRIEND_PEER);
+	SettleRaw(f, FRIEND_PEER);
 	const auto owners = Decoded(welcome, MT::kStorageOwners, [](auto a_data) { return Protocol::DecodeStorageOwners(a_data); });
 	REQUIRE(owners.size() == 1);
 	REQUIRE(owners[0].entries.size() == 1);
@@ -682,9 +797,9 @@ TEST("shared storage: who keeps each container outlasts a restart, closed to fri
 	CHECK((shown[0].stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 4 } }));
 }
 
-// ---- the redo finds the player short: what they moved away comes out of the true copy (kStorageForfeit) ------------
+// ---- the routes the reviews found: the true copy is put right, never the player, who could move the items away first ----
 
-TEST("shared storage: put, leave, load an older save, move the items to a workbench, rejoin: the chest gives them up")
+TEST("shared storage: put, leave, load an older save, move the items to a workbench, rejoin: the chest gives the put up")
 {
 	Session s;
 	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
@@ -702,10 +817,8 @@ TEST("shared storage: put, leave, load an older save, move the items to a workbe
 	s.Stash(WATER, 3);  // into their workbench, never reported
 	s.guest.Join(s.f, "Guest");
 	s.Settle();
-	CHECK(s.guest.storage.State().Stats().redone == 1);
-	CHECK(s.guest.storage.Stats().forfeited == 3);
-	CHECK(s.guest.storage.State().Stats().forfeits == 1);
-	CHECK(s.host.In(CHEST, WATER) == 0);  // the put stands, and what it couldn't take back again came out of the chest
+	CHECK(s.guest.storage.State().Stats().lacking == 1);
+	CHECK(s.host.In(CHEST, WATER) == 0);  // the put undone in the true copy
 	CHECK(s.Total(WATER) == 5);
 
 	// Taking the chest's waters on top of the workbench's finds none.
@@ -719,66 +832,157 @@ TEST("shared storage: put, leave, load an older save, move the items to a workbe
 	CHECK(s.Total(WATER) == 5);
 }
 
-TEST("shared storage: a connected load whose catch-up comes late: what the player moved away meanwhile comes out of the chest")
+TEST("shared storage: quickloads whose catch-up is owed: the friend can't view or take until it has come and they have settled")
 {
-	Session s;
-	const auto before = s.guest.SaveGame(s.f);
+	auto options = Options();
+	options.worldStateRefill = std::chrono::milliseconds{ 1500 };
+	Session s{ options };
+	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
 	s.guest.OpenMenu(s.f, CHEST);
 	s.Settle();
 	s.guest.Put(s.f, CHEST, WATER, 3);
 	s.guest.CloseMenu(s.f);
 	s.Settle();
+	REQUIRE(s.host.In(CHEST, WATER) == 3);
 
-	s.guest.LoadGame(s.f, before);  // the request is out; its answer not read yet (owed, say, after quick loads)
-	s.Stash(WATER, 2);
-	s.Settle();
-	CHECK(s.guest.Carried(WATER) == 0);  // the 1 it still held taken again
-	CHECK(s.guest.storage.Stats().forfeited == 2);
-	CHECK(s.host.In(CHEST, WATER) == 1);
-	CHECK(s.Total(WATER) == 5);
-}
+	// Quickloads spend the world-state budget: the last one's catch-up is owed.
+	for (int i = 0; i < 4; ++i) {
+		s.guest.LoadGame(s.f, before);
+	}
+	Pace(FRIEND_PEER);
+	Sync(s.f, FRIEND_PEER);
+	REQUIRE(s.f.Logged("has asked for the world too often"));
+	Receive(s.f, s.guest);
+	CHECK(s.guest.storage.State().Settling());
+	s.Stash(WATER, 3);  // the window a player could use
 
-TEST("shared storage: a put given back unanswered, moved away, then numbered after all: the chest gives it up")
-{
-	Session s;
+	// Their game won't open the host's chest meanwhile...
 	s.guest.OpenMenu(s.f, CHEST);
+	Receive(s.f, s.guest);
+	CHECK(!s.guest.storage.State().Viewing());
+	CHECK(!s.guest.menu);
+	CHECK(s.guest.storage.State().Stats().settlingClosed == 1);
+	CHECK(s.guest.Noticed(Notice::kClosed) == 1);
+	// ...nor will the server, for a game that tries anyway (a modified one): no contents, and the Take All refused.
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	s.f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, -3 }, MT::kReportContainer));
+	Pace(FRIEND_PEER);
+	const auto got = Received(s.f, FRIEND_PEER);
+	CHECK(Count(got, MT::kStorageContents) == 0);
+	CHECK(Count(got, MT::kContainerChanged) == 0);
+	const auto refusals = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	REQUIRE(refusals.size() == 2);
+	CHECK(refusals[0].item == 0);  // the view, closed
+	CHECK(refusals[1].reason == Protocol::StorageReason::kClosed);
+	s.host.Receive(s.f);
+	CHECK(s.host.In(CHEST, WATER) == 3);
+
+	// The owed catch-up comes: the put is undone in the true copy, and they can view it again.
+	std::this_thread::sleep_for(std::chrono::milliseconds{ 1700 });
 	s.Settle();
-	s.guest.Put(s.f, CHEST, WATER, 3);  // sent and numbered; its echo not read for a while
-	s.guest.Wait(s.f, StorageView::ANSWER_WITHIN);
-	CHECK(s.guest.Carried(WATER) == 3);  // given back
-	s.Stash(WATER, 3);
-	s.Settle();
-	CHECK(s.guest.storage.State().Stats().redone == 1);
-	CHECK(s.guest.storage.Stats().forfeited == 3);
-	s.guest.CloseMenu(s.f);
-	s.Settle();
+	CHECK(!s.guest.storage.State().Settling());
 	CHECK(s.host.In(CHEST, WATER) == 0);
 	CHECK(s.Total(WATER) == 5);
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	CHECK(s.guest.storage.State().Viewing() == CHEST);
+	CHECK(s.guest.In(CHEST, WATER) == 0);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.Total(WATER) == 5);
 }
 
-TEST("shared storage: a take undone as the connection goes, its items moved away first: the chest gives them up on the rejoin")
+TEST("shared storage: a Take All numbered, its answer lost as the connection goes, the items moved away: the rejoin keeps it")
 {
 	Session s;
 	s.guest.OpenMenu(s.f, CHEST);
 	s.Settle();
-	s.guest.Take(s.f, CHEST, STIMPAK, 2);
+	s.guest.Take(s.f, CHEST, STIMPAK, 5);
 	Pace(FRIEND_PEER);
 	Sync(s.f, FRIEND_PEER);  // numbered; the echo is lost with the connection
-	s.Stash(STIMPAK, 2);
+	s.Stash(STIMPAK, 5);
 	s.guest.Disconnect(s.f);
-	CHECK(s.guest.storage.State().Owed() == 1);  // can't be sent now
+	CHECK(s.guest.storage.State().InFlight() == 1);  // not undone: nothing is taken back from the player
 	s.host.Receive(s.f);
-	CHECK(s.host.In(CHEST, STIMPAK) == 3);
+	CHECK(s.host.In(CHEST, STIMPAK) == 0);
 
 	s.guest.Join(s.f, "Guest");
 	s.Settle();
-	CHECK(s.guest.storage.State().Owed() == 0);
-	CHECK(s.guest.Carried(STIMPAK) == 2);  // the catch-up numbered the take: done again
-	CHECK(s.host.In(CHEST, STIMPAK) == 1);  // and what the undo couldn't take back came out of the chest
+	CHECK(s.guest.storage.State().InFlight() == 0);  // the catch-up numbered it: in their world
+	CHECK(s.guest.storage.State().Stats().late == 0);
+	CHECK(s.host.In(CHEST, STIMPAK) == 0);
 	CHECK(s.Total(STIMPAK) == 5);
 }
 
-TEST("shared storage: what a forfeit asks for that the chest no longer holds isn't taken twice, and nothing goes negative")
+TEST("shared storage: a Take All never sent as the connection goes, the items moved away: the rejoin sends it late")
+{
+	Session s;
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Take(s.f, CHEST, STIMPAK, 5, false);  // still in the frame as the connection goes
+	s.Stash(STIMPAK, 5);
+	s.guest.Disconnect(s.f);
+	s.host.Receive(s.f);
+	CHECK(s.host.In(CHEST, STIMPAK) == 5);
+
+	s.guest.Join(s.f, "Guest");
+	s.Settle();
+	CHECK(s.guest.storage.State().Stats().late == 1);
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	CHECK(s.host.In(CHEST, STIMPAK) == 0);  // the true copy has the take
+	CHECK(s.Total(STIMPAK) == 5);
+}
+
+TEST("shared storage: a take cut off by a disconnect, saved, loaded and rejoined: the save keeps it, numbered or not")
+{
+	for (const bool numbered : { true, false }) {
+		Session s;
+		s.guest.OpenMenu(s.f, CHEST);
+		s.Settle();
+		s.guest.Take(s.f, CHEST, STIMPAK, 5, numbered);
+		if (numbered) {
+			Pace(FRIEND_PEER);
+			Sync(s.f, FRIEND_PEER);
+		}
+		s.Stash(STIMPAK, 5);
+		s.guest.Disconnect(s.f);
+		s.host.Receive(s.f);
+		const auto saved = s.guest.SaveGame(s.f);  // the take on its way, in the save's record
+		CHECK(saved.unanswered.size() == 1);
+		s.guest.Restart(saved);
+		s.guest.Join(s.f, "Guest");
+		s.Settle();
+		CHECK(s.guest.storage.State().InFlight() == 0);
+		CHECK(s.guest.storage.State().Stats().late == (numbered ? 0u : 1u));
+		CHECK(s.guest.storage.State().Stats().lacking == 0);
+		CHECK(s.host.In(CHEST, STIMPAK) == 0);
+		CHECK(s.Total(STIMPAK) == 5);
+	}
+}
+
+TEST("shared storage: a put given back by an older build's timeout can't come back: a put unanswered stays on its way, moved away or not")
+{
+	// The route of the second review: a put given back unanswered, moved away, then numbered. Nothing is given back now.
+	Session s;
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Put(s.f, CHEST, WATER, 3, false);
+	s.guest.FlushLoot();
+	auto lost = std::exchange(s.guest.outbox, {});  // held up on its way
+	s.guest.Wait(s.f, 2 * StorageView::ANSWER_WITHIN);
+	CHECK(s.guest.Carried(WATER) == 0);
+	for (auto& packet : lost) {
+		s.f.fake->Deliver(FRIEND_PEER, std::move(packet));  // it comes after all
+	}
+	s.Settle();
+	CHECK(s.guest.storage.State().InFlight() == 0);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 3);
+	CHECK(s.Total(WATER) == 5);
+}
+
+TEST("shared storage: a put undone in the true copy that another friend took meanwhile: what is left comes out, nothing goes negative")
 {
 	Session s;
 	Game other{ OTHER_PEER, OTHER_ID };
@@ -791,24 +995,21 @@ TEST("shared storage: what a forfeit asks for that the chest no longer holds isn
 	s.guest.Put(s.f, CHEST, WATER, 3);
 	s.guest.CloseMenu(s.f);
 	SettleAll(s.f, { &s.host, &s.guest, &other });
-	// Another friend takes the waters before the reload's redo comes up short.
 	other.OpenMenu(s.f, CHEST);
 	SettleAll(s.f, { &s.host, &s.guest, &other });
-	other.Take(s.f, CHEST, WATER, 3);
+	other.Take(s.f, CHEST, WATER, 2);
 	other.CloseMenu(s.f);
 	SettleAll(s.f, { &s.host, &s.guest, &other });
-	CHECK(other.Carried(WATER) == 3);
+	CHECK(other.Carried(WATER) == 2);
 
 	s.guest.LoadGame(s.f, before);
-	s.Stash(WATER, 3);
 	SettleAll(s.f, { &s.host, &s.guest, &other });
-	CHECK(s.guest.storage.Stats().forfeited == 3);
-	CHECK(s.host.In(CHEST, WATER) == 0);  // nothing left to give up: the server numbers none
-	CHECK(!s.f.Logged("gives up"));
-	CHECK(s.f.Logged("held only 0 of the 3"));
+	CHECK(s.host.In(CHEST, WATER) == 0);  // the 1 left taken out; the 2 the other friend has stay theirs
+	CHECK(s.guest.Carried(WATER) == 3);
+	CHECK(s.host.storage.State().Stats().shorts == 0);
 }
 
-TEST("shared storage: a take from a chest nobody kept yet, then claimed, isn't done again after a reload")
+TEST("shared storage: a take from a chest nobody kept yet, then claimed, isn't undone after a reload")
 {
 	Session s;
 	Storage(s.host, BOX);
@@ -831,12 +1032,50 @@ TEST("shared storage: a take from a chest nobody kept yet, then claimed, isn't d
 
 	s.guest.LoadGame(s.f, before);
 	s.Settle();
-	CHECK(s.guest.Carried(STIMPAK) == 0);  // not given again: their loaded copy holds the 5 it had
+	CHECK(s.guest.Carried(STIMPAK) == 0);  // their loaded copy holds the 5 it had
 	CHECK(s.guest.In(BOX, STIMPAK) == 5);
-	CHECK(s.guest.storage.State().Stats().redone == 0);
+	CHECK(s.host.In(BOX, STIMPAK) == 3);  // not put back: it was ordinary loot, which both worlds agree on
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
 }
 
-TEST("shared storage: a take that came back short and was then lost to a reload is done again only for what was there")
+TEST("shared storage: a put into a chest nobody kept yet, then claimed, is given up by the chest after a reload from before it")
+{
+	Session s;
+	Storage(s.host, BOX);
+	Storage(s.guest, BOX);
+	s.host.away.insert(BOX);
+	s.Settle();
+	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
+	s.guest.Put(s.f, BOX, WATER, 3);  // ordinary loot: nobody keeps it
+	s.Settle();
+	CHECK(s.guest.Keeper(BOX) == Keeper::kNone);
+
+	s.host.away.erase(BOX);  // the host comes near: the put goes into its copy, then it claims the box
+	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);
+	s.Settle();
+	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
+	CHECK(s.host.In(BOX, WATER) == 3);
+	CHECK(s.guest.storage.State().KeptSince(BOX) > 0);
+
+	s.guest.LoadGame(s.f, before);
+	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 3);  // the save's
+	CHECK(s.guest.storage.State().Stats().lacking == 1);
+	CHECK(s.host.In(BOX, WATER) == 0);  // the put undone in the true copy
+	CHECK(s.guest.In(BOX, WATER) == 0);
+	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) + s.guest.In(BOX, WATER) + s.guest.In(CHEST, WATER) == 5);
+
+	// Opening it and taking finds none.
+	s.guest.OpenMenu(s.f, BOX);
+	s.Settle();
+	s.guest.Take(s.f, BOX, WATER, 3);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 3);
+	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) + s.guest.In(BOX, WATER) + s.guest.In(CHEST, WATER) == 5);
+}
+
+TEST("shared storage: a take that came back short and was then lost to a reload: the chest has back only what it gave")
 {
 	Session s;
 	const auto before = s.guest.SaveGame(s.f);
@@ -851,8 +1090,8 @@ TEST("shared storage: a take that came back short and was then lost to a reload 
 
 	s.guest.LoadGame(s.f, before);
 	s.Settle();
-	CHECK(s.guest.Carried(STIMPAK) == 1);  // the server's log keeps the take as it was in the end
-	CHECK(s.host.In(CHEST, STIMPAK) == 0);
+	CHECK(s.guest.Carried(STIMPAK) == 0);  // the save's
+	CHECK(s.host.In(CHEST, STIMPAK) == 1);  // the server's log keeps the take as it was in the end: 1 back
 	CHECK(s.Total(STIMPAK) == 1);
 }
 
@@ -874,6 +1113,175 @@ TEST("shared storage: a take with its shortfall settled in the log, answered aft
 	CHECK(s.guest.Carried(STIMPAK) == 1);  // the catch-up's take of 1 matched it: the rest taken back
 	CHECK(s.guest.storage.State().Stats().corrected == 1);
 	CHECK(s.Total(STIMPAK) == 1);
+}
+
+TEST("shared storage: a change by nobody the host's chest held less of stays in the log as it was numbered")
+{
+	Session s;
+	const auto before = s.guest.SaveGame(s.f);
+	s.guest.OpenMenu(s.f, CHEST);
+	s.Settle();
+	s.guest.Put(s.f, CHEST, WATER, 3);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
+	s.host.holders[CHEST][WATER] = 1;  // a script took 2 in the host's world, unreported
+	s.guest.LoadGame(s.f, before);
+	s.Settle();
+	CHECK(s.host.In(CHEST, WATER) == 0);
+	CHECK(s.f.Logged("held 2 fewer of"));
+	CHECK(!s.f.Logged("that held less (change"));  // nobody's: nobody to give back
+	// A later catch-up (anyone's) carries the take by nobody as it was numbered: 3.
+	REQUIRE(s.f.Join(OTHER_PEER, Fixture::MakeHello("Other", OTHER_ID)));
+	const auto states = Decoded(Received(s.f, OTHER_PEER), MT::kWorldState, [](auto a_data) { return Protocol::DecodeWorldState(a_data); });
+	std::vector<Protocol::IndexedContainerChange> nobody;
+	for (const auto& state : states) {
+		for (const auto& change : state.containerChanges) {
+			if (change.playerId == 0) {
+				nobody.push_back(change);
+			}
+		}
+	}
+	REQUIRE(nobody.size() == 1);
+	CHECK((nobody[0].change == Protocol::ContainerChange{ CHEST, WATER, -3 }));
+}
+
+// ---- what the server accepts in a settle: a modified game can't empty a chest -----------------------------------
+
+TEST("shared storage: a settle undoes only the sender's own moves, once each, and only after the world state it answers")
+{
+	Fixture f{ Options() };
+	f.fake->SetLocal(HOST_PEER);
+	const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+	REQUIRE(host);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	REQUIRE(f.Join(OTHER_PEER, Fixture::MakeHello("Other", OTHER_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	SettleRaw(f, FRIEND_PEER);
+	SettleRaw(f, OTHER_PEER);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 3 }, MT::kReportContainer));     // #0
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, -1 }, MT::kReportContainer));  // #1
+	Sync(f, FRIEND_PEER);
+	f.fake->Deliver(OTHER_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	f.fake->Deliver(OTHER_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 2 }, MT::kReportContainer));  // #2
+	Sync(f, OTHER_PEER);
+	Received(f, HOST_PEER);
+	Received(f, FRIEND_PEER);
+	Received(f, OTHER_PEER);
+
+	// Not asked for a world state: a settle is ignored.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 1, 3, 0, { 0, 1, 2 }, {} }));
+	CHECK(Count(Received(f, HOST_PEER), MT::kContainerChanged) == 0);
+
+	// After a world request: a settle for an older one, then one naming everything, the others' and past the log too.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 3 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 1, 3, 0, { 0, 1, 2 }, {} }));
+	CHECK(Count(Received(f, HOST_PEER), MT::kContainerChanged) == 0);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 100, 0, { 0, 1, 2, 50 }, {} }));
+	auto undone = Decoded(Received(f, HOST_PEER), MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+	REQUIRE(undone.size() == 2);
+	CHECK(undone[0].playerId == 0);
+	CHECK((undone[0].change == Protocol::ContainerChange{ CHEST, STIMPAK, 1 }));  // what goes into the true copy first
+	CHECK((undone[1].change == Protocol::ContainerChange{ CHEST, WATER, -3 }));   // the other friend's 2 stay
+	CHECK(f.Logged("storage undid 2 and did again 0 of player"));
+
+	// Settled: the same again changes nothing, nor does it after another request.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 100, 0, { 0, 1, 2 }, {} }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 5 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 3, 100, 0, { 0, 1, 2 }, {} }));
+	CHECK(Count(Received(f, HOST_PEER), MT::kContainerChanged) == 0);
+
+	// What the chest holds: the host's 5 stimpaks and the other friend's 2 waters.
+	f.fake->Deliver(OTHER_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	const auto shown = Decoded(Received(f, OTHER_PEER), MT::kStorageContents, [](auto a_data) { return Protocol::DecodeStorageListing(a_data); });
+	REQUIRE(!shown.empty());
+	CHECK((shown.back().stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 5 }, { WATER, 2 } }));
+}
+
+TEST("shared storage: a late move goes through only at the container the player viewed last, and only in a settle")
+{
+	Fixture f{ Options() };
+	f.fake->SetLocal(HOST_PEER);
+	const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+	REQUIRE(host);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ BOX, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	// Never viewed anything: a late move goes nowhere.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 1, 0, 0, {}, { { CHEST, STIMPAK, -5 } } }));
+	auto got = Received(f, FRIEND_PEER);
+	CHECK(Count(got, MT::kContainerChanged) == 0);
+	auto refused = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].reason == Protocol::StorageReason::kNotViewing);
+
+	// Viewed the chest, then asked for the world: the late take there goes through, the one at the box doesn't.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 0, 0, {}, { { BOX, STIMPAK, -5 }, { CHEST, STIMPAK, -2 } } }));
+	got = Received(f, FRIEND_PEER);
+	const auto changes = Decoded(got, MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+	REQUIRE(changes.size() == 1);
+	CHECK((changes[0].change == Protocol::ContainerChange{ CHEST, STIMPAK, -2 }));
+	refused = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	REQUIRE(refused.size() == 2);
+	CHECK(refused[0].item == 0);  // the request closed the view
+	CHECK((refused[1].container == BOX && refused[1].reason == Protocol::StorageReason::kNotViewing));
+
+	// Settled: a late move outside a settle is an ordinary move, refused without a view.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 0, 0, {}, { { CHEST, STIMPAK, -2 } } }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, STIMPAK, -2 }, MT::kReportContainer));
+	got = Received(f, FRIEND_PEER);
+	CHECK(Count(got, MT::kContainerChanged) == 0);
+	refused = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	REQUIRE(refused.size() == 1);
+	CHECK(refused[0].reason == Protocol::StorageReason::kNotViewing);
+}
+
+TEST("shared storage: what the true copy undid outlasts a restart: none is undone twice, and a later save's world has it done again")
+{
+	TempSessionFile file;
+	auto            options = Options();
+	options.sessionFile = file.path.string();
+	std::uint64_t   session = 0;
+	{
+		Fixture f{ options };
+		f.fake->SetLocal(HOST_PEER);
+		const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+		REQUIRE(host);
+		session = host->sessionId;
+		REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+		f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+		Sync(f, HOST_PEER);
+		SettleRaw(f, FRIEND_PEER);
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 3 }, MT::kReportContainer));  // #0
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ session, 0 }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 1, 0, { 0 }, {} }));  // #1: the put undone
+		Sync(f, FRIEND_PEER);
+		REQUIRE(f.Logged("storage undid 1 and did again 0 of player"));
+	}  // stopping writes the session file
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	REQUIRE(saved->storageReversals.size() == 1);
+
+	Fixture f{ options };
+	f.fake->SetLocal(HOST_PEER);
+	REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 2, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	Received(f, HOST_PEER);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 1, 2, 0, { 0 }, {} }));  // lacking it still
+	CHECK(Count(Received(f, HOST_PEER), MT::kContainerChanged) == 0);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ session, 2 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 2, 0, {}, {} }));  // a world that has it
+	const auto redone = Decoded(Received(f, HOST_PEER), MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+	REQUIRE(redone.size() == 1);
+	CHECK(redone[0].playerId == 0);
+	CHECK((redone[0].change == Protocol::ContainerChange{ CHEST, WATER, 3 }));
 }
 
 TEST("shared storage: an item a quest alias holds a stack of in the friend's copy stays theirs for the view, all of it")

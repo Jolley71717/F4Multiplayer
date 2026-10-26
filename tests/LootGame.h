@@ -56,6 +56,7 @@ namespace LootTest
 		std::vector<LootSync::Move>           moves;  // since the last frame (WorldSync's inbox)
 		std::uint32_t                         applied = 0;   // other players' changes put into this world
 		std::uint32_t                         requests = 0;  // world requests sent (after Hello)
+		std::uint32_t                         caughtUp = 0;  // kStorageCaughtUp markers read
 		// Shared storage, as Storage.cpp runs it: our game is the host's (its server's own game: the test sets the server's
 		// hostIdentity to ours and marks our peer local).
 		bool                                  host = false;
@@ -77,6 +78,8 @@ namespace LootTest
 			std::vector<LootSync::Pending>         waiting;
 			std::uint64_t                          movesSession = 0;  // Storage's record: our unanswered moves
 			std::vector<Protocol::ContainerChange> unanswered;
+			std::vector<std::uint32_t>             lacks;      // and our numbered moves its world lacks
+			std::uint32_t                          lacksFrom = 0;
 		};
 
 		Game(PeerId a_peer, std::uint64_t a_identity) :
@@ -181,6 +184,12 @@ namespace LootTest
 					if (const auto msg = Protocol::DecodeStorageRefusal(packet)) {
 						storage.OnRefused(*msg);
 					}
+				} else if (IsType(packet, MT::kStorageCaughtUp)) {
+					// Storage::OnCaughtUp: our moves at a friend's storage settle once the world state answers our latest request.
+					if (const auto msg = Protocol::DecodeStorageCaughtUp(packet)) {
+						++caughtUp;
+						storage.OnCaughtUp(msg->asked, loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
+					}
 				}
 			}
 			// The menu Storage hid closes (the engine's close event, posted to the main thread).
@@ -206,6 +215,7 @@ namespace LootTest
 				outbox.push_back(Protocol::Encode(*request));
 				++requests;
 				storage.State().UnlistAll();  // the server holds our listings stale from the request on
+				storage.Asked();               // Storage::UnlistAll: and we settle again after its answer
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
 			if (connected) {
@@ -329,7 +339,7 @@ namespace LootTest
 		Save SaveGame(Fixture& a_f)
 		{
 			BeforeSaveOrLoad(a_f);
-			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered() };
+			return { holders, carried, loot.Point(), loot.Waiting(), storage.State().MovesSession(), storage.State().Unanswered(), storage.State().Lacking(), storage.State().LacksFrom() };
 		}
 
 		// Loads a save while connected: Session::OnBeforeSaveOrLoad, the co-save records (F4SE reverts them
@@ -491,7 +501,8 @@ namespace LootTest
 			loot.LoadRecord(0, 0, {});
 			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting);
 			const auto session = connected ? sessionId : a_save.movesSession;
-			storage.OnLoad(session, a_save.movesSession == session ? a_save.unanswered : std::vector<Protocol::ContainerChange>{});
+			const bool same = a_save.movesSession == session;
+			storage.OnLoad(session, same ? a_save.unanswered : std::vector<Protocol::ContainerChange>{}, same ? a_save.lacks : std::vector<std::uint32_t>{}, same ? a_save.lacksFrom : 0);
 		}
 	};
 }

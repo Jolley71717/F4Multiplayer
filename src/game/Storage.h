@@ -21,10 +21,11 @@
 //   (ammo, aid, junk: LootScope's) are set aside, out of reach, the server is asked for the true copy, and its contents
 //   come into the copy. Their takes and puts go out as any loot (WorldSync), checked by the server. As the menu closes
 //   (or before a save or a load, or as the session ends) the session's things leave the copy and what was set aside
-//   comes back. A move the server refused, or never answered, is undone: a take given back, a put returned (OwnGear's
-//   kStorageUndo, the one change made to our player, only ever through StorageView::Client).
-// - A load: our moves there that the loaded world lacks are done again on our player as the catch-up brings them, and
-//   the moves a save was made with still unanswered are kept in its co-save record (SaveRecord).
+//   comes back. A move the server refused is undone: a take given back, a put returned (OwnGear's kStorageUndo, the
+//   one change made to our player, only ever through StorageView::Client).
+// - A load or a rejoin: once its catch-up has come, our game settles (OnCaughtUp): the server undoes in the true copy
+//   our moves there that the loaded world lacks, and our moves it never numbered go late. Our player keeps what the
+//   save has. A save keeps our moves still unanswered and those its world lacks in its co-save record (SaveRecord).
 //
 // StorageView::Client holds the rules; this is its engine. The engine's own inventory changes made here are kept out of
 // WorldSync's watch (Applying). Main thread only, but for Applying and the menu entry points, which post to it.
@@ -37,6 +38,9 @@ namespace Storage
 	void OnOwners(const Protocol::StorageOwners& a_owners);
 	void OnContents(const Protocol::StorageListing& a_contents);
 	void OnRefused(const Protocol::StorageRefusal& a_refusal);
+	// The world state the server just sent answers our requests up to a_caughtUp.asked: our moves at a friend's storage are
+	// settled once it answers our latest (StorageView::Side::CaughtUp).
+	void OnCaughtUp(const Protocol::StorageCaughtUp& a_caughtUp);
 
 	// A packet we were to send that the session's numbering couldn't carry (FormTranslate dropped it): a move of ours at a
 	// friend's storage among them is undone, as it never went.
@@ -47,7 +51,8 @@ namespace Storage
 	void BeforeSaveOrLoad();
 	void OnGameLoaded();
 
-	// The co-save's record (main.cpp): our moves at a friend's storage still unanswered as the save was made.
+	// The co-save's record (main.cpp): our moves at a friend's storage still unanswered as the save was made, and those
+	// numbered that its world lacked (the true copy undid them).
 	[[nodiscard]] std::vector<std::uint8_t> SaveRecord();
 	void                                    LoadRecord(std::span<const std::uint8_t> a_bytes);
 	void                                    RevertRecord();
@@ -69,7 +74,7 @@ namespace Storage
 	[[nodiscard]] bool                          Reporting(const Protocol::ContainerChange& a_change);
 	void                                        OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking);
 	void                                        Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing);
-	void                                        UnlistAll();  // our world asked the server for the session's changes again
+	void                                        UnlistAll();  // our world asked the server for the session's changes again (a gap): we settle again
 
 	// Whether this thread is making one of Storage's own inventory changes (WorldSync's ContainerWatcher leaves them out).
 	[[nodiscard]] bool Applying();

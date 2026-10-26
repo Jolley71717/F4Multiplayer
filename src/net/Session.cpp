@@ -564,6 +564,11 @@ namespace Session
 					Storage::OnRefused(*msg);
 				}
 				break;
+			case MessageType::kStorageCaughtUp:
+				if (const auto msg = Protocol::DecodeStorageCaughtUp(a_data)) {
+					Storage::OnCaughtUp(*msg);  // after the world state it follows: our moves at a friend's storage settle
+				}
+				break;
 			case MessageType::kDestructions:
 				if (const auto msg = Protocol::DecodeDestructions(a_data)) {
 					Destructibles::Apply(*msg);

@@ -230,8 +230,9 @@ namespace
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
 	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
-	constexpr std::uint32_t STORAGE_VERSION = 1;
-	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT);  // Storage::SaveRecord: a session, a count, the moves
+	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
+	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
+	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
 
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
@@ -248,7 +249,7 @@ namespace
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
 		}
-		// Our moves at a friend's shared storage still unanswered (Storage): their answer, after a load, is known for what it is.
+		// Our moves at a friend's shared storage still unanswered, and those numbered our world lacks (Storage): settled after a load.
 		if (const auto storage = Storage::SaveRecord(); !storage.empty() && a_intfc->OpenRecord(STORAGE_RECORD, STORAGE_VERSION)) {
 			a_intfc->WriteRecordData(storage.data(), static_cast<std::uint32_t>(storage.size()));
 		}

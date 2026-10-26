@@ -30,20 +30,22 @@
 //   in an older session) are set aside, out of the copy and out of reach, and the server's contents come in their place;
 //   at the close the session's things leave the copy and what was set aside comes back (Client). Nothing set aside ever
 //   goes to the player. Their takes and puts are reported as any loot is, and the server checks each against what it
-//   holds. One it refuses is undone here: a take given back, a put returned. One with no answer for ANSWER_WITHIN (the
-//   server dropped it, the connection went) is undone the same way, and done again should its number come after all.
+//   holds. One it refuses is undone here: a take given back, a put returned. One with no answer stays on its way: its
+//   number or refusal may still come, and should the session never have numbered it (the server dropped it, the
+//   connection went), it goes again late with our next settle.
 //   While the menu is closed nothing of the session's goes into that copy, and the player's own moves there stay theirs.
-// - A load: our moves at a friend's storage that the server numbered and our loaded world lacks (made after the save) come
-//   back in the load's catch-up, and are done again on our player (Side::Own): a put takes the item from them again, a
-//   take gives it to them again. So the true copy, the server's book and our player agree, and a quickload neither dupes
-//   what was put nor loses what was taken. The moves a save was made with still unanswered are kept with it (the co-save),
-//   so their answer is known for what it is after a load. Only moves numbered since the container was claimed are ours
-//   to do again (StorageOwner::since): one made while nobody kept it was ordinary loot, and the host's world has it.
-// - Whenever we take back from our player (a take undone, a put done again, a put returned, a take found short) and they
-//   no longer hold all of it (moved to a workbench or a companion, dropped, used), the part they lack is sent as a
-//   forfeit (Protocol's kStorageForfeit): the server numbers it as a take by nobody, so the true copy gives it up and
-//   nothing anywhere is made out of nothing. One made while we're disconnected is owed, and sent when we're welcomed
-//   back to the same session; a load or another session drops it (that world is gone).
+// - Settling (a load, a rejoin, a gap asked for again). A player can always move an item out of their own inventory
+//   before a correction reaches it, never out of the host's container without the server, so what a load or a lost
+//   connection leaves wrong is put right in the true copy, never on our player: our world keeps what its save has. From
+//   the request until its catch-up has come, nothing is done at a friend's storage (the menu closes; the server refuses
+//   the view too). Then our game settles (Protocol::StorageSettle): our numbered moves there our world lacks (a load
+//   from before them: Side::Own), which the server undoes in the true copy, and our moves still unnumbered (late). The
+//   moves a save was made with still unanswered, and those its world lacked, are kept with it (the co-save), so a later
+//   save loaded has the server do again what an earlier one had it undo. Only takes numbered since the container was
+//   claimed are undone (StorageOwner::since): one made while nobody kept it was ordinary loot, which the host's world
+//   and the loaded one agree on.
+// - We take back from our player only for a refusal or a shortfall (the keeper's container held less than the server
+//   knew), an answer that comes as the move is made; what they no longer hold of it is counted, not made up for.
 // - A shared item our copy holds a quest's alias of stays the player's own while the menu is open (Engine::Aliased): not
 //   set aside, the host's stack of it not shown, and moves of it kept to our copy.
 // - Storage nobody keeps yet (the host's game hasn't loaded it since the rule came on) is ordinary loot, as in 0.9.2.
@@ -67,8 +69,8 @@ namespace StorageView
 	// Our moves at friends' storage not yet numbered or refused, at most: a Take All and a Store All of the fullest
 	// container the server keeps (Protocol::MAX_STORAGE_STACKS stacks each), and more. Past it a move is undone, not sent.
 	inline constexpr std::size_t MAX_IN_FLIGHT = Protocol::MAX_STORAGE_MOVES_UNANSWERED;
-	// A move with no answer after this is undone here (the server dropped it, or never had it). Should its number still
-	// come, it is done again.
+	// A move with no answer after this is counted unanswered (for the log). It stays on its way: its number or refusal may
+	// still come, and one the session never numbered goes late with the next settle.
 	inline constexpr Clock::duration ANSWER_WITHIN = std::chrono::seconds{ 30 };
 	// The same notice at most this often (a Take All refused is one notice, not a thousand).
 	inline constexpr Clock::duration NOTICE_EVERY = std::chrono::seconds{ 2 };
@@ -119,32 +121,33 @@ namespace StorageView
 		return out;
 	}
 
-	// The bookkeeping: who keeps what, our view, and our moves at friends' storage until they are answered.
+	// The bookkeeping: who keeps what, our view, our moves at friends' storage until they are answered, and our numbered
+	// moves there our world lacks.
 	class Side
 	{
 	public:
 		static constexpr std::size_t MAX_OWNERS = 4096;    // as the server's book (StorageBook::Book::MAX_CONTAINERS)
 		static constexpr std::size_t MAX_NUMBERED = MAX_IN_FLIGHT;  // our numbered takes there a shortfall may still come for
-		static constexpr std::size_t MAX_ORPHANS = 4096;   // our moves undone for want of an answer that may still come
+		static constexpr std::size_t MAX_LACKS = Protocol::MAX_STORAGE_LACKING;
 
 		struct Counts
 		{
 			std::uint32_t views = 0;          // menus opened on a friend's storage
 			std::uint32_t closedByHost = 0;   // views the server closed (its keeper away, or its world reloaded)
+			std::uint32_t settlingClosed = 0; // menus closed as they opened: our moves not settled yet since our world loaded
 			std::uint32_t refusedTakes = 0;   // our takes refused, given back
 			std::uint32_t refusedPuts = 0;    // our puts refused, returned
 			std::uint32_t shortTakes = 0;     // numbered takes the keeper's container held less of: given back
 			std::uint32_t unmatched = 0;      // refusals for no move we remember (made before a load): left alone
-			std::uint32_t lateRefusals = 0;   // refusals for a move already undone for want of an answer
-			std::uint32_t unanswered = 0;     // our moves undone with no answer (ANSWER_WITHIN, or the connection went)
+			std::uint32_t unanswered = 0;     // our moves with no answer after ANSWER_WITHIN: kept on their way (late at a settle)
 			std::uint32_t unsent = 0;         // our moves undone because they couldn't be sent (an item the session lacks)
 			std::uint32_t overflow = 0;       // our moves undone unsent at MAX_IN_FLIGHT
-			std::uint32_t redone = 0;         // our numbered moves our world lacked (a load, or undone unanswered): done again
-			std::uint32_t corrected = 0;      // our takes numbered smaller than made (the keeper's container held less): the rest taken back
-			std::uint32_t forfeits = 0;       // of what our player couldn't give back, the true copy was told to give up (kStorageForfeit)
-			std::uint32_t owedDropped = 0;    // forfeits owed while not connected that a load or another session let go
-			std::uint32_t orphansDropped = 0; // moves undone unanswered forgotten at MAX_ORPHANS (a late number is then not done again)
-			std::uint32_t listed = 0;        // our storage listings sent (the host's game)
+			std::uint32_t lacking = 0;        // our numbered moves a catch-up found our world lacks (the true copy undoes them)
+			std::uint32_t lacksDropped = 0;   // of those, forgotten at MAX_LACKS
+			std::uint32_t corrected = 0;      // our takes kept with a save, numbered smaller than made: the rest taken back
+			std::uint32_t settles = 0;        // settles sent (after a load, a hello, a gap asked for again)
+			std::uint32_t late = 0;           // our moves the session never numbered, sent again with a settle
+			std::uint32_t listed = 0;         // our storage listings sent (the host's game)
 			std::uint32_t shorts = 0;         // friends' takes our container held less of (the host's game)
 		};
 
@@ -159,8 +162,8 @@ namespace StorageView
 		// ---- the session ----------------------------------------------------------------------------------
 
 		// Welcomed into a_session under its rule; a_host: our game is the host's (its world is the session's). The owner
-		// table comes after the welcome. Our moves still unanswered (from a save loaded before it, or undone as the
-		// connection went) stay when it is the same session: its catch-up answers them.
+		// table comes after the welcome, then the hello's world state, and we settle after it (CaughtUp). Our moves still
+		// unanswered and those our world lacks stay when it is the same session: the settle tells the server of them.
 		void OnWelcome(bool a_rule, bool a_host, std::uint64_t a_session, Clock::time_point a_now)
 		{
 			rule = a_rule;
@@ -170,53 +173,93 @@ namespace StorageView
 			view.reset();
 			if (a_session != movesSession) {
 				flights.clear();
-				orphans.clear();
 				numbered.clear();
-				counts.owedDropped += static_cast<std::uint32_t>(owed.size());
-				owed.clear();  // the true copy they were owed by is another session's
+				lacks.clear();
+				lacksFrom = 0;
 				movesSession = a_session;
 			}
 			for (auto& flight : flights) {
 				flight.due = a_now + ANSWER_WITHIN;
 			}
+			Asked();
 		}
 
-		// The connection went: our moves still unanswered are undone (returned). Should a reconnect's catch-up number one
-		// after all, it is done again (Own).
-		std::vector<Undo> OnDisconnected()
+		// The connection went: our moves still unanswered stay on their way. The rejoin's catch-up brings the numbers of
+		// those the session had; the rest go again late with its settle.
+		void OnDisconnected()
 		{
 			rule = false;
 			owners.clear();
 			listed.clear();
 			view.reset();
-			std::vector<Undo> undone;
-			while (!flights.empty()) {
-				undone.push_back(Abandon(flights.front().change));
-				flights.pop_front();
+			for (auto& flight : flights) {
+				flight.settle = true;
 			}
-			return undone;
 		}
 
 		// Our world is a save's from here (a load) in a_session: a_unanswered, the moves the save was made with still
-		// unanswered (its co-save record; none when it is from another session), are in it. Nothing else we did before is.
-		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered, Clock::time_point a_now)
+		// unanswered, and a_lacks (from a_lacksFrom on), our numbered moves its world lacked (its co-save record; none when
+		// it is from another session). Nothing else we did before is in it: the catch-up finds what it lacks since.
+		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered, std::span<const std::uint32_t> a_lacks, std::uint32_t a_lacksFrom,
+			Clock::time_point a_now)
 		{
 			view.reset();
 			listed.clear();
 			flights.clear();
-			orphans.clear();
 			numbered.clear();
-			// What our player of the world we leave couldn't give back: that world (and what they had moved away in it) is
-			// gone, and the loaded one does its moves again (Own).
-			counts.owedDropped += static_cast<std::uint32_t>(owed.size());
-			owed.clear();
+			lacks.clear();
+			lacksFrom = a_lacksFrom;
 			movesSession = a_session;
 			for (const auto& change : a_unanswered) {
 				if (flights.size() < MAX_IN_FLIGHT) {
-					flights.push_back({ change, a_now + ANSWER_WITHIN });
+					flights.push_back({ .change = change, .due = a_now + ANSWER_WITHIN, .settle = true, .restored = true });
 				}
 			}
+			for (const auto index : a_lacks) {
+				if (index >= lacksFrom && lacks.size() < MAX_LACKS) {
+					lacks.insert(index);
+				}
+			}
+			settling = true;
 		}
+
+		// Our world asked the server for the session's changes (a hello, a load, a gap): the moves made before it go late
+		// if its catch-up doesn't number them, and nothing more is done at a friend's storage until we have settled.
+		void Asked()
+		{
+			settling = true;
+			for (auto& flight : flights) {
+				flight.settle = true;
+			}
+		}
+
+		// The server's world state answered a_asked of our requests (Protocol::StorageCaughtUp); a_ours: how many we made
+		// (LootSync), a_next: the first numbered change our world lacks, a_waiting: changes still wait for an earlier one.
+		// The settle to send once it answers our latest request and nothing of it is missing (a gap is asked for again, and
+		// its answer settles); nothing otherwise.
+		std::optional<Protocol::StorageSettle> CaughtUp(std::uint32_t a_asked, std::uint32_t a_ours, std::uint32_t a_next, bool a_waiting)
+		{
+			if (!rule || !settling || a_asked != a_ours || a_waiting) {
+				return std::nullopt;
+			}
+			settling = false;
+			Protocol::StorageSettle settle{ a_asked, a_next, lacksFrom, {}, {} };
+			for (auto it = lacks.lower_bound(lacksFrom); it != lacks.end() && *it < a_next; ++it) {
+				settle.lacking.push_back(*it);
+			}
+			for (auto& flight : flights) {
+				if (std::exchange(flight.settle, false) && settle.late.size() < Protocol::MAX_STORAGE_MOVES_UNANSWERED) {
+					settle.late.push_back(flight.change);
+				}
+			}
+			++counts.settles;
+			counts.late += static_cast<std::uint32_t>(settle.late.size());
+			return settle;
+		}
+
+		// Our moves are being settled: nothing is done at a friend's storage meanwhile.
+		[[nodiscard]] bool Settling() const { return rule && settling; }
+		void NoteSettlingClosed() { ++counts.settlingClosed; }
 
 		void Owners(const Protocol::StorageOwners& a_owners)
 		{
@@ -248,8 +291,8 @@ namespace StorageView
 			return it != owners.end() ? std::optional{ it->second.id } : std::nullopt;
 		}
 
-		// The first change numbered while a_container was kept: one of ours before it was ordinary loot (our copy mirrored
-		// it), and is never done again here (Own).
+		// The first change numbered while a_container was kept: a take of ours before it was ordinary loot (the host's world
+		// and our loaded one agree on it), never undone in the true copy (Own).
 		[[nodiscard]] std::uint32_t KeptSince(std::uint32_t a_container) const
 		{
 			const auto it = owners.find(a_container);
@@ -345,16 +388,19 @@ namespace StorageView
 				++counts.overflow;
 				return false;
 			}
-			flights.push_back({ a_change, a_now + ANSWER_WITHIN });
+			flights.push_back({ .change = a_change, .due = a_now + ANSWER_WITHIN });
 			return true;
 		}
 
 		// One of our moves at a friend's storage came back numbered, in session order (live, or in a catch-up). a_lacking:
-		// the ledger says our world doesn't have it. What to do again on our player: nothing for one on its way from this
-		// world (a flight); the move again for one we undid for want of an answer, or one our world lacks (a load from
-		// before it).
-		// A take can come back smaller than made (or 0): the keeper's container held less, and the server's log keeps the take
-		// as it was in the end, so a catch-up brings that. Matched to the take on its way (or undone), the rest is taken back.
+		// the ledger says our world doesn't have it (it came in a catch-up from before it). One on its way from this world (a
+		// flight) is in it. One that isn't, our world lacks: the true copy undoes it when we settle (StorageBook::Settle),
+		// and our player keeps what our save has. So a quickload neither dupes what was put nor loses what was taken, and
+		// nothing is taken back from a player who could have moved it away first.
+		// A take numbered before the container was kept (StorageOwner::since) was ordinary loot, and the host's world and
+		// ours agree on it: never undone. A put then is: the true copy has it, and so does our player again.
+		// A take kept with a save can come back smaller than made (the keeper's container held less, and the server's log
+		// keeps the take as it was in the end; its shortfall went to the game we left): the rest is taken back.
 		std::optional<Undo> Own(const Protocol::IndexedContainerChange& a_change, bool a_lacking)
 		{
 			const auto& change = a_change.change;
@@ -368,30 +414,31 @@ namespace StorageView
 				flights.erase(it);
 				return std::nullopt;
 			}
-			if (const auto it = std::ranges::find(orphans, change); it != orphans.end()) {
-				orphans.erase(it);
-				return Redo(change);
-			}
 			if (change.count <= 0) {
-				const auto smaller = [&](const Protocol::ContainerChange& a_made) {
-					return a_made.container == change.container && a_made.item == change.item && a_made.count < change.count;
+				const auto smaller = [&](const Flight& a_made) {
+					return a_made.restored && a_made.change.container == change.container && a_made.change.item == change.item && a_made.change.count < change.count;
 				};
-				if (const auto it = std::ranges::find_if(flights, smaller, &Flight::change); it != flights.end()) {
+				if (const auto it = std::ranges::find_if(flights, smaller); it != flights.end()) {
 					const auto made = it->change;
 					flights.erase(it);
 					++counts.corrected;
 					return Undo{ .matched = true, .refresh = Shows(change.container), .container = change.container, .item = change.item,
 						.player = static_cast<std::int64_t>(made.count) - change.count };
 				}
-				if (const auto it = std::ranges::find_if(orphans, smaller); it != orphans.end()) {
-					orphans.erase(it);
-					return change.count < 0 ? std::optional{ Redo(change) } : std::nullopt;
-				}
 				if (change.count == 0) {
 					return std::nullopt;  // nothing was taken
 				}
 			}
-			return a_lacking ? std::optional{ Redo(change) } : std::nullopt;
+			if (a_lacking && (change.count > 0 || a_change.index >= KeptSince(change.container)) && a_change.index >= lacksFrom && !lacks.contains(a_change.index)) {
+				if (lacks.size() >= MAX_LACKS) {
+					lacksFrom = *lacks.begin() + 1;  // the server hears of it no more: a later save loaded doesn't have it done again
+					lacks.erase(lacks.begin());
+					++counts.lacksDropped;
+				}
+				lacks.insert(a_change.index);
+				++counts.lacking;
+			}
+			return std::nullopt;
 		}
 
 		// The server refused one of our moves, or closed our view (item 0). What to undo; nothing for a move we don't
@@ -431,25 +478,20 @@ namespace StorageView
 				++(a_refusal.count < 0 ? counts.refusedTakes : counts.refusedPuts);
 				return Back(move);
 			}
-			if (const auto it = std::ranges::find(orphans, move); it != orphans.end()) {
-				orphans.erase(it);  // undone already
-				++counts.lateRefusals;
-				return undo;
-			}
 			++counts.unmatched;
 			return undo;
 		}
 
-		// Our moves with no answer past ANSWER_WITHIN: undone, each. An answer may still come (Own does it again, Refused
-		// leaves it).
-		std::vector<Undo> Expired(Clock::time_point a_now)
+		// Our moves with no answer past ANSWER_WITHIN, counted once each. They stay on their way: their number or refusal
+		// may still come, and one the session never had goes late with our next settle.
+		void Expired(Clock::time_point a_now)
 		{
-			std::vector<Undo> undone;
-			while (!flights.empty() && flights.front().due <= a_now) {
-				undone.push_back(Abandon(flights.front().change));
-				flights.pop_front();
+			for (auto& flight : flights) {
+				if (!flight.counted && flight.due <= a_now) {
+					flight.counted = true;
+					++counts.unanswered;
+				}
 			}
-			return undone;
 		}
 
 		// Our move couldn't be sent after all (the session's numbering has no ID for its item): undone, the newest such.
@@ -464,44 +506,11 @@ namespace StorageView
 			return Back(a_change);
 		}
 
-		// Our player couldn't give back a_missing of an item one of our moves at a_container should take out of their inventory
-		// (undone or done again). The true copy is to give it up instead: the take to send (kStorageForfeit) while connected;
-		// while not, it is owed until we are welcomed back into the same session (OwedNow), and let go with a load.
-		std::optional<Protocol::ContainerChange> Forfeit(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_missing)
-		{
-			if (a_missing <= 0 || a_container == 0) {
-				return std::nullopt;
-			}
-			const Protocol::ContainerChange take{ a_container, a_item, static_cast<std::int32_t>(-(std::min<std::int64_t>)(a_missing, Protocol::MAX_ITEM_COUNT)) };
-			if (!rule) {
-				if (owed.size() >= MAX_ORPHANS) {
-					owed.pop_front();
-					++counts.owedDropped;
-				}
-				owed.push_back(take);
-				return std::nullopt;
-			}
-			++counts.forfeits;
-			return take;
-		}
-
-		// Welcomed back into the session they are owed in: the forfeits to send now.
-		std::vector<Protocol::ContainerChange> OwedNow()
-		{
-			if (!rule) {
-				return {};
-			}
-			counts.forfeits += static_cast<std::uint32_t>(owed.size());
-			std::vector<Protocol::ContainerChange> out{ owed.begin(), owed.end() };
-			owed.clear();
-			return out;
-		}
-
 		[[nodiscard]] std::size_t InFlight() const { return flights.size(); }
-		[[nodiscard]] std::size_t Orphans() const { return orphans.size(); }
-		[[nodiscard]] std::size_t Owed() const { return owed.size(); }
+		[[nodiscard]] std::size_t Lacks() const { return lacks.size(); }
 
-		// For the co-save: our moves still unanswered, and the session they were made in.
+		// For the co-save: our moves still unanswered, our numbered moves our world lacks (from LacksFrom on), and the
+		// session they were made in.
 		[[nodiscard]] std::vector<Protocol::ContainerChange> Unanswered() const
 		{
 			std::vector<Protocol::ContainerChange> out;
@@ -512,7 +521,9 @@ namespace StorageView
 			return out;
 		}
 
-		[[nodiscard]] std::uint64_t MovesSession() const { return movesSession; }
+		[[nodiscard]] std::vector<std::uint32_t> Lacking() const { return { lacks.begin(), lacks.end() }; }
+		[[nodiscard]] std::uint32_t              LacksFrom() const { return lacksFrom; }
+		[[nodiscard]] std::uint64_t              MovesSession() const { return movesSession; }
 
 		// ---- our own storage (the host's game) -----------------------------------------------------------------
 
@@ -557,7 +568,10 @@ namespace StorageView
 		struct Flight
 		{
 			Protocol::ContainerChange change;
-			Clock::time_point         due{};  // undone if no answer has come by then
+			Clock::time_point         due{};             // counted unanswered if no answer has come by then
+			bool                      settle = false;    // made before our last request: late at its settle if still unnumbered
+			bool                      restored = false;  // kept with the save we loaded
+			bool                      counted = false;   // counted unanswered
 		};
 
 		// Our move undone: a take comes back out of our player (and into our copy, while it shows the true copy); a put goes
@@ -568,33 +582,15 @@ namespace StorageView
 			return { .matched = true, .refresh = shown, .container = a_change.container, .item = a_change.item, .player = a_change.count, .copy = shown ? -static_cast<std::int64_t>(a_change.count) : 0 };
 		}
 
-		// Our numbered move done again on our player: a put taken from them, a take given to them (our copy is shown afresh).
-		Undo Redo(const Protocol::ContainerChange& a_change)
-		{
-			++counts.redone;
-			return { .matched = true, .refresh = Shows(a_change.container), .container = a_change.container, .item = a_change.item, .player = -static_cast<std::int64_t>(a_change.count) };
-		}
-
-		// A flight given up: undone, and remembered in case its answer comes after all.
-		Undo Abandon(const Protocol::ContainerChange& a_change)
-		{
-			if (orphans.size() >= MAX_ORPHANS) {
-				orphans.pop_front();  // most likely one the server never had: a catch-up since would have brought its number
-				++counts.orphansDropped;
-			}
-			orphans.push_back(a_change);
-			++counts.unanswered;
-			return Back(a_change);
-		}
-
 		bool                                             rule = false;
 		bool                                             host = false;
+		bool                                             settling = false;  // asked the server, not settled since (CaughtUp)
 		std::unordered_map<std::uint32_t, Owner>         owners;  // container -> whose game keeps it, since when
 		std::optional<View>                              view;
-		std::uint64_t                                    movesSession = 0;  // the session our flights and orphans are in
+		std::uint64_t                                    movesSession = 0;  // the session our flights and lacks are in
 		std::deque<Flight>                               flights;   // ours, oldest first, not yet numbered or refused
-		std::deque<Protocol::ContainerChange>            orphans;   // ours, undone unanswered, oldest first
-		std::deque<Protocol::ContainerChange>            owed;      // forfeits (takes from the true copy) made while not connected
+		std::set<std::uint32_t>                          lacks;     // our numbered moves our world lacks (from lacksFrom on)
+		std::uint32_t                                    lacksFrom = 0;
 		std::map<std::uint32_t, Protocol::ContainerChange> numbered;  // our numbered takes, by index
 		std::unordered_set<std::uint32_t>                listed;    // ours listed since our world last loaded
 		Counts                                           counts;
@@ -663,10 +659,9 @@ namespace StorageView
 			std::uint32_t setAside = 0;   // stacks of our copy set aside as a view opened
 			std::uint32_t shown = 0;      // contents shown in our copy
 			std::uint32_t adjusts = 0;    // stacks our copy was changed by to show them
-			std::uint32_t takenBack = 0;  // undone takes and redone puts: out of our player
+			std::uint32_t takenBack = 0;  // refused and short takes: out of our player
 			std::int64_t  usedUp = 0;     // of those, items our player no longer had
-			std::uint32_t givenBack = 0;  // undone puts and redone takes: to our player
-			std::int64_t  forfeited = 0;  // of usedUp, items the true copy was told to give up instead (sent, or owed)
+			std::uint32_t givenBack = 0;  // refused puts: to our player
 			std::uint32_t notices = 0;    // notices shown (NOTICE_EVERY at most, each)
 		};
 
@@ -686,22 +681,17 @@ namespace StorageView
 		{
 			EndView(false);
 			side.OnWelcome(a_rule, a_host, a_session, engine.Now());
-			for (const auto& take : side.OwedNow()) {
-				engine.Send(Protocol::Encode(take, Protocol::MessageType::kStorageForfeit));
-			}
 		}
 
-		// The connection went: the moves made in the menu go with the rest, every unanswered one is undone, and our copy is
-		// our own again.
+		// The connection went: the moves made in the menu go with the rest, every unanswered one stays on its way (the
+		// rejoin settles it), and our copy is our own again.
 		void OnDisconnected()
 		{
 			if (side.Viewing()) {
 				engine.FlushLoot();
 			}
 			EndView(false);
-			for (const auto& undo : side.OnDisconnected()) {
-				Apply(undo, std::nullopt);
-			}
+			side.OnDisconnected();
 		}
 
 		// Before a save or a load (after WorldSync::FlushLoot): no save holds the session's things in our copy, nor misses
@@ -709,17 +699,24 @@ namespace StorageView
 		void BeforeSaveOrLoad() { EndView(true); }
 
 		// A save loaded, in a_session (see Side::OnLoad).
-		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered)
+		void OnLoad(std::uint64_t a_session, std::span<const Protocol::ContainerChange> a_unanswered, std::span<const std::uint32_t> a_lacks = {},
+			std::uint32_t a_lacksFrom = 0)
 		{
 			aside.clear();  // the save's copy holds it
-			side.OnLoad(a_session, a_unanswered, engine.Now());
+			side.OnLoad(a_session, a_unanswered, a_lacks, a_lacksFrom, engine.Now());
 		}
 
-		// Every frame: moves unanswered too long are undone.
-		void Frame()
+		// Every frame: moves unanswered too long are counted (they stay on their way: see Side::Expired).
+		void Frame() { side.Expired(engine.Now()); }
+
+		// Our world asked the server for the session's changes again (a gap): see Side::Asked.
+		void Asked() { side.Asked(); }
+
+		// The server's world state answered a_asked of our requests: our moves are settled (Side::CaughtUp).
+		void OnCaughtUp(std::uint32_t a_asked, std::uint32_t a_ours, std::uint32_t a_next, bool a_waiting)
 		{
-			for (const auto& undo : side.Expired(engine.Now())) {
-				Apply(undo, undo.player < 0 ? Notice::kTakeRefused : Notice::kPutRefused);
+			if (const auto settle = side.CaughtUp(a_asked, a_ours, a_next, a_waiting)) {
+				engine.Send(Protocol::Encode(*settle));
 			}
 		}
 
@@ -729,6 +726,13 @@ namespace StorageView
 		void Open(std::uint32_t a_container, bool a_friends)
 		{
 			if (!side.Rule() || !a_friends) {
+				return;
+			}
+			// Our moves since our world last loaded aren't settled yet (the server refuses the view meanwhile): the menu closes.
+			if (side.Settling()) {
+				side.NoteSettlingClosed();
+				engine.HideMenu();
+				Notify(Notice::kClosed);
 				return;
 			}
 			// Our moves before it (at another container, or this one before it was a friend's) go first, as theirs.
@@ -855,16 +859,10 @@ namespace StorageView
 				const auto done = engine.ChangePlayer(PlayerChange{ a_undo.item, a_undo.player });
 				if (a_undo.player < 0) {
 					++counts.takenBack;
-					// What our player no longer had (used, moved to a workbench or a companion, or not in a world loaded since)
-					// comes out of the true copy instead, so it isn't made out of nothing.
-					const auto missing = done - a_undo.player;
-					counts.usedUp += missing;
-					if (missing > 0) {
-						counts.forfeited += missing;
-						if (const auto take = side.Forfeit(a_undo.container, a_undo.item, missing)) {
-							engine.Send(Protocol::Encode(*take, Protocol::MessageType::kStorageForfeit));
-						}
-					}
+					// What our player no longer had (used, moved away in the moment it took the server to answer): for the
+					// log. Only a refusal or a shortfall takes back, never what a load or a lost connection left wrong (the
+					// true copy is put right for those: Side::Own).
+					counts.usedUp += done - a_undo.player;
 				} else {
 					++counts.givenBack;
 				}
