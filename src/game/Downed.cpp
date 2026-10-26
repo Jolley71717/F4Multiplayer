@@ -248,6 +248,7 @@ namespace Downed
 		if (!player) {
 			return;
 		}
+		// The rules in force: revive turned off while we are down waits until we are up (DownRules::Self::SetRules).
 		const bool enabled = self.GetRules().revive && a_withFriends && WorldSync::InWorld();
 		const auto now = Clock::now();
 		const bool fighting = player->IsInCombat();
@@ -286,6 +287,9 @@ namespace Downed
 		const auto rules = DownRules::Rules::From(a_rules);
 		self.SetRules(rules, a_session);
 		helper.SetRules(rules);
+		if (self.RulesWaiting()) {
+			REX::INFO("Downed: new rules while we are down; they apply once we are up");
+		}
 	}
 
 	bool IsDown()
@@ -389,8 +393,8 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={}",
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={} rulesWaiting={}",
 			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, helper.helped,
-			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now));
+			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.RulesWaiting());
 	}
 }

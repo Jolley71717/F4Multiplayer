@@ -166,8 +166,9 @@ The host can make it harder (their ini sets it for everyone; a joiner's own sett
 the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the health you get up with
 (`iReviveHealth`), how many times each player can be helped up per fight or per so many minutes
 (`iMaxRevives`, `iReviveWindowMinutes`), a time after getting up when a lethal hit kills
-(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). The HUD tells you
-how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
+(`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). When the host has
+changed any of these, joiners are told the rules as they join, and the F1 menu shows them. The HUD
+tells you how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
 `--revive-out-of-combat`, `--no-revive`).
 

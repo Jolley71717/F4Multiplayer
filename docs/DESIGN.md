@@ -1285,7 +1285,13 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   are kept by DownRules::Self on the downed player's side: out of revives, or in the cooldown, the player is
   not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
   frame in combat (on the ground counts as in combat). The helper checks its own combat state for
-  `bReviveOutOfCombat`. The defaults are the behaviour before the rules.
+  `bReviveOutOfCombat`. The defaults are the behaviour before the rules. Rules that reach `Self` while the
+  player is on the ground (a welcome back into the session mid-down) wait until they are up: a down finishes
+  under the rules it began with, so a shorter bleed-out or revive turned off never kills on the spot; the
+  revive count of the session carries on through any change. A joiner is told rules that differ from the
+  defaults once per session on the HUD ("Host's rules: revive limit 3 per fight, 30 s to bleed out";
+  common/RulesSummary.h, tested), and the F1 main page shows the same line while in the session. With the
+  defaults nothing is shown.
 - VATS in real time (src/game/RealTime.cpp, src/game/RealTimeVats.h; `bRealTimeVats`): the game slows VATS's
   aiming through `VATS::magicTimeSlowdown` (0.04 while aiming, measured on 1.11.240; the global time multiplier
   and its target follow it; Jet sets the same slowdown to 0.3), and a shot playing out through the VATS

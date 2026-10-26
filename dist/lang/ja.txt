@@ -117,6 +117,16 @@ down.revives_back = また仲間に助け起こしてもらえるようになり
 down.cooldown = 助け起こされた直後です。{n}秒間は致命傷を受けると死亡します
 down.cant_help_fighting = 戦闘中は{player}を助け起こせません
 
+rules.host = ホストのルール：{rules}
+rules.revive_off = 助け起こしなし、致命傷で死亡
+rules.revives_fight = 助け起こしは戦闘ごとに{n}回まで
+rules.revives_window = 助け起こしは{minutes}分ごとに{n}回まで
+rules.bleed_out = {n}秒で失血死
+rules.help_time = 仲間を助け起こすのに{n}秒
+rules.revive_health = 体力{n}%で起き上がる
+rules.cooldown = 助け起こされてから{n}秒以内の致命傷で死亡
+rules.out_of_combat = 戦闘中は助け起こし不可
+
 # --- The shared map, quests and workshop ---
 map.discovered = {player}が{place}を発見
 quest.caught_up = フレンドの進行に追いつきました：{names}

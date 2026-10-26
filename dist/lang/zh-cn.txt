@@ -101,6 +101,16 @@ down.last_revive = 这是你暂时最后一次被扶起：下一次致命攻击�
 down.revives_back = 朋友又可以扶起你了
 down.cooldown = 刚被扶起：{n} 秒内致命攻击会杀死你
 down.cant_help_fighting = 战斗中无法扶起 {player}
+
+rules.host = 主机的规则：{rules}
+rules.revive_off = 不能被扶起，致命攻击会杀死你
+rules.revives_fight = 每场战斗最多被扶起 {n} 次
+rules.revives_window = 每 {minutes} 分钟最多被扶起 {n} 次
+rules.bleed_out = {n} 秒后失血而死
+rules.help_time = 扶起朋友需要 {n} 秒
+rules.revive_health = 被扶起时有 {n}% 生命值
+rules.cooldown = 被扶起后 {n} 秒内受到致命攻击会死亡
+rules.out_of_combat = 战斗中不能扶起朋友
 map.discovered = {player} 发现了 {place}
 quest.caught_up = 已追上好友的进度：{names}
 quest.and_more = 还有 {n} 个
