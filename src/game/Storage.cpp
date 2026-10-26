@@ -346,6 +346,11 @@ namespace Storage
 	void Frame()
 	{
 		client.Frame();
+		// A catch-up that left the ledger waiting settles once the wait is over (a gap given up on asks for nothing more).
+		const auto& loot = WorldSync::Loot();
+		if (client.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0)) {
+			REX::INFO("Storage: settled our moves at a friend's storage once the changes we waited for were given up on ({} our world lacks)", side.Lacks());
+		}
 		Scan();
 	}
 

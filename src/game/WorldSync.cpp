@@ -2480,9 +2480,13 @@ namespace WorldSync
 		const auto  skippedBefore = numbers.Stats().skipped;
 		const auto  nextBefore = numbers.Next();
 		if (const auto request = loot.Due(now, engine)) {
-			Queue(Protocol::Encode(*request));
-			Storage::UnlistAll();  // the server holds our storage listings stale from the request on
-			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, numbers.Waiting());
+			if (Story::InOpening()) {
+				loot.Unasked();  // never sent from the opening (Session::SendWorldEvents): no world state answers it
+			} else {
+				Queue(Protocol::Encode(*request));
+				Storage::UnlistAll();  // the server holds our storage listings stale from the request on
+				REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, numbers.Waiting());
+			}
 		}
 		if (const auto skipped = numbers.Stats().skipped - skippedBefore) {
 			REX::WARN("WorldSync: gave up on container changes #{} to #{} after asking {} times; the {} after them went in ({} still waiting)", nextBefore,

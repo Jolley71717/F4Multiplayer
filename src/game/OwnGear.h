@@ -30,10 +30,11 @@ namespace OwnGear
 		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
 		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
 		kDropCopy,
-		// Shared storage (StorageView.h): our player's own move at a friend's storage undone (the server refused it or never
-		// answered: a take given back, a put returned), or done again (numbered, and our loaded world lacks it). The one change
-		// made to the local player, and only ever to them: what they did themselves, put right. Nothing else goes to them (a
-		// friend's copy's own things are set aside in the copy while it shows the true one, never moved to the player).
+		// Shared storage (StorageView.h): our player's own move at a friend's storage undone (the server refused it, or the
+		// host's chest held less than a take: a take given back, a put returned). A move our loaded world lacks is put right
+		// in the true copy by the server, never here. The one change made to the local player, and only ever to them: what they
+		// did themselves, put right. Nothing else goes to them (a friend's copy's own things are set aside in the copy while it
+		// shows the true one, never moved to the player).
 		kStorageUndo,
 		kCount,
 	};

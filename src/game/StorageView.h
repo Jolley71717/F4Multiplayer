@@ -168,6 +168,7 @@ namespace StorageView
 		{
 			rule = a_rule;
 			host = a_host;
+			marker.reset();
 			owners.clear();
 			listed.clear();
 			view.reset();
@@ -189,6 +190,7 @@ namespace StorageView
 		void OnDisconnected()
 		{
 			rule = false;
+			marker.reset();
 			owners.clear();
 			listed.clear();
 			view.reset();
@@ -236,13 +238,18 @@ namespace StorageView
 		// The server's world state answered a_asked of our requests (Protocol::StorageCaughtUp); a_ours: how many we made
 		// (LootSync), a_next: the first numbered change our world lacks, a_waiting: changes still wait for an earlier one.
 		// The settle to send once it answers our latest request and nothing of it is missing (a gap is asked for again, and
-		// its answer settles); nothing otherwise.
+		// its answer settles; a gap given up on instead settles at a later frame: see Marker); nothing otherwise. Moves of ours
+		// our world lacks numbered from a_next on are forgotten: the session's log was rewound past them (its host's game quit
+		// before saving them), and those numbers will be others' moves.
 		std::optional<Protocol::StorageSettle> CaughtUp(std::uint32_t a_asked, std::uint32_t a_ours, std::uint32_t a_next, bool a_waiting)
 		{
+			marker = a_asked;
 			if (!rule || !settling || a_asked != a_ours || a_waiting) {
 				return std::nullopt;
 			}
 			settling = false;
+			lacks.erase(lacks.lower_bound(a_next), lacks.end());
+			lacksFrom = (std::min)(lacksFrom, a_next);
 			Protocol::StorageSettle settle{ a_asked, a_next, lacksFrom, {}, {} };
 			for (auto it = lacks.lower_bound(lacksFrom); it != lacks.end() && *it < a_next; ++it) {
 				settle.lacking.push_back(*it);
@@ -256,6 +263,10 @@ namespace StorageView
 			counts.late += static_cast<std::uint32_t>(settle.late.size());
 			return settle;
 		}
+
+		// The last world state's marker (CaughtUp's a_asked) on this connection: while we are settling, the game tries it again
+		// each frame, as what it waited for (a gap) may have been given up on since, with no other world state to come.
+		[[nodiscard]] std::optional<std::uint32_t> Marker() const { return marker; }
 
 		// Our moves are being settled: nothing is done at a friend's storage meanwhile.
 		[[nodiscard]] bool Settling() const { return rule && settling; }
@@ -291,8 +302,8 @@ namespace StorageView
 			return it != owners.end() ? std::optional{ it->second.id } : std::nullopt;
 		}
 
-		// The first change numbered while a_container was kept: a take of ours before it was ordinary loot (the host's world
-		// and our loaded one agree on it), never undone in the true copy (Own).
+		// The first change numbered while a_container was kept: a move of ours before it was ordinary loot, never undone in
+		// the true copy by a settle (Own); the claim took our puts then back out of it (StorageBook::BeforeClaim).
 		[[nodiscard]] std::uint32_t KeptSince(std::uint32_t a_container) const
 		{
 			const auto it = owners.find(a_container);
@@ -397,8 +408,8 @@ namespace StorageView
 		// flight) is in it. One that isn't, our world lacks: the true copy undoes it when we settle (StorageBook::Settle),
 		// and our player keeps what our save has. So a quickload neither dupes what was put nor loses what was taken, and
 		// nothing is taken back from a player who could have moved it away first.
-		// A take numbered before the container was kept (StorageOwner::since) was ordinary loot, and the host's world and
-		// ours agree on it: never undone. A put then is: the true copy has it, and so does our player again.
+		// A move numbered before the container was kept (StorageOwner::since) was ordinary loot: never lacking here (the
+		// claim took the puts then back out of the true copy, whatever our world has).
 		// A take kept with a save can come back smaller than made (the keeper's container held less, and the server's log
 		// keeps the take as it was in the end; its shortfall went to the game we left): the rest is taken back.
 		std::optional<Undo> Own(const Protocol::IndexedContainerChange& a_change, bool a_lacking)
@@ -429,7 +440,7 @@ namespace StorageView
 					return std::nullopt;  // nothing was taken
 				}
 			}
-			if (a_lacking && (change.count > 0 || a_change.index >= KeptSince(change.container)) && a_change.index >= lacksFrom && !lacks.contains(a_change.index)) {
+			if (a_lacking && a_change.index >= KeptSince(change.container) && a_change.index >= lacksFrom && !lacks.contains(a_change.index)) {
 				if (lacks.size() >= MAX_LACKS) {
 					lacksFrom = *lacks.begin() + 1;  // the server hears of it no more: a later save loaded doesn't have it done again
 					lacks.erase(lacks.begin());
@@ -585,6 +596,7 @@ namespace StorageView
 		bool                                             rule = false;
 		bool                                             host = false;
 		bool                                             settling = false;  // asked the server, not settled since (CaughtUp)
+		std::optional<std::uint32_t>                     marker;            // the last kStorageCaughtUp's (Marker)
 		std::unordered_map<std::uint32_t, Owner>         owners;  // container -> whose game keeps it, since when
 		std::optional<View>                              view;
 		std::uint64_t                                    movesSession = 0;  // the session our flights and lacks are in
@@ -718,6 +730,17 @@ namespace StorageView
 			if (const auto settle = side.CaughtUp(a_asked, a_ours, a_next, a_waiting)) {
 				engine.Send(Protocol::Encode(*settle));
 			}
+		}
+
+		// Each frame while settling: the last marker again (Side::Marker). True when it settled.
+		bool RetryCaughtUp(std::uint32_t a_ours, std::uint32_t a_next, bool a_waiting)
+		{
+			const auto marker = side.Marker();
+			if (!side.Settling() || !marker || *marker != a_ours || a_waiting) {
+				return false;
+			}
+			OnCaughtUp(*marker, a_ours, a_next, a_waiting);
+			return !side.Settling();
 		}
 
 		// ---- the container menu ----------------------------------------------------------------------------

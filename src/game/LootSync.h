@@ -73,8 +73,8 @@ namespace LootSync
 		// now (too many unanswered), so it isn't sent, and the world has undone it.
 		virtual bool                         Reporting(const Protocol::ContainerChange&) { return true; }
 		// One of our own moves at a friend's storage came back numbered, in session order (live, or in a catch-up).
-		// a_lacking: our world doesn't have it (the save we loaded is from before it). Our takes there numbered before it
-		// was kept (KeptSince) don't come: they were ordinary loot.
+		// a_lacking: our world doesn't have it (the save we loaded is from before it). Our moves there numbered before it
+		// was kept (KeptSince) don't come: they were ordinary loot, and its claim took our puts back out of the host's copy.
 		virtual void                         OwnStorage(const Protocol::IndexedContainerChange&, bool) {}
 		// A friend's numbered take (a_index) our storage held a_missing fewer of than taken.
 		virtual void                         Short(std::uint32_t, const Protocol::ContainerChange&, std::int32_t) {}
@@ -271,6 +271,14 @@ namespace LootSync
 			return receiver.Request(a_now);
 		}
 
+		// A request Due made that was never sent (the game held it back): no world state will answer it.
+		void Unasked()
+		{
+			if (asked > 0) {
+				--asked;
+			}
+		}
+
 		// The same, in the session we were last welcomed into (SessionSteps::OnGameLoaded, once the game has
 		// left the session if the save isn't its world): nothing while we aren't in one.
 		std::optional<Protocol::WorldRequest> AfterLoad(Clock::time_point a_now)
@@ -449,7 +457,7 @@ namespace LootSync
 		{
 			return [&a_world](const Protocol::IndexedContainerChange& a_change, bool a_lacking) {
 				if (a_change.change.item != Protocol::CONTAINER_EMPTIED && a_world.Keeper(a_change.change.container) == StorageView::Keeper::kFriend &&
-					(a_change.change.count > 0 || a_change.index >= a_world.KeptSince(a_change.change.container))) {
+					a_change.index >= a_world.KeptSince(a_change.change.container)) {
 					a_world.OwnStorage(a_change, a_lacking);
 				}
 			};

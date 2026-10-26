@@ -252,7 +252,7 @@ TEST("storage view: a numbered move of ours our loaded world lacks is left to th
 	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 20, 21 }));
 }
 
-TEST("storage view: a take of ours numbered before the container was kept isn't lacking; a put then is")
+TEST("storage view: no move of ours numbered before the container was kept is lacking: the claim took the puts back")
 {
 	Side side = Friend();
 	side.Owners({ { { CHEST, FRIEND, 30 } } });
@@ -260,7 +260,25 @@ TEST("storage view: a take of ours numbered before the container was kept isn't 
 	side.Own({ 10, US, { CHEST, STIMPAK, -1 } }, true);
 	side.Own({ 11, US, { CHEST, WATER, 2 } }, true);
 	side.Own({ 31, US, { CHEST, STIMPAK, -1 } }, true);
-	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 11, 31 }));
+	CHECK((side.Lacking() == std::vector<std::uint32_t>{ 31 }));
+}
+
+TEST("storage view: a catch-up the ledger still waits after settles from the same marker later; lacks past a rewound log go")
+{
+	Side side = Friend();
+	side.OnLoad(SESSION, {}, { { 5, 20 } }, 0, T0);  // 20: numbered in a log the server lost (its host's game quit unsaved)
+	CHECK(!side.CaughtUp(1, 1, 10, true));            // a gap: not yet
+	REQUIRE(side.Marker());
+	CHECK(*side.Marker() == 1);
+	CHECK(side.Settling());
+	// The gap was given up on (no more world states come): the game tries the marker again.
+	const auto settle = side.CaughtUp(*side.Marker(), 1, 10, false);
+	REQUIRE(settle);
+	CHECK((settle->lacking == std::vector<std::uint32_t>{ 5 }));
+	CHECK(side.Lacks() == 1);  // 20 forgotten: that number will be someone else's move
+	CHECK(!side.Settling());
+	side.OnDisconnected();
+	CHECK(!side.Marker());
 }
 
 TEST("storage view: a load keeps the save's unanswered moves: their numbers find them, so they aren't lacking")

@@ -220,6 +220,7 @@ namespace LootTest
 			loot.Retry(*this, APPLY_INTERVAL);
 			if (connected) {
 				storage.Frame();
+				storage.RetryCaughtUp(loot.Asked(), loot.Numbers().Numbers().Next(), loot.Numbers().Numbers().Waiting() != 0);
 			}
 			ListStorage();
 			SendOut(a_f);
