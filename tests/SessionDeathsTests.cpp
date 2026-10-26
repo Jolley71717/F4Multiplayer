@@ -794,3 +794,38 @@ TEST("session deaths: one the session has dead may be offered only by a game tha
 	CHECK(deaths.MayClaim(RAIDER, t0, true));
 	CHECK(deaths.MayClaim(RAIDER2, t0, true));
 }
+
+TEST("session deaths: a death heard from a friend's report takes where its corpse came to rest from that friend alone, soon after")
+{
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	deaths.Add(RAIDER, t0, 2);  // Bob's report
+	deaths.Add(RAIDER2, t0);    // our own death event, or the session's list
+	CHECK(deaths.RestsFrom(RAIDER, 2, t0 + 3s));
+	CHECK(!deaths.RestsFrom(RAIDER, 3, t0 + 3s));  // Carol's report of it, later: not where Bob's corpse lies
+	CHECK(!deaths.RestsFrom(RAIDER, 2, t0 + Protocol::CORPSE_REST_WINDOW));
+	CHECK(!deaths.RestsFrom(RAIDER2, 2, t0 + 3s));
+	CHECK(!deaths.RestsFrom(RAIDER2, 0, t0 + 3s));
+	CHECK(!deaths.RestsFrom(0x00ABCDEF, 2, t0 + 3s));  // news: a death, not a rest
+	CHECK(!deaths.Add(RAIDER, t0 + 3s, 3));  // a second report changes nothing
+	CHECK(deaths.RestsFrom(RAIDER, 2, t0 + 3s));
+}
+
+TEST("session deaths: our report sent as an NPC began to fall is taken back once by its death event, to say where it came to rest")
+{
+	const auto            t0 = Clock::time_point{} + 1h;
+	SessionDeaths::Ledger deaths;
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });  // not known dead: nothing kept
+	CHECK(!deaths.TakeFell(RAIDER));
+	deaths.Add(RAIDER, t0);
+	CHECK(!deaths.TakeFell(RAIDER));  // reported at its death event, not as it fell
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });
+	const auto fell = deaths.TakeFell(RAIDER);
+	REQUIRE(fell);
+	CHECK((*fell)[0] == 1.0f);
+	CHECK((*fell)[2] == 3.0f);
+	CHECK(!deaths.TakeFell(RAIDER));  // once
+	deaths.FellReported(RAIDER, { 1.0f, 2.0f, 3.0f });
+	deaths.Reset(t0 + 1s);
+	CHECK(!deaths.TakeFell(RAIDER));
+}

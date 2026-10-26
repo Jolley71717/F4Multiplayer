@@ -1,9 +1,14 @@
 #pragma once
 
+#include "Protocol.h"
+
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 
 // What our game knows of the session's deaths (WorldSync), and what NpcSync asks of it before offering to run
 // an NPC. A raider the session has dead can be alive in our game in two ways: our game has not caught up yet
@@ -44,9 +49,32 @@ namespace SessionDeaths
 	class Ledger
 	{
 	public:
-		// Learned dead: our own death event, another game's report, the session's list or found dead when we host.
-		// True if it is news.
-		bool Add(std::uint32_t a_id, Clock::time_point a_now) { return dead.try_emplace(a_id, Entry{ a_now }).second; }
+		// Learned dead: our own death event, another game's report (a_from: that player), the session's list or found
+		// dead when we host. True if it is news.
+		bool Add(std::uint32_t a_id, Clock::time_point a_now, std::uint32_t a_from = 0) { return dead.try_emplace(a_id, Entry{ a_now, false, a_from }).second; }
+
+		// Whether a repeat of a death from a_player says where the corpse came to rest (Protocol::CORPSE_REST_WINDOW):
+		// the death was news to us from that player's report, a moment ago.
+		[[nodiscard]] bool RestsFrom(std::uint32_t a_id, std::uint32_t a_player, Clock::time_point a_now) const
+		{
+			const auto it = dead.find(a_id);
+			return it != dead.end() && a_player != 0 && it->second.from == a_player && a_now - it->second.learned < Protocol::CORPSE_REST_WINDOW;
+		}
+
+		// Our report of it went out as it began to fall (WorldSync::ReportFalling), with the corpse at a_at; its death
+		// event, at the end of the fall, takes that back (TakeFell) to tell whether it came to rest elsewhere.
+		void FellReported(std::uint32_t a_id, const std::array<float, 3>& a_at)
+		{
+			if (const auto it = dead.find(a_id); it != dead.end()) {
+				it->second.fellAt = a_at;
+			}
+		}
+
+		[[nodiscard]] std::optional<std::array<float, 3>> TakeFell(std::uint32_t a_id)
+		{
+			const auto it = dead.find(a_id);
+			return it == dead.end() ? std::nullopt : std::exchange(it->second.fellAt, std::nullopt);
+		}
 
 		// Our game has it dead: its death event, or its corpse loaded or found. A console kill that left it standing (an
 		// NPC essential in our game only: it goes down and gets up) is not this, so a later load of it alive is not
@@ -115,8 +143,10 @@ namespace SessionDeaths
 	private:
 		struct Entry
 		{
-			Clock::time_point learned{};
-			bool              seenDead = false;
+			Clock::time_point                   learned{};
+			bool                                seenDead = false;
+			std::uint32_t                       from = 0;  // the player whose report told us, or 0
+			std::optional<std::array<float, 3>> fellAt;    // FellReported
 		};
 
 		std::unordered_map<std::uint32_t, Entry>             dead;

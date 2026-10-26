@@ -399,6 +399,25 @@ TEST("death reports: a report is held against the player the server named, where
 	CHECK(book.Judge(false, book.Received({ .refId = 0x1F0B5, .playerId = 0, .x = 5.0f }, t0), jared, t0) == Verdict::kKeepAlive);  // a placed replay
 }
 
+TEST("death reports: where a corpse came to rest, said after its death, moves a report still held for our copy, and nothing else")
+{
+	using namespace std::chrono_literals;
+	DeathReports::Book                    book{ [](std::uint32_t) -> std::optional<Spot> { return std::nullopt; } };
+	const DeathReports::Clock::time_point t0{ 1h };
+	CHECK(!book.Rests(0x1F0B5, 900.0f, 10.0f, -40.0f));  // nothing held
+	CHECK(book.Empty());
+	book.Hold(0x1F0B5, book.Received({ .refId = 0x1F0B5, .playerId = 2, .killed = true, .x = 5.0f }, t0));
+	CHECK(book.Rests(0x1F0B5, 900.0f, 10.0f, -40.0f));
+	book.Retry([](std::uint32_t, const DeathReports::Report& a_report) {
+		CHECK(a_report.x == 900.0f);
+		CHECK(a_report.y == 10.0f);
+		CHECK(a_report.z == -40.0f);
+		CHECK(a_report.killer == 2);  // still the kill it was
+		return true;
+	});
+	CHECK(book.Empty());
+}
+
 TEST("token bucket: a burst, then one per refill, never more than the burst after a long quiet")
 {
 	using namespace std::chrono_literals;

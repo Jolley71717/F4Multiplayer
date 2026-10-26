@@ -528,6 +528,12 @@ namespace Protocol
 		bool operator==(const ActorDeath&) const = default;
 	};
 
+	// A game that reports a death as the NPC starts to fall (WorldSync::ReportFalling) sends it once more when the fall
+	// is over if the corpse came to rest elsewhere (thrown by a blast, off a ledge): the same death, not killed, with
+	// where it lies now. The server takes that only from the death's own reporter, once, within this long of the death
+	// (Server.cpp, handleDeath), and passes it on; games that heard the death from that player move their corpse.
+	inline constexpr auto CORPSE_REST_WINDOW = std::chrono::seconds(30);
+
 	// Health as a fraction of maximum: leveled actors can have different max health in each
 	// player's world, so absolute values don't transfer. kReportDamage and kActorDamaged carry the damage dealt the same
 	// way (a fraction of the maximum taken off).
