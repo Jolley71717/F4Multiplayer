@@ -455,6 +455,32 @@ namespace WorkshopSync
 			return cell->worldSpace == here->worldSpace ? here : nullptr;
 		}
 
+		// Whether the exterior cell the piece stands in is attached here. CellFor says only that its workbench (a
+		// persistent reference, in memory from anywhere in its worldspace) is in ours: from a town away, what stands at
+		// the spot can't be seen (AtSpot walks the attached cells), and a copy made there went over the save's copy, or
+		// over a piece of ours, unseen. Two at one spot flicker.
+		bool SpotAttached(const Protocol::WorkshopItem& a_item)
+		{
+			const auto tes = RE::TES::GetSingleton();
+			const auto grid = tes ? tes->gridCells : nullptr;
+			if (!grid) {
+				return false;
+			}
+			const auto x = WorkshopCells::Grid(a_item.position[0]);
+			const auto y = WorkshopCells::Grid(a_item.position[1]);
+			for (std::uint32_t i = 0; i < grid->dimension; ++i) {
+				for (std::uint32_t j = 0; j < grid->dimension; ++j) {
+					const auto gridCell = grid->Get(i, j);
+					const auto cell = gridCell ? gridCell->cell : nullptr;
+					const auto exterior = cell && cell->IsAttached() ? cell->cellData.exterior : nullptr;
+					if (exterior && exterior->cellX == x && exterior->cellY == y) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		// The cell a piece stands in, from its workbench's interior or worldspace and its position: what
 		// waits there is tried again when that cell attaches. Nowhere if its workbench isn't in this game.
 		WorkshopCells::Where WhereOf(const Protocol::WorkshopItem& a_item)
@@ -1154,7 +1180,12 @@ namespace WorkshopSync
 		{
 			using Copy = WorkshopSync::Copy;
 
-			bool                     Loaded(const Protocol::WorkshopItem& a_item) { return CellFor(a_item) != nullptr; }
+			// Its settlement is here, and the cell it stands in attached (SpotAttached): what waits for it is tried again then.
+			bool Loaded(const Protocol::WorkshopItem& a_item)
+			{
+				const auto cell = CellFor(a_item);
+				return cell && (cell->IsInterior() || SpotAttached(a_item));
+			}
 			WorkshopCells::Where     WhereOf(const Protocol::WorkshopItem& a_item) { return WorkshopSync::WhereOf(a_item); }
 			WorkshopCells::Where     WhereScrapped(const Protocol::WorkshopItem& a_item) { return WorkshopSync::WhereScrapped(a_item); }
 			// Named with a real workbench (else dropped, said once in the log), and within its reach.
@@ -1218,6 +1249,13 @@ namespace WorkshopSync
 			}
 
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }
+
+			// Only a copy of ours (it has the keyword Keep gives): never a loose thing of the same object.
+			std::optional<Copy> LeftoverAt(const Protocol::WorkshopItem& a_item)
+			{
+				const auto leftover = AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return !IsWorkshopObject(a_ref) && Blocked(*a_ref); });
+				return leftover ? std::optional<Copy>{ Copy{ leftover->GetHandle(), Clock::now() } } : std::nullopt;
+			}
 		};
 
 		// Tries again what waits in, or next to, a cell that just attached (in line with the rest: a cell
@@ -2179,8 +2217,8 @@ namespace WorkshopSync
 			droppedNow = dropped;
 			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} oursThere={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
-			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.oursThere, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} oursThere={} leftovers={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.oursThere, counts.leftovers, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +

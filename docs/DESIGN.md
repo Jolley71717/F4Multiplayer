@@ -1428,6 +1428,15 @@ at its spot makes no copy over it (`OursAt`, `oursThere=`), and their scrap of t
 Friends' copies stay out of workshop mode's reach by design (above), so a friend's crop or post can't be a job for
 our settlers; each player assigns jobs at their own pieces.
 
+**A friend's piece waits for its own cell.** Both searches walk only the attached cells
+(`TES::ForEachReferenceInRange`), while a workbench, a persistent reference, is in memory from anywhere in its
+worldspace. So a report is placed only once the exterior cell its piece stands in is attached (`SpotAttached`);
+until then it waits under that cell. Placed earlier (as older versions did), from a town away, the copy went over the save's
+copy (after a load away from the settlement, which forgets the copies' handles) or over a piece of ours, unseen:
+two at one spot, flickering. Copies left doubled that way go when their piece is placed again (`LeftoverAt`,
+`leftovers=`). Only a copy some session kept counts (it has the block keyword), never a loose reference of the same
+object.
+
 Rejected: stripping copies' links before every save and putting them back after. A save happens at any moment
 (autosaves, quicksaves, the game's own on sleep and fast travel); a put-back would re-run grid code mid-session,
 fire the game's power events into scripts, and would need wires that were never ours. Blocking the wire in the

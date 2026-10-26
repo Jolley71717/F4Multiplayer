@@ -68,6 +68,7 @@ namespace
 			WorkshopMove::Transform                at;
 			std::pair<std::int32_t, std::int32_t> cell;  // the cell it was made in: the engine keeps it there
 			int                                    held = 0;  // items in its inventory
+			bool                                   kept = false;  // a copy some session kept: it has the keyword Keep gives (WorkshopSync::Blocked)
 		};
 
 		using Copy = int;  // a piece's ID in `world`: the stand-in's handle
@@ -100,7 +101,7 @@ namespace
 		WorkshopCells::Where WhereOf(const Protocol::WorkshopItem& a_item) const { return benches.contains(a_item.workshop) ? Cell(a_item) : WorkshopCells::Where{}; }
 		WorkshopCells::Where WhereScrapped(const Protocol::WorkshopItem& a_item) const { return WhereOf(a_item); }
 		bool                 InReach(const Protocol::WorkshopItem& a_item) const { return std::hypot(a_item.position[0] - BENCH_X, a_item.position[1] - BENCH_Y) <= REACH; }
-		void                 Keep(Copy) {}
+		void                 Keep(Copy a_copy) { world[a_copy].kept = true; }
 		WorkshopApply::Placeable CanPlace(const Protocol::WorkshopItem& a_item) const { return stocked.contains(a_item.base) ? WorkshopApply::Placeable::kStocked : WorkshopApply::Placeable::kYes; }
 
 		// Pieces of the world itself (the settlement's own beds and crops), by their reference ID in every game.
@@ -168,22 +169,27 @@ namespace
 		// Pieces this game's player built (linked to our workbench): never a copy to take over (WorkshopSync::IsWorkshopObject).
 		std::set<int> built;
 
+		// The same object at the spot, in a loaded cell: the game looks only through the attached cells (WorkshopSync::AtSpot).
 		bool SameAtSpot(const Piece& a_piece, const Protocol::WorkshopItem& a_item) const
 		{
-			return a_piece.base == a_item.base && std::hypot(a_piece.at.position[0] - a_item.position[0], a_piece.at.position[1] - a_item.position[1]) <= ADOPT_RADIUS;
+			return a_piece.base == a_item.base && std::hypot(a_piece.at.position[0] - a_item.position[0], a_piece.at.position[1] - a_item.position[1]) <= ADOPT_RADIUS &&
+			       loaded.contains({ COMMONWEALTH, a_piece.cell.first, a_piece.cell.second });
 		}
 
-		// A piece of the same object at the spot that no copy of this run is, nor one we built.
-		std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item) const
+		// A piece of the same object at the spot that no copy of this run is, nor one we built (and, a_kept, one some session kept).
+		std::optional<Copy> Untracked(const Protocol::WorkshopItem& a_item, bool a_kept) const
 		{
 			for (const auto& [id, piece] : world) {
 				const bool tracked = std::ranges::any_of(copies, [&](const auto& a_copy) { return a_copy.second == id; });
-				if (!tracked && !built.contains(id) && SameAtSpot(piece, a_item)) {
+				if (!tracked && !built.contains(id) && (!a_kept || piece.kept) && SameAtSpot(piece, a_item)) {
 					return id;
 				}
 			}
 			return std::nullopt;
 		}
+
+		std::optional<Copy> FindExisting(const Protocol::WorkshopItem& a_item) const { return Untracked(a_item, false); }
+		std::optional<Copy> LeftoverAt(const Protocol::WorkshopItem& a_item) const { return Untracked(a_item, true); }
 
 		bool OursAt(const Protocol::WorkshopItem& a_item) const
 		{
@@ -373,6 +379,79 @@ TEST("workshop session: our own piece where a friend's identical one stands (sav
 	bob.Leave();
 	CHECK(bob.world.contains(mine));
 	CHECK(bob.At(200.0f) == 0);  // the adopted copy went with the session
+}
+
+TEST("workshop session: a friend's piece sent while you are towns away from its settlement waits for its cell, then takes over the save's copy there, and none goes over yours")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	Game bob;  // in the settlement's worldspace, its workbench in memory (a persistent reference), but its cells not loaded
+	bob.Load({ { 900, { WALL, WorkshopMove::Of(Wall(0, 100.0f)), { 0, 0 }, 0, true } } });  // the copy his save holds
+	const auto mine = bob.Build(200.0f);                                                     // and a wall of his own, from a past they share
+	bob.Receive(Received(f, 2));
+
+	// He loaded that save away from the settlement: the session's building comes again.
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	f.fake->Deliver(1, Report(Wall(0xFF000002, 200.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.placed == 0);
+	CHECK(bob.inbox.Pending().Size() == 2);
+
+	bob.Attach(WorkshopCells::Exterior(COMMONWEALTH, 100.0f, 1000.0f));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.placed == 0);
+	CHECK(bob.counts.adopted == 1);
+	CHECK(bob.counts.oursThere == 1);
+	CHECK(bob.world.contains(900));
+	CHECK(bob.world.contains(mine));
+	CHECK(bob.At(100.0f) == 1);
+	CHECK(bob.At(200.0f) == 1);
+	CHECK(bob.inbox.Pending().Empty());
+}
+
+TEST("workshop session: a save holding a friend's piece twice at one spot, or a copy over a piece of ours, keeps only one there once the session's building comes")
+{
+	Fixture f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Received(f, 1);
+	auto bob = GameAt(100.0f);
+	bob.Receive(Received(f, 2));
+	// An older version made copies from afar, over what stood at the spot unseen: the save's own copy, and a piece of ours.
+	const auto kept = [](float a_x) { return Game::Piece{ WALL, WorkshopMove::Of(Wall(0, a_x)), { 0, 0 }, 0, true }; };
+	bob.Load({ { 900, kept(100.0f) }, { 901, kept(100.0f) }, { 902, kept(300.0f) } });
+	const auto mine = bob.Build(300.0f);
+	bob.world[904] = { WALL, WorkshopMove::Of(Wall(0, 100.0f)), { 0, 0 } };  // the same object at the spot, but no copy any session kept: not ours to take away
+
+	f.fake->Deliver(1, Report(Wall(0xFF000001, 100.0f)));
+	f.fake->Deliver(1, Report(Wall(0xFF000002, 300.0f)));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.adopted == 1);
+	CHECK(bob.counts.oursThere == 1);
+	CHECK(bob.counts.leftovers == 2);
+	CHECK(bob.counts.placed == 0);
+	CHECK(bob.world.contains(900));
+	CHECK(!bob.world.contains(901));
+	CHECK(!bob.world.contains(902));
+	CHECK(bob.world.contains(mine));
+	CHECK(bob.world.contains(904));
+	CHECK(bob.At(300.0f) == 1);
+	CHECK(bob.copies.size() == 1);
+
+	// Sent again (another load): nothing more goes.
+	const auto save = bob.world;
+	bob.Load(save);
+	f.fake->Deliver(2, Protocol::Encode(Protocol::WorldRequest{ 0, 0 }));
+	bob.Receive(Received(f, 2));
+	bob.RunUntilIdle();
+	CHECK(bob.counts.leftovers == 2);
+	CHECK(bob.world.contains(900));
+	CHECK(bob.world.contains(904));
+	CHECK(bob.world.contains(mine));
 }
 
 TEST("workshop session: after a reload, a friend's piece moved or scrapped later still moves or goes")
