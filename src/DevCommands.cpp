@@ -35,6 +35,7 @@
 #include "game/Hud.h"
 #include "game/InjectInput.h"
 #include "game/InertShots.h"
+#include "game/LooksMenu.h"
 #include "game/MuzzleFlash.h"
 #include "game/NpcSync.h"
 #include "game/OpenMenus.h"
@@ -1764,6 +1765,19 @@ namespace DevCommands
 			Face::SetParts(*mask);
 			RemotePlayers::RebuildFaces();
 			return std::format("faces rebuilt with mask {:X}", *mask);
+		}
+
+		// looks <playerId>: what LooksMenu sliders and overlays were set on a friend's stand-in (and refused, their overlay
+		// mod missing here) and the skin it wears; what LooksMenu holds for it is asked for and goes to the log.
+		std::string Looks(std::string_view a_args)
+		{
+			std::uint32_t player = 0;
+			const auto    end = a_args.data() + a_args.size();
+			if (a_args.empty() || std::from_chars(a_args.data(), end, player).ptr != end) {
+				return "error: usage: looks <playerId>";
+			}
+			const auto actor = RE::TESForm::GetFormByID<RE::Actor>(RemotePlayers::ActorIdOf(player));
+			return actor ? LooksMenu::Look(actor) : std::format("error: player {} has no stand-in here now", player);
 		}
 
 		// friendlight <hex>: the light form placed at a friend's stand-in while their Pip-Boy light is on.
@@ -3562,6 +3576,7 @@ namespace DevCommands
 			Entry{ "projoff", ProjOff },
 			Entry{ "remove", Remove },
 			Entry{ "facemask", FaceMask },
+			Entry{ "looks", Looks },
 			Entry{ "friendlight", FriendLight },
 			Entry{ "piplight", PipLight },
 			Entry{ "sneak", Sneak },
