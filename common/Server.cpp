@@ -442,6 +442,14 @@ void Server::Run()
 	// Where an NPC fell, by the report that killed it; a joiner gets these before the dead list so its copy
 	// lies where the killer saw it. Not saved: after a restart the list alone is what there is.
 	std::unordered_map<std::uint32_t, std::array<float, 3>> deathPositions;
+	// Who reported each death this run, and when: that player alone may say once where its corpse came to rest
+	// (Protocol::CORPSE_REST_WINDOW). Not saved.
+	struct RestFrom
+	{
+		std::uint32_t     playerId = 0;
+		Clock::time_point at{};
+	};
+	std::unordered_map<std::uint32_t, RestFrom> restFrom;
 	constexpr std::size_t MAX_DEATH_POSITIONS_SENT = 500;  // the same, for the repeat check (quest << 16 | stage)
 	const auto questKey = [](const Protocol::QuestStage& a_stage) { return (static_cast<std::uint64_t>(a_stage.quest) << 16) | a_stage.stage; };
 	std::optional<Protocol::WorldTime>                    worldTime;    // from the first player
@@ -596,6 +604,7 @@ void Server::Run()
 		containerChanges.clear();
 		containersAuthored.clear();
 		deathPositions.clear();
+		restFrom.clear();
 		diedAt.clear();
 		pickedUp.clear();
 		refStates.clear();
@@ -1321,6 +1330,20 @@ void Server::Run()
 			if (healable.erase(death->refId)) {
 				touched();
 			}
+			// From the game that reported it as it began to fall: where the corpse came to rest. Kept for joiners and passed
+			// on, not as a kill (the kill feed had it with the death). Once, and only soon after the death.
+			const bool placed = death->x != 0.0f || death->y != 0.0f || death->z != 0.0f;
+			const auto rest = restFrom.find(death->refId);
+			if (rest != restFrom.end() && rest->second.playerId == a_player.id && placed && !death->foundDead &&
+				Clock::now() - rest->second.at < Protocol::CORPSE_REST_WINDOW) {
+				restFrom.erase(rest);
+				if (deathPositions.contains(death->refId) || deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+					deathPositions[death->refId] = { death->x, death->y, death->z };
+				}
+				death->killed = false;
+				death->playerId = a_player.id;
+				broadcast(Protocol::Encode(*death, Protocol::MessageType::kActorDied), true, a_player.key);
+			}
 			return;
 		}
 		if (deadActors.size() >= maxWorldEntries) {
@@ -1392,6 +1415,14 @@ void Server::Run()
 		}
 		if ((death->x != 0.0f || death->y != 0.0f || death->z != 0.0f) && deathPositions.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
 			deathPositions[death->refId] = { death->x, death->y, death->z };
+		}
+		if (!death->foundDead) {
+			if (restFrom.size() >= Protocol::MAX_WORLD_STATE_ACTORS) {
+				std::erase_if(restFrom, [&](const auto& a_entry) { return diedNow - a_entry.second.at >= Protocol::CORPSE_REST_WINDOW; });
+			}
+			if (restFrom.size() < Protocol::MAX_WORLD_STATE_ACTORS) {
+				restFrom[death->refId] = { a_player.id, diedNow };
+			}
 		}
 		if (actorOwners.erase(death->refId)) {
 			sendOwners({ { death->refId, 0 } }, 0);
@@ -1599,6 +1630,7 @@ void Server::Run()
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
 				deathPositions.erase(claim.refId);
+				restFrom.erase(claim.refId);
 				diedAt.erase(claim.refId);
 				touched();
 				log(std::format("server: {:08X}, dead in the saved session, is alive in the host's world and can't die there (essential); no longer dead in the session", claim.refId));
@@ -1613,6 +1645,7 @@ void Server::Run()
 				deadActors.erase(claim.refId);
 				healable.erase(claim.refId);
 				deathPositions.erase(claim.refId);
+				restFrom.erase(claim.refId);
 				if (died != diedAt.end()) {
 					diedAt.erase(died);
 				}

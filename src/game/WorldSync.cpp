@@ -63,6 +63,13 @@ namespace WorldSync
 		// player's is decided in Frame(), where who runs what can be read (CopyHealth::Credited).
 		using Killers = std::unordered_map<std::uint32_t, std::uint32_t>;
 		Killers killInbox;
+		// NPCs that began to fall (the engine's dying event, which comes as the fall starts and the death event at its end),
+		// and who killed them, the same way: ReportFalling.
+		std::vector<std::uint32_t> dyingInbox;
+		Killers                    dyingKillers;
+		constexpr std::size_t      MAX_DYING = 256;
+		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage): their fall is left to the death event.
+		std::unordered_set<std::uint32_t> friendsBlows;
 		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
 		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
 		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
@@ -146,6 +153,7 @@ namespace WorldSync
 		// their stand-in (so our own watcher, which takes only the player's presses, never reports it back).
 		std::uint32_t                                          activationsSent = 0, activationsApplied = 0, activationsRefused = 0;
 		std::uint32_t                                          refStatesRefused = 0, corpsesMoved = 0;
+		std::uint32_t                                          restsReported = 0, restsApplied = 0;  // where corpses came to rest after an early report: sent, taken
 		constexpr float                                        CORPSE_SLACK = 96.0f;  // a corpse this close to where it fell for the reporter stays put
 		constexpr float                                        ACTIVATION_REACH = 1500.0f;  // a button is pressed from arm's length; this allows for lag and a stand-in that is a step behind
 		std::unordered_map<std::uint32_t, Protocol::RefState> pendingRefStates;
@@ -301,6 +309,22 @@ namespace WorldSync
 		std::uint32_t                     switchedOnToKill = 0;  // off here, on and killed in the reporter's game: switched on to die
 		std::unordered_set<std::uint32_t> switchOnTried;
 
+		// Moves our copy to where the corpse lies in the reporter's game (a_at: all zero, unknown), unless it is close
+		// enough already or far from ours: a report doesn't pull an NPC across the map.
+		void PlaceCorpse(RE::Actor* a_actor, const RE::NiPoint3& a_at)
+		{
+			const bool  placed = a_at.x != 0.0f || a_at.y != 0.0f || a_at.z != 0.0f;
+			const float apart = a_actor->data.location.GetDistance(a_at);
+			if (placed && apart > CORPSE_SLACK && RemoteEdits::MayMoveCorpse(apart)) {
+				const auto id = a_actor->GetFormID();
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.1f}", id, a_at.x).c_str());
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.1f}", id, a_at.y).c_str());
+				RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.1f}", id, a_at.z).c_str());
+				NpcSync::CountCommands(3);
+				++corpsesMoved;
+			}
+		}
+
 		// Kills an actor that died in another player's world. Returns true once it is dead here
 		// (or can never be, or is not to be), false to try again later.
 		// a_inWorld (each Try* takes it): CanApply(), worked out once by the caller for all it tries.
@@ -375,15 +399,7 @@ namespace WorldSync
 			// The corpse lies where it fell in the reporter's game (each game's copy stood somewhere else when
 			// the report came; a far-off corpse is confusing and its loot is in the wrong place), unless that is
 			// far from ours: a report doesn't pull an NPC across the map.
-			const bool  placed = at.x != 0.0f || at.y != 0.0f || at.z != 0.0f;
-			const float apart = actor->data.location.GetDistance(at);
-			if (placed && apart > CORPSE_SLACK && RemoteEdits::MayMoveCorpse(apart)) {
-				RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.1f}", a_refId, at.x).c_str());
-				RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.1f}", a_refId, at.y).c_str());
-				RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.1f}", a_refId, at.z).c_str());
-				NpcSync::CountCommands(3);
-				++corpsesMoved;
-			}
+			PlaceCorpse(actor, at);
 			RE::Console::ExecuteCommand(std::format("{:08X}.kill", a_refId).c_str());
 			NpcSync::CountCommands(1);
 			++applied;
@@ -401,8 +417,18 @@ namespace WorldSync
 
 		void TakeDeath(std::uint32_t a_refId, const DeathReports::Report& a_death, bool a_inWorld)
 		{
-			if (IsShareableRef(a_refId) && dead.Add(a_refId, Clock::now()) && !TryKill(a_refId, a_death, a_inWorld)) {
+			if (IsShareableRef(a_refId) && dead.Add(a_refId, Clock::now(), a_death.reporter) && !TryKill(a_refId, a_death, a_inWorld)) {
 				reports.Hold(a_refId, a_death);
+			}
+		}
+
+		// Who dealt a death, as Frame takes it (Killers): our player's own ID for theirs, another actor's for its.
+		void NoteKiller(Killers& a_killers, std::uint32_t a_id, RE::TESObjectREFR* a_dying, RE::TESObjectREFR* a_killer, bool a_byPlayer)
+		{
+			if (a_byPlayer) {
+				a_killers[a_id] = Protocol::PLAYER_REF_ID;
+			} else if (a_killer && a_killer->As<RE::Actor>() && a_killer != a_dying) {
+				a_killers[a_id] = a_killer->GetFormID();
 			}
 		}
 
@@ -413,7 +439,7 @@ namespace WorldSync
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent& a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override
 			{
 				const auto ref = a_event.actorDying.get();
-				if (!a_event.dead || !ref) {
+				if (!ref) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
@@ -422,6 +448,18 @@ namespace WorldSync
 				const auto killer = a_event.actorKiller.get();
 				const bool byPlayer = killer && killer->IsPlayerRef() && !ref->IsPlayerRef();
 				if (actor && Puppets::IsPuppet(actor)) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+				// The dying event, as the fall begins: one our game runs may be reported dead now (ReportFalling), with the
+				// killer this event names. Its death event follows at the end of the fall.
+				if (!a_event.dead) {
+					if (actor && IsShareableRef(id)) {
+						std::scoped_lock l{ inboxLock };
+						if (dyingInbox.size() < MAX_DYING) {
+							dyingInbox.push_back(id);
+							NoteKiller(dyingKillers, id, ref, killer, byPlayer);
+						}
+					}
 					return RE::BSEventNotifyControl::kContinue;
 				}
 				if (byPlayer) {
@@ -443,11 +481,7 @@ namespace WorldSync
 				CopyWatch::NoteDeath(id, killer ? killer->GetFormID() : 0);
 				std::scoped_lock l{ inboxLock };
 				deathInbox.push_back(id);
-				if (byPlayer) {
-					killInbox[id] = Protocol::PLAYER_REF_ID;
-				} else if (killer && killer->As<RE::Actor>() && killer != ref) {
-					killInbox[id] = killer->GetFormID();
-				}
+				NoteKiller(killInbox, id, ref, killer, byPlayer);
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
@@ -1153,7 +1187,9 @@ namespace WorldSync
 			return it != a_killers.end() && CopyHealth::Credited(CopyWatch::CauseOf(it->second), NpcSync::LocalPlayer());
 		}
 
-		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const Killers& a_killers)
+		// a_atFall: reported as they began to fall (ReportFalling); their death events, at the end of the fall, say where
+		// the corpse came to rest if it was thrown or fell elsewhere meanwhile (Protocol::CORPSE_REST_WINDOW).
+		void ReportDeaths(const std::vector<std::uint32_t>& a_deaths, const Killers& a_killers, bool a_atFall = false)
 		{
 			for (const auto id : a_deaths) {
 				// Gone down, not dead: it gets up again (Dogmeat at the end of his health). Never reported, nor known dead
@@ -1174,44 +1210,40 @@ namespace WorldSync
 					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
 					const auto at = corpse && corpse->Get3D() ? corpse->data.location : RE::NiPoint3{};  // a script can kill one with no 3D
 					ReportDead({ .refId = id, .killed = KilledByUs(a_killers, id), .x = at.x, .y = at.y, .z = at.z });
+					if (a_atFall && corpse && corpse->Get3D()) {
+						dead.FellReported(id, { at.x, at.y, at.z });
+					}
+				} else if (const auto fell = dead.TakeFell(id)) {
+					// Its death event, the fall over: the same death once more, not a kill, if the corpse lies elsewhere now.
+					const auto corpse = RE::TESForm::GetFormByID<RE::Actor>(id);
+					if (corpse && corpse->Get3D() && corpse->data.location.GetDistance(RE::NiPoint3{ (*fell)[0], (*fell)[1], (*fell)[2] }) > CORPSE_SLACK) {
+						const auto& at = corpse->data.location;
+						ReportDead({ .refId = id, .x = at.x, .y = at.y, .z = at.z });
+						++restsReported;
+					}
 				}
 				dead.SawDead(id);  // ours, or the kill we ran for another game's report: it fell here
 				reports.Forget(id);
 				pendingHealth.erase(id);
+				friendsBlows.erase(id);
 			}
 		}
 
-		// The NPCs our game runs that started to fall since the last frame are reported dead now (NpcHold::ReportAtFall),
-		// not when their death event comes at the end of the fall: the friends' copies would stand and fight for those
-		// seconds. The kill is credited to us when our player hit it lately; the event's own killer is not known yet.
-		void ReportFalling()
+		// The NPCs our game runs that began to fall since the last frame (their dying events) are reported dead now
+		// (NpcHold::ReportAtFall), not when their death event comes at the end of the fall: the friends' copies would
+		// stand and fight for those seconds. The kill credit is the dying event's killer, as the death event's would be.
+		void ReportFalling(const std::vector<std::uint32_t>& a_dying, const Killers& a_killers)
 		{
 			const auto local = NpcSync::LocalPlayer();
-			const auto lists = RE::ProcessLists::GetSingleton();
-			if (local == 0 || !lists) {
-				return;
-			}
 			std::vector<std::uint32_t> falling;
-			Killers                    killers;
-			for (const auto& handle : lists->highActorHandles) {
-				const auto ptr = handle.get();
-				const auto actor = ptr.get();
-				if (!actor || !actor->IsDead(false) || actor->IsPlayerRef() || actor->IsDeleted() || Puppets::IsPuppet(actor)) {
-					continue;
-				}
-				const auto id = actor->GetFormID();
-				if (!IsShareableRef(id) || dead.Contains(id)) {
-					continue;
-				}
-				const bool fallingNow = static_cast<RE::ActorState&>(*actor).lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying);
-				if (NpcHold::ReportAtFall(NpcSync::Owner(id) == local, fallingNow, GetsUp(actor))) {
+			for (const auto id : a_dying) {
+				const bool friendsBlow = friendsBlows.erase(id) != 0;
+				const auto actor = local != 0 && !dead.Contains(id) ? LoadedActor(id) : nullptr;
+				if (actor && actor->IsDead(false) && NpcHold::ReportAtFall(NpcSync::Owner(id) == local, a_killers.contains(id), friendsBlow, GetsUp(actor))) {
 					falling.push_back(id);
-					if (NpcSync::FoughtLately(id)) {
-						killers[id] = Protocol::PLAYER_REF_ID;
-					}
 				}
 			}
-			ReportDeaths(falling, killers);
+			ReportDeaths(falling, a_killers, true);
 		}
 
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
@@ -2010,6 +2042,18 @@ namespace WorldSync
 			Spawns::ApplyDeath(a_death);  // a spawn's: its death is the session's for no longer than it lives
 			return;
 		}
+		// The same death again from the player we heard it from: where the corpse came to rest in their game
+		// (Protocol::CORPSE_REST_WINDOW). A report still held kills it there; one done moves our corpse.
+		if (dead.RestsFrom(a_death.refId, a_death.playerId, Clock::now())) {
+			++restsApplied;
+			if (reports.Rests(a_death.refId, a_death.x, a_death.y, a_death.z) || !CanApply()) {
+				return;
+			}
+			if (const auto actor = LoadedActor(a_death.refId); actor && DeadHere(actor)) {
+				PlaceCorpse(actor, RE::NiPoint3{ a_death.x, a_death.y, a_death.z });
+			}
+			return;
+		}
 		TakeDeath(a_death.refId, reports.Received(a_death, Clock::now()), CanApply());
 	}
 
@@ -2163,6 +2207,10 @@ namespace WorldSync
 		}
 		values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
 		++damageApplied;
+		// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
+		if (values.GetActorValue(*info) <= 0.0f && friendsBlows.size() < MAX_DYING) {
+			friendsBlows.insert(local);
+		}
 	}
 
 	bool MayClaim(std::uint32_t a_refId, bool a_essential)
@@ -2228,6 +2276,8 @@ namespace WorldSync
 		std::vector<std::pair<std::uint32_t, bool>> newLoads;
 		std::vector<std::uint32_t>                  newRefLoads;
 		Killers                    killers;
+		std::vector<std::uint32_t> newDying;
+		Killers                    dyingBy;
 		std::vector<Hit>           newHits;
 		std::vector<std::uint32_t> newPickups;
 		std::vector<std::uint32_t> newHarvests;
@@ -2244,6 +2294,8 @@ namespace WorldSync
 			newRefLoads.swap(refLoadInbox);
 			killers.swap(killInbox);
 			killInbox.clear();
+			newDying.swap(dyingInbox);
+			dyingBy.swap(dyingKillers);
 			newHits.swap(hitInbox);
 			newPickups.swap(pickupInbox);
 			newHarvests.swap(harvestInbox);
@@ -2254,7 +2306,7 @@ namespace WorldSync
 		}
 
 		ReportDeaths(newDeaths, killers);
-		ReportFalling();
+		ReportFalling(newDying, dyingBy);
 		ReportRuntimeDeaths(newRuntimeDeaths);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
@@ -2451,6 +2503,7 @@ namespace WorldSync
 		essentialHeld.clear();
 		switchOnTried.clear();
 		pendingHealth.clear();
+		friendsBlows.clear();
 		pendingPickups.clear();
 		pickupUnplacedSince.clear();
 		pickedUpKnown.clear();
@@ -2481,6 +2534,8 @@ namespace WorldSync
 		npcDoorInbox.clear();
 		deathInbox.clear();
 		killInbox.clear();
+		dyingInbox.clear();
+		dyingKillers.clear();
 		runtimeDeathInbox.clear();
 		hitInbox.clear();
 		lootInbox.clear();
@@ -2561,6 +2616,6 @@ namespace WorldSync
 		       std::format(" storyKillKept={} switchedOnToKill={} loadApplied={} retryUs={}/{} revived={} settled={} strayChanges={} gapsSkipped={}/{} downNotDead={} essentialHolds={} healthShared={}/{} damage={}/{}/{} scriptDoors={}/{}/{}/{} gates={}/{}/{}/{} npcDoors={}", storyKillsKept, switchedOnToKill, loadApplied, retryUs, retryUsMax,
 			   dead.Revived(), dead.Settled(Clock::now()), counts.strays, counts.skips, counts.skipped, downNotDead, essentialHolds, healthShare.Shared(), healthShare.Firsts(), damageReported, damageApplied, damageIgnored, scriptDoorsSent, scriptDoorsSet, scriptDoorsGaveUp,
 			   scriptDoors.PendingCount(), gatesSet, gateReportsHeld, gatePressesLeft, gatesApplied.Size(), npcDoorsWatched) +
-		       std::format(" puppetHitsOnUs={} standInBlowsThere={}", hitsOnUsByPuppets.load(), standInBlowsThere);
+		       std::format(" puppetHitsOnUs={} standInBlowsThere={} rests={}/{}", hitsOnUsByPuppets.load(), standInBlowsThere, restsReported, restsApplied);
 	}
 }

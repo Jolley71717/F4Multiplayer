@@ -75,13 +75,16 @@ namespace NpcHold
 		std::unordered_map<std::uint32_t, Clock::time_point> dying;   // NPCs we run, kept since they fell
 	};
 
-	// WorldSync::ReportFalling's decision: true to report the death of an NPC the moment it starts to fall, not when the
-	// death event comes seconds later (the friends' copies stood on, fighting, all the while). Only one our game runs
-	// (the server believes its runner without asking who fought it), and not one that goes down and gets up again. The
-	// event that follows adds nothing: the death is known by then.
-	[[nodiscard]] constexpr bool ReportAtFall(bool a_ours, bool a_falling, bool a_getsUp)
+	// WorldSync::ReportFalling's decision, on the engine's dying event (as the fall begins): true to report the death of
+	// an NPC then, not when the death event comes seconds later (the friends' copies stood on, fighting, all the while).
+	// Only one our game runs (the server believes its runner without asking who fought it), and not one that goes down
+	// and gets up again. a_killerNamed: the dying event names who killed it, so the report's kill credit is the
+	// engine's, as the death event's would be. Without one, or when a friend's blow took the last of its health here
+	// (a_friendsBlow: their damage names no attacker), it is left to the death event as before: the friend's own report
+	// carries their kill, and ours, early, would beat it to the server.
+	[[nodiscard]] constexpr bool ReportAtFall(bool a_ours, bool a_killerNamed, bool a_friendsBlow, bool a_getsUp)
 	{
-		return a_ours && a_falling && !a_getsUp;
+		return a_ours && a_killerNamed && !a_friendsBlow && !a_getsUp;
 	}
 
 	// WorldSync::CheckFoundDead's decision for an NPC dead in our world that the session does not know is dead: true
