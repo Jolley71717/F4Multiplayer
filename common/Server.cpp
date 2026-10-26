@@ -1272,6 +1272,8 @@ void Server::Run()
 	};
 	Clock::time_point droppedDeathLogged{};
 	std::size_t       droppedDeaths = 0;  // since the last line about them
+	Clock::time_point staleHealthLogged{};
+	std::size_t       staleHealthDropped = 0;  // health reports from a game that no longer runs the NPC, since the last line
 
 	// A spawn died: in its owner's game, or in the game of a player fighting their copy of it (they hurt it or tried to
 	// take it over within Options::deathGrace, as for any NPC another game runs). Not kept with the session's dead: it is
@@ -1420,6 +1422,20 @@ void Server::Run()
 			noteHostHadAlive(a_player, health->refId);  // hit and still alive
 		}
 		noteFighting(a_player, health->refId, Clock::now());
+		// Where an NPC's health stands is said by the game that runs it, or by anyone while nobody does. A report from
+		// any other game is from before it learnt who runs the NPC now: a takeover by a friend's hit, granted while the
+		// game that had run it sent its last report. Passed on, it set the new runner's NPC back to that older health,
+		// undoing the very hit that took it over (and the runner then shared that as where it stood): the hit healed.
+		if (const auto owner = actorOwners.find(health->refId);
+			a_out == Protocol::MessageType::kActorHealth && !spawn && owner != actorOwners.end() && owner->second.playerId != a_player.id) {
+			++staleHealthDropped;
+			if (const auto now = Clock::now(); now - staleHealthLogged >= DROPPED_DEATH_LOG_INTERVAL) {
+				staleHealthLogged = now;
+				log(std::format("server: health of {:08X} from player {} not passed on: player {} runs it ({} since the last such line)", health->refId, a_player.id,
+					owner->second.playerId, std::exchange(staleHealthDropped, 0)));
+			}
+			return;
+		}
 		broadcast(Protocol::Encode(*health, a_out), true, a_player.key);
 	};
 
