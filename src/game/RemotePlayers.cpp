@@ -126,7 +126,7 @@ namespace RemotePlayers
 			int                  pickLogged = -1;        // the last ArmorFrames::Pick logged for this stand-in
 			std::optional<RE::NiPoint3> lastTarget;      // where the stand-in was put last frame
 			StandInHold::Check   hold;                   // frames it stood still somewhere else than put (net status)
-			StandInSpace::Away   away;                   // the heading they came onto our very spot with (see StandInSpace::Place)
+			StandInSpace::Away   away;                   // where their stand-in went as they came onto our very spot (see StandInSpace::Place)
 			Clock::time_point    holdLoggedAt{};
 			StandInCalm::Track   calm;                   // fights with us or another stand-in ended on it (see KeepCalm)
 			RE::ObjectRefHandle  original;               // our copy of their pre-placed frame, hidden while they wear theirs
@@ -1325,7 +1325,7 @@ namespace RemotePlayers
 			}
 			const auto& us = a_us->data.location;
 			const float clear = a_player.inPowerArmor || Equipment::InPowerArmor(a_us) ? StandInSpace::CLEAR_ARMOR : StandInSpace::CLEAR;
-			const auto  spot = StandInSpace::Place(a_player.away, { at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, clear);
+			const auto  spot = StandInSpace::Place(a_player.away, { at.x, at.y, at.z }, a_state.heading, { us.x, us.y, us.z }, a_us->data.angle.z, clear);
 			if (spot.x == at.x && spot.y == at.y) {
 				return at;
 			}
