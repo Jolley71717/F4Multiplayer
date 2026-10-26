@@ -35,6 +35,10 @@ namespace InertShots
 		std::uint32_t              endedForSave = 0;     // ... ended before a save or a load
 		std::uint32_t              dropped = 0;          // ... let go of: the engine deleted them (they hit something)
 		std::uint32_t              droppedEarlyLogged = 0;
+		std::uint32_t              aliveLogged = 0;
+		std::atomic<std::uint32_t> unownedLogged{ 0 };
+		std::atomic<std::uint32_t> leftLogged{ 0 };
+		std::uint32_t              expectLogged = 0;
 
 		using Clock = std::chrono::steady_clock;
 
@@ -134,11 +138,19 @@ namespace InertShots
 			bool spawned = false;
 			if (!actor) {
 				std::scoped_lock l{ spawnLock };
-				spawned = expectedSpawn == base &&
-				          InertShot::SwapsSpawned(false, true, std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - expectedAt));
+				const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - expectedAt);
+				spawned = expectedSpawn == base && InertShot::SwapsSpawned(false, true, since);
+				if (expectedSpawn && since <= InertShot::SPAWN_WINDOW && unownedLogged++ < 20) {
+					REX::INFO("InertShots: an unowned launch of {:08X} ({}) {} ms after a relayed explosion that spawns {:08X} was placed; shooter {}", base->GetFormID(),
+						spawned ? "swapped" : "not the spawn record", since.count(), expectedSpawn->GetFormID(), shooter ? std::format("{:08X} (no actor)", shooter->GetFormID()) : "none");
+				}
 			}
 			const bool puppets = actor && Puppets::IsRegistered(actor) && InertShot::Swaps(true, base->data.flags, base->data.explosionType != nullptr);
 			if (!puppets && !spawned) {
+				if (InertShot::GoesOff(base->data.flags, base->data.explosionType != nullptr) && leftLogged++ < 30) {
+					REX::INFO("InertShots: a launch of {:08X} (goes off) left to the engine: shooter {}{}", base->GetFormID(), shooter ? std::format("{:08X}", shooter->GetFormID()) : "none",
+						actor ? (actor == RE::PlayerCharacter::GetSingleton() ? " (our player)" : " (an actor)") : shooter ? " (no actor)" : "");
+				}
 				return continuation(a_out, a_data);
 			}
 			const auto shooterId = actor ? actor->GetFormID() : 0;
@@ -158,9 +170,26 @@ namespace InertShots
 				}
 				return a_out;
 			}
+			// A puppet's shot goes where its owner aimed, not at whoever the engine has it look at (InertShot::LaunchAngles).
+			const auto givenZ = a_data->zAngle;
+			const auto givenX = a_data->xAngle;
+			const auto givenTarget = a_data->homingTarget;
+			bool aimed = false;
+			if (puppets) {
+				if (const auto aim = Puppets::AimOf(actor)) {
+					const auto angles = InertShot::LaunchAngles(aim->heading, aim->pitch);
+					a_data->zAngle = angles.z;
+					a_data->xAngle = angles.x;
+					a_data->homingTarget = nullptr;
+					aimed = true;
+				}
+			}
 			a_data->projectileBase = copy;
 			const auto result = continuation(a_out, a_data);
 			a_data->projectileBase = base;  // the caller's own data again: nothing of ours is left for it to read
+			a_data->zAngle = givenZ;
+			a_data->xAngle = givenX;
+			a_data->homingTarget = givenTarget;
 			++swapped;
 			if (spawned) {
 				++spawnedSwapped;
@@ -177,8 +206,8 @@ namespace InertShots
 				Keep({ .handle = *a_out, .launched = Clock::now() });
 			}
 			if (logged.fetch_add(1) < 20) {
-				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
-					spawned ? " (a relayed explosion's child)" : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
+				REX::INFO("InertShots: {:08X}'s {:08X} launched inert{}{}{} as projectile {:08X}{}: its blast comes as its shooter's game's report", shooterId, base->GetFormID(),
+					spawned ? " (a relayed explosion's child)" : "", aimed ? std::format(" aimed at heading {:.2f} pitch {:.2f}", a_data->zAngle, a_data->xAngle) : "", onMain ? "" : " (off the main thread)", projectile ? projectile->GetFormID() : 0, projectile ? "" : " (none made)");
 			}
 			return result;
 		}
@@ -253,6 +282,12 @@ namespace InertShots
 				return true;
 			}
 			const auto cell = ref->GetParentCell();
+			if (aliveLogged < 4) {
+				++aliveLogged;
+				REX::INFO("InertShots: inert shot {:08X} alive {} ms after its launch at ({:.0f},{:.0f},{:.0f}), 3d={} cell={:08X}{}", ref->GetFormID(),
+					std::chrono::duration_cast<std::chrono::milliseconds>(now - a_live.launched).count(), ref->data.location.x, ref->data.location.y, ref->data.location.z,
+					ref->Get3D() != nullptr, cell ? cell->GetFormID() : 0, cell && cell->IsAttached() ? " (attached)" : "");
+			}
 			if (InertShot::Stale(std::chrono::duration_cast<std::chrono::milliseconds>(now - a_live.launched), cell && cell->IsAttached())) {
 				End(ref.get());
 				++endedStale;
@@ -289,6 +324,10 @@ namespace InertShots
 		std::scoped_lock l{ spawnLock };
 		expectedSpawn = a_spawn;
 		expectedAt = Clock::now();
+		if (expectLogged++ < 10) {
+			REX::INFO("InertShots: a relayed explosion that spawns projectile {:08X} was placed: an unowned launch of it in the next {} ms flies inert", a_spawn->GetFormID(),
+				InertShot::SPAWN_WINDOW.count());
+		}
 	}
 
 	std::string Describe()

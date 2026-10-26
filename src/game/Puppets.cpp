@@ -793,6 +793,17 @@ namespace Puppets
 		return a_actor && OccupiedFurniture(a_actor) != nullptr;
 	}
 
+	std::optional<OwnerAim> AimOf(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		const auto it = puppets.find(a_actor);
+		if (it == puppets.end() || it->second.formId != a_actor->GetFormID()) {
+			return std::nullopt;
+		}
+		const auto& target = it->second.target;
+		return OwnerAim{ .heading = target.heading, .pitch = it->second.kind == Kind::kPlayer ? target.pitch : target.ownerAim.value_or(0.0f) };
+	}
+
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsDeleted()) {

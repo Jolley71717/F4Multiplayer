@@ -2027,15 +2027,17 @@ namespace WeaponFire
 		data.interior = cell->IsInterior() ? cell : nullptr;
 		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
 		data.clearStillLoadingFlag = true;
+		// One whose record spawns projectiles (a MIRV pack's children, a Sentry Bot's cluster) spawns them here too, as the
+		// reference is created, with no shooter; the shooter's game reports their blasts, so the ones spawned here fly
+		// inert (InertShots): told before the creation, as the engine launches them inside it (seen on the rig: a MIRV
+		// pack's five children launched in the same millisecond, before the placing returned, and went off twice).
+		InertShots::ExpectSpawned(base->data.spawnProjectile);
 		const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 		if (const auto ref = handle.get()) {
 			// A friend's explosion we just placed is in range of our own scan after our next throw: it
 			// was reported back as ours, and went off a second time for everyone.
 			setOffExplosions.Add(ref.get());
 		}
-		// One whose record spawns projectiles (a MIRV pack's children, a Sentry Bot's cluster) spawns them here too, with
-		// no shooter; the shooter's game reports their blasts, so the ones spawned here fly inert (InertShots).
-		InertShots::ExpectSpawned(base->data.spawnProjectile);
 		++explosionsSetOff;
 	}
 

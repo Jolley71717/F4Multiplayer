@@ -122,6 +122,25 @@ namespace InertShot
 		return a_age > MAX_LIFE || (a_age > SETTLE && !a_cellAttached);
 	}
 
+	// Where an inert shot goes. The engine aims an NPC's launch at whoever it looks at (on the rig a stand-in's missile
+	// went straight at our player, whichever way its friend had aimed; its plain bullets hit our player the same way), so
+	// a swapped launch is given its angles outright, from the puppet's own heading and its owner's pitch (Puppets::AimOf):
+	// the launch data's zAngle is the heading as the game keeps it (radians, 0 along +y, a quarter turn along +x), and its
+	// xAngle the game's angle x, which is positive looking down (AimPoint.h), so the pitch, degrees up, is turned over.
+	struct Angles
+	{
+		float z;
+		float x;
+
+		friend constexpr bool operator==(const Angles&, const Angles&) = default;
+	};
+
+	constexpr Angles LaunchAngles(float a_heading, float a_pitchUpDegrees)
+	{
+		constexpr float TO_RADIANS = 3.14159265358979f / 180.0f;
+		return { .z = a_heading, .x = -a_pitchUpDegrees * TO_RADIANS };
+	}
+
 	// A relayed explosion placed from its record spawns that record's projectiles (a MIRV pack's children, a Sentry Bot's
 	// shoulder cluster), with no shooter: real, so they went off in the receiver's game alongside the shooter's reported
 	// child blasts. For a moment after one is placed, an unowned launch of its spawn record is swapped too.

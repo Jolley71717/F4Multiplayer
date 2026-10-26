@@ -83,3 +83,16 @@ TEST("InertShot: an unowned launch of a relayed explosion's spawn record is swap
 	CHECK(!SwapsSpawned(true, true, 0ms));   // our own MIRV's children name our player: the engine's, reported
 	CHECK(!SwapsSpawned(false, false, 0ms));  // an unowned launch of some other record: a trap's, a script's
 }
+
+TEST("InertShot: a swapped launch is aimed by the puppet's heading and its owner's pitch, the pitch turned over for the game's angle x")
+{
+	using namespace InertShot;
+	const auto level = LaunchAngles(1.5f, 0.0f);
+	CHECK(level.z == 1.5f);
+	CHECK(level.x == 0.0f);
+	const auto up = LaunchAngles(0.0f, 30.0f);
+	CHECK(up.x < -0.52f && up.x > -0.53f);  // 30 degrees up is a negative angle x (looking down is positive)
+	const auto down = LaunchAngles(3.0f, -45.0f);
+	CHECK(down.z == 3.0f);
+	CHECK(down.x > 0.78f && down.x < 0.79f);
+}
