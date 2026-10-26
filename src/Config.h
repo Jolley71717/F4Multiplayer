@@ -140,6 +140,7 @@ namespace Config
 		std::uint32_t reviveWindowMinutes = 0;     // that window; 0 = per fight
 		std::uint32_t reviveCooldownSeconds = 0;   // helped up, a lethal hit within this long kills instead of downing
 		bool          reviveOutOfCombat = false;   // friends can help only while they are not in a fight
+		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
 

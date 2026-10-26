@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <span>
 
@@ -1237,6 +1239,267 @@ TEST("downed rules: a welcome back into the same session keeps the revives used 
 	other.Run(now, 1s);
 	CHECK(other.body.essential);
 	CHECK(other.self.RevivesLeft(now) == 1);
+}
+
+// ---- crawling while down (bDownedCrawl) ------------------------------------------------------------------
+
+namespace
+{
+	using Crawl = DownRules::Crawl;
+
+	bool Close(float a_value, float a_expected)
+	{
+		return std::fabs(a_value - a_expected) < 0.001f;
+	}
+
+	// The player down and waiting for help, in a session whose rules let them crawl (or not).
+	void DownIn(Game& a_game, Clock::time_point& a_now, bool a_crawl = true)
+	{
+		Protocol::SessionRules session;
+		session.downedCrawl = a_crawl;
+		a_game.self.SetRules(DownRules::Rules::From(session));
+		a_game.Run(a_now, 1s);
+		a_game.body.LethalHit();
+		a_game.Run(a_now, 1s);
+	}
+
+	// What Downed.cpp tells the crawl of a frame with this input and nothing in the way.
+	Crawl::Facts Pushing(const DownRules::Self& a_self, float a_x, float a_y, float a_seconds = 0.05f)
+	{
+		return { .may = a_self.MayCrawl(), .x = a_x, .y = a_y, .seconds = a_seconds };
+	}
+}
+
+TEST("downed crawl: forward input moves along the heading at crawl speed, backward at half")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	REQUIRE(game.self.MayCrawl());
+
+	const auto forward = Crawl::Wanted(Pushing(game.self, 0.0f, 1.0f));
+	CHECK(Close(forward.forward, DownRules::CRAWL_SPEED * 0.05f));
+	CHECK(forward.turn == 0.0f);
+	const auto back = Crawl::Wanted(Pushing(game.self, 0.0f, -1.0f));
+	CHECK(Close(back.forward, -DownRules::CRAWL_SPEED * 0.05f / 2.0f));
+	// Half the stick, half the speed; a stick at rest that drifts a little is no input.
+	CHECK(Close(Crawl::Wanted(Pushing(game.self, 0.0f, 0.5f)).forward, DownRules::CRAWL_SPEED * 0.05f / 2.0f));
+	CHECK(!Crawl::Wanted(Pushing(game.self, 0.05f, 0.1f)).Any());
+	CHECK(!Crawl::Pushed(0.05f, 0.1f));
+	CHECK(Crawl::Pushed(0.0f, 1.0f));
+
+	// Along the heading, which counts from north (y) toward east (x).
+	const auto north = Crawl::Along(0.0f, 10.0f);
+	CHECK(Close(north[0], 0.0f));
+	CHECK(Close(north[1], 10.0f));
+	const auto east = Crawl::Along(1.5707964f, 10.0f);
+	CHECK(Close(east[0], 10.0f));
+	CHECK(Close(east[1], 0.0f));
+
+	// A whole bleed-out of crawling covers about 25 m, no more.
+	float crawled = 0.0f;
+	for (std::chrono::milliseconds left = DownRules::BLEEDOUT_TIME; left > 0ms; left -= 50ms) {
+		crawled += Crawl::Wanted(Pushing(game.self, 0.0f, 1.0f)).forward;
+	}
+	CHECK(crawled > 1700.0f);
+	CHECK(crawled < 1900.0f);
+}
+
+TEST("downed crawl: sideways input turns the body and does not move it")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	const auto right = Crawl::Wanted(Pushing(game.self, 1.0f, 0.0f));
+	CHECK(Close(right.turn, DownRules::CRAWL_TURN * 0.05f));
+	CHECK(right.forward == 0.0f);
+	const auto left = Crawl::Wanted(Pushing(game.self, -1.0f, 0.0f));
+	CHECK(Close(left.turn, -DownRules::CRAWL_TURN * 0.05f));
+	CHECK(left.forward == 0.0f);
+	// The heading stays within a turn.
+	CHECK(Close(Crawl::Turned(6.2f, 0.2f), 6.2f + 0.2f - 6.2831853f));
+	CHECK(Close(Crawl::Turned(0.1f, -0.2f), 6.2831853f - 0.1f));
+	CHECK(Close(Crawl::Turned(1.0f, 0.5f), 1.5f));
+}
+
+TEST("downed crawl: nothing moves while up, getting up, bled out, paused, in the air, swimming, in furniture or knocked over")
+{
+	Game game;
+	auto now = Start();
+	Protocol::SessionRules session;
+	session.downedCrawl = true;
+	game.self.SetRules(DownRules::Rules::From(session));
+	game.Run(now, 1s);
+	CHECK(!game.self.MayCrawl());  // up
+	CHECK(!Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f)).Any());
+
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	REQUIRE(game.self.MayCrawl());
+	const auto base = Pushing(game.self, 1.0f, 1.0f);
+	CHECK(Crawl::Wanted(base).Any());
+	for (const auto blocked : { &Crawl::Facts::paused, &Crawl::Facts::inAir, &Crawl::Facts::swimming, &Crawl::Facts::inFurniture,
+			 &Crawl::Facts::knockedOver, &Crawl::Facts::inScene }) {
+		auto facts = base;
+		facts.*blocked = true;
+		CHECK(!Crawl::Wanted(facts).Any());
+	}
+
+	// Helped and getting up.
+	REQUIRE(game.Revived(now));
+	CHECK(!game.self.MayCrawl());
+
+	// Bled out.
+	Game alone;
+	now = Start();
+	DownIn(alone, now);
+	alone.Run(now, DownRules::BLEEDOUT_TIME);
+	CHECK(alone.self.Now() == Phase::kBledOut);
+	CHECK(!alone.self.MayCrawl());
+
+	// Giving up stops it at once, before the bleed-out the next frame.
+	Game givingUp;
+	now = Start();
+	DownIn(givingUp, now);
+	givingUp.self.GiveUp();
+	CHECK(!givingUp.self.MayCrawl());
+}
+
+TEST("downed crawl: stood up by the game while waiting for help, no crawl until the put-down takes")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	REQUIRE(game.self.MayCrawl());
+	// The game stands them up (clutter) and the engine's put-down does not take for a while.
+	game.body.putDownIgnored = true;
+	game.body.StoodUpByGame();
+	for (int i = 0; i < 10; ++i) {
+		game.Frame(now);
+		now += FRAME;
+		CHECK(game.self.Now() == Phase::kDown);
+		CHECK(!game.self.MayCrawl());
+		CHECK(!Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f)).Any());
+	}
+	CHECK(game.stoodUp == 1);
+	// The put-down takes: down again, and crawling again.
+	game.body.putDownIgnored = false;
+	game.Run(now, 1s);
+	REQUIRE(game.body.down);
+	CHECK(game.backDown == 1);
+	CHECK(game.self.MayCrawl());
+}
+
+TEST("downed crawl: the rule off means no crawl")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now, false);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	CHECK(!game.self.MayCrawl());
+	CHECK(!Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f)).Any());
+	// The default rules, as before there was a crawl: off.
+	CHECK(!DownRules::Rules{}.crawl);
+	CHECK(!DownRules::Rules::From(Protocol::SessionRules{}).crawl);
+}
+
+TEST("downed crawl: a friend's stand-in within help range stops the crawl, and it resumes once they go")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	auto facts = Pushing(game.self, 0.0f, 1.0f);
+	facts.friendNear = true;
+	CHECK(!Crawl::Wanted(facts).Any());
+	facts.friendNear = false;
+	CHECK(Crawl::Wanted(facts).forward > 0.0f);
+}
+
+TEST("downed crawl: a long frame moves no farther than a tenth of a second's crawl")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	const auto hitch = Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f, 2.0f));
+	CHECK(Close(hitch.forward, DownRules::CRAWL_SPEED * DownRules::CRAWL_LONGEST_FRAME));
+	CHECK(Close(hitch.turn, DownRules::CRAWL_TURN * DownRules::CRAWL_LONGEST_FRAME));
+	// A clock that went back, or no time to tell: nothing.
+	CHECK(!Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f, -1.0f)).Any());
+	CHECK(!Crawl::Wanted(Pushing(game.self, 1.0f, 1.0f, std::numeric_limits<float>::quiet_NaN())).Any());
+	CHECK(!Crawl::Wanted(Pushing(game.self, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity())).Any());
+}
+
+TEST("downed crawl: a step into a wall, off a ledge, or over nothing is refused; a small rise or fall snaps to the ground")
+{
+	using Refused = Crawl::Refused;
+	constexpr float FEET = 100.0f, STEP = 2.0f;
+	// Flat ground and nothing in the way.
+	const auto flat = Crawl::Accept(FEET, STEP, { .groundThere = FEET, .groundAhead = FEET });
+	CHECK(flat.refused == Refused::kNone);
+	CHECK(flat.z == FEET);
+	// A wall within the step and the body: refused, forward or back; one farther on is no matter yet.
+	CHECK(Crawl::Accept(FEET, STEP, { .wall = 15.0f, .groundThere = FEET, .groundAhead = FEET }).refused == Refused::kWall);
+	CHECK(Crawl::Accept(FEET, -STEP, { .wall = 15.0f, .groundThere = FEET, .groundAhead = FEET }).refused == Refused::kWall);
+	CHECK(Crawl::Accept(FEET, STEP, { .wall = STEP + DownRules::CRAWL_BODY + 1.0f, .groundThere = FEET, .groundAhead = FEET }).refused == Refused::kNone);
+	// Nothing under the step, or ahead of it.
+	CHECK(Crawl::Accept(FEET, STEP, { .groundAhead = FEET }).refused == Refused::kNoGround);
+	CHECK(Crawl::Accept(FEET, STEP, { .groundThere = FEET }).refused == Refused::kNoGround);
+	CHECK(Crawl::Accept(FEET, STEP, { .groundThere = std::numeric_limits<float>::quiet_NaN(), .groundAhead = FEET }).refused == Refused::kNoGround);
+	// A ledge ahead, a cliff ahead.
+	CHECK(Crawl::Accept(FEET, STEP, { .groundThere = FEET, .groundAhead = FEET - 60.0f }).refused == Refused::kLedge);
+	CHECK(Crawl::Accept(FEET, STEP, { .groundThere = FEET, .groundAhead = FEET + 40.0f }).refused == Refused::kClimb);
+	// A stair's step up, a kerb down: onto the ground.
+	const auto up = Crawl::Accept(FEET, STEP, { .groundThere = FEET + 16.0f, .groundAhead = FEET + 16.0f });
+	CHECK(up.refused == Refused::kNone);
+	CHECK(up.z == FEET + 16.0f);
+	const auto down = Crawl::Accept(FEET, STEP, { .groundThere = FEET - 10.0f, .groundAhead = FEET - 20.0f });
+	CHECK(down.refused == Refused::kNone);
+	CHECK(down.z == FEET - 10.0f);
+
+	// What the rays count as solid: the world, not our own body or any character, nor loose clutter.
+	CHECK(DownRules::CrawlStops(1));   // static
+	CHECK(DownRules::CrawlStops(13));  // terrain
+	CHECK(DownRules::CrawlStops(27));  // invisible wall
+	CHECK(DownRules::CrawlStops(26));  // a railing, a grate
+	CHECK(DownRules::CrawlStops(28));  // the same, animated
+	CHECK(DownRules::CrawlStops(0));   // a hit that can't be told
+	CHECK(!DownRules::CrawlStops(8));   // biped
+	CHECK(!DownRules::CrawlStops(30));  // character controller
+	CHECK(!DownRules::CrawlStops(33));  // biped, no character controller
+	CHECK(!DownRules::CrawlStops(4));   // clutter
+	CHECK(!DownRules::CrawlStops(12));  // trigger
+
+	// The count, and a refusal logged once, not every frame it goes on.
+	Crawl crawl;
+	CHECK(!crawl.Count(flat, STEP));
+	CHECK(crawl.Count({ Refused::kWall }, STEP));
+	CHECK(!crawl.Count({ Refused::kWall }, STEP));
+	CHECK(crawl.Count({ Refused::kLedge }, STEP));
+	CHECK(!crawl.Count(flat, -STEP));
+	CHECK(crawl.Count({ Refused::kWall }, STEP));
+	CHECK(crawl.steps == 2);
+	CHECK(crawl.refused == 4);
+	CHECK(Close(crawl.distance, 2.0f * STEP));
+	CHECK(crawl.Last() == Refused::kWall);
+}
+
+TEST("downed crawl: a load while down leaves nothing to crawl")
+{
+	Game game;
+	auto now = Start();
+	DownIn(game, now);
+	REQUIRE(game.self.MayCrawl());
+	// The save had the player down: they are stood up as if helped, and crawl no more.
+	CHECK(game.self.Loaded(true, now));
+	CHECK(!game.self.MayCrawl());
+	CHECK(!Crawl::Wanted(Pushing(game.self, 0.0f, 1.0f)).Any());
+	// A save made up: up.
+	Game other;
+	now = Start();
+	DownIn(other, now);
+	CHECK(!other.self.Loaded(false, now));
+	CHECK(!other.self.MayCrawl());
 }
 
 TEST("downed: stood up with the console open (player.resurrect, a heal) while waiting for help, up it is: no putting down again")

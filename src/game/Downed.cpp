@@ -27,6 +27,9 @@ namespace Downed
 		std::optional<Clock::time_point> lastSaveAt;  // OnBeforeSave, for the stand-up log
 		std::optional<Clock::time_point> consoleSeenAt;  // the console last seen open
 		constexpr auto                   CONSOLE_GRACE = std::chrono::seconds{ 2 };  // a command's effect may come as it closes
+		DownRules::Crawl                 crawl;
+		std::optional<Clock::time_point> crawledAt;    // the last frame the player could crawl
+		bool                             inputSeen = false;  // this down's first movement input is logged (whether the game reads it while down)
 
 		std::vector<std::vector<std::uint8_t>> outgoing;
 
@@ -144,6 +147,20 @@ namespace Downed
 				npc && npc->IsEssential(), a_player->boolFlags.all(BoolFlag::kEssential), a_player->boolFlags.all(BoolFlag::kProtected), sinceSave);
 		}
 
+		// The movement input the game's controls read, and what could hold a crawl back, for the log and Describe: whether
+		// the game still reads the movement keys and the stick while the player is down is a look at the line (bDownedCrawl).
+		std::string InputFacts()
+		{
+			const auto controls = RE::PlayerControls::GetSingleton();
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!controls || !player) {
+				return "no controls";
+			}
+			const auto& move = controls->data.moveInputVec;
+			return std::format("move input ({:.2f}, {:.2f}), input blocked {}, knock state {}", move.x, move.y, controls->blockPlayerInput,
+				static_cast<std::uint32_t>(static_cast<RE::ActorState&>(*player).knockState));
+		}
+
 		// The game stands an essential character up with full health; being helped up leaves the player hurt.
 		void TrimHealth(RE::PlayerCharacter* a_player)
 		{
@@ -172,8 +189,8 @@ namespace Downed
 				TrimHealth(a_player);
 			}
 			if (a_step.wentDown) {
-				REX::INFO("Downed: down; a friend can help us up");
-				Hud::Notify(Text::Format("down.went_down", { { "key", GiveUpKey() } }));
+				REX::INFO("Downed: down; a friend can help us up (crawl {}; {})", self.MayCrawl(), InputFacts());
+				Hud::Notify(Text::Format(self.MayCrawl() ? "down.went_down_crawl" : "down.went_down", { { "key", GiveUpKey() } }));
 			}
 			if (a_step.secondsLeft >= 0) {
 				Hud::Notify(Text::Format("down.seconds_left", { { "n", a_step.secondsLeft } }));
@@ -240,6 +257,126 @@ namespace Downed
 				Hud::Notify(Text::Format("down.helped", { { "player", nameOf(step.helped) } }));
 			}
 		}
+
+		// How far along the line from a_from to a_to the world has something a crawl stops at (DownRules::CrawlStops), by the
+		// engine's own pick through the cell's physics (as Party's SurfaceAlong). Anything else it hits is passed through, our
+		// own body first: the rays start inside it. Nothing: nullopt.
+		std::optional<float> SolidAlong(RE::TESObjectCELL* a_cell, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to)
+		{
+			const auto  line = a_to - a_from;
+			const float length = line.Length();
+			if (!(length > 0.0f)) {
+				return std::nullopt;
+			}
+			float start = 0.0f;
+			for (int tries = 0; tries < 8 && start < length; ++tries) {
+				RE::bhkPickData pick;
+				pick.SetStartEnd(a_from + line * (start / length), a_to);
+				static_cast<void>(a_cell->Pick(pick));  // what it hit is read from the body below
+				if (!pick.HasHit()) {
+					return std::nullopt;
+				}
+				const float fraction = pick.GetHitFraction();
+				if (!std::isfinite(fraction)) {
+					return std::nullopt;
+				}
+				const float along = start + std::clamp(fraction, 0.0f, 1.0f) * (length - start);
+				const auto  body = pick.GetBody();
+				const auto  layer = body ? static_cast<std::uint32_t>(RE::CFilter{ body->m_collisionFilterInfo }.GetCollisionLayer()) : 0u;
+				if (DownRules::CrawlStops(layer)) {
+					return along;
+				}
+				start = along + 1.0f;
+			}
+			return std::nullopt;
+		}
+
+		// A friend's stand-in within help range: they may be helping us up, and a crawl away would start that over.
+		bool FriendNear(RE::PlayerCharacter* a_player)
+		{
+			for (const auto& info : RemotePlayers::List()) {
+				if (info.actor && info.actor->GetParentCell() && info.actor->data.location.GetDistance(a_player->data.location) <= DownRules::HELP_RANGE) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Down, with the session's crawl rule: the player's movement input turns them and moves them a step, where the world
+		// lets it (DownRules::Crawl). Their position goes to friends as it always does; their stand-in lies where they are.
+		void CrawlFrame(RE::PlayerCharacter* a_player, bool a_paused, Clock::time_point a_now)
+		{
+			const auto controls = RE::PlayerControls::GetSingleton();
+			const auto input = controls ? controls->data.moveInputVec : RE::NiPoint2{};
+			// Whether the game reads the movement keys and the stick while the player is down, rule or not: once a down.
+			if (!self.WaitsForHelp()) {
+				inputSeen = false;
+			} else if (!inputSeen && DownRules::Crawl::Pushed(input.x, input.y)) {
+				inputSeen = true;
+				REX::INFO("Downed: movement input while down ({})", InputFacts());
+			}
+			if (!self.MayCrawl()) {
+				crawledAt.reset();
+				return;
+			}
+			const float seconds = crawledAt ? std::chrono::duration<float>(a_now - *crawledAt).count() : 0.0f;
+			crawledAt = a_now;
+			const auto cell = a_player->GetParentCell();
+			if (!cell || !a_player->Get3D()) {
+				return;
+			}
+			using CharacterState = RE::IMovementState::CHARACTER_STATE;
+			const auto                    state = static_cast<const RE::IMovementState&>(*a_player).DoGetCharacterState();
+			const DownRules::Crawl::Facts facts{ .may = true,
+				.x = input.x,
+				.y = input.y,
+				.seconds = seconds,
+				.paused = a_paused,
+				.inAir = state == CharacterState::kJumping || state == CharacterState::kInAir,
+				.swimming = state == CharacterState::kSwimming,
+				.inFurniture = static_cast<int>(a_player->DoGetSitSleepState()) != 0,
+				.knockedOver = static_cast<RE::ActorState&>(*a_player).knockState != 0,
+				.inScene = a_player->GetCurrentScene() != nullptr,
+				.friendNear = DownRules::Crawl::Pushed(input.x, input.y) && FriendNear(a_player) };
+			const auto move = DownRules::Crawl::Wanted(facts);
+			const float heading = DownRules::Crawl::Turned(a_player->data.angle.z, move.turn);
+			if (move.turn != 0.0f) {
+				a_player->SetHeading(heading);
+			}
+			if (move.forward == 0.0f) {
+				return;
+			}
+			const auto feet = a_player->data.location;
+			const auto way = DownRules::Crawl::Along(heading, move.forward > 0.0f ? 1.0f : -1.0f);
+			const auto at = [&](float a_along, float a_up) {
+				return RE::NiPoint3{ feet.x + way[0] * a_along, feet.y + way[1] * a_along, feet.z + a_up };
+			};
+			const float step = std::fabs(move.forward);
+			const float reach = step + DownRules::CRAWL_BODY + 1.0f;
+			DownRules::Crawl::Probe probe;
+			for (const float up : { DownRules::CRAWL_PROBE_LOW, DownRules::CRAWL_PROBE_HIGH }) {
+				if (const auto wall = SolidAlong(cell, at(0.0f, up), at(reach, up)); wall && (!probe.wall || *wall < *probe.wall)) {
+					probe.wall = wall;
+				}
+			}
+			const auto ground = [&](float a_along) -> std::optional<float> {
+				const auto hit = SolidAlong(cell, at(a_along, DownRules::CRAWL_PROBE_LOW), at(a_along, -DownRules::CRAWL_GROUND_REACH));
+				return hit ? std::optional<float>{ feet.z + DownRules::CRAWL_PROBE_LOW - *hit } : std::nullopt;
+			};
+			if (!probe.wall) {  // a wall refuses the step whatever the ground
+				probe.groundThere = ground(step);
+				probe.groundAhead = ground(DownRules::CRAWL_AHEAD);
+			}
+			const auto verdict = DownRules::Crawl::Accept(feet.z, move.forward, probe);
+			if (crawl.Count(verdict, move.forward)) {
+				REX::INFO("Downed: crawl refused ({}; {} step(s) taken, {} refused)", DownRules::RefusedName(verdict.refused), crawl.steps, crawl.refused);
+			}
+			if (verdict.refused == DownRules::Crawl::Refused::kNone) {
+				auto to = at(step, 0.0f);
+				to.z = verdict.z;
+				a_player->SetPosition(to, true);
+			}
+		}
 	}
 
 	void Frame(bool a_withFriends)
@@ -276,6 +413,8 @@ namespace Downed
 			}
 			giveUpHeld = held;
 		}
+
+		CrawlFrame(player, facts.paused, now);
 
 		// Only while up: helping is reset meanwhile, so being down for a moment does not count toward it.
 		HelpFriends(player, enabled && self.Now() == DownRules::Self::Phase::kUp && !facts.dead, fighting, now);
@@ -389,8 +528,9 @@ namespace Downed
 	std::string Describe()
 	{
 		const auto now = Clock::now();
-		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={}",
+		return std::format("downed: essential={} down={} waits={} downs={} revives={} bleedOuts={} killRetries={} standUps={} putDowns={} helped={} friendsDown={} revivesLeft={} cooldown={} | crawl: may={} steps={} refused={} last={} distance={:.0f} | {}",
 			essential, self.IsDown(), self.WaitsForHelp(), self.downs, self.revives, self.bleedOuts, self.killRetries, self.standUps, self.putDowns, helper.helped,
-			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now));
+			helper.FriendsDown(), self.RevivesLeft(now), self.InCooldown(now), self.MayCrawl(), crawl.steps, crawl.refused, DownRules::RefusedName(crawl.Last()),
+			crawl.distance, InputFacts());
 	}
 }

@@ -169,7 +169,12 @@ the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the h
 (`iReviveCooldownSeconds`), and helping only out of a fight (`bReviveOutOfCombat`). The HUD tells you
 how many revives you have left. The dedicated server takes the same rules as options (`--bleed-out`,
 `--revive-seconds`, `--revive-health`, `--max-revives`, `--revive-window`, `--revive-cooldown`,
-`--revive-out-of-combat`, `--no-revive`).
+`--revive-out-of-combat`, `--no-revive`, `--downed-crawl`).
+
+The host can also let downed players crawl (`bDownedCrawl = true`; experimental, off by default):
+while down, forward and back crawl slowly and left and right turn you, so you can reach a friend or
+cover before you bleed out. Walls, ledges and steep ground stop you, and so does a friend right next
+to you, so their help isn't broken. Your friends see you drag yourself along the ground.
 
 ### VATS in real time
 

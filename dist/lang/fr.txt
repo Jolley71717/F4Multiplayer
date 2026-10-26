@@ -96,6 +96,7 @@ party.cant_teleport_into = Impossible de se téléporter là où est {player}
 party.cant_teleport_to = Téléportation vers {player} impossible
 party.teleporting = Téléportation vers {player}
 down.went_down = Vous êtes à terre ! Un ami peut vous relever. Maintenez {key} pour abandonner
+down.went_down_crawl = Vous êtes à terre ! Un ami peut vous relever, et vous pouvez ramper. Maintenez {key} pour abandonner
 down.seconds_left = Encore {n} s pour être relevé
 down.helping = Vous relevez {player}...
 down.helped = Vous avez relevé {player}

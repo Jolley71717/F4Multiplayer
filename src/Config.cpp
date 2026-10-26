@@ -136,6 +136,8 @@ namespace Config
 				ParseInt(value, settings.reviveCooldownSeconds);
 			} else if (key == "bReviveOutOfCombat") {
 				settings.reviveOutOfCombat = ParseBool(value);
+			} else if (key == "bDownedCrawl") {
+				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
 			} else if (key == "bHideTutorials") {

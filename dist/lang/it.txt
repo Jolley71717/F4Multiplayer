@@ -93,6 +93,7 @@ party.cant_teleport_into = Non puoi teletrasportarti dove si trova {player}
 party.cant_teleport_to = Teletrasporto da {player} fallito
 party.teleporting = Teletrasporto da {player}
 down.went_down = Sei a terra! Un amico può rialzarti. Tieni premuto {key} per arrenderti
+down.went_down_crawl = Sei a terra! Un amico può rialzarti, e puoi strisciare. Tieni premuto {key} per arrenderti
 down.seconds_left = {n} secondi per farti rialzare
 down.helping = Stai rialzando {player}...
 down.helped = Hai rialzato {player}
