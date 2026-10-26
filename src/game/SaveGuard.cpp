@@ -681,6 +681,13 @@ namespace SaveGuard
 		}
 	}
 
+	void HandOver(RE::TESObjectREFR* a_ref, std::string_view a_what)
+	{
+		if (a_ref) {
+			HandToLoad(a_ref, a_what);
+		}
+	}
+
 	std::uint32_t BeforeSave()
 	{
 		std::uint32_t kept = 0;

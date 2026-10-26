@@ -9,7 +9,7 @@ namespace AttackKind
 	constexpr std::int32_t GUN_TYPE = 9;  // RE::WEAPON_TYPE::kGun
 
 	// Guns replay through the animation graph ("attackStart": the firing animation; its bullet is kept from the engine,
-	// HoldsOwnFire, when it is a plain one, HoldsShotOf).
+	// HoldsOwnFire, when it is a plain one or would go off with no inert launch to give it, ShotReplay).
 	// Melee weapons, and fists when nothing is held, refuse that event: they perform the engine's
 	// own attack action instead.
 	constexpr bool ReplaysAsGun(std::int32_t a_weaponType, bool a_holdsWeapon)
@@ -69,23 +69,41 @@ namespace AttackKind
 	inline constexpr std::uint32_t PROJECTILE_MOTION_BEAM = 0x40000;
 	inline constexpr std::uint32_t PROJECTILE_MOTION_TYPES = 0x7F0000;
 
-	// Whether a stand-in's shot of a gun firing this projectile (a_flags; a_explodes: it names an explosion, or the
-	// gun's enchantment may set one off) is one to keep from the engine (HoldsOwnFire). Every shot that would go off: a
-	// missile, a mini nuke, a grenade launcher's shell, a beam or a bullet with a blast of its own, a legendary's
-	// Explosive round. Friends see none of these in flight (a known limit, docs/DESIGN.md). Its explosion goes off in
-	// the shooter's game and comes here as that game's report (WeaponFire::ApplyExplosion), once: fired here as well,
-	// it went off twice, and the stand-in's own blast hurt the NPCs our game runs a second time (docs/DESIGN.md, "Who
-	// sets off an explosion"). And a plain one, a bullet or a beam, which hit our player and shows nothing in flight but what the replay draws (MuzzleFlash). What neither goes
-	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
-	// railway spike, which hurt nobody here (the stand-in's damage multiplier is zero, Puppets). A gun whose projectile
-	// we can't read (a_known false) is taken for a plain one.
-	constexpr bool HoldsShotOf(bool a_known, std::uint32_t a_flags, bool a_explodes)
+	// What becomes of a replayed shot's own projectile on a stand-in or a copy.
+	enum class Fire
 	{
-		if (!a_known || a_explodes || (a_flags & PROJECTILE_EXPLOSION) != 0) {
-			return true;
+		kHeld,   // kept from the engine (HoldsOwnFire): nothing leaves the gun
+		kFired,  // the engine's own, as before
+		kInert,  // launched from a copy of its record with no blast (InertShot.h): seen in flight, goes off nowhere
+	};
+
+	// What a stand-in's (a_standIn) or a mirrored NPC's shot of a gun firing this projectile (a_flags) comes to, with
+	// a_explodes: the projectile names an explosion or has the explosion flag, and a_enchanted: one of the gun's
+	// enchantments has an effect that sets off an explosion (which no game legendary has; Explosive swaps the
+	// projectile instead). Whatever goes off by its projectile: a missile, a mini nuke, a grenade launcher's shell, a
+	// beam or a bullet with a blast of its own, a legendary's Explosive round. Its blast goes off in the shooter's game
+	// and comes here as that game's report (WeaponFire::ApplyExplosion), once: fired here as it is, it went off twice,
+	// and the stand-in's own blast hurt the NPCs our game runs a second time (docs/DESIGN.md, "Who sets off an
+	// explosion"). With the inert launch in place (a_inert: InertShots::Installed) it is fired from a record with no
+	// blast, so friends see it fly; without it, held. One that goes off by an enchantment alone is held: there is no
+	// record to take the blast from. A stand-in's plain one, a bullet or a beam, is held: it hit our player and shows
+	// nothing in flight but what the replay draws (MuzzleFlash); a copy's is the engine's, as before. What neither goes
+	// off nor flies straight is fired as before, so friends see it: a flamer's or a cryolator's stream, a harpoon or a
+	// railway spike, which hurt nobody here (the puppet's damage multiplier is zero, Puppets). A gun whose projectile
+	// we can't read (a_known false) is taken for a plain one.
+	constexpr Fire ShotReplay(bool a_standIn, bool a_known, std::uint32_t a_flags, bool a_explodes, bool a_enchanted, bool a_inert)
+	{
+		if (a_known && a_explodes) {
+			return a_inert ? Fire::kInert : Fire::kHeld;
+		}
+		if (!a_known || a_enchanted) {
+			return a_standIn || a_enchanted ? Fire::kHeld : Fire::kFired;
+		}
+		if (!a_standIn) {
+			return Fire::kFired;
 		}
 		const auto motion = a_flags & PROJECTILE_MOTION_TYPES;
-		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM;
+		return motion == 0 || motion == PROJECTILE_MOTION_MISSILE || motion == PROJECTILE_MOTION_BEAM ? Fire::kHeld : Fire::kFired;
 	}
 
 	enum class Replay

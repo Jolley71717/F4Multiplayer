@@ -6,6 +6,7 @@
 #include "game/EngineRefs.h"
 #include "game/Equipment.h"
 #include "game/HandThrowable.h"
+#include "game/InertShots.h"
 #include "game/MuzzleFlash.h"
 #include "game/AttackKind.h"
 #include "game/NpcSync.h"
@@ -131,7 +132,8 @@ namespace WeaponFire
 		constexpr std::size_t                                                    MAX_FIRE_REPLAYS = 64;
 		std::atomic<std::uint32_t>                                               firesHeld{ 0 };
 		std::atomic<std::uint32_t>                                               firesLogged{ 0 };
-		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a missile, a shell, a flame
+		std::uint32_t                                                            firesLetGo = 0;  // stand-ins' shots fired as before: a flame, a harpoon
+		std::uint32_t                                                            firesInert = 0;  // stand-ins' and copies' shots launched inert: a missile, a shell, an explosive round
 
 		static_assert(AttackKind::PROJECTILE_EXPLOSION == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kExplosion));
 		static_assert(AttackKind::PROJECTILE_MOTION_MISSILE == std::to_underlying(RE::BGSProjectile::BGSProjectileFlags::kMotionMissile));
@@ -150,12 +152,55 @@ namespace WeaponFire
 			       MuzzleFlash::GunEnchantmentExplodes(a_actor);
 		}
 
-		// Whether the stand-in's gun fires a shot to keep from the engine (AttackKind::HoldsShotOf): a plain one, a bullet or a
-		// beam, and every one that may go off (ShotGoesOff). Main thread (PlayShot).
-		bool HoldsShotOf(RE::Actor* a_actor)
+		// What becomes of the stand-in's (a_standIn) or the copy's own shot of a replay (AttackKind::ShotReplay): held, the
+		// engine's as before, or launched inert (InertShots: one that would go off flies with no blast, so friends see it).
+		// Main thread (PlayShot).
+		AttackKind::Fire ShotReplayOf(RE::Actor* a_actor, bool a_standIn)
 		{
 			const auto projectile = MuzzleFlash::GunProjectile(a_actor);
-			return AttackKind::HoldsShotOf(projectile != nullptr, projectile ? projectile->data.flags : 0, ShotGoesOff(a_actor));
+			const bool explodes = projectile && (projectile->data.explosionType || (projectile->data.flags & AttackKind::PROJECTILE_EXPLOSION) != 0);
+			return AttackKind::ShotReplay(a_standIn, projectile != nullptr, projectile ? projectile->data.flags : 0, explodes, MuzzleFlash::GunEnchantmentExplodes(a_actor),
+				InertShots::Installed());
+		}
+
+		// A stand-in has its player's gun and nothing to fire from it: its replayed shot of a gun whose shot flies here
+		// (an inert missile, a shell) left the gun with nothing (seen on the rig, and with missiles given it after its
+		// launcher was equipped too). Its gun is given a few rounds and loaded before the replay.
+		constexpr std::uint32_t SHOT_AMMO = 3;
+		std::uint32_t           ammoGiven = 0;
+		std::uint32_t           inertReplaysLogged = 0;
+
+		void GiveShotAmmo(RE::Actor* a_actor)
+		{
+			if (MuzzleFlash::LoadGun(a_actor, SHOT_AMMO)) {
+				++ammoGiven;
+			}
+		}
+
+		// A stand-in's graph refused "attackStart" while it says an animation drives it (bAnimationDriven), standing in no
+		// furniture and no power armor frame (seen on the rig right after a join: every replayed shot of its friend's
+		// sounded and flashed, none animated, so nothing left its gun). Out of furniture and a frame nothing of a
+		// stand-in's is animation-driven (we place it every frame), so the flag is cleared, and the replay is asked once
+		// more. A copy's (an NPC's) is left to the engine: its idles are its own (Puppets::ReleaseIdle).
+		std::uint32_t animationDrivenCleared = 0;
+
+		bool ReleaseAnimationDriven(RE::Actor* a_actor)
+		{
+			static const RE::BSFixedString animationDriven{ "bAnimationDriven" };
+			if (Puppets::InFurniture(a_actor) || Equipment::InPowerArmor(a_actor)) {
+				return false;
+			}
+			const auto graph = static_cast<RE::IAnimationGraphManagerHolder*>(a_actor);
+			bool       driven = false;
+			if (!graph->GetGraphVariableImplBool(animationDriven, driven) || !driven) {
+				return false;
+			}
+			graph->SetGraphVariableBool(animationDriven, false);
+			if (++animationDrivenCleared <= 10) {
+				REX::INFO("WeaponFire: {:08X}'s graph refused a replayed shot while an animation drove it, in no furniture or frame; the flag cleared and the shot asked again ({} so far)",
+					a_actor->GetFormID(), animationDrivenCleared);
+			}
+			return true;
 		}
 
 		void ForgetReplayedFire(std::uint32_t a_actorId)
@@ -617,21 +662,32 @@ namespace WeaponFire
 		// The graph refuses a new attack while the last one still plays (automatic fire arrives faster
 		// than the animation), so the animation is best effort; the sound is played for every shot.
 		bool       animated = false;
-		// A stand-in's plain shot, and any copy's shot that may go off (ShotGoesOff), are held: what they hit or set off
-		// comes as the shooter's game's report, once (docs/DESIGN.md, "Who sets off an explosion"). So friends see no
-		// missile or explosive round in flight, only the flash and the blast (a known limit: fired and defused a frame
-		// later, one that landed within the frame went off twice).
+		// A stand-in's plain shot is held: what it hit comes as the shooter's game's report. A stand-in's or a copy's shot
+		// that would go off flies, launched inert (InertShots: no blast, no damage of its own), so friends see the missile
+		// or the explosive round in flight, and its blast comes as the shooter's game's report, once (docs/DESIGN.md,
+		// "Who sets off an explosion"); with no inert launch to be had, it is held too.
 		const bool puppet = Puppets::IsPuppet(a_actor);
-		const bool standIn = replay == AttackKind::Replay::kFire && (puppet ? HoldsShotOf(a_actor) : ShotGoesOff(a_actor));
+		const auto fire = replay == AttackKind::Replay::kFire ? ShotReplayOf(a_actor, puppet) : AttackKind::Fire::kFired;
+		const bool standIn = fire == AttackKind::Fire::kHeld;
 		if (standIn) {
 			ArmReplayedFire(a_actor->GetFormID());  // before the graph is told: its "WeaponFire" may come at once
-		} else if (replay == AttackKind::Replay::kFire && puppet) {
+		} else if (replay == AttackKind::Replay::kFire) {
 			ForgetReplayedFire(a_actor->GetFormID());  // a pistol's shot just before is no reason to hold this one
-			++firesLetGo;
+			firesLetGo += puppet && fire == AttackKind::Fire::kFired;
+		}
+		if (fire == AttackKind::Fire::kInert) {
+			InertShots::Prepare(MuzzleFlash::GunProjectile(a_actor));  // the inert copy, made here on the main thread
+			if (puppet) {
+				GiveShotAmmo(a_actor);
+			}
+			++firesInert;
 		}
 		if (replay == AttackKind::Replay::kSoundOnly) {
 			++unseen;
 		} else if (static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
+			++played;
+			animated = true;
+		} else if (puppet && ReleaseAnimationDriven(a_actor) && static_cast<RE::IAnimationGraphManagerHolder*>(a_actor)->NotifyAnimationGraphImpl(attackStart)) {
 			++played;
 			animated = true;
 		}
@@ -640,6 +696,10 @@ namespace WeaponFire
 		// from the engine (HoldsReplayedFire: with it, the engine made no flash either, seen on the rig).
 		if (replay == AttackKind::Replay::kFire) {
 			MuzzleFlash::OnShot(a_actor, animated && !standIn);
+		}
+		if (fire == AttackKind::Fire::kInert && inertReplaysLogged < 20) {
+			++inertReplaysLogged;
+			REX::INFO("WeaponFire: {:08X}'s shot replayed to fly inert: animated={} {}", a_actor->GetFormID(), animated, MuzzleFlash::DescribeLoad(a_actor));
 		}
 		// Nothing is fired, so the game plays no sound: play the gun's own, from the shooter. The
 		// shooter's game picked it from their gun's mods; the stand-in's copy of the gun is a new one
@@ -753,7 +813,7 @@ namespace WeaponFire
 
 	std::string Describe()
 	{
-		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe();
+		return std::format("shots={} bashes={} replayed={}/{} swung={} sounded={} unseen={} theirs={} kssm={:08X}{} loops={}/{} long={} actions={} explosions={}/{} ghosts={} attaches={} loads={} explosionRefusedRadius={} shielded={}/{}/{}/{} ghostsStuck={}/{} ghostsHidden={} held={} firesHeld={} firesLetGo={} firesInert={} ammoGiven={} animDrivenCleared={} inhand={}",total.load(), bashesKept, played, replayed, swung, sounded, unseen, theirs, lastSound, lastLooped ? "(loop)" : "", loopingShots.Active(), loopsEnded, longCut, actionsPlayed, explosionsReported, explosionsSetOff, GhostsRemoved(), throwAttaches.load(), Equipment::AttachesAsked(), explosionRefusedRadius, copiesShielded, shieldsEnded, shieldsHurt, shieldedDied, ghostsStuck, ghostsRetried, ghostsHiddenFromSaves, releasesHeld.load(), firesHeld.load(), firesLetGo, firesInert, ammoGiven, animationDrivenCleared, DescribeHandThrowables()) + " " + DescribeBlasts() + " " + MuzzleFlash::Describe() + " " + InertShots::Describe();
 	}
 
 	std::string LogAnimationEvents(bool a_start)
@@ -1967,6 +2027,11 @@ namespace WeaponFire
 		data.interior = cell->IsInterior() ? cell : nullptr;
 		data.world = cell->IsInterior() ? nullptr : cell->worldSpace;
 		data.clearStillLoadingFlag = true;
+		// One whose record spawns projectiles (a MIRV pack's children, a Sentry Bot's cluster) spawns them here too, as the
+		// reference is created, with no shooter; the shooter's game reports their blasts, so the ones spawned here fly
+		// inert (InertShots): told before the creation, as the engine launches them inside it (seen on the rig: a MIRV
+		// pack's five children launched in the same millisecond, before the placing returned, and went off twice).
+		InertShots::ExpectSpawned(base->data.spawnProjectile);
 		const auto handle = EngineRefs::CreateReferenceAtLocation(data);
 		if (const auto ref = handle.get()) {
 			// A friend's explosion we just placed is in range of our own scan after our next throw: it

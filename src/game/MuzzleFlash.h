@@ -32,6 +32,12 @@ namespace MuzzleFlash
 	// game's legendaries does (Wounding, Instigating and the like are plain effects; Explosive swaps the projectile for
 	// one that names its explosion, GunProjectile), so a legendary's shot is held only when its projectile goes off.
 	[[nodiscard]] bool GunEnchantmentExplodes(RE::Actor* a_actor);
+	// Makes the actor's equipped gun able to fire a_rounds: ammunition it takes given when it has none (a stand-in has its
+	// player's gun, not their ammunition), and the gun loaded when empty (ammunition given after the gun was equipped is
+	// not in it: the engine fired nothing, seen on the rig). Whether anything was given or loaded. Main thread.
+	bool LoadGun(RE::Actor* a_actor, std::uint32_t a_rounds);
+	// The gun's load, for the log and dev `proj`: its ammunition, the rounds in it and those carried.
+	[[nodiscard]] std::string DescribeLoad(RE::Actor* a_actor);
 
 	// Keeps showing flashes drawn and takes down those that are due. Call every frame.
 	void Frame();
