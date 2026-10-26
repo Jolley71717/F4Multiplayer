@@ -30,7 +30,7 @@
 //                                                        workshop mode off our copies, saved with it) and holds nothing, not
 //                                                        the player's own
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
-//   bool CopyAt(item)                                    one of our copies of a friend's piece, the same object, stands at the spot
+//   bool CopyAt(item)                                    one of our copies, the same object, stands near the spot (TwinOf's quick look)
 //   std::optional<Copy> LeftoverAt(item)                 a copy of it no session knows, at the spot, beside the one kept (or a piece of ours)
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
@@ -54,7 +54,8 @@ namespace WorkshopApply
 		std::uint32_t oursThere = 0;     // no copy made: a piece of ours, the same object, stands at the spot
 		std::uint32_t leftovers = 0;     // copies a save held twice at one spot, or over a piece of ours: gone
 		std::uint32_t framesCleared = 0;  // copies of a power armor frame an older version made, found at the spot and removed
-		std::uint32_t twinned = 0;       // no copy made: a copy of another friend's, the same object, stands at the spot
+		std::uint32_t twinned = 0;       // no copy made: a copy of another friend's, the same object, stands just so at the spot
+		std::uint32_t untwinned = 0;     // ... and placed after all: that copy went, or moved
 	};
 
 	inline constexpr int MAX_LEFTOVERS = 8;  // removed at one spot in one go: a guard, should one not go at once
@@ -74,6 +75,18 @@ namespace WorkshopApply
 			++a_counts.leftovers;
 		}
 	}
+
+	// A report that made no copy because another friend's copy stands for it (TwinOf), kept with the key of that copy: if it
+	// goes or moves, the piece this report names still stands in its builder's game, and is placed here then (Apply).
+	template <class Key>
+	struct Twin
+	{
+		Key                    of;
+		Protocol::WorkshopItem item;
+	};
+
+	template <class Key>
+	using Twins = std::map<Key, Twin<Key>>;
 
 	// Where a copy stands here, for following its piece.
 	struct Standing
@@ -137,9 +150,31 @@ namespace WorkshopApply
 		return true;
 	}
 
+	// The key of another player's copy standing just where the report puts the same object, turned the same way: two friends
+	// whose saves share a past each report the piece built before they parted. One of the reporter's own is another piece of
+	// theirs (two of one object at one spot, crossed, or turned about a shared end), and so is one turned otherwise.
+	template <class World, class Key>
+	std::optional<Key> TwinOf(World& a_world, const std::map<Key, typename World::Copy>& a_copies, const Key& a_key, const Protocol::WorkshopItem& a_item)
+	{
+		if (!a_world.CopyAt(a_item)) {
+			return std::nullopt;  // the usual case, without going over every copy
+		}
+		const auto to = WorkshopMove::Of(a_item);
+		for (const auto& [key, copy] : a_copies) {
+			if (key.first == a_key.first) {
+				continue;
+			}
+			const auto now = a_world.StandingOf(copy);
+			if (now && now->base == a_item.base && WorkshopMove::Same(now->at, to)) {
+				return key;
+			}
+		}
+		return std::nullopt;
+	}
+
 	// Places (or moves) the copy; false if its settlement isn't loaded yet.
 	template <class World, class Key>
-	bool Place(World& a_world, std::map<Key, typename World::Copy>& a_copies, Counts& a_counts, const Key& a_key, const Protocol::WorkshopItem& a_item)
+	bool Place(World& a_world, std::map<Key, typename World::Copy>& a_copies, Twins<Key>& a_twins, Counts& a_counts, const Key& a_key, const Protocol::WorkshopItem& a_item)
 	{
 		if (!a_world.Loaded(a_item)) {
 			return false;
@@ -207,9 +242,10 @@ namespace WorkshopApply
 			DiscardLeftovers(a_world, a_item, a_counts);
 			return true;
 		}
-		if (a_world.CopyAt(a_item)) {
+		if (const auto twin = TwinOf(a_world, a_copies, a_key, a_item)) {
 			// Two friends whose saves share a past each report the piece built before it parted: the first made the copy, and
-			// the second's would double it.
+			// the second's would double it. Kept, for when the first's copy goes or moves (Untwin).
+			a_twins.insert_or_assign(a_key, Twin<Key>{ *twin, a_item });
 			++a_counts.twinned;
 			return true;
 		}
@@ -244,15 +280,43 @@ namespace WorkshopApply
 		return true;
 	}
 
+	// The reports twinned with a_key's copy (TwinOf) whose piece it no longer stands for, now that it went or moved: placed
+	// for themselves (or one twinned with the first of them placed), or filed until their cell loads.
+	template <class World, class Key>
+	void Untwin(World& a_world, std::map<Key, typename World::Copy>& a_copies, Twins<Key>& a_twins, WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>& a_inbox, Counts& a_counts,
+		const Key& a_key)
+	{
+		if (a_twins.empty()) {
+			return;
+		}
+		const auto it = a_copies.find(a_key);
+		const auto now = it != a_copies.end() ? a_world.StandingOf(it->second) : std::nullopt;
+		std::vector<std::pair<Key, Protocol::WorkshopItem>> loose;
+		std::erase_if(a_twins, [&](const auto& a_twin) {
+			if (a_twin.second.of != a_key || (now && now->base == a_twin.second.item.base && WorkshopMove::Same(now->at, WorkshopMove::Of(a_twin.second.item)))) {
+				return false;
+			}
+			loose.emplace_back(a_twin.first, a_twin.second.item);
+			return true;
+		});
+		for (const auto& [key, item] : loose) {
+			++a_counts.untwinned;
+			if (!Place(a_world, a_copies, a_twins, a_counts, key, item)) {
+				a_inbox.Wait(a_world.WhereOf(item), key, item);
+			}
+		}
+	}
+
 	// Another player's report, its turn come: placed, moved, or scrapped here, or filed until its cell
 	// loads. Whatever waited under its key is older (a report waits only after its turn came, and one
 	// arriving later is behind it in line): left waiting, it would undo this one when its cell attaches
 	// (a scrapped piece standing again, a moved one going back).
 	template <class World, class Key>
-	void Apply(World& a_world, std::map<Key, typename World::Copy>& a_copies, WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>& a_inbox, Counts& a_counts, const Key& a_key,
-		const Protocol::WorkshopItem& a_item)
+	void Apply(World& a_world, std::map<Key, typename World::Copy>& a_copies, Twins<Key>& a_twins, WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>& a_inbox, Counts& a_counts,
+		const Key& a_key, const Protocol::WorkshopItem& a_item)
 	{
 		a_inbox.Forget(a_key);
+		a_twins.erase(a_key);  // this report is newer than the one twinned
 		if (a_item.op == Protocol::WorkshopOp::kScrapped) {
 			if (const auto it = a_copies.find(a_key); it != a_copies.end()) {
 				a_world.Discard(it->second);
@@ -264,11 +328,13 @@ namespace WorkshopApply
 			if (Protocol::IsShareableRef(a_item.refId) && !a_world.ScrapWorldRef(a_item)) {
 				a_inbox.Wait(a_world.WhereScrapped(a_item), a_key, a_item, a_item.refId);
 			}
+			Untwin(a_world, a_copies, a_twins, a_inbox, a_counts, a_key);
 			return;
 		}
-		if (!Place(a_world, a_copies, a_counts, a_key, a_item)) {
+		if (!Place(a_world, a_copies, a_twins, a_counts, a_key, a_item)) {
 			a_inbox.Wait(a_world.WhereOf(a_item), a_key, a_item);
 		}
+		Untwin(a_world, a_copies, a_twins, a_inbox, a_counts, a_key);
 	}
 
 	// What waits nowhere (its workbench wasn't in this game) and has somewhere to wait now: a cell that
@@ -290,12 +356,13 @@ namespace WorkshopApply
 	// Leaving the session: every copy goes (what the player kept in one comes to them first), and so
 	// does what waited to be placed.
 	template <class World, class Key>
-	void RemoveAll(World& a_world, std::map<Key, typename World::Copy>& a_copies, WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>& a_inbox)
+	void RemoveAll(World& a_world, std::map<Key, typename World::Copy>& a_copies, Twins<Key>& a_twins, WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>& a_inbox)
 	{
 		for (const auto& [key, copy] : a_copies) {
 			a_world.Discard(copy);
 		}
 		a_copies.clear();
+		a_twins.clear();
 		a_inbox.Clear();
 	}
 }

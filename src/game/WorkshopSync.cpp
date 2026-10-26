@@ -61,6 +61,7 @@ namespace WorkshopSync
 		std::uint32_t                                       dropped = 0;  // reports dropped with the queue full (under outLock)
 		bool                                                droppedWarned = false;  // since the queue last ran empty (under outLock)
 		std::map<Key, Copy>                                 copies;
+		WorkshopApply::Twins<Key>                           twins;  // reports another friend's copy stands for (WorkshopApply::TwinOf)
 		WorkshopInbox::Inbox<Key, Protocol::WorkshopItem>   inbox;  // other players' reports to place, and those waiting for their cell to load
 		std::vector<Copy>                                   graveyard;
 		constexpr float                                     ADOPT_RADIUS = 4.0f;  // a copy left by an earlier session, at the same spot
@@ -993,8 +994,8 @@ namespace WorkshopSync
 			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr; }) != nullptr;
 		}
 
-		// One of our copies of a friend's piece, the same object, at the spot: another friend's report of it (saves that share a
-		// past) makes no second one.
+		// One of our copies of a friend's piece, the same object, near the spot: WorkshopApply::TwinOf's quick look, before it
+		// asks whose copy it is and whether it stands just so.
 		bool CopyAt(const Protocol::WorkshopItem& a_item)
 		{
 			return AtSpot(a_item, [](RE::TESObjectREFR*) { return true; }, true) != nullptr;
@@ -1932,7 +1933,7 @@ namespace WorkshopSync
 				mirror.Forget(a_key);
 			}
 			EngineWorld world;
-			WorkshopApply::Apply(world, copies, inbox, counts, a_key, a_item);
+			WorkshopApply::Apply(world, copies, twins, inbox, counts, a_key, a_item);
 		}
 	}
 
@@ -2062,7 +2063,7 @@ namespace WorkshopSync
 	void Reset()
 	{
 		EngineWorld world;
-		WorkshopApply::RemoveAll(world, copies, inbox);
+		WorkshopApply::RemoveAll(world, copies, twins, inbox);
 		{
 			std::scoped_lock l{ copyIdsLock };
 			copyIds.clear();
@@ -2096,6 +2097,7 @@ namespace WorkshopSync
 		// stays. What waits in line, or for its cell, is reports, not handles, and stays.
 		REX::INFO("WorkshopSync: load: forgot {} copies, {} in the graveyard", copies.size(), graveyard.size());
 		copies.clear();
+		twins.clear();  // the session's building sent again twins them again with the copies found
 		graveyard.clear();
 		unbuiltWires.clear();
 		{
@@ -2114,6 +2116,7 @@ namespace WorkshopSync
 	void OnWorldGone()
 	{
 		copies.clear();
+		twins.clear();
 		graveyard.clear();
 		unbuiltWires.clear();
 		reporter.Clear();
@@ -2252,8 +2255,9 @@ namespace WorkshopSync
 			droppedNow = dropped;
 			unsent = outgoing.Size();
 		}
-		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} oursThere={} leftovers={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
-			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.oursThere, counts.leftovers, counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
+		return std::format("workshop: reported={} unsent={} dropped={} copies={} placed={} moved={} recreated={} baseMismatch={} scrapped={} rescued={} worldScrapped={} adopted={} oursThere={} leftovers={} twinned={} untwinned={} twins={} refused={} emptied={} pending={} inbox={} applyMsMax={:.1f}", reported, unsent, droppedNow, copies.size(),
+			       counts.placed, counts.moved, counts.recreated, counts.baseMismatch, counts.scrapped, itemsRescued, worldScrapped, counts.adopted, counts.oursThere, counts.leftovers, counts.twinned,
+			       counts.untwinned, twins.size(), counts.refused, counts.emptied, inbox.Pending().Size(), inbox.Queued(), static_cast<double>(applyUsMax) / 1000.0) +
 		       std::format(" savedScraps={} (walked={} disabled={} deleted={} benches={} waiting={} queued={})", walk.Reported(), walk.SeenCounts().refs, walk.SeenCounts().disabled,
 				   walk.SeenCounts().deleted, walk.Benches().size(), walk.Waiting(), walk.ToSend()) +
 		       std::format(" anchorRefused={} scrapRefused={} scrapDeferred={} unplaceable={}", anchorRefused, scrapRefused, scrapsDeferred.size(), unplaceable) +

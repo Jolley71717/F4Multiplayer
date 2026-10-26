@@ -1550,7 +1550,11 @@ reports what its player built before the session (`BuiltWalk`); a guest's does t
 `bShareGuestBuilds` (a session rule, sent with the welcome; off by default, since each player keeps their own save and a
 guest's solo settlement would land on top of the host's). Building done in the session is shared either way. Then a third
 player can get the same piece from two friends: the second report finds the first's copy at the spot and makes none
-(`CopyAt`, `twinned=`).
+(`WorkshopApply::TwinOf`, `twinned=`). A twin is another player's copy (one of the reporter's own is another piece of
+theirs) of the same object standing just so, turned the same way (two of one object crossed at one origin are two pieces).
+The report is kept with the key of the copy that stands for it (`twins=`): if that friend scraps or moves theirs, the other
+friend's piece still stands in their game, and is placed then (`untwinned=`). A third player on a build before this check
+still gets such a piece twice.
 Friends' copies stay out of workshop mode's reach by design (above), so a friend's crop or post can't be a job for
 our settlers; each player assigns jobs at their own pieces.
 
