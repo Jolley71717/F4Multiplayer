@@ -797,6 +797,71 @@ TEST("shared storage: who keeps each container outlasts a restart, closed to fri
 	CHECK((shown[0].stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 4 } }));
 }
 
+TEST("shared storage: a run with the rule off keeps who keeps each container, so turning it on again takes back nothing friends put in")
+{
+	TempSessionFile file;
+	auto            on = Options();
+	on.sessionFile = file.path.string();
+	auto off = Options(false);
+	off.sessionFile = file.path.string();
+	std::int64_t hostChest = 0;     // the waters in the host's chest
+	std::int64_t friendCarries = 20;
+	{
+		Fixture f{ on };
+		f.fake->SetLocal(HOST_PEER);
+		REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+		REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+		f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+		Sync(f, HOST_PEER);
+		SettleRaw(f, FRIEND_PEER);
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 20 }, MT::kReportContainer));  // #0, in the host's copy alone
+		Sync(f, FRIEND_PEER);
+		const auto put = Decoded(Received(f, HOST_PEER), MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); });
+		REQUIRE(put.size() == 1);
+		hostChest += put[0].change.count;
+		friendCarries -= 20;
+	}
+	REQUIRE(hostChest == 20);
+	{
+		Fixture f{ off };  // the host tries the session without the rule for a while
+		f.fake->SetLocal(HOST_PEER);
+		REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+		REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+		Received(f, FRIEND_PEER);
+		// The book is kept, not asked: the friend's game is shown nothing of the host's chest.
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+		Sync(f, FRIEND_PEER);
+		const auto got = Received(f, FRIEND_PEER);
+		CHECK(Count(got, MT::kStorageContents) == 0);
+		CHECK(Count(got, MT::kStorageRefused) == 0);
+	}
+	const auto saved = SessionFile::Load(file.path);
+	REQUIRE(saved);
+	CHECK(saved->storageOwners.size() == 1);
+
+	Fixture f{ on };  // and turns it on again
+	f.fake->SetLocal(HOST_PEER);
+	REQUIRE(f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID)));
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	Received(f, HOST_PEER);
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 1, { { STIMPAK, 5 }, { WATER, 20 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	for (const auto& change : Decoded(Received(f, HOST_PEER), MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); })) {
+		if (change.change.item == WATER) {
+			hostChest += change.change.count;
+		}
+	}
+	CHECK(!f.Logged("claimed:"));
+	CHECK(hostChest == 20);  // the friend's 20 are still in the host's chest
+	CHECK(hostChest + friendCarries == 20);
+	SettleRaw(f, FRIEND_PEER);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	const auto shown = Decoded(Received(f, FRIEND_PEER), MT::kStorageContents, [](auto a_data) { return Protocol::DecodeStorageListing(a_data); });
+	REQUIRE(shown.size() == 1);
+	CHECK((shown[0].stacks == std::vector<Protocol::StorageStack>{ { STIMPAK, 5 }, { WATER, 20 } }));
+}
+
 // ---- the routes the reviews found: the true copy is put right, never the player, who could move the items away first ----
 
 TEST("shared storage: put, leave, load an older save, move the items to a workbench, rejoin: the chest gives the put up")
@@ -1377,6 +1442,46 @@ TEST("shared storage: undoing and doing again one's own moves counts against one
 	const auto refusals = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
 	REQUIRE(refusals.size() == 1);
 	CHECK(refusals[0].reason == Protocol::StorageReason::kClosed);
+}
+
+TEST("shared storage: a settle that doesn't all fit in one's share makes none of its changes: no take put back without its put taken out")
+{
+	auto options = Options();
+	options.maxContainerChangesPerPlayer = 3;
+	options.worldStateRefill = std::chrono::milliseconds{ 0 };
+	Fixture f{ options };
+	f.fake->SetLocal(HOST_PEER);
+	const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+	REQUIRE(host);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	SettleRaw(f, FRIEND_PEER);
+	std::int64_t hostChest = 0;  // the waters in the host's chest
+	const auto   apply = [&] {
+		Pace(HOST_PEER);
+		for (const auto& change : Decoded(Received(f, HOST_PEER), MT::kContainerChanged, [](auto a_data) { return Protocol::DecodeIndexedContainerChange(a_data); })) {
+			hostChest += change.change.count;
+		}
+	};
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 50 }, MT::kReportContainer));   // #0
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, -50 }, MT::kReportContainer));  // #1
+	Pace(FRIEND_PEER);
+	Sync(f, FRIEND_PEER);
+	apply();
+	REQUIRE(hostChest == 0);
+
+	// They load a save from before both: their world carries the 50 again. Two changes to put it right, one left in their share.
+	const std::int64_t friendCarries = 50;
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ 2, 2, 0, { 0, 1 }, {} }));
+	Pace(FRIEND_PEER);
+	Received(f, FRIEND_PEER);
+	apply();
+	CHECK(hostChest == 0);  // not the take's 50 put back alone
+	CHECK(hostChest + friendCarries == 50);
+	CHECK(f.Logged("can't all be put right (2 changes"));
 }
 
 TEST("shared storage: what the true copy undid outlasts a restart: none is undone twice, and a later save's world has it done again")

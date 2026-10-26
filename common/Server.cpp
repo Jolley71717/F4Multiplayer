@@ -571,11 +571,14 @@ void Server::Run()
 			for (const auto& drop : saved->drops) {
 				drops.Restore(drop);
 			}
-			// Only while the host shares storage: turned off, every game keeps its own copy, and the owners are forgotten.
-			for (const auto& owner : options.rules.sharedStorage ? saved->storageOwners : std::vector<Protocol::StorageOwner>{}) {
+			// Kept whatever the rule: a run with it off leaves the book alone (every game keeps its own copy, and nothing asks
+			// the book) and saves it again, so turning it on later finds each container's keeper and the moves since its claim
+			// as they were. Forgotten, the next listing would be a first claim, and its take-back (StorageBook::BeforeClaim)
+			// would take out of the host's chest everything friends put in it while the host kept it.
+			for (const auto& owner : saved->storageOwners) {
 				storage.Restore(owner);  // closed to friends until the host's game lists it again
 			}
-			for (const auto& reversal : options.rules.sharedStorage ? saved->storageReversals : std::vector<Protocol::StorageReversal>{}) {
+			for (const auto& reversal : saved->storageReversals) {
 				storage.Restore(reversal, containerChanges.size());  // none undone twice after a restart
 			}
 			for (const auto& destruction : saved->destructions) {
@@ -1593,7 +1596,8 @@ void Server::Run()
 	// keeps that their game made before its connection went and the session never numbered, sent again with a settle
 	// (StorageBook::Book::Check's a_late).
 	const auto takeContainerChange = [&](Player& a_player, const std::optional<Protocol::ContainerChange>& change, bool a_late) {
-		const auto keeper = change && Protocol::IsValid(*change) ? storage.KeeperOf(change->container) : std::nullopt;
+		// With the rule off the book is only kept for a later run: no container has a keeper.
+		const auto keeper = options.rules.sharedStorage && change && Protocol::IsValid(*change) ? storage.KeeperOf(change->container) : std::nullopt;
 		const bool atFriends = keeper && *keeper != a_player.id;
 		// The budget first, before the book is asked or anything answered: a friend's moves at storage another game keeps
 		// have their own (STORAGE_MOVE_BURST), everything else the event budget.
@@ -1783,7 +1787,7 @@ void Server::Run()
 
 	// A friend opened (or closed) their copy of storage another game keeps: what it holds, to show, or that it is closed.
 	const auto handleViewStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player)) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
 			return;
 		}
 		const auto view = Protocol::DecodeStorageView(a_data);
@@ -1822,7 +1826,7 @@ void Server::Run()
 	// The keeper's game applied a friend's numbered take and its container held less: the friend's game gives back what
 	// was missing (its player has an item the session's storage never had).
 	const auto handleStorageShort = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player)) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
 			return;
 		}
 		const auto report = Protocol::DecodeStorageShort(a_data);
@@ -1888,21 +1892,22 @@ void Server::Run()
 		std::ranges::stable_partition(work, adds);
 		std::size_t undone = 0;
 		std::size_t redone = 0;
-		bool        cut = false;
+		// Each change is counted against the settler's own share of the log, like their moves: undoing and doing again
+		// their moves between two saves can't fill the table for everyone. All of it goes, or none: a settle cut part way
+		// could put back a take's items and leave the matching put's in, in two worlds at once. Past their share (or a full
+		// log) they stay unsettled (no view, no move at storage others keep) until a later settle, with room, puts it right.
+		std::size_t planned = 0;
 		for (const auto& [index, has] : work) {
-			const auto planned = storage.Settle(a_player.id, index, has, containerChanges, false);
-			if (planned) {
-				// Each change is counted against the settler's own share of the log, like their moves: undoing and doing
-				// again their moves between two saves can't fill the table for everyone. Past it (or a full log) the rest
-				// waits, and they stay unsettled (no view, no move at storage others keep) until a later settle, with room,
-				// puts it right.
-				const bool shared = a_player.local ||
-				                    (containersAuthored[a_player.id] < options.maxContainerChangesPerPlayer && withinShare(a_player, kContainers));
-				if (!shared || containerChanges.size() >= maxWorldEntries) {
-					cut = true;
-					break;
-				}
-			}
+			planned += storage.Settle(a_player.id, index, has, containerChanges, false) ? 1 : 0;
+		}
+		const bool shared = a_player.local || planned == 0 ||
+		                    (containersAuthored[a_player.id] + planned <= options.maxContainerChangesPerPlayer &&
+								budgetOf(a_player).added[kContainers] + planned <= options.maxContainerChangesPerPlayer);
+		const bool cut = !shared || containerChanges.size() + planned > maxWorldEntries;
+		if (cut) {
+			work.clear();
+		}
+		for (const auto& [index, has] : work) {
 			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
 			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
@@ -1932,9 +1937,9 @@ void Server::Run()
 		}
 		a_player.storageSettled = !cut;
 		if (cut) {
-			log(std::format("server: player {}'s storage moves can't all be put right (their share of the container table, or a full one); "
-							"storage others keep stays closed to them until a later settle can",
-				a_player.id));
+			log(std::format("server: player {}'s storage moves can't all be put right ({} changes, past their share of the container table or a full one); "
+							"none is made, and storage others keep stays closed to them until a later settle can",
+				a_player.id, planned));
 		}
 		if (undone + redone != 0) {
 			storageUndone += undone + redone;

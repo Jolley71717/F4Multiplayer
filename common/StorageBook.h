@@ -309,7 +309,8 @@ namespace StorageBook
 		// claim took what friends put in then back out of the true copy already (BeforeClaim).
 		// A take out of the true copy (a put undone, a take done again) is no more than the book holds while it is listed
 		// (the rest went to others meanwhile); while it is stale, all of it (the keeper's world applies what is there).
-		// a_commit false: what it would be, changing nothing (the server first sees whether the player's share has room).
+		// a_commit false: what it would be, changing nothing, before what the book holds caps it (the server first sees whether
+		// the player's share has room for all of a settle: a cap may be lifted by a change before it in the same settle).
 		std::optional<Protocol::ContainerChange> Settle(std::uint32_t a_player, std::uint32_t a_index, bool a_has, std::span<const Protocol::IndexedContainerChange> a_log,
 			bool a_commit = true)
 		{
@@ -334,12 +335,12 @@ namespace StorageBook
 			} else {
 				return std::nullopt;
 			}
+			if (!a_commit) {
+				return count == 0 ? std::nullopt : std::optional{ Protocol::ContainerChange{ move.change.container, move.change.item, static_cast<std::int32_t>(count) } };
+			}
 			if (count < 0 && it->second.fresh) {
 				const auto held = it->second.held.find(move.change.item);
 				count = -(std::min)(-count, held != it->second.held.end() ? held->second : 0);
-			}
-			if (!a_commit) {
-				return count == 0 ? std::nullopt : std::optional{ Protocol::ContainerChange{ move.change.container, move.change.item, static_cast<std::int32_t>(count) } };
 			}
 			if (a_has) {
 				reversed.erase(reversal);
