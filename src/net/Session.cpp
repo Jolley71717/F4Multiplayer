@@ -392,6 +392,13 @@ namespace Session
 				if (result.kind == FormTranslate::Result::Kind::kDropped) {
 					return;
 				}
+				// A friend whose state named a place our game lacks (a DLC or mod): somewhere we cannot reach, not where
+				// their last readable state was. A state of theirs we can read after this undoes it (RemotePlayers).
+				for (const auto id : result.placeless) {
+					if (id != localId) {
+						RemotePlayers::NoteUnplaced(id);
+					}
+				}
 				if (result.kind == FormTranslate::Result::Kind::kChanged) {
 					HandlePacket(result.packet);
 					return;

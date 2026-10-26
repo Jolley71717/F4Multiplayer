@@ -420,7 +420,9 @@ namespace Party
 					out += " - " + place;
 				}
 			}
-			if (a_player.state) {
+			if (a_player.unreachable) {
+				out += ", " + Text::Get("player.unreachable");  // not "loading" and not where they last were
+			} else if (a_player.state) {
 				if (auto distance = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y); !distance.empty()) {
 					out += ", " + distance;
 				}
@@ -433,6 +435,9 @@ namespace Party
 		// How far and which way a friend is ("30 m NE"), or where they are when that is elsewhere, or that they are loading.
 		std::string WhereIs(const RemotePlayers::Info& a_player)
 		{
+			if (a_player.unreachable) {
+				return Text::Get("player.unreachable");
+			}
 			if (!a_player.state) {
 				return Text::Get("player.loading");
 			}
@@ -1001,6 +1006,12 @@ namespace Party
 			Hud::Notify(Text::Get(reason));
 			return;
 		}
+		// In a DLC or mod our game does not have: their last state is where they were, not where they are.
+		if (target->unreachable) {
+			REX::INFO("Party: can't teleport to player {}: they are in a place our game does not have", target->id);
+			Hud::Notify(Text::Format("party.cant_teleport_unreachable", { { "player", target->name } }));
+			return;
+		}
 		if (!target->state) {
 			REX::INFO("Party: can't teleport to player {}: no position from them yet", target->id);
 			Hud::Notify(Text::Format("party.cant_find", { { "player", target->name } }));
@@ -1134,6 +1145,9 @@ namespace Party
 		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld);
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
+		}
+		for (const auto& info : RemotePlayers::List()) {
+			out += info.unreachable ? std::format(" [friend {} unreachable]", info.id) : info.state ? std::format(" [friend {} cell={:08X} ws={:08X}]", info.id, info.state->cell, info.state->worldspace) : std::format(" [friend {} no state]", info.id);
 		}
 		out += std::format(" pings: sent={} received={} tooSoon={}", pingsSent, pingsReceived, pingLimit.Refused());
 		for (const auto& [pinger, mark] : pings.Marks()) {

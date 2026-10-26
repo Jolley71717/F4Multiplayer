@@ -42,6 +42,9 @@ namespace FormTranslate
 		std::uint32_t              entries = 0;  // list entries left out (and container changes emptied)
 		std::uint32_t              fields = 0;   // details set to none
 		std::vector<std::uint32_t> unmapped;     // the IDs that had none, in the numbering they came in (the first few)
+		// The players whose state was left out of a PlayerStates because the cell or worldspace it names has no ID on this
+		// side: they are somewhere this game lacks, which is not the same as their states not coming (RemotePlayers).
+		std::vector<std::uint32_t> placeless;
 	};
 
 	inline constexpr std::size_t MAX_UNMAPPED_KEPT = 8;
@@ -348,7 +351,13 @@ namespace FormTranslate
 			break;
 		case MessageType::kPlayerStates:
 			Apply<PlayerStates>(a_packet, ctx, DecodePlayerStates, [&](PlayerStates& m) {
-				ctx.Entries(m.players, [&](RemoteState& a_entry) { return ctx.Place(a_entry.state.cell, a_entry.state.worldspace); });
+				ctx.Entries(m.players, [&](RemoteState& a_entry) {
+					if (ctx.Place(a_entry.state.cell, a_entry.state.worldspace)) {
+						return true;
+					}
+					ctx.out.placeless.push_back(a_entry.playerId);
+					return false;
+				});
 				return true;
 			}, plain);
 			break;
