@@ -156,6 +156,35 @@ TEST("gait: walking stays a walk, at its own pace, and a sprint plays the run no
 	CHECK(Gait::Playback(10.0f, Gait::WALK_CLIP) == 0.5f);
 }
 
+TEST("gait: a run that sets off after a stop plays its clip at the run's pace at once, not at the slowest rate")
+{
+	// Standing: the smoothed speed sits at 0 whichever way it is seeded.
+	float standing = 0.0f;
+	for (int i = 0; i < 40; ++i) {
+		standing = Gait::Smoothed(standing, 0.0f, 0.062f);
+	}
+	// The first frame of the run, and the next ones.
+	float speed = Gait::Smoothed(standing, 373.0f, 0.062f);
+	CHECK(Gait::Playback(speed, Gait::RUN_CLIP) > 0.99f);
+	speed = Gait::Smoothed(speed, 373.0f, 0.062f);
+	CHECK(Gait::Playback(speed, Gait::RUN_CLIP) > 0.99f);
+	// Once moving, a swing is still smoothed, not followed.
+	CHECK(Gait::Smoothed(373.0f, 88.0f, 0.062f) > 300.0f);
+}
+
+TEST("gait: a friend running while the graph refuses the start keeps swinging speeds smoothed")
+{
+	// Seeded once from the first reading, then every swing is averaged, whatever the graph took.
+	constexpr float live[] = { 623.0f, 145.0f, 747.0f, 177.0f, 425.0f, 200.0f, 88.0f, 378.0f };
+	float           speed = Gait::Smoothed(0.0f, live[0], 0.062f);
+	CHECK(speed == live[0]);
+	for (int i = 1; i < 80; ++i) {
+		speed = Gait::Smoothed(speed, live[i % 8], 0.062f);
+		CHECK(speed > 150.0f);
+		CHECK(speed < 650.0f);
+	}
+}
+
 TEST("gait: a slow friend's speeds, which swing from frame to frame, show one steady run")
 {
 	// What the host's game read for a 16 fps joiner running, live: 350 on average.

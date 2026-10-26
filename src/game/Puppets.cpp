@@ -367,7 +367,7 @@ namespace Puppets
 			// variables go first, so a moveStart below enters the right gait.
 			const bool  humanoid = kind.family == MirrorGait::Family::kPerson;
 			const float seconds = a_puppet.gaitAt == std::chrono::steady_clock::time_point{} ? 0.0f : std::chrono::duration<float>(now - a_puppet.gaitAt).count();
-			const float gaitSpeed = Gait::Smooth(a_puppet.gaitSpeed, motion.speed, seconds);
+			const float gaitSpeed = Gait::Smoothed(a_puppet.gaitSpeed, motion.speed, seconds);
 			const auto  person = MirrorGait::Person(own, motion.gait, motion.gaitRate, (motion.flags & Protocol::kWeaponDrawn) != 0, gaitSpeed, a_puppet.gait, motion.moveMode);
 			const auto  gait = humanoid ? person.gait : a_puppet.gait;
 			if (humanoid) {
