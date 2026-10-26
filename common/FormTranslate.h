@@ -574,6 +574,44 @@ namespace FormTranslate
 		case MessageType::kWorldState:
 			Apply<WorldState>(a_packet, ctx, DecodeWorldState, [&](WorldState& m) { return detail::MapWorldState(ctx, m); }, plain);
 			break;
+		case MessageType::kReportStorage:
+		case MessageType::kStorageContents:
+			// The container, or not at all; an item the other side lacks is left out of the listing (the viewer can't hold it,
+			// so can't take it).
+			Apply<StorageListing>(a_packet, ctx, DecodeStorageListing, [&](StorageListing& m) {
+				if (!ctx.Key(m.container)) {
+					return false;
+				}
+				ctx.Entries(m.stacks, [&](StorageStack& a_stack) { return ctx.Key(a_stack.item); });
+				return true;
+			}, typed);
+			break;
+		case MessageType::kViewStorage:
+			Apply<StorageView>(a_packet, ctx, DecodeStorageView, [&](StorageView& m) { return ctx.Key(m.container); }, plain);
+			break;
+		case MessageType::kStorageOwners:
+			Apply<StorageOwners>(a_packet, ctx, DecodeStorageOwners, [&](StorageOwners& m) {
+				ctx.Entries(m.entries, [&](StorageOwner& a_entry) { return ctx.Key(a_entry.container); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kStorageRefused:
+			// Our own move, so both are ours; the item 0 of a closed view stays 0.
+			Apply<StorageRefusal>(a_packet, ctx, DecodeStorageRefusal, [&](StorageRefusal& m) { return ctx.Key(m.container) && ctx.Key(m.item); }, plain);
+			break;
+		case MessageType::kReportStorageShort:
+			break;  // a change's number and a count
+		case MessageType::kStorageSettle:
+			// Our numbered moves (numbers), and the moves of ours the session never numbered: one whose item the session can't
+			// name is left out (it never went out in the first place: Storage::Unsent undid it).
+			Apply<StorageSettle>(a_packet, ctx, DecodeStorageSettle, [&](StorageSettle& m) {
+				ctx.Entries(m.late, [&](ContainerChange& a_change) { return ctx.Change(a_change); });
+				return true;
+			}, plain);
+			break;
+		case MessageType::kStorageCaughtUp:
+		case MessageType::kStorageReversals:
+			break;  // counts and numbers
 		}
 		return out;
 	}

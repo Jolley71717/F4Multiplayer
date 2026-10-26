@@ -29,6 +29,7 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(!rules.downedCrawl);
 	CHECK(rules.realTimeVats);
 	CHECK(!rules.shareGuestBuilds);  // a guest's earlier building stays in their own game
+	CHECK(!rules.sharedStorage);     // each game keeps its own copy of storage, as in 0.9.2
 }
 
 TEST("session rules: crawling while down is off by default, and the host's bDownedCrawl turns it on for the downed rules")
@@ -56,6 +57,7 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.reviveOutOfCombat = true;
 	settings.realTimeVats = false;
 	settings.shareGuestBuilds = true;
+	settings.sharedStorage = true;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
 	CHECK(rules.bleedOutSeconds == 120);
@@ -67,6 +69,8 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	CHECK(rules.reviveOutsideCombat);
 	CHECK(!rules.realTimeVats);
 	CHECK(rules.shareGuestBuilds);
+	CHECK(rules.sharedStorage);
+	CHECK(HostRules::Describe(rules).find("sharedStorage=true") != std::string::npos);
 
 	settings.bleedOutSeconds = 1;
 	settings.reviveHealth = 400;

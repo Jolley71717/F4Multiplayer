@@ -9,6 +9,7 @@
 #include "Protocol.h"
 #include "Redact.h"
 #include "SessionFile.h"
+#include "StorageBook.h"
 #include "TokenBucket.h"
 #include "WorkshopStore.h"
 
@@ -19,6 +20,7 @@
 #include <format>
 #include <map>
 #include <random>
+#include <set>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -115,6 +117,16 @@ namespace
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
+	// Shared storage (StorageBook.h). A friend's moves at storage another game keeps have their own budget, ahead of
+	// anything the book is asked or answers: a burst of a Take All and a Store All of the fullest container (each move
+	// dropped would be refused, and undone in their game), then the event budget's rate. Its refusals have one of the same
+	// size (past it a move gets no answer: their game keeps it on its way, and sends it again as a late move when it next
+	// settles, after a load or a rejoin). The contents a view is
+	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed.
+	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
+	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
+	constexpr double      STORAGE_VIEW_BURST = 16.0;
+	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -210,6 +222,9 @@ namespace
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
+		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
+		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
+		TokenBucket       storageViews{ STORAGE_VIEW_BURST, STORAGE_VIEWS_PER_SECOND };     // contents sent to a view
 		Clock::time_point spawnsLogged{};
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
@@ -240,6 +255,11 @@ namespace
 		bool                       worldStateOwed = false;
 		std::uint32_t              owedFrom = 0;
 		bool                       workshopOwed = false;  // a load's settlements, sent with the owed world state
+		// Shared storage: how many world states they asked for on this connection (the hello's first), and whether their
+		// game has settled its storage moves since the last (Protocol::StorageSettle). Until it has, their storage views are
+		// answered closed and their moves at storage another game keeps refused.
+		std::uint32_t              worldAsked = 0;
+		bool                       storageSettled = true;
 		// A hello that came when their budget had no world state for it (a game rejoining over and over):
 		// handled when it refills, so each hello's welcome (who runs which NPC, what's built) is paid for too.
 		std::vector<std::uint8_t>  waitingHello;
@@ -251,6 +271,10 @@ namespace
 		Clock::time_point          loadOrderSent{};  // when the session's load order last went to them (LOAD_ORDER_INTERVAL)
 		std::optional<std::string> pendingName;   // cleaned; waits for RENAME_INTERVAL to pass (flushRename)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
+		std::vector<std::string>   plugins;        // their game's plugins, from their hello: whether it can hold an item put in storage it keeps
+		// Their plugins against the session's table (sessionTableVersion), made once for storage they keep (handleContainer).
+		std::optional<FormIds::Mapper> storageMapper;
+		std::uint64_t              storageMapperFor = 0;
 		// Who they are, for a ban (BanList): the transport's name for them (a Steam ID; 0 over UDP), and the identity
 		// their game said hello with.
 		std::uint64_t              transportId = 0;
@@ -363,6 +387,7 @@ void Server::Run()
 	// The plugins that number every form ID the session holds and relays (Protocol::PluginTable, common/FormIds.h): the
 	// saved session's, or the first player's load order, with every later joiner's other plugins added after it.
 	std::vector<std::string>                  sessionTable;
+	std::uint64_t                             sessionTableVersion = 0;  // moves on with every change to it
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
 	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
@@ -436,6 +461,12 @@ void Server::Run()
 	// session: a drop lies in nobody's save but the session file.
 	DropStore                                             drops;
 	bool                                                  dropsFullLogged = false;
+	// Shared storage (Options::rules.sharedStorage): who keeps each home's or settlement's container, and what it holds
+	// (common/StorageBook.h). The owners are saved with the session; what they hold is listed again by the host's game.
+	StorageBook::Book                                     storage;
+	std::size_t                                           storageRefused = 0;  // friends' moves at storage refused this run (for the log)
+	std::size_t                                           storageUnanswered = 0;  // of those, past the refusals' budget: not answered (their game undoes them in time)
+	std::size_t                                           storageUndone = 0;  // friends' moves the true copy undid or did again for their loaded worlds (for the log)
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -498,6 +529,7 @@ void Server::Run()
 		if (const auto saved = SessionFile::Recover(sessionPath, [&](const std::string& a_line) { log("server: " + a_line); })) {
 			sessionContentHash = saved->contentHash;
 			sessionTable = saved->plugins;
+			++sessionTableVersion;
 			sessionId = saved->sessionId;
 			nextId = (std::max)(nextId, saved->nextId);
 			for (const auto& [identity, id] : saved->identities) {
@@ -538,6 +570,16 @@ void Server::Run()
 			}
 			for (const auto& drop : saved->drops) {
 				drops.Restore(drop);
+			}
+			// Kept whatever the rule: a run with it off leaves the book alone (every game keeps its own copy, and nothing asks
+			// the book) and saves it again, so turning it on later finds each container's keeper and the moves since its claim
+			// as they were. Forgotten, the next listing would be a first claim, and its take-back (StorageBook::BeforeClaim)
+			// would take out of the host's chest everything friends put in it while the host kept it.
+			for (const auto& owner : saved->storageOwners) {
+				storage.Restore(owner);  // closed to friends until the host's game lists it again
+			}
+			for (const auto& reversal : saved->storageReversals) {
+				storage.Restore(reversal, containerChanges.size());  // none undone twice after a restart
 			}
 			for (const auto& destruction : saved->destructions) {
 				destructions[destruction.refId] = destruction;
@@ -591,6 +633,8 @@ void Server::Run()
 		}
 		workshop.ForEach([&](const WorkshopStore::Key&, const Protocol::WorkshopItem& a_item) { snapshot.workshopItems.push_back(a_item); });
 		snapshot.drops = drops.All();
+		snapshot.storageOwners = storage.Owners();
+		snapshot.storageReversals = storage.Reversals();
 		for (const auto& [id, destruction] : destructions) {
 			snapshot.destructions.push_back(destruction);
 		}
@@ -629,6 +673,7 @@ void Server::Run()
 		npcIdentities.clear();
 		workshop.Clear();
 		drops.Clear();
+		storage.Clear();
 		questStages.clear();
 		questStageKeys.clear();
 		worldTime.reset();
@@ -643,6 +688,7 @@ void Server::Run()
 		}
 		sessionId = NewSessionId();
 		sessionTable.clear();  // the next arrival's load order numbers the new session
+		++sessionTableVersion;
 		touched();
 	};
 
@@ -924,6 +970,14 @@ void Server::Run()
 	// A player gets the world state they need (on joining, after loading a save) now if their budget
 	// allows, else when it refills (the tick sends it): owed, never dropped, or their world would miss
 	// what happened. Asking again while it is owed only moves where it starts.
+	// After each world state, with shared storage on: which of their requests it answered, so their game settles its
+	// storage moves against the last (Protocol::StorageCaughtUp).
+	const auto sendCaughtUp = [&](const Player& a_player) {
+		if (options.rules.sharedStorage) {
+			send(a_player.key, Protocol::Encode(Protocol::StorageCaughtUp{ a_player.worldAsked }), true);
+		}
+	};
+
 	const auto giveWorldState = [&](Player& a_player, std::uint32_t a_containerFrom) {
 		if (a_player.worldStateOwed) {
 			a_player.owedFrom = (std::min)(a_player.owedFrom, a_containerFrom);
@@ -931,6 +985,7 @@ void Server::Run()
 		}
 		if (allowWorldState(a_player)) {
 			sendWorldState(a_player.key, a_containerFrom);
+			sendCaughtUp(a_player);
 			a_player.worldStale = false;
 			return;
 		}
@@ -1000,6 +1055,38 @@ void Server::Run()
 		sendOwners(released, 0);
 	};
 
+	// Shared storage (common/StorageBook.h): friends whose view of a container closed (its keeper's world reloaded, or they
+	// left) are told so, and their game closes its menu.
+	const auto tellViewsClosed = [&](const std::vector<StorageBook::Closed>& a_closed) {
+		for (const auto& closed : a_closed) {
+			for (const auto& [key, other] : players) {
+				if (other.welcomed && other.id == closed.viewer) {
+					send(key, Protocol::Encode(Protocol::StorageRefusal{ closed.container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
+				}
+			}
+		}
+	};
+
+	// A player's own views of storage others keep close (their world loaded: it settles before they view again).
+	const auto closeOwnViews = [&](const Player& a_player) {
+		for (const auto container : storage.CloseViews(a_player.id)) {
+			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
+		}
+	};
+
+	// Whose game keeps storage containers, in packets. a_to = 0: everyone.
+	const auto sendStorageOwners = [&](const std::vector<Protocol::StorageOwner>& a_owners, ConnectionKey a_to) {
+		for (std::size_t i = 0; i < a_owners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
+			const auto end = (std::min)(a_owners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
+			const auto packet = Protocol::Encode(Protocol::StorageOwners{ { a_owners.begin() + i, a_owners.begin() + end } });
+			if (a_to) {
+				send(a_to, packet, true);
+			} else {
+				broadcast(packet, true, 0);
+			}
+		}
+	};
+
 	// The player is gone: the others are told, and the NPCs they ran are free for someone else.
 	const auto leave = [&](const Player& a_player) {
 		if (a_player.welcomed) {
@@ -1013,6 +1100,8 @@ void Server::Run()
 		// Offers they never confirmed go: their game may still have those items (common/DropStore.h).
 		drops.DropOffers(a_player.id);
 		objectMovers.Leave(a_player.id);
+		// They view no storage now, and what their game keeps closes to friends until it lists it again.
+		tellViewsClosed(storage.Left(a_player.id));
 	};
 
 	// a_again: a hello on a connection already in the session (their game restarted; see welcome).
@@ -1164,6 +1253,7 @@ void Server::Run()
 		// numbered by it. Then the newcomer's, before the welcome. Their hello's one form ID, sent before they knew
 		// the table, is translated here.
 		if (const auto added = FormIds::Extend(sessionTable, hello->plugins); added != 0) {
+			++sessionTableVersion;
 			touched();
 			log(std::format("server: the session's plugin table has {} plugins ({} new)", FormIds::Table::Of(sessionTable).Size(), added));
 			if (welcomedCount() != 0) {
@@ -1178,10 +1268,22 @@ void Server::Run()
 		}
 		a_player.welcomed = true;
 		a_player.local = local;
+		a_player.plugins = hello->plugins;
+		a_player.storageMapper.reset();  // made again for these plugins
 		a_player.dropListAt.reset();
 		a_player.helloId = hello->identity;
 		a_player.worldAskedAt = Clock::now();
+		// Their game's world is its save's now: what it keeps is closed to friends until it lists it again, and what it does
+		// at storage others keep waits for its settle (handleStorageSettle).
+		tellViewsClosed(storage.Stale(a_player.id));
+		closeOwnViews(a_player);
+		a_player.worldAsked = 1;
+		a_player.storageSettled = !options.rules.sharedStorage;
 		send(a_player.key, Protocol::Encode(Protocol::Welcome{ a_player.id, sessionId, options.friendlyFire, options.sharedStory, options.rules.Clamped() }), true);
+		// Whose game keeps each storage container, ahead of the world state: their game judges its changes there by it.
+		if (options.rules.sharedStorage) {
+			sendStorageOwners(storage.Owners(), a_player.key);
+		}
 		giveWorldState(a_player, hello->world.sessionId == sessionId ? hello->world.containerFrom : 0);
 
 		for (auto& [key, other] : players) {
@@ -1490,12 +1592,86 @@ void Server::Run()
 
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
 	// which of them its world contains (see Protocol::WorldRequest).
-	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		if (!allowEvent(a_player)) {
+	// A player's container change, numbered (and sent to every game) if it may be. a_late: a move at storage another game
+	// keeps that their game made before its connection went and the session never numbered, sent again with a settle
+	// (StorageBook::Book::Check's a_late).
+	const auto takeContainerChange = [&](Player& a_player, const std::optional<Protocol::ContainerChange>& change, bool a_late) {
+		// With the rule off the book is only kept for a later run: no container has a keeper.
+		const auto keeper = options.rules.sharedStorage && change && Protocol::IsValid(*change) ? storage.KeeperOf(change->container) : std::nullopt;
+		const bool atFriends = keeper && *keeper != a_player.id;
+		// The budget first, before the book is asked or anything answered: a friend's moves at storage another game keeps
+		// have their own (STORAGE_MOVE_BURST), everything else the event budget.
+		const auto now = Clock::now();
+		const bool allowed = atFriends || a_late ? budgetOf(a_player).storageMoves.Take(now) : allowEvent(a_player);
+		if (!change || !Protocol::IsValid(*change)) {
 			return;
 		}
-		const auto change = Protocol::DecodeContainerChange(a_data);
-		if (!change || !Protocol::IsValid(*change) || containerChanges.size() >= maxWorldEntries) {
+		// A friend's move at storage another game keeps (common/StorageBook.h) goes through only if the book can check it.
+		// Whatever doesn't go through is refused to their game, which undoes it: their item left their inventory (or came
+		// into it) already, and a move dropped without a word would lose it, or dupe it. Past the refusals' own budget a
+		// move gets no answer at all: their game keeps it on its way and sends it again late at its next settle.
+		const auto refuse = [&](Protocol::StorageReason a_reason) {
+			if (!budgetOf(a_player).storageRefusals.Take(now)) {
+				++storageUnanswered;
+				return;
+			}
+			++storageRefused;
+			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ change->container, change->item, change->count, Protocol::STORAGE_NOT_NUMBERED, a_reason }), true);
+		};
+		if (!allowed) {
+			if (atFriends || a_late) {
+				refuse(Protocol::StorageReason::kCantHold);
+			}
+			return;
+		}
+		if (a_late && !atFriends) {
+			refuse(Protocol::StorageReason::kClosed);  // a late move is only ever one at storage another game keeps
+			return;
+		}
+		// Their game hasn't settled its moves since their world last loaded (Protocol::StorageSettle): nothing it does at
+		// storage another game keeps goes through until it has, so their moves the true copy undoes are still there to undo.
+		if (atFriends && !a_late && !a_player.storageSettled) {
+			refuse(Protocol::StorageReason::kClosed);
+			return;
+		}
+		const auto verdict = !atFriends ? (keeper ? StorageBook::Verdict::kKeeper : StorageBook::Verdict::kNotStorage) :
+		                                  storage.Check(a_player.id, *change, [&](std::uint32_t a_keeper, std::uint32_t a_item) {
+			if ((a_item >> 24) == 0xFF) {
+				return false;  // made in their game alone: no other has it
+			}
+			const auto holder = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == a_keeper; });
+			if (holder == players.end() || holder->second.plugins.empty() || sessionTable.empty()) {
+				return true;
+			}
+			// Their game's numbering against the session's, made once (it changes only as the session's table grows).
+			auto& player = holder->second;
+			if (!player.storageMapper || player.storageMapperFor != sessionTableVersion) {
+				player.storageMapper.emplace(player.plugins, sessionTable);
+				player.storageMapperFor = sessionTableVersion;
+			}
+			return player.storageMapper->ToLocal(a_item).has_value();
+		}, a_late);
+		const bool checked = verdict == StorageBook::Verdict::kAccept;
+		switch (verdict) {
+		case StorageBook::Verdict::kClosed:
+			refuse(Protocol::StorageReason::kClosed);
+			return;
+		case StorageBook::Verdict::kNotViewing:
+			refuse(Protocol::StorageReason::kNotViewing);
+			return;
+		case StorageBook::Verdict::kNotHeld:
+			refuse(Protocol::StorageReason::kNotHeld);
+			return;
+		case StorageBook::Verdict::kCantHold:
+			refuse(Protocol::StorageReason::kCantHold);
+			return;
+		default:
+			break;
+		}
+		if (!allowed || containerChanges.size() >= maxWorldEntries) {
+			if (checked) {
+				refuse(Protocol::StorageReason::kCantHold);
+			}
 			return;
 		}
 		// Their share of the session's table, by player ID (saved with the session) and by budget (this run).
@@ -1504,15 +1680,25 @@ void Server::Run()
 			if (!std::exchange(budgetOf(a_player).shareLogged[kContainers], true)) {
 				log(std::format("server: player {} has made {} container changes this session, their share; no more of theirs are kept", a_player.id, containersAuthored[a_player.id]));
 			}
+			if (checked) {
+				refuse(Protocol::StorageReason::kCantHold);
+			}
 			return;
 		}
 		if (!withinShare(a_player, kContainers)) {
+			if (checked) {
+				refuse(Protocol::StorageReason::kCantHold);
+			}
 			return;
 		}
 		++containersAuthored[a_player.id];
 		++budgetOf(a_player).added[kContainers];
 		const auto index = static_cast<std::uint32_t>(containerChanges.size());
 		containerChanges.push_back({ index, a_player.id, *change });
+		if (!storage.Numbered(containerChanges.back())) {
+			// The keeper's own take of what a friend's take, numbered first, had: its game finds the friend's short.
+			log(std::format("server: storage {:08X} held less of {:08X} than player {} took", change->container, change->item, a_player.id));
+		}
 		noteFill(kContainers, containerChanges.size());
 		touched();
 		// Not to a player owed the world state: it carries this change, in order after the ones before it.
@@ -1524,6 +1710,246 @@ void Server::Run()
 			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
 				send(key, packet, true);
 			}
+		}
+	};
+
+	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		takeContainerChange(a_player, a_player.welcomed ? Protocol::DecodeContainerChange(a_data) : std::nullopt, false);
+	};
+
+	// Shared storage (common/StorageBook.h). The host's game lists what one of its storage containers holds, and so claims
+	// it; any other game's listing is nobody's truth and is ignored. The friends viewing it see it as it is now.
+	bool storageFullLogged = false;
+	const auto handleReportStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto listing = Protocol::DecodeStorageListing(a_data);
+		if (!listing) {
+			return;
+		}
+		bool changed = false;
+		const auto listed = storage.List(a_player.id, a_player.local, *listing, containerChanges, &changed);
+		const bool claimed = listed == StorageBook::Listed::kClaimed;
+		switch (listed) {
+		case StorageBook::Listed::kNotHost:
+			return;
+		case StorageBook::Listed::kFull:
+			if (!std::exchange(storageFullLogged, true)) {
+				log(std::format("server: {} storage containers are shared, the most there may be; others stay each player's own", storage.Size()));
+			}
+			return;
+		case StorageBook::Listed::kClaimed:
+		case StorageBook::Listed::kTaken:
+			break;
+		}
+		if (changed) {
+			touched();
+			sendStorageOwners({ { listing->container, a_player.id, storage.Since(listing->container) } }, 0);
+		}
+		if (claimed) {
+			// What friends put in it before (ordinary loot then) comes back out of the true copy, after the games know who keeps
+			// it (so theirs skip it) and before anyone views it: those items are in their own copies, or back in a world they
+			// loaded, already (StorageBook::BeforeClaim). Numbered as changes by nobody, counted against the friend who put most.
+			std::size_t unput = 0;
+			for (const auto& [change, player] : storage.BeforeClaim(listing->container, containerChanges)) {
+				if (containerChanges.size() >= maxWorldEntries) {
+					break;
+				}
+				++containersAuthored[player];
+				const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
+				containerChanges.push_back({ numbered, 0, change });
+				storage.Numbered(containerChanges.back());
+				noteFill(kContainers, containerChanges.size());
+				touched();
+				unput += static_cast<std::size_t>(-static_cast<std::int64_t>(change.count));
+				const auto packet = Protocol::Encode(containerChanges.back());
+				for (const auto& [key, other] : players) {
+					if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+						send(key, packet, true);
+					}
+				}
+			}
+			if (unput != 0) {
+				log(std::format("server: storage {:08X} claimed: {} items friends put in it before go back out of the host's copy", listing->container, unput));
+			}
+		}
+		const auto viewers = storage.Viewers(listing->container);
+		if (!viewers.empty()) {
+			const auto packet = Protocol::Encode(storage.ContentsOf(listing->container, static_cast<std::uint32_t>(containerChanges.size())), Protocol::MessageType::kStorageContents);
+			for (const auto& [key, other] : players) {
+				if (other.welcomed && std::ranges::contains(viewers, other.id)) {
+					send(key, packet, true);
+				}
+			}
+		}
+	};
+
+	// A friend opened (or closed) their copy of storage another game keeps: what it holds, to show, or that it is closed.
+	const auto handleViewStorage = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto view = Protocol::DecodeStorageView(a_data);
+		if (!view) {
+			return;
+		}
+		if (!view->open) {
+			storage.Close(a_player.id, view->container);
+			return;
+		}
+		// Contents are up to ~8 KB: a few a second at most (their game asks again only once an answer has come). One past
+		// that is answered closed, as their game can't be left waiting with its menu open.
+		if (!budgetOf(a_player).storageViews.Take(Clock::now())) {
+			storage.Close(a_player.id, view->container);
+			if (budgetOf(a_player).storageRefusals.Take(Clock::now())) {
+				send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ view->container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
+			}
+			return;
+		}
+		// Their game hasn't settled its moves since their world last loaded: no view until it has (see takeContainerChange).
+		const auto shown = a_player.storageSettled ? storage.Open(a_player.id, view->container, static_cast<std::uint32_t>(containerChanges.size())) :
+		                                             StorageBook::Viewed{ storage.KeeperOf(view->container) ? StorageBook::Viewed::Kind::kClosed : StorageBook::Viewed::Kind::kNotStorage };
+		switch (shown.kind) {
+		case StorageBook::Viewed::Kind::kShown:
+			send(a_player.key, Protocol::Encode(shown.contents, Protocol::MessageType::kStorageContents), true);
+			break;
+		case StorageBook::Viewed::Kind::kClosed:
+		case StorageBook::Viewed::Kind::kNotStorage:
+			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ view->container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
+			break;
+		case StorageBook::Viewed::Kind::kOwn:
+			break;
+		}
+	};
+
+	// The keeper's game applied a friend's numbered take and its container held less: the friend's game gives back what
+	// was missing (its player has an item the session's storage never had).
+	const auto handleStorageShort = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!options.rules.sharedStorage || !allowEvent(a_player)) {
+			return;
+		}
+		const auto report = Protocol::DecodeStorageShort(a_data);
+		const auto refusal = report ? storage.Short(a_player.id, *report, containerChanges) : std::nullopt;
+		if (!refusal) {
+			return;
+		}
+		if (refusal->first == 0) {
+			log(std::format("server: storage {:08X} held {} fewer of {:08X} than given up for change #{}", refusal->second.container, report->missing, refusal->second.item,
+				report->index));
+			return;
+		}
+		// The friend's change as it was in the end: a catch-up (a load, a rejoin) brings the take of what the container had,
+		// so a game that applies it again gives no more than that, and the true copy undoing it (a settle) puts back only
+		// that. A change by nobody stays as numbered: no game counts it as its own.
+		containerChanges[report->index].change.count += report->missing;
+		touched();
+		const auto taker = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == refusal->first; });
+		if (taker == players.end()) {
+			log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); they are away, so they keep it", refusal->first,
+				-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
+			return;
+		}
+		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
+			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
+		send(taker->first, Protocol::Encode(refusal->second), true);
+	};
+
+	// A friend's game settles its moves at storage another game keeps, once the world state a load or a rejoin asked for
+	// has come (Protocol::StorageSettle). The true copy is put right, never their inventory (a player can always move an
+	// item out of their own inventory first, never out of the host's container without the server): each of their
+	// numbered moves their world lacks is undone there, and each undone before that their world has after all is done
+	// again, as changes by nobody (player 0) that every game applies as another's. What goes into the true copy goes
+	// first, so what comes out is held back only by what others took meanwhile. Their moves the session never numbered
+	// (lost with the connection) go through late. Until it comes, their views and moves there are refused.
+	const auto handleStorageSettle = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		if (!a_player.welcomed || !options.rules.sharedStorage || a_player.storageSettled || a_player.worldStateOwed) {
+			return;
+		}
+		const auto settle = Protocol::DecodeStorageSettle(a_data);
+		if (!settle || settle->asked != a_player.worldAsked) {
+			return;  // a marker for a world state before their last request: the settle for the last comes after it
+		}
+		const auto to = (std::min<std::uint32_t>)(settle->next, static_cast<std::uint32_t>(containerChanges.size()));
+		const auto from = (std::min)(settle->lacksFrom, to);
+		std::set<std::uint32_t> lacking;
+		for (const auto index : settle->lacking) {
+			if (index >= from && index < to) {
+				lacking.insert(index);
+			}
+		}
+		std::vector<std::pair<std::uint32_t, bool>> work;  // (index, their world has it)
+		for (const auto index : lacking) {
+			work.push_back({ index, false });
+		}
+		for (const auto index : storage.ReversedOf(a_player.id, from, to)) {
+			if (!lacking.contains(index)) {
+				work.push_back({ index, true });
+			}
+		}
+		// Into the true copy first (a take undone, a put done again), then out of it.
+		const auto adds = [&](const std::pair<std::uint32_t, bool>& a_work) { return (containerChanges[a_work.first].change.count < 0) != a_work.second; };
+		std::ranges::stable_partition(work, adds);
+		std::size_t undone = 0;
+		std::size_t redone = 0;
+		// Each change is counted against the settler's own share of the log, like their moves: undoing and doing again
+		// their moves between two saves can't fill the table for everyone. All of it goes, or none: a settle cut part way
+		// could put back a take's items and leave the matching put's in, in two worlds at once. Past their share (or a full
+		// log) they stay unsettled (no view, no move at storage others keep) until a later settle, with room, puts it right.
+		std::size_t planned = 0;
+		for (const auto& [index, has] : work) {
+			planned += storage.Settle(a_player.id, index, has, containerChanges, false) ? 1 : 0;
+		}
+		const bool shared = a_player.local || planned == 0 ||
+		                    (containersAuthored[a_player.id] + planned <= options.maxContainerChangesPerPlayer &&
+								budgetOf(a_player).added[kContainers] + planned <= options.maxContainerChangesPerPlayer);
+		const bool cut = !shared || containerChanges.size() + planned > maxWorldEntries;
+		if (cut) {
+			work.clear();
+		}
+		for (const auto& [index, has] : work) {
+			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
+			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
+			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
+			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
+					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			}
+			if (!change) {
+				continue;
+			}
+			if (!a_player.local) {
+				++containersAuthored[a_player.id];
+				++budgetOf(a_player).added[kContainers];
+			}
+			const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
+			containerChanges.push_back({ numbered, 0, *change });
+			storage.Numbered(containerChanges.back());
+			noteFill(kContainers, containerChanges.size());
+			touched();
+			++(has ? redone : undone);
+			const auto packet = Protocol::Encode(containerChanges.back());
+			for (const auto& [key, other] : players) {
+				if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+					send(key, packet, true);
+				}
+			}
+		}
+		a_player.storageSettled = !cut;
+		if (cut) {
+			log(std::format("server: player {}'s storage moves can't all be put right ({} changes, past their share of the container table or a full one); "
+							"none is made, and storage others keep stays closed to them until a later settle can",
+				a_player.id, planned));
+		}
+		if (undone + redone != 0) {
+			storageUndone += undone + redone;
+			log(std::format("server: storage undid {} and did again {} of player {}'s moves for their loaded world ({} this run)", undone, redone, a_player.id, storageUndone));
+		}
+		if (!settle->late.empty()) {
+			log(std::format("server: player {}'s game sends {} storage moves the session never numbered", a_player.id, settle->late.size()));
+		}
+		for (const auto& change : settle->late) {
+			takeContainerChange(a_player, change, true);
 		}
 	};
 
@@ -2616,6 +3042,12 @@ void Server::Run()
 		}
 		a_player.worldAskedAt = Clock::now();
 		a_player.worldStale = true;
+		// What its game keeps in storage closes to friends until its loaded world lists it again (StorageBook::Stale), and
+		// what it does at storage others keep waits for its settle after this world state (handleStorageSettle).
+		tellViewsClosed(storage.Stale(a_player.id));
+		closeOwnViews(a_player);
+		++a_player.worldAsked;
+		a_player.storageSettled = !options.rules.sharedStorage;
 		// The others' games send their radiant runs going again: the loaded game knows none of them now. At most once in
 		// Options::reloadToldEvery for a player (a game asking over and over has every other game resend its runs); one asked for
 		// sooner goes when that time is up (a second load at once threw away what the first had resent).
@@ -2900,6 +3332,7 @@ void Server::Run()
 				if (a_player.welcomed) {
 					a_player.worldStale = true;  // its game restarted and has its own save's world now (see handleClaims)
 					a_player.worldAskedAt = Clock::now();
+					a_player.storageSettled = !options.rules.sharedStorage;  // and settles again once its hello is answered
 				}
 				if (a_player.waitingHello.empty()) {
 					log(std::format("server: {} says hello too often; answering when their budget refills", describe(a_player.key)));
@@ -2923,6 +3356,18 @@ void Server::Run()
 			break;
 		case MessageType::kReportContainer:
 			handleContainer(a_player, a_data);
+			break;
+		case MessageType::kReportStorage:
+			handleReportStorage(a_player, a_data);
+			break;
+		case MessageType::kViewStorage:
+			handleViewStorage(a_player, a_data);
+			break;
+		case MessageType::kReportStorageShort:
+			handleStorageShort(a_player, a_data);
+			break;
+		case MessageType::kStorageSettle:
+			handleStorageSettle(a_player, a_data);
 			break;
 		case MessageType::kReportPickup:
 			handlePickup(a_player, a_data);
@@ -3159,6 +3604,7 @@ void Server::Run()
 			if (player.welcomed && player.worldStateOwed && allowWorldState(player)) {
 				player.worldStateOwed = false;
 				sendWorldState(key, player.owedFrom);
+				sendCaughtUp(player);
 				player.worldStale = false;
 				if (std::exchange(player.workshopOwed, false)) {
 					sendWorkshop(player);

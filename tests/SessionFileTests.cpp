@@ -119,9 +119,9 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (37),
-	// and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 0xE526 } }) {
+	// Before the first file (protocol 22), the layouts of the destructibles' and shared storage's own test
+	// builds (35, 37), a layout to come (39), and nonsense.
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 39 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -148,6 +148,11 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	const auto bytes = SessionFile::Encode(MakeSnapshot());
 	std::uint16_t version = 0;
 	std::memcpy(&version, bytes.data() + 4, sizeof(version));
+	CHECK(version == SessionFile::OBJECT_PLACES);  // no shared storage: the layout an older build reads too
+	auto withOwners = MakeSnapshot();
+	withOwners.storageOwners = { { 0x00020000, 1 } };
+	const auto ownerBytes = SessionFile::Encode(withOwners);
+	std::memcpy(&version, ownerBytes.data() + 4, sizeof(version));
 	CHECK(version == SessionFile::FORMAT);
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
 	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the
@@ -496,7 +501,7 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 	auto bare = MakeSnapshot();
 	bare.workshopItems.clear();
 	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
-		if (layout == SessionFile::DESTRUCTIBLES_TEST) {
+		if (layout == SessionFile::DESTRUCTIBLES_TEST || layout == SessionFile::STORAGE_TEST) {
 			continue;  // no build reads it
 		}
 		const auto out = as(SessionFile::Encode(bare), layout);
@@ -602,4 +607,49 @@ TEST("session file: moved objects' places come back from layout 36, in the order
 	auto letGo = in;
 	letGo.objectPlaces[0].kind = Protocol::ObjectRestKind::kLetGo;
 	CHECK(!SessionFile::Decode(SessionFile::Encode(letGo)));
+}
+
+// Layout 38 adds whose game keeps each shared storage container (after a restart a friend's copy stays closed until that
+// game lists it again, and nobody else's claim takes it) and the friends' moves its true copy undid, so none is undone
+// twice. In a file of an older layout, they are damage; 37 (shared storage's test builds) isn't read at all.
+TEST("session file: storage owners and undone moves come back from layout 38, and a layout 36 file still loads without them")
+{
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+	auto in = MakeSnapshot();
+	for (std::uint32_t i = 0; i < Protocol::MAX_STORAGE_OWNERS_PER_PACKET + 5; ++i) {
+		in.storageOwners.push_back({ 0x00020000 + i, 1 + i % 2, i });  // more than one packet holds
+	}
+	for (std::uint32_t i = 0; i < Protocol::MAX_STORAGE_REVERSALS_PER_PACKET + 3; ++i) {
+		in.storageReversals.push_back({ i, 2, i % 2 ? -3 : 4 });
+	}
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->storageOwners == in.storageOwners);
+	CHECK(out->storageReversals == in.storageReversals);
+	CHECK(!SessionFile::Readable(SessionFile::STORAGE_TEST));
+	CHECK(!as(SessionFile::Encode(in), SessionFile::STORAGE_TEST));
+	SessionFile::Snapshot only;
+	only.storageOwners = { { 0x00020000, 1 } };
+	CHECK(!only.Empty());
+	SessionFile::Snapshot undone;
+	undone.storageReversals = { { 7, 2, -3 } };
+	CHECK(!undone.Empty());
+	const auto undoneOut = SessionFile::Decode(SessionFile::Encode(undone));
+	REQUIRE(undoneOut);
+	CHECK(undoneOut->storageReversals == undone.storageReversals);
+
+	CHECK(!as(SessionFile::Encode(in), SessionFile::OBJECT_PLACES));
+	auto none = MakeSnapshot();
+	const auto older = as(SessionFile::Encode(none), SessionFile::OBJECT_PLACES);
+	REQUIRE(older);
+	CHECK(older->storageOwners.empty());
+	auto nobody = in;
+	nobody.storageOwners[0].ownerId = 0;
+	CHECK(!SessionFile::Decode(SessionFile::Encode(nobody)));
+	auto unnamed = in;
+	unnamed.storageReversals[0].playerId = 0;
+	CHECK(!SessionFile::Decode(SessionFile::Encode(unnamed)));
 }

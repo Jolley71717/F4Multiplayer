@@ -31,6 +31,7 @@
 #include "NestedPump.h"
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
+#include "game/Storage.h"
 #include "game/HavokGuard.h"
 #include "game/InertShots.h"
 #include "game/TextureWait.h"
@@ -228,6 +229,10 @@ namespace
 	constexpr std::uint32_t LOOKS_RECORD = 'LOOK';
 	constexpr std::uint32_t LOOKS_VERSION = 1;
 	constexpr std::uint32_t LOOKS_MAX_LENGTH = 2 + 4 * 512;  // LooksSave::Encode: a count and at most BodyMorphs::MAX_SAVED IDs
+	constexpr std::uint32_t STORAGE_RECORD = 'STOR';
+	constexpr std::uint32_t STORAGE_VERSION = 2;  // 1 (unreleased builds): the moves alone
+	// Storage::SaveRecord: a session, a count, the moves, where its lacking moves start, a count, their numbers.
+	constexpr std::uint32_t STORAGE_MAX_LENGTH = 12 + 12 * static_cast<std::uint32_t>(StorageView::MAX_IN_FLIGHT) + 8 + 4 * static_cast<std::uint32_t>(Protocol::MAX_STORAGE_LACKING);
 
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
@@ -243,6 +248,10 @@ namespace
 		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
 		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
 			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
+		}
+		// Our moves at a friend's shared storage still unanswered, and those numbered our world lacks (Storage): settled after a load.
+		if (const auto storage = Storage::SaveRecord(); !storage.empty() && a_intfc->OpenRecord(STORAGE_RECORD, STORAGE_VERSION)) {
+			a_intfc->WriteRecordData(storage.data(), static_cast<std::uint32_t>(storage.size()));
 		}
 		// The form IDs LooksMenu may still keep a friend's looks under in this same save (LooksMenu): cleared after its load.
 		if (const auto looks = LooksMenu::SaveRecord(); !looks.empty() && a_intfc->OpenRecord(LOOKS_RECORD, LOOKS_VERSION)) {
@@ -273,6 +282,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					RadiantSync::LoadRecord(bytes);
 				}
+			} else if (type == STORAGE_RECORD && version == STORAGE_VERSION && length <= STORAGE_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					Storage::LoadRecord(bytes);
+				}
 			} else if (type == LOOKS_RECORD && version == LOOKS_VERSION && length <= LOOKS_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -289,6 +303,7 @@ namespace
 		RadiantSync::RevertRecord();
 		RemotePlayers::RevertRecord();
 		LooksMenu::RevertRecord();
+		Storage::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),

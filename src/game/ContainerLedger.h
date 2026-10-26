@@ -66,6 +66,8 @@ namespace ContainerLedger
 		[[nodiscard]] std::uint32_t Next() const { return next; }
 		// Changes waiting for an earlier one.
 		[[nodiscard]] std::size_t   Waiting() const { return ahead.size(); }
+		// We asked the server for changes (a hello's, a load's, a gap's) and no answer has come yet.
+		[[nodiscard]] bool          Asking() const { return requested.has_value(); }
 		[[nodiscard]] const Counts& Stats() const { return counts; }
 
 		// Our world has every change before a_next and nothing after (a new session, a save's record).
@@ -268,6 +270,9 @@ namespace ContainerLedger
 	{
 	public:
 		using Apply = std::function<void(const Protocol::IndexedContainerChange&)>;
+		// One of our own changes, next in order (none goes to Apply). a_lacking: our world lacks it (made before the save we
+		// loaded, or in a world we no longer have), as OwnSkipped counts.
+		using Own = std::function<void(const Protocol::IndexedContainerChange&, bool a_lacking)>;
 
 		// Our reports remembered until they come back numbered, at most. Past it the oldest is forgotten
 		// (its echo is then judged by how it came: see Deliver).
@@ -334,21 +339,22 @@ namespace ContainerLedger
 		// What our world has, without asking (for the save's record).
 		[[nodiscard]] Protocol::WorldRequest Point() const { return { session, ledger.Next() }; }
 
-		void Live(const Protocol::IndexedContainerChange& a_change, Clock::time_point a_now, const Apply& a_apply)
+		void Live(const Protocol::IndexedContainerChange& a_change, Clock::time_point a_now, const Apply& a_apply, const Own& a_own = {})
 		{
 			for (const auto& ready : ledger.Offer(a_change, false, a_now)) {
-				Deliver(ready, a_apply);
+				Deliver(ready, a_apply, a_own);
 			}
 		}
 
 		// One WorldState's container changes. Returns how many numbers the server's log lost (see
 		// Ledger::OnChunk); our count then starts again at a_firstIndex.
-		std::uint32_t CatchUp(std::uint32_t a_firstIndex, const std::vector<Protocol::IndexedContainerChange>& a_changes, Clock::time_point a_now, const Apply& a_apply)
+		std::uint32_t CatchUp(std::uint32_t a_firstIndex, const std::vector<Protocol::IndexedContainerChange>& a_changes, Clock::time_point a_now, const Apply& a_apply,
+			const Own& a_own = {})
 		{
 			const auto lost = ledger.OnChunk(a_firstIndex, a_changes.size(), a_now);
 			for (const auto& change : a_changes) {
 				for (const auto& ready : ledger.Offer(change, true, a_now)) {
-					Deliver(ready, a_apply);
+					Deliver(ready, a_apply, a_own);
 				}
 			}
 			return lost;
@@ -356,10 +362,10 @@ namespace ContainerLedger
 
 		// Whether to ask the server again now (see Ledger::Due); then send Request. A gap asked for
 		// Ledger::SKIP_AFTER times is skipped instead (Ledger::Skip): what waited behind it goes to a_apply.
-		bool Due(Clock::time_point a_now, const Apply& a_apply)
+		bool Due(Clock::time_point a_now, const Apply& a_apply, const Own& a_own = {})
 		{
 			for (const auto& ready : ledger.Skip(a_now)) {
-				Deliver(ready, a_apply);
+				Deliver(ready, a_apply, a_own);
 			}
 			return ledger.Due(a_now);
 		}
@@ -371,7 +377,7 @@ namespace ContainerLedger
 		[[nodiscard]] std::uint32_t  DupRisk() const { return dups.Count(); }
 
 	private:
-		void Deliver(const Ready& a_ready, const Apply& a_apply)
+		void Deliver(const Ready& a_ready, const Apply& a_apply, const Own& a_own)
 		{
 			const auto& change = a_ready.change;
 			if (ownIds.contains(change.playerId)) {
@@ -379,9 +385,13 @@ namespace ContainerLedger
 				// making it, and it came in a catch-up). A move made in the moments before a save it was in
 				// is counted too when its echo is late (rare: the save would have to come within a round trip).
 				const auto made = MadeIn(change.change);
-				if (made ? *made != world : a_ready.catchUp) {
+				const bool lacking = made ? *made != world : a_ready.catchUp;
+				if (lacking) {
 					++ownSkipped;
 					dups.OwnSkipped(change.change);
+				}
+				if (a_own) {
+					a_own(change, lacking);
 				}
 				return;
 			}

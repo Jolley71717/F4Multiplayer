@@ -7,6 +7,7 @@
 #include "game/OpenMenus.h"
 #include "game/Puppets.h"
 #include "game/StandInGear.h"
+#include "game/Storage.h"
 #include "game/TextureFlush.h"
 
 #include <algorithm>
@@ -1195,6 +1196,9 @@ namespace Equipment
 					++transfersClosedAtShow;
 				}
 				MainThread::Post([target, closed] { CheckTransfer(target, closed); });
+				if (!closed) {
+					Storage::OnMenuShown(target);  // a friend's storage: its true copy shown in ours
+				}
 			}
 			return result;
 		}
