@@ -68,6 +68,7 @@ namespace CopyWatch
 		float         healthRestored = 0.0f;
 		std::uint32_t copiesDied = 0;
 		std::uint32_t reportsSet = 0;
+		std::uint32_t reportsHeld = 0;  // reports that would have raised a copy just after our hits, held (Book::Heard)
 		std::vector<std::pair<std::uint32_t, float>> damageOut;  // what our hits took off copies, by session id, to send
 		std::uint32_t damageSent = 0;
 		std::uint32_t leftToOwner = 0;  // throws' blows of ours on copies, left to the NPC's own game (OwnersToDeal)
@@ -302,22 +303,40 @@ namespace CopyWatch
 		}
 	}
 
-	void HealthSet(std::uint32_t a_refId, float a_before, float a_health)
+	float HealthToSet(std::uint32_t a_refId, float a_before, float a_health)
 	{
 		// The book goes by the session's id, as Frame checks it: our copy of a friend's spawn has a form id of our game's
 		// own. Set under that, a friend's report on it was taken back the next frame as a drop with no hit of ours, and
 		// our player's next shot reported the copy's untouched health to its owner, healing the NPC there.
 		const auto wire = WireOf(a_refId);
 		if (wire == 0) {
-			return;  // one of our game's own, never shared: no copy of anyone's
+			return a_health;  // one of our game's own, never shared: no copy of anyone's
 		}
-		book.Heard(wire, a_before, a_health, Clock::now());
-		if (const auto owner = OtherOwner(wire)) {
+		const auto  owner = OtherOwner(wire);
+		const float health = book.Heard(wire, a_before, a_health, Clock::now(), owner != 0);
+		if (owner != 0) {
 			++reportsSet;
+			const bool held = book.Holds(wire);
+			if (held) {
+				++reportsHeld;
+			}
 			if (reportsLogged < 40) {
 				++reportsLogged;
-				REX::INFO("CopyWatch: a report set our copy {:08X}{} (player {}'s) to {:.1f} health (from {:.1f})", a_refId, SpawnNote(a_refId, wire), owner, a_health, a_before);
+				if (held) {
+					REX::INFO("CopyWatch: a report would raise our copy {:08X}{} (player {}'s) to {:.1f} health just after our hits on it; set to {:.1f} (from {:.1f}), the rest held",
+						a_refId, SpawnNote(a_refId, wire), owner, a_health, health, a_before);
+				} else {
+					REX::INFO("CopyWatch: a report set our copy {:08X}{} (player {}'s) to {:.1f} health (from {:.1f})", a_refId, SpawnNote(a_refId, wire), owner, health, a_before);
+				}
 			}
+		}
+		return health;
+	}
+
+	void HealthSet(std::uint32_t a_refId, float a_health)
+	{
+		if (const auto wire = WireOf(a_refId); wire != 0) {
+			book.Set(wire, a_health);
 		}
 	}
 
@@ -394,6 +413,7 @@ namespace CopyWatch
 				copiesSeen[id] = now;
 				auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 				const float health = values.GetActorValue(*info);
+				const bool  held = book.Holds(id);
 				const float give = book.Check(id, health, now);
 				// What our hits took off it, for the game that runs it (WorldSync sends it).
 				if (const float ours = book.TakeOurs(id); ours > 0.0f) {
@@ -410,6 +430,14 @@ namespace CopyWatch
 				values.RestoreActorValue(*info, give);
 				const float after = values.GetActorValue(*info);
 				book.Set(id, after);
+				if (held && !book.Holds(id)) {
+					if (reportsLogged < 40) {
+						++reportsLogged;
+						REX::INFO("CopyWatch: the report held for our copy {:08X}{} (player {}'s) stands now our hits are over: {:.1f} -> {:.1f}", actor->GetFormID(),
+							SpawnNote(actor->GetFormID(), id), NpcSync::Owner(id), health, after);
+					}
+					continue;
+				}
 				++restores;
 				healthRestored += give;
 				if (restoresLogged < 60) {
@@ -466,8 +494,8 @@ namespace CopyWatch
 
 	std::string Describe()
 	{
-		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyDeaths={}", book.Size(), hitsOnCopies,
-			allyHits, restores, healthRestored, reportsSet, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, copiesDied);
+		return std::format("copies={} copyHits={} copyAllyHits={} copyRestores={}/{:.0f} copyReports={} copyHeld={} copyDamage={}/{:.0f} copyThrows={} copyBlasts={}/{} copyDeaths={}", book.Size(),
+			hitsOnCopies, allyHits, restores, healthRestored, reportsSet, reportsHeld, damageSent, damageTotal, leftToOwner, blastsThere, blastsOurs, copiesDied);
 	}
 
 	std::vector<std::pair<std::uint32_t, float>> TakeDamage()

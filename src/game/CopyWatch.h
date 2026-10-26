@@ -39,9 +39,13 @@ namespace CopyWatch
 	// A death in our world, and what killed it (0: nothing).
 	void NoteDeath(std::uint32_t a_refId, std::uint32_t a_killer);
 
-	// Another player's report set the copy's health (WorldSync::TrySetHealth, a_refId our game's form id, a spawn copy's
-	// too): where it stands from now on.
-	void HealthSet(std::uint32_t a_refId, float a_before, float a_health);
+	// Another player's report would set the actor's health from a_before to a_health (WorldSync::TrySetHealth, a_refId our
+	// game's form id, a spawn copy's too): the health to set. On a copy, a raise that may be from before our latest hits is
+	// held (CopyHealth::Book::Heard); otherwise a_health.
+	[[nodiscard]] float HealthToSet(std::uint32_t a_refId, float a_before, float a_health);
+
+	// ... and it reads a_health once set (what the engine let it come to): where it stands from now on.
+	void HealthSet(std::uint32_t a_refId, float a_health);
 
 	// Gives copies back what something other than our hits took, and logs the hits and deaths. Every frame.
 	void Frame();

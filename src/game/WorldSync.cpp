@@ -640,15 +640,16 @@ namespace WorldSync
 			}
 			auto&       values = static_cast<RE::ActorValueOwner&>(*actor);
 			const float maximum = values.GetPermanentActorValue(*info);
-			const float target = std::clamp(a_fraction, 0.0f, 1.0f) * maximum;
 			const float before = values.GetActorValue(*info);
+			// On a copy, a raise that may be from before our latest hits is held back (CopyHealth::Book::Heard).
+			const float target = CopyWatch::HealthToSet(a_refId, before, std::clamp(a_fraction, 0.0f, 1.0f) * maximum);
 			const float delta = target - before;
 			if (delta < 0.0f) {
 				values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, delta);
 			} else if (delta > 0.0f) {
 				values.RestoreActorValue(*info, delta);
 			}
-			CopyWatch::HealthSet(a_refId, before, values.GetActorValue(*info));
+			CopyWatch::HealthSet(a_refId, values.GetActorValue(*info));
 			return true;
 		}
 

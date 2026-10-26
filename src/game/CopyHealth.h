@@ -223,6 +223,17 @@ namespace CopyHealth
 				return 0.0f;
 			}
 			auto& entry = it->second;
+			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
+			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged, nor on
+			// a fresh drop: either may be ours to send yet (a hit's event can come a frame after its damage).
+			if (entry.held && !entry.dropSince && a_health >= *entry.health - SLACK && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
+				const float held = *std::exchange(entry.held, std::nullopt);
+				entry.unacked = 0.0f;
+				if (held > a_health + SLACK) {
+					entry.dropSince.reset();
+					return held - a_health;
+				}
+			}
 			if (a_health >= *entry.health - SLACK) {
 				entry.health = a_health;
 				entry.dropSince.reset();
@@ -237,6 +248,7 @@ namespace CopyHealth
 				const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
 				entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
 				entry.ours += take;
+				entry.unacked += take;
 				*entry.health -= take;
 				if (drop - take <= SLACK) {
 					entry.health = a_health;
@@ -250,6 +262,7 @@ namespace CopyHealth
 				}
 				if (!OwnersAround(entry)) {
 					entry.ours += *entry.health - a_health;
+					entry.unacked += *entry.health - a_health;
 					entry.health = a_health;
 					entry.dropSince.reset();
 					return 0.0f;
@@ -262,21 +275,59 @@ namespace CopyHealth
 			return *entry.health - a_health;
 		}
 
-		// Another game's report sets the copy from a_before to a_health now. What a hit of ours took off it since it was last
-		// checked (the report came between the blow and the next frame) is ours all the same, not overwritten.
-		void Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now)
+		// Another game's report would set the copy from a_before to a_health now: the health to set it to. What a hit of ours
+		// took off it since it was last checked (the report came between the blow and the next frame) is ours all the same.
+		//
+		// On a copy (a_copy) a report that would raise it within OURS_GRACE of a hit of ours may be one the owner's game sent
+		// before our hits reached it: one the server passed on just before our hit's claim took the NPC over, which that game
+		// then never takes our damage off (no longer its to deal). Set, it healed our hit back, and our game, running the NPC
+		// from then on, told everyone the healed health. So such a raise is set only for what it has beyond what our hits took
+		// that may still be on its way (more than that is a real heal in the owner's game); the rest is
+		// held, and the copy goes to the report once our hits are over (Check) unless a newer report comes first, as the
+		// owner's does once it took our damage off. A report that lowers the copy is set at once.
+		float Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now, bool a_copy = true)
 		{
-			if (auto it = entries.find(a_id); it != entries.end()) {
-				auto& entry = it->second;
-				if (entry.health && entry.ourHit && a_before < *entry.health - SLACK && *entry.ourHit + OURS_GRACE >= a_now) {
-					const float drop = *entry.health - a_before;
-					const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
-					const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
-					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
-					entry.ours += take;
-				}
+			const auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				Set(a_id, a_health);
+				return a_health;
 			}
-			Set(a_id, a_health);
+			auto&      entry = it->second;
+			const bool lately = entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now;
+			if (entry.health && lately && a_before < *entry.health - SLACK) {
+				// With a blow left to the owner around, only what our hits said they took is ours (as in Check).
+				const float drop = *entry.health - a_before;
+				const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
+				const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+				entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+				entry.ours += take;
+				entry.unacked += take;
+			}
+			entry.held.reset();
+			float health = a_health;
+			if (!lately || !a_copy) {
+				entry.unacked = 0.0f;
+			} else if (a_health > a_before + SLACK) {
+				health = (std::max)(a_before, a_health - entry.unacked);
+				if (health < a_health - SLACK) {
+					entry.held = a_health;
+				}
+				// Unless it healed, no more of ours than the raise is still on its way: the rest the owner's game took. Else,
+				// under a sustained burst every report raises the copy, and what is held grows to the whole burst's damage.
+				entry.unacked = (std::min)(entry.unacked, a_health - a_before);
+			} else {
+				entry.unacked = 0.0f;
+			}
+			entry.health = health;
+			entry.dropSince.reset();
+			return health;
+		}
+
+		// Whether a report is held for the copy (Heard), to be set once our hits on it are over.
+		[[nodiscard]] bool Holds(std::uint32_t a_id) const
+		{
+			const auto it = entries.find(a_id);
+			return it != entries.end() && it->second.held.has_value();
 		}
 
 		// What hits of ours took off the copy since this was last asked (0: nothing): for the game that runs it to take off.
@@ -317,6 +368,8 @@ namespace CopyHealth
 			float                            dealt = 0.0f;     // what our hits since ourHit's grace began said they took, not yet booked
 			bool                             unknown = false;  // ... and one of them said nothing
 			bool                             figured = false;  // ... and one of them said what it took
+			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
+			std::optional<float>             held;  // a report's health not set yet (Heard)
 		};
 
 		// Our hits around the drop said nothing of what they took: all of it is ours. Not when one of them did: a hit event
