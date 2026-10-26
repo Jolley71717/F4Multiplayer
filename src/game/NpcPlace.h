@@ -39,7 +39,7 @@ namespace NpcPlace
 	enum class Why
 	{
 		kHere,          // loaded where the owner's copy is: mirrored from there, nothing to move
-		kOwnerIndoors,  // the owner's copy is in an interior (or nowhere): only one outdoors near us is brought in
+		kOwnerIndoors,  // the owner's copy is in an interior (or nowhere): only one outdoors near us, or in the interior we are in, is brought in
 		kNotNearUs,     // our player is indoors, in another world, or farther than BRING_IN_RANGE from the owner's copy
 		kCannot,        // ours is not in our game, is off, dead or deleted, or is the player
 		kBusy,          // ours is our companion, in a scene here, fighting us, talking to us or holding us: it stays with us
@@ -50,20 +50,25 @@ namespace NpcPlace
 	// Whether ours is moved to where the owner's copy stands (a_owners, from the owner's state). a_player: where our
 	// player is. a_ownerBeside: the owner's stand-in stands beside that spot (RemoteEdits::OwnerBeside).
 	//
-	// Our player stands outdoors in the owner's world, within BRING_IN_RANGE of the owner's copy, so ours is never taken
-	// from a cell our player is in with it: talking to Preston inside the museum, ours stays there. Nor is one moved that
-	// our game is using with us. Anything else outside the owner's space, loaded or not, is moved: a companion that
-	// walked here with its player from a cell we have not loaded, or a copy its own quest left in an interior.
+	// Our player stands outdoors in the owner's world, or in the interior the owner's copy is in, within BRING_IN_RANGE
+	// of the owner's copy, so ours is never taken from a cell our player is in with it: talking to Preston inside the
+	// museum, ours stays there. Nor is one moved that our game is using with us. Anything else outside the owner's
+	// space, loaded or not, is moved: a companion that walked here with its player from a cell we have not loaded, or
+	// a copy its own quest left in an interior.
 	constexpr Why Decide(const Spot& a_owners, const Ours& a_ours, const Spot& a_player, bool a_ownerBeside)
 	{
 		if (a_ours.exists && a_ours.loaded && RemoteEdits::SameSpace(a_ours.at, a_owners)) {
 			return Why::kHere;
 		}
-		if (a_owners.cell != 0 || a_owners.worldspace == 0) {
-			return Why::kOwnerIndoors;
-		}
-		if (a_player.cell != 0 || a_player.worldspace != a_owners.worldspace) {
-			return Why::kNotNearUs;
+		// Our player is in the interior the owner's copy is in: a companion that followed its player through the door.
+		const bool inItsInterior = a_owners.cell != 0 && a_player.cell == a_owners.cell;
+		if (!inItsInterior) {
+			if (a_owners.cell != 0 || a_owners.worldspace == 0) {
+				return Why::kOwnerIndoors;
+			}
+			if (a_player.cell != 0 || a_player.worldspace != a_owners.worldspace) {
+				return Why::kNotNearUs;
+			}
 		}
 		const float dx = a_owners.x - a_player.x, dy = a_owners.y - a_player.y, dz = a_owners.z - a_player.z;
 		if (!(dx * dx + dy * dy + dz * dz <= BRING_IN_RANGE * BRING_IN_RANGE)) {
