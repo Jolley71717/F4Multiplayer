@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <span>
@@ -56,7 +57,8 @@ namespace StorageBook
 
 	enum class Listed : std::uint8_t
 	{
-		kTaken,       // claimed (or listed again) by the host's game
+		kClaimed,     // claimed by the host's game for the first time (see BeforeClaim)
+		kTaken,       // listed again by the host's game (or taken over by its new ID)
 		kNotHost,     // only the host's game claims
 		kFull,        // the book has MAX_CONTAINERS and this one is new
 	};
@@ -108,12 +110,14 @@ namespace StorageBook
 			if (!a_host) {
 				return Listed::kNotHost;
 			}
+			bool claimed = false;
 			auto it = entries.find(a_listing.container);
 			if (it == entries.end()) {
 				if (entries.size() >= maxContainers) {
 					return Listed::kFull;
 				}
 				it = entries.emplace(a_listing.container, Entry{ .since = static_cast<std::uint32_t>(a_log.size()) }).first;
+				claimed = true;
 				if (a_changed) {
 					*a_changed = true;
 				}
@@ -135,7 +139,65 @@ namespace StorageBook
 					Move(entry, change.change);
 				}
 			}
-			return Listed::kTaken;
+			return claimed ? Listed::kClaimed : Listed::kTaken;
+		}
+
+		// What a_container's first claim takes back out of the true copy: the friends' moves there before it (ordinary loot,
+		// mirrored into the keeper's copy) that put more in than they took out, item by item. Those items are in the friends'
+		// own copies still (their stash there, set aside while they view the keeper's), or back in a world they loaded from
+		// before the put: either way the keeper's copy must not hold them too, or a friend who put, loaded and put again
+		// before the claim could take them all out after it. No more than everyone's moves there added (the keeper's own
+		// takes, or others', took some), nor than the listing holds. Each comes with the friend who put the most of it, whose
+		// share of the log it is counted against.
+		struct Unput
+		{
+			Protocol::ContainerChange change;
+			std::uint32_t             player = 0;
+		};
+
+		[[nodiscard]] std::vector<Unput> BeforeClaim(std::uint32_t a_container, std::span<const Protocol::IndexedContainerChange> a_log) const
+		{
+			const auto it = entries.find(a_container);
+			if (it == entries.end()) {
+				return {};
+			}
+			const auto&                                                     entry = it->second;
+			std::map<std::uint32_t, std::int64_t>                           everyone;
+			std::map<std::uint32_t, std::map<std::uint32_t, std::int64_t>> friends;  // item -> player -> what they put, net
+			const auto                                                      to = (std::min<std::size_t>)(entry.since, a_log.size());
+			for (std::size_t i = 0; i < to; ++i) {
+				const auto& change = a_log[i];
+				if (change.change.container != a_container || change.change.item == Protocol::CONTAINER_EMPTIED || change.playerId == 0) {
+					continue;
+				}
+				everyone[change.change.item] += change.change.count;
+				if (change.playerId != entry.keeper) {
+					friends[change.change.item][change.playerId] += change.change.count;
+				}
+			}
+			std::vector<Unput> out;
+			for (const auto& [item, players] : friends) {
+				std::int64_t  put = 0;
+				std::uint32_t most = 0;
+				std::int64_t  mostPut = 0;
+				for (const auto& [player, net] : players) {
+					put += net;
+					if (net > mostPut) {
+						most = player;
+						mostPut = net;
+					}
+				}
+				auto count = (std::min)(put, everyone[item]);
+				if (entry.fresh) {
+					const auto held = entry.held.find(item);
+					count = (std::min)(count, held != entry.held.end() ? held->second : std::int64_t{ 0 });
+				}
+				count = (std::min<std::int64_t>)(count, std::numeric_limits<std::int32_t>::max());
+				if (count > 0 && most != 0) {
+					out.push_back({ { a_container, item, static_cast<std::int32_t>(-count) }, most });
+				}
+			}
+			return out;
 		}
 
 		// The keeper's world is not the one its listings described any more (it loaded a save, said hello again, or left).
@@ -243,12 +305,13 @@ namespace StorageBook
 		// their world has it already, or the move isn't one of a_player's own at storage another game keeps. Each is undone
 		// at most once until done again, and doing it again does the opposite of what the undoing did: a modified game can
 		// take out of a chest no more than its own puts there put in.
-		// A take made before the container was claimed (index < since) is never undone: it was ordinary loot, which the
-		// keeper's copy and the friend's loaded copy both had already. A put before the claim is: the keeper's copy has it,
-		// and so does the loaded player.
+		// A move made before the container was claimed (index < since) is never undone here: it was ordinary loot, and the
+		// claim took what friends put in then back out of the true copy already (BeforeClaim).
 		// A take out of the true copy (a put undone, a take done again) is no more than the book holds while it is listed
 		// (the rest went to others meanwhile); while it is stale, all of it (the keeper's world applies what is there).
-		std::optional<Protocol::ContainerChange> Settle(std::uint32_t a_player, std::uint32_t a_index, bool a_has, std::span<const Protocol::IndexedContainerChange> a_log)
+		// a_commit false: what it would be, changing nothing (the server first sees whether the player's share has room).
+		std::optional<Protocol::ContainerChange> Settle(std::uint32_t a_player, std::uint32_t a_index, bool a_has, std::span<const Protocol::IndexedContainerChange> a_log,
+			bool a_commit = true)
 		{
 			if (a_index >= a_log.size() || a_player == 0) {
 				return std::nullopt;
@@ -256,7 +319,7 @@ namespace StorageBook
 			const auto& move = a_log[a_index];
 			const auto  it = entries.find(move.change.container);
 			if (move.playerId != a_player || !Protocol::IsValid(move.change) || move.change.item == Protocol::CONTAINER_EMPTIED || it == entries.end() ||
-				it->second.keeper == a_player || (move.change.count < 0 && a_index < it->second.since)) {
+				it->second.keeper == a_player || a_index < it->second.since) {
 				return std::nullopt;
 			}
 			const auto reversal = reversed.find(a_index);
@@ -274,6 +337,9 @@ namespace StorageBook
 			if (count < 0 && it->second.fresh) {
 				const auto held = it->second.held.find(move.change.item);
 				count = -(std::min)(-count, held != it->second.held.end() ? held->second : 0);
+			}
+			if (!a_commit) {
+				return count == 0 ? std::nullopt : std::optional{ Protocol::ContainerChange{ move.change.container, move.change.item, static_cast<std::int32_t>(count) } };
 			}
 			if (a_has) {
 				reversed.erase(reversal);
@@ -300,6 +366,13 @@ namespace StorageBook
 		}
 
 		[[nodiscard]] bool Reversed(std::uint32_t a_index) const { return reversed.contains(a_index); }
+
+		// What the undoing of a_index did to the true copy (< 0 taken out), if it is undone.
+		[[nodiscard]] std::optional<std::int32_t> ReversedBy(std::uint32_t a_index) const
+		{
+			const auto it = reversed.find(a_index);
+			return it != reversed.end() ? std::optional{ it->second.count } : std::nullopt;
+		}
 
 		// For the session file, and back from it.
 		[[nodiscard]] std::vector<Protocol::StorageReversal> Reversals() const

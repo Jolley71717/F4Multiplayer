@@ -1725,7 +1725,9 @@ void Server::Run()
 			return;
 		}
 		bool changed = false;
-		switch (storage.List(a_player.id, a_player.local, *listing, containerChanges, &changed)) {
+		const auto listed = storage.List(a_player.id, a_player.local, *listing, containerChanges, &changed);
+		const bool claimed = listed == StorageBook::Listed::kClaimed;
+		switch (listed) {
 		case StorageBook::Listed::kNotHost:
 			return;
 		case StorageBook::Listed::kFull:
@@ -1733,12 +1735,40 @@ void Server::Run()
 				log(std::format("server: {} storage containers are shared, the most there may be; others stay each player's own", storage.Size()));
 			}
 			return;
+		case StorageBook::Listed::kClaimed:
 		case StorageBook::Listed::kTaken:
 			break;
 		}
 		if (changed) {
 			touched();
 			sendStorageOwners({ { listing->container, a_player.id, storage.Since(listing->container) } }, 0);
+		}
+		if (claimed) {
+			// What friends put in it before (ordinary loot then) comes back out of the true copy, after the games know who keeps
+			// it (so theirs skip it) and before anyone views it: those items are in their own copies, or back in a world they
+			// loaded, already (StorageBook::BeforeClaim). Numbered as changes by nobody, counted against the friend who put most.
+			std::size_t unput = 0;
+			for (const auto& [change, player] : storage.BeforeClaim(listing->container, containerChanges)) {
+				if (containerChanges.size() >= maxWorldEntries) {
+					break;
+				}
+				++containersAuthored[player];
+				const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
+				containerChanges.push_back({ numbered, 0, change });
+				storage.Numbered(containerChanges.back());
+				noteFill(kContainers, containerChanges.size());
+				touched();
+				unput += static_cast<std::size_t>(-static_cast<std::int64_t>(change.count));
+				const auto packet = Protocol::Encode(containerChanges.back());
+				for (const auto& [key, other] : players) {
+					if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+						send(key, packet, true);
+					}
+				}
+			}
+			if (unput != 0) {
+				log(std::format("server: storage {:08X} claimed: {} items friends put in it before go back out of the host's copy", listing->container, unput));
+			}
 		}
 		const auto viewers = storage.Viewers(listing->container);
 		if (!viewers.empty()) {
@@ -1858,13 +1888,34 @@ void Server::Run()
 		std::ranges::stable_partition(work, adds);
 		std::size_t undone = 0;
 		std::size_t redone = 0;
+		bool        cut = false;
 		for (const auto& [index, has] : work) {
-			if (containerChanges.size() >= maxWorldEntries) {
-				break;  // left as it is: a later settle, with room, puts it right
+			const auto planned = storage.Settle(a_player.id, index, has, containerChanges, false);
+			if (planned) {
+				// Each change is counted against the settler's own share of the log, like their moves: undoing and doing
+				// again their moves between two saves can't fill the table for everyone. Past it (or a full log) the rest
+				// waits, and they stay unsettled (no view, no move at storage others keep) until a later settle, with room,
+				// puts it right.
+				const bool shared = a_player.local ||
+				                    (containersAuthored[a_player.id] < options.maxContainerChangesPerPlayer && withinShare(a_player, kContainers));
+				if (!shared || containerChanges.size() >= maxWorldEntries) {
+					cut = true;
+					break;
+				}
 			}
+			const auto expected = has ? storage.ReversedBy(index).transform([](std::int32_t a_count) { return -static_cast<std::int64_t>(a_count); }) :
+			                            std::optional{ -static_cast<std::int64_t>(containerChanges[index].change.count) };
 			const auto change = storage.Settle(a_player.id, index, has, containerChanges);
+			if (expected && *expected < 0 && (change ? change->count : 0) > *expected) {
+				log(std::format("server: storage {:08X} held {} fewer of {:08X} than player {}'s move #{} {} needed", containerChanges[index].change.container,
+					(change ? change->count : 0) - *expected, containerChanges[index].change.item, a_player.id, index, has ? "done again" : "undone"));
+			}
 			if (!change) {
 				continue;
+			}
+			if (!a_player.local) {
+				++containersAuthored[a_player.id];
+				++budgetOf(a_player).added[kContainers];
 			}
 			const auto numbered = static_cast<std::uint32_t>(containerChanges.size());
 			containerChanges.push_back({ numbered, 0, *change });
@@ -1879,7 +1930,12 @@ void Server::Run()
 				}
 			}
 		}
-		a_player.storageSettled = true;
+		a_player.storageSettled = !cut;
+		if (cut) {
+			log(std::format("server: player {}'s storage moves can't all be put right (their share of the container table, or a full one); "
+							"storage others keep stays closed to them until a later settle can",
+				a_player.id));
+		}
 		if (undone + redone != 0) {
 			storageUndone += undone + redone;
 			log(std::format("server: storage undid {} and did again {} of player {}'s moves for their loaded world ({} this run)", undone, redone, a_player.id, storageUndone));

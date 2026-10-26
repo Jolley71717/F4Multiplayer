@@ -53,7 +53,7 @@ namespace
 	Book Opened(Log& a_log)
 	{
 		Book book;
-		CHECK(book.List(HOST, true, Listing(CHEST, a_log.Next(), { { STIMPAK, 5 } }), a_log.changes) == Listed::kTaken);
+		CHECK(book.List(HOST, true, Listing(CHEST, a_log.Next(), { { STIMPAK, 5 } }), a_log.changes) == Listed::kClaimed);
 		CHECK(book.Open(FRIEND, CHEST, a_log.Next()).kind == Viewed::Kind::kShown);
 		return book;
 	}
@@ -67,7 +67,7 @@ TEST("storage book: only the host's game claims a container, and a claim lists w
 	CHECK(book.List(FRIEND, false, Listing(CHEST, 0, { { STIMPAK, 5 } }), log.changes, &changed) == Listed::kNotHost);
 	CHECK(!changed);
 	CHECK(!book.KeeperOf(CHEST));
-	CHECK(book.List(HOST, true, Listing(CHEST, 0, { { STIMPAK, 5 }, { WATER, 2 } }), log.changes, &changed) == Listed::kTaken);
+	CHECK(book.List(HOST, true, Listing(CHEST, 0, { { STIMPAK, 5 }, { WATER, 2 } }), log.changes, &changed) == Listed::kClaimed);
 	CHECK(changed);
 	CHECK(book.KeeperOf(CHEST) == HOST);
 	CHECK(book.Held(CHEST, STIMPAK) == 5);
@@ -276,7 +276,7 @@ TEST("storage book: a full book claims no new container, but lists the ones it h
 {
 	Log  log;
 	Book book(1);
-	CHECK(book.List(HOST, true, Listing(CHEST, 0, {}), log.changes) == Listed::kTaken);
+	CHECK(book.List(HOST, true, Listing(CHEST, 0, {}), log.changes) == Listed::kClaimed);
 	CHECK(book.List(HOST, true, Listing(BOX, 0, {}), log.changes) == Listed::kFull);
 	CHECK(book.List(HOST, true, Listing(CHEST, 0, { { WATER, 1 } }), log.changes) == Listed::kTaken);
 	book.Restore({ BOX, HOST });
@@ -383,18 +383,54 @@ TEST("storage book: a put undone gives up no more than the chest holds while lis
 	CHECK((*all == Take(WATER, 3)));  // the keeper's world applies what is there
 }
 
-TEST("storage book: a take before the claim is never undone, a put before it is")
+TEST("storage book: no move made before the claim is undone by a settle; the claim takes back what friends put in, net")
 {
-	Log  log;
+	Log        log;
 	const auto take = log.Add(FRIEND, Take(STIMPAK, 1));
 	const auto put = log.Add(FRIEND, Put(WATER, 2));
-	Book book;
-	book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 4 }, { WATER, 2 } }), log.changes);
+	Book       book;
+	CHECK(book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 4 }, { WATER, 2 } }), log.changes) == Listed::kClaimed);
 	CHECK(book.Since(CHEST) == 2);
 	CHECK(!book.Settle(FRIEND, take.index, false, log.changes));
-	const auto unput = book.Settle(FRIEND, put.index, false, log.changes);
-	REQUIRE(unput);
-	CHECK((*unput == Take(WATER, 2)));
+	CHECK(!book.Settle(FRIEND, put.index, false, log.changes));  // the claim's to take back
+	const auto unput = book.BeforeClaim(CHEST, log.changes);
+	REQUIRE(unput.size() == 1);
+	CHECK((unput[0].change == Take(WATER, 2)));
+	CHECK(unput[0].player == FRIEND);
+	CHECK(book.List(HOST, true, Listing(CHEST, log.Next(), { { STIMPAK, 4 } }), log.changes) == Listed::kTaken);  // listed again: no claim
+}
+
+TEST("storage book: what a claim takes back is no more than friends put in net, everyone's moves added, or the listing holds")
+{
+	constexpr std::uint32_t AMMO = 0x0001'F276;
+	constexpr std::uint32_t JUNK = 0x0003'0000;
+	Log                     log;
+	log.Add(FRIEND, Put(STIMPAK, 10));  // put and taken back: nothing (the third review's pair)
+	log.Add(FRIEND, Take(STIMPAK, 10));
+	log.Add(FRIEND, Put(WATER, 500));  // a quickload loop's puts, three times over
+	log.Add(FRIEND, Put(WATER, 500));
+	log.Add(FRIEND, Put(WATER, 500));
+	log.Add(OTHER, Take(WATER, 200));  // another friend took some of them: theirs now
+	log.Add(FRIEND, Put(AMMO, 4));
+	log.Add(HOST, Take(AMMO, 3));  // the keeper's own take of them
+	log.Add(HOST, Put(JUNK, 9));    // the keeper's own put: its world's
+	log.Add(OTHER, Put(JUNK, 2));
+	log.Add(FRIEND, Put(JUNK, 1, BOX));  // another container
+	log.Add(FRIEND, { CHEST, Protocol::CONTAINER_EMPTIED, -1 });
+	Book book;
+	REQUIRE(book.List(HOST, true, Listing(CHEST, log.Next(), { { WATER, 1300 }, { AMMO, 1 }, { JUNK, 1 } }), log.changes) == Listed::kClaimed);
+	const auto unput = book.BeforeClaim(CHEST, log.changes);
+	std::map<std::uint32_t, std::pair<std::int32_t, std::uint32_t>> got;
+	for (const auto& one : unput) {
+		CHECK(one.change.container == CHEST);
+		got[one.change.item] = { one.change.count, one.player };
+	}
+	CHECK(got.size() == 3);
+	CHECK((got[WATER] == std::pair<std::int32_t, std::uint32_t>{ -1300, FRIEND }));  // 1500 put, 200 taken by another
+	CHECK((got[AMMO] == std::pair<std::int32_t, std::uint32_t>{ -1, FRIEND }));     // 4 put, the keeper took 3
+	CHECK((got[JUNK] == std::pair<std::int32_t, std::uint32_t>{ -1, OTHER }));       // the other friend's 2, the listing holds 1
+	CHECK(!got.contains(STIMPAK));
+	CHECK(book.BeforeClaim(BOX, log.changes).empty());  // nobody keeps it
 }
 
 TEST("storage book: the moves undone come back from the session file, and none is undone twice after it")
@@ -450,7 +486,7 @@ TEST("storage book: a container is kept from the first change numbered after its
 	log.Add(FRIEND, Take(WATER, 1, BOX));
 	Book book;
 	CHECK(book.Since(BOX) == 0);
-	CHECK(book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 3 } }), log.changes) == Listed::kTaken);
+	CHECK(book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 3 } }), log.changes) == Listed::kClaimed);
 	CHECK(book.Since(BOX) == 2);
 	log.Add(FRIEND, Take(WATER, 1, BOX));
 	book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 2 } }), log.changes);

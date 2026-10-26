@@ -1038,41 +1038,126 @@ TEST("shared storage: a take from a chest nobody kept yet, then claimed, isn't u
 	CHECK(s.guest.storage.State().Stats().lacking == 0);
 }
 
-TEST("shared storage: a put into a chest nobody kept yet, then claimed, is given up by the chest after a reload from before it")
+namespace
+{
+	// Water across the session's worlds with the box in play: the host's box and chest, the friend's inventory, and the
+	// friend's own copies of both (their stash; set aside while they view the host's).
+	std::int64_t Waters(Session& a_s)
+	{
+		const auto&  aside = a_s.guest.storage.Aside();
+		const auto   viewing = a_s.guest.storage.State().Viewing();
+		std::int64_t own = 0;
+		for (const auto holder : { CHEST, BOX }) {
+			own += viewing == holder ? 0 : a_s.guest.In(holder, WATER);
+		}
+		own += viewing && aside.contains(WATER) ? aside.at(WATER) : 0;
+		return a_s.host.In(BOX, WATER) + a_s.host.In(CHEST, WATER) + a_s.host.Carried(WATER) + a_s.guest.Carried(WATER) + own;
+	}
+}
+
+TEST("shared storage: a put into a chest nobody kept yet comes back out of the host's copy as its game claims it; the friend's copy keeps it")
 {
 	Session s;
 	Storage(s.host, BOX);
 	Storage(s.guest, BOX);
 	s.host.away.insert(BOX);
 	s.Settle();
-	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
-	s.guest.Put(s.f, BOX, WATER, 3);  // ordinary loot: nobody keeps it
+	s.guest.Put(s.f, BOX, WATER, 3);  // ordinary loot: nobody keeps it, and the host's copy will have it too
 	s.Settle();
 	CHECK(s.guest.Keeper(BOX) == Keeper::kNone);
+	CHECK(Waters(s) == 5);
 
 	s.host.away.erase(BOX);  // the host comes near: the put goes into its copy, then it claims the box
 	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);
 	s.Settle();
 	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
-	CHECK(s.host.In(BOX, WATER) == 3);
-	CHECK(s.guest.storage.State().KeptSince(BOX) > 0);
+	CHECK(s.host.In(BOX, WATER) == 0);   // given up at the claim
+	CHECK(s.guest.In(BOX, WATER) == 3);  // their stash, in their copy
+	CHECK(s.f.Logged("claimed: 3 items friends put in it before go back out"));
+	CHECK(Waters(s) == 5);
 
-	s.guest.LoadGame(s.f, before);
-	s.Settle();
-	CHECK(s.guest.Carried(WATER) == 3);  // the save's
-	CHECK(s.guest.storage.State().Stats().lacking == 1);
-	CHECK(s.host.In(BOX, WATER) == 0);  // the put undone in the true copy
-	CHECK(s.guest.In(BOX, WATER) == 0);
-	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) + s.guest.In(BOX, WATER) + s.guest.In(CHEST, WATER) == 5);
-
-	// Opening it and taking finds none.
+	// Viewing the host's copy shows none, and the stash is set aside, not given.
 	s.guest.OpenMenu(s.f, BOX);
 	s.Settle();
+	CHECK(s.guest.In(BOX, WATER) == 0);
 	s.guest.Take(s.f, BOX, WATER, 3);
 	s.guest.CloseMenu(s.f);
 	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 0);
+	CHECK(s.guest.In(BOX, WATER) == 3);
+	CHECK(Waters(s) == 5);
+}
+
+TEST("shared storage: put into a chest nobody kept yet, quickload, put again, over and over: the claim gives every put up")
+{
+	Session s{ Reloads() };
+	Storage(s.host, BOX);
+	Storage(s.guest, BOX);
+	s.host.away.insert(BOX);
+	s.Settle();
+	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
+	for (int i = 0; i < 3; ++i) {
+		s.guest.Put(s.f, BOX, WATER, 3);
+		s.Settle();
+		s.guest.LoadGame(s.f, before);  // the put lacking, at a box nobody keeps: nothing to settle yet
+		s.Settle();
+		CHECK(s.guest.Carried(WATER) == 3);
+	}
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
+
+	s.host.away.erase(BOX);  // the host walks by: its copy has all nine, then it claims the box
+	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);
+	s.Settle();
+	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
+	CHECK(s.host.In(BOX, WATER) == 0);
+	CHECK(s.f.Logged("claimed: 9 items friends put in it before go back out"));
+	CHECK(Waters(s) == 5);
+
+	// Taking it all out finds nothing of theirs.
+	s.guest.OpenMenu(s.f, BOX);
+	s.Settle();
+	CHECK(s.guest.In(BOX, WATER) == 0);
+	s.guest.Take(s.f, BOX, WATER, 9);
+	s.guest.CloseMenu(s.f);
+	s.Settle();
 	CHECK(s.guest.Carried(WATER) == 3);
-	CHECK(s.host.In(BOX, WATER) + s.guest.Carried(WATER) + s.guest.In(BOX, WATER) + s.guest.In(CHEST, WATER) == 5);
+	CHECK(Waters(s) == 5);
+
+	// Nor does a load from before it all, after the claim.
+	s.guest.LoadGame(s.f, before);
+	s.Settle();
+	CHECK(s.host.In(BOX, WATER) == 0);
+	CHECK(s.guest.storage.State().Stats().lacking == 0);
+	CHECK(Waters(s) == 5);
+	CHECK(!s.f.Logged("has asked for the world too often"));
+}
+
+TEST("shared storage: a put and a take of the same items before the claim, both lost to a load after it: the host's own stay")
+{
+	Session s;
+	Storage(s.host, BOX);
+	Storage(s.guest, BOX);
+	s.host.away.insert(BOX);
+	s.host.holders[BOX][WATER] = 4;  // the host's own, in its copy
+	s.Settle();
+	const auto before = s.guest.SaveGame(s.f);  // carrying 3 waters
+	s.guest.Put(s.f, BOX, WATER, 3);
+	s.Settle();
+	s.guest.Take(s.f, BOX, WATER, 3);
+	s.Settle();
+	CHECK(s.guest.Carried(WATER) == 3);
+
+	s.host.away.erase(BOX);
+	s.host.Wait(s.f, LootTest::APPLY_INTERVAL);
+	s.Settle();
+	REQUIRE(s.guest.Keeper(BOX) == Keeper::kFriend);
+	CHECK(s.host.In(BOX, WATER) == 4);  // nothing put in, net: nothing given up
+
+	s.guest.LoadGame(s.f, before);
+	s.Settle();
+	CHECK(s.host.In(BOX, WATER) == 4);  // neither undone: both before the claim
+	CHECK(s.guest.Carried(WATER) == 3);
+	CHECK(Waters(s) == 9);
 }
 
 TEST("shared storage: a take that came back short and was then lost to a reload: the chest has back only what it gave")
@@ -1238,6 +1323,60 @@ TEST("shared storage: a late move goes through only at the container the player 
 	refused = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
 	REQUIRE(refused.size() == 1);
 	CHECK(refused[0].reason == Protocol::StorageReason::kNotViewing);
+}
+
+TEST("shared storage: undoing and doing again one's own moves counts against one's share of the log, and stops there")
+{
+	auto options = Options();
+	options.maxContainerChangesPerPlayer = 12;
+	options.worldStateRefill = std::chrono::milliseconds{ 0 };
+	Fixture f{ options };
+	f.fake->SetLocal(HOST_PEER);
+	const auto host = f.Join(HOST_PEER, Fixture::MakeHello("Host", HOST_ID));
+	REQUIRE(host);
+	REQUIRE(f.Join(FRIEND_PEER, Fixture::MakeHello("Guest", FRIEND_ID)));
+	f.fake->Deliver(HOST_PEER, Protocol::Encode(Protocol::StorageListing{ CHEST, 0, { { STIMPAK, 5 } } }, MT::kReportStorage));
+	Sync(f, HOST_PEER);
+	SettleRaw(f, FRIEND_PEER);
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	for (int i = 0; i < 4; ++i) {
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::ContainerChange{ CHEST, WATER, 1 }, MT::kReportContainer));  // #0 to #3
+	}
+	Pace(FRIEND_PEER);
+	Sync(f, FRIEND_PEER);
+	const auto numbered = [&] {
+		Pace(HOST_PEER);
+		return Count(Received(f, HOST_PEER), MT::kContainerChanged);
+	};
+	CHECK(numbered() == 4);
+
+	// A modified game flips them between two loaded worlds: lacking all, then none, then all again.
+	std::uint32_t asked = 1;
+	const auto    settle = [&](std::vector<std::uint32_t> a_lacking) {
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::WorldRequest{ host->sessionId, 0 }));
+		f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageSettle{ ++asked, 4, 0, std::move(a_lacking), {} }));
+		Pace(FRIEND_PEER);
+		Received(f, FRIEND_PEER);
+	};
+	settle({ 0, 1, 2, 3 });
+	CHECK(numbered() == 4);  // undone: their share is 8 of 12 now
+	settle({});
+	CHECK(numbered() == 4);  // done again: 12 of 12
+	for (int i = 0; i < 5; ++i) {
+		settle({ 0, 1, 2, 3 });
+		CHECK(numbered() == 0);  // nothing more of theirs goes in the log
+	}
+	CHECK(f.Logged("can't all be put right"));
+	CHECK(f.Logged("their share"));
+
+	// Their moves aren't all put right, so storage others keep stays closed to them.
+	f.fake->Deliver(FRIEND_PEER, Protocol::Encode(Protocol::StorageView{ CHEST, true }));
+	Pace(FRIEND_PEER);
+	const auto got = Received(f, FRIEND_PEER);
+	CHECK(Count(got, MT::kStorageContents) == 0);
+	const auto refusals = Decoded(got, MT::kStorageRefused, [](auto a_data) { return Protocol::DecodeStorageRefusal(a_data); });
+	REQUIRE(refusals.size() == 1);
+	CHECK(refusals[0].reason == Protocol::StorageReason::kClosed);
 }
 
 TEST("shared storage: what the true copy undid outlasts a restart: none is undone twice, and a later save's world has it done again")
