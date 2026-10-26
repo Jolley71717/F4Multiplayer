@@ -1,6 +1,7 @@
 #include "game/LooksMenu.h"
 
 #include "game/BodyMorphs.h"
+#include "game/GameStop.h"
 #include "game/Papyrus.h"
 
 #include <mutex>
@@ -360,8 +361,7 @@ namespace LooksMenu
 				}
 				return;
 			}
-			const auto ui = RE::UI::GetSingleton();
-			if (reading.ShouldStart(!ui || ui->menuMode != 0, a_now)) {
+			if (reading.ShouldStart(GameStop::Now(), a_now)) {
 				StartRead(player, npc->IsFemale(), a_now);
 			}
 		}

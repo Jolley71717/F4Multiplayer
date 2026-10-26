@@ -1,6 +1,7 @@
 #include "game/RadiantSync.h"
 
 #include "Config.h"
+#include "game/GameStop.h"
 #include "game/Official.h"
 #include "game/QuestStageLayout.h"
 #include "game/QuestSync.h"
@@ -624,8 +625,7 @@ namespace RadiantSync
 
 		bool Paused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0;
+			return GameStop::Now();
 		}
 
 		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops

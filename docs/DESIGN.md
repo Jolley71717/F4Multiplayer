@@ -282,6 +282,17 @@
   4000 units and at most half as far (not its companion, its conversation partner or an NPC
   fighting the owner), so enemies react to the player standing next to them. The owner doesn't claim
   it back for 10 s (the friend's game claims it) and hands the same NPC off at most every 30 s.
+- A game stopped by a menu (`GameStop::Now`: `UI::menuMode` above 0, the one place the plugin asks it) for 5 s
+  (`PauseHandOff.h`, game-free and tested) offers to run nothing new, NPCs or frames, and releases the NPCs it runs
+  that a friend can take on: a friend in the same space within 6000 units of it, whose own status names no menu
+  that stops their game (Pip-Boy, pause menu, container or trade, terminal). Through the same release as above (not
+  claimed back for 10 s, not let go again for 30 s); the friend's game claims it as nobody's. Kept: its companion,
+  its conversation partner or one holding it, settlers it commands, one its player fought within 10 s (`NpcHold`;
+  one dying is no candidate and is kept by the hold too), its spawns and frames. An enemy fighting the stopped
+  player is let go once the fight's 10 s are over, so it fights on in the friend's world. After the menu closes
+  its game copies them from the friend's (`NpcPlace::Follows`), and a hit takes one back as any takeover does. A
+  quick look at the Pip-Boy (under 5 s) changes nothing; a loading screen ends the count. `net status`:
+  `pauseHandOffs=`, `pausedFor=` (seconds the current stop has lasted).
 - Remote players' stand-ins are in PlayerFaction, so enemies in the owner's world attack them. Hits on a
   stand-in by an NPC are forwarded to that player (`PlayerHit` -> damage to their health), naming the
   NPC. An explosion's hit is not, when the explosion goes off in their game too (one reported, a trap's,
@@ -1297,7 +1308,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
 - Menus still pause: clearing `kPausesGame` as a menu is made (wrapping its `UIMenuEntry::create`) was tried
   and taken out. The UI counts `menuMode` from the flag after the menu has handled its show message
   (0x141a811bc) and again at close (0x141a80a49). Made without it, the Pip-Boy came up with a blank screen
-  and would not close, and a container was still counted (`menuMode` 1).
+  and would not close, and a container was still counted (`menuMode` 1). What a stopped game does to the
+  session is asked of `GameStop::Now` alone (src/game/GameStop.h), the place a menu made to run in real time
+  would have to be told apart; meanwhile the NPCs a stopped game runs go to friends near them after 5 s (see
+  Shared NPC AI).
 - Voice (src/game/Voice.cpp): `ISteamUser::StartVoiceRecording`/`GetVoice` (compressed) while the
   push-to-talk key is held, sent unreliably (server budget 16 KB/s per player). Receivers run
   `DecompressVoice` at 24 kHz, scale the samples by distance to the speaker's stand-in (full within

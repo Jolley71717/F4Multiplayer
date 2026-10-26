@@ -7,6 +7,7 @@
 #include "game/FriendFrame.h"
 #include "game/FriendLight.h"
 #include "game/FriendPlace.h"
+#include "game/GameStop.h"
 #include "game/GraphInfo.h"
 #include "game/HeldCopy.h"
 #include "game/Hud.h"
@@ -2882,7 +2883,6 @@ namespace RemotePlayers
 	{
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		const auto localCell = player ? player->GetParentCell() : nullptr;
-		const auto ui = RE::UI::GetSingleton();
 		const bool loading = Hud::LoadingScreenUp();
 
 		const auto now = Clock::now();
@@ -2892,7 +2892,7 @@ namespace RemotePlayers
 			BuryWaitedOut();
 			ShareKeptOut();
 		}
-		const auto playedNow = played.Advance(now, loading || (ui && ui->menuMode > 0));
+		const auto playedNow = played.Advance(now, loading || GameStop::Now());
 		// Our own player's head, for FaceWatch: missing from a loaded 3D (a loading screen takes all 3D; not that).
 		const bool oursGone = player && !loading && player->Get3D() && !Face::HasHead(player);
 		// What waits in the graveyard, or to be let go of by the engine, and has lost its cell has its record dropped
