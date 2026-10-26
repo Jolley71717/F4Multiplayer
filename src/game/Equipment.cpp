@@ -289,6 +289,9 @@ namespace Equipment
 				}
 				if (const auto instance = InstanceOf(*stack); instance && instance->values) {
 					out.push_back({ item.object->GetFormID(), instance->itemIndex, ModsOn(*instance) });
+				} else if (const auto armor = item.object->GetFormType() == RE::ENUM_FORM_ID::kARMO ? item.object->As<RE::TESObjectARMO>() : nullptr; armor && !armor->objectTemplate.items.empty()) {
+					// A worn piece with combinations but no mods is said plain: said nothing, the other game rolls its own.
+					out.push_back({ item.object->GetFormID(), StandInGear::NO_TEMPLATE, {} });
 				}
 				break;
 			}
@@ -439,7 +442,9 @@ namespace Equipment
 				return;
 			}
 			RE::BSTSmartPointer<RE::ExtraDataList> extra{ new RE::ExtraDataList() };
-			if (instance) {
+			if (StandInGear::IsPlain(a_mods)) {
+				// Theirs is a plain piece: given as it is, not with the default combination, which may be an armored one here.
+			} else if (instance) {
 				RE::BSTSmartPointer<RE::TBO_InstanceData> data;
 				instance->CreateBaseInstanceData(*object, data);
 				extra->AddExtra(instance.release());  // the list owns it from here
@@ -462,7 +467,7 @@ namespace Equipment
 			const auto theirs = StandInGear::ModsOf(a_mods, a_item);
 			// Checked against the mods its copy is built with here: one of theirs this game hasn't never is on it.
 			const auto buildable = StandInGear::Buildable(theirs, ModHere);
-			const auto copy = StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, CarriedMods(a_actor, a_item));
+			const auto copy = StandInGear::ChooseCopy(buildable ? &*buildable : nullptr, CarriedMods(a_actor, a_item), StandInGear::IsPlain(theirs));
 			if (a_wearing && copy == StandInGear::Copy::kKeep) {
 				return false;
 			}

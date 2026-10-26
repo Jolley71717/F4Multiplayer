@@ -95,6 +95,14 @@ namespace StandInGear
 		return out;
 	}
 
+	// Whether their copy is on record as a plain one: no instance extra with mods, no template combination named
+	// (Equipment::ReadMods says so for a worn piece with an object template). Such a copy is given without the engine's
+	// default combination, which a game may have armored where theirs is base (a Raider chest piece).
+	inline bool IsPlain(const Protocol::ItemMods* a_theirs)
+	{
+		return a_theirs && a_theirs->templateIndex == NO_TEMPLATE && a_theirs->mods.empty();
+	}
+
 	// How the stand-in gets one item of theirs.
 	enum class Copy
 	{
@@ -105,11 +113,15 @@ namespace StandInGear
 
 	// a_theirs: the mods on their copy that go on here (Buildable), or nullptr. a_ours: the mods on the stand-in's copy, or nullopt when it
 	// has none (a copy without an instance extra carries no mods). With nothing on record whatever copy it has stays: a
-	// copy cannot be checked against nothing.
-	inline Copy ChooseCopy(const Protocol::ItemMods* a_theirs, const std::optional<std::vector<Protocol::ItemMod>>& a_ours)
+	// copy cannot be checked against nothing. a_plain: theirs is on record as plain (IsPlain), so a copy with mods is
+	// another one.
+	inline Copy ChooseCopy(const Protocol::ItemMods* a_theirs, const std::optional<std::vector<Protocol::ItemMod>>& a_ours, bool a_plain = false)
 	{
 		if (!a_ours) {
 			return Copy::kGive;
+		}
+		if (a_plain) {
+			return a_ours->empty() ? Copy::kKeep : Copy::kReplace;
 		}
 		return a_theirs && !SameMods(a_theirs->mods, *a_ours) ? Copy::kReplace : Copy::kKeep;
 	}
