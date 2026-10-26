@@ -1746,7 +1746,7 @@ namespace
 	}
 }
 
-TEST("server session: with a story mod, a friend without the host's HD texture pack gets in, told it is missing, and the mod's NPC is translated")
+TEST("server session: with a story mod, a friend without the host's HD texture pack gets in, told of no difference, and the mod's NPC is translated")
 {
 	// The report: a story mod and its companion mod after the game's own files. With the texture pack the mod's NPC
 	// is 09000004, without it 08000004.
@@ -1762,8 +1762,9 @@ TEST("server session: with a story mod, a friend without the host's HD texture p
 	REQUIRE(f.Join(2, HelloWith("Friend", withoutPack)));
 	const auto told = ModsTold(f, 2, HelloWith("Friend", withoutPack).plugins);
 	REQUIRE(told);
-	CHECK(told->missing == std::vector<std::string>{ "DLCUltraHighResolution.esm" });
-	CHECK(told->Count() == 1u);
+	// The pack holds no records, so the friend's notice doesn't name it (src/net/ModDiff.h).
+	CHECK(told->missing.empty());
+	CHECK(told->Count() == 0u);
 	// The NPC their game numbers 08000004 is the session's (the host's) 09000004, and back.
 	const FormIds::Mapper friendForms(HelloWith("Friend", withoutPack).plugins, HelloWith("Host", host).plugins);
 	CHECK(friendForms.ToSession(0x08000004) == 0x09000004u);

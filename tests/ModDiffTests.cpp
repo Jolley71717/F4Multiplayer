@@ -182,6 +182,17 @@ TEST("mod diff: the comparison agrees with the server's: nothing to change exact
 	}
 }
 
+TEST("mod diff: the texture pack is no difference, in either game and in any case, and a real missing mod is still named")
+{
+	const Names pack{ "Fallout4.esm", "DLCUltraHighResolution.esm", "Mod.esp" };
+	const Names none{ "Fallout4.esm", "Mod.esp" };
+	CHECK(Compare(Order(none), Order(pack)).Empty());
+	CHECK(Compare(Order(pack), Order(none)).Empty());
+	CHECK(Compare(Order(none), Order({ "Fallout4.esm", "dlcultrahighresolution.ESM", "Mod.esp" })).Matters() == 0u);
+	CHECK(Compare(Order(none), Order({ "Fallout4.esm", "DLCUltraHighResolution.esm", "Mod.esp", "Gone.esp" })).missing == Names{ "Gone.esp" });
+	CHECK(Compare(Order(none), Order(pack)).theirs == 2u);
+}
+
 TEST("mod diff: a name twice counts once, and an empty name or a lone light mark is no plugin")
 {
 	const auto plugins = ModDiff::Plugins({ "A.esp", "a.ESP", "", std::string{ Protocol::LIGHT_PLUGINS }, "B.esl", "A.esp" });

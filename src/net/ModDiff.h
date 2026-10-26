@@ -100,7 +100,8 @@ namespace ModDiff
 		}
 	}
 
-	// A load order's plugins with their kind. A name twice (no game loads one twice) counts once, where it first is.
+	// A load order's plugins with their kind. A name twice (no game loads one twice) counts once, where it first is. The
+	// texture pack is left out: it holds no records, and forms are translated by name, so it is no difference to tell of.
 	[[nodiscard]] inline std::vector<Plugin> Plugins(const std::vector<std::string>& a_order)
 	{
 		std::vector<Plugin>             out;
@@ -109,6 +110,8 @@ namespace ModDiff
 		for (const auto& name : a_order) {
 			if (name == Protocol::LIGHT_PLUGINS) {
 				light = true;
+			} else if (Protocol::SamePluginName(name, Protocol::TEXTURE_PACK)) {
+				continue;
 			} else if (!name.empty() && seen.insert(detail::Lower(name)).second) {
 				out.push_back({ name, light });
 			}
