@@ -1022,6 +1022,23 @@ TEST("stand-in gear: an item whose mods are all from plugins this game hasn't, n
 	CHECK(bob.Shot() == AttackKind::Replay::kFire);
 }
 
+TEST("stand-in gear: a piece on record as plain is kept while the stand-in's copy has no mods, and replaced once it has some")
+{
+	using Mods = std::vector<Protocol::ItemMod>;
+	const Protocol::ItemMods plain{ PISTOL, StandInGear::NO_TEMPLATE, {} };
+	CHECK(StandInGear::IsPlain(&plain));
+	CHECK(!StandInGear::IsPlain(nullptr));
+	const Protocol::ItemMods templated{ PISTOL, 3, {} };
+	const Protocol::ItemMods modded{ PISTOL, StandInGear::NO_TEMPLATE, { STANDARD_RECEIVER } };
+	CHECK(!StandInGear::IsPlain(&templated));
+	CHECK(!StandInGear::IsPlain(&modded));
+	CHECK(StandInGear::ChooseCopy(nullptr, Mods{}, true) == StandInGear::Copy::kKeep);
+	CHECK(StandInGear::ChooseCopy(nullptr, Mods{ STANDARD_RECEIVER }, true) == StandInGear::Copy::kReplace);
+	CHECK(StandInGear::ChooseCopy(nullptr, std::nullopt, true) == StandInGear::Copy::kGive);
+	CHECK(StandInGear::ChooseCopy(nullptr, Mods{ STANDARD_RECEIVER }) == StandInGear::Copy::kKeep);  // no record at all: left as it is
+	CHECK(!StandInGear::Buildable(&plain, [](std::uint32_t) { return true; }));
+}
+
 TEST("stand-in gear: the mods a copy is built with here are theirs less the ones this game hasn't, and none without a template combination")
 {
 	using StandInGear::Buildable;
