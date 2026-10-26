@@ -1635,6 +1635,18 @@ TEST("protocol: Explosion round trips and needs a base")
 	}
 }
 
+TEST("protocol: an Explosion carries the NPC that set it off, a plugin's or a spawn, and never the player")
+{
+	for (const auto source : { REF_A, RUNTIME_REF }) {
+		const Explosion in{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x0000003C, source };
+		const auto      out = DecodeExplosion(Encode(in, MT::kExplosion));
+		REQUIRE(out);
+		CHECK(out->source == source);
+	}
+	CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, PLAYER_REF_ID }, MT::kReportExplosion)));
+	CHECK(!DecodeExplosion(Encode(Explosion{ 3, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, 0xFF000000 }, MT::kReportExplosion)));
+}
+
 TEST("protocol: Explosion refuses a position that is not a number")
 {
 	for (const float bad : { NaN, Inf, -Inf }) {

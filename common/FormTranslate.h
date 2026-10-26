@@ -508,7 +508,8 @@ namespace FormTranslate
 			break;
 		case MessageType::kReportExplosion:
 		case MessageType::kExplosion:
-			Apply<Explosion>(a_packet, ctx, DecodeExplosion, [&](Explosion& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace); }, typed);
+			// An NPC's of a plugin we lack: a fight our game can't see, its blast none of ours (Protocol::Explosion).
+			Apply<Explosion>(a_packet, ctx, DecodeExplosion, [&](Explosion& m) { return ctx.Key(m.base) && ctx.Place(m.cell, m.worldspace) && ctx.Key(m.source); }, typed);
 			break;
 		case MessageType::kReportActivation:
 		case MessageType::kActivation:

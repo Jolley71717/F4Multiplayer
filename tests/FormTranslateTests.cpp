@@ -125,6 +125,18 @@ TEST("form translate: a message about a form the other side lacks is dropped, an
 	CHECK(runtime.kind == Result::Kind::kSame);
 }
 
+TEST("form translate: an explosion set off by an NPC of a plugin we lack is dropped; a player's or a spawn's is kept")
+{
+	Result out;
+	CHECK(!After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, THEIRS }, MT::kExplosion), MISSING, Way::kToLocal, &out));
+	CHECK(out.unmapped == std::vector<std::uint32_t>{ THEIRS });
+	CHECK(After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, 0 }, MT::kExplosion), MISSING, Way::kToLocal));
+	CHECK(After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, RUNTIME_REF }, MT::kExplosion), MISSING, Way::kToLocal));
+	const auto shared = After(Encode(Explosion{ 2, 0x0001D2EE, 1.0f, 2.0f, 3.0f, 0, 0x3C, SESSION_SHARED }, MT::kExplosion), MISSING, Way::kToLocal);
+	REQUIRE(shared);
+	CHECK(DecodeExplosion(*shared)->source == SHARED);
+}
+
 TEST("form translate: an entry of a list the other side can't name is left out, the rest kept")
 {
 	ActorState a, b, c;

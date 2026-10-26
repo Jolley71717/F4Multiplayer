@@ -289,6 +289,7 @@ namespace WeaponFire
 		std::uint32_t            explosionsSetOff = 0;    // explosions from other players set off here
 		std::uint32_t            explosionsForOurs = 0;   // ... of those, far from our player, beside an NPC our game runs
 		std::uint32_t            explosionRefusedRadius = 0;  // ... not set off: no throw makes one that big (or it has no radius)
+		std::uint32_t            explosionsNoSource = 0;      // ... not set off: an NPC's we have no copy of
 		std::uint32_t            copiesShielded = 0;  // our copies of NPCs other games run made ghosts against a friend's explosion (BlastShield)
 		std::uint32_t            shieldsEnded = 0;    // ... and no ghosts again
 		std::uint32_t            shieldsHurt = 0;     // ... that lost health meanwhile all the same
@@ -1045,8 +1046,10 @@ namespace WeaponFire
 				if (reportGate.Pass(NearestPlayer(a_ref->data.location, a_player), seen.radius, a_now)) {
 					seen.fate = RemoteEdits::Fate::kShared;
 					what = "reported";
+					// The NPC that set it off, for a game with no copy of it to leave it be (Protocol::Explosion).
+					const auto source = by && !by->IsPlayerRef() ? NpcSync::SessionId(by->GetFormID()) : 0;
 					std::scoped_lock e{ explosionLock };
-					explosions.push_back({ 0, base->GetFormID(), seen.at.x, seen.at.y, seen.at.z, seen.at.cell, seen.at.worldspace });
+					explosions.push_back({ 0, base->GetFormID(), seen.at.x, seen.at.y, seen.at.z, seen.at.cell, seen.at.worldspace, source });
 					++explosionsReported;
 				} else {
 					++explosionsKept;
@@ -1214,8 +1217,8 @@ namespace WeaponFire
 
 	std::string DescribeBlasts()
 	{
-		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
-			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
+		return std::format("blasts={} areaWatches={} explosionsNotShared={} standInExplosions={} othersExplosions={} explosionsKept={} explosionsForOurs={} explosionsNoSource={} blastsNamed={}/{}/{} shotsWatched={}/{} nearFriends={} deathBlasts={}", blasts.Size(),
+			areaWatches.Size(), explosionsNotShared, explosionsOfStandIns, explosionsOfOthers, explosionsKept, explosionsForOurs, explosionsNoSource, blastsNamed, blastsNearest, blastsAmbiguous, shotsWatched,
 			shotsChecked, explosionsNearFriends, deathBlasts);
 	}
 
@@ -1988,6 +1991,11 @@ namespace WeaponFire
 		const auto form = RE::TESForm::GetFormByID(a_explosion.base);
 		const auto base = form ? form->As<RE::BGSExplosion>() : nullptr;
 		if (!cell || !base) {
+			return;
+		}
+		// Set off by an NPC we have no copy of (one of a plugin we lack never gets here: FormTranslate drops it).
+		if (!RemoteEdits::SourceHere(a_explosion.source, a_explosion.source ? NpcSync::LocalRef(a_explosion.source) : 0)) {
+			++explosionsNoSource;
 			return;
 		}
 		const auto&             us = player->data.location;

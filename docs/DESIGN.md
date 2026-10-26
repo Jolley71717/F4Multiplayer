@@ -463,6 +463,10 @@ shared at all. That game deals every blow itself, a copy's too, reported as its 
 - Set off where its NPCs are: a reported explosion goes off within 6000 units of our player, or beside an NPC our game
   runs (our companion among them) within its radius and 1024 units, wherever our player is (`explosionsForOurs=`). Our
   copies of NPCs other games run are made ghosts while it goes off (BlastShield).
+- Never from a fight we can't see: a report names the NPC that set it off (`source`, 0 for a player's), and a game with
+  no copy of it sets nothing off (seen on the rig: a host-only Nuka-World NPC's blast went off beside a player without
+  the DLC). One of a plugin that game lacks is dropped as it comes in (FormTranslate); a spawn it never placed is
+  counted (`explosionsNoSource=`). A spawn's blast in the moment before its copy is placed is lost the same way.
 - The objects' own: `explode` goes with a destructible object's stage whoever reports it, with no window, and a budget
   of its own of 64 at once, then 64 a second per player, far past any fight. A stage comes once in the session, near its
   reporter. A trap's spring is relayed from 16000 units.
