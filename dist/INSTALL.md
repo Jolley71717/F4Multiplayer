@@ -124,10 +124,13 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
 - `bSharedStorage` (false, experimental): on, a container in a home or a settlement (one a player owns, or one in a
   settlement they own) has one copy for everyone, the host's. A guest who opens theirs sees what is in the host's, and
   what one player takes is gone for everyone. Only ammo, aid and junk are shared this way; weapons, armor, keys and
-  notes stay in each player's own copy. When a guest first opens one, the ammo, aid and junk their own copy held go to
-  their inventory. A container is shared once the host has been near it in the session; until then, and after the host
-  loads a save until they come near it again, each player's copy is their own. A take that loses a race to a friend's
-  is given back. Off, each player keeps their own copy, and loot taken from one is taken from the others' copies too.
+  notes stay in each player's own copy. The ammo, aid and junk a guest's own copy held are put aside while it shows the
+  host's, and are back in their copy when they close it: they can't be taken while the host keeps that container. A
+  container is shared once the host has been near it in the session; until then it works as with this off. After the
+  host loads a save, a guest's menu on one closes with a notice until the host comes near it again. A take that loses a
+  race to a friend's, or that the session never answers, is given back; a guest who reloads keeps what the container
+  got (a put is taken from them again, a take given again). Off, each player keeps their own copy, and loot taken from
+  one is taken from the others' copies too.
   A session on the dedicated server (`F4MPServer.exe`) has no host's game to keep the copy, so it never shares storage.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
   `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
