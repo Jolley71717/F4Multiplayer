@@ -119,9 +119,9 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (37),
+	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (38),
 	// and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 0xE526 } }) {
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 38 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -602,4 +602,33 @@ TEST("session file: moved objects' places come back from layout 36, in the order
 	auto letGo = in;
 	letGo.objectPlaces[0].kind = Protocol::ObjectRestKind::kLetGo;
 	CHECK(!SessionFile::Decode(SessionFile::Encode(letGo)));
+}
+
+// Layout 37 adds whose game keeps each shared storage container: after a restart a friend's copy stays closed until that
+// game lists it again, and nobody else's claim takes it. In a file of an older layout, owners are damage.
+TEST("session file: storage owners come back from layout 37, and a layout 36 file still loads without them")
+{
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+	auto in = MakeSnapshot();
+	for (std::uint32_t i = 0; i < Protocol::MAX_STORAGE_OWNERS_PER_PACKET + 5; ++i) {
+		in.storageOwners.push_back({ 0x00020000 + i, 1 + i % 2 });  // more than one packet holds
+	}
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->storageOwners == in.storageOwners);
+	SessionFile::Snapshot only;
+	only.storageOwners = { { 0x00020000, 1 } };
+	CHECK(!only.Empty());
+
+	CHECK(!as(SessionFile::Encode(in), SessionFile::OBJECT_PLACES));
+	auto none = MakeSnapshot();
+	const auto older = as(SessionFile::Encode(none), SessionFile::OBJECT_PLACES);
+	REQUIRE(older);
+	CHECK(older->storageOwners.empty());
+	auto nobody = in;
+	nobody.storageOwners[0].ownerId = 0;
+	CHECK(!SessionFile::Decode(SessionFile::Encode(nobody)));
 }

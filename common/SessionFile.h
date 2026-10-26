@@ -39,7 +39,9 @@ namespace SessionFile
 	// damaged in it (Snapshot::destructions, as kDestructions packets). The traps' own test builds wrote 34 with the traps
 	// alone, which reads as one without destructions; the destructibles' own test builds wrote 35, which no build reads.
 	// 36 adds to 34 where the loose objects players moved came to rest (Snapshot::objectPlaces, as kObjectRested packets).
-	inline constexpr std::uint16_t FORMAT = 36;
+	// 37 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets).
+	inline constexpr std::uint16_t FORMAT = 37;
+	inline constexpr std::uint16_t OBJECT_PLACES = 36;
 	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
 	inline constexpr std::uint16_t DESTRUCTIBLES_TEST = 35;
 	inline constexpr std::uint16_t ALL_THREE = 33;
@@ -51,7 +53,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 37 (35 was the destructibles' test builds').
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 38 (35 was the destructibles' test builds').
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -62,7 +64,8 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format >= ALL_THREE; }
 	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
 	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
-	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= FORMAT; }
+	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= OBJECT_PLACES; }
+	[[nodiscard]] constexpr bool HasStorageOwners(std::uint16_t a_format) { return a_format >= FORMAT; }
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
@@ -104,11 +107,14 @@ namespace SessionFile
 		// Where the loose objects players moved came to rest (common/ObjectMovers.h's Places), moved longest ago first:
 		// kRest, playerId 0, as a catch-up has them.
 		std::vector<Protocol::ObjectRest>                   objectPlaces;
+		// Whose game keeps each shared storage container (common/StorageBook.h): closed to friends after a restart until that
+		// game lists it again, never taken by another.
+		std::vector<Protocol::StorageOwner>                 storageOwners;
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty() && objectPlaces.empty();
+			       destructions.empty() && objectPlaces.empty() && storageOwners.empty();
 		}
 	};
 
@@ -187,6 +193,10 @@ namespace SessionFile
 		}
 		for (const auto& place : a_snapshot.objectPlaces) {
 			packet(Protocol::Encode(place, Protocol::MessageType::kObjectRested));
+		}
+		for (std::size_t i = 0; i < a_snapshot.storageOwners.size(); i += Protocol::MAX_STORAGE_OWNERS_PER_PACKET) {
+			const auto end = (std::min)(a_snapshot.storageOwners.size(), i + Protocol::MAX_STORAGE_OWNERS_PER_PACKET);
+			packet(Protocol::Encode(Protocol::StorageOwners{ { a_snapshot.storageOwners.begin() + i, a_snapshot.storageOwners.begin() + end } }));
 		}
 		return out;
 	}
@@ -320,6 +330,14 @@ namespace SessionFile
 					return std::nullopt;
 				}
 				snapshot.objectPlaces.push_back(*place);
+				break;
+			}
+			case Protocol::MessageType::kStorageOwners: {
+				const auto owners = HasStorageOwners(version) ? Protocol::DecodeStorageOwners(packet) : std::nullopt;
+				if (!owners) {
+					return std::nullopt;
+				}
+				snapshot.storageOwners.insert(snapshot.storageOwners.end(), owners->entries.begin(), owners->entries.end());
 				break;
 			}
 			default:

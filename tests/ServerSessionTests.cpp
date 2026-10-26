@@ -344,6 +344,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.realTimeVats);
 		CHECK(!welcome->rules.downedCrawl);
 		CHECK(!welcome->rules.shareGuestBuilds);
+		CHECK(!welcome->rules.sharedStorage);
 	}
 	{
 		Server::Options options;
@@ -354,6 +355,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		options.rules.downedCrawl = true;  // --downed-crawl
 		options.rules.realTimeVats = false;
 		options.rules.shareGuestBuilds = true;
+		options.rules.sharedStorage = true;
 		options.rules.bleedOutSeconds = 9999;  // past the limit: brought within it
 		Fixture    f{ options };
 		const auto welcome = f.Join(1, Fixture::MakeHello("Alice"));
@@ -365,6 +367,7 @@ TEST("server session: the welcome carries the host's session rules, the defaults
 		CHECK(welcome->rules.downedCrawl);
 		CHECK(!welcome->rules.realTimeVats);
 		CHECK(welcome->rules.shareGuestBuilds);
+		CHECK(welcome->rules.sharedStorage);
 		CHECK(welcome->rules.bleedOutSeconds == Protocol::SessionRules::MAX_BLEED_OUT);
 	}
 }

@@ -145,6 +145,9 @@ namespace Protocol
 		kReportMarkers = 24,      // map markers the sender discovered
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
 		kReportNpcIdentity = 67,   // what an NPC the sender runs was rolled as: its leveled templates, level and factions
+		kReportStorage = 68,       // the host's game: what one of its storage containers holds that the session shares (StorageListing)
+		kViewStorage = 69,         // the sender opened or closed a storage container another game keeps (StorageView)
+		kReportStorageShort = 70,  // the host's game: a friend's take its storage container held less of than was taken (StorageShort)
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
@@ -192,6 +195,9 @@ namespace Protocol
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
 		kNpcIdentity = 167,       // what an NPC another player's game runs was rolled as there: the session's roll of it
+		kStorageContents = 168,   // what a storage container holds in the game that keeps it, for the player viewing it (StorageListing)
+		kStorageOwners = 169,     // whose game keeps the one true copy of storage containers (StorageOwners)
+		kStorageRefused = 170,    // a move of ours at a storage container that didn't go through, or our view of it closed (StorageRefusal)
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
@@ -357,6 +363,11 @@ namespace Protocol
 		// Settlements (src/game/BuiltWalk.h): a guest's game also reports what its player built before the session, not only
 		// the host's (bShareGuestBuilds). A flag bit no older build sets or reads, so the protocol stays as it was.
 		bool shareGuestBuilds = false;
+
+		// Storage (src/game/StorageView.h, common/StorageBook.h): the host's game keeps the one true copy of a home's or a
+		// settlement's containers, and a friend's game shows them and moves through it (bSharedStorage; off by default).
+		// Welcome flag bit 32, as shareGuestBuilds: a build that neither sets nor reads it keeps 0.9.2's way.
+		bool sharedStorage = false;
 
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
@@ -553,6 +564,8 @@ namespace Protocol
 		std::uint32_t container = 0;
 		std::uint32_t item = 0;  // base object form ID
 		std::int32_t  count = 0;
+
+		bool operator==(const ContainerChange&) const = default;
 	};
 
 	// A container change as the server relays it: numbered in session order, with who made it.
@@ -561,6 +574,93 @@ namespace Protocol
 		std::uint32_t   index = 0;
 		std::uint32_t   playerId = 0;
 		ContainerChange change;
+	};
+
+	// Shared storage (SessionRules::sharedStorage): a home's or a settlement's container (LootScope::IsStorage in the
+	// host's game) has one true copy, the host's game's. Its game tells the server what the container holds of what the
+	// session shares (kReportStorage, which also claims it), the server keeps that and every move since (StorageBook.h),
+	// and a friend who opens their copy is sent it to show (kStorageContents). Their takes and puts are ordinary
+	// kReportContainer moves, checked against it first: one that can't be checked (the host away, the container not
+	// listed by the host's world since its last load) or that takes what isn't there is refused (kStorageRefused), never
+	// numbered, and their game undoes it.
+	inline constexpr std::size_t   MAX_STORAGE_STACKS = 1024;          // stacks of one container's listing
+	inline constexpr std::size_t   MAX_STORAGE_OWNERS_PER_PACKET = 1024;
+	inline constexpr std::uint32_t STORAGE_NOT_NUMBERED = 0xFFFFFFFF;  // StorageRefusal::index of a move the server never numbered
+
+	struct StorageStack
+	{
+		std::uint32_t item = 0;  // base form
+		std::int32_t  count = 0;  // 1 to MAX_ITEM_COUNT
+
+		bool operator==(const StorageStack&) const = default;
+	};
+
+	// kReportStorage (the host's game: its world's, as of its ledger's next change asOf) and kStorageContents (the server's,
+	// as of the next number it gives: every change numbered from asOf on goes into the viewer's copy too).
+	struct StorageListing
+	{
+		std::uint32_t             container = 0;
+		std::uint32_t             asOf = 0;
+		std::vector<StorageStack> stacks;  // at most MAX_STORAGE_STACKS, one per item
+
+		bool operator==(const StorageListing&) const = default;
+	};
+
+	// kViewStorage: the sender's container menu opened (or closed) on its copy of a container another game keeps.
+	struct StorageView
+	{
+		std::uint32_t container = 0;
+		bool          open = true;
+
+		bool operator==(const StorageView&) const = default;
+	};
+
+	struct StorageOwner
+	{
+		std::uint32_t container = 0;
+		std::uint32_t ownerId = 0;  // the player whose game keeps it
+
+		bool operator==(const StorageOwner&) const = default;
+	};
+
+	// kStorageOwners: the whole table after a welcome (before the world state), and each new entry as it is claimed.
+	struct StorageOwners
+	{
+		std::vector<StorageOwner> entries;  // at most MAX_STORAGE_OWNERS_PER_PACKET
+
+		bool operator==(const StorageOwners&) const = default;
+	};
+
+	// kReportStorageShort: the host's game applied a friend's numbered take (index) and its container held `missing` fewer
+	// than taken (its world was reloaded since the server last heard what it holds).
+	struct StorageShort
+	{
+		std::uint32_t index = 0;
+		std::int32_t  missing = 0;  // 1 to MAX_ITEM_COUNT
+
+		bool operator==(const StorageShort&) const = default;
+	};
+
+	enum class StorageReason : std::uint8_t
+	{
+		kClosed = 1,      // the game that keeps it is away, or its world hasn't said what it holds since its last load
+		kNotHeld = 2,     // a take of more than the container holds
+		kCantHold = 3,    // a put of an item the game that keeps it doesn't have (a mod it lacks), or the container is full
+		kShort = 4,       // a numbered take the keeper's container held less of than taken (index: that change)
+		kNotViewing = 5,  // a move at a container the sender isn't viewing (an old copy's contents are their own)
+	};
+
+	// kStorageRefused: the sender's move (container, item, count as reported) didn't go through, all of it, or for kShort
+	// `count` of a numbered take (index). item 0: the sender's view of the container closed (reason kClosed).
+	struct StorageRefusal
+	{
+		std::uint32_t container = 0;
+		std::uint32_t item = 0;
+		std::int32_t  count = 0;
+		std::uint32_t index = STORAGE_NOT_NUMBERED;
+		StorageReason reason = StorageReason::kClosed;
+
+		bool operator==(const StorageRefusal&) const = default;
 	};
 
 	struct RefPickedUp
@@ -2010,7 +2110,8 @@ namespace Protocol
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
-		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0);
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0) |
+		                           (rules.sharedStorage ? 32 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2040,6 +2141,7 @@ namespace Protocol
 			rules.realTimeVats = (flags & 4) != 0;
 			rules.shareGuestBuilds = (flags & 8) != 0;  // an older host never sets it: off, as it was
 			rules.downedCrawl = (flags & 16) != 0;
+			rules.sharedStorage = (flags & 32) != 0;  // a host without it never sets it: each game keeps its own copy, as in 0.9.2
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();
@@ -2706,6 +2808,157 @@ namespace Protocol
 		if (!r.Ok() || !r.AtEnd() || (!IsValid(msg.change) && !IsEmpty(msg.change))) {
 			return std::nullopt;
 		}
+		return msg;
+	}
+
+	// kReportStorage, kStorageContents
+	inline std::vector<std::uint8_t> Encode(const StorageListing& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.container);
+		w.U32(a_msg.asOf);
+		const auto count = (std::min)(a_msg.stacks.size(), MAX_STORAGE_STACKS);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.stacks[i].item);
+			w.U32(static_cast<std::uint32_t>(a_msg.stacks[i].count));
+		}
+		return w.Data();
+	}
+
+	inline std::optional<StorageListing> DecodeStorageListing(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageListing msg;
+		msg.container = r.U32();
+		msg.asOf = r.U32();
+		const auto count = r.U16();
+		if (!r.Ok() || count > MAX_STORAGE_STACKS || !IsShareableRef(msg.container)) {
+			return std::nullopt;
+		}
+		msg.stacks.reserve(count);
+		for (std::uint16_t i = 0; i < count; ++i) {
+			StorageStack stack;
+			stack.item = r.U32();
+			stack.count = static_cast<std::int32_t>(r.U32());
+			if (!r.Ok() || stack.item == 0 || stack.count <= 0 || stack.count > MAX_ITEM_COUNT) {
+				return std::nullopt;
+			}
+			msg.stacks.push_back(stack);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageView& a_msg)
+	{
+		Writer w{ MessageType::kViewStorage };
+		w.U32(a_msg.container);
+		w.U8(a_msg.open ? 1 : 0);
+		return w.Data();
+	}
+
+	inline std::optional<StorageView> DecodeStorageView(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageView msg;
+		msg.container = r.U32();
+		const auto open = r.U8();
+		if (!r.Ok() || !r.AtEnd() || open > 1 || !IsShareableRef(msg.container)) {
+			return std::nullopt;
+		}
+		msg.open = open == 1;
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageOwners& a_msg)
+	{
+		Writer w{ MessageType::kStorageOwners };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_STORAGE_OWNERS_PER_PACKET);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.entries[i].container);
+			w.U32(a_msg.entries[i].ownerId);
+		}
+		return w.Data();
+	}
+
+	inline std::optional<StorageOwners> DecodeStorageOwners(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageOwners msg;
+		const auto    count = r.U16();
+		if (!r.Ok() || count > MAX_STORAGE_OWNERS_PER_PACKET) {
+			return std::nullopt;
+		}
+		msg.entries.reserve(count);
+		for (std::uint16_t i = 0; i < count; ++i) {
+			StorageOwner entry;
+			entry.container = r.U32();
+			entry.ownerId = r.U32();
+			if (!r.Ok() || !IsShareableRef(entry.container) || entry.ownerId == 0) {
+				return std::nullopt;
+			}
+			msg.entries.push_back(entry);
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageShort& a_msg)
+	{
+		Writer w{ MessageType::kReportStorageShort };
+		w.U32(a_msg.index);
+		w.U32(static_cast<std::uint32_t>(a_msg.missing));
+		return w.Data();
+	}
+
+	inline std::optional<StorageShort> DecodeStorageShort(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageShort msg;
+		msg.index = r.U32();
+		msg.missing = static_cast<std::int32_t>(r.U32());
+		if (!r.Ok() || !r.AtEnd() || msg.missing <= 0 || msg.missing > MAX_ITEM_COUNT) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	inline std::vector<std::uint8_t> Encode(const StorageRefusal& a_msg)
+	{
+		Writer w{ MessageType::kStorageRefused };
+		w.U32(a_msg.container);
+		w.U32(a_msg.item);
+		w.U32(static_cast<std::uint32_t>(a_msg.count));
+		w.U32(a_msg.index);
+		w.U8(static_cast<std::uint8_t>(a_msg.reason));
+		return w.Data();
+	}
+
+	inline std::optional<StorageRefusal> DecodeStorageRefusal(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		StorageRefusal msg;
+		msg.container = r.U32();
+		msg.item = r.U32();
+		msg.count = static_cast<std::int32_t>(r.U32());
+		msg.index = r.U32();
+		const auto reason = r.U8();
+		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.container) || reason < 1 || reason > static_cast<std::uint8_t>(StorageReason::kNotViewing) ||
+			msg.count < -MAX_ITEM_COUNT || msg.count > MAX_ITEM_COUNT || ((msg.item == 0) != (msg.count == 0))) {
+			return std::nullopt;
+		}
+		msg.reason = static_cast<StorageReason>(reason);
 		return msg;
 	}
 

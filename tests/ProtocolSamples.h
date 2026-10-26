@@ -326,6 +326,17 @@ namespace ProtocolSamples
 		s.push_back({ "DropList(empty)", Encode(DropList{}), D(DecodeDropList) });
 		s.push_back({ "PluginTable", Encode(PluginTable{ { "Fallout4.esm", "DLCCoast.esm", "MyMod.esp", std::string{ LIGHT_PLUGINS }, "Light.esl" } }), D(DecodePluginTable) });
 		s.push_back({ "WorldState", Encode(MakeWorldState()), D(DecodeWorldState) });
+		for (const auto type : { MT::kReportStorage, MT::kStorageContents }) {
+			s.push_back({ "StorageListing", Encode(StorageListing{ REF_A, 41, { { 0x0001F276, 120 }, { 0x0004835D, 3 } } }, type), D(DecodeStorageListing) });
+			s.push_back({ "StorageListing(empty)", Encode(StorageListing{ REF_B, 0, {} }, type), D(DecodeStorageListing) });
+		}
+		s.push_back({ "StorageView", Encode(StorageView{ REF_A, true }), D(DecodeStorageView) });
+		s.push_back({ "StorageView(closed)", Encode(StorageView{ REF_A, false }), D(DecodeStorageView) });
+		s.push_back({ "StorageOwners", Encode(StorageOwners{ { { REF_A, 1 }, { REF_B, 1 } } }), D(DecodeStorageOwners) });
+		s.push_back({ "StorageShort", Encode(StorageShort{ 17, 2 }), D(DecodeStorageShort) });
+		s.push_back({ "StorageRefusal", Encode(StorageRefusal{ REF_A, 0x0001F276, -5, STORAGE_NOT_NUMBERED, StorageReason::kNotHeld }), D(DecodeStorageRefusal) });
+		s.push_back({ "StorageRefusal(short)", Encode(StorageRefusal{ REF_A, 0x0001F276, -2, 17, StorageReason::kShort }), D(DecodeStorageRefusal) });
+		s.push_back({ "StorageRefusal(closed)", Encode(StorageRefusal{ REF_A, 0, 0, STORAGE_NOT_NUMBERED, StorageReason::kClosed }), D(DecodeStorageRefusal) });
 		return s;
 	}
 
@@ -442,6 +453,12 @@ namespace ProtocolSamples
 		case MT::kObjectRested:
 		case MT::kPluginTable:
 		case MT::kTraps:
+		case MT::kReportStorage:
+		case MT::kViewStorage:
+		case MT::kReportStorageShort:
+		case MT::kStorageContents:
+		case MT::kStorageOwners:
+		case MT::kStorageRefused:
 			return true;
 		}
 		return false;
