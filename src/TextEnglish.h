@@ -121,6 +121,7 @@ namespace Text
 
 		// --- Being down and helping up ---
 		{ "down.went_down", "You're down! A friend can help you up. Hold {key} to give up" },
+		{ "down.went_down_crawl", "You're down! A friend can help you up, and you can crawl. Hold {key} to give up" },
 		{ "down.seconds_left", "{n} seconds left to be helped up" },
 		{ "down.helping", "Helping {player} up..." },
 		{ "down.helped", "You helped {player} up" },

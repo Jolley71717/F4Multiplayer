@@ -297,6 +297,7 @@ TEST("text: every English key is unique and gives the literal the mod showed bef
 		{ "party.cant_teleport_to", { { "player", "Sam" } }, "Can't teleport to Sam" },
 		{ "party.teleporting", { { "player", "Sam" } }, "Teleporting to Sam" },
 		{ "down.went_down", { { "key", "F7" } }, "You're down! A friend can help you up. Hold F7 to give up" },
+		{ "down.went_down_crawl", { { "key", "F7" } }, "You're down! A friend can help you up, and you can crawl. Hold F7 to give up" },
 		{ "down.seconds_left", { { "n", 30 } }, "30 seconds left to be helped up" },
 		{ "down.helping", { { "player", "Sam" } }, "Helping Sam up..." },
 		{ "down.helped", { { "player", "Sam" } }, "You helped Sam up" },

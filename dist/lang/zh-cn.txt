@@ -92,6 +92,7 @@ party.cant_teleport_into = 无法传送到 {player} 所在的地方
 party.cant_teleport_to = 无法传送到 {player} 那里
 party.teleporting = 正在传送到 {player} 那里
 down.went_down = 你倒下了！好友可以扶你起来。按住 {key} 放弃
+down.went_down_crawl = 你倒下了！好友可以扶你起来，你也可以爬行。按住 {key} 放弃
 down.seconds_left = 还有 {n} 秒可以被扶起
 down.helping = 正在扶起 {player}……
 down.helped = 你扶起了 {player}

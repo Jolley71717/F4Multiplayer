@@ -92,6 +92,7 @@ party.cant_teleport_into = Kein Teleport an den Ort von {player}
 party.cant_teleport_to = Kein Teleport zu {player}
 party.teleporting = Teleportiere zu {player}
 down.went_down = Du bist am Boden! Freunde können dir aufhelfen. Aufgeben: {key} halten
+down.went_down_crawl = Du bist am Boden! Freunde können dir aufhelfen, und du kannst kriechen. Aufgeben: {key} halten
 down.seconds_left = Noch {n} Sek., um dir aufzuhelfen
 down.helping = Du hilfst {player} auf...
 down.helped = Du hast {player} aufgeholfen

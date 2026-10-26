@@ -1277,6 +1277,25 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   `kEssentialDown` up (rig 2026-10-20: up 20 ms after each lie-down without it). Up again, its life
   state goes back to alive (the engine's get-up); still down 4 s later it is replaced, standing. Found up
   again while they are down, it is laid down again 2 s on. Laid down by us, it is not replaced as broken.
+- Crawling while down (`bDownedCrawl`, the host's rule, off by default; `DownRules::Crawl`, tested;
+  `Downed::CrawlFrame`): down and waiting for help, the player's own movement input
+  (`PlayerControls::data.moveInputVec`, which the game fills from keys or stick through its control map)
+  moves their own character in their own game: forward 40 units/s along the heading, back at half, and
+  sideways turns the body 90°/s (the bleed-out camera gives no direction to go by). A frame counts for
+  at most 0.1 s. Nothing moves while the game has the player up and they are being put down again (the
+  engine walks them then, and a step of ours could keep the put-down from taking), nor while paused, in the air, swimming, in furniture or a scene, knocked over
+  (knock state not normal), or with a friend's stand-in within help range (a crawl away would start
+  their help over). Each step is checked first with the cell's physics pick: two rays along the way at
+  35 and 60 units up (a wall within the step plus 20 units refuses it), and two down from 35 units up, at
+  the step's end and 20 units ahead (no ground within 120 units below, a rise over 30 or a drop over 45
+  refuses it; the feet go onto the ground). Only hits on the world's own solid layers count
+  (`DownRules::CrawlStops`, railings and grates included): the rays start inside our own body, and
+  characters, loose clutter and triggers are passed through. A step is `SetPosition` and `SetHeading`, as teleport does. The position
+  goes to friends in `PlayerState` as always, and their stand-in, lying, is placed at it every update,
+  so it drags itself along in the downed pose. Nothing new is saved, and a load while down stands the
+  player up as before. A game from before the rule ignores the welcome's bit and does not crawl. Whether
+  the game still fills `moveInputVec` during bleed-out is logged once a down ("movement input while
+  down") and shown in `Describe`.
 - Session rules (`Protocol::SessionRules`, protocol 49): the host's ini (src/game/HostRules.h; F4MPServer's
   options) sets them and the server sends them with every `Welcome`, the host's own game included, so every
   game plays by the same ones until the session ends (decoded rules are clamped: bleed-out 5-600 s, help
@@ -1285,7 +1304,8 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   are kept by DownRules::Self on the downed player's side: out of revives, or in the cooldown, the player is
   not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
   frame in combat (on the ground counts as in combat). The helper checks its own combat state for
-  `bReviveOutOfCombat`. The defaults are the behaviour before the rules. Rules that reach `Self` while the
+  `bReviveOutOfCombat`. `bDownedCrawl` is the welcome's flag bit 16, added without a protocol version of
+  its own (off is what a game from before it does). The defaults are the behaviour before the rules. Rules that reach `Self` while the
   player is on the ground (a welcome back into the session mid-down) wait until they are up: a down finishes
   under the rules it began with, so a shorter bleed-out or revive turned off never kills on the spot; the
   revive count of the session carries on through any change. A joiner is told rules that differ from the

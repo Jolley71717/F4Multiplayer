@@ -346,6 +346,10 @@ namespace Protocol
 		std::uint16_t reviveWindowMinutes = 0;    // that window; 0 = per fight (iReviveWindowMinutes)
 		std::uint16_t downCooldownSeconds = 0;    // helped up, a lethal hit within this long kills (iReviveCooldownSeconds)
 		bool          reviveOutsideCombat = false;  // friends can only help while they are not in a fight (bReviveOutOfCombat)
+		// A downed player can crawl slowly with their movement keys while they wait (bDownedCrawl; experimental, off).
+		// Welcome flag bit 16, with no version of its own: a game from before it ignores the bit and does not crawl,
+		// which moves nobody but its own player.
+		bool          downedCrawl = false;
 
 		// Time (src/game/RealTime.h): in a session, VATS runs in real time instead of slowing the game.
 		bool realTimeVats = true;  // VATS (bRealTimeVats)
@@ -1990,7 +1994,7 @@ namespace Protocol
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
-		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0);
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.downedCrawl ? 16 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2018,6 +2022,7 @@ namespace Protocol
 			rules.revive = (flags & 1) != 0;
 			rules.reviveOutsideCombat = (flags & 2) != 0;
 			rules.realTimeVats = (flags & 4) != 0;
+			rules.downedCrawl = (flags & 16) != 0;
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
 			rules.reviveHealth = r.U8();

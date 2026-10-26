@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -41,6 +42,7 @@ namespace DownRules
 		Clock::duration window{};               // 0 = per fight
 		Clock::duration cooldown{};             // helped up, a lethal hit within this long kills
 		bool            outsideCombat = false;  // a helper in a fight cannot help
+		bool            crawl = false;          // down, the player crawls with their movement keys (Crawl)
 
 		static Rules From(const Protocol::SessionRules& a_session)
 		{
@@ -54,6 +56,7 @@ namespace DownRules
 			rules.window = std::chrono::minutes{ session.reviveWindowMinutes };
 			rules.cooldown = std::chrono::seconds{ session.downCooldownSeconds };
 			rules.outsideCombat = session.reviveOutsideCombat;
+			rules.crawl = session.downedCrawl;
 			return rules;
 		}
 	};
@@ -377,6 +380,10 @@ namespace DownRules
 		// What friends are told: down and still waiting for help. Once helped, friends stop helping; they kept
 		// helping while the game stood the player up, and the helper read "You helped Host up" three times for one down.
 		[[nodiscard]] bool WaitsForHelp() const { return phase == Phase::kDown; }
+		// The session's rule lets the player crawl, and they are down waiting for help (not helped and getting up, not
+		// bled out, not giving up), and really lying there: not while the game has them up and they are being put down
+		// again (StoodUp), when the engine walks them itself and a step of ours could keep the put-down from taking.
+		[[nodiscard]] bool MayCrawl() const { return rules.crawl && phase == Phase::kDown && !giveUp && !standingSince; }
 
 		std::uint32_t downs = 0;
 		std::uint32_t revives = 0;
@@ -574,6 +581,196 @@ namespace DownRules
 		Clock::time_point       helpSince{};
 		Clock::time_point       helpAgain{};
 	};
+
+	// Crawling while down (the session's rule, bDownedCrawl): the player's own movement input, read from the game's
+	// controls, moves their character slowly in their own game; friends see it through the position they already get,
+	// their stand-in lying where the player is (StandInDown). Forward and back crawl along the heading and sideways turns
+	// the body, since the bleed-out camera gives no direction to go by. Each step is checked against the world first
+	// (Accept): Downed.cpp casts the rays through the cell's physics and does what this answers.
+	inline constexpr float CRAWL_SPEED = 40.0f;           // game units a second forward (half that backward): 25 m in a 45 s bleed-out
+	inline constexpr float CRAWL_TURN = 1.5707964f;       // radians a second (90 degrees)
+	inline constexpr float CRAWL_LONGEST_FRAME = 0.1f;    // seconds: a hitch moves no farther than this much crawl
+	inline constexpr float CRAWL_DEAD_ZONE = 0.15f;       // input under this is none (a pad's stick at rest drifts)
+	inline constexpr float CRAWL_BODY = 20.0f;            // something solid closer than this past the step is a wall
+	inline constexpr float CRAWL_AHEAD = 20.0f;           // the ground is judged this far ahead too, so a slope reads as one
+	inline constexpr float CRAWL_CLIMB = 30.0f;           // the most the ground may rise there (a stair's step, a 55 degree slope)
+	inline constexpr float CRAWL_DROP = 45.0f;            // the most it may fall there: more is a ledge
+	inline constexpr float CRAWL_PROBE_LOW = 35.0f;       // the low wall ray and the ground rays start this high above the feet
+	inline constexpr float CRAWL_PROBE_HIGH = 60.0f;      // the high wall ray (under a table is still a way)
+	inline constexpr float CRAWL_GROUND_REACH = 120.0f;   // the ground rays reach this far below the feet
+
+	// What stops a crawl, by the collision layer (the engine's COL_LAYER) of what a ray hit: the world's own solid
+	// things. Characters (our own body first: the rays start inside it), loose clutter, water, triggers and the like are
+	// passed through.
+	constexpr bool CrawlStops(std::uint32_t a_layer)
+	{
+		switch (a_layer) {
+		case 0:   // unidentified: a hit that can't be told is taken as solid
+		case 1:   // static
+		case 2:   // animated static
+		case 3:   // transparent (glass, a fence)
+		case 9:   // trees
+		case 10:  // props
+		case 13:  // terrain
+		case 17:  // ground
+		case 20:  // large debris
+		case 26:  // small transparent (a railing, a grate, a small fence)
+		case 27:  // invisible wall
+		case 28:  // small transparent, animated
+		case 29:  // large clutter
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	class Crawl
+	{
+	public:
+		// What the game shows this frame.
+		struct Facts
+		{
+			bool  may = false;          // the session's rule, down and waiting for help (Self::MayCrawl)
+			float x = 0.0f;             // the movement input, -1 (left) to 1 (right)
+			float y = 0.0f;             // -1 (back) to 1 (forward)
+			float seconds = 0.0f;       // since the last frame
+			bool  paused = false;       // a menu has the game stopped
+			bool  inAir = false;
+			bool  swimming = false;
+			bool  inFurniture = false;
+			bool  knockedOver = false;  // the knock state is not normal: a ragdoll, or the get-up after it
+			bool  inScene = false;
+			bool  friendNear = false;   // a friend's stand-in within HELP_RANGE: kept still, so their help isn't broken
+		};
+
+		struct Move
+		{
+			float turn = 0.0f;     // radians, to the right
+			float forward = 0.0f;  // game units along the heading after the turn; backward is negative
+
+			[[nodiscard]] bool Any() const { return turn != 0.0f || forward != 0.0f; }
+		};
+
+		// The input is held at all (worth a look for friends near).
+		static bool Pushed(float a_x, float a_y)
+		{
+			return std::fabs(a_x) >= CRAWL_DEAD_ZONE || std::fabs(a_y) >= CRAWL_DEAD_ZONE;
+		}
+
+		static Move Wanted(const Facts& a_facts)
+		{
+			if (!a_facts.may || a_facts.paused || a_facts.inAir || a_facts.swimming || a_facts.inFurniture || a_facts.knockedOver ||
+				a_facts.inScene || a_facts.friendNear) {
+				return {};
+			}
+			const float seconds = std::isfinite(a_facts.seconds) ? std::clamp(a_facts.seconds, 0.0f, CRAWL_LONGEST_FRAME) : 0.0f;
+			const auto  axis = [](float a_value) {
+				return std::isfinite(a_value) && std::fabs(a_value) >= CRAWL_DEAD_ZONE ? std::clamp(a_value, -1.0f, 1.0f) : 0.0f;
+			};
+			const float x = axis(a_facts.x);
+			const float y = axis(a_facts.y);
+			Move move;
+			move.turn = x * CRAWL_TURN * seconds;
+			move.forward = y * CRAWL_SPEED * seconds * (y < 0.0f ? 0.5f : 1.0f);
+			return move;
+		}
+
+		// The heading turned by a_turn, within 0 to 2 pi.
+		static float Turned(float a_heading, float a_turn)
+		{
+			constexpr float FULL = 6.2831853f;
+			const float     heading = std::fmod(a_heading + a_turn, FULL);
+			return heading < 0.0f ? heading + FULL : heading;
+		}
+
+		// How far east (x) and north (y) a_distance along a_heading is: the engine's heading counts from north toward east.
+		static std::array<float, 2> Along(float a_heading, float a_distance)
+		{
+			return { std::sin(a_heading) * a_distance, std::cos(a_heading) * a_distance };
+		}
+
+		// What the rays found for a step, each nothing when they hit nothing that stops a crawl (CrawlStops).
+		struct Probe
+		{
+			std::optional<float> wall;         // how far along the step's way something solid is, from the feet, at either height
+			std::optional<float> groundThere;  // the height of the ground where the step ends
+			std::optional<float> groundAhead;  // and CRAWL_AHEAD along the way from the feet
+		};
+
+		enum class Refused
+		{
+			kNone,
+			kWall,
+			kNoGround,
+			kLedge,
+			kClimb,
+		};
+
+		struct Verdict
+		{
+			Refused refused = Refused::kNone;
+			float   z = 0.0f;  // taken: the height to put the feet at, on the ground
+		};
+
+		// A step of a_step units (negative: backward) from feet at a_fromZ.
+		static Verdict Accept(float a_fromZ, float a_step, const Probe& a_probe)
+		{
+			if (a_probe.wall && *a_probe.wall < std::fabs(a_step) + CRAWL_BODY) {
+				return { Refused::kWall };
+			}
+			if (!a_probe.groundThere || !a_probe.groundAhead || !std::isfinite(*a_probe.groundThere) || !std::isfinite(*a_probe.groundAhead)) {
+				return { Refused::kNoGround };
+			}
+			for (const float ground : { *a_probe.groundThere, *a_probe.groundAhead }) {
+				if (ground - a_fromZ > CRAWL_CLIMB) {
+					return { Refused::kClimb };
+				}
+				if (a_fromZ - ground > CRAWL_DROP) {
+					return { Refused::kLedge };
+				}
+			}
+			return { Refused::kNone, *a_probe.groundThere };
+		}
+
+		// Counts a step's verdict. True for a refusal that is news (not the same as the step before it was), for the log.
+		bool Count(const Verdict& a_verdict, float a_step)
+		{
+			const bool news = a_verdict.refused != Refused::kNone && a_verdict.refused != last;
+			last = a_verdict.refused;
+			if (a_verdict.refused == Refused::kNone) {
+				++steps;
+				distance += std::fabs(a_step);
+			} else {
+				++refused;
+			}
+			return news;
+		}
+
+		[[nodiscard]] Refused Last() const { return last; }
+
+		std::uint32_t steps = 0;
+		std::uint32_t refused = 0;
+		float         distance = 0.0f;  // game units crawled in all
+
+	private:
+		Refused last = Refused::kNone;
+	};
+
+	constexpr const char* RefusedName(Crawl::Refused a_refused)
+	{
+		switch (a_refused) {
+		case Crawl::Refused::kWall:
+			return "wall";
+		case Crawl::Refused::kNoGround:
+			return "no ground";
+		case Crawl::Refused::kLedge:
+			return "ledge";
+		case Crawl::Refused::kClimb:
+			return "too steep";
+		default:
+			return "none";
+		}
+	}
 
 	// A friend who is down is shown down: their stand-in lies where they are, in the engine's own downed pose (its life
 	// state put to essential-down, which plays its graph's bleedout, in a power armor frame too), held there until they

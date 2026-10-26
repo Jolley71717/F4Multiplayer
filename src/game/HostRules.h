@@ -32,6 +32,7 @@ namespace HostRules
 		rules.reviveWindowMinutes = u16(a_settings.reviveWindowMinutes);
 		rules.downCooldownSeconds = u16(a_settings.reviveCooldownSeconds);
 		rules.reviveOutsideCombat = a_settings.reviveOutOfCombat;
+		rules.downedCrawl = a_settings.downedCrawl;
 		rules.realTimeVats = a_settings.realTimeVats;
 		return rules.Clamped();
 	}
@@ -39,10 +40,10 @@ namespace HostRules
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} realTimeVats={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.realTimeVats);
+			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats);
 	}
 
 	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed

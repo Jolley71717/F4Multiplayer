@@ -6,6 +6,7 @@
 #include "Background.h"
 #include "RulesSummary.h"
 #include "Text.h"
+#include "game/DownRules.h"
 #include "game/HostRules.h"
 #include "game/RealTimeVats.h"
 
@@ -25,7 +26,20 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(rules.reviveWindowMinutes == 0);
 	CHECK(rules.downCooldownSeconds == 0);
 	CHECK(!rules.reviveOutsideCombat);
+	CHECK(!rules.downedCrawl);
 	CHECK(rules.realTimeVats);
+}
+
+TEST("session rules: crawling while down is off by default, and the host's bDownedCrawl turns it on for the downed rules")
+{
+	Config::Settings settings;
+	CHECK(!HostRules::FromSettings(settings).downedCrawl);
+	CHECK(!DownRules::Rules::From(HostRules::FromSettings(settings)).crawl);
+	settings.downedCrawl = true;
+	const auto rules = HostRules::FromSettings(settings);
+	CHECK(rules.downedCrawl);
+	CHECK(DownRules::Rules::From(rules).crawl);
+	CHECK(HostRules::Describe(rules).find("crawl=true") != std::string::npos);
 }
 
 TEST("session rules: the host's keys each set their rule, within the limits")
