@@ -473,6 +473,14 @@ TEST("npc place: each reason ours stays or moves, and when it is mirrored")
 	CHECK(NpcPlace::Decide(IN_THE_MUSEUM, museum, us, true) == Why::kHere);
 	CHECK(NpcPlace::Decide(Off(IN_THE_MUSEUM, 0.0f), LoadedAt(SANCTUARY), us, true) == Why::kOwnerIndoors);
 	CHECK(NpcPlace::Decide({ 0, 0, 0.0f, 0.0f, 0.0f }, museum, us, true) == Why::kOwnerIndoors);  // nowhere
+	// Our player is in the interior it is in: ours, left in Sanctuary, is moved there.
+	const Spot inside = Off(IN_THE_MUSEUM, 0.0f);
+	const Spot besideUs = Off(IN_THE_MUSEUM, 200.0f);
+	CHECK(NpcPlace::Decide(inside, LoadedAt(SANCTUARY), besideUs, true) == Why::kMove);
+	CHECK(NpcPlace::Decide(inside, LoadedAt(SANCTUARY), besideUs, false) == Why::kOwnerAway);
+	CHECK(NpcPlace::Decide(inside, LoadedAt(SANCTUARY), Off(IN_THE_MUSEUM, NpcPlace::BRING_IN_RANGE + 1.0f), true) == Why::kNotNearUs);
+	CHECK(NpcPlace::Decide(inside, LoadedAt(SANCTUARY), Off({ 0x0001F3B2, 0, 0.0f, 0.0f, 0.0f }, 200.0f), true) == Why::kOwnerIndoors);  // another interior
+	CHECK(NpcPlace::Decide(inside, NpcPlace::Ours{ .exists = true, .at = SANCTUARY, .companion = true }, besideUs, true) == Why::kBusy);
 	CHECK(NpcPlace::Decide(theirs, museum, IN_THE_MUSEUM, true) == Why::kNotNearUs);
 	CHECK(NpcPlace::Decide(theirs, museum, { 0, 0x00000099, us.x, us.y, us.z }, true) == Why::kNotNearUs);  // another world
 	CHECK(NpcPlace::Decide(theirs, museum, Off(theirs, NpcPlace::BRING_IN_RANGE + 1.0f), true) == Why::kNotNearUs);
