@@ -6,10 +6,13 @@
 #include "game/Hud.h"
 #include "game/LootScope.h"
 #include "game/LootSync.h"
+#include "game/OpenMenus.h"
 #include "game/WorldSync.h"
 
+#include <atomic>
 #include <charconv>
 #include <chrono>
+#include <cstring>
 #include <format>
 #include <unordered_map>
 #include <vector>
@@ -29,21 +32,11 @@ namespace Storage
 		// A container the scan found not to be storage is looked at again after this (a settlement taken, a home bought).
 		constexpr auto  NOT_STORAGE_FOR = std::chrono::seconds{ 30 };
 
-		StorageView::Side side;  // main thread
-		bool              hosting = false;
-		Clock::time_point scannedAt{};
-		std::unordered_map<std::uint32_t, Clock::time_point> notStorage;  // the host's scan: since when
-
 		struct Counts
 		{
-			std::uint32_t stashed = 0;      // stacks of our copy moved to our player as a view opened
-			std::uint32_t shown = 0;        // contents shown in our copy
-			std::uint32_t adjusts = 0;      // stacks our copy was changed by to show them
-			std::uint32_t givenBack = 0;    // refused or short takes taken back out of our player
-			std::int64_t  usedUp = 0;       // of those, items our player no longer had
-			std::uint32_t returned = 0;     // refused puts given back to our player
-			std::uint32_t refusedOwn = 0;   // our player changes OwnGear refused (must stay 0)
+			std::uint32_t refusedOwn = 0;   // inventory changes OwnGear refused (must stay 0)
 			std::uint32_t listFailed = 0;   // the host's listings put off (the ledger still asking)
+			std::uint32_t unsentSeen = 0;   // our reports the session's numbering couldn't carry (Unsent)
 		} counts;
 
 		thread_local bool applying = false;
@@ -67,16 +60,23 @@ namespace Storage
 			return a_ref && a_object ? static_cast<std::int64_t>(a_ref->GetInventoryObjectCount(a_object)) : 0;
 		}
 
-		// Adds to (a_count > 0) or takes out of (< 0) an inventory, as one of Storage's own changes; what was changed (a take
-		// takes no more than there is). a_change: OwnGear's for that reference (our player: kStorageUndo only).
-		std::int64_t Change(RE::TESObjectREFR* a_ref, std::uint32_t a_item, std::int64_t a_count, OwnGear::Change a_change)
+		RE::TESObjectREFR* Ref(std::uint32_t a_id)
+		{
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
+			return ref && !ref->IsDeleted() ? ref : nullptr;
+		}
+
+		RE::TESObjectREFR* Player()
+		{
+			return RE::PlayerCharacter::GetSingleton();
+		}
+
+		// Adds to (a_count > 0) or takes out of (< 0) an inventory OwnGear let us change, as one of Storage's own changes
+		// (WorldSync doesn't report it); what was changed (a take takes no more than there is).
+		std::int64_t Move(RE::TESObjectREFR* a_ref, std::uint32_t a_item, std::int64_t a_count)
 		{
 			const auto object = Object(a_item);
 			if (!a_ref || !object || a_count == 0) {
-				return 0;
-			}
-			if (!Equipment::MayChange(a_ref, a_change)) {
-				++counts.refusedOwn;
 				return 0;
 			}
 			Guard guard;
@@ -94,74 +94,91 @@ namespace Storage
 			return -n;
 		}
 
-		RE::TESObjectREFR* Ref(std::uint32_t a_id)
+		// Our copy of a container (never our player: OwnGear refuses).
+		std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count)
 		{
-			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(a_id);
-			return ref && !ref->IsDeleted() ? ref : nullptr;
-		}
-
-		RE::TESObjectREFR* Player()
-		{
-			return RE::PlayerCharacter::GetSingleton();
-		}
-
-		void Send(std::vector<std::uint8_t> a_packet)
-		{
-			WorldSync::QueueEvent(std::move(a_packet));
-		}
-
-		// The session's things leave our copy of the container we viewed (the menu closed, a save, the session's end).
-		void EndView(bool a_tellServer)
-		{
-			const auto container = side.Close();
-			if (!container) {
-				return;
-			}
-			if (const auto ref = Ref(*container)) {
-				for (const auto& [item, count] : WorldSync::SharedIn(*container)) {
-					Change(ref, item, -count, OwnGear::Change::kContainer);
-				}
-			}
-			if (a_tellServer) {
-				Send(Protocol::Encode(Protocol::StorageView{ *container, false }));
-			}
-		}
-
-		// Our menu shows a_container: a friend's storage is viewed.
-		void Open(std::uint32_t a_container)
-		{
-			if (!side.Rule() || KeeperOf(a_container) != Keeper::kFriend) {
-				return;
-			}
-			// Our moves before it (at another container, or this one before it was a friend's) go first, as theirs.
-			WorldSync::FlushLoot();
-			if (side.Viewing() && *side.Viewing() != a_container) {
-				EndView(true);
-			}
-			if (!side.Open(a_container)) {
-				return;
-			}
 			const auto ref = Ref(a_container);
-			const auto player = Player();
-			if (ref && player) {
-				// What our copy held of the session's things (our own stash from before, a roll of loot) is our player's now.
-				for (const auto& [item, count] : WorldSync::SharedIn(a_container)) {
-					const auto taken = -Change(ref, item, -count, OwnGear::Change::kContainer);
-					if (taken > 0) {
-						Change(player, item, taken, OwnGear::Change::kStorageUndo);
-						++counts.stashed;
-					}
-				}
+			if (!ref || !Equipment::MayChange(ref, OwnGear::Change::kContainer)) {
+				++counts.refusedOwn;
+				return 0;
 			}
-			Send(Protocol::Encode(Protocol::StorageView{ a_container, true }));
+			return Move(ref, a_item, a_count);
 		}
 
-		void Close()
+		// Our player's inventory: only ever for a PlayerChange, which only StorageView::Client makes (one of our own moves
+		// put right).
+		std::int64_t ChangePlayer(const StorageView::PlayerChange& a_change)
 		{
-			// The moves made in the menu go first: they were made while it showed the session's things.
-			WorldSync::FlushLoot();
-			EndView(true);
+			const auto player = Player();
+			if (!player || !Equipment::MayChange(player, OwnGear::Change::kStorageUndo)) {
+				++counts.refusedOwn;
+				return 0;
+			}
+			return Move(player, a_change.Item(), a_change.Count());
 		}
+
+		std::string_view TextKey(StorageView::Notice a_notice)
+		{
+			switch (a_notice) {
+			case StorageView::Notice::kClosed:
+				return "storage.closed";
+			case StorageView::Notice::kTakeRefused:
+				return "storage.take_refused";
+			case StorageView::Notice::kPutRefused:
+				return "storage.put_refused";
+			case StorageView::Notice::kShort:
+				return "storage.short";
+			default:
+				return "storage.closed";
+			}
+		}
+
+		class GameEngine final :
+			public StorageView::Engine
+		{
+		public:
+			std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container) override { return WorldSync::SharedIn(a_container); }
+
+			std::int64_t ChangeCopy(std::uint32_t a_container, std::uint32_t a_item, std::int64_t a_count) override
+			{
+				return Storage::ChangeCopy(a_container, a_item, a_count);
+			}
+
+			std::int64_t ChangePlayer(const StorageView::PlayerChange& a_change) override { return Storage::ChangePlayer(a_change); }
+
+			void FlushLoot() override { WorldSync::FlushLoot(); }
+
+			void Send(std::vector<std::uint8_t> a_packet) override { WorldSync::QueueEvent(std::move(a_packet)); }
+
+			void Notify(StorageView::Notice a_notice) override { Hud::Notify(Text::Get(TextKey(a_notice))); }
+
+			void HideMenu() override
+			{
+				// Not before the UI may be written to: the menu then stays open on our own copy, and closes as the player closes it.
+				const auto queue = RE::UIMessageQueue::GetSingleton();
+				if (queue && Hud::IsSettled() && OpenMenus::Open(OpenMenus::Menu::kContainer)) {
+					queue->AddMessage(RE::ContainerMenu::MENU_NAME, RE::UI_MESSAGE_TYPE::kHide);
+				}
+			}
+
+			Clock::time_point Now() override { return Clock::now(); }
+		};
+
+		GameEngine          engine;
+		StorageView::Client client{ engine };  // main thread
+		StorageView::Side&  side = client.State();
+		std::atomic<bool>   ruleOn{ false };  // for the menu's entry points, which run on any thread
+		bool                hosting = false;
+		std::uint64_t       live = 0;  // the session we are welcomed into (0: none)
+		Clock::time_point   scannedAt{};
+		std::unordered_map<std::uint32_t, Clock::time_point> notStorage;  // the host's scan: since when
+
+		// A save's record, read before the game says it has loaded (OnGameLoaded).
+		struct Record
+		{
+			std::uint64_t                          session = 0;
+			std::vector<Protocol::ContainerChange> unanswered;
+		} loaded;
 
 		void Scan()
 		{
@@ -200,10 +217,10 @@ namespace Storage
 				}
 				const auto listing = WorldSync::StorageListing(id);
 				if (!listing) {
-					++counts.listFailed;  // the ledger is still asking: next time
-					return;
+					++counts.listFailed;  // the ledger is still asking, or the container's inventory isn't made yet: next time
+					continue;
 				}
-				Send(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
+				WorldSync::QueueEvent(Protocol::Encode(*listing, Protocol::MessageType::kReportStorage));
 				side.MarkListed(id);
 				++listed;
 			}
@@ -223,27 +240,52 @@ namespace Storage
 				return "ours";
 			case Keeper::kFriend:
 				return "a friend's";
-			case Keeper::kLocal:
-				return "each player's own";
 			default:
 				return "not shared storage";
 			}
 		}
+
+		template <class T>
+		void Put(std::vector<std::uint8_t>& a_out, T a_value)
+		{
+			const auto at = a_out.size();
+			a_out.resize(at + sizeof(T));
+			std::memcpy(a_out.data() + at, &a_value, sizeof(T));
+		}
+
+		template <class T>
+		bool Get(std::span<const std::uint8_t>& a_in, T& a_value)
+		{
+			if (a_in.size() < sizeof(T)) {
+				return false;
+			}
+			std::memcpy(&a_value, a_in.data(), sizeof(T));
+			a_in = a_in.subspan(sizeof(T));
+			return true;
+		}
 	}
 
-	void OnWelcome(bool a_rule, bool a_hosting)
+	void OnWelcome(bool a_rule, bool a_hosting, std::uint64_t a_session)
 	{
 		hosting = a_hosting;
-		side.OnWelcome(a_rule, a_hosting);
+		live = a_session;
+		client.OnWelcome(a_rule, a_hosting, a_session);
+		ruleOn = a_rule;
 		notStorage.clear();
 		scannedAt = {};
-		REX::INFO("Storage: shared storage {}{}", a_rule ? "on" : "off", a_rule && a_hosting ? " (our game keeps the true copies)" : "");
+		REX::INFO("Storage: shared storage {}{} ({} of our moves at a friend's storage still to be answered)", a_rule ? "on" : "off",
+			a_rule && a_hosting ? " (our game keeps the true copies)" : "", side.InFlight());
 	}
 
 	void OnDisconnected()
 	{
-		EndView(false);  // nobody's truth now: the session's things leave our copy
-		side.OnDisconnected();
+		const auto unanswered = side.InFlight();
+		client.OnDisconnected();  // nobody's truth now: the session's things leave our copy, and what we sent unanswered is undone
+		ruleOn = false;
+		live = 0;
+		if (unanswered != 0) {
+			REX::INFO("Storage: {} of our moves at a friend's storage had no answer as the connection went: undone (done again should a reconnect number them)", unanswered);
+		}
 	}
 
 	void OnOwners(const Protocol::StorageOwners& a_owners)
@@ -253,88 +295,119 @@ namespace Storage
 
 	void OnContents(const Protocol::StorageListing& a_contents)
 	{
-		const auto want = side.Contents(a_contents);
-		const auto ref = want ? Ref(a_contents.container) : nullptr;
-		if (!ref) {
-			return;
-		}
-		++counts.shown;
-		for (const auto& adjust : StorageView::Reconcile(*want, WorldSync::SharedIn(a_contents.container))) {
-			Change(ref, adjust.item, adjust.count, OwnGear::Change::kContainer);
-			++counts.adjusts;
-		}
+		client.OnContents(a_contents);
 	}
 
 	void OnRefused(const Protocol::StorageRefusal& a_refusal)
 	{
-		const auto undo = side.Refused(a_refusal);
-		if (undo.closeView) {
-			// The server closed it already. The menu stays open on our own copy: what our player does there now stays in our game
-			// (LootSync keeps a move at a friend's storage made without a view), and the next open asks again.
-			EndView(false);
-			Hud::Notify(Text::Get("storage.closed"));
-			return;
-		}
-		if (!undo.matched) {
-			return;
-		}
-		if (const auto player = Player(); player && undo.player != 0) {
-			const auto done = Change(player, undo.item, undo.player, OwnGear::Change::kStorageUndo);
-			if (undo.player < 0) {
-				++counts.givenBack;
-				counts.usedUp += done - undo.player;  // what our player no longer had (used, dropped)
-			} else {
-				++counts.returned;
-			}
-		}
-		if (undo.copy != 0) {
-			Change(Ref(undo.container), undo.item, undo.copy, OwnGear::Change::kContainer);
-		}
-		if (undo.refresh && side.Refresh(undo.container)) {
-			Send(Protocol::Encode(Protocol::StorageView{ undo.container, true }));
-		}
-		Hud::Notify(Text::Get(a_refusal.reason == Protocol::StorageReason::kShort ? "storage.short" :
-		                      undo.player < 0                                     ? "storage.take_refused" :
-		                                                                            "storage.put_refused"));
+		client.OnRefused(a_refusal);
 	}
 
 	void BeforeSaveOrLoad()
 	{
-		EndView(true);
+		client.BeforeSaveOrLoad();
 	}
 
 	void OnGameLoaded()
 	{
-		side.OnLoad();
+		// Connected, our world is the session's from here (a save from another adopts it): the save's unanswered moves count
+		// only when they were made in it. Alone, they wait for a welcome into the save's session.
+		auto       record = std::exchange(loaded, {});
+		const auto session = live != 0 ? live : record.session;
+		if (record.session != session) {
+			record.unanswered.clear();
+		}
+		client.OnLoad(session, record.unanswered);
 		notStorage.clear();
+		if (!record.unanswered.empty()) {
+			REX::INFO("Storage: the save was made with {} of our moves at a friend's storage unanswered", record.unanswered.size());
+		}
 	}
 
 	void Frame()
 	{
+		client.Frame();
 		Scan();
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		std::vector<std::uint8_t> out;
+		const auto                unanswered = side.Unanswered();
+		if (unanswered.empty() || side.MovesSession() == 0) {
+			return out;
+		}
+		Put(out, side.MovesSession());
+		Put(out, static_cast<std::uint32_t>(unanswered.size()));
+		for (const auto& change : unanswered) {
+			Put(out, change.container);
+			Put(out, change.item);
+			Put(out, change.count);
+		}
+		return out;
+	}
+
+	void LoadRecord(std::span<const std::uint8_t> a_bytes)
+	{
+		loaded = {};
+		std::uint64_t session = 0;
+		std::uint32_t count = 0;
+		if (!Get(a_bytes, session) || !Get(a_bytes, count) || count > StorageView::MAX_IN_FLIGHT || a_bytes.size() != count * 12ull) {
+			REX::WARN("Storage: ignoring an unreadable record of our unanswered moves");
+			return;
+		}
+		loaded.session = session;
+		for (std::uint32_t i = 0; i < count; ++i) {
+			Protocol::ContainerChange change{};
+			Get(a_bytes, change.container);
+			Get(a_bytes, change.item);
+			Get(a_bytes, change.count);
+			if (Protocol::IsValid(change)) {
+				loaded.unanswered.push_back(change);
+			}
+		}
+	}
+
+	void RevertRecord()
+	{
+		loaded = {};
+	}
+
+	void Unsent(std::span<const std::uint8_t> a_packet)
+	{
+		if (a_packet.empty() || a_packet[0] != static_cast<std::uint8_t>(Protocol::MessageType::kReportContainer)) {
+			return;
+		}
+		if (const auto change = Protocol::DecodeContainerChange(a_packet)) {
+			++counts.unsentSeen;
+			client.Unsent(*change);
+		}
 	}
 
 	void OnMenuShown(RE::ObjectRefHandle a_container)
 	{
+		if (!ruleOn) {
+			return;
+		}
 		MainThread::Post([a_container] {
 			if (const auto ref = a_container.get()) {
-				Open(ref->GetFormID());
+				const auto id = ref->GetFormID();
+				client.Open(id, KeeperOf(id) == Keeper::kFriend);
 			}
 		});
 	}
 
 	void OnMenuClosed()
 	{
-		MainThread::Post([] { Close(); });
+		if (!ruleOn) {
+			return;  // nothing to do without the rule (a friend's storage is never viewed)
+		}
+		MainThread::Post([] { client.MenuClosed(); });
 	}
 
 	Keeper KeeperOf(std::uint32_t a_container)
 	{
-		if (!side.Rule()) {
-			return Keeper::kNone;
-		}
-		const bool storageHere = !side.OwnerOf(a_container) && !hosting && WorldSync::HolderFactsOf(a_container).storage;
-		return side.KeeperOf(a_container, storageHere, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
+		return side.KeeperOf(a_container, [](std::uint32_t a_id) { return WorldSync::Loot().Ours(a_id); });
 	}
 
 	std::optional<std::uint32_t> ViewFrom(std::uint32_t a_container)
@@ -342,24 +415,22 @@ namespace Storage
 		return side.ViewFrom(a_container);
 	}
 
-	void Reporting(const Protocol::ContainerChange& a_change)
+	bool Reporting(const Protocol::ContainerChange& a_change)
 	{
-		side.Reported(a_change);
+		return client.Reporting(a_change);
+	}
+
+	void OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking)
+	{
+		client.OwnStorage(a_change, a_lacking);
 	}
 
 	void Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing)
 	{
-		Send(Protocol::Encode(Protocol::StorageShort{ a_index, a_missing }));
+		WorldSync::QueueEvent(Protocol::Encode(Protocol::StorageShort{ a_index, a_missing }));
 		side.Unlist(a_change.container);  // listed again, as it is now
 		side.NoteShort();
 		REX::INFO("Storage: change {} took {} of {:08X} from {:08X}, which held {} fewer here", a_index, -a_change.count, a_change.item, a_change.container, a_missing);
-	}
-
-	void OwnNumbered(const Protocol::IndexedContainerChange& a_change)
-	{
-		if (side.Rule() && WorldSync::Loot().Ours(a_change.playerId)) {
-			side.OwnNumbered(a_change);
-		}
 	}
 
 	void UnlistAll()
@@ -375,10 +446,12 @@ namespace Storage
 	std::string Describe()
 	{
 		const auto& s = side.Stats();
-		return std::format("storage={}{} owners={} viewing={} inFlight={} views={} shown={} stashed={} refusedTakes={} refusedPuts={} shortTakes={} usedUp={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
-			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(), s.views,
-			counts.shown, counts.stashed, s.refusedTakes, s.refusedPuts, s.shortTakes, counts.usedUp, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed,
-			counts.refusedOwn);
+		const auto& c = client.Stats();
+		return std::format("storage={}{} owners={} viewing={} inFlight={} orphans={} setAside={} views={} shown={} refusedTakes={} refusedPuts={} shortTakes={} unanswered={} "
+						   "lateRefusals={} unsent={} overflow={} redone={} takenBack={} usedUp={} givenBack={} closedByHost={} unmatched={} listed={} shorts={} listPutOff={} ownRefused={}",
+			side.Rule() ? "on" : "off", hosting ? "(host)" : "", side.OwnerCount(), side.Viewing() ? std::format("{:08X}", *side.Viewing()) : "-", side.InFlight(),
+			side.Orphans(), c.setAside, s.views, c.shown, s.refusedTakes, s.refusedPuts, s.shortTakes, s.unanswered, s.lateRefusals, s.unsent, s.overflow, s.redone,
+			c.takenBack, c.usedUp, c.givenBack, s.closedByHost, s.unmatched, s.listed, s.shorts, counts.listFailed, counts.refusedOwn);
 	}
 
 	std::string Command(std::string_view a_args)
@@ -402,7 +475,7 @@ namespace Storage
 			return std::format("{} containers kept in the session", side.OwnerCount());
 		}
 		if (args[0] == "close") {
-			Close();
+			client.MenuClosed();
 			return "closed";
 		}
 		if (args.size() < 2) {
@@ -419,7 +492,7 @@ namespace Storage
 				WorldSync::HolderFactsOf(id).storage, side.ViewFrom(id) ? std::to_string(*side.ViewFrom(id)) : "-");
 		}
 		if (args[0] == "view") {
-			Open(id);
+			client.Open(id, KeeperOf(id) == Keeper::kFriend);
 			return side.Viewing() == id ? "viewing" : std::format("not viewed: {}", Name(KeeperOf(id)));
 		}
 		if (args.size() < 3) {

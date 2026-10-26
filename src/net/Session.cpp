@@ -365,6 +365,7 @@ namespace Session
 				auto result = FormTranslate::Translate(a_packet, forms, FormTranslate::Way::kToSession);
 				NoteSkips(result, FormTranslate::Way::kToSession, a_packet);
 				if (result.kind == FormTranslate::Result::Kind::kDropped) {
+					Storage::Unsent(a_packet);  // a move of ours at a friend's storage that can't go is undone
 					return;
 				}
 				if (result.kind == FormTranslate::Result::Kind::kChanged) {
@@ -445,7 +446,7 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
-					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr);
+					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr, msg->sessionId);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :

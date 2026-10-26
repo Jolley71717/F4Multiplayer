@@ -12,7 +12,9 @@
 // at the point it is made, whatever the code that asked for it already checked (a Nexus report had a host lose their
 // Pip-Boy and weapons as a friend joined; that was a story mod's quest stage replayed, see Official.h, and nothing of
 // the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
-// friend's shared storage that the server refused is undone (Change::kStorageUndo, never on anything but our player).
+// friend's shared storage that the server refused or never answered is undone, or one the server numbered that our loaded
+// world lacks is done again (Change::kStorageUndo, never on anything but our player, and only for a
+// StorageView::PlayerChange, which only StorageView::Client makes).
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
 {
@@ -28,9 +30,10 @@ namespace OwnGear
 		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
 		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
 		kDropCopy,
-		// Shared storage (StorageView.h): our player's own move at a friend's storage, undone because the server refused it
-		// (a take given back, a put returned), or the shared things our copy of it held moved to our player as their menu
-		// opens on it. The one change made to the local player, and only ever to them: what they did themselves, put right.
+		// Shared storage (StorageView.h): our player's own move at a friend's storage undone (the server refused it or never
+		// answered: a take given back, a put returned), or done again (numbered, and our loaded world lacks it). The one change
+		// made to the local player, and only ever to them: what they did themselves, put right. Nothing else goes to them (a
+		// friend's copy's own things are set aside in the copy while it shows the true one, never moved to the player).
 		kStorageUndo,
 		kCount,
 	};

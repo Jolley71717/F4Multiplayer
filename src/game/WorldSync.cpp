@@ -1166,7 +1166,9 @@ namespace WorldSync
 
 			std::optional<std::uint32_t> ViewFrom(std::uint32_t a_holder) override { return Storage::ViewFrom(a_holder); }
 
-			void Reporting(const Protocol::ContainerChange& a_change) override { Storage::Reporting(a_change); }
+			bool Reporting(const Protocol::ContainerChange& a_change) override { return Storage::Reporting(a_change); }
+
+			void OwnStorage(const Protocol::IndexedContainerChange& a_change, bool a_lacking) override { Storage::OwnStorage(a_change, a_lacking); }
 
 			void Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing) override
 			{
@@ -2193,9 +2195,6 @@ namespace WorldSync
 		// are skipped (see ContainerLedger::Receiver).
 		engine.inWorld = inWorld;
 		const auto strays = loot.Numbers().Numbers().Stats().strays;
-		for (const auto& change : a_state.containerChanges) {
-			Storage::OwnNumbered(change);  // ours at a friend's storage, numbered: it went through
-		}
 		const auto lost = loot.CatchUp(a_state.containerFirstIndex, a_state.containerChanges, Clock::now(), engine);
 		engine.inWorld.reset();
 		if (lost) {
@@ -2320,7 +2319,6 @@ namespace WorldSync
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
 		MainThread::Assert("WorldSync::ApplyContainerChange");
-		Storage::OwnNumbered(a_change);
 		loot.Live(a_change, Clock::now(), engine);
 	}
 
