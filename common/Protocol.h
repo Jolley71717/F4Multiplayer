@@ -207,7 +207,7 @@ namespace Protocol
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
 		kPinged = 156,            // another player pinged something
 		kObjectHeld = 152,        // another player holds this object (unreliable); to a player refused it, who holds it
-		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
+		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest (playerId 0: the session's, catching up)
 		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
 		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
 		kPlayerReloaded = 160,    // another player loaded a save (asked for the world state again): their game knows no radiant run of ours
@@ -893,7 +893,9 @@ namespace Protocol
 
 	// kReportObjectRest / kObjectRested, reliable: an object the sender moved, in the world. kLetGo: the sender's player
 	// let go of it (dropped it, or threw it: velocity is how it left their hands, units a second), and sequence is the
-	// last hold they sent of it; kRest: where it came to rest (after a let-go, or knocked about), velocity zero.
+	// last hold they sent of it; kRest: where it came to rest (after a let-go, or knocked about), velocity zero. The
+	// server keeps each object's last kRest (ObjectMovers::Places) and sends them after a join or a load as kObjectRested
+	// naming nobody (playerId 0: a catch-up).
 	namespace ObjectRestKind
 	{
 		inline constexpr std::uint8_t kLetGo = 0;

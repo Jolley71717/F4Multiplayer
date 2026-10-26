@@ -989,8 +989,19 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   sending for 2 s, or leaves, holds it no more.
 - Knocked about: four times a second our game looks at up to 256 loose objects within 1500 units. One that moved with no
   hand on it and came to rest is reported (kRest) when our player moved it (stood within 160 units of it, or hit it in
-  the last 3 s: TESHitEvent) and a friend is within 6000 units, 8 at once and 3 a second at most. What a friend's move
-  put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+  the last 3 s: TESHitEvent), 8 at once and 3 a second at most, whether or not a friend is near (the session keeps it,
+  below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report).
+- Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
+  the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
+  `maxObjectPlacesPerPlayer`, never more whatever `--max-share` says, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested
+  packets) and sends it with the world state after a join or a load, as `kObjectRested` naming nobody (playerId 0). A
+  game puts each where it says once the object is loaded in that space and the place is within 8000 units of its player
+  (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but
+  not while anyone moves it; a friend's live rest for an object it doesn't
+  have loaded waits the same way (at most 4096 waiting; a flood of those drops the rests waiting of the friend with the
+  most, the flooder, never the catch-ups or anyone else's). So a friend who loads the cell later, and every save loaded later, has the object
+  where it was left. No new message (an older game takes a catch-up as a rest, if the object is loaded then). A known
+  limit: a reference moved this way keeps its parent cell, as one a friend carried across a cell border does.
 - Knocked about by NPCs and blasts: the same scan also reports an object that came to rest after an NPC our game runs
   stood within 200 units of it (`ObjectShare::Answers`: the session knows the NPC and the server made our player its
   owner; a copy of a friend's NPC, one nobody runs yet and a stand-in are never ours), or after an explosion of ours

@@ -1895,6 +1895,9 @@ namespace WorldSync
 			if (a_inWorld && Destructibles::ApplyWaiting(a_id)) {
 				++done;
 			}
+			if (a_inWorld && MovedObjects::ApplyWaiting(a_id)) {
+				++done;
+			}
 			return done;
 		}
 
@@ -1914,6 +1917,8 @@ namespace WorldSync
 			}
 			const auto wrecks = Destructibles::WaitingRefs();
 			ids.insert(ids.end(), wrecks.begin(), wrecks.end());
+			const auto places = MovedObjects::WaitingRefs();
+			ids.insert(ids.end(), places.begin(), places.end());
 			return ids;
 		}
 
@@ -2454,7 +2459,8 @@ namespace WorldSync
 				gateLoads[id] = now;
 			}
 		}
-		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting();
+		const bool anyWaiting = !reports.Empty() || !pendingHealth.empty() || !loot.Waiting().empty() || !pendingPickups.empty() || !pendingRefStates.empty() || Destructibles::AnyWaiting() ||
+		                       MovedObjects::AnyWaiting();
 		const auto started = Clock::now();
 		const auto plan = retrySchedule.Frame(now, inWorld, cell, std::move(newRefLoads), anyWaiting, [] { return WaitingIds(); });
 		for (const auto id : plan.loaded) {

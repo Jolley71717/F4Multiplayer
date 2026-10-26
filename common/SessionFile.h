@@ -38,7 +38,10 @@ namespace SessionFile
 	// 34 adds to 33 the session's spent world traps (Snapshot::traps, as kTraps packets) and the destructible objects
 	// damaged in it (Snapshot::destructions, as kDestructions packets). The traps' own test builds wrote 34 with the traps
 	// alone, which reads as one without destructions; the destructibles' own test builds wrote 35, which no build reads.
-	inline constexpr std::uint16_t FORMAT = 34;
+	// 36 adds to 34 where the loose objects players moved came to rest (Snapshot::objectPlaces, as kObjectRested packets).
+	inline constexpr std::uint16_t FORMAT = 36;
+	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
+	inline constexpr std::uint16_t DESTRUCTIBLES_TEST = 35;
 	inline constexpr std::uint16_t ALL_THREE = 33;
 	inline constexpr std::uint16_t BEFORE_WIRES = 29;         // the releases' layout: before drops, wires and the plugin table
 	inline constexpr std::uint16_t BEFORE_PLUGIN_TABLE = 29;
@@ -48,7 +51,7 @@ namespace SessionFile
 
 	// The header values of the layout before 29: the protocol versions it was written under before it
 	// had its own, 23 to 28 (test builds of protocol 27 wrote 27, and the shared-quest test builds of
-	// protocol 28 wrote 28), and 26 once it had. The next layout takes 36 (35 was the destructibles' test builds').
+	// protocol 28 wrote 28), and 26 once it had. The next layout takes 37 (35 was the destructibles' test builds').
 	[[nodiscard]] constexpr bool Legacy(std::uint16_t a_format)
 	{
 		return a_format >= 23 && a_format <= 28;
@@ -57,12 +60,13 @@ namespace SessionFile
 	[[nodiscard]] constexpr bool HasDrops(std::uint16_t a_format) { return a_format == DROPS_ONLY || a_format >= ALL_THREE; }
 	[[nodiscard]] constexpr bool HasWires(std::uint16_t a_format) { return a_format == WIRES_ONLY || a_format >= ALL_THREE; }
 	[[nodiscard]] constexpr bool HasPluginTable(std::uint16_t a_format) { return a_format == PLUGIN_TABLE_ONLY || a_format >= ALL_THREE; }
-	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= FORMAT; }
-	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= FORMAT; }
+	[[nodiscard]] constexpr bool HasTraps(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
+	[[nodiscard]] constexpr bool HasDestructions(std::uint16_t a_format) { return a_format >= TRAPS_AND_DESTRUCTIONS; }
+	[[nodiscard]] constexpr bool HasObjectPlaces(std::uint16_t a_format) { return a_format >= FORMAT; }
 
 	[[nodiscard]] constexpr bool Readable(std::uint16_t a_format)
 	{
-		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT);
+		return Legacy(a_format) || (a_format >= 29 && a_format <= FORMAT && a_format != DESTRUCTIBLES_TEST);
 	}
 
 	struct Snapshot
@@ -97,11 +101,14 @@ namespace SessionFile
 		// Destructible objects damaged in the session (a shot car, a blown barrel): each one's lowest health, and whether it
 		// is destroyed. playerId 0 and explode false: a game takes these as the wreck alone.
 		std::vector<Protocol::Destruction>                  destructions;
+		// Where the loose objects players moved came to rest (common/ObjectMovers.h's Places), moved longest ago first:
+		// kRest, playerId 0, as a catch-up has them.
+		std::vector<Protocol::ObjectRest>                   objectPlaces;
 
 		[[nodiscard]] bool Empty() const
 		{
 			return deadActors.empty() && containerChanges.empty() && pickedUp.empty() && refStates.empty() && questStages.empty() && !worldTime && markers.empty() && workshopItems.empty() && drops.empty() && traps.empty() &&
-			       destructions.empty();
+			       destructions.empty() && objectPlaces.empty();
 		}
 	};
 
@@ -177,6 +184,9 @@ namespace SessionFile
 		for (std::size_t i = 0; i < a_snapshot.destructions.size(); i += Protocol::MAX_DESTRUCTION_ENTRIES) {
 			const auto end = (std::min)(a_snapshot.destructions.size(), i + Protocol::MAX_DESTRUCTION_ENTRIES);
 			packet(Protocol::Encode(Protocol::Destructions{ 0, { a_snapshot.destructions.begin() + i, a_snapshot.destructions.begin() + end } }, Protocol::MessageType::kDestructions));
+		}
+		for (const auto& place : a_snapshot.objectPlaces) {
+			packet(Protocol::Encode(place, Protocol::MessageType::kObjectRested));
 		}
 		return out;
 	}
@@ -302,6 +312,14 @@ namespace SessionFile
 					entry.explode = false;  // a wreck from the file never goes off again
 					snapshot.destructions.push_back(entry);
 				}
+				break;
+			}
+			case Protocol::MessageType::kObjectRested: {
+				const auto place = HasObjectPlaces(version) ? Protocol::DecodeObjectRest(packet) : std::nullopt;
+				if (!place || place->playerId != 0 || place->kind != Protocol::ObjectRestKind::kRest) {
+					return std::nullopt;
+				}
+				snapshot.objectPlaces.push_back(*place);
 				break;
 			}
 			default:

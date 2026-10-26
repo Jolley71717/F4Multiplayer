@@ -157,11 +157,13 @@ namespace
 		kWorkshop,
 		kTraps,
 		kDestructions,
+		kObjectPlaces,
 		kTables
 	};
 	// For log lines: "the session's {} table", "{} sharing".
-	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object" };
-	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction" };
+	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object",
+		"moved object place" };
+	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction", "moved object" };
 
 	// Whose budget: the transport's own name for the peer (a Steam ID, which a client can't choose), else
 	// the identity their game says hello with, else the connection itself.
@@ -328,6 +330,10 @@ bool Server::Start(const Options& a_options, std::vector<std::unique_ptr<ServerT
 	// The story's choice too: a joiner whose story progress never reaches the host's game is first asked for this line.
 	log(std::format("server: listening on UDP port {}{} (max {} players, {} transports, {} story)", options.port,
 		options.udpLoopbackOnly ? " (this machine only)" : "", options.maxPlayers, transports.size(), options.sharedStory ? "shared" : "own"));
+	const auto kept = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
+	log(std::format("server: a joiner's share this run: {} world entries, {} container changes, {} built objects, {} moved object places of {}",
+		options.maxWorldEntriesPerPlayer, options.maxContainerChangesPerPlayer, options.maxWorkshopItemsPerPlayer,
+		ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, kept), kept));
 	return true;
 }
 
@@ -412,6 +418,8 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
+	const auto                                            maxObjectPlaces = (std::min)(options.maxObjectPlaces, ObjectMovers::MAX_PLACES);
+	ObjectMovers::Places                                  objectPlaces{ maxObjectPlaces };  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
@@ -534,6 +542,9 @@ void Server::Run()
 			for (const auto& destruction : saved->destructions) {
 				destructions[destruction.refId] = destruction;
 			}
+			for (const auto& place : saved->objectPlaces) {
+				objectPlaces.Rested(place);
+			}
 			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
 				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
 			noteFill(kDeaths, deadActors.size());
@@ -583,6 +594,7 @@ void Server::Run()
 		for (const auto& [id, destruction] : destructions) {
 			snapshot.destructions.push_back(destruction);
 		}
+		snapshot.objectPlaces = objectPlaces.All();
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
@@ -611,6 +623,7 @@ void Server::Run()
 		traps.clear();
 		actorOwners.clear();
 		destructions.clear();
+		objectPlaces.Clear();
 		spawns.clear();
 		npcEquipment.clear();
 		npcIdentities.clear();
@@ -803,9 +816,10 @@ void Server::Run()
 		if (a_player.local) {
 			return true;
 		}
-		const auto share = a_table == kContainers ? options.maxContainerChangesPerPlayer :
-		                   a_table == kWorkshop   ? options.maxWorkshopItemsPerPlayer :
-		                                            options.maxWorldEntriesPerPlayer;
+		const auto share = a_table == kContainers   ? options.maxContainerChangesPerPlayer :
+		                   a_table == kWorkshop     ? options.maxWorkshopItemsPerPlayer :
+		                   a_table == kObjectPlaces ? ObjectMovers::PlacesShare(options.maxObjectPlacesPerPlayer, maxObjectPlaces) :
+		                                              options.maxWorldEntriesPerPlayer;
 		if (budget.added[a_table] < share) {
 			return true;
 		}
@@ -900,6 +914,10 @@ void Server::Run()
 		}
 		if (!wrecks.entries.empty()) {
 			send(a_to, Protocol::Encode(wrecks, Protocol::MessageType::kDestructions), true);
+		}
+		// Where moved objects came to rest, with nobody named: the receiver puts each there once its game has it loaded.
+		for (const auto& place : objectPlaces.All()) {
+			send(a_to, Protocol::Encode(place, Protocol::MessageType::kObjectRested), true);
 		}
 	};
 
@@ -1519,6 +1537,7 @@ void Server::Run()
 			return;
 		}
 		pickedUp.insert(pickup->refId);
+		objectPlaces.Forget(pickup->refId);  // in someone's pockets now, at no place
 		++budgetOf(a_player).added[kPickups];
 		noteFill(kPickups, pickedUp.size());
 		touched();
@@ -2213,7 +2232,10 @@ void Server::Run()
 	};
 
 	// An object the player let go of, or that came to rest after they moved it: to the others, unless another player
-	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones.
+	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones. Where it came
+	// to rest is kept (objectPlaces), for a game that loads it later. An object the session has no place for yet takes one
+	// from the player's share: a full Places forgets the one moved longest ago, so past it a joiner's made-up objects
+	// would push out the host's. Theirs past it still go to the others, as a door's state does.
 	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2226,6 +2248,17 @@ void Server::Run()
 		rest->playerId = a_player.id;
 		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
 			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
+			if (rest->kind != Protocol::ObjectRestKind::kRest || pickedUp.contains(rest->refId)) {
+				return;
+			}
+			if (!objectPlaces.Find(rest->refId)) {
+				if (!withinShare(a_player, kObjectPlaces)) {
+					return;
+				}
+				++budgetOf(a_player).added[kObjectPlaces];
+			}
+			objectPlaces.Rested(*rest);
+			touched();
 		}
 	};
 

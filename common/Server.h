@@ -61,6 +61,13 @@ public:
 		// game has no limit. Generous: a player picks up and kills a few hundred things an hour.
 		std::size_t maxWorldEntriesPerPlayer = 15000;
 		std::size_t maxWorkshopItemsPerPlayer = 10000;
+		// Objects one player's game may give a kept place to (ObjectMovers::Places) in one server run. Well under its
+		// 2048 (MAX_PLACES): a full Places forgets the place kept longest, so a joiner's made-up objects can't push out
+		// the host's places. Held to at most a quarter of maxObjectPlaces (512) whatever is set (--max-share sets it with
+		// the other shares).
+		std::size_t maxObjectPlacesPerPlayer = 512;
+		// How many objects' places the session keeps; at most, and by default, ObjectMovers::MAX_PLACES. Tests lower it.
+		std::size_t maxObjectPlaces = 2048;
 
 		// A player asking for the world state again (a reload, a rejoin) has a bucket of three, refilled
 		// one per this. Past it, theirs is sent when the bucket refills. Tests shorten it.

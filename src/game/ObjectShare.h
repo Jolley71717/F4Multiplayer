@@ -706,11 +706,11 @@ namespace ObjectShare
 	};
 
 	// The objects our game sees moving, by a scan of those near our player (a few times a second). One moved with no
-	// hand on it and come to rest is reported when our game is the one to say who moved it, and a friend is near enough to
-	// have it loaded too (friendNear): our player did (walked into it, shot it: byUs), an NPC our game runs did (byNpc:
-	// one of ours stood by it), or a blast of ours threw it (blast: BlastBook's serial). The friend's game reports the
-	// ones their player, their NPCs and their blasts move; an object a friend's blast reaches (theirs) is never ours,
-	// whatever else moved it. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying from
+	// hand on it and come to rest is reported when our game is the one to say who moved it, whether or not a friend has
+	// it loaded now (the session keeps where it rests, for a game that loads it later): our player did (walked into it,
+	// shot it: byUs), an NPC our game runs did (byNpc: one of ours stood by it), or a blast of ours threw it (blast:
+	// BlastBook's serial). The friend's game reports the ones their player, their NPCs and their blasts move; an object a
+	// friend's blast reaches (theirs) is never ours, whatever else moved it. What a friend's move put somewhere (Placed), and what is in anyone's hands or flying from
 	// them (busy), is never ours to report either. A blast is reported for at most BLAST_MAX_REPORTS objects; one the
 	// budget has no room for yet waits BLAST_DEFER for it.
 	class KnockWatch
@@ -727,7 +727,7 @@ namespace ObjectShare
 			bool          theirs = false;
 		};
 
-		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, bool a_friendNear, Clock::time_point a_now)
+		std::vector<Protocol::ObjectRest> Scan(std::span<const Seen> a_seen, Clock::time_point a_now)
 		{
 			std::vector<Protocol::ObjectRest> out;
 			for (const auto& seen : a_seen) {
@@ -765,7 +765,7 @@ namespace ObjectShare
 						// Came to rest while the budget had no room: say so now if it has, or give up.
 						if (a_now >= w.owedUntil) {
 							w.owed = false;
-						} else if (a_friendNear && a_now >= w.quietUntil && Take(w.blast, a_now)) {
+						} else if (a_now >= w.quietUntil && Take(w.blast, a_now)) {
 							out.push_back(Rest(seen));
 							w.owed = false;
 						}
@@ -787,7 +787,7 @@ namespace ObjectShare
 				}
 				w.moving = false;
 				w.rest = seen.pose;
-				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0) && a_friendNear && a_now >= w.quietUntil) {
+				if (!w.theirs && (w.byUs || w.byNpc || w.blast != 0) && a_now >= w.quietUntil) {
 					if (Take(w.blast, a_now)) {
 						out.push_back(Rest(seen));
 					} else if (w.blast != 0 && BlastRoom(w.blast)) {
@@ -937,6 +937,79 @@ namespace ObjectShare
 		}
 		return a_facts.fromPlace <= MAX_JUMP ? Verdict::kApply : Verdict::kTooFar;
 	}
+
+	// A place the session kept (a catch-up after joining or loading, or a friend's rest that came while our game didn't
+	// have the object): put there once our game has the object loaded, in that space, and the place is within APPLY_RANGE
+	// of our player (so the ground there is loaded too: put down beyond it, the object would fall through), however far
+	// from where our save had it (it was carried there, out of our sight). Not while someone moves it (a_busy: in a
+	// friend's hands, flying from them, or settling from our own let-go), nor while our player holds it: that move says
+	// where it goes.
+	inline Verdict JudgePlace(const Facts& a_facts, bool a_busy)
+	{
+		if (!a_facts.loaded || !a_facts.sameSpace || !(a_facts.fromUs <= APPLY_RANGE)) {
+			return Verdict::kNotHere;
+		}
+		return a_facts.oursHeld || a_busy ? Verdict::kOurs : Verdict::kApply;
+	}
+
+	// The session's places our game could not put an object at yet (not loaded, in another space, being moved), one each,
+	// the newest. A newer move of the object (ours or a friend's, applied) ends its wait. At most MAX: a flood of one
+	// friend's rests for objects we never load (a joiner's made-up ones) drops the rests waiting of the friend with the most,
+	// the flooder's, and keeps the catch-ups (playerId 0, at most the session's MAX_PLACES) and everyone else's, so the
+	// host's places, kept or live, still go down when we reach their cells.
+	class WaitingPlaces
+	{
+	public:
+		static constexpr std::size_t MAX = 4096;
+
+		void Add(const Protocol::ObjectRest& a_rest)
+		{
+			if (a_rest.kind != Protocol::ObjectRestKind::kRest) {
+				return;  // flying: where it comes to rest follows
+			}
+			if (places.size() >= MAX && !places.contains(a_rest.refId)) {
+				std::unordered_map<std::uint32_t, std::size_t> byPlayer;
+				for (const auto& [ref, rest] : places) {
+					if (rest.playerId != 0) {
+						++byPlayer[rest.playerId];
+					}
+				}
+				const auto most = std::ranges::max_element(byPlayer, {}, [](const auto& a_count) { return a_count.second; });
+				if (most != byPlayer.end()) {
+					std::erase_if(places, [player = most->first](const auto& a_place) { return a_place.second.playerId == player; });
+				}
+				if (places.size() >= MAX) {
+					places.clear();
+				}
+			}
+			places[a_rest.refId] = a_rest;
+		}
+
+		[[nodiscard]] const Protocol::ObjectRest* Find(std::uint32_t a_ref) const
+		{
+			const auto it = places.find(a_ref);
+			return it == places.end() ? nullptr : &it->second;
+		}
+
+		void Erase(std::uint32_t a_ref) { places.erase(a_ref); }
+		[[nodiscard]] bool        Empty() const { return places.empty(); }
+		[[nodiscard]] std::size_t Size() const { return places.size(); }
+
+		[[nodiscard]] std::vector<std::uint32_t> Refs() const
+		{
+			std::vector<std::uint32_t> out;
+			out.reserve(places.size());
+			for (const auto& [ref, rest] : places) {
+				out.push_back(ref);
+			}
+			return out;
+		}
+
+		void Clear() { places.clear(); }
+
+	private:
+		std::unordered_map<std::uint32_t, Protocol::ObjectRest> places;
+	};
 
 	// Whether a pose may be written into the game: finite, in the world, angles a turn or so.
 	inline bool Writable(const Vec3& a_position, const Vec3& a_angles)

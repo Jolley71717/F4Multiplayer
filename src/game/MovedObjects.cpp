@@ -10,7 +10,9 @@
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
+#include "game/Story.h"
 #include "game/WeaponFire.h"
+#include "game/WorldSync.h"
 
 #include <atomic>
 #include <charconv>
@@ -30,7 +32,6 @@ namespace MovedObjects
 		constexpr auto  SCAN_INTERVAL = std::chrono::milliseconds(250);
 		constexpr float SCAN_RADIUS = 1500.0f;        // loose objects this close to our player are watched for knocks
 		constexpr std::size_t MAX_SCANNED = 256;      // of them, at most this many a scan
-		constexpr float FRIEND_NEAR = 6000.0f;        // a knock is reported only with a friend this close
 		constexpr auto  HIT_MEMORY = std::chrono::seconds(3);  // a hit of ours moves it for that long
 		constexpr auto  FLIGHT = std::chrono::seconds(12);     // a friend's let-go flies here until their rest, at most
 		constexpr float SNAP_DISTANCE = 1.0f;          // our copy this far from their rest is put where theirs lies
@@ -41,6 +42,7 @@ namespace MovedObjects
 		ObjectShare::Carried    carried;
 		ObjectShare::KnockWatch knocks;
 		ObjectShare::BlastBook  blasts;
+		ObjectShare::WaitingPlaces waiting;  // the session's places for objects not in our world yet
 		std::vector<Packet>     outgoing;
 		Clock::time_point       lastFrame{};
 		Clock::time_point       nextScan{};
@@ -69,6 +71,7 @@ namespace MovedObjects
 			std::uint64_t letGosSent = 0, letGosApplied = 0;
 			std::uint64_t restsSent = 0, restsApplied = 0, restsAlready = 0, restsIgnored = 0;
 			std::uint64_t knocksSent = 0, refused = 0, releases = 0, badPoses = 0, blastsSeen = 0;
+			std::uint64_t placesApplied = 0, placesAlready = 0;
 		} counts;
 
 		// The base forms whose references are loose objects a player can grab or knock about.
@@ -418,14 +421,35 @@ namespace MovedObjects
 			}
 		}
 
-		bool FriendNear(const RE::PlayerCharacter* a_player)
+		// Puts the object where the session has it (ObjectShare::JudgePlace), once our game has it loaded. True when that is
+		// done, or nothing is left to do (it lay there already).
+		bool TryPlace(const Protocol::ObjectRest& a_place, Clock::time_point a_now)
 		{
-			for (const auto& info : RemotePlayers::List()) {
-				if (const auto at = RemotePlayers::PositionOf(info.id); at && at->GetDistance(a_player->data.location) <= FRIEND_NEAR) {
-					return true;
-				}
+			const auto id = a_place.refId;
+			const auto ref = Lookup(id);
+			const auto player = RE::PlayerCharacter::GetSingleton();
+			if (!ref || !player || !Movable(ref.get())) {
+				return false;
 			}
-			return false;
+			const bool               busy = carried.Find(id) || flying.contains(id) || keyframed.contains(id) || released.contains(id) || carry.IsSettling(id) || carry.IsRefused(id);
+			const ObjectShare::Facts facts{
+				.loaded = true,
+				.sameSpace = SpaceOf(ref.get()) == std::pair{ a_place.cell, a_place.worldspace },
+				.oursHeld = OurHeld() == id,
+				.fromUs = ObjectShare::Distance(Position(player), a_place.position),
+			};
+			if (ObjectShare::JudgePlace(facts, busy) != ObjectShare::Verdict::kApply) {
+				return false;
+			}
+			const auto here = PoseOf(ref.get());
+			if (here && ObjectShare::Distance(here->position, a_place.position) <= SNAP_DISTANCE && ObjectShare::Turned(here->angles, a_place.rotation) <= SNAP_TURN) {
+				++counts.placesAlready;
+			} else if (Place(ref.get(), a_place.position, a_place.rotation)) {
+				SetVelocity(ref.get(), {});
+				++counts.placesApplied;
+			}
+			knocks.Placed(id, Pose{ .cell = a_place.cell, .worldspace = a_place.worldspace, .position = a_place.position, .angles = a_place.rotation }, a_now);
+			return true;
 		}
 
 		// Whether our game runs this actor (not our player, not a friend's stand-in): the server made our player its owner
@@ -525,8 +549,9 @@ namespace MovedObjects
 				seen.push_back({ .refId = id, .pose = *pose, .byUs = ObjectShare::Near(player, pose->position) || HitByUs(id, a_now), .busy = busy, .byNpc = byNpc,
 					.blast = reach.serial, .theirs = reach.theirs });
 			}
-			for (const auto& rest : knocks.Scan(seen, FriendNear(a_player), a_now)) {
+			for (const auto& rest : knocks.Scan(seen, a_now)) {
 				Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
+				waiting.Erase(rest.refId);  // our move is the newer
 				++counts.knocksSent;
 			}
 			PruneHits(a_now);
@@ -562,10 +587,12 @@ namespace MovedObjects
 		carry.Frame(shared, holder, PoseOfId, now);
 		for (const auto& hold : carry.TakeHolds()) {
 			Send(Protocol::Encode(hold, Protocol::MessageType::kReportObjectHold), false);
+			waiting.Erase(hold.refId);  // our player's move is the newer
 			++counts.holdsSent;
 		}
 		for (const auto& rest : carry.TakeRests()) {
 			Send(Protocol::Encode(rest, Protocol::MessageType::kReportObjectRest), true);
+			waiting.Erase(rest.refId);
 			++(rest.kind == Protocol::ObjectRestKind::kLetGo ? counts.letGosSent : counts.restsSent);
 		}
 		if (shared && carry.IsRefused(shared)) {
@@ -597,6 +624,7 @@ namespace MovedObjects
 		}
 		carry.TakenOver(a_hold.refId);
 		flying.erase(a_hold.refId);
+		waiting.Erase(a_hold.refId);  // their move is the newer; its rest comes
 		if (!carried.OnHold(a_hold, now)) {
 			++counts.holdsIgnored;
 		}
@@ -605,6 +633,14 @@ namespace MovedObjects
 	void OnRested(const Protocol::ObjectRest& a_rest)
 	{
 		const auto now = Clock::now();
+		waiting.Erase(a_rest.refId);
+		if (a_rest.playerId == 0) {
+			// A catch-up (after joining or loading): where the session has it, put there now or once our game loads it.
+			if (!WorldSync::InWorld() || Story::InOpening() || !TryPlace(a_rest, now)) {
+				waiting.Add(a_rest);
+			}
+			return;
+		}
 		const bool wasHeld = carried.OnLetGo(a_rest, now);
 		carry.TakenOver(a_rest.refId);
 		const auto ref = Lookup(a_rest.refId);
@@ -623,6 +659,9 @@ namespace MovedObjects
 		if (verdict != ObjectShare::Verdict::kApply) {
 			if (wasHeld) {
 				LetLoose(a_rest.refId);
+			}
+			if (verdict == ObjectShare::Verdict::kNotHere) {
+				waiting.Add(a_rest);  // a rest: put there once our game has it (a let-go's rest follows)
 			}
 			++counts.restsIgnored;
 			return;
@@ -667,6 +706,26 @@ namespace MovedObjects
 		}
 	}
 
+	bool AnyWaiting()
+	{
+		return !waiting.Empty();
+	}
+
+	std::vector<std::uint32_t> WaitingRefs()
+	{
+		return waiting.Refs();
+	}
+
+	bool ApplyWaiting(std::uint32_t a_ref)
+	{
+		const auto place = waiting.Find(a_ref);
+		if (!place || Story::InOpening() || !TryPlace(*place, Clock::now())) {
+			return false;
+		}
+		waiting.Erase(a_ref);
+		return true;
+	}
+
 	void BeforeSaveOrLoad()
 	{
 		EnableReleased(Clock::now(), true);
@@ -683,6 +742,7 @@ namespace MovedObjects
 		carry.Reset();
 		knocks.Reset();
 		blasts.Reset();
+		waiting.Clear();
 		flying.clear();
 		outgoing.clear();
 		std::scoped_lock l{ hitLock };
@@ -693,9 +753,10 @@ namespace MovedObjects
 	{
 		const auto& c = counts;
 		return std::format("objects: held={:08X} holds={}/{} ignored={} letGo={}/{} rests={}/{} already={} ignored={} knocks={} refused={} releases={} badPoses={} "
-		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{}",
+		                   "carried={} flying={} stillForFriends={} watched={} moving={} blasts={}/{} places={} placedAlready={} placesWaiting={}",
 			carry.Holding(), c.holdsSent, c.holdsApplied, c.holdsIgnored, c.letGosSent, c.letGosApplied, c.restsSent, c.restsApplied, c.restsAlready, c.restsIgnored,
-			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size());
+			c.knocksSent, c.refused, c.releases, c.badPoses, carried.Size(), flying.size(), keyframed.size(), knocks.Watching(), knocks.Moving(), c.blastsSeen, blasts.Size(),
+			c.placesApplied, c.placesAlready, waiting.Size());
 	}
 
 	std::string Command(std::string_view a_args)
