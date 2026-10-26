@@ -10,6 +10,7 @@
 #include "game/GraphInfo.h"
 #include "game/HeldCopy.h"
 #include "game/Hud.h"
+#include "game/MenuBadges.h"
 #include "game/MoveSync.h"
 #include "game/NetSim.h"
 #include "game/SaveGuard.h"
@@ -1544,6 +1545,7 @@ namespace RemotePlayers
 			if (actor) {
 				WeaponFire::ReleaseSoundsOf(actor->GetFormID());  // a replayed burst may still follow its 3D
 				WeaponFire::DropHandThrowable(actor->GetFormID());
+				MenuBadges::Drop(actor->GetFormID());
 				LooksMenu::Remove(actor);  // or the next reference given its form ID would have their body and tattoos
 				// It stays a puppet until it is disabled (see Grave::puppet), standing still where it is: no friend
 				// moves it any more.

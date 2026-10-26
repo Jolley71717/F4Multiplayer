@@ -152,6 +152,8 @@ namespace Config
 				settings.compassMarkers = ParseBool(value);
 			} else if (key == "bMenuIcons") {
 				settings.menuIcons = ParseBool(value);
+			} else if (key == "bMenuBadges") {
+				settings.menuBadges = ParseBool(value);
 			} else if (key == "bSyncTime") {
 				settings.syncTime = ParseBool(value);
 			} else if (key == "bSaveSession") {

@@ -87,6 +87,11 @@ namespace Config
 		// Menus). Their stand-in raises its Pip-Boy and its name tag says so either way.
 		bool menuIcons = false;
 
+		// A Pip-Boy over the nearest friend's stand-in while they are in theirs, hung in the world from its 3D rather than
+		// drawn on the HUD (bMenuBadges; MenuBadges, StandInBadge.h). Off until it is seen on the rig: the Pip-Boy's world
+		// model, the engine's one node for it, has never been drawn this way.
+		bool menuBadges = false;
+
 		// Follow the first player's (the host's) time of day and weather.
 		bool syncTime = true;
 

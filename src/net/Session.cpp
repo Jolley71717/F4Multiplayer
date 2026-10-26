@@ -14,6 +14,7 @@
 #include "game/CharacterBinding.h"
 #include "game/Compass.h"
 #include "game/FadeWatch.h"
+#include "game/MenuBadges.h"
 #include "game/MenuIcons.h"
 #include "game/Conversations.h"
 #include "game/CopyWatch.h"
@@ -873,6 +874,7 @@ namespace Session
 			NpcSync::Reset();
 			WeaponFire::EndAllShields();
 			WeaponFire::DropHandThrowables();
+			MenuBadges::DropAll();
 			Party::Reset();
 			WorldClock::Reset();
 			Voice::Reset();
@@ -1474,6 +1476,7 @@ namespace Session
 		PERF_NEXT(perf, "Compass");
 		Compass::Frame();
 		MenuIcons::Frame();
+		MenuBadges::Frame();
 		if (InGame()) {
 			FadeWatch::Frame();
 		}
@@ -1499,6 +1502,7 @@ namespace Session
 		NpcSync::ReleaseMirrors();
 		WeaponFire::EndAllShields();  // a ghost made against a friend's explosion is never saved
 		WeaponFire::DropHandThrowables();
+		MenuBadges::DropAll();  // a node in a stand-in's 3D, never saved: off before it goes all the same
 		Downed::OnBeforeSave();
 		MovedObjects::BeforeSaveOrLoad();
 		Destructibles::BeforeSaveOrLoad();
