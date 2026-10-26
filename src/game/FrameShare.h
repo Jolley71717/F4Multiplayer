@@ -4,6 +4,7 @@
 #include "game/StandInHold.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -40,6 +41,8 @@ namespace FrameShare
 		                         // frame their game made): never ours to share
 		Spot  at;                // where it stands here
 		float heading = 0.0f;
+		bool  upright = true;    // not leaning (its x and y angles within TURNED of none): one leaning past
+		                         // fFurnitureUprightAngle cannot be got into (FrameUse.h)
 	};
 
 	// ---- Running one: what our game shares -------------------------------------------------------------------
@@ -175,8 +178,16 @@ namespace FrameShare
 	// in another place, it is moved as a reference is between cells.
 	constexpr float NUDGE_LIMIT = 256.0f;
 
+	// Whether a frame's x and y angles leave it standing up (FrameOursOf's upright): the owner's game parks its frames
+	// upright and sends no tilt, so ours leaning (left so by a console move, or by a save) is not there yet. An angle
+	// that is not a number is not upright.
+	inline bool Upright(float a_angleX, float a_angleY)
+	{
+		return std::abs(a_angleX) <= TURNED && std::abs(a_angleY) <= TURNED;
+	}
+
 	// a_theirs: where the owner's game has it. a_inView: that spot is in the area our engine draws around our player
-	// (our interior, or an exterior cell attached around ours).
+	// (our interior, or an exterior cell attached around ours). Ours leaning is not there, and is stood up in place.
 	inline Move Decide(const Ours& a_ours, const Spot& a_theirs, float a_theirHeading, bool a_inView)
 	{
 		if (!a_ours.found || a_ours.created) {
@@ -195,7 +206,7 @@ namespace FrameShare
 			return Move::kInUse;
 		}
 		const float distance = RemoteEdits::Distance(a_ours.at, a_theirs);  // NaN in another place
-		if (a_ours.loaded && RemoteEdits::Within(distance, MOVED) && StandInHold::AngleBetween(a_ours.heading, a_theirHeading) <= TURNED) {
+		if (a_ours.loaded && a_ours.upright && RemoteEdits::Within(distance, MOVED) && StandInHold::AngleBetween(a_ours.heading, a_theirHeading) <= TURNED) {
 			return Move::kThere;
 		}
 		if (!a_inView) {

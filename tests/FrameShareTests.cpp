@@ -7,6 +7,7 @@
 #include "game/FrameShare.h"
 #include "game/NpcClaims.h"
 
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -320,6 +321,30 @@ TEST("frame share: ours is moved to where its owner's game has it: in place when
 	facts = ours;
 	facts.inUse = true;
 	CHECK(Decide(facts, SANCTUARY_STATION, 1.0f, true) == Move::kInUse);
+}
+
+TEST("frame share: a frame another game runs that leans here is stood up in place, even at their spot and heading")
+{
+	using FrameShare::Decide;
+	using FrameShare::Upright;
+	// A console move (moveto player) turns ours as our player is, their look down too: it leans past what the engine
+	// lets anyone get into, and the owner's game sends no tilt.
+	auto leaning = Standing();
+	leaning.upright = false;
+	CHECK(Decide(leaning, SANCTUARY_STATION, 1.0f, true) == Move::kNudge);
+	// Upright at their spot and heading: there.
+	CHECK(Decide(Standing(), SANCTUARY_STATION, 1.0f, true) == Move::kThere);
+	// Out of our sight, or not loaded: left as it is, or brought.
+	CHECK(Decide(leaning, SANCTUARY_STATION, 1.0f, false) == Move::kOutOfView);
+	leaning.loaded = false;
+	CHECK(Decide(leaning, SANCTUARY_STATION, 1.0f, true) == Move::kBring);
+	// Upright: within a hundredth of a turn of no tilt either way; a look down of 0.5 radians is not, nor an angle
+	// that is not a number.
+	CHECK(Upright(0.0f, 0.0f));
+	CHECK(Upright(-FrameShare::TURNED, FrameShare::TURNED));
+	CHECK(!Upright(0.5f, 0.0f));
+	CHECK(!Upright(0.0f, -0.2f));
+	CHECK(!Upright(std::numeric_limits<float>::quiet_NaN(), 0.0f));
 }
 
 TEST("frame share: the host's game runs a frame nobody used, and only its word on where it stands reaches the others")
