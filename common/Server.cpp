@@ -2959,6 +2959,7 @@ void Server::Run()
 			break;
 		case MessageType::kDropRecord:
 			handleDropRecord(a_player, a_data);
+			break;
 		case MessageType::kReportWorkshopPower:
 			handleWorkshopPower(a_player, a_data);
 			break;
