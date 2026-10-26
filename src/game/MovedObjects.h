@@ -19,8 +19,12 @@
 //   physics again, put where it left their hands with their throw's velocity, so it flies here as it did there; at their
 //   rest it is put where it lies in their world, if ours settled elsewhere.
 // - Knocked about: a scan of the loose objects near our player, four times a second, finds those that moved with no hand
-//   on them; one our player moved (walked into it, or shot it) is reported where it came to rest, when a friend is near
-//   enough to have it loaded too, a few a second at most.
+//   on them; one our player moved (walked into it, or shot it) is reported where it came to rest, a few a second at most,
+//   friend near or not.
+// - Later: the server keeps where each object came to rest last (ObjectMovers::Places, saved with the session) and tells
+//   a game that joins or loads a save (a catch-up: playerId 0). A place for an object our game doesn't have loaded yet
+//   waits (as a friend's rest that came meanwhile does) and is put there when it loads (WorldSync's retry, as references
+//   load), so a friend arriving later finds it where it was left, and so does the next load of every save.
 //
 // Never: actors and corpses (their own sync), quest items (in a quest alias), references made at runtime (dropped items,
 // what Drops, Spawns and WorkshopSync place, all 0xFF......), what SaveGuard keeps out of saves, power armor frames, and
@@ -47,6 +51,12 @@ namespace MovedObjects
 	void OnHit(std::uint32_t a_ref);
 
 	void OnPlayerLeft(std::uint32_t a_playerId);
+
+	// The places waiting for objects not in our world yet (WorldSync's retry, when references load). ApplyWaiting is true
+	// when it put the object there (or found it there already).
+	[[nodiscard]] bool AnyWaiting();
+	[[nodiscard]] std::vector<std::uint32_t> WaitingRefs();
+	bool ApplyWaiting(std::uint32_t a_ref);
 
 	// Before a save or a load: every object we hold still for a friend is physics again, as the game made it.
 	void BeforeSaveOrLoad();

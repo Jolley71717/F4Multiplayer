@@ -148,6 +148,94 @@ TEST("moved objects book: at most MAX_OBJECTS at once")
 	CHECK(book.Size() == 1);
 }
 
+// --- the session's places -----------------------------------------------------------------------------------------
+// A move was passed on once, to the games that had the object loaded then; a friend who loaded the cell later found it
+// where their own save had it. The session keeps where each object came to rest last, for the games that load it later.
+
+TEST("moved objects places: an object's last rest is kept after its move is over, naming nobody; a let-go is not")
+{
+	ObjectMovers::Book   book;
+	ObjectMovers::Places places;
+	const auto           t = Clock::now();
+	auto                 rest = Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 10, 20, 30 });
+	rest.playerId = 1;
+	REQUIRE(book.Rest(rest, 1, t) == Verdict::kRelay);
+	places.Rested(rest);
+	book.Prune(t + ObjectMovers::FLIGHT + ObjectMovers::SETTLED + 1s);
+	CHECK(book.Size() == 0);
+	const auto* kept = places.Find(BROOM);
+	REQUIRE(kept);
+	CHECK(kept->playerId == 0);
+	CHECK(kept->kind == Protocol::ObjectRestKind::kRest);
+	CHECK(kept->worldspace == SANCTUARY);
+	CHECK(Near(kept->position, { 10, 20, 30 }));
+	// Flying: where it comes to rest follows.
+	places.Rested(Rest(TIRE, Protocol::ObjectRestKind::kLetGo, 1, { 0, 0, 0 }, { 0, 300, 50 }));
+	CHECK(!places.Find(TIRE));
+	// Moved again: the newer rest is the one kept.
+	places.Rested(Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 40, 20, 30 }));
+	REQUIRE(places.Find(BROOM));
+	CHECK(Near(places.Find(BROOM)->position, { 40, 20, 30 }));
+	CHECK(places.Size() == 1);
+	// Picked up: at no place.
+	places.Forget(BROOM);
+	CHECK(places.Size() == 0);
+	CHECK(places.All().empty());
+}
+
+TEST("moved objects places: past the cap, the object moved longest ago is forgotten first")
+{
+	ObjectMovers::Places places{ 3 };
+	constexpr std::uint32_t A = 0x00100001, B = 0x00100002, C = 0x00100003, D = 0x00100004;
+	for (const auto ref : { A, B, C, A }) {  // A moved again: the newest
+		places.Rested(Rest(ref, Protocol::ObjectRestKind::kRest));
+	}
+	places.Rested(Rest(D, Protocol::ObjectRestKind::kRest));
+	CHECK(places.Size() == 3);
+	CHECK(!places.Find(B));
+	const auto all = places.All();
+	REQUIRE(all.size() == 3);
+	CHECK(all[0].refId == C);
+	CHECK(all[1].refId == A);
+	CHECK(all[2].refId == D);
+}
+
+TEST("moved objects places: a kept place near us is put down once our game has the object, however far it was carried, and never under a move in progress")
+{
+	using ObjectShare::Verdict;
+	ObjectShare::Facts facts{ .loaded = true, .sameSpace = true, .fromUs = 3000.0f, .fromPlace = 20000.0f };
+	CHECK(ObjectShare::JudgePlace(facts, false) == Verdict::kApply);
+	CHECK(ObjectShare::JudgeRest(facts) == Verdict::kTooFar);  // a live rest is: its holds brought our copy along
+	CHECK(ObjectShare::JudgePlace(facts, true) == Verdict::kOurs);  // in a friend's hands, or flying
+	auto beyond = facts;
+	beyond.fromUs = ObjectShare::APPLY_RANGE + 1.0f;  // the ground there may not be loaded: it waits until we come near
+	CHECK(ObjectShare::JudgePlace(beyond, false) == Verdict::kNotHere);
+	auto held = facts;
+	held.oursHeld = true;
+	CHECK(ObjectShare::JudgePlace(held, false) == Verdict::kOurs);
+	auto elsewhere = facts;
+	elsewhere.sameSpace = false;
+	CHECK(ObjectShare::JudgePlace(elsewhere, false) == Verdict::kNotHere);
+	CHECK(ObjectShare::JudgePlace({}, false) == Verdict::kNotHere);  // not loaded here yet: it waits
+
+	ObjectShare::WaitingPlaces waiting;
+	waiting.Add(Rest(BROOM, Protocol::ObjectRestKind::kRest));
+	waiting.Add(Rest(TIRE, Protocol::ObjectRestKind::kLetGo, 1, { 0, 0, 0 }, { 0, 300, 50 }));  // its rest follows
+	CHECK(waiting.Size() == 1);
+	waiting.Add(Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 70, 0, 0 }));
+	REQUIRE(waiting.Find(BROOM));
+	CHECK(Near(waiting.Find(BROOM)->position, { 70, 0, 0 }));
+	CHECK(waiting.Refs() == std::vector<std::uint32_t>{ BROOM });
+	waiting.Erase(BROOM);
+	CHECK(waiting.Empty());
+	// A flood for objects we never load starts it over.
+	for (std::uint32_t i = 0; i <= ObjectShare::WaitingPlaces::MAX; ++i) {
+		waiting.Add(Rest(0x00100000 + i, Protocol::ObjectRestKind::kRest));
+	}
+	CHECK(waiting.Size() <= ObjectShare::WaitingPlaces::MAX);
+	CHECK(waiting.Find(0x00100000 + static_cast<std::uint32_t>(ObjectShare::WaitingPlaces::MAX)) != nullptr);
+}
+
 // --- the holder's frame -------------------------------------------------------------------------------------------
 
 TEST("moved objects frame: an object ahead of a holder facing +x is ahead in their frame, and back")
@@ -484,13 +572,13 @@ namespace
 	using Seen = ObjectShare::KnockWatch::Seen;
 
 	// Scans every 250 ms from a_from, a_count times, with the object at a_pose.
-	std::vector<Protocol::ObjectRest> ScanFor(ObjectShare::KnockWatch& a_watch, Clock::time_point& a_at, int a_count, const Seen& a_seen, bool a_friendNear = true)
+	std::vector<Protocol::ObjectRest> ScanFor(ObjectShare::KnockWatch& a_watch, Clock::time_point& a_at, int a_count, const Seen& a_seen)
 	{
 		std::vector<Protocol::ObjectRest> out;
 		for (int i = 0; i < a_count; ++i) {
 			a_at += 250ms;
 			const std::array seen{ a_seen };
-			for (auto& rest : a_watch.Scan(seen, a_friendNear, a_at)) {
+			for (auto& rest : a_watch.Scan(seen, a_at)) {
 				out.push_back(rest);
 			}
 		}
@@ -515,16 +603,14 @@ TEST("moved objects knocks: one our player knocked over is reported where it cam
 	CHECK(watch.Moving() == 0);
 }
 
-TEST("moved objects knocks: not ours, no friend near, held or just placed by a friend: not reported")
+TEST("moved objects knocks: not ours, held or just placed by a friend: not reported")
 {
 	ObjectShare::KnockWatch watch;
 	auto                    t = Clock::now();
 	// Something else moved it (an NPC, an explosion of theirs).
 	ScanFor(watch, t, 1, { .refId = TIRE, .pose = At({ 0, 0, 0 }) });
 	CHECK(ScanFor(watch, t, 6, { .refId = TIRE, .pose = At({ 50, 0, 0 }) }).empty());
-	// No friend near enough to have it loaded.
-	ScanFor(watch, t, 1, { .refId = BROOM, .pose = At({ 0, 0, 0 }) }, false);
-	CHECK(ScanFor(watch, t, 6, { .refId = BROOM, .pose = At({ 50, 0, 0 }), .byUs = true }, false).empty());
+	ScanFor(watch, t, 1, { .refId = BROOM, .pose = At({ 0, 0, 0 }) });
 	// Busy: in someone's hands.
 	CHECK(ScanFor(watch, t, 6, { .refId = BROOM, .pose = At({ 100, 0, 0 }), .byUs = true, .busy = true }).empty());
 	// A friend's move put it there: our physics settling it is not ours to report.
@@ -542,11 +628,11 @@ TEST("moved objects knocks: a shelf knocked over at once is reported on a budget
 		still.push_back({ .refId = 0x00200000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
 		moved.push_back({ .refId = 0x00200000 + i, .pose = At({ i * 10.0f, 50, 0 }), .byUs = true });
 	}
-	watch.Scan(still, true, t);
-	watch.Scan(moved, true, t += 250ms);
+	watch.Scan(still, t);
+	watch.Scan(moved, t += 250ms);
 	std::size_t reported = 0;
 	for (int i = 0; i < 4; ++i) {
-		reported += watch.Scan(moved, true, t += 250ms).size();
+		reported += watch.Scan(moved, t += 250ms).size();
 	}
 	CHECK(reported <= static_cast<std::size_t>(ObjectShare::KNOCK_BURST) + 1);
 	CHECK(reported >= static_cast<std::size_t>(ObjectShare::KNOCK_BURST));
@@ -580,7 +666,7 @@ namespace
 		void Still(std::uint32_t a_ref, Vec3 a_at)
 		{
 			const std::array seen{ Seen{ .refId = a_ref, .pose = At(a_at) } };
-			watch.Scan(seen, true, t += 250ms);
+			watch.Scan(seen, t += 250ms);
 		}
 
 		// The object is shoved to a_to in this game, and rests there; a_how is what the game knew of who moved it, at the
@@ -592,7 +678,7 @@ namespace
 			std::vector<Protocol::ObjectRest> out;
 			for (int i = 0; i < 8; ++i) {
 				const std::array seen{ a_how };
-				for (auto& rest : watch.Scan(seen, true, t += 250ms)) {
+				for (auto& rest : watch.Scan(seen, t += 250ms)) {
 					out.push_back(rest);
 				}
 				a_how.byUs = a_how.byNpc = a_how.theirs = false;
@@ -635,7 +721,7 @@ TEST("npc knocks: the game that does not run the NPC says nothing of what its co
 	CHECK(!ObjectShare::Answers(RAIDER, 0, 0));
 }
 
-TEST("npc knocks: an NPC far from the object did not shove it, and nothing is said with no friend near")
+TEST("npc knocks: an NPC far from the object did not shove it")
 {
 	CHECK(ObjectShare::NpcNear({ 0, 0, 0 }, { 150, 100, 40 }));
 	CHECK(!ObjectShare::NpcNear({ 0, 0, 0 }, { 300, 0, 0 }));
@@ -643,16 +729,6 @@ TEST("npc knocks: an NPC far from the object did not shove it, and nothing is sa
 	Game game;
 	game.Still(TIRE, { 0, 0, 0 });
 	CHECK(game.Shoved(TIRE, { 50, 0, 0 }, {}).empty());  // moved by something we cannot name
-	ObjectShare::KnockWatch lonely;
-	auto                    t = Clock::now();
-	const std::array        still{ Seen{ .refId = TIRE, .pose = At({ 0, 0, 0 }) } };
-	lonely.Scan(still, false, t += 250ms);
-	std::size_t said = 0;
-	for (int i = 0; i < 8; ++i) {
-		const std::array seen{ Seen{ .refId = TIRE, .pose = At({ 60, 0, 0 }), .byNpc = i == 0 } };
-		said += lonely.Scan(seen, false, t += 250ms).size();
-	}
-	CHECK(said == 0);
 }
 
 TEST("npc knocks: an object a friend's blast reaches is theirs whoever else moved it, and a friend's put-down is quiet")
@@ -719,8 +795,8 @@ TEST("blasts: a grenade into a table of clutter is reported by the thrower's gam
 	for (std::uint32_t i = 0; i < COUNT; ++i) {
 		still.push_back({ .refId = 0x00300000 + i, .pose = At({ i * 5.0f, 0, 0 }) });
 	}
-	alice.watch.Scan(still, true, alice.t += 250ms);
-	bob.watch.Scan(still, true, bob.t += 250ms);
+	alice.watch.Scan(still, alice.t += 250ms);
+	bob.watch.Scan(still, bob.t += 250ms);
 	CHECK(aliceBook.Note(1, { 0, 0, 0 }, 300, BlastRole::kOurs, alice.t));
 	CHECK(bobBook.Note(1, { 0, 0, 0 }, 300, BlastRole::kTheirs, bob.t));
 	std::size_t             aliceSaid = 0, bobSaid = 0;
@@ -736,11 +812,11 @@ TEST("blasts: a grenade into a table of clutter is reported by the thrower's gam
 			a.push_back({ .refId = id, .pose = At(inA), .blast = first ? ra.serial : 0 });
 			b.push_back({ .refId = id, .pose = At(inB), .byUs = first, .theirs = first && rb.theirs });
 		}
-		for (const auto& rest : alice.watch.Scan(a, true, alice.t += 250ms)) {
+		for (const auto& rest : alice.watch.Scan(a, alice.t += 250ms)) {
 			++aliceSaid;
 			CHECK(told.insert(rest.refId).second);  // never twice
 		}
-		bobSaid += bob.watch.Scan(b, true, bob.t += 250ms).size();
+		bobSaid += bob.watch.Scan(b, bob.t += 250ms).size();
 	}
 	CHECK(bobSaid == 0);
 	CHECK(aliceSaid > 0);
@@ -748,7 +824,7 @@ TEST("blasts: a grenade into a table of clutter is reported by the thrower's gam
 	CHECK(alice.watch.Reported() == aliceSaid);
 }
 
-TEST("blasts: a burst waits for the budget instead of dropping its rests, up to the cap; with no friend near it is given up")
+TEST("blasts: a burst waits for the budget instead of dropping its rests, up to the cap")
 {
 	using ObjectShare::BlastRole;
 	ObjectShare::BlastBook  book;
@@ -762,14 +838,14 @@ TEST("blasts: a burst waits for the budget instead of dropping its rests, up to 
 		still.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 0, 0 }) });
 		moved.push_back({ .refId = 0x00310000 + i, .pose = At({ i * 10.0f, 90, 0 }), .blast = serial });
 	}
-	watch.Scan(still, true, t += 250ms);
-	watch.Scan(moved, true, t += 250ms);
+	watch.Scan(still, t += 250ms);
+	watch.Scan(moved, t += 250ms);
 	for (auto& m : moved) {
 		m.blast = 0;
 	}
 	std::size_t said = 0, atOnce = 0;
 	for (int i = 0; i < 40; ++i) {
-		const auto n = watch.Scan(moved, true, t += 250ms).size();
+		const auto n = watch.Scan(moved, t += 250ms).size();
 		if (said == 0) {
 			atOnce = n;
 		}
@@ -778,19 +854,6 @@ TEST("blasts: a burst waits for the budget instead of dropping its rests, up to 
 	CHECK(atOnce >= static_cast<std::size_t>(ObjectShare::KNOCK_BURST));
 	CHECK(atOnce <= static_cast<std::size_t>(ObjectShare::KNOCK_BURST) + 3);
 	CHECK(said == COUNT);  // the others came as the budget filled
-	// With no friend near, the rests are given up quietly.
-	ObjectShare::KnockWatch later;
-	auto                    u = Clock::now();
-	for (auto& m : moved) {
-		m.blast = serial;
-	}
-	later.Scan(still, false, u += 250ms);
-	later.Scan(moved, false, u += 250ms);
-	std::size_t gotten = 0;
-	for (int i = 0; i < 40; ++i) {
-		gotten += later.Scan(moved, false, u += 250ms).size();
-	}
-	CHECK(gotten == 0);
 }
 
 TEST("blasts: each blast has its own cap")
@@ -809,7 +872,7 @@ TEST("blasts: each blast has its own cap")
 		for (std::uint32_t i = 0; i < COUNT; ++i) {
 			still.push_back({ .refId = 0x00320000 + blast * 100 + i, .pose = At({ x + i * 5.0f, 0, 0 }) });
 		}
-		watch.Scan(still, true, t += 250ms);
+		watch.Scan(still, t += 250ms);
 		CHECK(book.Note(1 + blast, { x, 0, 0 }, 300, BlastRole::kOurs, t));
 		const auto serial = book.Reaching({ x, 0, 0 }, t).serial;
 		CHECK(serial != 0);
@@ -817,7 +880,7 @@ TEST("blasts: each blast has its own cap")
 			moved.push_back({ .refId = 0x00320000 + blast * 100 + i, .pose = At({ x + i * 5.0f, 90, 0 }), .blast = serial });
 		}
 		for (int look = 0; look < 40; ++look) {
-			said[blast] += watch.Scan(moved, true, t += 250ms).size();
+			said[blast] += watch.Scan(moved, t += 250ms).size();
 			for (auto& m : moved) {
 				m.blast = 0;
 			}
@@ -997,4 +1060,60 @@ TEST("moved objects server: holds on a budget; nothing from a player not yet wel
 	Clear(f, { 2, 4 });
 	f.fake->Deliver(2, HoldPacket(BROOM, 1));
 	CHECK(Helds(Received(f, 4)).size() == 1);
+}
+
+TEST("moved objects server: where an object came to rest is told to a player who joins later, naming nobody; a refused rest and a picked-up object are not")
+{
+	constexpr std::uint32_t BOTTLE = 0x0001A003;
+	Fixture                 f;
+	JoinAs(f, 1, "Alice");
+	JoinAs(f, 2, "Bob");
+	Clear(f, { 1, 2 });
+
+	// Alice throws the broom; Bob's say of where it lies is refused while it is still hers.
+	f.fake->Deliver(1, HoldPacket(BROOM, 1));
+	f.fake->Deliver(1, RestPacket(Rest(BROOM, Protocol::ObjectRestKind::kLetGo, 1, { 0, 0, 0 }, { 0, 300, 50 })));
+	f.fake->Deliver(1, RestPacket(Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 100, 600, 30 })));
+	Clear(f, { 1 });
+	f.fake->Deliver(2, RestPacket(Rest(BROOM, Protocol::ObjectRestKind::kRest, 0, { 900, 900, 0 })));
+	// Bob knocks the tire over, with nobody near; and a bottle, which he then picks up.
+	f.fake->Deliver(2, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 })));
+	f.fake->Deliver(2, RestPacket(Rest(BOTTLE, Protocol::ObjectRestKind::kRest)));
+	f.fake->Deliver(2, Protocol::Encode(Protocol::RefPickedUp{ BOTTLE }, MT::kReportPickup));
+	Clear(f, { 1, 2 });
+
+	JoinAs(f, 3, "Carol");
+	const auto places = Resteds(Received(f, 3));
+	REQUIRE(places.size() == 2);
+	CHECK(places[0].refId == BROOM);  // moved longest ago first
+	CHECK(Near(places[0].position, { 100, 600, 30 }));
+	CHECK(places[1].refId == TIRE);
+	CHECK(Near(places[1].position, { -50, 20, 4 }));
+	for (const auto& place : places) {
+		CHECK(place.playerId == 0);
+		CHECK(place.kind == Protocol::ObjectRestKind::kRest);
+		CHECK(place.worldspace == SANCTUARY);
+	}
+}
+
+TEST("moved objects server: the places are saved with the session, and a joiner after a restart gets them")
+{
+	const TempSessionFile file;
+	Server::Options       options;
+	options.sessionFile = file.path.string();
+	{
+		Fixture f{ options };
+		JoinAs(f, 1, "Alice", 0xA11CE);
+		f.fake->Deliver(1, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 })));
+		Clear(f, { 1 });
+	}  // stopping saves
+	{
+		Fixture f{ options };
+		JoinAs(f, 2, "Bob");
+		const auto places = Resteds(Received(f, 2));
+		REQUIRE(places.size() == 1);
+		CHECK(places[0].refId == TIRE);
+		CHECK(places[0].playerId == 0);
+		CHECK(Near(places[0].position, { -50, 20, 4 }));
+	}
 }

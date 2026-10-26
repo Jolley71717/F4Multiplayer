@@ -412,6 +412,7 @@ void Server::Run()
 	std::unordered_map<std::uint32_t, Protocol::Destruction> destructions;
 	std::unordered_map<std::uint32_t, Ownership>          actorOwners;  // which player's game runs each NPC's AI
 	ObjectMovers::Book                                    objectMovers;  // who moves each loose object right now (not saved: a move is over in seconds)
+	ObjectMovers::Places                                  objectPlaces;  // where each came to rest last, for a game that loads it later. Saved.
 	// NPCs games made at runtime and share, by spawn id (Protocol::IsSpawnRef): each is run by its owner (in actorOwners
 	// too) until it dies, its owner's game lets it go, or its owner leaves. Not saved: it is in no save but its owner's.
 	std::unordered_map<std::uint32_t, Protocol::Spawn>    spawns;
@@ -526,6 +527,9 @@ void Server::Run()
 			for (const auto& destruction : saved->destructions) {
 				destructions[destruction.refId] = destruction;
 			}
+			for (const auto& place : saved->objectPlaces) {
+				objectPlaces.Rested(place);
+			}
 			log(std::format("server: loaded the saved session ({} dead, {} loot changes, {} built, {} scrapped, {} items dropped for others)", deadActors.size(),
 				containerChanges.size(), workshop.Built().size(), workshop.Scraps().size(), drops.LyingCount()));
 			noteFill(kDeaths, deadActors.size());
@@ -575,6 +579,7 @@ void Server::Run()
 		for (const auto& [id, destruction] : destructions) {
 			snapshot.destructions.push_back(destruction);
 		}
+		snapshot.objectPlaces = objectPlaces.All();
 		snapshot.plugins = sessionTable;
 		const auto saved = revision;
 		if (!SessionFile::Save(sessionPath, snapshot)) {
@@ -602,6 +607,7 @@ void Server::Run()
 		traps.clear();
 		actorOwners.clear();
 		destructions.clear();
+		objectPlaces.Clear();
 		spawns.clear();
 		npcEquipment.clear();
 		npcIdentities.clear();
@@ -891,6 +897,10 @@ void Server::Run()
 		}
 		if (!wrecks.entries.empty()) {
 			send(a_to, Protocol::Encode(wrecks, Protocol::MessageType::kDestructions), true);
+		}
+		// Where moved objects came to rest, with nobody named: the receiver puts each there once its game has it loaded.
+		for (const auto& place : objectPlaces.All()) {
+			send(a_to, Protocol::Encode(place, Protocol::MessageType::kObjectRested), true);
 		}
 	};
 
@@ -1488,6 +1498,7 @@ void Server::Run()
 			return;
 		}
 		pickedUp.insert(pickup->refId);
+		objectPlaces.Forget(pickup->refId);  // in someone's pockets now, at no place
 		++budgetOf(a_player).added[kPickups];
 		noteFill(kPickups, pickedUp.size());
 		touched();
@@ -2180,7 +2191,8 @@ void Server::Run()
 	};
 
 	// An object the player let go of, or that came to rest after they moved it: to the others, unless another player
-	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones.
+	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones. Where it came
+	// to rest is kept (objectPlaces), for a game that loads it later.
 	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2193,6 +2205,10 @@ void Server::Run()
 		rest->playerId = a_player.id;
 		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
 			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
+			if (rest->kind == Protocol::ObjectRestKind::kRest && !pickedUp.contains(rest->refId)) {
+				objectPlaces.Rested(*rest);
+				touched();
+			}
 		}
 	};
 

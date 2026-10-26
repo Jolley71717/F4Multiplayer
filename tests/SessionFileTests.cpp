@@ -119,9 +119,9 @@ TEST("session file: a truncated, foreign or other-layout file is refused whole")
 	auto wrongMagic = bytes;
 	wrongMagic[0] ^= 0xFF;
 	CHECK(!SessionFile::Decode(wrongMagic));
-	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (36),
+	// Before the first file (protocol 22), the layout of the destructibles' own test builds (35), a layout to come (37),
 	// and nonsense.
-	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 36 }, std::uint16_t{ 0xE526 } }) {
+	for (const std::uint16_t version : { std::uint16_t{ 22 }, std::uint16_t{ 35 }, std::uint16_t{ 37 }, std::uint16_t{ 0xE526 } }) {
 		auto other = bytes;
 		std::memcpy(other.data() + 4, &version, sizeof(version));
 		CHECK(!SessionFile::Decode(other));
@@ -496,6 +496,9 @@ TEST("session file: the layouts of drops, wires and the plugin table each load, 
 	auto bare = MakeSnapshot();
 	bare.workshopItems.clear();
 	for (std::uint16_t layout = 29; layout <= SessionFile::FORMAT; ++layout) {
+		if (layout == SessionFile::DESTRUCTIBLES_TEST) {
+			continue;  // no build reads it
+		}
 		const auto out = as(SessionFile::Encode(bare), layout);
 		REQUIRE(out);
 		CHECK(out->deadActors == bare.deadActors);
@@ -565,4 +568,38 @@ TEST("session file: destructible objects come back from layout 34 as wrecks alon
 	SessionFile::Snapshot only;
 	only.destructions = { { 0x0001B8AA, 0.0f, true, false } };
 	CHECK(!only.Empty());
+	// A file of layout 34 still loads (without moved objects, which it never had).
+	const auto layout34 = as(SessionFile::Encode(in), SessionFile::TRAPS_AND_DESTRUCTIONS);
+	REQUIRE(layout34);
+	CHECK(layout34->destructions == in.destructions);
+}
+
+// Layout 36 adds where the loose objects players moved came to rest: a friend who loads the cell after the session
+// restarts still finds them there. In a file of an older layout, or as a live move, one is damage.
+TEST("session file: moved objects' places come back from layout 36, in the order they were moved")
+{
+	const auto as = [](std::vector<std::uint8_t> a_bytes, std::uint16_t a_layout) {
+		std::memcpy(a_bytes.data() + 4, &a_layout, sizeof(a_layout));
+		return SessionFile::Decode(a_bytes);
+	};
+	const auto place = [](std::uint32_t a_ref, float a_x) {
+		return Protocol::ObjectRest{ .refId = a_ref, .kind = Protocol::ObjectRestKind::kRest, .worldspace = 0x0000003C, .position = { a_x, -40.5f, 6.0f }, .rotation = { 0.0f, 1.5f, -2.0f } };
+	};
+	auto in = MakeSnapshot();
+	in.objectPlaces = { place(0x0001A002, 120.0f), place(0x0001A001, -300.0f) };
+	const auto out = SessionFile::Decode(SessionFile::Encode(in));
+	REQUIRE(out);
+	CHECK(out->objectPlaces == in.objectPlaces);
+	CHECK(out->deadActors == in.deadActors);
+	SessionFile::Snapshot only;
+	only.objectPlaces = { place(0x0001A001, 0.0f) };
+	CHECK(!only.Empty());
+
+	CHECK(!as(SessionFile::Encode(in), SessionFile::TRAPS_AND_DESTRUCTIONS));
+	auto named = in;
+	named.objectPlaces[0].playerId = 2;
+	CHECK(!SessionFile::Decode(SessionFile::Encode(named)));
+	auto letGo = in;
+	letGo.objectPlaces[0].kind = Protocol::ObjectRestKind::kLetGo;
+	CHECK(!SessionFile::Decode(SessionFile::Encode(letGo)));
 }
