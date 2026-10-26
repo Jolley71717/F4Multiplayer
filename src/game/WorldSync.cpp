@@ -68,8 +68,11 @@ namespace WorldSync
 		std::vector<std::uint32_t> dyingInbox;
 		Killers                    dyingKillers;
 		constexpr std::size_t      MAX_DYING = 256;
-		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage): their fall is left to the death event.
-		std::unordered_set<std::uint32_t> friendsBlows;
+		// NPCs we run whose last health a friend's blow took (ApplyRemoteDamage), and when: their fall is left to the death
+		// event. A plugin's only (a spawn's fall isn't reported early); an entry no fall took (an essential NPC kneels,
+		// the NPC unloads) goes after FRIENDS_BLOW_KEEP, so a long session doesn't fill it.
+		std::unordered_map<std::uint32_t, Clock::time_point> friendsBlows;
+		constexpr auto                                       FRIENDS_BLOW_KEEP = std::chrono::seconds(30);
 		// Deaths of NPCs our game made at runtime (and whether the player caused them): Frame asks Spawns which are shared.
 		std::vector<std::pair<std::uint32_t, bool>> runtimeDeathInbox;
 		constexpr std::size_t                       MAX_RUNTIME_DEATHS = 256;
@@ -2208,8 +2211,12 @@ namespace WorldSync
 		values.ModActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, *info, -a_damage * maximum);
 		++damageApplied;
 		// The friend's killing blow: their report has their kill (ReportFalling leaves this fall to the death event).
-		if (values.GetActorValue(*info) <= 0.0f && friendsBlows.size() < MAX_DYING) {
-			friendsBlows.insert(local);
+		if (values.GetActorValue(*info) <= 0.0f && !Protocol::IsSpawnRef(a_refId)) {
+			const auto now = Clock::now();
+			std::erase_if(friendsBlows, [&](const auto& a_entry) { return now - a_entry.second > FRIENDS_BLOW_KEEP; });
+			if (friendsBlows.size() < MAX_DYING) {
+				friendsBlows.insert_or_assign(local, now);
+			}
 		}
 	}
 
