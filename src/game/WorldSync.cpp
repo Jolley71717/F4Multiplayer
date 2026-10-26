@@ -29,6 +29,7 @@
 #include "game/ScriptDoors.h"
 #include "game/SharedGates.h"
 #include "game/Spawns.h"
+#include "game/Storage.h"
 #include "game/Story.h"
 #include "game/Traps.h"
 #include "game/WeaponFire.h"
@@ -765,6 +766,10 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent& a_event, RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
 			{
+				// Shared storage's own changes (a friend's copy shown, a refused move undone): never a move of the player's.
+				if (Storage::Applying()) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
 				// Only moves the local player makes. Changes we apply for other players go between a
 				// container and nothing, so they never match and never echo back.
 				using Protocol::PLAYER_REF_ID;
@@ -818,6 +823,9 @@ namespace WorldSync
 		public:
 			RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
 			{
+				if (!a_event.opening && a_event.menuName == "ContainerMenu"sv) {
+					Storage::OnMenuClosed();  // a friend's storage viewed: the session's things leave our copy
+				}
 				if (a_event.menuName == "BarterMenu"sv) {
 					if (!a_event.opening) {
 						barterClosedAt = Clock::now().time_since_epoch().count();
@@ -1151,6 +1159,18 @@ namespace WorldSync
 					std::format("{:08X}.removeitem {:08X} {}", a_change.container, a_change.item, -static_cast<std::int64_t>(a_change.count)) :
 					std::format("{:08X}.additem {:08X} {}", a_change.container, a_change.item, a_change.count);
 				RE::Console::ExecuteCommand(command.c_str());
+			}
+
+			// Shared storage: who keeps a container, and our view of a friend's (Storage).
+			StorageView::Keeper Keeper(std::uint32_t a_holder) override { return Storage::KeeperOf(a_holder); }
+
+			std::optional<std::uint32_t> ViewFrom(std::uint32_t a_holder) override { return Storage::ViewFrom(a_holder); }
+
+			void Reporting(const Protocol::ContainerChange& a_change) override { Storage::Reporting(a_change); }
+
+			void Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing) override
+			{
+				Storage::Short(a_index, a_change, a_missing);
 			}
 		};
 
@@ -1995,6 +2015,35 @@ namespace WorldSync
 		return loot;
 	}
 
+	LootScope::HolderFacts HolderFactsOf(std::uint32_t a_ref)
+	{
+		return ReadHolderFacts(a_ref);
+	}
+
+	std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_container)
+	{
+		std::map<std::uint32_t, std::int64_t> out;
+		const auto                            holder = ReadHolderFacts(a_container);
+		for (const auto& stack : engine.Stacks(a_container)) {
+			auto item = engine.Item(stack.item);
+			item.questAlias = stack.questAlias;
+			if (LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
+				out[stack.item] += stack.count;
+			}
+		}
+		return out;
+	}
+
+	std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container)
+	{
+		return loot.Listing(a_container, engine);
+	}
+
+	void QueueEvent(std::vector<std::uint8_t> a_packet)
+	{
+		Queue(std::move(a_packet));
+	}
+
 	namespace
 	{
 		// The Apply* entry points, with CanApply() worked out by the caller (once for a whole world state).
@@ -2144,6 +2193,9 @@ namespace WorldSync
 		// are skipped (see ContainerLedger::Receiver).
 		engine.inWorld = inWorld;
 		const auto strays = loot.Numbers().Numbers().Stats().strays;
+		for (const auto& change : a_state.containerChanges) {
+			Storage::OwnNumbered(change);  // ours at a friend's storage, numbered: it went through
+		}
 		const auto lost = loot.CatchUp(a_state.containerFirstIndex, a_state.containerChanges, Clock::now(), engine);
 		engine.inWorld.reset();
 		if (lost) {
@@ -2268,6 +2320,7 @@ namespace WorldSync
 	void ApplyContainerChange(const Protocol::IndexedContainerChange& a_change)
 	{
 		MainThread::Assert("WorldSync::ApplyContainerChange");
+		Storage::OwnNumbered(a_change);
 		loot.Live(a_change, Clock::now(), engine);
 	}
 
@@ -2430,6 +2483,7 @@ namespace WorldSync
 		const auto  nextBefore = numbers.Next();
 		if (const auto request = loot.Due(now, engine)) {
 			Queue(Protocol::Encode(*request));
+			Storage::UnlistAll();  // the server holds our storage listings stale from the request on
 			REX::INFO("WorldSync: still missing container change #{} ({} waiting); asking again", request->containerFrom, numbers.Waiting());
 		}
 		if (const auto skipped = numbers.Stats().skipped - skippedBefore) {

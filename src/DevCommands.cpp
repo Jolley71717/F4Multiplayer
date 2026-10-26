@@ -46,6 +46,7 @@
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/SharedGates.h"
+#include "game/Storage.h"
 #include "game/StateBuffer.h"
 #include "game/Traps.h"
 #include "game/QuestStageLayout.h"
@@ -3430,6 +3431,18 @@ namespace DevCommands
 			return Destructibles::Command(joined);
 		}
 
+		// storage: shared storage (Storage.h): status; owners; keeper <ref>; view <ref> / close (what the container menu's show and close do);
+		// count <ref> <item>; take / put <ref> <item> [count] (a transfer between our player and the container, as the menu makes one).
+		std::string StorageCommand(std::string_view a_args)
+		{
+			const auto  args = SplitArgs(a_args);
+			std::string joined;
+			for (const auto& arg : args) {
+				joined += (joined.empty() ? "" : " ") + std::string(arg);
+			}
+			return Storage::Command(joined);
+		}
+
 		std::string SaveGuardCommand(std::string_view a_args)
 		{
 			const auto args = SplitArgs(a_args);
@@ -3609,6 +3622,7 @@ namespace DevCommands
 			Entry{ "workshop", Workshop },
 			Entry{ "objects", ObjectsCommand },
 			Entry{ "destruct", DestructCommand },
+			Entry{ "storage", StorageCommand },
 		};
 	}
 

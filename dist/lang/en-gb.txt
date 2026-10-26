@@ -149,6 +149,10 @@ workshop.rescued = What you kept in a friend's container is in your inventory
 drops.container_hint = Weapons and armour you put in a container stay in your game only. To give one to a friend, drop it near them
 drops.not_given = Friends can't pick this item up: it stays on the ground in your game only
 drops.taken_first = A friend picked it up first
+storage.closed = The host's copy of this container isn't open now (they are away from it, or their game loaded): what you do here stays in your game
+storage.take_refused = That was gone from the host's container (a friend took it first?): it went back
+storage.put_refused = That couldn't go into the host's container (their game lacks its mod?): it came back to you
+storage.short = The container held less than it showed: what wasn't there was taken back
 save.old_leftover = Multiplayer: this save holds a leftover from an older version of the mod. Save now, then restart the game and play from the new save
 
 # --- The F1 menu ---

@@ -3,6 +3,10 @@
 #include "Protocol.h"
 
 #include "game/FoundDead.h"
+#include "game/LootScope.h"
+
+#include <map>
+#include <optional>
 
 namespace LootSync
 {
@@ -27,6 +31,14 @@ namespace WorldSync
 	// The loot engine: which of the session's container changes our world holds (or waits to), and our IDs in
 	// it (kept in the save). Session moves it through loads, hellos and welcomes with SessionSteps.
 	[[nodiscard]] LootSync::Loot& Loot();
+
+	// For shared storage (Storage): what LootScope reads of a holder; what a container holds of the session's things (the
+	// shared stacks); the host's listing of a container (none while the ledger is still asking); and a packet sent in
+	// order with the loot's.
+	[[nodiscard]] LootScope::HolderFacts                  HolderFactsOf(std::uint32_t a_ref);
+	[[nodiscard]] std::map<std::uint32_t, std::int64_t>   SharedIn(std::uint32_t a_container);
+	[[nodiscard]] std::optional<Protocol::StorageListing> StorageListing(std::uint32_t a_container);
+	void                                                  QueueEvent(std::vector<std::uint8_t> a_packet);
 
 	// Another player's game reported a death, or the server replays one it knows (no player named): killed
 	// here once loaded, the corpse put where it fell for them and pushed by their stand-in if theirs was the

@@ -43,6 +43,7 @@
 #include "game/RemotePlayers.h"
 #include "game/SaveGuard.h"
 #include "game/Spawns.h"
+#include "game/Storage.h"
 #include "game/Story.h"
 #include "game/Traps.h"
 #include "game/WeaponFire.h"
@@ -444,6 +445,7 @@ namespace Session
 					Story::SetShared(msg->sharedStory);
 					RadiantSync::OnWelcome(msg->sessionId);  // after the story's sharing: the runs this world shared in the session
 					HostRules::Set(msg->rules, msg->sessionId);
+					Storage::OnWelcome(msg->rules.sharedStorage, hostedServer != nullptr);
 					refusals.Clear();
 					const bool tellMods = hostMods.OnWelcome();
 					Notify(msg->sharedStory ? (msg->friendlyFire ? "session.connected_shared_fire" : "session.connected_shared") :
@@ -544,6 +546,21 @@ namespace Session
 			case MessageType::kExplosion:
 				if (const auto msg = Protocol::DecodeExplosion(a_data)) {
 					WeaponFire::ApplyExplosion(*msg);
+				}
+				break;
+			case MessageType::kStorageOwners:
+				if (const auto msg = Protocol::DecodeStorageOwners(a_data)) {
+					Storage::OnOwners(*msg);
+				}
+				break;
+			case MessageType::kStorageContents:
+				if (const auto msg = Protocol::DecodeStorageListing(a_data)) {
+					Storage::OnContents(*msg);
+				}
+				break;
+			case MessageType::kStorageRefused:
+				if (const auto msg = Protocol::DecodeStorageRefusal(a_data)) {
+					Storage::OnRefused(*msg);
 				}
 				break;
 			case MessageType::kDestructions:
@@ -880,6 +897,7 @@ namespace Session
 			Drops::Reset();  // our copies of what lies about go (the record stays: it is our world's)
 			Traps::Reset();
 			RadiantSync::SetLocalPlayer(0);
+			Storage::OnDisconnected();  // before WorldSync forgets: the session's things leave a friend's copy we view
 			RemotePlayers::RemoveAll();
 			WorldSync::Reset();
 			SessionSteps::OnDisconnected(WorldSync::Loot());
@@ -1393,6 +1411,9 @@ namespace Session
 		// claim (Server.cpp, handleDeath), so this order is what keeps a one-shot kill.
 		SendWorldEvents();
 		WorldSync::Frame(welcomed && hostedServer && hostedServer->Running());
+		if (welcomed && !Story::InOpening()) {
+			Storage::Frame();
+		}
 
 		PERF_NEXT(perf, "NpcSync");
 		if (welcomed) {
@@ -1525,6 +1546,7 @@ namespace Session
 		// stands: after a load they would be forgotten (WorldSync::Reset), and sent ahead of the load's
 		// request they are in its answer, numbered before it.
 		WorldSync::FlushLoot();
+		Storage::BeforeSaveOrLoad();  // no save holds the session's things in a friend's copy
 		SendWorldEvents();
 		Drops::DiscardCopies();  // no copy of an item lying in the session is saved (the graveyard DespawnAll empties)
 		for (auto& packet : Drops::TakeOutgoing()) {
@@ -1569,6 +1591,7 @@ namespace Session
 		// What we knew about the world described the game before the load.
 		WorldSync::Reset();
 		QuestSync::Rebaseline();
+		Storage::OnGameLoaded();
 		Achievements::OnGameLoaded();
 		MapShare::Rebaseline();
 		Downed::OnGameLoaded();
@@ -1624,7 +1647,7 @@ namespace Session
 		}
 		return std::format("status={} id={} hosting={} server='{}' hash={:08X} reject='{}' world: {} players: {}",
 			       status, localId, hostedServer && hostedServer->Running(), serverAddress, contentHash,
-			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
+			       refusals.Last(), WorldSync::Describe() + " " + NpcSync::Describe() + " " + Spawns::Describe() + " " + QuestSync::Describe() + " " + Achievements::Describe() + " " + Story::Describe() + " " + WeaponFire::Describe() + " " + CopyWatch::Describe() + " " + Party::Describe() + " " + WorldClock::Describe() + " " + Voice::Describe() + " " + Drops::Describe() + " " + Traps::Describe() + " " + MapShare::Describe() + " " + WorkshopSync::Describe() + " " + MovedObjects::Status() + " " + Destructibles::Describe() + " " + Storage::Describe() + " " + Conversations::Describe() + " " + Compass::Describe() + " " + MenuIcons::Describe() + " " + FadeWatch::Describe() + " " + Hud::Describe() + " " + LooksMenu::Describe() + " " + Face::Describe() + " " + Equipment::DescribeOwnGear(), RemotePlayers::Describe()) +
 		       std::format(" hits: taken={} ignored={} mult={} forms={} skippedOut={} skippedIn={}", hitsTaken, hitsIgnored, lastHitMult, forms.Identity() ? "same" : "translated", skippedOut.packets + skippedOut.entries + skippedOut.fields, skippedIn.packets + skippedIn.entries + skippedIn.fields) + " " + SaveGuard::Describe() + " frameHook=" + MainThread::HookState() + " " + (steamMode ? Steam::Describe() : "steam=off");
 	}
 
