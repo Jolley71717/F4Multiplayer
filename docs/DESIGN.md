@@ -1394,7 +1394,10 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   not made essential, so a lethal hit kills as it would alone. A fight is over 30 s after the player's last
   frame in combat (on the ground counts as in combat). The helper checks its own combat state for
   `bReviveOutOfCombat`. `bDownedCrawl` is the welcome's flag bit 16, added without a protocol version of
-  its own (off is what a game from before it does). The defaults are the behaviour before the rules. Rules that reach `Self` while the
+  its own (off is what a game from before it does). The defaults are the behaviour before the rules.
+  `bShareGuestBuilds` (the welcome's flag bit 8, which older builds neither set nor read, so the protocol
+  version is unchanged) lets a guest's game report what its player built before the session
+  (`BuiltWalk::Shares`; see Shared settlements). Rules that reach `Self` while the
   player is on the ground (a welcome back into the session mid-down) wait until they are up: a down finishes
   under the rules it began with, so a shorter bleed-out or revive turned off never kills on the spot; the
   revive count of the session carries on through any change. A joiner is told rules that differ from the
@@ -1542,7 +1545,12 @@ a past (one save, played on by both) hold the same built pieces at the same spot
 workshop's own extra data, which only a workbench carries) let our own pass: adopted, it was blocked from workshop
 mode, unlinked from our workbench by the audit (its settler's job with it) and deleted when the session ended. A
 piece linked to a workbench as its workshop item is ours and is never adopted; a friend's report of the same object
-at its spot makes no copy over it (`OursAt`, `oursThere=`), and their scrap of theirs leaves ours standing.
+at its spot makes no copy over it (`OursAt`, `oursThere=`), and their scrap of theirs leaves ours standing. The host's game
+reports what its player built before the session (`BuiltWalk`); a guest's does too only when the host sets
+`bShareGuestBuilds` (a session rule, sent with the welcome; off by default, since each player keeps their own save and a
+guest's solo settlement would land on top of the host's). Building done in the session is shared either way. Then a third
+player can get the same piece from two friends: the second report finds the first's copy at the spot and makes none
+(`CopyAt`, `twinned=`).
 Friends' copies stay out of workshop mode's reach by design (above), so a friend's crop or post can't be a job for
 our settlers; each player assigns jobs at their own pieces.
 

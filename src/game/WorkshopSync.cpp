@@ -3,6 +3,7 @@
 #include "game/BuiltWalk.h"
 #include "game/Drops.h"
 #include "game/EngineRefs.h"
+#include "game/HostRules.h"
 #include "game/RemoteEdits.h"
 #include "game/SavedScraps.h"
 #include "game/SaveStrays.h"
@@ -959,7 +960,7 @@ namespace WorkshopSync
 		// The first reference made at runtime of the item's base at its spot, still standing (not one deleted already,
 		// waiting for the save to drop it), none of our copies, that a_pick takes.
 		template <class Pick>
-		RE::TESObjectREFR* AtSpot(const Protocol::WorkshopItem& a_item, Pick a_pick)
+		RE::TESObjectREFR* AtSpot(const Protocol::WorkshopItem& a_item, Pick a_pick, bool a_copies = false)
 		{
 			const auto tes = RE::TES::GetSingleton();
 			if (!tes) {
@@ -969,7 +970,7 @@ namespace WorkshopSync
 			const RE::NiPoint3 at{ a_item.position[0], a_item.position[1], a_item.position[2] };
 			tes->ForEachReferenceInRange(at, ADOPT_RADIUS, [&](RE::TESObjectREFR* a_ref) {
 				const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
-				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !a_ref->IsDisabled() && !a_ref->IsDeleted() && !IsCopy(a_ref) &&
+				if (base && base->GetFormID() == a_item.base && (a_ref->GetFormID() >> 24) == 0xFF && !a_ref->IsDisabled() && !a_ref->IsDeleted() && IsCopy(a_ref) == a_copies &&
 					!InGraveyard(a_ref) && !Drops::IsCopyRef(a_ref->GetFormID()) && a_pick(a_ref)) {
 					found = a_ref;
 					return RE::BSContainer::ForEachResult::kStop;
@@ -990,6 +991,13 @@ namespace WorkshopSync
 		bool OursAt(const Protocol::WorkshopItem& a_item)
 		{
 			return AtSpot(a_item, [](RE::TESObjectREFR* a_ref) { return BenchOf(*a_ref) != nullptr; }) != nullptr;
+		}
+
+		// One of our copies of a friend's piece, the same object, at the spot: another friend's report of it (saves that share a
+		// past) makes no second one.
+		bool CopyAt(const Protocol::WorkshopItem& a_item)
+		{
+			return AtSpot(a_item, [](RE::TESObjectREFR*) { return true; }, true) != nullptr;
 		}
 
 		// What workshop mode can build: furniture, walls, lights, containers, crops, turrets... A
@@ -1268,6 +1276,7 @@ namespace WorkshopSync
 			}
 
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }
+			bool CopyAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::CopyAt(a_item); }
 
 			// Only a copy of ours (it has the keyword Keep gives): never a loose thing of the same object.
 			std::optional<Copy> LeftoverAt(const Protocol::WorkshopItem& a_item)
@@ -1583,7 +1592,7 @@ namespace WorkshopSync
 		SavedScraps::Walk<WalkEngine> walk{ sentScraps };
 		Clock::time_point             lastSend{};  // when the walk's reports last had their turn
 
-		// ---- What the host built before the session ---------------------------------------------------
+		// ---- What the host (and, by the host's rule, a guest) built before the session -----------------
 		//
 		// See BuiltWalk. The pieces are found in each cell as it attaches (and the worldspace's persistent
 		// cell), and in the list of workshop items of each workbench found there (which names pieces in cells
@@ -1966,6 +1975,7 @@ namespace WorkshopSync
 	void Frame(bool a_host)
 	{
 		const auto now = Clock::now();
+		const bool shares = BuiltWalk::Shares(a_host, HostRules::Get());
 		++frameNumber;  // what the grids name is read again (GridNamed)
 		std::erase_if(graveyard, [&](Copy& a_copy) {
 			const auto ref = a_copy.ref.get();
@@ -1985,6 +1995,10 @@ namespace WorkshopSync
 			// stay theirs.
 			if (a_host) {
 				QueueWalks(fresh);
+			}
+			// What our player built before the session: the host's always, a guest's only if the host's rules share it
+			// (bShareGuestBuilds).
+			if (shares) {
 				OfferAndReportBuilt(fresh);
 			}
 			NoteBenches(fresh);
@@ -2003,6 +2017,8 @@ namespace WorkshopSync
 		}
 		if (a_host) {
 			WalkAndSend(now);
+		}
+		if (shares) {
 			BuiltEngine engine;
 			builtWalk.ReportSome(engine);
 		}

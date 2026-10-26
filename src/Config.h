@@ -143,6 +143,8 @@ namespace Config
 		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
+		bool shareGuestBuilds = false;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;

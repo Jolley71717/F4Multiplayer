@@ -30,6 +30,7 @@
 //                                                        workshop mode off our copies, saved with it) and holds nothing, not
 //                                                        the player's own
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
+//   bool CopyAt(item)                                    one of our copies of a friend's piece, the same object, stands at the spot
 //   std::optional<Copy> LeftoverAt(item)                 a copy of it no session knows, at the spot, beside the one kept (or a piece of ours)
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
@@ -53,6 +54,7 @@ namespace WorkshopApply
 		std::uint32_t oursThere = 0;     // no copy made: a piece of ours, the same object, stands at the spot
 		std::uint32_t leftovers = 0;     // copies a save held twice at one spot, or over a piece of ours: gone
 		std::uint32_t framesCleared = 0;  // copies of a power armor frame an older version made, found at the spot and removed
+		std::uint32_t twinned = 0;       // no copy made: a copy of another friend's, the same object, stands at the spot
 	};
 
 	inline constexpr int MAX_LEFTOVERS = 8;  // removed at one spot in one go: a guard, should one not go at once
@@ -203,6 +205,12 @@ namespace WorkshopApply
 			// make it a copy: out of workshop mode's reach, off our workbench, and deleted when the session ends.
 			++a_counts.oursThere;
 			DiscardLeftovers(a_world, a_item, a_counts);
+			return true;
+		}
+		if (a_world.CopyAt(a_item)) {
+			// Two friends whose saves share a past each report the piece built before it parted: the first made the copy, and
+			// the second's would double it.
+			++a_counts.twinned;
 			return true;
 		}
 		if (placeable == Placeable::kStocked) {

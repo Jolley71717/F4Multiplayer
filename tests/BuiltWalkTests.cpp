@@ -3,8 +3,8 @@
 
 #include <vector>
 
-// What the host built before the session: which references count as its building, each reported once a
-// session, a few a frame, and what can't be reported yet kept for the next frame.
+// What a player built before the session: whose game reports it, which references count as its building,
+// each reported once a session, a few a frame, and what can't be reported yet kept for the next frame.
 namespace
 {
 	using BuiltWalk::Piece;
@@ -89,6 +89,16 @@ TEST("built walk: a big settlement goes a few pieces a frame, in the order found
 	for (std::uint32_t i = 0; i < PIECES; ++i) {
 		CHECK(game.reported[i] == 0xFF100000 + i);  // none skipped while it waited, none twice
 	}
+}
+
+TEST("built walk: the host's game reports what it built before the session either way, a guest's only with the host's bShareGuestBuilds")
+{
+	Protocol::SessionRules rules;  // as an ini without the key hosts
+	CHECK(BuiltWalk::Shares(true, rules));
+	CHECK(!BuiltWalk::Shares(false, rules));
+	rules.shareGuestBuilds = true;
+	CHECK(BuiltWalk::Shares(true, rules));
+	CHECK(BuiltWalk::Shares(false, rules));
 }
 
 TEST("built walk: what is queued stays within what the server would keep")

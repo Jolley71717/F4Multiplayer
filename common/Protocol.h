@@ -354,6 +354,10 @@ namespace Protocol
 		// Time (src/game/RealTime.h): in a session, VATS runs in real time instead of slowing the game.
 		bool realTimeVats = true;  // VATS (bRealTimeVats)
 
+		// Settlements (src/game/BuiltWalk.h): a guest's game also reports what its player built before the session, not only
+		// the host's (bShareGuestBuilds). A flag bit no older build sets or reads, so the protocol stays as it was.
+		bool shareGuestBuilds = false;
+
 		// Limits: what an ini or the wire may ask for is brought within them (Clamped).
 		static constexpr std::uint16_t MIN_BLEED_OUT = 5, MAX_BLEED_OUT = 600;
 		static constexpr std::uint16_t MIN_HELP_TENTHS = 5, MAX_HELP_TENTHS = 300;
@@ -2006,7 +2010,7 @@ namespace Protocol
 		w.U8(a_msg.friendlyFire ? 1 : 0);
 		w.U8(a_msg.sharedStory ? 1 : 0);
 		const auto& rules = a_msg.rules;
-		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.downedCrawl ? 16 : 0);
+		const std::uint8_t flags = (rules.revive ? 1 : 0) | (rules.reviveOutsideCombat ? 2 : 0) | (rules.realTimeVats ? 4 : 0) | (rules.shareGuestBuilds ? 8 : 0) | (rules.downedCrawl ? 16 : 0);
 		w.U8(flags);
 		w.U16(rules.bleedOutSeconds);
 		w.U16(rules.helpTenths);
@@ -2034,6 +2038,7 @@ namespace Protocol
 			rules.revive = (flags & 1) != 0;
 			rules.reviveOutsideCombat = (flags & 2) != 0;
 			rules.realTimeVats = (flags & 4) != 0;
+			rules.shareGuestBuilds = (flags & 8) != 0;  // an older host never sets it: off, as it was
 			rules.downedCrawl = (flags & 16) != 0;
 			rules.bleedOutSeconds = r.U16();
 			rules.helpTenths = r.U16();
