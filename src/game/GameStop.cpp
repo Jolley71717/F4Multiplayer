@@ -2,9 +2,15 @@
 
 namespace GameStop
 {
-	bool Now()
+	std::optional<std::uint32_t> MenuMode()
 	{
 		const auto ui = RE::UI::GetSingleton();
-		return !ui || ui->menuMode != 0;
+		return ui ? std::optional<std::uint32_t>{ ui->menuMode } : std::nullopt;
+	}
+
+	bool Now()
+	{
+		const auto mode = MenuMode();
+		return !mode || *mode != 0;
 	}
 }

@@ -118,14 +118,14 @@ namespace Hotkeys
 			if (a_chord) {
 				return "Alt, Ctrl or Win is held with it";
 			}
-			const auto ui = RE::UI::GetSingleton();
-			if (!ui) {
+			const auto mode = GameStop::MenuMode();
+			if (!mode) {
 				return "the game's UI isn't there yet";
 			}
 			if (OpenMenus::Open(OpenMenus::Menu::kConsole)) {
 				return "the console is open";
 			}
-			return std::format("a menu is open (menu mode {})", static_cast<int>(ui->menuMode));
+			return std::format("a menu is open (menu mode {})", *mode);
 		}
 
 		// How the keys are read, once, with the first Poll.
@@ -236,12 +236,12 @@ namespace Hotkeys
 	std::string Describe()
 	{
 		const auto&                    settings = Config::Get();
-		const auto                     ui = RE::UI::GetSingleton();
+		const auto                     mode = GameStop::MenuMode();
 		const auto                     key = [](const char* a_name, std::uint32_t a_vk) {
 			return std::format(" {}={:02X}{}", a_name, a_vk, IsDown(a_vk) ? "(down)" : "");
 		};
 		return std::format("hotkeys: focus={} ({}) menuMode={} console={} chord: alt={} ctrl={} win={} polls={} fired={} blocked={} keysSeen={} keys:",
-				   GameHasFocus(), FocusName(GameFocus()), ui ? static_cast<int>(ui->menuMode) : -1, OpenMenus::Open(OpenMenus::Menu::kConsole), IsDown(0x12),
+				   GameHasFocus(), FocusName(GameFocus()), mode ? static_cast<int>(*mode) : -1, OpenMenus::Open(OpenMenus::Menu::kConsole), IsDown(0x12),
 				   IsDown(0x11), IsDown(0x5B) || IsDown(0x5C), polls, actionsFired, blockedPresses, keyWatch.Seen()) +
 		       key("menu", settings.keyMenu) + key("list", settings.keyPlayerList) + key("teleport", settings.keyTeleport) + key("ping", settings.keyPing) + key("where", settings.keyWhere) + key("voice", settings.keyVoice);
 	}

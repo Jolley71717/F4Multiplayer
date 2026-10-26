@@ -20,8 +20,10 @@
 #include "game/Face.h"
 #include "game/FadeWatch.h"
 #include "game/FrameClock.h"
+#include "game/GameStop.h"
 #include "game/MapMarkerLayout.h"
 #include "game/Menu.h"
+#include "game/MenuClock.h"
 #include "game/MenuMessages.h"
 #include "game/MenuIcons.h"
 #include "game/MenuWatch.h"
@@ -2894,6 +2896,14 @@ namespace DevCommands
 			return RealTime::Describe();
 		}
 
+		// menuclock on [seconds] | off: logs the clocks a menu could stop, each frame for a while after any menu opens
+		// or closes (game/MenuClock.h), to find what stops the world under a menu (F4Multiplayer-tnl5). Nothing: the
+		// state and the clocks now.
+		std::string MenuClockCommand(std::string_view a_args)
+		{
+			return MenuClock::Command(a_args);
+		}
+
 		// rules: the session's rules this game plays by (the host's, from the welcome), and the down state they limit.
 		std::string Rules(std::string_view)
 		{
@@ -2906,7 +2916,7 @@ namespace DevCommands
 			const auto ui = RE::UI::GetSingleton();
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return std::format("freezeTime={} gameActive={} menuMode={} freezeFramePause={} pauseMenu={} pipboy={} difficulty={} sit={} scene={}", main ? main->freezeTime : false, main ? main->gameActive : false,
-				ui ? ui->menuMode : 0, ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
+				GameStop::MenuMode().value_or(0), ui ? ui->freezeFramePause : 0, OpenMenus::Open(OpenMenus::Menu::kPause), OpenMenus::Open(OpenMenus::Menu::kPipboy), player ? static_cast<int>(player->GetDifficultyLevel()) : -1,
 				player ? static_cast<int>(player->DoGetSitSleepState()) : -1, player && player->GetCurrentScene());
 		}
 
@@ -3548,6 +3558,7 @@ namespace DevCommands
 			Entry{ "hotkeys", HotkeysCommand },
 			Entry{ "paused", Paused },
 			Entry{ "timescale", TimeScale },
+			Entry{ "menuclock", MenuClockCommand },
 			Entry{ "rules", Rules },
 			Entry{ "idles", Idles },
 			Entry{ "steam", SteamCommand },
@@ -3605,6 +3616,7 @@ namespace DevCommands
 	{
 		TraceFrame();
 		InputFrame();
+		MenuClock::Frame();
 		if (!turn.active) {
 			return;
 		}
