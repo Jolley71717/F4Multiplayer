@@ -266,6 +266,33 @@ TEST("npc hold: the host kills a guard its game runs while the friend fights it 
 	CHECK(!f.Logged("dropped"));
 }
 
+TEST("npc hold: a guard our game runs is reported dead as it starts to fall, and its death event seconds later adds nothing")
+{
+	Fixture    f{ HostedOptions() };
+	Game       host{ f, 1, "Host", HOST_IDENTITY };
+	Game       bob{ f, 2, "Bob" };
+	const auto t0 = Clock::now();
+	host.Scan(GUARD, Here::kAlive, t0);
+	bob.Pump(t0);
+	host.Hits(GUARD, std::nullopt, t0 + 1s);  // the killing blow
+
+	CHECK(NpcHold::ReportAtFall(true, true, false));
+	CHECK(!NpcHold::ReportAtFall(false, true, false));  // a friend's runs it: the death event, and the fight, decide
+	CHECK(!NpcHold::ReportAtFall(true, false, false));  // alive, or long dead
+	CHECK(!NpcHold::ReportAtFall(true, true, true));    // Dogmeat, down: he gets up
+
+	host.SawDie(GUARD, true);  // as it starts to fall
+	const auto early = bob.Pump(t0 + 1s);
+	REQUIRE(early.size() == 1);
+	CHECK(early[0].refId == GUARD);
+	CHECK(early[0].playerId == host.id);
+	CHECK(bob.OwnerOf(GUARD) == 0);
+
+	host.SawDie(GUARD, true);  // the death event, 3 s on: the game knows it dead already, but a repeat is harmless
+	CHECK(bob.Pump(t0 + 4s).empty());
+	CHECK(!f.Logged("dropped"));
+}
+
 TEST("npc hold: a guard let go as it fell is still the host's kill once its death event comes, not its found-dead check")
 {
 	// A game without the hold, or one whose hold ran out: the guard changes hands mid-fall.

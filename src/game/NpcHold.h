@@ -75,6 +75,15 @@ namespace NpcHold
 		std::unordered_map<std::uint32_t, Clock::time_point> dying;   // NPCs we run, kept since they fell
 	};
 
+	// WorldSync::ReportFalling's decision: true to report the death of an NPC the moment it starts to fall, not when the
+	// death event comes seconds later (the friends' copies stood on, fighting, all the while). Only one our game runs
+	// (the server believes its runner without asking who fought it), and not one that goes down and gets up again. The
+	// event that follows adds nothing: the death is known by then.
+	[[nodiscard]] constexpr bool ReportAtFall(bool a_ours, bool a_falling, bool a_getsUp)
+	{
+		return a_ours && a_falling && !a_getsUp;
+	}
+
 	// WorldSync::CheckFoundDead's decision for an NPC dead in our world that the session does not know is dead: true
 	// to leave it to its death event for now, as a death seen happen (our kill, if it is). a_falling: it is still
 	// falling (dying, not yet dead). a_foughtLately: our player hit it within FOUGHT. a_waits keeps when each began to

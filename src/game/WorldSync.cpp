@@ -1181,6 +1181,39 @@ namespace WorldSync
 			}
 		}
 
+		// The NPCs our game runs that started to fall since the last frame are reported dead now (NpcHold::ReportAtFall),
+		// not when their death event comes at the end of the fall: the friends' copies would stand and fight for those
+		// seconds. The kill is credited to us when our player hit it lately; the event's own killer is not known yet.
+		void ReportFalling()
+		{
+			const auto local = NpcSync::LocalPlayer();
+			const auto lists = RE::ProcessLists::GetSingleton();
+			if (local == 0 || !lists) {
+				return;
+			}
+			std::vector<std::uint32_t> falling;
+			Killers                    killers;
+			for (const auto& handle : lists->highActorHandles) {
+				const auto ptr = handle.get();
+				const auto actor = ptr.get();
+				if (!actor || !actor->IsDead(false) || actor->IsPlayerRef() || actor->IsDeleted() || Puppets::IsPuppet(actor)) {
+					continue;
+				}
+				const auto id = actor->GetFormID();
+				if (!IsShareableRef(id) || dead.Contains(id)) {
+					continue;
+				}
+				const bool fallingNow = static_cast<RE::ActorState&>(*actor).lifeState == static_cast<std::uint32_t>(RE::ACTOR_LIFE_STATE::kDying);
+				if (NpcHold::ReportAtFall(NpcSync::Owner(id) == local, fallingNow, GetsUp(actor))) {
+					falling.push_back(id);
+					if (NpcSync::FoughtLately(id)) {
+						killers[id] = Protocol::PLAYER_REF_ID;
+					}
+				}
+			}
+			ReportDeaths(falling, killers);
+		}
+
 		// Deaths of NPCs our game made at runtime: a shared one's (ours, or our copy of a friend's we killed first) is
 		// reported under its spawn id. Not kept with the session's dead: the id may name another spawn later.
 		void ReportRuntimeDeaths(const std::vector<std::pair<std::uint32_t, bool>>& a_deaths)
@@ -2221,6 +2254,7 @@ namespace WorldSync
 		}
 
 		ReportDeaths(newDeaths, killers);
+		ReportFalling();
 		ReportRuntimeDeaths(newRuntimeDeaths);
 		// After the deaths: a corpse looted the frame it died goes out dead first.
 		ReportMoves(newMoves);
