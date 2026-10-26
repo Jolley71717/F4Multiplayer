@@ -767,6 +767,10 @@ namespace Protocol
 		float         x = 0.0f, y = 0.0f, z = 0.0f;
 		std::uint32_t cell = 0;        // interior cell, or 0 outside
 		std::uint32_t worldspace = 0;
+		// The NPC the reporter's game runs that set it off (a plugin's reference or a spawn id, IsActorRef), 0 for the
+		// reporter's player or no actor. A game with no copy of that NPC (a DLC's it lacks: FormTranslate drops the
+		// message; a spawn it couldn't place) never sees the fight, and sets off nothing.
+		std::uint32_t source = 0;
 
 		bool operator==(const Explosion&) const = default;
 	};
@@ -2344,6 +2348,7 @@ namespace Protocol
 		w.F32(a_msg.z);
 		w.U32(a_msg.cell);
 		w.U32(a_msg.worldspace);
+		w.U32(a_msg.source);
 		return w.Data();
 	}
 
@@ -2359,7 +2364,8 @@ namespace Protocol
 		msg.z = r.F32();
 		msg.cell = r.U32();
 		msg.worldspace = r.U32();
-		if (!r.Ok() || !r.AtEnd() || msg.base == 0 || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
+		msg.source = r.U32();
+		if (!r.Ok() || !r.AtEnd() || msg.base == 0 || (msg.source != 0 && !IsActorRef(msg.source)) || !std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.z)) {
 			return std::nullopt;
 		}
 		return msg;

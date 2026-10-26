@@ -118,6 +118,14 @@ TEST("remote edits: a friend's explosion goes off near us whoever stands beside 
 	CHECK(SetOff(us, us, INF) == Blast::kNotThrown);
 }
 
+TEST("remote edits: a friend's explosion set off by an NPC we have no copy of is no blast of ours; a player's or a mirrored NPC's is")
+{
+	CHECK(SourceHere(0, 0));                    // the friend's own throw
+	CHECK(SourceHere(0x0001F00D, 0x0001F00D));  // a plugin's NPC, mirrored here
+	CHECK(SourceHere(0xFF000123, 0xFF004567));  // a spawn, and our copy of it
+	CHECK(!SourceHere(0xFF000123, 0));          // a spawn never placed here (a DLC's NPC we lack): a fight we can't see
+}
+
 TEST("remote edits: an explosion's blow on a copy is the owner's exactly when that explosion goes off in the owner's game")
 {
 	using namespace std::chrono_literals;
