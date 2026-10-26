@@ -26,6 +26,8 @@
 //   void Keep(const Copy&) / void Discard(const Copy&)   ours from now on / deleted, in time
 //   Placeable CanPlace(item)
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot (never a piece of ours)
+//   bool MadeByUs(const Copy&)                           a copy of this kind made it (it carries the keyword that keeps
+//                                                        workshop mode off our copies, saved with it), not the player's own
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
@@ -47,6 +49,7 @@ namespace WorkshopApply
 		std::uint32_t movedOwn = 0;      // pieces of the world itself another player moved: ours moved
 		std::uint32_t ownRefused = 0;    // ... but not one a friend may move (see OwnPiece)
 		std::uint32_t oursThere = 0;     // no copy made: a piece of ours, the same object, stands at the spot
+		std::uint32_t framesCleared = 0;  // copies of a power armor frame an older version made, found at the spot and removed
 	};
 
 	// Where a copy stands here, for following its piece.
@@ -62,6 +65,7 @@ namespace WorkshopApply
 		kYes,
 		kNo,       // nothing we can show (a mod we don't have), or nothing we would (not something workshop mode builds)
 		kStocked,  // a container whose base holds things of its own: its copy is emptied (World::Empty), or it would be loot
+		kFrame,    // a power armor frame (see Shared): no copy, and one an older version made at the spot goes
 	};
 
 	// What a copy is, as far as what it holds goes.
@@ -79,6 +83,17 @@ namespace WorkshopApply
 	constexpr bool Rescues(Kind a_kind, bool a_holdsItems)
 	{
 		return a_kind == Kind::kContainer && a_holdsItems;
+	}
+
+	// Whether a piece of this object is the workshop's to share: one workshop mode builds, and never a power armor
+	// frame. Workshop mode moves a parked frame like a piece of its own, but a frame is its player's, shared worn,
+	// parked or left by RemotePlayers. Up to 0.9.1 a frame moved there (the player's own, or our copy of a friend's)
+	// was reported as a piece too: each friend's game made a workshop copy of it where it was set down, beside the
+	// copy of the frame itself, and the server kept that copy for every later session and load (the 0.9.1 report:
+	// frames piling up in Sanctuary). Neither reported nor placed now, whoever sends it (Placeable::kFrame).
+	constexpr bool Shared(bool a_buildable, bool a_frame)
+	{
+		return a_buildable && !a_frame;
 	}
 
 	// Moves the copy to where the report puts it (see WorkshopMove); false if it has to be made again
@@ -150,6 +165,15 @@ namespace WorkshopApply
 		}
 		const auto placeable = a_world.CanPlace(a_item);
 		if (placeable == Placeable::kNo) {
+			return true;
+		}
+		if (placeable == Placeable::kFrame) {
+			// What 0.9.x's copy of the frame left in this save (the server still sends its report) goes; a frame of the
+			// same base at the spot that no copy of ours made (the player's own suit) is left alone.
+			if (const auto left = a_world.FindExisting(a_item); left && a_world.MadeByUs(*left)) {
+				a_world.Discard(*left);
+				++a_counts.framesCleared;
+			}
 			return true;
 		}
 		if (a_world.OursAt(a_item)) {

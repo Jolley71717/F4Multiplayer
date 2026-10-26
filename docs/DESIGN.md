@@ -1123,6 +1123,14 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   good once it does not (`lingered`, `lingeringDropped` and `lingering` in `saveguard`); no record is dropped for its
   id once it is gone, as the id is the loaded game's. `net status` counts the rest: `framesUnloaded`, `framesBack`
   (stand-ins), `unloaded` and `back` (spawns).
+  Nor is a frame a workshop piece (`WorkshopApply::Shared`): workshop mode moves a parked frame, and up to 0.9.1 the
+  move (of the player's own, or of our copy of a friend's) was reported as building: each friend's game made a plain
+  copy of the frame where it was set down, and the server kept it for every later session and load. Now WorkshopSync
+  neither reports a frame nor places or moves anything for a report of one (an older game's, or the session file's:
+  counted in `unplaceable`, or `ownRefused` for a frame of the world). Such a copy is told from a suit of the player's
+  own: every workshop copy carries the keyword that keeps workshop mode off it (`BlockInteraction`, since 0.9.0, saved
+  with it), and nothing else gives a frame that. So the report of one still finds what stands at its spot, and a frame
+  carrying the keyword goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it is left alone.
   Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
   (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
   drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it
