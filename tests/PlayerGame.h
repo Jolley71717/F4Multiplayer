@@ -165,6 +165,7 @@ namespace TestGame
 		std::uint64_t                    character;
 		bool                             wantHost = false;  // bHost
 		bool                             inOpening = false;
+		bool                             devChannel = false;  // the test rig's: a new character with no name isn't held
 		std::string                      password;  // sPassword
 		// Session's side.
 		bool                             hosting = false;
@@ -204,10 +205,14 @@ namespace TestGame
 			return true;
 		}
 
-		// Session::Frame's once-a-second check, with the player in the world.
+		// Session::Frame's once-a-second check, with the player in the world. A new character with no name yet is in the
+		// opening wherever it is (Story::Frame), but on the dev channel.
 		void Tick()
 		{
-			switch (binding.Check(Link(), { character, true, inOpening })) {
+			if (inOpening) {
+				binding.OnVaultOpening();  // Session, after Story::Frame (every frame)
+			}
+			switch (binding.Check(Link(), { character, true, InOpening() })) {
 			case Step::kStopHosting:
 				StopHosting();
 				break;
@@ -225,7 +230,7 @@ namespace TestGame
 		{
 			Server::Options options;
 			options.hostIdentity = identity;
-			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, false, loot.Point().sessionId, [this](const std::string& a_line) {
+			options.sessionFile = CharacterBinding::PrepareFile(machine.folder.path, character, devChannel, loot.Point().sessionId, [this](const std::string& a_line) {
 				machine.said.push_back(a_line);
 			}).string();
 			HostOn(options);
@@ -431,14 +436,29 @@ namespace TestGame
 		// New Game: a fresh world in Vault 111's opening, its character still the last one's until named.
 		void NewGame() { LoadWorld({ character }, true); }
 
-		// In the opening the player confirms the new character's name: it has its own ID from now on.
+		// New Game with an alternate-start mod: a fresh world outside Vault 111 (a room of the mod's own, or the
+		// Commonwealth), the character still the last one's until named there.
+		void AlternateStart()
+		{
+			NewGame();
+			inOpening = false;
+		}
+
+		// The player confirms the new character's name (in the opening, or in an alternate start's room): it has its own
+		// ID from now on.
 		void NameCharacter(std::uint64_t a_character) { character = a_character; }
 
 		void LeaveOpening() { inOpening = false; }
 
+		// Story::InOpening as Session's Frame sets it.
+		[[nodiscard]] bool InOpening() const { return inOpening || (!devChannel && binding.Unnamed(character)); }
+
 	private:
 		void LoadWorld(const Save& a_save, bool a_newGame)
 		{
+			if (!a_newGame) {
+				binding.OnLoadStarting();  // Session::OnBeforeLoad, at F4SE's kPreLoadGame
+			}
 			character = a_save.character;
 			stimpaks = a_save.stimpaks;
 			inOpening = a_newGame;

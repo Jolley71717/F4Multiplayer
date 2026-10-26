@@ -16,11 +16,22 @@ namespace Story
 	// scenes need their NPCs, doors and time of day as the game set them, so the session leaves
 	// this player's world alone and doesn't report it: no shared NPCs, world changes, quests, time
 	// or weather, damage or teleports. What arrived meanwhile is applied once they're out.
+	// A new character with no name yet counts too, wherever it is (an alternate start's own room):
+	// its world is no character's session yet, and hosting it would open the last character's.
 	[[nodiscard]] bool InOpening();
 
+	enum class Opening
+	{
+		kNone,
+		kVault,    // Vault 111's opening
+		kUnnamed,  // a new character with no name yet, elsewhere (CharacterBinding::Tracker::Unnamed)
+	};
+	// Why InOpening is true.
+	[[nodiscard]] Opening Why();
+
 	// Updates InOpening. Every frame, before the rest of the session: right after loading a save
-	// it must already be right.
-	void Frame();
+	// it must already be right. a_unnamed: the loaded character is a new one not named yet.
+	void Frame(bool a_unnamed);
 
 	std::string Describe();
 }

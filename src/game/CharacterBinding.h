@@ -95,7 +95,7 @@ namespace CharacterBinding
 	{
 		std::uint64_t character = 0;  // the loaded character's ID (0 is an ordinary ID: many saves have it)
 		bool          inWorld = false;
-		bool          inOpening = false;  // Vault 111's opening (Story::InOpening)
+		bool          inOpening = false;  // Vault 111's opening, or a new character with no name yet (Story::InOpening)
 	};
 
 	// Session's side of it.
@@ -118,11 +118,21 @@ namespace CharacterBinding
 		// alternate start who walks into Vault 111 hosts on); another character stops it.
 		Step Check(const Link& a_link, const Game& a_game)
 		{
+			// Since a new game, the ID is the one the game had before (the last character's) until the name is confirmed.
+			// A change with no load in between is that (frames are held across a load until OnLoad has run), wherever it
+			// happens: an alternate start names the character outside the opening. A joined game plays that character from
+			// now on. (Only in the world: at the main menu nothing is named.)
+			if (unnamed && a_game.inWorld && a_game.character != *unnamed) {
+				if (a_link.joining && bound) {
+					bound = a_game.character;
+				}
+				unnamed.reset();
+			}
 			if (a_link.hosting) {
 				return a_game.character != hosted ? Step::kStopHosting : Step::kNone;
 			}
-			// A joined game's character changes with no load only when a new character's name is confirmed, in the
-			// opening: that character plays in the session from now on. (Anywhere else a change is a load: OnLoad.)
+			// In the opening too (a save made there before the name was confirmed leaves nothing for the above to see): a
+			// joined game's character changes there with no load only when a new character's name is confirmed.
 			if (a_link.joining && bound && a_game.inWorld && a_game.inOpening) {
 				bound = a_game.character;
 			}
@@ -136,6 +146,8 @@ namespace CharacterBinding
 		// character for co-op is what INSTALL.md suggests, and Check takes it once it has its name.
 		Step OnLoad(const Link& a_link, bool a_newGame, std::uint64_t a_character)
 		{
+			unnamed = a_newGame ? std::optional{ a_character } : std::nullopt;  // a save's ID is its character's
+			vaultSeen = false;
 			if (a_link.hosting) {
 				return a_newGame || a_character != hosted ? Step::kStopHosting : Step::kNone;
 			}
@@ -174,8 +186,27 @@ namespace CharacterBinding
 
 		[[nodiscard]] std::uint64_t Hosted() const { return hosted; }
 
+		// A new game's character with no name yet: since a new game, with no load since, and a_character (the loaded ID)
+		// still the one the game had then, the last character's. Its world is no session's yet (Story counts it as the
+		// opening): hosting would open the last character's session file. Not once the new game has been in Vault 111's
+		// opening (OnVaultOpening): that holds it as it always did, and a start there is held no longer than before
+		// whenever the game gives the ID (were it given before the new game's message, naming would change nothing).
+		[[nodiscard]] bool Unnamed(std::uint64_t a_character) const { return unnamed && !vaultSeen && *unnamed == a_character; }
+		// The ID a new game started under, until Check sees the name confirmed or a save loads.
+		[[nodiscard]] std::optional<std::uint64_t> UnnamedId() const { return unnamed; }
+
+		// The game is in Vault 111's opening (Story::Opening::kVault).
+		void OnVaultOpening() { vaultSeen = true; }
+
+		// A load begins (F4SE's kPreLoadGame): the ID from here on is a save's, never a name. Should the load's end never
+		// come (frames go on after SaveLoadHold's limit with no OnLoad), Check must not take the save's ID for naming
+		// outside the opening and bind a joined game to it.
+		void OnLoadStarting() { unnamed.reset(); }
+
 	private:
 		std::uint64_t                hosted = 0;  // the character whose session our server holds
+		std::optional<std::uint64_t> unnamed;     // since a new game: the ID it had then, until named (UnnamedId)
+		bool                         vaultSeen = false;  // since the last load or new game: Vault 111's opening was seen
 		std::optional<std::uint64_t> bound;       // the character that joined the server we're set to reach
 		std::optional<std::uint64_t> joined;      // the session it joined
 	};

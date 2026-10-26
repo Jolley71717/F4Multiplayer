@@ -26,9 +26,11 @@ session.joining_friend = Multiplayer: joining your friend's game
 session.no_steam = Multiplayer: Steam isn't available
 session.host_other_session = Multiplayer: the host is in another session now (another character, or a fresh start); join again from the menu to play in it
 session.character_changed_host = Multiplayer: you loaded another character; hosting restarts with that character's session
-session.hosting_resumes = Multiplayer: hosting starts again once you're out of Vault 111
+session.hosting_resumes = Multiplayer: hosting starts again once your new character has a name and is out of Vault 111
 session.character_changed_left = Multiplayer: you loaded another character and left the session; join again from the menu
+session.unnamed_waits = Multiplayer: the session waits until your new character has a name (or you load a save)
 host.err_opening = you can host once you're out of Vault 111
+host.err_opening_unnamed = you can host once your new character has a name
 host.err_port = could not host on port {port}
 world.history_full = Multiplayer: the session's shared history is {percent}% full; loot and kill sharing stop at 100%. The host can start a fresh session by removing the session file (see the docs)
 

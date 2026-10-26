@@ -12,8 +12,8 @@ namespace Story
 
 		constexpr std::uint16_t QUEST_COMPLETED = 0x0002;
 
-		bool shared = false;
-		bool opening = false;
+		bool    shared = false;
+		Opening opening = Opening::kNone;
 
 		bool PastTheVault()
 		{
@@ -66,20 +66,29 @@ namespace Story
 
 	bool InOpening()
 	{
+		return opening != Opening::kNone;
+	}
+
+	Opening Why()
+	{
 		return opening;
 	}
 
-	void Frame()
+	void Frame(bool a_unnamed)
 	{
-		const bool inOpening = Compute();
-		if (inOpening != opening) {
-			REX::INFO("Story: {} the opening", inOpening ? "in" : "out of");
-			opening = inOpening;
+		const auto now = Compute() ? Opening::kVault : a_unnamed ? Opening::kUnnamed : Opening::kNone;
+		if (now != opening) {
+			if (now == Opening::kNone || opening == Opening::kNone) {
+				REX::INFO("Story: {} the opening{}", now != Opening::kNone ? "in" : "out of", now == Opening::kUnnamed ? " (a new character with no name yet)" : "");
+			} else if (now == Opening::kUnnamed) {
+				REX::INFO("Story: still in the opening (a new character with no name yet)");
+			}
+			opening = now;
 		}
 	}
 
 	std::string Describe()
 	{
-		return std::format("story: {} opening={}", shared ? "shared" : "own", opening);
+		return std::format("story: {} opening={}{}", shared ? "shared" : "own", InOpening(), opening == Opening::kUnnamed ? " (unnamed)" : "");
 	}
 }

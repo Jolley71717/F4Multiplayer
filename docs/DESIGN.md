@@ -889,7 +889,31 @@ need their NPCs, doors and time of day as the game set them. Their game claims a
 applied once the player is out), takes no damage from friends' NPCs, gets no shared XP or map
 markers, and reports nothing. They can't teleport, and nobody can teleport to them (status flag
 `opening`). They still see friends who are in the same place. A mod that starts the game somewhere
-else skips this: the player is never in those places. Untried with any such mod (dist/INSTALL.md, Alternate-start mods): a start in a cell of its own is shared from its first frame, scenes and all, and a character named there gets its ID (`BGSSaveLoadManager::currentPlayerID`) outside the opening, so a host may start hosting under the unnamed ID and restart once named (CharacterBinding: kStopHosting), and a joiner who connected first stays bound to the old ID until a load makes it leave (Tracker::Check rebinds only in the opening). Only the ID's low 32 bits name the character (CharacterBinding::Character): a save's file name holds them and a letter the game loads back into the high half ('_' 0, 'M' 1 once the game has a mod's plugin), so the same character's quickload can bring another high half than the game had in memory.
+else is never in those places.
+
+A new character with no name yet counts as the opening too, wherever it is (`Story::Opening::kUnnamed`; log
+`Story: in the opening (a new character with no name yet)`). The game gives a character its ID
+(`BGSSaveLoadManager::currentPlayerID`) when its name is confirmed; until then a new game still has the last
+character's. `CharacterBinding::Tracker` keeps it: since a New Game (`OnLoad` with a_newGame), with no load
+since, and the ID still the one it had then, the character is unnamed (`Unnamed`). A change of ID that `Check`
+sees with no load in between is the name being confirmed (frames are held from `kPreLoadGame` until
+`Session::OnGameLoaded` has run, so a load's new ID always reaches `OnLoad` first): a joined game is bound to
+the named character from then on, anywhere (log `Session: the new character is named: X -> Y`), so its own
+saves load without leaving. Before, only a name confirmed in the opening was taken, and a friend who joined
+before naming in an alternate start's own room was made to leave on the next load. Held as unnamed, an
+alternate start (a room of the mod's own, or the Commonwealth) is left alone until named, and a host doesn't
+start hosting (`host.err_opening_unnamed`): hosting opens the loaded ID's session file, which would have been
+the last character's, taken in whole by the new world and written into with its kills and loot. After two
+minutes unnamed outside Vault 111, a player set to host or join is told once per new game that the session
+waits for the name or a load (`session.unnamed_waits`): a start that never asks for a name stays held until a
+save of it is loaded (its save carries the old ID, which nothing can tell apart). A new game that has been in
+Vault 111's opening is not held as unnamed (`Tracker::OnVaultOpening`): the vault holds it as it always did and
+lets it go when the player leaves, so a Vault 111 start is held no longer than before even if the game gave the
+new ID before the new-game message (naming would then change nothing). A load's start (`kPreLoadGame`,
+`Session::OnBeforeLoad`) ends the unnamed state too: should its end never come (frames go on after
+SaveLoadHold's 60 s limit with no `OnLoad`), the save's ID is not taken for a name outside the opening. The dev channel is exempt:
+the rig's character from `coc` at the main menu never gets a name, and its session files are its own
+(`dev.`). Untried with any alternate-start mod (dist/INSTALL.md, Alternate-start mods). Only the ID's low 32 bits name the character (CharacterBinding::Character): a save's file name holds them and a letter the game loads back into the high half ('_' 0, 'M' 1 once the game has a mod's plugin), so the same character's quickload can bring another high half than the game had in memory.
 
 ## Moved objects (src/game/MovedObjects.cpp, ObjectShare.h, common/ObjectMovers.h)
 

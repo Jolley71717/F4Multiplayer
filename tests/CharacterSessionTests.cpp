@@ -221,6 +221,111 @@ TEST("character session: a friend who starts a new character for co-op stays joi
 	CHECK(!me.joining);
 }
 
+TEST("character session: an alternate-start host doesn't host until named; the previous character's file is untouched and the new one gets its own")
+{
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	Game    me{ machine, FRIEND, FRIEND_COOP };
+	host.wantHost = true;
+	host.Tick();
+	REQUIRE(host.welcome);
+	const auto coopSession = host.welcome->sessionId;
+	me.JoinFriend();
+	REQUIRE(me.welcome);
+	me.Send(Kill(RAIDER));
+	me.Process();
+	host.StopHosting();  // the co-op session is written
+	const auto coopPath = FileOf(machine, HOST_COOP);
+	REQUIRE(std::filesystem::exists(coopPath));
+	const auto coopTime = std::filesystem::last_write_time(coopPath);
+
+	// New Game with an alternate start: out of Vault 111 from the first frame, with the co-op character's ID still.
+	host.AlternateStart();
+	CHECK(host.InOpening());
+	host.Tick();
+	host.Tick();
+	CHECK(!host.hosting);
+	CHECK(!machine.server);
+
+	// Named in the mod's room: hosting starts, with the new character's own session.
+	host.NameCharacter(HOST_NEW);
+	CHECK(!host.InOpening());
+	host.Tick();
+	REQUIRE(host.welcome);
+	CHECK(host.welcome->sessionId != coopSession);
+	host.StopHosting();
+	CHECK(std::filesystem::last_write_time(coopPath) == coopTime);
+	const auto coopFile = SessionFile::Load(coopPath);
+	const auto newFile = SessionFile::Load(FileOf(machine, HOST_NEW));
+	REQUIRE(coopFile);
+	REQUIRE(newFile);
+	CHECK(coopFile->sessionId == coopSession);
+	CHECK(coopFile->deadActors == std::vector<std::uint32_t>{ RAIDER });
+	CHECK(newFile->deadActors.empty());
+}
+
+TEST("character session: a friend with an alternate start who joins before naming plays as the named character, and its own save loads without leaving")
+{
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	Game    me{ machine, FRIEND, FRIEND_COOP };
+	host.wantHost = true;
+	host.Tick();
+	REQUIRE(host.welcome);
+
+	me.AlternateStart();
+	CHECK(me.InOpening());  // held, as in Vault 111
+	me.JoinFriend();
+	REQUIRE(me.welcome);
+	me.Tick();
+	me.NameCharacter(FRIEND_NEW);
+	CHECK(!me.InOpening());
+	me.Tick();
+	host.Loot(-3);
+	host.Process();
+	me.Process();
+	CHECK(me.stimpaks == 7);
+
+	const auto newSave = me.MakeSave();
+	me.Load(newSave);
+	CHECK(me.joining);
+	CHECK(me.welcome);
+	me.Tick();
+	CHECK(me.joining);
+
+	me.Load({ FRIEND_COOP, 7, me.loot.Point().sessionId, 1, {} });
+	CHECK(!me.joining);
+}
+
+TEST("character session: a Vault 111 New Game is let out with the vault even if naming never changed the ID")
+{
+	Machine machine;
+	Game    host{ machine, HOST, HOST_COOP };
+	host.wantHost = true;
+	host.NewGame();
+	host.Tick();
+	CHECK(!host.hosting);
+	host.LeaveOpening();  // named in the vault, the ID as it was
+	CHECK(!host.InOpening());
+	host.Tick();
+	CHECK(host.hosting);  // as before the unnamed hold
+}
+
+TEST("character session: the dev channel's coc character hosts unnamed as before")
+{
+	Machine machine;
+	Game    host{ machine, HOST, 0 };
+	host.wantHost = true;
+	host.devChannel = true;
+	host.AlternateStart();  // coc from the main menu: no name ever asked
+	CHECK(!host.InOpening());
+	host.Tick();
+	REQUIRE(host.welcome);
+	CHECK(host.hosting);
+	host.StopHosting();
+	CHECK(std::filesystem::exists(machine.folder.path / CharacterBinding::FileName(0, true)));
+}
+
 TEST("character session: the old shared session file is taken over only by the character whose save played in it")
 {
 	Machine machine;
