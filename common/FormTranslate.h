@@ -375,6 +375,7 @@ namespace FormTranslate
 			Apply<ActorHealth>(a_packet, ctx, DecodeActorHealth, [&](ActorHealth& m) { return ctx.Key(m.refId); }, typed);
 			break;
 		case MessageType::kReportContainer:
+		case MessageType::kStorageForfeit:
 			Apply<ContainerChange>(a_packet, ctx, DecodeContainerChange, [&](ContainerChange& m) { return ctx.Change(m); }, typed);
 			break;
 		case MessageType::kContainerChanged:

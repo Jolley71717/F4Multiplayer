@@ -107,7 +107,7 @@ namespace StorageBook
 				if (entries.size() >= maxContainers) {
 					return Listed::kFull;
 				}
-				it = entries.emplace(a_listing.container, Entry{}).first;
+				it = entries.emplace(a_listing.container, Entry{ .since = static_cast<std::uint32_t>(a_log.size()) }).first;
 				if (a_changed) {
 					*a_changed = true;
 				}
@@ -205,6 +205,31 @@ namespace StorageBook
 				return true;
 			}
 			return Move(it->second, a_change.change);
+		}
+
+		// A friend's game couldn't take back from its player what one of its moves at a_change.container should have (count
+		// < 0, Protocol's kStorageForfeit): how much the true copy gives up instead, to be numbered as a take by nobody. While
+		// the listing is fresh no more than the book holds (the rest was taken by others meanwhile); while stale all of it
+		// (the keeper's world applies what is there). 0 for a container nobody keeps, or one the sender keeps.
+		[[nodiscard]] std::int32_t Forfeit(std::uint32_t a_player, const Protocol::ContainerChange& a_change) const
+		{
+			const auto it = entries.find(a_change.container);
+			if (it == entries.end() || it->second.keeper == a_player || a_change.count >= 0 || a_change.item == Protocol::CONTAINER_EMPTIED) {
+				return 0;
+			}
+			const auto wanted = -static_cast<std::int64_t>(a_change.count);
+			if (!it->second.fresh) {
+				return static_cast<std::int32_t>(wanted);
+			}
+			const auto held = it->second.held.find(a_change.item);
+			return static_cast<std::int32_t>(held != it->second.held.end() ? (std::min)(held->second, wanted) : 0);
+		}
+
+		// The first change numbered while a_container was kept (0 when nobody keeps it).
+		[[nodiscard]] std::uint32_t Since(std::uint32_t a_container) const
+		{
+			const auto it = entries.find(a_container);
+			return it != entries.end() ? it->second.since : 0;
 		}
 
 		// The keeper's game applied numbered take a_index (a friend's) and its container held a_missing fewer than taken.
@@ -307,7 +332,7 @@ namespace StorageBook
 			std::vector<Protocol::StorageOwner> out;
 			out.reserve(entries.size());
 			for (const auto& [container, entry] : entries) {
-				out.push_back({ container, entry.keeper });
+				out.push_back({ container, entry.keeper, entry.since });
 			}
 			return out;
 		}
@@ -318,7 +343,7 @@ namespace StorageBook
 			if (!Protocol::IsShareableRef(a_owner.container) || a_owner.ownerId == 0 || (entries.size() >= maxContainers && !entries.contains(a_owner.container))) {
 				return;
 			}
-			entries[a_owner.container] = Entry{ .keeper = a_owner.ownerId };
+			entries[a_owner.container] = Entry{ .keeper = a_owner.ownerId, .since = a_owner.since };
 		}
 
 		void Clear()
@@ -331,6 +356,7 @@ namespace StorageBook
 		struct Entry
 		{
 			std::uint32_t                           keeper = 0;
+			std::uint32_t                           since = 0;  // the first change numbered while kept (StorageOwner::since)
 			bool                                    fresh = false;
 			std::map<std::uint32_t, std::int64_t>   held;     // item -> count, while fresh
 			std::vector<std::uint32_t>              viewers;  // friends whose menu is open on it

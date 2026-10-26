@@ -223,6 +223,7 @@ namespace
 		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
 		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
 		TokenBucket       storageViews{ STORAGE_VIEW_BURST, STORAGE_VIEWS_PER_SECOND };     // contents sent to a view
+		TokenBucket       storageForfeits{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };  // what their game couldn't take back, out of the true copy (no more than their moves)
 		Clock::time_point spawnsLogged{};
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
@@ -459,6 +460,7 @@ void Server::Run()
 	StorageBook::Book                                     storage;
 	std::size_t                                           storageRefused = 0;  // friends' moves at storage refused this run (for the log)
 	std::size_t                                           storageUnanswered = 0;  // of those, past the refusals' budget: not answered (their game undoes them in time)
+	std::size_t                                           storageForfeited = 0;  // items the true copy gave up for what a friend's game couldn't take back (for the log)
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -1238,6 +1240,7 @@ void Server::Run()
 		a_player.welcomed = true;
 		a_player.local = local;
 		a_player.plugins = hello->plugins;
+		a_player.storageMapper.reset();  // made again for these plugins
 		a_player.dropListAt.reset();
 		a_player.helloId = hello->identity;
 		a_player.worldAskedAt = Clock::now();
@@ -1689,7 +1692,7 @@ void Server::Run()
 		}
 		if (changed) {
 			touched();
-			sendStorageOwners({ { listing->container, a_player.id } }, 0);
+			sendStorageOwners({ { listing->container, a_player.id, storage.Since(listing->container) } }, 0);
 		}
 		const auto viewers = storage.Viewers(listing->container);
 		if (!viewers.empty()) {
@@ -1749,6 +1752,15 @@ void Server::Run()
 		if (!refusal) {
 			return;
 		}
+		// The change as it was in the end: a catch-up (a load, a rejoin) brings the take of what the container had, so a
+		// game that does it again (the taker's after a load) gives no more than that.
+		containerChanges[report->index].change.count += report->missing;
+		touched();
+		if (refusal->first == 0) {
+			log(std::format("server: storage {:08X} held {} fewer of {:08X} than given up for change #{}", refusal->second.container, report->missing, refusal->second.item,
+				report->index));
+			return;
+		}
 		const auto taker = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == refusal->first; });
 		if (taker == players.end()) {
 			log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); they are away, so they keep it", refusal->first,
@@ -1758,6 +1770,44 @@ void Server::Run()
 		log(std::format("server: player {} took {} of {:08X} from storage {:08X} that held less (change #{}); their game gives it back", refusal->first,
 			-refusal->second.count, refusal->second.item, refusal->second.container, refusal->second.index));
 		send(taker->first, Protocol::Encode(refusal->second), true);
+	};
+
+	// A friend's game undid (or did again) one of its moves at storage another game keeps and its player no longer had all
+	// that was to come out of their inventory: the true copy gives it up instead, as a take by nobody (player 0) that every
+	// game applies as another's, so nothing is left made out of nothing. Budgeted as their moves are; never answered.
+	const auto handleStorageForfeit = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
+		const auto change = a_player.welcomed && options.rules.sharedStorage ? Protocol::DecodeContainerChange(a_data) : std::nullopt;
+		if (!change || !Protocol::IsValid(*change) || change->count >= 0 || !budgetOf(a_player).storageForfeits.Take(Clock::now())) {
+			return;
+		}
+		const auto count = storage.Forfeit(a_player.id, *change);
+		if (count < -change->count) {
+			// Taken by others since: those players have them, and so does this one's world. Left for the log.
+			log(std::format("server: storage {:08X} held only {} of the {} of {:08X} player {}'s game couldn't take back", change->container, count, -change->count,
+				change->item, a_player.id));
+		}
+		if (count <= 0 || containerChanges.size() >= maxWorldEntries || !withinShare(a_player, kContainers)) {
+			return;
+		}
+		if (!a_player.local && containersAuthored[a_player.id] >= options.maxContainerChangesPerPlayer) {
+			return;
+		}
+		++containersAuthored[a_player.id];
+		++budgetOf(a_player).added[kContainers];
+		const auto index = static_cast<std::uint32_t>(containerChanges.size());
+		containerChanges.push_back({ index, 0, { change->container, change->item, -count } });
+		storage.Numbered(containerChanges.back());
+		noteFill(kContainers, containerChanges.size());
+		touched();
+		storageForfeited += static_cast<std::size_t>(count);
+		log(std::format("server: storage {:08X} gives up {} of {:08X} that player {}'s game couldn't take back (change #{}, {} this run)", change->container, count, change->item,
+			a_player.id, index, storageForfeited));
+		const auto packet = Protocol::Encode(containerChanges.back());
+		for (const auto& [key, other] : players) {
+			if (other.welcomed && !other.worldStateOwed && other.waitingHello.empty()) {
+				send(key, packet, true);
+			}
+		}
 	};
 
 	const auto handlePickup = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
@@ -3167,6 +3217,9 @@ void Server::Run()
 			break;
 		case MessageType::kReportStorageShort:
 			handleStorageShort(a_player, a_data);
+			break;
+		case MessageType::kStorageForfeit:
+			handleStorageForfeit(a_player, a_data);
 			break;
 		case MessageType::kReportPickup:
 			handlePickup(a_player, a_data);

@@ -296,3 +296,38 @@ TEST("storage book: a put of a new item into a chest of the most stacks a listin
 	CHECK(book.Check(FRIEND, Put(0x0010'0000, 1)) == Verdict::kAccept);
 	CHECK(book.Check(FRIEND, Put(WATER, 1)) == Verdict::kCantHold);
 }
+
+TEST("storage book: a forfeit gives up no more than the chest holds while listed, all of it while stale, and none of the keeper's own")
+{
+	Log  log;
+	auto book = Opened(log);
+	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 3)) == 3);
+	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 9)) == 5);  // the rest was taken by others meanwhile
+	CHECK(book.Forfeit(FRIEND, Take(WATER, 2)) == 0);    // none there to give up
+	CHECK(book.Forfeit(FRIEND, Put(STIMPAK, 2)) == 0);   // a forfeit only ever takes
+	CHECK(book.Forfeit(HOST, Take(STIMPAK, 1)) == 0);    // the keeper's game takes from its own chest itself
+	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 1, BOX)) == 0);  // nobody keeps it
+	CHECK(book.Forfeit(FRIEND, Take(Protocol::CONTAINER_EMPTIED, 1)) == 0);
+	book.Stale(HOST);
+	CHECK(book.Forfeit(FRIEND, Take(STIMPAK, 9)) == 9);  // the keeper's world applies what is there
+}
+
+TEST("storage book: a container is kept from the first change numbered after its claim, and that survives the session file")
+{
+	Log  log;
+	log.Add(FRIEND, Take(WATER, 1, BOX));
+	log.Add(FRIEND, Take(WATER, 1, BOX));
+	Book book;
+	CHECK(book.Since(BOX) == 0);
+	CHECK(book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 3 } }), log.changes) == Listed::kTaken);
+	CHECK(book.Since(BOX) == 2);
+	log.Add(FRIEND, Take(WATER, 1, BOX));
+	book.List(HOST, true, Listing(BOX, log.Next(), { { WATER, 2 } }), log.changes);
+	CHECK(book.Since(BOX) == 2);  // listed again: still kept from the claim
+	const auto owners = book.Owners();
+	CHECK(owners.size() == 1);
+	CHECK(owners[0].since == 2);
+	Book restored;
+	restored.Restore(owners[0]);
+	CHECK(restored.Since(BOX) == 2);
+}

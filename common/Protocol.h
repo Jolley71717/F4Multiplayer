@@ -148,6 +148,7 @@ namespace Protocol
 		kReportStorage = 68,       // the host's game: what one of its storage containers holds that the session shares (StorageListing)
 		kViewStorage = 69,         // the sender opened or closed a storage container another game keeps (StorageView)
 		kReportStorageShort = 70,  // the host's game: a friend's take its storage container held less of than was taken (StorageShort)
+		kStorageForfeit = 71,      // a friend's game: what one of its moves at storage another game keeps couldn't take back from its player comes out of the true copy (ContainerChange)
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
@@ -623,6 +624,7 @@ namespace Protocol
 	{
 		std::uint32_t container = 0;
 		std::uint32_t ownerId = 0;  // the player whose game keeps it
+		std::uint32_t since = 0;    // the first change numbered while it was kept: a move there before it was ordinary loot
 
 		bool operator==(const StorageOwner&) const = default;
 	};
@@ -634,6 +636,12 @@ namespace Protocol
 
 		bool operator==(const StorageOwners&) const = default;
 	};
+
+	// kStorageForfeit (a ContainerChange, count < 0): a friend's game undid or did again one of its moves at storage another
+	// game keeps and its player no longer had all of what was to come out of their inventory (moved to a workbench or a
+	// companion, used, or in a world loaded since). What it lacked comes out of the true copy instead: the server numbers a
+	// take of it by nobody (player 0), which every game applies as another's take, so no item is left made out of nothing.
+	// Never answered.
 
 	// kReportStorageShort: the host's game applied a friend's numbered take (index) and its container held `missing` fewer
 	// than taken (its world was reloaded since the server last heard what it holds).
@@ -2887,6 +2895,7 @@ namespace Protocol
 		for (std::size_t i = 0; i < count; ++i) {
 			w.U32(a_msg.entries[i].container);
 			w.U32(a_msg.entries[i].ownerId);
+			w.U32(a_msg.entries[i].since);
 		}
 		return w.Data();
 	}
@@ -2905,6 +2914,7 @@ namespace Protocol
 			StorageOwner entry;
 			entry.container = r.U32();
 			entry.ownerId = r.U32();
+			entry.since = r.U32();
 			if (!r.Ok() || !IsShareableRef(entry.container) || entry.ownerId == 0) {
 				return std::nullopt;
 			}
