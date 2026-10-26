@@ -174,10 +174,11 @@ namespace DownRules
 			kBledOut,
 		};
 
-		// The session's rules, and a new count.
+		// The session's rules, and a new count. Rules that come while the player is on the ground wait until they are
+		// up: a down finishes under the rules it began with (a shorter bleed-out would kill at once, revive off too).
 		void SetRules(const Rules& a_rules)
 		{
-			rules = a_rules;
+			Take(a_rules);
 			countedFor = 0;
 			helpedUpAt.clear();
 			fightRevives = 0;
@@ -192,18 +193,24 @@ namespace DownRules
 		void SetRules(const Rules& a_rules, std::uint64_t a_session)
 		{
 			if (a_session == 0 || a_session == countedFor) {
-				rules = a_rules;
+				Take(a_rules);
 				return;
 			}
 			SetRules(a_rules);
 			countedFor = a_session;
 		}
 
+		// The rules in force now (not ones waiting for the player to be up).
 		[[nodiscard]] const Rules& GetRules() const { return rules; }
+		[[nodiscard]] bool RulesWaiting() const { return pending.has_value(); }
 
 		Step Frame(const Facts& a_facts, Clock::time_point a_now)
 		{
 			Step step;
+			if (pending && !IsDown()) {
+				rules = *pending;
+				pending.reset();
+			}
 			// A fight goes on while the player is on the ground: enemies may well leave a downed player alone.
 			if (a_facts.inCombat || IsDown()) {
 				lastFight = a_now;
@@ -438,6 +445,16 @@ namespace DownRules
 			}
 		}
 
+		void Take(const Rules& a_rules)
+		{
+			if (IsDown()) {
+				pending = a_rules;
+			} else {
+				rules = a_rules;
+				pending.reset();
+			}
+		}
+
 		void BleedOut(Step& a_step, Clock::time_point a_now)
 		{
 			phase = Phase::kBledOut;
@@ -449,6 +466,7 @@ namespace DownRules
 		}
 
 		Rules                            rules;
+		std::optional<Rules>             pending;     // came while on the ground: in force once up (Take)
 		std::deque<Clock::time_point>    helpedUpAt;  // help-ups within the window (revives per window)
 		std::uint32_t                    fightRevives = 0;
 		Clock::time_point                lastFight{};

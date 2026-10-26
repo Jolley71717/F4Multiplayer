@@ -1,6 +1,7 @@
 #include "game/Menu.h"
 
 #include "Config.h"
+#include "game/HostRules.h"
 #include "game/Hud.h"
 #include "game/Party.h"
 #include "game/RemotePlayers.h"
@@ -230,6 +231,10 @@ namespace Menu
 				body += players.empty() ? "\n" + Text::Get("menu.nobody_else") : "\n" + Text::Format("menu.with_you", { { "n", players.size() } });
 				for (const auto& line : players) {
 					body += "\n" + line;
+				}
+				// The host's rules for being down, when they are not the defaults.
+				if (const auto rules = HostRules::Summary(HostRules::Get()); HostRules::InSession() && !rules.empty()) {
+					body += "\n" + rules;
 				}
 			}
 			return body;

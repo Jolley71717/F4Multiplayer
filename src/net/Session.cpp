@@ -110,6 +110,7 @@ namespace Session
 		CharacterBinding::Tracker         binding;
 		bool                              leaveAfterPoll = false;  // let back into another session than the one we joined
 		std::unordered_set<std::uint64_t> legacyTold;              // characters told about the old shared session file
+		std::uint64_t                     rulesToldFor = 0;        // the session whose rules for being down the HUD has told
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
@@ -444,6 +445,14 @@ namespace Session
 					                          (msg->friendlyFire ? "session.connected_own_fire" : "session.connected_own"));
 					if (tellMods) {
 						NotifyMods();  // the list that came before the welcome, after the line saying we are in
+					}
+					// A joiner is told the host's rules for being down, once a session (not again at each rejoin), and only
+					// when they are not the defaults. The host set them.
+					if (!hostedServer && msg->sessionId != rulesToldFor) {
+						rulesToldFor = msg->sessionId;
+						if (const auto summary = HostRules::Summary(msg->rules); !summary.empty()) {
+							Hud::Notify(summary);
+						}
 					}
 				}
 				break;

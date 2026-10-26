@@ -119,6 +119,17 @@ down.revives_back = Your revives are back: a friend can help you up again
 down.cooldown = Just helped up: for {n} seconds a lethal hit kills you
 down.cant_help_fighting = Can't help {player} up during a fight
 
+# --- The host's rules for being down, as a joiner is told them ---
+rules.host = Host's rules: {rules}
+rules.revive_off = no revives, a lethal hit kills
+rules.revives_fight = revive limit {n} per fight
+rules.revives_window = revive limit {n} per {minutes} min
+rules.bleed_out = {n} s to bleed out
+rules.help_time = {n} s to help a friend up
+rules.revive_health = up with {n}% health
+rules.cooldown = a lethal hit within {n} s of a revive kills
+rules.out_of_combat = no helping up during a fight
+
 # --- The shared map, quests and workshop ---
 map.discovered = {player} discovered {place}
 quest.caught_up = Caught up with your friends: {names}

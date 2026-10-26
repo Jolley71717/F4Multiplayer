@@ -103,6 +103,16 @@ down.last_revive = Na razie to było ostatnie podniesienie: następny śmierteln
 down.revives_back = Przyjaciele znów mogą pomóc ci wstać
 down.cooldown = Dopiero co ktoś pomógł ci wstać: przez {n} s śmiertelny cios cię zabije
 down.cant_help_fighting = Podczas walki nie możesz podnieść gracza {player}
+
+rules.host = Zasady hosta: {rules}
+rules.revive_off = bez podnoszenia, śmiertelny cios zabija
+rules.revives_fight = limit podniesień: {n} na walkę
+rules.revives_window = limit podniesień: {n} na {minutes} min
+rules.bleed_out = {n} s do wykrwawienia
+rules.help_time = {n} s na podniesienie przyjaciela
+rules.revive_health = wstajesz z {n}% zdrowia
+rules.cooldown = śmiertelny cios w ciągu {n} s od podniesienia zabija
+rules.out_of_combat = bez podnoszenia podczas walki
 map.discovered = {player} odkrywa: {place}
 quest.caught_up = Nadrobiono zadania znajomych: {names}
 quest.and_more = i jeszcze {n}

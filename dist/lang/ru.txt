@@ -121,6 +121,16 @@ down.revives_back = Друзья снова могут вас поднять
 down.cooldown = Вас только что подняли: ещё {n} сек. смертельный удар вас убьёт
 down.cant_help_fighting = Нельзя поднять игрока {player} во время боя
 
+rules.host = Правила хоста: {rules}
+rules.revive_off = без подъёмов, смертельный удар убивает
+rules.revives_fight = не больше {n} подъёмов за бой
+rules.revives_window = не больше {n} подъёмов за {minutes} мин.
+rules.bleed_out = {n} сек. до гибели от ран
+rules.help_time = {n} сек., чтобы поднять друга
+rules.revive_health = подъём с {n}% здоровья
+rules.cooldown = смертельный удар в течение {n} сек. после подъёма убивает
+rules.out_of_combat = нельзя поднимать во время боя
+
 # --- The shared map, quests and workshop ---
 map.discovered = {player} обнаружил: {place}
 quest.caught_up = Вы догнали друзей по сюжету: {names}

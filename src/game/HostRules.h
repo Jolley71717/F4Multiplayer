@@ -2,11 +2,14 @@
 
 #include "Config.h"
 #include "Protocol.h"
+#include "RulesSummary.h"
+#include "Text.h"
 
 #include <algorithm>
 #include <cmath>
 #include <format>
 #include <string>
+#include <vector>
 
 // The session's rules (Protocol::SessionRules): downed and revive, and what runs in real time. The host's ini sets them,
 // its server sends them with every welcome (the host's own game is welcomed too), and every game plays by the ones it was
@@ -40,6 +43,21 @@ namespace HostRules
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
 			a_rules.reviveOutsideCombat, a_rules.realTimeVats);
+	}
+
+	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed
+	// out". Empty with the defaults (RulesSummary).
+	inline std::string Summary(const Protocol::SessionRules& a_rules)
+	{
+		std::string list;
+		for (const auto& part : RulesSummary::Of(a_rules)) {
+			std::vector<Text::Arg> args;
+			for (const auto& [name, value] : part.args) {
+				args.emplace_back(name, value);
+			}
+			list += (list.empty() ? "" : ", ") + Text::Expand(Text::Get(part.key), args);
+		}
+		return list.empty() ? list : Text::Format("rules.host", { { "rules", list } });
 	}
 
 	// The game's side (HostRules.cpp), main thread.

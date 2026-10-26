@@ -111,7 +111,7 @@ namespace
 
 			// As Downed.cpp reads it: the life state, and the game's IsDead, which is true while down as well.
 			const std::int32_t     lifeState = body.down ? DownRules::LIFE_ESSENTIAL_DOWN : body.dead ? DownRules::LIFE_DEAD : 0;
-			const DownRules::Facts facts{ .enabled = withFriends, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console };
+			const DownRules::Facts facts{ .enabled = withFriends && self.GetRules().revive, .essential = body.essential, .down = body.down, .dead = DownRules::Dead(lifeState, body.dead || body.down), .paused = paused, .inCombat = fighting, .console = console };
 			const auto             step = self.Frame(facts, a_now);
 			if (step.essential) {
 				body.essential = *step.essential;
@@ -1237,6 +1237,109 @@ TEST("downed rules: a welcome back into the same session keeps the revives used 
 	other.Run(now, 1s);
 	CHECK(other.body.essential);
 	CHECK(other.self.RevivesLeft(now) == 1);
+}
+
+TEST("downed rules: rules that come while the player is down wait until they are up")
+{
+	constexpr std::uint64_t SESSION = 0x0000000100000000ull;
+	Protocol::SessionRules  tighter;
+	tighter.bleedOutSeconds = 10;
+	tighter.reviveHealth = 10;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(Protocol::SessionRules{}), SESSION);
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 20s);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	game.self.SetRules(DownRules::Rules::From(tighter), SESSION);
+	CHECK(game.self.RulesWaiting());
+	CHECK(game.self.GetRules().bleedOut == DownRules::BLEEDOUT_TIME);
+	game.Run(now, 5s);
+	CHECK(!game.body.dead);  // 25 s down, past the new 10 s: the old 45 s still hold
+	REQUIRE(game.Revived(now));
+	CHECK(game.self.GetRules().reviveHealth == 0.3f);  // helped up with the health of the rules the down began with
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	CHECK(!game.self.RulesWaiting());
+	CHECK(game.self.GetRules().bleedOut == 10s);
+	CHECK(game.kills == 0);
+}
+
+TEST("downed rules: turning revive off while down does not kill; the next lethal hit does")
+{
+	Protocol::SessionRules off;
+	off.revive = false;
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	game.self.SetRules(DownRules::Rules::From(off), 0);
+	game.Run(now, 10s);
+	CHECK(!game.body.dead);
+	CHECK(game.self.Now() == Phase::kDown);
+	CHECK(game.kills == 0);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	CHECK(!game.body.essential);
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	CHECK(game.body.dead);
+	CHECK(game.downNotices == 1);
+}
+
+TEST("downed rules: a shorter bleed-out applies to the next down")
+{
+	Protocol::SessionRules shorter;
+	shorter.bleedOutSeconds = 10;
+	Game game;
+	auto now = Start();
+	game.Run(now, 1s);
+	game.body.LethalHit();
+	game.Run(now, 2s);
+	game.self.SetRules(DownRules::Rules::From(shorter), 0);
+	game.Run(now, 20s);
+	REQUIRE(game.self.Now() == Phase::kDown);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	// The next down bleeds out in the new 10 s.
+	game.body.LethalHit();
+	game.Run(now, 9s);
+	CHECK(!game.body.dead);
+	game.Run(now, 2s);
+	CHECK(game.body.dead);
+}
+
+TEST("downed rules: new rules in the same session keep the revive count")
+{
+	constexpr std::uint64_t SESSION = 0x0000000100000000ull;
+	Protocol::SessionRules  three;
+	three.maxRevives = 3;
+	Protocol::SessionRules two;
+	two.maxRevives = 2;
+	Game game;
+	auto now = Start();
+	game.self.SetRules(DownRules::Rules::From(three), SESSION);
+	game.fighting = true;
+	game.Run(now, 1s);
+	DownAndUp(game, now);
+	CHECK(game.self.RevivesLeft(now) == 2);
+	game.self.SetRules(DownRules::Rules::From(two), SESSION);
+	game.Run(now, 1s);
+	CHECK(game.self.RevivesLeft(now) == 1);
+	// Changed while down: the count goes on as well, under the new limit once up.
+	game.body.LethalHit();
+	game.Run(now, 1s);
+	game.self.SetRules(DownRules::Rules::From(three), SESSION);
+	REQUIRE(game.Revived(now));
+	game.Run(now, 5s);
+	REQUIRE(game.self.Now() == Phase::kUp);
+	CHECK(game.self.RevivesLeft(now) == 1);
+	CHECK(game.body.essential);
 }
 
 TEST("downed: stood up with the console open (player.resurrect, a heal) while waiting for help, up it is: no putting down again")

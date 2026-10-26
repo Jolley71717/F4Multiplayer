@@ -28,7 +28,9 @@ free layout aren't possible with it; the address to join still comes from the in
 
 **Main.** The first line is the session: not in one, connecting to (or refused by) a host, in a
 host's game with the ping, or hosting (through Steam with the lobby open, or on a UDP port). Then
-who is with you, one line each as the F6 player list shows them. Buttons depend on the state:
+who is with you, one line each as the F6 player list shows them, and, when the host changed the rules
+for going down, a line saying them ("Host's rules: revive limit 3 per fight, 30 s to bleed out"). Buttons
+depend on the state:
 
 | State | Buttons |
 |---|---|

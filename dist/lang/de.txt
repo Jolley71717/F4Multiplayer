@@ -101,6 +101,16 @@ down.last_revive = Das war vorerst das letzte Aufhelfen: Der nächste tödliche 
 down.revives_back = Freunde können dir wieder aufhelfen
 down.cooldown = Gerade aufgeholfen: {n} Sek. lang tötet dich ein tödlicher Treffer
 down.cant_help_fighting = Im Kampf kannst du {player} nicht aufhelfen
+
+rules.host = Regeln des Hosts: {rules}
+rules.revive_off = kein Aufhelfen, ein tödlicher Treffer tötet
+rules.revives_fight = höchstens {n}-mal Aufhelfen pro Kampf
+rules.revives_window = höchstens {n}-mal Aufhelfen pro {minutes} Min.
+rules.bleed_out = {n} Sek. bis zum Verbluten
+rules.help_time = {n} Sek. zum Aufhelfen
+rules.revive_health = aufgeholfen mit {n} % Gesundheit
+rules.cooldown = ein tödlicher Treffer binnen {n} Sek. nach dem Aufhelfen tötet
+rules.out_of_combat = kein Aufhelfen im Kampf
 map.discovered = {player} hat {place} entdeckt
 quest.caught_up = Auf dem Stand deiner Freunde: {names}
 quest.and_more = und {n} weitere

@@ -101,6 +101,16 @@ down.last_revive = Era tu último levantamiento por ahora: el próximo golpe mor
 down.revives_back = Tus amigos pueden volver a levantarte
 down.cooldown = Te acaban de levantar: durante {n} s, un golpe mortal te matará
 down.cant_help_fighting = No puedes levantar a {player} durante un combate
+
+rules.host = Reglas del anfitrión: {rules}
+rules.revive_off = sin levantamientos, un golpe mortal mata
+rules.revives_fight = como máximo {n} levantamientos por combate
+rules.revives_window = como máximo {n} levantamientos cada {minutes} min
+rules.bleed_out = {n} s antes de desangrarse
+rules.help_time = {n} s para levantar a un amigo
+rules.revive_health = levantado con un {n} % de salud
+rules.cooldown = un golpe mortal en los {n} s después de un levantamiento mata
+rules.out_of_combat = no se puede levantar a nadie durante un combate
 map.discovered = {player} ha descubierto {place}
 quest.caught_up = Te has puesto al día con tus amigos: {names}
 quest.and_more = y {n} más
