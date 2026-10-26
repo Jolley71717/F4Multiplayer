@@ -120,7 +120,14 @@ namespace
 					client.Died(a_target, onlyPlayer ? a_by == PLAYER : CopyHealth::Credited(CauseOf(a_by), local));
 				}
 			} else if (after.report) {
-				client.Hurt(a_target, npc.health / 100.0f);
+				// On a copy what the blow took goes as damage (CopyWatch's book), for the game that runs it to take off; on
+				// one ours runs, or nobody does, its health.
+				const auto owner = client.OwnerOf(a_target);
+				if (owner != 0 && owner != local) {
+					client.Damage(a_target, a_damage / 100.0f);
+				} else {
+					client.Hurt(a_target, npc.health / 100.0f);
+				}
 				++reportsSent;
 			}
 			Wait(FRAME);
@@ -161,6 +168,16 @@ namespace
 					npc.health = *heard * 100.0f;
 					copies.Set(id, npc.health);
 				}
+			}
+			// A friend's damage on one our game runs is taken off (WorldSync::ApplyRemoteDamage), and where it stands
+			// then is shared (HealthShare).
+			for (const auto& damage : client.TakeDamageHeard()) {
+				const auto it = npcs.find(damage.refId);
+				if (it == npcs.end() || it->second.dead || client.OwnerOf(damage.refId) != client.Id()) {
+					continue;
+				}
+				it->second.health -= damage.health * 100.0f;
+				client.Hurt(damage.refId, it->second.health / 100.0f);
 			}
 		}
 	};
@@ -208,9 +225,12 @@ namespace
 		{
 			hostGame.Wait(std::chrono::seconds{ 1 });
 			bobGame.Wait(std::chrono::seconds{ 1 });
-			s.Settle();
-			hostGame.Apply();
-			bobGame.Apply();
+			// Twice: the health the runner's game shares after a friend's damage reaches the friend.
+			for (int i = 0; i < 2; ++i) {
+				s.Settle();
+				hostGame.Apply();
+				bobGame.Apply();
+			}
 		}
 
 		[[nodiscard]] bool DeathDropped(std::uint32_t a_ref) const { return s.Logged(std::format("death of {:08X} from player", a_ref)); }
@@ -224,8 +244,8 @@ TEST("copy hits: our companion's bites on a friend's raider hurt it in the frien
 	f.Pass();
 	CHECK(f.bobGame.npcs[RAIDER_1].health == 70.0f);  // kept on Bob's copy
 	CHECK(f.bobGame.givenBack == 0.0f);
-	CHECK(Near(f.host.HealthHeard(RAIDER_1).value_or(-1.0f), 0.7f));
 	CHECK(Near(f.hostGame.npcs[RAIDER_1].health, 70.0f));  // the raider's own game took the bite
+	CHECK(Near(f.bob.HealthHeard(RAIDER_1).value_or(-1.0f), 0.7f));  // and says so
 	CHECK(f.bob.OwnerOf(RAIDER_1) == f.host.Id());      // a bite that doesn't kill takes nothing over
 
 	f.bobGame.Strike(DOGMEAT, RAIDER_1, 30.0f);
@@ -276,7 +296,7 @@ TEST("copy hits: an NPC our game runs that fights a friend's counts in our game 
 	// (WeaponFire: no projectile, no damage), so the settler is hurt by Bob's report or not at all.
 	f.bobGame.Strike(RAIDER_2, SETTLER, 40.0f);
 	f.Pass();
-	CHECK(f.bobGame.npcs[SETTLER].health == 60.0f);
+	CHECK(Near(f.bobGame.npcs[SETTLER].health, 60.0f));
 	CHECK(Near(f.hostGame.npcs[SETTLER].health, 60.0f));
 	f.bobGame.Strike(RAIDER_2, SETTLER, 70.0f);
 	f.Pass();
@@ -287,7 +307,7 @@ TEST("copy hits: an NPC our game runs that fights a friend's counts in our game 
 	// The host's raider shoots Bob's companion back, in the host's game: the same rule the other way.
 	f.hostGame.Strike(RAIDER_1, DOGMEAT, 25.0f);
 	f.Pass();
-	CHECK(f.hostGame.npcs[DOGMEAT].health == 75.0f);
+	CHECK(Near(f.hostGame.npcs[DOGMEAT].health, 75.0f));
 	CHECK(Near(f.bobGame.npcs[DOGMEAT].health, 75.0f));
 	CHECK(f.hostGame.givenBack == 0.0f);
 }

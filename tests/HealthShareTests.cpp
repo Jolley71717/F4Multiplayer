@@ -216,9 +216,13 @@ TEST("health share: with 0.8.10 the fire's damage stayed in the host's game, and
 	CHECK(Near(f.hostGame.health, 60.0f));
 	CHECK(Near(f.bobGame.health, 90.0f));  // Bob's copy never burnt
 
+	// Bob's report of his copy's health (75) healed 15 back on in the host's game: "my shots do nothing", or the fire did
+	// nothing. The server now passes on an NPC's health only from the game that runs it, so a copy's word is dropped (and
+	// with no damage sent, as in 0.8.10, Bob's shot is lost instead).
 	f.bobGame.Shoot(15.0f);
 	f.Pass();
-	CHECK(Near(f.hostGame.health, 75.0f));  // 15 healed back on: "my shots do nothing", or the fire did nothing
+	CHECK(Near(f.hostGame.health, 60.0f));
+	CHECK(f.s.Logged(std::format("health of {:08X} from player {} not passed on: player {} runs it", RAIDER, f.bob.Id(), f.host.Id())));
 }
 
 TEST("health share: Bob's shot while the raider burns comes off the health the host's game has, though Bob's copy had not heard the latest burn")
@@ -367,8 +371,10 @@ TEST("health share: Bob's Molotov on his copy of the host's raider hurts it once
 		f.hostGame.Burn(1.0f, 20);  // and its fire
 		f.Pass();
 		if (v0810) {
-			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 30.0f - 20.0f));  // the blast twice: 20 left
-			CHECK(Near(f.bobGame.health, 70.0f));                           // and Bob's copy never saw the fire
+			// With 0.8.10 the blast landed twice (20 left): Bob's report of his copy came on top of the host's own blast.
+			// The server now passes on an NPC's health only from the game that runs it: once.
+			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f));
+			CHECK(Near(f.bobGame.health, 70.0f));  // and Bob's copy never saw the fire
 		} else {
 			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f));
 			CHECK(Near(f.bobGame.health, f.hostGame.health));

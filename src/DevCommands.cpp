@@ -1530,7 +1530,18 @@ namespace DevCommands
 				return "error: no such reference";
 			}
 			const auto actor = ref->As<RE::Actor>();
-			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{});
+			// An actor's health: now, its maximum as the session's fractions take it (permanent), its base, and the three
+			// modifiers; and who runs it.
+			std::string health;
+			if (const auto values = RE::ActorValue::GetSingleton(); actor && values && values->health) {
+				const auto& owner = static_cast<RE::ActorValueOwner&>(*actor);
+				const auto& info = *values->health;
+				health = std::format(" hp={:.1f} permHp={:.1f} baseHp={:.1f} modPerm={:.1f} modTemp={:.1f} modDamage={:.1f} owner={} dead={}", owner.GetActorValue(info),
+					owner.GetPermanentActorValue(info), owner.GetBaseActorValue(info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kPermanent, info),
+					owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kTemporary, info), owner.GetModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, info),
+					NpcSync::Owner(actor->GetFormID()), actor->IsDead(false));
+			}
+			return DescribeRef(ref) + std::format(" formFlags={:08X}", ref->formFlags) + (actor ? " ghost=" + CopyWatch::GhostState(actor) : std::string{}) + health;
 		}
 
 		// scripts <refHex>: the script objects bound to a reference, as the VM's ForEachBoundObject visits them. Walked

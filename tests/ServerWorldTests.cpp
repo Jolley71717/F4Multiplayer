@@ -685,6 +685,46 @@ TEST("server world: fighting another player's NPC takes it over after the cooldo
 	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
 }
 
+TEST("server world: an NPC's health is said by the game that runs it; the last word of the game that ran it before a takeover never sets it back")
+{
+	Fixture    f;
+	const auto alice = JoinAs(f, 1, "Alice");
+	const auto bob = JoinAs(f, 2, "Bob");
+	f.fake->Deliver(1, Claim(NPC));
+	Clear(f, { 1, 2 });
+
+	// Alice's game runs it: its word reaches Bob's copy.
+	f.fake->Deliver(1, Health(NPC, 0.9f));
+	CHECK(Count(Received(f, 2), MT::kActorHealth) == 1);
+
+	// Bob's shot takes it over. Alice's game had a report on its way, sent before it heard: in Bob's game, now the one
+	// that runs it, it set the NPC back to 0.9, undoing the shot (and his game then shared that as where it stood).
+	std::this_thread::sleep_for(5100ms);  // TAKEOVER_COOLDOWN
+	f.fake->Deliver(2, Claim(NPC, Reason::kInteract));
+	CHECK(HasOwner(Owners(Received(f, 1)), NPC, bob));
+	Clear(f, { 2 });
+	f.fake->Deliver(1, Health(NPC, 0.9f));
+	CHECK(Count(Received(f, 2), MT::kActorHealth) == 0);
+	CHECK(f.Logged(std::format("health of {:08X} from player {} not passed on: player {} runs it", NPC, alice, bob)));
+	// Her hits on her copy now go as damage, which Bob's game takes off; his game's word on its health reaches her.
+	f.fake->Deliver(1, Protocol::Encode(Protocol::ActorHealth{ NPC, 0.1f }, MT::kReportDamage));
+	CHECK(Count(Received(f, 2), MT::kActorDamaged) == 1);
+	f.fake->Deliver(2, Health(NPC, 0.6f));
+	const auto toAlice = Decoded(Received(f, 1), MT::kActorHealth, Protocol::DecodeActorHealth);
+	REQUIRE(toAlice.size() == 1);
+	CHECK(toAlice[0].health == 0.6f);
+
+	// One nobody runs: anyone's word is passed on (each game that has it runs its own).
+	f.fake->Deliver(2, Health(NPC2, 0.4f));
+	CHECK(Count(Received(f, 1), MT::kActorHealth) == 1);
+	// Her report of the NPC still counts as fighting it: her kill of it is believed.
+	f.fake->Deliver(1, Health(NPC, 0.5f));
+	f.fake->Deliver(1, Death(NPC, true));
+	const auto deaths = Decoded(Received(f, 2), MT::kActorDied, Protocol::DecodeActorDeath);
+	REQUIRE(deaths.size() == 1);
+	CHECK(deaths[0].playerId == alice);
+}
+
 TEST("server world: a companion goes to its player, but not away from another's companion")
 {
 	Fixture    f;
