@@ -99,8 +99,10 @@ UI) in `sIgnoredPlugins` (comma-separated) so the joiner is not told about them.
 ### Host settings
 
 These count only in the host's `F4Multiplayer.ini`. A guest's own value of them is not used: the game takes the
-host's when it joins, so there is nothing for a guest to set. They are read when the host's game starts hosting, so
-change them before you host. A switch in the F1 menu (friendly fire, story) is saved at once but counts from the
+host's when it joins, so there is nothing for a guest to set. The two exceptions are `sPassword` (a guest sends their
+own as the password to join) and `iPort` (a guest joining without Steam connects on their own `iPort`, unless
+`sServerAddress` names a port). The ini is read once, when the game starts: after editing it by hand, restart the
+game before you host. A switch in the F1 menu (friendly fire, story) is saved at once but counts from the
 next time you host: choose *Stop hosting*, then *Host a session* again.
 
 - `iMaxPlayers` (4): how many players can be in the session at once, the host included. More is allowed, but each
@@ -120,8 +122,8 @@ next time you host: choose *Stop hosting*, then *Host a session* again.
   world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
   host's world too. Two saves with different building at the same settlement then show both.
 - The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
-  `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0) and
-  `bReviveOutOfCombat` (false). Guests play by the host's. See [Going down](#going-down).
+  `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
+  `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
 - `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
   everyone. See [VATS in real time](#vats-in-real-time).
 
@@ -137,7 +139,8 @@ These change only your own game. Set them as you like; friends don't need the sa
 - `iKeyMenu`, `iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`,
   `iKeyEmoteClap` and `iKeyVoice`: your hotkeys. See [Hotkeys](#hotkeys).
 - `bVoiceChat` (true), `bVoiceOpenMic` (false) and `fVoiceRange` (60): your voice chat. See [Voice chat](#voice-chat).
-  `fVoiceRange` is how far your own voice carries to others.
+  `fVoiceRange` is how far away you can still hear a friend (0: you hear everyone, wherever they are). It changes
+  only what you hear, not how far your voice carries to friends.
 - `bSpokenLines` (true): hear what's said near you in a friend's game.
 - `bCompassMarkers` (true): friends' markers on your compass.
 - `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
@@ -214,8 +217,8 @@ work while a menu or the console is open.
 ### Voice chat
 
 Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
-a key). Friends hear you at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
-0 = everyone hears everyone). It uses the microphone chosen in Steam > Settings > Voice.
+a key). You hear a friend at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
+0 = you hear everyone, wherever they are). It uses the microphone chosen in Steam > Settings > Voice.
 
 ### Going down
 
