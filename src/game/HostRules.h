@@ -11,7 +11,8 @@
 #include <string>
 #include <vector>
 
-// The session's rules (Protocol::SessionRules): downed and revive, and what runs in real time. The host's ini sets them,
+// The session's rules (Protocol::SessionRules): downed and revive, what runs in real time, and whose earlier building
+// is shared. The host's ini sets them,
 // its server sends them with every welcome (the host's own game is welcomed too), and every game plays by the ones it was
 // welcomed with until the session ends. Out of a session nothing here applies. The conversion is free of the game, so
 // it is tested; the session's copy lives in HostRules.cpp (main thread).
@@ -34,16 +35,17 @@ namespace HostRules
 		rules.reviveOutsideCombat = a_settings.reviveOutOfCombat;
 		rules.downedCrawl = a_settings.downedCrawl;
 		rules.realTimeVats = a_settings.realTimeVats;
+		rules.shareGuestBuilds = a_settings.shareGuestBuilds;
 		return rules.Clamped();
 	}
 
 	// One line for the log and the dev channel.
 	inline std::string Describe(const Protocol::SessionRules& a_rules)
 	{
-		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={}",
+		return std::format("revive={} bleedOut={}s help={:.1f}s health={}% maxRevives={} window={} cooldown={}s outOfCombat={} crawl={} realTimeVats={} shareGuestBuilds={}",
 			a_rules.revive, a_rules.bleedOutSeconds, a_rules.helpTenths / 10.0, a_rules.reviveHealth, a_rules.maxRevives,
 			a_rules.reviveWindowMinutes ? std::format("{}min", a_rules.reviveWindowMinutes) : std::string{ "fight" }, a_rules.downCooldownSeconds,
-			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats);
+			a_rules.reviveOutsideCombat, a_rules.downedCrawl, a_rules.realTimeVats, a_rules.shareGuestBuilds);
 	}
 
 	// What a player reads of the rules for being down, in their language: "Host's rules: 3 revives per fight, 30 s to bleed

@@ -8,13 +8,15 @@
 #include <unordered_set>
 #include <utility>
 
-// What the host built before the session: the walls, wires and turrets of a settlement built in an
-// earlier game, before the mod was installed, or while hosting someone who has since left with the
-// session file gone. The workshop's events only tell of building done while we watch, so a friend who
-// joins would never see any of it. The host's game looks over the references of the cells as they
-// attach, and the workshop items its workbenches list, and reports each piece it built once a session,
-// as if it had just been placed: the server keeps it for whoever joins later, and a friend's game that
-// has a copy already (from the session file) leaves it where it stands.
+// What a player built before the session (the host, and a guest when the host lets them): the walls, wires
+// and turrets of a settlement built in an earlier game, before the mod was installed, or while hosting
+// someone who has since left with the session file gone. The workshop's events only tell of building done
+// while we watch, so a friend who joins would never see any of it. The host's game (and, with the host's
+// bShareGuestBuilds, a guest's: Shares) looks over the references of the cells as they attach, and the
+// workshop items its workbenches list, and reports each piece it built once a session, as if it had just
+// been placed: the server keeps it for whoever joins later, and a friend's game that has a copy already
+// (from the session file) leaves it where it stands. Building done in the session is reported by the
+// workshop's events, from every game, whatever the rule.
 //
 // A piece counts if the game made it at runtime (a built piece's reference ID is 0xFF...), it is linked
 // to a workbench as one of its workshop items, its object is something workshop mode builds, and it is
@@ -37,7 +39,15 @@ namespace BuiltWalk
 		bool          off = false;        // switched off or deleted: stored, scrapped, or on its way out
 	};
 
-	// Whether the piece is one the host built: see above.
+	// Whether this game reports what its player built before the session: the host's always; a guest's only when the
+	// host's rules say so (off by default: each player keeps their own save, and a guest's solo settlement would land on
+	// top of the host's own building).
+	[[nodiscard]] constexpr bool Shares(bool a_host, const Protocol::SessionRules& a_rules)
+	{
+		return a_host || a_rules.shareGuestBuilds;
+	}
+
+	// Whether the piece is one its player built: see above.
 	[[nodiscard]] constexpr bool Built(const Piece& a_piece)
 	{
 		return a_piece.ref != 0 && a_piece.ref != Protocol::PLAYER_REF_ID && !Protocol::IsShareableRef(a_piece.ref) && a_piece.bench != 0 && a_piece.buildable &&
@@ -48,7 +58,7 @@ namespace BuiltWalk
 	{
 	public:
 		// A reference found in a cell, or in a workbench's list: queued to be reported, once a session.
-		// False if it isn't one the host built, or it was offered already.
+		// False if it isn't one its player built, or it was offered already.
 		bool Offer(const Piece& a_piece)
 		{
 			if (!Built(a_piece) || queued.size() >= MAX_QUEUED || !seen.insert(a_piece.ref).second) {

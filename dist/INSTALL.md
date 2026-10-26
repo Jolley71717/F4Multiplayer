@@ -57,9 +57,11 @@ same folder.
 ## Settings
 
 Edit `Data\F4SE\Plugins\F4Multiplayer.ini` (in Vortex: the mod's staging folder, or use
-"Open in File Manager").
+"Open in File Manager"). The file is read when the game starts: change it, then restart the game. The one
+exception is the F1 menu's *Settings* page: a switch there applies to your game at once and is saved to the file
+(for the host's rules, see below).
 
-One player hosts. Only the host changes a setting:
+One player hosts:
 
 ```ini
 bHost = true
@@ -69,11 +71,8 @@ The host's game starts hosting once it is in the world (not at the main menu, an
 character not until it is out of Vault 111). Friends who try to join earlier are told the host isn't
 in the game yet, and their game tries again by itself.
 
-The host also sets how many players can be in the session at once, themselves included (`iMaxPlayers = 4` by
-default). More is allowed, but each extra player adds traffic and NPC work for the host, and sessions of more than
-two players have been tested less.
-
-Everyone else keeps the defaults. Players are named after the character they play (`sPlayerName = character`;
+Everyone else keeps the defaults, apart from the settings of their own (see [Your own settings](#your-own-settings)).
+Players are named after the character they play (`sPlayerName = character`;
 your Steam name stands in until a new character has a name). Set `sPlayerName` to a name of your own, or leave it
 empty to use your Steam name. The name is sent when your game connects.
 
@@ -96,6 +95,72 @@ NPC, an item, a quest, a settlement piece) is left out in the other game, and th
 mods differ (F1, *Compare mods*). To share a mod's content, everyone needs that mod. Two versions of one
 mod count as the same mod, so keep those the same. The host can list cosmetic plugins (textures, sounds,
 UI) in `sIgnoredPlugins` (comma-separated) so the joiner is not told about them.
+
+### Host settings
+
+These count only in the host's `F4Multiplayer.ini`. A guest's own value of them is not used: the game takes the
+host's when it joins, so there is nothing for a guest to set. The two exceptions are `sPassword` (a guest sends their
+own as the password to join) and `iPort` (a guest joining without Steam connects on their own `iPort`, unless
+`sServerAddress` names a port). The ini is read once, when the game starts: after editing it by hand, restart the
+game before you host. A switch in the F1 menu (friendly fire, story) is saved at once but counts from the
+next time you host: choose *Stop hosting*, then *Host a session* again.
+
+- `iMaxPlayers` (4): how many players can be in the session at once, the host included. More is allowed, but each
+  extra player adds traffic and NPC work for the host, and sessions of more than two players have been tested
+  less. A guest who comes when it is full is turned away.
+- `sPassword` (empty): if set, a guest must have the same password in their own `sPassword` to join. The host's
+  F1 menu can also make up or remove it while hosting.
+- `iPort` (7779): the UDP port the host's game listens on. Guests only need it when they join without Steam.
+- `bFriendlyFire` (false): on, players can hurt each other with weapons. Off, only enemies hurt a player.
+- `sStory` (shared): `shared`, the main story and the faction quests move along for everyone. `own`, each guest plays
+  them in their own game. Side quests are shared either way. See [What is shared](#what-is-shared).
+- `sIgnoredPlugins` (empty): plugins, comma-separated, that guests may have different. A guest is not told about
+  them when their mods differ from the host's.
+- `bSaveSession` (true): the host's game keeps the shared world on disk and carries on with it next time that
+  character hosts. Guests see no difference, but a guest who joins later catches up on what is kept.
+- `bShareGuestBuilds` (false): off, what a guest built in their own save before joining does not come into the host's
+  world: only building done during the session is shared. On, a guest's earlier settlement building comes into the
+  host's world too. Two saves with different building at the same settlement then show both.
+- The rules for going down: `bRevive` (true), `iBleedOutSeconds` (45), `fReviveSeconds` (2.0), `iReviveHealth` (30),
+  `iMaxRevives` (0, no limit), `iReviveWindowMinutes` (0, per fight), `iReviveCooldownSeconds` (0),
+  `bReviveOutOfCombat` (false) and `bDownedCrawl` (false). Guests play by the host's. See [Going down](#going-down).
+- `bRealTimeVats` (true): in a session VATS runs at full speed for everyone. False keeps the game's slow motion for
+  everyone. See [VATS in real time](#vats-in-real-time).
+
+Also host controls, not settings: the host can lock the session, kick and ban from the F1 menu (see
+[Host controls](#host-controls)).
+
+### Your own settings
+
+These change only your own game. Set them as you like; friends don't need the same.
+
+- `sPlayerName` (character): the name others see. See above.
+- `sLanguage` (empty, the game's language): the language of the mod's messages and menu.
+- `iKeyMenu`, `iKeyPlayerList`, `iKeyTeleport`, `iKeyPing`, `iKeyWhere`, `iKeyEmotePoint`, `iKeyEmoteCheer`,
+  `iKeyEmoteClap` and `iKeyVoice`: your hotkeys. See [Hotkeys](#hotkeys).
+- `bVoiceChat` (true), `bVoiceOpenMic` (false) and `fVoiceRange` (60): your voice chat. See [Voice chat](#voice-chat).
+  `fVoiceRange` is how far away you can still hear a friend (0: you hear everyone, wherever they are). It changes
+  only what you hear, not how far your voice carries to friends.
+- `bSpokenLines` (true): hear what's said near you in a friend's game.
+- `bCompassMarkers` (true): friends' markers on your compass.
+- `bFriendFaces` (true): friends' stand-ins wear their own face. Off, they all have the settler's face.
+- `bGrenadeInHand` (true): a friend's grenade is seen in their stand-in's hand as they throw.
+- `iMyAppearance` (0) and `iPuppetBaseForm` (the female settler): which character friends see for you, and which one
+  you see for friends who haven't picked one. Friends see only the two settlers.
+- `bShareMap` (true): locations friends discover show on your map, and yours show on theirs.
+- `bSyncTime` (true): you follow the host's time of day and weather. If the host turns it off, nobody follows.
+- `fXpShare` (0.5): the share of a friend's kill XP you get.
+- `bSyncQuests` (true): turn it off and your game leaves the shared quests: nothing comes to you, nothing goes out.
+- `bSharedRadiants` (true): needs `bSyncQuests` and the shared story. Everyone in the session needs it on for the
+  repeatable jobs to match.
+- `bHideTutorials` (true): the game's tutorial hints stay hidden in a session.
+- `bRunInBackground` (true): your game keeps running when you alt-tab, while you are in a session.
+- `bFastLoading` (true) and `iFastLoadingSeconds` (20): faster loading screens.
+- `sTransport` (auto), `sServerAddress` (empty) and `bHost`: how you join or host. See
+  [Without Steam](#without-steam-lan-or-vpn).
+
+The rest (`bMenuIcons`, `iHangSeconds`, `bHangDump`, `sLogLevel`, `bDevChannel`, `iDevChannelPort`) is for the
+mod's developers and bug reports: leave them alone unless you are asked to change one.
 
 ## Playing
 
@@ -139,7 +204,7 @@ Each player keeps their own save, character and inventory.
 
 | Key | What it does |
 |---|---|
-| F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
+| F1 | Multiplayer menu: host a session, join a friend who's hosting, see who's in the session, and switch friendly fire, shared story, voice chat, spoken lines, compass markers and fast loading (saved to the ini). See `docs/MENU.md` |
 | F6 | Player list: where everyone is, how far and which way, their health and level |
 | F7 | Teleport to a friend: tap to choose who, then hold for a second to go there. While you're down: hold to give up |
 | F8 | Ping what you are looking at: an enemy, an item lying there, a friend, or the spot under your crosshair ("over here!" when you aim at the sky). You and your friends see it on the compass as a ring in your marker's color for 15 seconds, with a line naming it and how far away it is ("Raider (23 m NE)"). An enemy you ping is the same one in every game. A new ping replaces your last; one a second at most |
@@ -152,15 +217,15 @@ work while a menu or the console is open.
 ### Voice chat
 
 Hold the mouse's back side button to talk (`iKeyVoice`; set `bVoiceOpenMic = true` to talk without
-a key). Friends hear you at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
-0 = everyone hears everyone). It uses the microphone chosen in Steam > Settings > Voice.
+a key). You hear a friend at full volume within 8 meters, fading out by 60 meters (`fVoiceRange`;
+0 = you hear everyone, wherever they are). It uses the microphone chosen in Steam > Settings > Voice.
 
 ### Going down
 
 With friends in the session, a hit that would kill you knocks you down instead. A friend who stands
 next to you for 2 seconds helps you up (with 30% health). When a friend goes down, holding F7 takes
-you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. Turn this off with
-`bRevive = false`.
+you to them. If nobody comes within 45 seconds, or you hold F7, you die as usual. The host can turn this off
+with `bRevive = false`.
 
 The host can make it harder (their ini sets it for everyone; a joiner's own settings aren't used):
 the time to bleed out (`iBleedOutSeconds`), to help up (`fReviveSeconds`), the health you get up with

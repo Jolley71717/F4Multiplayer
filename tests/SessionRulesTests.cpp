@@ -28,6 +28,7 @@ TEST("session rules: an ini with none of the keys hosts with the defaults, which
 	CHECK(!rules.reviveOutsideCombat);
 	CHECK(!rules.downedCrawl);
 	CHECK(rules.realTimeVats);
+	CHECK(!rules.shareGuestBuilds);  // a guest's earlier building stays in their own game
 }
 
 TEST("session rules: crawling while down is off by default, and the host's bDownedCrawl turns it on for the downed rules")
@@ -54,6 +55,7 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	settings.reviveCooldownSeconds = 90;
 	settings.reviveOutOfCombat = true;
 	settings.realTimeVats = false;
+	settings.shareGuestBuilds = true;
 	const auto rules = HostRules::FromSettings(settings);
 	CHECK(!rules.revive);
 	CHECK(rules.bleedOutSeconds == 120);
@@ -64,6 +66,7 @@ TEST("session rules: the host's keys each set their rule, within the limits")
 	CHECK(rules.downCooldownSeconds == 90);
 	CHECK(rules.reviveOutsideCombat);
 	CHECK(!rules.realTimeVats);
+	CHECK(rules.shareGuestBuilds);
 
 	settings.bleedOutSeconds = 1;
 	settings.reviveHealth = 400;

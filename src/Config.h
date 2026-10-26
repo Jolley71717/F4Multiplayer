@@ -113,8 +113,8 @@ namespace Config
 		std::uint32_t keyEmoteClap = 0x73;   // F4: clap
 
 		// Proximity voice chat through Steam: hold keyVoice to talk (or always, with an open mic).
-		// Friends hear you at full volume within 8 m, fading out at voiceRange meters (0 = everyone
-		// always hears everyone).
+		// You hear a friend at full volume within 8 m, fading out at voiceRange meters (0 = you hear
+		// everyone, wherever they are). Only incoming voices use it.
 		bool          voiceChat = true;
 		bool          voiceOpenMic = false;
 		std::uint32_t keyVoice = 0x05;  // mouse side button (back)
@@ -143,6 +143,8 @@ namespace Config
 		bool          downedCrawl = false;         // down, a player crawls slowly with their movement keys (experimental)
 		// In a session, VATS runs in real time, as in Fallout 76, instead of slowing the world almost to a stop.
 		bool realTimeVats = true;
+		// What a guest built in their own save before joining is shared too, not only the host's (BuiltWalk.h).
+		bool shareGuestBuilds = false;
 
 		// Not a host's rule: in a session, the game's tutorial hints (its help messages) stay hidden (bShowTutorials).
 		bool hideTutorials = true;

@@ -140,6 +140,8 @@ namespace Config
 				settings.downedCrawl = ParseBool(value);
 			} else if (key == "bRealTimeVats") {
 				settings.realTimeVats = ParseBool(value);
+			} else if (key == "bShareGuestBuilds") {
+				settings.shareGuestBuilds = ParseBool(value);
 			} else if (key == "bHideTutorials") {
 				settings.hideTutorials = ParseBool(value);
 			} else if (key == "bShareMap") {
