@@ -45,6 +45,20 @@ namespace Puppets
 	// True for any puppet: a remote player's stand-in or a mirrored NPC.
 	[[nodiscard]] bool IsRegistered(const RE::Actor* a_actor);
 
+	// Whether the actor uses furniture (sits or lies on it, or still holds it getting off).
+	[[nodiscard]] bool InFurniture(const RE::Actor* a_actor);
+
+	// Where a puppet's owner aims: the heading (radians) and the pitch (degrees up) its owner's game sent, or for a
+	// mirrored NPC the pitch its owner's copy aims at (none while it aims at nothing: level). None for no puppet. Any
+	// thread (the puppet's last state, under its lock): the launch hook aims a stand-in's inert shot by it
+	// (InertShots), as the engine otherwise fires an NPC's shot at whoever it looks at.
+	struct OwnerAim
+	{
+		float heading = 0.0f;  // radians, 0 along +y, a quarter turn along +x
+		float pitch = 0.0f;    // degrees, up positive
+	};
+	[[nodiscard]] std::optional<OwnerAim> AimOf(const RE::Actor* a_actor);
+
 	// Unregisters a mirrored NPC and gives it back to its own AI.
 	void ReleaseNpc(RE::Actor* a_actor);
 

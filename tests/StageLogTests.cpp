@@ -45,6 +45,7 @@ namespace
 		std::set<std::uint32_t>                                        startable;  // not running, and a friend's stage starts them (Quest::kStart)
 		std::map<std::pair<std::uint32_t, std::uint16_t>, StageLog::Set> verdicts;  // kSet if not here
 		std::map<std::pair<std::uint32_t, std::uint16_t>, Clock::duration> holds;
+		std::set<std::pair<std::uint32_t, std::uint16_t>>              setsAnother;  // stages whose script sets another quest's
 
 		bool Running(std::uint32_t a_quest) { return (quests[a_quest].flags & StageLog::QUEST_RUNNING) != 0; }
 
@@ -105,6 +106,8 @@ namespace
 			const auto it = holds.find({ a_quest, a_stage });
 			return it != holds.end() ? it->second : Clock::duration::zero();
 		}
+
+		bool SetsAnother(std::uint32_t a_quest, std::uint16_t a_stage) { return setsAnother.contains({ a_quest, a_stage }); }
 
 		std::vector<Stage> Poll(StageLog::Queue& a_queue, Clock::time_point a_now, bool a_paused = false) { return a_queue.Poll(a_now, *this, a_paused); }
 
@@ -1125,4 +1128,89 @@ TEST("stage queue: a quest is contained while it has a stage waiting, not once i
 	// More come while it holds: contained again.
 	CHECK(queue.Add(SIDE, 20));
 	CHECK(queue.Contains(SIDE));
+}
+
+namespace
+{
+	constexpr std::uint32_t CODSWORTH = 0x0001E64E;  // DialogueCodsworthPostWar: its 50 sets MQ102's 30, its 200 MQ102's 50
+}
+
+TEST("stage queue: a stage whose script sets another quest's waits for that quest's stages that came before it (Codsworth's 50 and 200, Out of Time's 30 and 50)")
+{
+	FakeGame game;
+	game.quests[MQ102].current = 15;
+	game.quests[CODSWORTH].current = 5;
+	game.setsAnother = { { CODSWORTH, 50 }, { CODSWORTH, 200 } };
+	game.onStage = [&](std::uint32_t a_quest, std::uint16_t a_stage) {
+		if (a_quest == CODSWORTH && a_stage == 50) {
+			game.SetStage(MQ102, 30);
+		} else if (a_quest == CODSWORTH && a_stage == 200) {
+			game.SetStage(MQ102, 50);
+		}
+	};
+	StageLog::Queue queue;
+	// A friend's Sanctuary, caught up all at once, in the order it came.
+	for (const auto stage : StageLog::Stages{ 20, 22, 25, 30 }) {
+		queue.Add(MQ102, stage);
+	}
+	queue.Add(CODSWORTH, 50);
+	for (const auto stage : StageLog::Stages{ 32, 34, 36, 38, 40 }) {
+		queue.Add(MQ102, stage);
+	}
+	queue.Add(CODSWORTH, 100);
+	queue.Add(CODSWORTH, 200);
+	queue.Add(MQ102, 60);
+
+	auto now = Start();
+	game.Run(queue, now);
+	CHECK(queue.Size() == 0);
+	// Every stage of Out of Time ran, in order: none was taken for one already behind it.
+	std::vector<std::uint16_t> outOfTime;
+	std::vector<std::uint16_t> codsworth;
+	for (const auto& stage : game.set) {
+		(stage.quest == MQ102 ? outOfTime : codsworth).push_back(stage.stage);
+	}
+	CHECK((outOfTime == std::vector<std::uint16_t>{ 20, 22, 25, 30, 32, 34, 36, 38, 40, 60 }));
+	CHECK((codsworth == std::vector<std::uint16_t>{ 50, 100, 200 }));
+	// Codsworth's 50 only once Out of Time's 30 was set; his 100 sets nothing elsewhere and didn't wait for Out of Time's 32 to 40.
+	const auto at = [&](std::uint32_t a_quest, std::uint16_t a_stage) { return std::ranges::find(game.set, Stage{ a_quest, a_stage }) - game.set.begin(); };
+	CHECK(at(CODSWORTH, 50) > at(MQ102, 30));
+	CHECK(at(CODSWORTH, 100) < at(MQ102, 40));
+	CHECK(at(CODSWORTH, 200) > at(MQ102, 40));
+}
+
+TEST("stage queue: two quests whose next stages set each other's never wait for each other, and one waiting for good holds neither up")
+{
+	FakeGame game;
+	game.quests[MQ102].current = 5;
+	game.quests[CODSWORTH].current = 5;
+	game.quests[SIDE].flags = 0;  // stopped here before: kWait for good
+	game.setsAnother = { { MQ102, 10 }, { CODSWORTH, 50 } };
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);       // the oldest, but it never goes
+	queue.Add(MQ102, 20);      // MQ102's oldest; its 10 (next to be set) came later
+	queue.Add(CODSWORTH, 50);
+	queue.Add(MQ102, 10);
+
+	auto now = Start();
+	game.Run(queue, now, 20);
+	CHECK((game.set == std::vector<Stage>{ { MQ102, 10 }, { MQ102, 20 }, { CODSWORTH, 50 } }));
+	CHECK((queue.Waiting(SIDE) == StageLog::Stages{ 10 }));
+}
+
+TEST("stage queue: a lock's stage that sets another quest's isn't held up by other quests (MQ206's 500 starts MQ207)")
+{
+	FakeGame game;
+	game.quests[SIDE].current = 5;
+	game.quests[MQ206].current = 400;
+	game.setsAnother = { { MQ206, 500 } };
+	game.verdicts[{ SIDE, 10 }] = StageLog::Set::kLater;  // a fight holds it
+	StageLog::Queue queue;
+	queue.Add(SIDE, 10);
+	queue.Add(MQ206, 500);
+	queue.Lock(MQ206, MQ206);
+
+	auto now = Start();
+	game.Run(queue, now, 3);
+	CHECK((game.set == std::vector<Stage>{ { MQ206, 500 } }));
 }

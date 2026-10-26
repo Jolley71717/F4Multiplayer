@@ -42,6 +42,9 @@ namespace FormTranslate
 		std::uint32_t              entries = 0;  // list entries left out (and container changes emptied)
 		std::uint32_t              fields = 0;   // details set to none
 		std::vector<std::uint32_t> unmapped;     // the IDs that had none, in the numbering they came in (the first few)
+		// The players whose state was left out of a PlayerStates because the cell or worldspace it names has no ID on this
+		// side: they are somewhere this game lacks, which is not the same as their states not coming (RemotePlayers).
+		std::vector<std::uint32_t> placeless;
 	};
 
 	inline constexpr std::size_t MAX_UNMAPPED_KEPT = 8;
@@ -325,6 +328,7 @@ namespace FormTranslate
 		case MessageType::kWelcome:
 		case MessageType::kReject:
 		case MessageType::kPlayerLeft:
+		case MessageType::kPlayerReloaded:
 		case MessageType::kPartyXp:
 		case MessageType::kHeartbeatAck:
 		case MessageType::kRevived:
@@ -347,7 +351,13 @@ namespace FormTranslate
 			break;
 		case MessageType::kPlayerStates:
 			Apply<PlayerStates>(a_packet, ctx, DecodePlayerStates, [&](PlayerStates& m) {
-				ctx.Entries(m.players, [&](RemoteState& a_entry) { return ctx.Place(a_entry.state.cell, a_entry.state.worldspace); });
+				ctx.Entries(m.players, [&](RemoteState& a_entry) {
+					if (ctx.Place(a_entry.state.cell, a_entry.state.worldspace)) {
+						return true;
+					}
+					ctx.out.placeless.push_back(a_entry.playerId);
+					return false;
+				});
 				return true;
 			}, plain);
 			break;
@@ -463,6 +473,25 @@ namespace FormTranslate
 				return true;
 			}, typed);
 			break;
+		case MessageType::kReportNpcIdentity:
+		case MessageType::kNpcIdentity:
+			// A slot whose NPC the other side lacks becomes 0 with its bit kept (the roll is not whole there). Without the
+			// NPC it was placed as there is no roll to make: the slots go. A faction it lacks is left out.
+			Apply<NpcIdentity>(a_packet, ctx, DecodeNpcIdentity, [&](NpcIdentity& m) {
+				if (!ctx.Key(m.refId)) {
+					return false;
+				}
+				if (m.originalBase != 0 && !ctx.Detail(m.originalBase)) {
+					m.mask = 0;
+					m.templates = {};
+				}
+				for (auto& slot : m.templates) {
+					ctx.Detail(slot);
+				}
+				ctx.Entries(m.factions, [&](FactionRank& a_entry) { return ctx.Key(a_entry.faction); });
+				return true;
+			}, typed);
+			break;
 		case MessageType::kReportFace:
 		case MessageType::kPlayerFace:
 			Apply<Face>(a_packet, ctx, DecodeFace, [&](Face& m) { return detail::MapFace(ctx, m); }, typed);
@@ -484,6 +513,15 @@ namespace FormTranslate
 		case MessageType::kReportActivation:
 		case MessageType::kActivation:
 			Apply<Activation>(a_packet, ctx, DecodeActivation, [&](Activation& m) { return ctx.Key(m.refId); }, typed);
+			break;
+		case MessageType::kReportTrap:
+			Apply<TrapState>(a_packet, ctx, DecodeTrapState, [&](TrapState& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, plain);
+			break;
+		case MessageType::kTraps:
+			Apply<TrapStates>(a_packet, ctx, DecodeTrapStates, [&](TrapStates& m) {
+				ctx.Entries(m.traps, [&](TrapState& a_trap) { return ctx.Key(a_trap.refId) && ctx.Place(a_trap.cell, a_trap.worldspace); });
+				return !m.traps.empty();  // a live one whose trap has no ID here is about nothing
+			}, plain);
 			break;
 		case MessageType::kReportSpawn:
 		case MessageType::kSpawned:
@@ -508,6 +546,13 @@ namespace FormTranslate
 		case MessageType::kReportObjectRest:
 		case MessageType::kObjectRested:
 			Apply<ObjectRest>(a_packet, ctx, DecodeObjectRest, [&](ObjectRest& m) { return ctx.Key(m.refId) && ctx.Place(m.cell, m.worldspace); }, typed);
+			break;
+		case MessageType::kReportDestruction:
+		case MessageType::kDestructions:
+			Apply<Destructions>(a_packet, ctx, DecodeDestructions, [&](Destructions& m) {
+				ctx.Entries(m.entries, [&](Destruction& a_entry) { return ctx.Key(a_entry.refId) && ctx.Place(a_entry.cell, a_entry.worldspace); });
+				return !m.entries.empty();
+			}, typed);
 			break;
 		case MessageType::kReportWorkshopPower:
 		case MessageType::kWorkshopPower:

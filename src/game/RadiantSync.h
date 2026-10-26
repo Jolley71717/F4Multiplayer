@@ -19,13 +19,21 @@ namespace RadiantSync
 
 	// This player's id in the session (the welcome's).
 	void SetLocalPlayer(std::uint32_t a_id);
+	// Welcomed into a_session (after SetLocalPlayer and the story's sharing are set): the runs this world shared in it
+	// (a save's record, or those kept when the player left it) are shared again as they were.
+	void OnWelcome(std::uint64_t a_session);
 
 	// A friend's game started a run; their stages of it.
 	void OnStart(const Protocol::RadiantStart& a_start);
 	void OnStage(const Protocol::RadiantStage& a_stage);
 
-	// Someone joined: our runs going now are sent again, for them (the others' games ignore runs they know).
+	// Someone joined: our runs going now are sent again, for them (the others' games ignore runs they know), and the
+	// stages done here under every run shared here (one who came back knows a run only as it was when they left).
 	void OnPlayerJoined();
+	// A friend's game loaded a save: it knows our runs only as its save had them (its record), or not at all, so ours
+	// going are sent again, and the stages done here under every run shared here. One it finished before the load is never
+	// started there again (RadiantRules::Book keeps them, and its record).
+	void OnPlayerReloaded(std::uint32_t a_playerId);
 
 	// Whether this radiant's run here is shared with friends now (its friends' stages are set here).
 	[[nodiscard]] bool Shares(std::uint32_t a_quest);
@@ -43,6 +51,12 @@ namespace RadiantSync
 	void OnSessionEnded();
 	void OnServerChanged();
 	void Rebaseline();
+
+	// The co-save's record of the runs (RadiantRules::Saved): written with each save, read back with it (on the save's or
+	// load's thread, frames held out), and taken by the Rebaseline after the load. Empty: none to write.
+	std::vector<std::uint8_t> SaveRecord();
+	void                      LoadRecord(std::span<const std::uint8_t> a_bytes);
+	void                      RevertRecord();
 
 	// For the developer's commands: a quest's aliases, their fill definitions and fills here.
 	std::string DumpAliases(const RE::TESQuest* a_quest);

@@ -4,6 +4,7 @@
 #include "game/Hotkeys.h"
 #include "game/RemotePlayers.h"
 #include "game/VoiceGate.h"
+#include "game/VoiceRamp.h"
 #include "steam/SteamApi.h"
 
 // winmm waveOut (windows.h clashes with CommonLibF4's names).
@@ -83,6 +84,8 @@ namespace Voice
 		std::vector<std::uint8_t>              captureBuffer(8192);
 		std::vector<std::int16_t>              pcmBuffer(SAMPLE_RATE);  // one second
 		const std::vector<std::int16_t>        silence(LEAD_SAMPLES);
+		const std::vector<std::int16_t>        longSilence(LEAD_SAMPLES * 2);
+		std::uint32_t                          underruns = 0;  // a friend's voice that ran out mid-speech (VoiceRamp::Underrun)
 
 		std::uint64_t bytesSent = 0;
 		std::uint64_t bytesHeard = 0;
@@ -209,8 +212,11 @@ namespace Voice
 				}
 			}
 
-			auto& speaker = speakers[a_id];
-			speaker.lastHeard = Clock::now();
+			auto&      speaker = speakers[a_id];
+			const auto now = Clock::now();
+			const bool heardBefore = speaker.lastHeard != Clock::time_point{};
+			const auto sinceLast = now - speaker.lastHeard;
+			speaker.lastHeard = now;
 			if (!speaker.device) {
 				F4MP_WAVEFORMATEX format{};
 				format.formatTag = 1;  // PCM
@@ -229,9 +235,14 @@ namespace Voice
 			if (speaker.queued.size() >= MAX_QUEUED) {
 				return;  // far behind (the game was paused); drop until it catches up
 			}
-			// Starting from silence: a little lead so the next pieces arrive before this one ends.
+			// Starting from silence: a little lead so the next pieces arrive before this one ends, and the piece faded in
+			// so it doesn't start with a click (VoiceRamp). After an underrun (the last piece ran out before this one
+			// came) the lead is twice as long, so a late connection doesn't starve the device piece after piece.
 			if (speaker.queued.empty()) {
-				Queue(speaker, silence);
+				const bool underrun = VoiceRamp::Underrun(true, heardBefore, sinceLast);
+				underruns += underrun;
+				Queue(speaker, underrun ? longSilence : silence);
+				VoiceRamp::FadeIn(samples);
 			}
 			Queue(speaker, samples);
 		}
@@ -379,7 +390,7 @@ namespace Voice
 		for (const auto& [id, speaker] : speakers) {
 			open += speaker.device != nullptr;
 		}
-		return std::format("voice: available={} recording={} tail={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} devices={} last={}",
-			VoiceApi() != nullptr, mic == Mic::kOn, mic == Mic::kTail, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, open, lastResult);
+		return std::format("voice: available={} recording={} tail={} loopback={} sent={} heard={} played={} tooFar={} decodeErrors={} underruns={} devices={} last={}",
+			VoiceApi() != nullptr, mic == Mic::kOn, mic == Mic::kTail, loopback, bytesSent, bytesHeard, buffersPlayed, tooFar, decodeErrors, underruns, open, lastResult);
 	}
 }

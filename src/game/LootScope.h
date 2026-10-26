@@ -57,6 +57,7 @@ namespace LootScope
 		bool   vendorChest = false;  // a faction's merchant container: a vendor's stock and caps
 		bool   alive = false;        // an actor the engine says is alive
 		bool   knownDead = false;    // an actor the session says is dead (its kill may still be on its way here)
+		bool   storage = false;      // a container that keeps what the player puts in it (IsStorage): a stash, not a roll of loot
 	};
 
 	enum class Direction : std::uint8_t
@@ -124,6 +125,32 @@ namespace LootScope
 			return Scope::kNotYetDead;
 		}
 		return Scope::kShared;
+	}
+
+	// What makes a container the player's storage, read off the game (WorldSync.cpp, ReadHolderFacts).
+	struct StorageFacts
+	{
+		bool playerOwned = false;        // the container, or its cell, is the player's (a home bought: Home Plate's cell is PlayerFaction's)
+		bool workshopItem = false;       // a settlement's workbench, or a piece built there and linked to it
+		bool inOwnedSettlement = false;  // in the build area of a settlement whose workbench the player owns
+	};
+
+	// Storage is what the player has made their own: a container they own, one of a settlement's workshop, or one in a
+	// settlement they own. Neither the base's Respawn flag nor the location's settlement keyword says so: not a chest
+	// that only never respawns (a dungeon's one-off loot, DN035_EasyCityDownsWallSafe), nor one in a settlement nobody
+	// owns yet (the Sanctuary houses at the start, the Castle before it is cleared). Those hold a roll of loot each game
+	// rolled on its own.
+	constexpr bool IsStorage(const StorageFacts& a_facts)
+	{
+		return a_facts.playerOwned || a_facts.workshopItem || a_facts.inOwnedSettlement;
+	}
+
+	// Whether what the holder has is the game's own roll of loot, which each game rolls on its own: a chest that isn't the
+	// player's storage (IsStorage), or an NPC. Only such a holder taken bare is bare for friends (CONTAINER_EMPTIED): a
+	// container that keeps things may hold a friend's stash, put there in their own world.
+	constexpr bool Rolled(const HolderFacts& a_holder)
+	{
+		return a_holder.kind == Holder::kActor || (a_holder.kind == Holder::kContainer && !a_holder.storage);
 	}
 
 	// A loose item picked up from the world. Each game's copy of a placed item is that same reference, so a

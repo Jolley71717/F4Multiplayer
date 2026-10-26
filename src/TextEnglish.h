@@ -70,6 +70,7 @@ namespace Text
 		{ "player.dead", "dead" },
 		{ "player.status", "{hp}% HP, level {level}" },
 		{ "player.loading", "loading" },
+		{ "player.unreachable", "somewhere your game doesn't have" },
 		{ "player.right_here", "right here" },
 		{ "player.distance", "{m} m {dir}" },
 		{ "compass.n", "N" },
@@ -93,6 +94,8 @@ namespace Text
 		{ "party.ping_something", "something" },
 		{ "party.where", "{player}: {where}" },
 		{ "party.no_emote_armor", "No emotes in power armor" },
+		// Our player tried to get into our copy of a friend's frame (FriendFrame.h).
+		{ "party.friends_frame", "This is {player}'s power armor. Sharing power armor with friends is coming in a later version." },
 		// A friend's name tag (their name, with their health when hurt) while they are in their Pip-Boy, or another menu.
 		{ "party.tag_pipboy", "{name} [Pip-Boy]" },
 		{ "party.tag_menu", "{name} [in a menu]" },
@@ -109,6 +112,7 @@ namespace Text
 		{ "party.cant_teleport_busy", "Can't teleport while sitting or using something" },
 		{ "party.cant_teleport_survival", "Can't teleport in Survival (no fast travel)" },
 		{ "party.cant_find", "Can't find {player} right now" },
+		{ "party.cant_teleport_unreachable", "{player} is somewhere your game doesn't have: a DLC or mod you don't own" },
 		{ "party.still_in_vault", "{player} hasn't left Vault 111 yet" },
 		{ "party.teleported", "Teleported to {player}" },
 		{ "party.cant_teleport_into", "Can't teleport into {player}'s location" },
@@ -142,6 +146,7 @@ namespace Text
 		{ "drops.container_hint", "Weapons and armor you put in a container stay in your game only. To give one to a friend, drop it near them" },
 		{ "drops.not_given", "Friends can't pick this item up: it stays on the ground in your game only" },
 		{ "drops.taken_first", "A friend picked it up first" },
+		{ "save.old_leftover", "Multiplayer: this save holds a leftover from an older version of the mod. Save now, then restart the game and play from the new save" },
 
 		// --- The F1 menu ---
 		{ "menu.unavailable", "Multiplayer: the menu isn't available" },
@@ -204,7 +209,7 @@ namespace Text
 		{ "menu.host_controls", "Host controls" },
 		{ "menu.hc_waiting", "Waiting for your server to answer. Try again in a moment." },
 		{ "menu.hc_open", "The session is open: friends can join." },
-		{ "menu.hc_locked", "The session is locked: nobody new can join (those here stay)." },
+		{ "menu.hc_locked", "The session is locked: new players can't join. Players already in it can rejoin if their game crashes or their connection drops; kicked and banned players can't." },
 		{ "menu.hc_no_password", "No password: anyone who can reach the session can join." },
 		{ "menu.hc_password", "Password: {password} (friends set sPassword = {password} in their F4Multiplayer.ini)" },
 		{ "menu.hc_banned", "Banned players: {n}" },

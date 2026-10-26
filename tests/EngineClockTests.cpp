@@ -161,3 +161,29 @@ TEST("engine clock: a timer that stops marking frames gives the wall clock, and 
 	wall += 33ms;
 	CHECK(frames.Now(wall, 11, 0.033f) == wall);
 }
+
+TEST("engine clock: under Jet or a slowed VATS it steps by the frame's real time, evenly with the wall clock, where the slowed time fell behind and jumped")
+{
+	// Jet: the time multiplier at 0.3, frames 16 ms apart. BSTimer's delta is 4.8 ms, its real time 16.
+	constexpr float DELTA = 0.0048f, REAL = 0.016f;
+	CHECK(EngineClock::FrameSeconds(DELTA, REAL) == REAL);
+	EngineClock::Frames real, slowed;
+	auto                wall = start;
+	double              worstReal = 0.0;
+	int                 jumps = 0;
+	auto                lastSlowed = slowed.Now(wall, 1, DELTA);
+	(void)real.Now(wall, 1, EngineClock::FrameSeconds(DELTA, REAL));
+	for (std::uint64_t mark = 2; mark <= 120; ++mark) {
+		wall += 16ms;
+		const auto at = real.Now(wall, mark, EngineClock::FrameSeconds(DELTA, REAL));
+		worstReal = (std::max)(worstReal, std::abs(Ms(wall - at)));
+		const auto slowedAt = slowed.Now(wall, mark, DELTA);
+		jumps += Ms(slowedAt - lastSlowed) > 50.0 ? 1 : 0;
+		lastSlowed = slowedAt;
+	}
+	CHECK(worstReal < 1.0);
+	CHECK(jumps >= 10);  // the multiplied time: set to the wall clock again and again (about 7 times a second)
+	// A timer whose real time doesn't read goes by its delta.
+	CHECK(EngineClock::FrameSeconds(DELTA, 0.0f) == DELTA);
+	CHECK(EngineClock::FrameSeconds(DELTA, std::nanf("")) == DELTA);
+}

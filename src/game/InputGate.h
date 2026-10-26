@@ -44,8 +44,16 @@ namespace InputGate
 		{
 			Step step;
 			if (!a_enabled) {
+				// Off while closed (the session ended alt-tabbed): the game took the last focus change as "active", as
+				// bAlwaysActive was on then, and would read input in the background until the next one. Kept closed until the
+				// window is in front; from then on the game handles its focus itself.
 				if (state != State::kOpen) {
-					Open(step);
+					if (a_inFront) {
+						Open(step);
+					} else {
+						state = State::kClosed;
+						step.polling = false;
+					}
 				}
 				return step;
 			}

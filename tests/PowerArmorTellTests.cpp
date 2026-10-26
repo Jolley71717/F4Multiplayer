@@ -31,12 +31,13 @@ namespace
 		ArmorFrames::OwnWear  wear;
 		bool                  on = false;
 		ArmorFrames::Seat     seat;
+		ArmorFrames::Seat     held;  // the frame the engine keeps as worn (Equipment::PowerArmorFrameOf)
 		std::uint8_t          health = 100;
 		int                   logged = 0;
 
 		void Send(Fixture& a_f, Clock::time_point a_now)
 		{
-			const auto told = wear.Update(on, [&] { return seat; }, a_now);
+			const auto told = wear.Update(on, [&] { return ArmorFrames::WornSeat(seat, held); }, a_now);
 			logged += told.unknown;
 			Protocol::PlayerStatus status;
 			status.location = 0x1000;
@@ -49,7 +50,7 @@ namespace
 		}
 
 		// Its game's frames between statuses (it logs on a frame, not only as it sends).
-		void Tick(Clock::time_point a_now) { logged += wear.Update(on, [&] { return seat; }, a_now).unknown; }
+		void Tick(Clock::time_point a_now) { logged += wear.Update(on, [&] { return ArmorFrames::WornSeat(seat, held); }, a_now).unknown; }
 	};
 
 	// One friend's game hearing the session: the frames it has (what RemotePlayers' WornFrame finds), and per player
@@ -312,4 +313,102 @@ TEST("power armor tell: a friend whose game restarts and comes back in the same 
 	CHECK(alice.order == expected);
 	Run(second, alice, t0 + 3s, t0 + 5s);
 	CHECK(alice.logged == 2);
+}
+
+TEST("power armor tell: the worn frame is what the player sits in while that is a frame, else the one the engine keeps as worn")
+{
+	const ArmorFrames::Seat none{};
+	const ArmorFrames::Seat frame{ .ref = PRE_PLACED, .base = VANILLA_FRAME, .frame = true };
+	const ArmorFrames::Seat made{ .ref = MADE_HERE, .base = PLUGIN_FRAME, .frame = true };
+	const ArmorFrames::Seat terminal{ .ref = 0xFF002000, .base = TERMINAL, .frame = false };
+
+	// Getting in: what they sit in, whatever the engine keeps.
+	CHECK(ArmorFrames::WornSeat(frame, none).ref == PRE_PLACED);
+	CHECK(ArmorFrames::WornSeat(frame, made).ref == PRE_PLACED);
+	// Loaded in the armor: nothing sat in, the engine's worn frame.
+	CHECK(ArmorFrames::WornSeat(none, made).ref == MADE_HERE);
+	CHECK(ArmorFrames::WornSeat(none, made).base == PLUGIN_FRAME);
+	CHECK(ArmorFrames::WornSeat(none, frame).frame);
+	// Loaded in the armor and at a terminal at once: the worn frame, never the terminal.
+	CHECK(ArmorFrames::WornSeat(terminal, frame).base == VANILLA_FRAME);
+	// Neither a frame: what they sit in, for the log.
+	CHECK(ArmorFrames::WornSeat(terminal, none).base == TERMINAL);
+	CHECK(!ArmorFrames::WornSeat(terminal, none).frame);
+	CHECK(ArmorFrames::WornSeat(none, none).base == 0u);
+	// A frame with no base is no frame to tell.
+	CHECK(ArmorFrames::WornSeat(none, ArmorFrames::Seat{ .ref = MADE_HERE, .base = 0, .frame = true }).base == 0u);
+}
+
+TEST("power armor tell: a player whose game loads with them already in power armor is seen in their frame by a friend there, one joining late, after a reload and after they come back")
+{
+	Fixture f;
+	const auto alice = f.Join(1, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(alice);
+	REQUIRE(f.Join(2, Fixture::MakeHello("Bob")));
+	Hearer bob{ .peer = 2, .framesHere = { VANILLA_FRAME } };
+	const auto t0 = Clock::now();
+
+	// Her save was made in a suit her game dropped: loaded, she sits in nothing, and the engine keeps the frame as worn.
+	// Her first status names it; before, every status named none until she got out and in again.
+	Wearer wearer{ .peer = 1 };
+	wearer.on = true;
+	wearer.held = { .ref = MADE_HERE, .base = VANILLA_FRAME, .frame = true };
+	wearer.Send(f, t0);
+	REQUIRE(bob.HearStatus(f, alice->playerId));
+	CHECK(bob.Of(alice->playerId).on);
+	CHECK(bob.Of(alice->playerId).frame == VANILLA_FRAME);
+	CHECK(bob.Of(alice->playerId).frameRef == 0u);  // made in her game: never sent
+	Run(wearer, bob, t0, t0 + 3s);
+	CHECK(wearer.logged == 0);
+	CHECK(bob.logged == 0);
+
+	// Carol joins late: the server tells her Alice's last status, frame and all.
+	REQUIRE(f.Join(3, Fixture::MakeHello("Carol")));
+	Hearer carol{ .peer = 3, .framesHere = { VANILLA_FRAME } };
+	REQUIRE(carol.HearStatus(f, alice->playerId));
+	CHECK(carol.Of(alice->playerId).on);
+	CHECK(carol.Of(alice->playerId).frame == VANILLA_FRAME);
+
+	// She reloads a save made in the museum's suit, which every game has: the wear is forgotten (Party::OnGameLoaded)
+	// and learnt again from the engine's worn frame, reference and all.
+	wearer.wear.Forget();
+	wearer.held = { .ref = PRE_PLACED, .base = VANILLA_FRAME, .frame = true };
+	wearer.Send(f, t0 + 4s);
+	REQUIRE(bob.HearStatus(f, alice->playerId));
+	CHECK(bob.Of(alice->playerId).on);
+	CHECK(bob.Of(alice->playerId).frameRef == PRE_PLACED);
+	Run(wearer, bob, t0 + 4s, t0 + 7s);
+	CHECK(wearer.logged == 0);
+	CHECK(bob.logged == 0);
+
+	// Her game restarts and joins again, loaded in the same suit: a fresh game's wear, known from its first status.
+	const auto again = f.Join(5, Fixture::MakeHello("Alice", 0xA11CE));
+	REQUIRE(again);
+	CHECK(again->playerId == alice->playerId);
+	Wearer second{ .peer = 5 };
+	second.on = true;
+	second.held = wearer.held;
+	second.Send(f, t0 + 8s);
+	REQUIRE(bob.HearStatus(f, alice->playerId));
+	CHECK(bob.Of(alice->playerId).on);
+	CHECK(bob.Of(alice->playerId).frame == VANILLA_FRAME);
+	CHECK(bob.Of(alice->playerId).frameRef == PRE_PLACED);
+	Run(second, bob, t0 + 8s, t0 + 11s);
+	CHECK(second.logged == 0);
+	CHECK(bob.logged == 0);
+
+	// Out, and in again by the usual way: what she sits in names it, as before.
+	second.on = false;
+	second.held = {};
+	second.Send(f, t0 + 12s);
+	REQUIRE(bob.HearStatus(f, alice->playerId));
+	CHECK(!bob.Of(alice->playerId).on);
+	second.on = true;
+	second.seat = { .ref = 0xFF004000, .base = VANILLA_FRAME, .frame = true };
+	second.held = second.seat;
+	second.Send(f, t0 + 13s);
+	REQUIRE(bob.HearStatus(f, alice->playerId));
+	CHECK(bob.Of(alice->playerId).on);
+	CHECK(bob.Of(alice->playerId).frame == VANILLA_FRAME);
+	CHECK(bob.Of(alice->playerId).frameRef == 0u);
 }

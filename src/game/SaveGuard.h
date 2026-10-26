@@ -1,5 +1,7 @@
 #pragma once
 
+#include "game/HeldCopy.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -10,8 +12,9 @@
 namespace SaveGuard
 {
 	// Drops the form's record from the game's list of changes, so the next save does not write it. Called
-	// before a save, and before a load (DespawnAll runs at both; before a load it does no harm, the load
-	// replaces the list). Whether there was a record and it is gone now.
+	// before a save, and before a load (DespawnAll runs at both). Before a load that alone would keep the form in
+	// memory through it, as the load frees only what has a record: BeforeLoad gives each of ours on its way out its
+	// record back. Whether there was a record and it is gone now.
 	bool Exclude(RE::TESForm* a_form);
 
 	// Whether the engine's save code finds a cell or a worldspace to save the reference under (see SaveStrays::Doomed).
@@ -35,8 +38,18 @@ namespace SaveGuard
 	void KeepUnpromoted(RE::Actor* a_actor);
 
 	// A reference of ours (Track) whose handle stopped resolving: the game took it from under us, and its form may
-	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is.
+	// still be there. Kept out of saves, and its record dropped once a second (Frame), for as long as it is. One whose form
+	// is gone (the engine unloaded it with its cell) has its record dropped at once: the engine keeps that record under the
+	// cell, and loading the cell again would bring the reference back (see SaveStrays::Book::KeepForgotten, HeldCopy.h).
 	void Forget(std::uint32_t a_id);
+
+	// A copy of ours (Track) held by a_handle, placed under a_ids (see HeldCopy), once its handle stops resolving: the same
+	// copy back under its id with its cell is held again (a_handle set to it); otherwise it is forgotten (Forget) and a_ids
+	// cleared. What was done (kNone while the handle still resolves, or nothing is held).
+	HeldCopy::Lost Refresh(RE::ObjectRefHandle& a_handle, HeldCopy::Ids& a_ids);
+
+	// The ids a copy just placed is held under (see HeldCopy).
+	[[nodiscard]] HeldCopy::Ids IdsOf(const RE::TESObjectREFR* a_ref);
 
 	// A reference of ours (Track) the player took into their inventory (a copy of a friend's dropped item): not ours any
 	// more, and its id may soon name an item of the game's (SaveStrays::Book::Release).
@@ -50,6 +63,18 @@ namespace SaveGuard
 	// One of the game's with neither, its base still there, is only logged (its record is the game's, as without the
 	// mod). Every save is searched. Returns how many were kept out.
 	std::uint32_t BeforeSave();
+
+	// Just before a load, once the stand-ins and their copies are on their way out: each of ours on its way out (a stand-in, a
+	// frame copy, a light) is handed to the load, which frees only what has a record of changes (SaveStrays::Handover), and
+	// noted as it is, to tell one the load kept all the same from one the loaded game made since under the same id (see
+	// SaveStrays::Remains). So is each stray of ours the last load brought back.
+	void BeforeLoad();
+
+	// Just before a load, for a created reference of ours that Track was never told of (an inert shot, InertShots): handed
+	// to the load as BeforeLoad hands ours over (SaveStrays::Handover): given its record back so the load frees it, or let
+	// go of now with the engine's own call when it takes none (deleted, not persistent). Ending it instead would leave it in
+	// memory through the load, as the load frees only what has a record. a_what names it in the log.
+	void HandOver(RE::TESObjectREFR* a_ref, std::string_view a_what);
 
 	// After a load: the strays the save brought back are logged, and the ones that are ours dropped from it.
 	std::uint32_t AfterLoad();

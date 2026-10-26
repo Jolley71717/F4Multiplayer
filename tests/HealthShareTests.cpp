@@ -216,9 +216,13 @@ TEST("health share: with 0.8.10 the fire's damage stayed in the host's game, and
 	CHECK(Near(f.hostGame.health, 60.0f));
 	CHECK(Near(f.bobGame.health, 90.0f));  // Bob's copy never burnt
 
+	// Bob's report of his copy's health (75) healed 15 back on in the host's game: "my shots do nothing", or the fire did
+	// nothing. The server now passes on an NPC's health only from the game that runs it, so a copy's word is dropped (and
+	// with no damage sent, as in 0.8.10, Bob's shot is lost instead).
 	f.bobGame.Shoot(15.0f);
 	f.Pass();
-	CHECK(Near(f.hostGame.health, 75.0f));  // 15 healed back on: "my shots do nothing", or the fire did nothing
+	CHECK(Near(f.hostGame.health, 60.0f));
+	CHECK(f.s.Logged(std::format("health of {:08X} from player {} not passed on: player {} runs it", RAIDER, f.bob.Id(), f.host.Id())));
 }
 
 TEST("health share: Bob's shot while the raider burns comes off the health the host's game has, though Bob's copy had not heard the latest burn")
@@ -367,8 +371,10 @@ TEST("health share: Bob's Molotov on his copy of the host's raider hurts it once
 		f.hostGame.Burn(1.0f, 20);  // and its fire
 		f.Pass();
 		if (v0810) {
-			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 30.0f - 20.0f));  // the blast twice: 20 left
-			CHECK(Near(f.bobGame.health, 70.0f));                           // and Bob's copy never saw the fire
+			// With 0.8.10 the blast landed twice (20 left): Bob's report of his copy came on top of the host's own blast.
+			// The server now passes on an NPC's health only from the game that runs it: once.
+			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f));
+			CHECK(Near(f.bobGame.health, 70.0f));  // and Bob's copy never saw the fire
 		} else {
 			CHECK(Near(f.hostGame.health, 100.0f - 30.0f - 20.0f));
 			CHECK(Near(f.bobGame.health, f.hostGame.health));
@@ -385,8 +391,10 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	using CopyHealth::OwnersToDeal;
 	constexpr std::uint32_t US = 2;
 	constexpr std::uint32_t FRIEND = 1;
-	// While our game shares its explosions (a throw's watch is on), and a while after for what they left burning.
-	CHECK(OwnersToDeal(Blow{ .explosion = true, .explosionsShared = true, .threwLately = true }));
+	// An explosion that goes off in the owner's game too (one we reported, a wreck's, a trap's), a throwable's own hit while
+	// a throw's watch is on, and a while after for what they left burning.
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .blastThere = true }));
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .throwable = true, .explosionsShared = true, .blastThere = true }));
 	CHECK(OwnersToDeal(Blow{ .throwable = true, .explosionsShared = true, .threwLately = true }));
 	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{}));  // a gun's, a bat's: ours to report
@@ -403,22 +411,28 @@ TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own 
 	CHECK(After(Hitter::kOurPlayer, FRIEND, US, false, false).report);
 }
 
-TEST("copy health: a blow with a weapon in hand is ours whatever else its hit event reads, and nothing is a throw's while our game shares no explosion")
+TEST("copy health: a blow with a weapon in hand is ours whatever else its hit event reads, and an explosion's is the owner's only where it goes off there too")
 {
 	using CopyHealth::Blow;
 	using CopyHealth::OwnersToDeal;
-	// A gun's hit read as an explosion's, or as a spell's with no weapon: ours while no explosion of ours is shared.
+	// A gun's hit read as an explosion's, or as a spell's with no weapon: ours while no explosion reaches it there.
 	CHECK(!OwnersToDeal(Blow{ .explosion = true, .inHand = true }));
 	CHECK(!OwnersToDeal(Blow{ .explosion = true, .inHand = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{ .spellAlone = true, .inHand = true, .explosionsShared = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{ .throwable = true, .inHand = true, .explosionsShared = true }));
-	// While a throw's watch is on, every explosion near our player goes off in the owner's game too, a missile's as well.
-	CHECK(OwnersToDeal(Blow{ .explosion = true, .inHand = true, .explosionsShared = true }));
-	// No throw of ours lately: none of our explosions goes off in another game, so none of these is dealt there.
+	// A missile's blast our game reported (a throw's watch was on) goes off in the owner's game: theirs to deal.
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .inHand = true, .explosionsShared = true, .blastThere = true }));
+	// The watch on, but that blast never reported (over 6000 units from our player) or not set off there (the owner's
+	// player too far from it): dealt nowhere else, so ours. Under the watch alone it was dealt in neither game.
+	CHECK(!OwnersToDeal(Blow{ .explosion = true, .inHand = true, .explosionsShared = true }));
+	CHECK(!OwnersToDeal(Blow{ .explosion = true, .throwable = true, .explosionsShared = true }));
+	// A car's blast long after any watch: the wreck sets it off in the owner's game, so theirs.
+	CHECK(OwnersToDeal(Blow{ .explosion = true, .inHand = true, .blastThere = true }));
+	// No throw of ours lately: none of these is dealt elsewhere.
 	CHECK(!OwnersToDeal(Blow{ .explosion = true }));
 	CHECK(!OwnersToDeal(Blow{ .throwable = true }));  // a mine laid long ago, stepped on now
 	CHECK(!OwnersToDeal(Blow{ .spellAlone = true }));
-	// After the throw's watch: its explosions are no longer reported, while the fire it left may burn on there too.
+	// After the throw's watch: the fire it left may burn on there too.
 	CHECK(!OwnersToDeal(Blow{ .explosion = true, .threwLately = true }));
 	CHECK(!OwnersToDeal(Blow{ .throwable = true, .threwLately = true }));
 	CHECK(OwnersToDeal(Blow{ .spellAlone = true, .threwLately = true }));

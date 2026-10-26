@@ -420,7 +420,9 @@ namespace Party
 					out += " - " + place;
 				}
 			}
-			if (a_player.state) {
+			if (a_player.unreachable) {
+				out += ", " + Text::Get("player.unreachable");  // not "loading" and not where they last were
+			} else if (a_player.state) {
 				if (auto distance = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y); !distance.empty()) {
 					out += ", " + distance;
 				}
@@ -433,6 +435,9 @@ namespace Party
 		// How far and which way a friend is ("30 m NE"), or where they are when that is elsewhere, or that they are loading.
 		std::string WhereIs(const RemotePlayers::Info& a_player)
 		{
+			if (a_player.unreachable) {
+				return Text::Get("player.unreachable");
+			}
 			if (!a_player.state) {
 				return Text::Get("player.loading");
 			}
@@ -522,15 +527,20 @@ namespace Party
 			// The engine's PlayerInPowerArmor said false on a player visibly in a frame (1.11.240); the
 			// ExtraPowerArmor on the actor and the furniture it occupies are what the game itself keeps.
 			status.powerArmor = Equipment::InPowerArmor(player);
-			// The frame is the furniture occupied when the armor went on, remembered for as long as it stays on (see
-			// ArmorFrames::OwnWear).
+			// The frame is the furniture occupied when the armor went on, or the engine's worn frame when the game was loaded
+			// in it, remembered for as long as it stays on (see ArmorFrames::OwnWear and WornSeat).
 			const auto wear = ownWear.Update(
 				status.powerArmor,
 				[&] {
+					const auto seatOf = [](const RE::TESObjectREFR* a_ref) {
+						const auto base = a_ref ? a_ref->GetObjectReference() : nullptr;
+						return ArmorFrames::Seat{ .ref = a_ref ? a_ref->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+					};
 					const auto middle = player->currentProcess ? player->currentProcess->middleHigh : nullptr;
 					const auto seat = middle ? middle->occupiedFurniture.get() : nullptr;
-					const auto base = seat ? seat->GetObjectReference() : nullptr;
-					return ArmorFrames::Seat{ .ref = seat ? seat->GetFormID() : 0, .base = base ? base->GetFormID() : 0, .frame = Equipment::IsPowerArmorFrame(base) };
+					// After a load in the armor nothing is sat in; the engine's own worn frame names it (see WornSeat).
+					const auto held = Equipment::PowerArmorFrameOf(player);
+					return ArmorFrames::WornSeat(seatOf(seat.get()), seatOf(held && !held->IsDeleted() ? held.get() : nullptr));
 				},
 				Clock::now());
 			status.powerArmorFrame = wear.frame;
@@ -996,6 +1006,12 @@ namespace Party
 			Hud::Notify(Text::Get(reason));
 			return;
 		}
+		// In a DLC or mod our game does not have: their last state is where they were, not where they are.
+		if (target->unreachable) {
+			REX::INFO("Party: can't teleport to player {}: they are in a place our game does not have", target->id);
+			Hud::Notify(Text::Format("party.cant_teleport_unreachable", { { "player", target->name } }));
+			return;
+		}
 		if (!target->state) {
 			REX::INFO("Party: can't teleport to player {}: no position from them yet", target->id);
 			Hud::Notify(Text::Format("party.cant_find", { { "player", target->name } }));
@@ -1010,10 +1026,11 @@ namespace Party
 		const auto& state = *target->state;
 		const RE::NiPoint3 position{ state.x, state.y, state.z + 10.0f };
 
-		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins go first, in this
-		// frame (RemotePlayers::DespawnAll, as before a save): the engine clears the cells for the coc or cow later in this
-		// same frame, after our work, and a stand-in it unloads with them can lose its cell while its record stays, which
-		// crashes the engine unloading it or the next save. They are placed again where we arrive.
+		// Same place: go straight there. Elsewhere: load their cell or worldspace first. The stand-ins are taken out first
+		// (RemotePlayers::DespawnAll, as before a save): disabled in this frame, before the engine clears the cells for the
+		// coc or cow later in it, and deleted a second later, their records kept out of every save meanwhile (a stand-in
+		// left with no cell crashed the next save). Not deleted at once: a physics job of the frames after still handles a
+		// collision with one just beside the player (the crash a save's flush had). They are placed again where we arrive.
 		if (SpaceOf(player) == std::pair{ state.cell, state.worldspace }) {
 			FadeWatch::Arm("moved the player to a friend");
 			player->SetPosition(position, true);
@@ -1029,7 +1046,7 @@ namespace Party
 				return;
 			}
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("coc {}", editorId).c_str());
 		} else if (const auto world = RE::TESForm::GetFormByID<RE::TESWorldSpace>(state.worldspace)) {
 			const std::string editorId = world->GetFormEditorID();
@@ -1040,7 +1057,7 @@ namespace Party
 			}
 			const auto grid = [](float a_coord) { return static_cast<int>(std::floor(a_coord / 4096.0f)); };
 			FadeWatch::Arm("teleported the player to a friend");
-			RemotePlayers::DespawnAll(true);  // the cells go later in this frame: no time to wait
+			RemotePlayers::DespawnAll();
 			RE::Console::ExecuteCommand(std::format("cow {} {} {}", editorId, grid(state.x), grid(state.y)).c_str());
 		} else {
 			REX::INFO("Party: can't teleport to player {}: no cell {:08X} or worldspace {:08X} here", target->id, state.cell, state.worldspace);
@@ -1128,6 +1145,9 @@ namespace Party
 		std::string out = std::format("party: rtt={}ms unstable={} xp={:.0f} xpCredit={:.0f} xpWithheld={}", roundTripMs, unstable, lastXp.value_or(-1.0f), xpCredit, xpWithheld);
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
+		}
+		for (const auto& info : RemotePlayers::List()) {
+			out += info.unreachable ? std::format(" [friend {} unreachable]", info.id) : info.state ? std::format(" [friend {} cell={:08X} ws={:08X}]", info.id, info.state->cell, info.state->worldspace) : std::format(" [friend {} no state]", info.id);
 		}
 		out += std::format(" pings: sent={} received={} tooSoon={}", pingsSent, pingsReceived, pingLimit.Refused());
 		for (const auto& [pinger, mark] : pings.Marks()) {

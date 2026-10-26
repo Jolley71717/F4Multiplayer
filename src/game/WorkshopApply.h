@@ -25,7 +25,8 @@
 //   void MoveTo(const Copy&, item)                       moves it within its cell
 //   void Keep(const Copy&) / void Discard(const Copy&)   ours from now on / deleted, in time
 //   Placeable CanPlace(item)
-//   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot
+//   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot (never a piece of ours)
+//   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
 //   bool ScrapWorldRef(item)                             false until the reference is loaded here
@@ -45,6 +46,7 @@ namespace WorkshopApply
 		std::uint32_t baseMismatch = 0;  // copies replaced by another object under the same ID (their builder loaded a save)
 		std::uint32_t movedOwn = 0;      // pieces of the world itself another player moved: ours moved
 		std::uint32_t ownRefused = 0;    // ... but not one a friend may move (see OwnPiece)
+		std::uint32_t oursThere = 0;     // no copy made: a piece of ours, the same object, stands at the spot
 	};
 
 	// Where a copy stands here, for following its piece.
@@ -148,6 +150,13 @@ namespace WorkshopApply
 		}
 		const auto placeable = a_world.CanPlace(a_item);
 		if (placeable == Placeable::kNo) {
+			return true;
+		}
+		if (a_world.OursAt(a_item)) {
+			// Our save and theirs share a past (one save, played on by both): the piece they built before it parted is ours
+			// too, linked to our workbench, with its settler's job. A copy over it would double it, and taking it over would
+			// make it a copy: out of workshop mode's reach, off our workbench, and deleted when the session ends.
+			++a_counts.oursThere;
 			return true;
 		}
 		if (placeable == Placeable::kStocked) {

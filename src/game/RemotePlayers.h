@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/Equipment.h"
 #include "game/NetSim.h"
 #include "game/RemoteEdits.h"
 
@@ -18,6 +19,11 @@ namespace RemotePlayers
 
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
+	// The server sent their state, but it names a cell or worldspace our game does not have (a DLC or mod we lack), so it
+	// could not be read (FormTranslate::Result::placeless). They are somewhere we cannot reach: their last state is no
+	// longer where they are, so the list, the compass, the teleport and their stand-in stop using it, until a state we can
+	// read comes (PushState). Not for states that stop coming (a lagging or a lost friend: handled by the connection).
+	void NoteUnplaced(std::uint32_t a_id);
 	// Dev: friends' states from now on come as over a worse connection (NetSim.h); off lets in what waits.
 	void SetNetSim(const NetSim::Settings& a_settings);
 	[[nodiscard]] std::string DescribeNetSim();
@@ -57,9 +63,10 @@ namespace RemotePlayers
 	{
 		std::uint32_t                        id = 0;
 		std::string                          name;
-		std::optional<Protocol::PlayerState> state;  // latest received
+		std::optional<Protocol::PlayerState> state;  // latest received; none while they are somewhere our game lacks (unreachable)
 		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
 		std::uint8_t                         menu = 0;         // the menu they are in (Protocol::MenuKind), from their status
+		bool                                 unreachable = false;  // their latest state names a place our game does not have (NoteUnplaced)
 	};
 
 	[[nodiscard]] std::vector<Info> List();
@@ -69,7 +76,7 @@ namespace RemotePlayers
 	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
 	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);
 
-	// The last state a player sent, wherever they are (nothing if none yet, or they are gone).
+	// The last state a player sent, wherever they are (nothing if none yet, they are gone, or they are somewhere our game lacks).
 	[[nodiscard]] std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id);
 
 	// The player's name, or "" if unknown.
@@ -93,14 +100,17 @@ namespace RemotePlayers
 	[[nodiscard]] bool IsStandInBase(std::uint32_t a_base);
 
 	// Deletes every puppet actor but keeps the players; they respawn on the next Update.
-	// Used before saving and loading so puppets never end up in a save file: each is disabled now and
-	// marked for deletion a second later (DeferredDelete::MayDelete), its record kept out of the save.
-	// a_deleteNow marks them for deletion at once, for a teleport (Party), whose cells the engine
-	// clears later in this frame.
-	void DespawnAll(bool a_deleteNow = false);
+	// Used before saving and loading, and before a teleport (Party), so puppets never end up in a save file: each is
+	// disabled now and marked for deletion a second later (DeferredDelete::MayDelete), its record kept out of every save
+	// meanwhile (one whose cell a teleport unloads too: see Update). Never both in one frame, a teleport's neither: a
+	// physics job of the frames after still handles a collision with the stand-in.
+	void DespawnAll();
 	// Deletes another reference the session placed (Spawns' copies of friends' NPCs) the way stand-ins go: disabled
 	// once that is safe, then deleted, and never written into a save (DespawnAll deletes what still waits).
 	void Discard(RE::ObjectRefHandle a_ref, std::chrono::steady_clock::time_point a_placedAt);
+	// Whether the reference is one of ours on its way out: buried (waiting to be disabled or deleted) or marked for deletion and
+	// not yet let go of by the engine. Only those can outlive a load (SaveGuard::BeforeLoad).
+	bool OnItsWayOut(const RE::TESObjectREFR* a_ref);
 	// Places an empty copy of a power armor frame (as the one a stand-in gets into), kept out of saves: Spawns' copy of a
 	// frame a friend's game made. In our player's cell (a_cell: an interior, or outside in its worldspace). Deleted with
 	// Discard.
@@ -109,6 +119,21 @@ namespace RemotePlayers
 	// stands within ArmorFrames::ORIGINAL_RADIUS of a_spot and nobody is in it: Spawns' copy of the same frame, once
 	// their game shares it, takes it over rather than standing a second suit in the same spot. None otherwise.
 	RE::ObjectRefHandle TakeParkedCopy(std::uint32_t a_owner, std::uint32_t a_base, const RemoteEdits::Spot& a_spot);
+	// Our player asks to get into this frame or opens its inventory (Equipment's frame gate), or someone else here (a_by: a
+	// companion ordered into it) is found in it: whether they are kept out of it, a copy the session placed of a friend's
+	// frame (see FriendFrame). The HUD tells our player whose it is. Someone else is sent out of it again (each frame:
+	// Actor.SwitchToPowerArmor with None, FriendFrame::SendsOut).
+	[[nodiscard]] bool KeepOutOfFrame(RE::TESObjectREFR* a_frame, Equipment::FrameAsk a_ask, const RE::Actor* a_by);
+	// Whether someone here is in this frame who is to be sent out of it, or just got out of it (its 3D being built again,
+	// FriendFrame::Settling): the frame is not theirs, and Spawns' and our own frame copies are left as they are meanwhile
+	// (not "it is theirs now", nor taken for a copy that never loaded).
+	[[nodiscard]] bool BeingSentOut(RE::TESObjectREFR* a_frame);
+	// Whether someone our game sends out of this frame copy is in it, getting in, or on their way out: nothing buries it
+	// then (FriendFrame::ChooseLeave). A save keeps it as it is, saved with the frame they wear (Spawns' DiscardCopies too).
+	[[nodiscard]] bool SomeoneSentOutOf(RE::TESObjectREFR* a_frame);
+	// As a load comes (after DespawnAll): who was being sent out of a copy, and the copies just got out of, are forgotten
+	// (their ids name the loaded game's forms), and a send-out call still queued in the VM is not to take effect after it.
+	void BeforeLoad();
 	// A save was loaded: forgets handles and runtime forms from before it.
 	void OnGameLoaded();
 

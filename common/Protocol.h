@@ -28,7 +28,12 @@ namespace Protocol
 	// workshop pieces are powered (settlement-power). 44 was a trial bundle's.
 	// 48: the menu a player is in (PlayerStatus::menu, MenuKind): the Pip-Boy their stand-in raises, the icon over it.
 	// 49: the host's session rules in the welcome (SessionRules: downed and revive, VATS in real time).
-	inline constexpr std::uint16_t VERSION = 49;
+	// 50: the next release's branches together: world traps (kReportTrap, kTraps: a mine, a tripwire, a bear trap, a
+	// grenade bouquet that went off, was disarmed or was taken), destructible objects' damage (Destruction:
+	// kReportDestruction, kDestructions: a car, a barrel or a gas pump a player shot is as wrecked in every game, and goes
+	// off once) and what a leveled NPC was rolled as in the game that runs it (kReportNpcIdentity, kNpcIdentity:
+	// NpcIdentity). 51, 52 and 54 were those branches' own test builds (traps', destructibles', NPC identity's).
+	inline constexpr std::uint16_t VERSION = 50;
 	inline constexpr std::uint16_t DEFAULT_PORT = 7779;
 	// A name's bytes on the wire: Name::MAX_CHARACTERS characters of UTF-8, up to four bytes each (common/Name.h).
 	inline constexpr std::size_t   MAX_NAME_LENGTH = 128;
@@ -137,6 +142,7 @@ namespace Protocol
 		kVoice = 23,              // a piece of the sender's voice (Steam-compressed)
 		kReportMarkers = 24,      // map markers the sender discovered
 		kReportNpcEquipment = 26,  // what an NPC the sender runs is wearing and holding
+		kReportNpcIdentity = 67,   // what an NPC the sender runs was rolled as: its leveled templates, level and factions
 		kReportFace = 27,          // the sender's character's face and body shape
 		kReportWorkshopItem = 28,  // the sender placed, moved or scrapped a workshop object
 		kReportExplosion = 29,     // an explosion after one of the sender's throws
@@ -144,7 +150,9 @@ namespace Protocol
 		kReportSpawn = 31,         // the sender's game made an NPC at runtime; it shares it under this spawn id
 		kRename = 32,              // the sender's name changed (a new character named in the opening after connecting)
 		kRequestLoadOrder = 33,    // the sender wants the session's load order (answered with kLoadOrder)
+		kReportDestruction = 34,   // destructible objects (a car, a barrel) the sender's game damaged past a stage (Destructions)
 		kReportWorkshopPower = 62,  // which of the sender's own workshop pieces their game powers now
+		kReportTrap = 64,           // a world trap in the sender's game went off, was disarmed or was taken (TrapState)
 		kHostCommand = 54,         // the host's own game: kick, ban, unban, lock, unlock or change the password (HostCommand)
 		kRequestHostInfo = 55,     // the host's own game wants the host controls' state (answered with kHostInfo)
 		// 18 and 120 were the ping before version 43, which named only where the sender stood.
@@ -181,6 +189,7 @@ namespace Protocol
 		kWorldTime = 119,         // the session's time of day and weather
 		kPartyXp = 121,           // another player got XP for a kill
 		kNpcEquipment = 128,      // what an NPC run by another player is wearing and holding
+		kNpcIdentity = 167,       // what an NPC another player's game runs was rolled as there: the session's roll of it
 		kPlayerFace = 129,        // another player's face and body shape
 		kWorkshopItem = 130,      // a workshop object another player placed, moved or scrapped
 		kWorkshopItems = 131,     // several of those at once (a joiner's catch-up)
@@ -189,7 +198,9 @@ namespace Protocol
 		kSpawned = 134,           // an NPC another player's game made at runtime: place a copy of it
 		kRenamed = 135,           // another player's name changed
 		kLoadOrder = 136,         // the session's load order (the host's): after a hello whose load order differs, or when asked
+		kDestructions = 137,      // destructible objects damaged in another player's game, or the session's (playerId 0: catching up)
 		kWorkshopPower = 162,     // which of another player's workshop pieces their game powers: their copies here show it
+		kTraps = 164,             // world traps spent in the session: one that just went off in another game (live), or the list (catching up)
 		kRemoved = 154,           // the host removed you (kicked or banned); the connection closes after it
 		kHostInfo = 155,          // to the host's own game: the session's lock, password and ban list (HostInfo)
 		kPinged = 156,            // another player pinged something
@@ -197,6 +208,7 @@ namespace Protocol
 		kObjectRested = 153,      // an object another player let go of, or moved, and where it came to rest
 		kRadiantStarted = 158,    // a radiant quest started in another player's game, with its fills
 		kRadiantStage = 159,      // a shared radiant quest reached a new stage in another player's game
+		kPlayerReloaded = 160,    // another player loaded a save (asked for the world state again): their game knows no radiant run of ours
 		kPluginTable = 145,       // the session's plugin table, which numbers every form ID on the wire: before the welcome, and when it grows
 		kHeartbeatAck = 122,
 		kQuestDone = 123,         // another player completed a quest
@@ -476,6 +488,13 @@ namespace Protocol
 		std::uint32_t playerId = 0;
 	};
 
+	// Another player's game loaded a save (kRequestWorldState): what it knew of the others' radiant runs went with the
+	// world it threw away, so each game sends its runs going again (RadiantSync).
+	struct PlayerReloaded
+	{
+		std::uint32_t playerId = 0;
+	};
+
 	// A player's name changed after their hello: a joiner who connected before naming a new character in the
 	// opening (Vault 111) sends it once the name is there. kRename: playerId is ignored client -> server; kRenamed:
 	// whose name it is, cleaned by the server as a hello's (common/Name.h).
@@ -722,9 +741,19 @@ namespace Protocol
 		inline constexpr std::uint8_t kScrapped = 1;
 	}
 
-	// An explosion the sender's game saw after one of its throws (a grenade, a mine, a Molotov): the
-	// others set off the same explosion at the same spot, since a thrown projectile cannot be launched
-	// for a stand-in (the engine's throw action plays the animation only).
+	// An explosion the sender's player (or an NPC its game runs) set off: a grenade, a Molotov, a missile, a shell, an
+	// explosive bullet, a mine they shot. The others set off the same explosion at the same spot, once: a stand-in's shot
+	// that would go off flies with no blast of its own, and it throws no grenade (docs/DESIGN.md, "Who sets off an
+	// explosion"). Sent reliably: the game that runs an NPC it reaches deals its blow there, so a lost report is a blow
+	// dealt nowhere.
+	//
+	// The server passes one on from near where its reporter or another player is (REPORTED_EXPLOSION_RANGE: the sender
+	// reports one wherever any player could be hit by it, as only a player's own game deals their blows), within the
+	// reporter's budget (a burst, then a few a second). Each game judges its own reports by stricter numbers before it sends them
+	// (RemoteEdits::ReportGate): one it sends is sure to reach the others.
+	inline constexpr float  REPORTED_EXPLOSION_RANGE = 8000.0f;
+	inline constexpr double REPORTED_EXPLOSION_BURST = 16.0;
+	inline constexpr double REPORTED_EXPLOSIONS_PER_SECOND = 4.0;
 	struct Explosion
 	{
 		std::uint32_t playerId = 0;  // who reported it (set by the server)
@@ -746,6 +775,50 @@ namespace Protocol
 
 		bool operator==(const Activation&) const = default;
 	};
+
+	// A world trap from a plugin (a placed mine, a tripwire, a tension trigger, a grenade bouquet or another of the game's
+	// TrapBase traps, a bear trap) that is spent in the sender's game: it went off, a player disarmed it, or a player took it
+	// (a mine picked up, a sprung bear trap carried off). Kept by the server, first come first kept (a take still follows a
+	// disarm), and sent to everyone: live as it happens (each game whose copy is armed sets it off), and in the list a joiner
+	// or a loaded save gets (spent quietly). src/game/TrapRules.h has the rules.
+	struct TrapState
+	{
+		enum State : std::uint8_t
+		{
+			kFired = 1,     // it went off (stepped on, shot, set off by its trigger)
+			kDisarmed = 2,  // a player disarmed it
+			kTaken = 3,     // a player took it away: it is gone from the world
+		};
+
+		std::uint32_t playerId = 0;  // who reported it (set by the server)
+		std::uint32_t refId = 0;
+		std::uint8_t  state = kFired;
+		std::uint32_t cell = 0;        // where it is: interior cell, or 0 outside
+		std::uint32_t worldspace = 0;  // ... or its worldspace
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
+
+		bool operator==(const TrapState&) const = default;
+	};
+
+	// kTraps: live (one just spent in a friend's game) or caught up (part of the session's list, MAX_TRAPS_PER_PACKET at most).
+	struct TrapStates
+	{
+		bool                   live = false;
+		std::vector<TrapState> traps;
+
+		bool operator==(const TrapStates&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_TRAPS_PER_PACKET = 1000;
+
+	// Whether a trap's new state replaces the one the session has: none yet, or a take after a spring or a disarm (the trap is
+	// gone from the world now: a sprung bear trap carried off, a disarmed mine picked up). Never the other way: a trap taken
+	// stays taken. A take is believed only from a player standing at the trap (the server's TRAP_REACH), so a report can't
+	// take away every spent trap around its sender.
+	[[nodiscard]] constexpr bool TrapSupersedes(std::uint8_t a_new, std::optional<std::uint8_t> a_old)
+	{
+		return !a_old || (a_new == TrapState::kTaken && *a_old != TrapState::kTaken);
+	}
 
 	// A power wire's shape. The game makes a wire (a BGSBendableSpline reference) between two things the
 	// player wired: its reference stands halfway between its ends, each end halfExtents away (one plus, one
@@ -863,6 +936,46 @@ namespace Protocol
 
 	inline constexpr std::size_t MAX_POWER_ENTRIES = 255;
 
+	// A destructible object placed by a plugin (a car, an explosive barrel, a gas pump: a reference whose base has
+	// destruction data, IsShareableRef), damaged in the sender's game: its health there (the engine's, in its own units: a
+	// station wagon has 500), and whether the engine counts it destroyed. Each game works out from the health which of the
+	// object's stages it has passed, as the engine does (src/game/DestructionRules.h). The session keeps the lowest health
+	// and destroyed for good (a wreck is never mended), and so does each game.
+	//
+	// explode: in a report, the change passed a stage that sets off an explosion in the sender's game; relayed, the
+	// server lets it through only after one of the sender's shots or throws, within their explosion budget. A game that
+	// gets it sets off the explosion of each stage the change moves its own copy past, once: a stage it had passed
+	// already went off there. Never in a catch-up (a world state after joining or loading: playerId 0), which is the
+	// wreck alone.
+	struct Destruction
+	{
+		std::uint32_t refId = 0;
+		float         health = 0.0f;
+		bool          destroyed = false;
+		bool          explode = false;
+		// In a report only (kReportDestruction): where the object stands in the sender's game, an interior cell (worldspace
+		// 0) or a worldspace (cell 0), for the server to hold against where the sender is (a report is otherwise a way to
+		// wreck any car, and set it off, at anyone). Never relayed nor kept: a game knows where its own copy is.
+		std::uint32_t cell = 0;
+		std::uint32_t worldspace = 0;
+		float         x = 0.0f, y = 0.0f, z = 0.0f;
+
+		bool operator==(const Destruction&) const = default;
+	};
+
+	// kReportDestruction / kDestructions, reliable: what changed, MAX_DESTRUCTION_ENTRIES at most a packet.
+	struct Destructions
+	{
+		std::uint32_t            playerId = 0;  // stamped by the server; 0 in a catch-up
+		std::vector<Destruction> entries;
+
+		bool operator==(const Destructions&) const = default;
+	};
+
+	inline constexpr std::size_t MAX_DESTRUCTION_ENTRIES = 255;
+	// The game's toughest destructible (a vertibird's wreck, a bus) has a few thousand; a friend's message can say anything.
+	inline constexpr float MAX_DESTRUCTIBLE_HEALTH = 1000000.0f;
+
 	struct FaceBone
 	{
 		std::uint32_t region = 0;
@@ -954,6 +1067,51 @@ namespace Protocol
 		std::vector<std::uint32_t> items;
 
 		bool operator==(const NpcEquipment&) const = default;
+	};
+
+	// What an NPC was rolled as in the game that runs it. A leveled NPC (a raider, a bloatfly, a ghoul placed from a
+	// leveled list) is put together by each game on its own as it first loads: its list is rolled at that game's player's
+	// level, and so is the chance of a legendary one. So one game had a legendary bloatfly where the other had a plain
+	// one. The engine keeps the roll as one NPC per template slot (ExtraLeveledCreature: traits, stats, factions, spells
+	// and the rest, in TEMPLATE_USE_FLAG's order), and a legendary roll is in them (its name, keyword and mutation). The
+	// owner reports them, and the others make their own NPC that roll (src/game/NpcRoll.h). factions: for a spawn only
+	// (kFactions), what its owner's copy is in, the runtime changes of a random encounter or a settlement included.
+	// playerId is ignored client -> server: the server sets it, and keeps the first runner's (the session's roll).
+	inline constexpr std::size_t   IDENTITY_TEMPLATES = 13;
+	inline constexpr std::size_t   MAX_IDENTITY_FACTIONS = 32;
+	inline constexpr std::uint16_t MAX_IDENTITY_LEVEL = 1000;
+
+	struct FactionRank
+	{
+		std::uint32_t faction = 0;
+		std::int8_t   rank = 0;
+
+		bool operator==(const FactionRank&) const = default;
+	};
+
+	struct NpcIdentity
+	{
+		enum Flags : std::uint8_t
+		{
+			kLegendary = 1 << 0,    // its owner's game rolled it legendary (logged and shown; the templates make it so)
+			kFactions = 1 << 1,     // factions lists what it is in (else they were not sent)
+			kFactionsCut = 1 << 2,  // ... and it is in more than MAX_IDENTITY_FACTIONS: the list is the first of them
+		};
+		static constexpr std::uint8_t ALL_FLAGS = kLegendary | kFactions | kFactionsCut;
+
+		std::uint32_t playerId = 0;
+		std::uint32_t refId = 0;         // a plugin's reference or a spawn id
+		std::uint32_t originalBase = 0;  // the NPC it was placed as (its leveled data's), 0 if it isn't leveled
+		std::uint16_t level = 0;
+		std::uint8_t  flags = 0;
+		// The slots the owner's roll filled: bit i for templates[i].
+		std::uint16_t mask = 0;
+		// Slot i's NPC (0 where the roll left it empty). Translated, one the other side lacks becomes 0 with its bit still
+		// in mask: the receiver can tell the roll is not whole there.
+		std::array<std::uint32_t, IDENTITY_TEMPLATES> templates{};
+		std::vector<FactionRank>                      factions;
+
+		bool operator==(const NpcIdentity&) const = default;
 	};
 
 	// NPC AI ownership: one player's game runs each NPC; the others copy its movement.
@@ -1178,6 +1336,11 @@ namespace Protocol
 
 	// A ping's name on the wire: what the sender's game calls the target ("Raider"), for a game with no copy of it.
 	inline constexpr std::size_t MAX_PING_NAME_LENGTH = 64;
+
+	// The least time between two of a player's pings the server passes on, by when they arrive. Less than a game's own
+	// spacing (PingRules::MIN_GAP, 1 s by key press): pings pressed a second apart reach the server a little sooner or later
+	// than that with the network's jitter, and one dropped here would show on the pinger's compass and on no friend's.
+	inline constexpr auto PING_SERVER_GAP = std::chrono::milliseconds{ 800 };
 
 	// A ping: "look at this". playerId: who pinged (ignored client -> server). The spot is where the target was in the
 	// sender's game, inside (cell) or outside (worldspace). target: for kActor the id the session knows the NPC by
@@ -2055,6 +2218,25 @@ namespace Protocol
 		return msg;
 	}
 
+	inline std::vector<std::uint8_t> Encode(const PlayerReloaded& a_msg)
+	{
+		Writer w{ MessageType::kPlayerReloaded };
+		w.U32(a_msg.playerId);
+		return w.Data();
+	}
+
+	inline std::optional<PlayerReloaded> DecodePlayerReloaded(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		PlayerReloaded msg;
+		msg.playerId = r.U32();
+		if (!r.Ok()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const Rename& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -2192,6 +2374,92 @@ namespace Protocol
 		msg.playerId = r.U32();
 		msg.refId = r.U32();
 		if (!r.Ok() || !r.AtEnd() || !IsShareableRef(msg.refId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	namespace detail
+	{
+		inline void WriteTrap(Writer& a_w, const TrapState& a_trap)
+		{
+			a_w.U32(a_trap.playerId);
+			a_w.U32(a_trap.refId);
+			a_w.U8(a_trap.state);
+			a_w.U32(a_trap.cell);
+			a_w.U32(a_trap.worldspace);
+			a_w.F32(a_trap.x);
+			a_w.F32(a_trap.y);
+			a_w.F32(a_trap.z);
+		}
+
+		// False for one that names no trap a session can share, a state there is none of, or a place outside the world.
+		inline bool ReadTrap(Reader& a_r, TrapState& a_trap)
+		{
+			a_trap.playerId = a_r.U32();
+			a_trap.refId = a_r.U32();
+			a_trap.state = a_r.U8();
+			a_trap.cell = a_r.U32();
+			a_trap.worldspace = a_r.U32();
+			a_trap.x = a_r.F32();
+			a_trap.y = a_r.F32();
+			a_trap.z = a_r.F32();
+			return a_r.Ok() && IsShareableRef(a_trap.refId) && a_trap.state >= TrapState::kFired && a_trap.state <= TrapState::kTaken && InWorld(a_trap.x) &&
+			       InWorld(a_trap.y) && InWorld(a_trap.z);
+		}
+	}
+
+	// kReportTrap: the sender's one trap.
+	inline std::vector<std::uint8_t> Encode(const TrapState& a_msg)
+	{
+		Writer w{ MessageType::kReportTrap };
+		detail::WriteTrap(w, a_msg);
+		return w.Data();
+	}
+
+	inline std::optional<TrapState> DecodeTrapState(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TrapState msg;
+		if (!detail::ReadTrap(r, msg) || !r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// Up to MAX_TRAPS_PER_PACKET traps (any more are left off: the server splits its list).
+	inline std::vector<std::uint8_t> Encode(const TrapStates& a_msg)
+	{
+		Writer     w{ MessageType::kTraps };
+		const auto count = (std::min)(a_msg.traps.size(), MAX_TRAPS_PER_PACKET);
+		w.U8(a_msg.live ? 1 : 0);
+		w.U16(static_cast<std::uint16_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			detail::WriteTrap(w, a_msg.traps[i]);
+		}
+		return w.Data();
+	}
+
+	// None if any trap in it is bad (see ReadTrap), or a live one isn't one trap alone.
+	inline std::optional<TrapStates> DecodeTrapStates(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		TrapStates msg;
+		const auto live = r.U8();
+		const auto count = r.U16();
+		if (!r.Ok() || live > 1 || count > MAX_TRAPS_PER_PACKET || (live == 1 && count != 1)) {
+			return std::nullopt;
+		}
+		msg.live = live == 1;
+		msg.traps.resize(count);
+		for (auto& trap : msg.traps) {
+			if (!detail::ReadTrap(r, trap)) {
+				return std::nullopt;
+			}
+		}
+		if (!r.AtEnd()) {
 			return std::nullopt;
 		}
 		return msg;
@@ -2710,6 +2978,68 @@ namespace Protocol
 		return msg;
 	}
 
+	// Up to MAX_DESTRUCTION_ENTRIES entries (any more are left off: the sender splits them).
+	inline std::vector<std::uint8_t> Encode(const Destructions& a_msg, MessageType a_type)
+	{
+		Writer     w{ a_type };
+		const auto count = (std::min)(a_msg.entries.size(), MAX_DESTRUCTION_ENTRIES);
+		w.U32(a_msg.playerId);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			const auto& entry = a_msg.entries[i];
+			w.U32(entry.refId);
+			w.F32(entry.health);
+			w.U8(static_cast<std::uint8_t>((entry.destroyed ? 1 : 0) | (entry.explode ? 2 : 0)));
+			if (a_type == MessageType::kReportDestruction) {
+				w.U32(entry.cell);
+				w.U32(entry.worldspace);
+				w.F32(entry.x);
+				w.F32(entry.y);
+				w.F32(entry.z);
+			}
+		}
+		return w.Data();
+	}
+
+	// None if it names nothing, a reference no plugin placed, or a health no object has.
+	inline std::optional<Destructions> DecodeDestructions(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		const bool report = static_cast<MessageType>(r.U8()) == MessageType::kReportDestruction;
+		Destructions msg;
+		msg.playerId = r.U32();
+		const auto count = r.U8();
+		if (!r.Ok() || count == 0) {
+			return std::nullopt;
+		}
+		msg.entries.resize(count);
+		for (auto& entry : msg.entries) {
+			entry.refId = r.U32();
+			entry.health = r.F32();
+			const auto flags = r.U8();
+			if (!r.Ok() || (flags & ~3u) != 0 || !IsShareableRef(entry.refId) || !std::isfinite(entry.health) || entry.health < 0.0f ||
+				entry.health > MAX_DESTRUCTIBLE_HEALTH) {
+				return std::nullopt;
+			}
+			entry.destroyed = (flags & 1) != 0;
+			entry.explode = (flags & 2) != 0;
+			if (report) {
+				entry.cell = r.U32();
+				entry.worldspace = r.U32();
+				entry.x = r.F32();
+				entry.y = r.F32();
+				entry.z = r.F32();
+				if (!r.Ok() || !std::isfinite(entry.x) || !std::isfinite(entry.y) || !std::isfinite(entry.z)) {
+					return std::nullopt;
+				}
+			}
+		}
+		if (!r.AtEnd()) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
 	inline std::vector<std::uint8_t> Encode(const Face& a_msg, MessageType a_type)
 	{
 		Writer w{ a_type };
@@ -2968,6 +3298,73 @@ namespace Protocol
 			msg.items.push_back(r.U32());
 		}
 		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId)) {
+			return std::nullopt;
+		}
+		return msg;
+	}
+
+	// The filled slots' NPCs in mask order, then the factions.
+	inline std::vector<std::uint8_t> Encode(const NpcIdentity& a_msg, MessageType a_type)
+	{
+		Writer w{ a_type };
+		w.U32(a_msg.playerId);
+		w.U32(a_msg.refId);
+		w.U32(a_msg.originalBase);
+		w.U16(a_msg.level);
+		w.U8(a_msg.flags);
+		const auto mask = static_cast<std::uint16_t>(a_msg.mask & ((1u << IDENTITY_TEMPLATES) - 1));
+		w.U16(mask);
+		for (std::size_t i = 0; i < IDENTITY_TEMPLATES; ++i) {
+			if (mask & (1u << i)) {
+				w.U32(a_msg.templates[i]);
+			}
+		}
+		const auto count = (std::min)(a_msg.factions.size(), MAX_IDENTITY_FACTIONS);
+		w.U8(static_cast<std::uint8_t>(count));
+		for (std::size_t i = 0; i < count; ++i) {
+			w.U32(a_msg.factions[i].faction);
+			w.U8(static_cast<std::uint8_t>(a_msg.factions[i].rank));
+		}
+		return w.Data();
+	}
+
+	// An NPC the session names, a level of at most MAX_IDENTITY_LEVEL, slots only with the NPC it was placed as, and
+	// factions only when flagged, none 0 and none twice. A slot's NPC may be 0 (a translation had none for it).
+	inline std::optional<NpcIdentity> DecodeNpcIdentity(std::span<const std::uint8_t> a_data)
+	{
+		Reader r{ a_data };
+		r.U8();
+		NpcIdentity msg;
+		msg.playerId = r.U32();
+		msg.refId = r.U32();
+		msg.originalBase = r.U32();
+		msg.level = r.U16();
+		msg.flags = r.U8();
+		msg.mask = r.U16();
+		if (!r.Ok() || msg.mask >= (1u << IDENTITY_TEMPLATES) || (msg.flags & ~NpcIdentity::ALL_FLAGS) != 0) {
+			return std::nullopt;
+		}
+		for (std::size_t i = 0; i < IDENTITY_TEMPLATES; ++i) {
+			if (msg.mask & (1u << i)) {
+				msg.templates[i] = r.U32();
+			}
+		}
+		const auto count = r.U8();
+		if (count > MAX_IDENTITY_FACTIONS) {
+			return std::nullopt;
+		}
+		for (std::uint8_t i = 0; i < count && r.Ok(); ++i) {
+			FactionRank entry;
+			entry.faction = r.U32();
+			entry.rank = static_cast<std::int8_t>(r.U8());
+			if (entry.faction == 0 || std::ranges::any_of(msg.factions, [&](const FactionRank& a_other) { return a_other.faction == entry.faction; })) {
+				return std::nullopt;
+			}
+			msg.factions.push_back(entry);
+		}
+		const bool listed = (msg.flags & NpcIdentity::kFactions) != 0;
+		if (!r.Ok() || !r.AtEnd() || !IsActorRef(msg.refId) || msg.level > MAX_IDENTITY_LEVEL || (msg.mask != 0 && msg.originalBase == 0) ||
+			(!listed && (!msg.factions.empty() || (msg.flags & NpcIdentity::kFactionsCut) != 0))) {
 			return std::nullopt;
 		}
 		return msg;

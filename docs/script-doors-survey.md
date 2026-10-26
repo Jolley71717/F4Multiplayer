@@ -84,6 +84,73 @@ their open state is shared as a door's and set in a friend's game through `SetOp
 those switches are covered by the same state; the other switches are not pressed again later (they toggle, with
 effects of their own). 4 is left as it is.
 
+Since then, second round (2026-10-20, src/game/DoorShare.h and SharedGates.h): the remaining scripted gates and
+doors were read one by one (below, "Gates with a script of their own" and "Doors with a script on them"), and doors an
+NPC opens were looked at. Nuka-World (DLCNukaWorld.esm) and Automatron (DLCRobot.esm), installed on 2026-10-19, were
+read for doors and gates too; their quest stages were not surveyed.
+
+- Gates run by a script that extends the two-state one, or with another script beside it: shared where what the
+  script adds is a show, or happens on activation only (`SharedGates::CHILDREN`, `SIBLINGS`). 8 more gates.
+- Doors with a script on them: shared where every script on the door acts only on activation or on the lock, and
+  never moves the door itself (`DoorShare::QUIET_SCRIPTS`). A friend's door is opened through the engine's open
+  state, which raises no OnActivate. 70 more doors, 53 of them ChainedDoor's.
+- Doors an NPC opens: an NPC another game runs is a copy with its AI off, so it walks through its owner's doors
+  without opening ours. A plain door an NPC our game runs opens near our player is now watched (30 s) and its state
+  shared like a player's. The friend's copy of that NPC opens nothing, so nothing in their game fights it; their own
+  NPCs at the same door report it the same way, the latest word standing. Load doors and automatic doors are not.
+
+## Gates with a script of their own
+
+Activators that run `Default2StateActivator` together with, or in place of, another script (Fallout4.esm,
+DLCNukaWorld.esm, DLCRobot.esm; DLCCoast.esm and the Creation Club plugins have none). A reference that runs a script
+extending the two-state one has the base's copy removed (VMAD status "removed"), so the extending script is the only
+one: it is the one called, and its overrides run.
+
+| Script | Gates | Kind | What it adds | Verdict |
+|---|---|---|---|---|
+| DN066_LabDoorScript | 1 (08274D, Med-Tek) | extends | on SetOpenNoWait: sounds the lab klaxon, opens the window shutters | shared (CHILDREN) |
+| DN066_SubLabDoorScript | 1 (084CFE, Med-Tek) | extends | on SetOpenNoWait: klaxon, nine shutters | shared (CHILDREN) |
+| DN070_TreasureDoorScript | 2 (0E9A06, 0E9A18, Jamaica Plain) | extends | after opening, sets DN070 95 or 105 (lights, displays, the "Battle Hymn" music), after closing 110 (music off) | shared (CHILDREN) |
+| dn143RemoveFromCaptiveFaction | 2 (1A58A0, 1A58A9, Vault 75's cells) | beside | on activation: the captives turn on the player | shared (SIBLINGS): SetOpenNoWait raises no OnActivate, so the captives are let out only in the presser's game |
+| DefaultRefEnableLinkedRefOnActivate | 1 (0D676F, Boston Airport ruins) | beside | on activation: enables its link, which is unset | shared (SIBLINGS) |
+| DLC01:DLC01_GarageDoorKlaxonScript | 1 (01001C54, the Mechanist's lair) | beside | klaxon lights and sound while the door moves | shared (SIBLINGS) |
+| DLC01:DLC01_MechanistDoorScript | 84 (the Mechanist's lair) | extends | opened in sequence by a door control (DLC01_MechanistDoorControlScript), whose red and green state is each game's, set by DLC01Lair's quest script | not shared: a door set from outside would disagree with its control |
+| DLC01:DLC01_TrackSystemDoor | 24 (the lair's track system) | extends | opened and closed as the track's carts pass, held open while its trigger holds something | not shared: each game's track runs its own |
+| DN017_PrototypeLabDoorScript | 1 (11C90A, Arcjet) | extends | sets DN017 40 and 41, then activates the lab's stinger | not shared: Arcjet's stages are BoS101's (NEVER) |
+| DN103_SetStageOnOpen | 1 (122410, Poseidon Energy) | extends | sets DN103 10, which sets 20: the protectrons wake | not shared: it would move NPCs in the friend's game |
+| DN084_AssaultronDoorScript | 2 (Mass Fusion) | beside | | not shared: NEVER |
+| DLC04:DLC04_GauntletGasDoorScript | 1 (0100C9F8, the Gauntlet) | extends | sets DLC04MQ01Gauntlet 850 | not shared: Nuka-World's story |
+| dn133_SecurityDoorScript | 3 (the Castle) | beside | a SetOpen and an animation of its own, a "closed" message | not shared: the Castle's quest opens it through its own script |
+| DN009_SecurityDoor | 1 (064E9A) | beside | sets DN009_MQ205's stage when the animation ends | not shared: Hunter/Hunted (NEVER), and the animation plays in the friend's game too |
+| DN015_ActivateOnOpen | 1 (135A74, Cambridge Polymer Labs) | beside | activates its link (the glowing one's activator) as the animation plays | not shared: it would let the glowing one out in the friend's game |
+| DN130_CambridgePDDoorStateToggle | 1 (03D6BE) | beside | on load, sets the gate from DN130's stage | not shared: the Brotherhood's stage decides it in each game |
+
+## Doors with a script on them
+
+Doors (DOOR records, not activators) that a script is attached to, by the scripts on them, base and reference
+together (Fallout4.esm, DLCCoast.esm, DLCNukaWorld.esm, DLCRobot.esm; the Creation Club plugins have none).
+
+| Scripts | Doors | What the script does | Verdict |
+|---|---|---|---|
+| ChainedDoor | 53 (44, Coast 4, Nuka-World 5) | on activation: "chained" or "unchain me" messages and a rattle; the chain beside it (DoorChain, an activator) unlocks the door | shared (QUIET) |
+| DefaultRefOnActivate | 6 (Parsons State MS09, the Memory Den MS04, Libertalia Inst301, Covenant MS17, Nuka-World DLC04MS01 and DLC04MQ01Gauntlet) | on activation: sets a stage | shared (QUIET): the stage stays the activator's game's, or QuestSync's |
+| DefaultRefEnableLinkedRefOnActivate | 4 (College Square, Faneuil Hall, Wilson Atomatoys x2) | on activation: enables its link (an NPC at College Square) | shared (QUIET): only in the activator's game |
+| DefaultRefEnableLinkedRefOnActivate + DefaultRefOnActivate | 1 (09D568, Mass Fusion) | disables a navcut, sets DN084 410 | not shared: `DoorShare::NEVER` |
+| DefaultActivateLinkOnUnlock | 1 (0F06D2, Boston Public Library) | on unlock: activates its link | shared (QUIET): the lock is shared already |
+| MS10CellDoorScript | 1 (1478BF, Trinity Tower) | on unlock: MS10b 35, Trinity Tower 500 | shared (QUIET): the lock is shared already |
+| DefaultMusicActivateScript | 1 (Nuka-World, Grandchester Mansion) | music on activation | shared (QUIET) |
+| DefaultBlockFollowerActivation | 2 (Nuka-World, Kiddie Kingdom) | companions can't be sent to it | shared (QUIET) |
+| DisableEnableLinkOnActivateOnce (+ PlaySoundOnActivate) | 2 (HalluciGen's stairs marker, a bunker's NPC) | on activation: enables its link once | not shared: at HalluciGen the link is the stairs the way needs, which the friend's game wouldn't get |
+| DefaultRefOnOpen | 7 (HalluciGen's amnesiac door, Nuka-World's shacks...) | on opening: sets a stage | not shared: the engine's open state may raise OnOpen in the friend's game |
+| POI_OnOpenActivateAmbush, DLC04_GauntletMonkeyTrapScript | 3 | on opening: an ambush, a trap | not shared |
+| PulowskShelterScript | 51 | the shelter shuts its player in | not shared: each player's own |
+| loadelevatordoorscript, LoadElevatorDoorScript, ElevatorDoorForwardActivationScript, InvisibleDoorBlockActivationScript, DefaultBlockActivationOnLoad | 101 | elevators and load elevators | not shared (gap 4) |
+| Vault111LeverScript, CharGenFridgeDoorScript | 26 | the opening | not shared: NEVER |
+| MS17DoorLockOnLoadScript (+ defaultStartSceneOnActivate), MS17CovenantDoor | 6 | Covenant locks them on load and starts its scene | not shared |
+| DLC01:DLC01Lair_SecurityDoorScript | 3 | blocks activation; the lair's quest opens it, with scenes | not shared |
+| DLC03:DLC03POI04LockedBunkerDoorScript | 1 | blocks activation; opens itself, lets feral ghouls in | not shared |
+| StimObjectScript, SentinelSiteDoorBlockAfterActivate, REObject02FakeDoorScript, DN130_CambridgePDDoorStateToggle, DBPOI01PipeScript | 6 | block activation and open or unlock by script, a random encounter, the Brotherhood's stage, a power box lid | not shared |
+
 ## Quest stages, by quest
 
 Form IDs are within their plugin (no load-order byte). "Set by" says what sets the stage in a normal game.

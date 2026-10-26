@@ -7,6 +7,7 @@
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
 #include "game/RemotePlayers.h"
+#include "game/Rolls.h"
 #include "game/SaveGuard.h"
 #include "game/SpawnBook.h"
 #include "game/Story.h"
@@ -27,12 +28,26 @@ namespace Spawns
 		SpawnBook::Theirs theirs;
 
 		// Our copies of friends' spawns, by spawn id: the handle (its id alone may name something else once it is gone).
+		// The id and base it was placed under go with it (see HeldCopy): the engine unloads a copy with its cell, its handle
+		// stops resolving and the cell keeps its record, which brought it back beside the next copy placed (Refresh).
 		struct Placed
 		{
 			RE::ObjectRefHandle handle;
 			Clock::time_point   placedAt{};
+			HeldCopy::Ids       ids;
 		};
 		std::unordered_map<std::uint32_t, Placed> placed;
+
+		// When each friend's spawn was first seen here: its copy waits a moment for their roll of it (NpcRoll::IDENTITY_WAIT).
+		std::unordered_map<std::uint32_t, Clock::time_point> seenAt;
+
+		// What our copy of a friend's spawn is placed from: the NPC their game placed it as, which ours rolls and their
+		// roll then makes theirs, when their roll of it came and that is a leveled NPC here; else the spawn's base.
+		std::uint32_t PlaceBase(std::uint32_t a_id, std::uint32_t a_base)
+		{
+			const auto roll = NpcSync::RollOf(a_id);
+			return NpcRoll::PlaceFrom(roll, a_base, roll && Rolls::IsLeveledNpc(roll->originalBase));
+		}
 
 		// Our NPCs killed for another game's report (a friend's kill of ours, or our copy's death in its owner's game):
 		// their deaths here are not reported back.
@@ -66,11 +81,43 @@ namespace Spawns
 		std::uint32_t reported = 0, granted = 0, refused = 0, received = 0;
 		std::uint32_t copiesPlaced = 0, placeFailed = 0, copiesDiscarded = 0, copiesLost = 0, copiesKilled = 0, oursKilled = 0;
 		std::uint32_t framesReported = 0, frameCopiesPlaced = 0, frameCopiesMoved = 0, frameCopiesTaken = 0;
+		std::uint32_t copiesUnloaded = 0, copiesBack = 0;  // copies the engine unloaded with their cell: forgotten, or held again (Refresh)
 		std::uint32_t logged = 0;
 
 		std::uint32_t LocalPlayer()
 		{
 			return NpcSync::LocalPlayer();
+		}
+
+		// Our copy of spawn a_id, kept true once its handle stops resolving (see HeldCopy): the same copy back under its id
+		// with its cell is held again; one gone is forgotten (SaveGuard drops the record its cell keeps, so the cell never
+		// brings it back beside a new copy), and the book then finds no copy there (kLost).
+		void Refresh(std::uint32_t a_id, Placed& a_placed)
+		{
+			const auto local = a_placed.ids.id;
+			switch (SaveGuard::Refresh(a_placed.handle, a_placed.ids)) {
+			case HeldCopy::Lost::kNone:
+				break;
+			case HeldCopy::Lost::kBack:
+				++copiesBack;
+				REX::INFO("Spawns: {:08X}, our copy of spawn {:08X}, came back with its cell; held again, no second one placed", local, a_id);
+				break;
+			case HeldCopy::Lost::kForget:
+				++copiesUnloaded;
+				REX::INFO("Spawns: {:08X}, our copy of spawn {:08X}, is gone from under us (unloaded with its cell); forgotten, its record dropped", local, a_id);
+				break;
+			}
+		}
+
+		// Our copy of spawn a_id, if one is placed and still there (see Refresh).
+		RE::NiPointer<RE::TESObjectREFR> CopyOf(std::uint32_t a_id)
+		{
+			const auto it = placed.find(a_id);
+			if (it == placed.end()) {
+				return {};
+			}
+			Refresh(a_id, it->second);
+			return it->second.handle.get();
 		}
 
 		RemoteEdits::Spot SpotOf(const RE::TESObjectREFR* a_ref)
@@ -129,9 +176,9 @@ namespace Spawns
 		}
 
 		// Our copy of a friend's spawn, in our player's cell or worldspace (Theirs::Decide has them in the same space).
-		RE::ObjectRefHandle PlaceCopy(const SpawnBook::Theirs::Copy& a_copy, RE::TESObjectCELL* a_cell)
+		RE::ObjectRefHandle PlaceCopy(const SpawnBook::Theirs::Copy& a_copy, std::uint32_t a_base, RE::TESObjectCELL* a_cell)
 		{
-			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_copy.spawn.base);
+			const auto npc = RE::TESForm::GetFormByID<RE::TESNPC>(a_base);
 			if (!npc) {
 				return {};
 			}
@@ -156,6 +203,7 @@ namespace Spawns
 		{
 			NpcSync::DropMirror(a_id);
 			if (const auto it = placed.find(a_id); it != placed.end()) {
+				Refresh(a_id, it->second);  // one the engine unloaded is forgotten here, its record dropped
 				if (const auto local = theirs.LocalOf(a_id)) {
 					if (leaving.size() >= MAX_LEAVING) {
 						std::erase_if(leaving, [](const auto& a_entry) { return !a_entry.second.get(); });
@@ -204,11 +252,11 @@ namespace Spawns
 			SpawnBook::FrameFacts            facts{ .inView = NpcSync::InSight(copy->at) };
 			RE::NiPointer<RE::TESObjectREFR> ref;
 			if (copy->local != 0) {
-				const auto it = placed.find(a_id);
-				ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				ref = CopyOf(a_id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				if (facts.copyThere) {
 					facts.occupied = Occupied(ref.get());
+					facts.leaving = RemotePlayers::BeingSentOut(ref.get());
 					// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT).
 					if (ref->GetParentCell()) {
 						facts.copyAt = SpotOf(ref.get());
@@ -242,7 +290,7 @@ namespace Spawns
 						REX::WARN("Spawns: could not place a copy of player {}'s frame {:08X} (base {:08X})", playerId, a_id, base);
 						break;
 					}
-					placed[a_id] = { handle, a_now };
+					placed[a_id] = { handle, a_now, SaveGuard::IdsOf(placedRef.get()) };
 					theirs.Placed(a_id, placedRef->GetFormID(), a_now);
 					++frameCopiesPlaced;
 					REX::INFO("Spawns: {} {:08X} at ({:.0f},{:.0f},{:.0f}) as our copy of player {}'s frame {:08X} (base {:08X}), made in their game", adopted ? "took the parked copy" : "placed", placedRef->GetFormID(), at.x, at.y, at.z,
@@ -256,6 +304,11 @@ namespace Spawns
 				++frameCopiesMoved;
 				break;
 			case SpawnBook::Act::kDiscard:
+				if (ref) {
+					const float off = facts.copyAt ? RemoteEdits::Distance(*facts.copyAt, at) : -1.0f;
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame {:08X} goes (over={} inView={} inCell={} loaded={} leaving={} {:.0f} units off)", ref->GetFormID(),
+						playerId, a_id, copy->gone, facts.inView, facts.copyAt.has_value(), facts.copyLoaded, facts.leaving, off);
+				}
 				Discard(a_id);
 				break;
 			case SpawnBook::Act::kLost:
@@ -265,6 +318,7 @@ namespace Spawns
 				break;
 			case SpawnBook::Act::kAbandon:
 				REX::INFO("Spawns: someone here got into {:08X}, our copy of player {}'s frame {:08X}; it is theirs now", ref->GetFormID(), playerId, a_id);
+				SaveGuard::Release(ref->GetFormID());  // no longer ours: never kept out of a save, nor noted at a load
 				placed.erase(a_id);
 				theirs.Taken(a_id);
 				++frameCopiesTaken;
@@ -353,6 +407,13 @@ namespace Spawns
 		return ref && !ref->IsDeleted() && !ref->IsDisabled() && ref->GetParentCell();
 	}
 
+	std::uint32_t FrameCopyOwnerOf(std::uint32_t a_local)
+	{
+		const auto id = theirs.IdOf(a_local);
+		const auto copy = id != 0 && placed.contains(id) ? theirs.Find(id) : nullptr;
+		return copy ? copy->spawn.playerId : 0;
+	}
+
 	std::uint32_t LocalOf(std::uint32_t a_id)
 	{
 		if (const auto local = ours.LocalOf(a_id)) {
@@ -382,6 +443,7 @@ namespace Spawns
 	void Add(const Protocol::Spawn& a_spawn)
 	{
 		if (const auto known = theirs.Find(a_spawn.refId); known && known->local != 0) {
+			REX::INFO("Spawns: player {} shared {:08X} again; our copy {:08X} of it goes", a_spawn.playerId, a_spawn.refId, known->local);
 			Discard(a_spawn.refId);  // an old one under the same id: it is over
 		}
 		if (theirs.Add(a_spawn, LocalPlayer())) {
@@ -479,9 +541,9 @@ namespace Spawns
 			if (const auto state = RemotePlayers::LastStateOf(copy->spawn.playerId)) {
 				facts.owner = RemoteEdits::SpotOf(*state);
 			}
+			const auto from = PlaceBase(id, copy->spawn.base);
 			if (copy->local != 0) {
-				const auto it = placed.find(id);
-				const auto ref = it != placed.end() ? it->second.handle.get() : RE::NiPointer<RE::TESObjectREFR>{};
+				const auto ref = CopyOf(id);  // one the engine unloaded with its cell: back, or forgotten (see Refresh)
 				facts.copyThere = ref && !ref->IsDeleted() && ref->GetFormID() == copy->local;
 				// Just placed, it has a cell before its 3D (SpawnBook::LOAD_WAIT): not taken for one that unloaded.
 				if (facts.copyThere && ref->GetParentCell()) {
@@ -489,7 +551,9 @@ namespace Spawns
 					facts.copyLoaded = ref->Get3D() != nullptr;
 				}
 			} else {
-				facts.baseOk = BaseOk(copy->spawn.base);
+				facts.baseOk = BaseOk(from);
+				const auto seen = seenAt.try_emplace(id, now).first->second;
+				facts.waiting = !NpcSync::RollOf(id) && now - seen < NpcRoll::IDENTITY_WAIT;
 			}
 			switch (theirs.Decide(id, facts, now)) {
 			case SpawnBook::Act::kPlace:
@@ -500,15 +564,15 @@ namespace Spawns
 					++placedNow;
 					const auto playerId = copy->spawn.playerId;
 					const auto base = copy->spawn.base;
-					const auto handle = PlaceCopy(*copy, cell);
+					const auto handle = PlaceCopy(*copy, from, cell);
 					const auto ref = handle.get();
 					if (!ref) {
 						theirs.Placed(id, 0, now);
 						++placeFailed;
-						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X})", playerId, id, base);
+						REX::WARN("Spawns: could not place a copy of player {}'s {:08X} (base {:08X}, from {:08X})", playerId, id, base, from);
 						break;
 					}
-					placed[id] = { handle, now };
+					placed[id] = { handle, now, SaveGuard::IdsOf(ref.get()) };
 					theirs.Placed(id, ref->GetFormID(), now);
 					++copiesPlaced;
 					if (logged < LOGGED) {
@@ -528,6 +592,7 @@ namespace Spawns
 				break;
 			case SpawnBook::Act::kForget:
 				theirs.Forget(id);
+				seenAt.erase(id);
 				break;
 			case SpawnBook::Act::kMove:     // a frame's (UpdateFrameCopy): never an NPC's
 			case SpawnBook::Act::kAbandon:
@@ -535,6 +600,8 @@ namespace Spawns
 				break;
 			}
 		}
+		// A spawn forgotten some other way (its player gone, the server's word) takes its first sighting with it.
+		std::erase_if(seenAt, [&](const auto& a_entry) { return !theirs.Find(a_entry.first); });
 	}
 
 	std::vector<std::vector<std::uint8_t>> TakeOutgoing()
@@ -545,10 +612,32 @@ namespace Spawns
 	void DiscardCopies()
 	{
 		for (const auto id : theirs.Ids()) {
-			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
-				Discard(id);
+			const auto copy = theirs.Find(id);
+			if (!copy || copy->local == 0) {
+				continue;
+			}
+			// A frame copy someone is being sent out of is kept as it is, saved with the frame they wear (a load takes it with
+			// the old world): buried, the save would have them wear a frame it does not have (RemotePlayers::SomeoneSentOutOf).
+			if (const auto it = placed.find(id); it != placed.end()) {
+				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
+					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
+					continue;
+				}
+			}
+			Discard(id);
+		}
+	}
+
+	std::vector<RE::ObjectRefHandle> FrameCopies()
+	{
+		std::vector<RE::ObjectRefHandle> out;
+		for (const auto& [id, copy] : placed) {
+			const auto spawn = theirs.Find(id);
+			if (spawn && Equipment::IsPowerArmorFrame(RE::TESForm::GetFormByID(spawn->spawn.base))) {
+				out.push_back(copy.handle);
 			}
 		}
+		return out;
 	}
 
 	void OnGameLoaded()
@@ -576,8 +665,15 @@ namespace Spawns
 
 	void Reset()
 	{
-		DiscardCopies();
+		// Every copy goes, as at a save, but none is kept: one someone is being sent out of waits for them in RemotePlayers
+		// (or, with the session over, is left to them).
+		for (const auto id : theirs.Ids()) {
+			if (const auto copy = theirs.Find(id); copy && copy->local != 0) {
+				Discard(id);
+			}
+		}
 		placed.clear();
+		seenAt.clear();
 		theirs.Clear();
 		ours.Clear();
 		ownFrames.clear();
@@ -587,8 +683,8 @@ namespace Spawns
 
 	std::string Describe()
 	{
-		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={}", ours.Size(),
+		return std::format("spawns: ours={} theirs={} copies={} reported={} granted={} refused={} received={} placed={} placeFailed={} discarded={} lost={} killed={}/{} frames: ours={} reported={} placed={} moved={} taken={} unloaded={} back={}", ours.Size(),
 			theirs.Size(), theirs.PlacedCount(), reported, granted, refused, received, copiesPlaced, placeFailed, copiesDiscarded, copiesLost, copiesKilled, oursKilled, ownFrames.size(), framesReported,
-			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken);
+			frameCopiesPlaced, frameCopiesMoved, frameCopiesTaken, copiesUnloaded, copiesBack);
 	}
 }

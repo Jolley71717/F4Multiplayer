@@ -10,7 +10,9 @@
 #include <cstring>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -141,6 +143,248 @@ namespace DropBook
 		std::unordered_map<std::uint32_t, Clock::time_point> out;
 	};
 
+	// ---- a copy scrapped in workshop mode ----------------------------------------------------------------------
+
+	// Workshop mode scraps a loose item lying in a settlement (its pick test lets loose weapons, armor and junk through):
+	// the player gets its components and the game takes the reference away. Our copy of an item lying in the session
+	// went that way without a word to anyone: the server still had it lying there, every friend's copy stood on, and
+	// ours was placed again as soon as its handle let go, or after the next save, load or walk away. The components and
+	// the item both, as often as the player liked. A scrap is our world consuming the item, so it is our player's take.
+	enum class CopyGone : std::uint8_t
+	{
+		kStanding,  // still there as far as we can tell (or hidden, its activation not yet blocked)
+		kScrapped,  // scrapped (or stored) in workshop mode: claimed as our take (Scraps)
+		kLost,      // its handle names nothing: the game took it (its cell went); placed again
+	};
+
+	// Our copy, looked at in a frame: a_resolves (its handle still names a reference), a_named (the workshop's own
+	// destroyed event named it: scrapped or stored). Only that event makes it a scrap: a copy merely found gone, in
+	// workshop mode or not, may have gone some other way (its cell unloading as the player walks off), and taking it for
+	// our take would take the item from its owner for nothing. Gone so, it is lost if its handle went (placed again),
+	// else left alone.
+	constexpr CopyGone JudgeCopy(bool a_resolves, bool a_named)
+	{
+		if (a_named) {
+			return CopyGone::kScrapped;
+		}
+		return a_resolves ? CopyGone::kStanding : CopyGone::kLost;
+	}
+
+	// Drops our player scrapped (their copy taken away in workshop mode), until the server says who has each. The scrap is
+	// claimed as a take (kClaimDrop kTake: no new message): granted, every game removes its copy and the server keeps it as
+	// ours, so nobody takes it and no list or saved session lays it down again. Our record says we took it from the moment
+	// of the scrap (Record::Took), so a link lost before the answer still settles it as ours with our next record. Lost to
+	// a claim that came first (someone took it a moment before), it is theirs, our record says we never had it, and what
+	// the scrap put in the workbench is taken back out of it (ScrapYields).
+	class Scraps
+	{
+	public:
+		enum class Outcome : std::uint8_t
+		{
+			kNotScrapped,  // not one of ours: the answer is for something else
+			kOurs,         // granted: the item is gone for everyone, its components are ours
+			kLost,         // someone else had it first: only our copy went; the item is theirs
+		};
+
+		// a_dropId's copy was scrapped here. True the first time: claim it now (a second scrap of it is the same one). Never
+		// refused for want of room: a scrap left unclaimed would leave the item lying for the others while our player has
+		// its components (the set holds no more than the drops lying about).
+		bool Scrapped(std::uint32_t a_dropId)
+		{
+			if (a_dropId == 0 || out.contains(a_dropId)) {
+				return false;
+			}
+			out.insert(a_dropId);
+			return true;
+		}
+
+		// The server says who has a_dropId now (0: nobody it remembers, its owner's world has it again).
+		Outcome Answered(std::uint32_t a_dropId, std::uint32_t a_takerId, std::uint32_t a_localId)
+		{
+			if (!out.erase(a_dropId)) {
+				return Outcome::kNotScrapped;
+			}
+			return a_takerId != 0 && a_takerId == a_localId ? Outcome::kOurs : Outcome::kLost;
+		}
+
+		// Not placed again while its claim waits (the server still lists it).
+		[[nodiscard]] bool Waiting(std::uint32_t a_dropId) const { return out.contains(a_dropId); }
+		[[nodiscard]] std::vector<std::uint32_t> Unanswered() const { return { out.begin(), out.end() }; }
+		[[nodiscard]] std::size_t Size() const { return out.size(); }
+		void Clear() { out.clear(); }
+
+	private:
+		std::set<std::uint32_t> out;
+	};
+
+	// What each scrap of our copies put in its workbench, so a scrap lost to a friend's claim (Scraps::Outcome::kLost)
+	// can be taken back out: the item is theirs, and our player is to keep nothing of it. The workshop's destroyed event
+	// names the reference and its workbench; the components (or, stored, the item itself) come into the workbench from
+	// nothing (container change events) in the same moment, before or after it. Every destroyed event is noted, our
+	// player's own scraps too, and each thing that came in is given to the nearest scrap of that workbench within WINDOW,
+	// so our own scraps beside a copy's keep their components. A scrap's yield is known once WINDOW twice over has passed.
+	class ScrapYields
+	{
+	public:
+		static constexpr auto        WINDOW = std::chrono::milliseconds(500);
+		static constexpr std::size_t MAX_ADDED = 256;   // things come in from nothing, the newest kept
+		static constexpr std::size_t MAX_SCRAPS = 64;   // destroyed events waiting for their yield, the newest kept
+
+		struct Item
+		{
+			std::uint32_t base = 0;
+			std::int32_t  count = 0;
+
+			bool operator==(const Item&) const = default;
+		};
+
+		struct Yield
+		{
+			std::uint32_t     dropId = 0;
+			std::uint32_t     bench = 0;
+			std::vector<Item> items;
+		};
+
+		// a_count of a_base came into a_container from nothing.
+		void Added(std::uint32_t a_container, std::uint32_t a_base, std::int32_t a_count, Clock::time_point a_at)
+		{
+			if (a_container == 0 || a_base == 0 || a_count <= 0) {
+				return;
+			}
+			if (added.size() >= MAX_ADDED) {
+				added.erase(added.begin());
+			}
+			added.push_back({ a_container, a_base, a_count, a_at });
+		}
+
+		// The workshop took a reference away from a_bench: our copy of a_dropId, or (0) anything else of the settlement's.
+		void Destroyed(std::uint32_t a_dropId, std::uint32_t a_bench, Clock::time_point a_at)
+		{
+			if (a_bench == 0) {
+				return;
+			}
+			if (scraps.size() >= MAX_SCRAPS) {
+				scraps.erase(scraps.begin());
+			}
+			scraps.push_back({ a_dropId, a_bench, a_at });
+		}
+
+		// The yields of our copies' scraps now known (other scraps' are let go), each with what it put in its workbench.
+		// What a scrap is given is its own: never given again to a scrap after it.
+		std::vector<Yield> Due(Clock::time_point a_now)
+		{
+			std::vector<Yield> due;
+			std::vector<bool>  done(scraps.size(), false);
+			std::vector<bool>  given(added.size(), false);
+			for (std::size_t i = 0; i < scraps.size(); ++i) {
+				if (a_now - scraps[i].at < WINDOW * 2) {
+					continue;
+				}
+				done[i] = true;
+				Yield yield{ scraps[i].dropId, scraps[i].bench, {} };
+				for (std::size_t j = 0; j < added.size(); ++j) {
+					if (given[j] || Nearest(added[j]) != i) {
+						continue;
+					}
+					given[j] = true;
+					const auto same = std::ranges::find(yield.items, added[j].base, &Item::base);
+					if (same != yield.items.end()) {
+						same->count += added[j].count;
+					} else {
+						yield.items.push_back({ added[j].base, added[j].count });
+					}
+				}
+				if (yield.dropId != 0) {
+					due.push_back(std::move(yield));
+				}
+			}
+			std::vector<Scrap> waiting;
+			for (std::size_t i = 0; i < scraps.size(); ++i) {
+				if (!done[i]) {
+					waiting.push_back(scraps[i]);
+				}
+			}
+			scraps = std::move(waiting);
+			// What was given, and what came in too long ago for any scrap still waiting, is let go.
+			std::vector<In> kept;
+			for (std::size_t j = 0; j < added.size(); ++j) {
+				if (!given[j] && a_now - added[j].at < WINDOW * 4) {
+					kept.push_back(added[j]);
+				}
+			}
+			added = std::move(kept);
+			return due;
+		}
+
+		// What of a lost scrap's yield is taken back out (Drops). A thing with no instance of its own (a_fungible: a
+		// component, a misc mod, ammunition, food), where any of that base in the workbench is the same thing, comes out by
+		// base: the amount comes out right even if our player moved some out since. An item stored whole (a weapon, an
+		// armor, a key) comes out as its own stack (PickStack: the drop's mods and name), never by base, as the engine
+		// removes by base whichever it finds first, and our player's own modded or legendary one can sit beside it. Our
+		// player's own is never taken; one with no stack that is the item is refused, and the friend has it alone.
+		struct TakeBack
+		{
+			std::vector<Item> out;
+			std::vector<Item> whole;
+		};
+
+		template <class Fungible>
+		static TakeBack PlanTakeBack(const Yield& a_yield, Fungible&& a_fungible)
+		{
+			TakeBack plan;
+			for (const auto& item : a_yield.items) {
+				if (item.base == 0 || item.count <= 0) {
+					continue;
+				}
+				(a_fungible(item.base) ? plan.out : plan.whole).push_back(item);
+			}
+			return plan;
+		}
+
+		[[nodiscard]] std::size_t Waiting() const { return scraps.size(); }
+		void Clear()
+		{
+			added.clear();
+			scraps.clear();
+		}
+
+	private:
+		struct In
+		{
+			std::uint32_t     container = 0;
+			std::uint32_t     base = 0;
+			std::int32_t      count = 0;
+			Clock::time_point at{};
+		};
+		struct Scrap
+		{
+			std::uint32_t     dropId = 0;
+			std::uint32_t     bench = 0;
+			Clock::time_point at{};
+		};
+
+		// The scrap of the same workbench nearest in time to what came in, within WINDOW (SIZE_MAX: none).
+		[[nodiscard]] std::size_t Nearest(const In& a_in) const
+		{
+			std::size_t best = SIZE_MAX;
+			auto        bestGap = WINDOW + Clock::duration{ 1 };
+			for (std::size_t i = 0; i < scraps.size(); ++i) {
+				if (scraps[i].bench != a_in.container) {
+					continue;
+				}
+				const auto gap = a_in.at > scraps[i].at ? a_in.at - scraps[i].at : scraps[i].at - a_in.at;
+				if (gap <= WINDOW && gap < bestGap) {
+					best = i;
+					bestGap = gap;
+				}
+			}
+			return best;
+		}
+
+		std::vector<In>    added;
+		std::vector<Scrap> scraps;
+	};
+
 	// ---- our drops the server hasn't confirmed ---------------------------------------------------------------
 
 	// Our drops our game swapped for a copy (kPlaced sent) that the server hasn't yet said lie there. The server forgets
@@ -235,6 +479,15 @@ namespace DropBook
 			if (auto* session = Find(current); session && !std::ranges::contains(session->taken, a_dropId)) {
 				Trim(session->taken);
 				session->taken.push_back(a_dropId);
+			}
+		}
+
+		// An item we recorded as taken is not in our world after all: our copy was scrapped, but someone else was granted it
+		// (DropBook::Scraps).
+		void Untook(std::uint32_t a_dropId)
+		{
+			if (auto* session = Find(current)) {
+				std::erase(session->taken, a_dropId);
 			}
 		}
 
@@ -379,4 +632,63 @@ namespace DropBook
 		std::vector<Session> sessions;
 		std::uint64_t        current = 0;
 	};
+
+	// One stack of a container's items of one base, as Drops reads it from the engine's inventory list.
+	struct StackInfo
+	{
+		std::uint32_t              count = 0;
+		bool                       instanced = false;  // it has instance data of its own (a weapon's or an armor's mods)
+		std::vector<std::uint32_t> mods;               // its mods, sorted
+		std::string                name;               // the name the player gave it; empty: the game's own
+	};
+
+	// Which stack of a container's items of the drop's base is the drop itself (its mods and name, as the friend's game
+	// reported it; a drop with no name of its own takes any name, as Drops::TakeBack does): that one comes out, never
+	// another of the same base, which may be our player's own. With none that is the item: any of them if none has an instance of its own (they are all the same thing, a key or a plain item);
+	// else nothing (refused).
+	struct StackPick
+	{
+		enum class Kind
+		{
+			kNone,   // no stack is the item: nothing is taken
+			kAny,    // all of the base are the same thing: by base
+			kStack,  // stack number index
+		};
+		Kind          kind = Kind::kNone;
+		std::uint32_t index = 0;
+
+		bool operator==(const StackPick&) const = default;
+	};
+
+	inline StackPick PickStack(const std::vector<StackInfo>& a_stacks, const Protocol::DroppedItem& a_drop, std::int32_t a_count)
+	{
+		if (a_count <= 0) {
+			return {};
+		}
+		std::vector<std::uint32_t> wanted;
+		for (const auto& mod : a_drop.mods) {
+			wanted.push_back(mod.mod);
+		}
+		std::ranges::sort(wanted);
+		bool          instanced = false;
+		std::uint64_t total = 0;
+		for (std::uint32_t i = 0; i < a_stacks.size(); ++i) {
+			const auto& stack = a_stacks[i];
+			instanced = instanced || stack.instanced;
+			total += stack.count;
+			if (stack.count < static_cast<std::uint32_t>(a_count)) {
+				continue;
+			}
+			// A drop with mods is the stack with exactly those; one with none (a plain item) is any stack with none.
+			const bool modsMatch = a_drop.mods.empty() ? !stack.instanced || stack.mods.empty() : stack.mods == wanted;
+			const bool nameMatch = a_drop.name.empty() || Protocol::Utf8Prefix(stack.name, Protocol::MAX_ITEM_NAME_LENGTH) == a_drop.name;
+			if (modsMatch && nameMatch) {
+				return { StackPick::Kind::kStack, i };
+			}
+		}
+		if (!instanced && total >= static_cast<std::uint64_t>(a_count)) {
+			return { StackPick::Kind::kAny, 0 };
+		}
+		return {};
+	}
 }

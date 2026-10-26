@@ -11,6 +11,7 @@
 #include "game/WorldSync.h"
 
 #include <deque>
+#include <mutex>
 
 namespace RadiantSync
 {
@@ -34,18 +35,26 @@ namespace RadiantSync
 		// BGSBaseAlias::aliasID of an alias that has none.
 		constexpr std::uint32_t NO_ALIAS = 0xFFFFFFFF;
 
-		RadiantRules::Book                     book;
+		// Run numbers start at this game's start (SerialSeed): a game that restarts never numbers a run as one of its last.
+		RadiantRules::Book                     book{ RadiantRules::SerialSeed(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count())) };
 		std::uint32_t                          self = 0;
 		bool                                   inSession = false;
 		std::vector<std::vector<std::uint8_t>> outgoing;
 		std::deque<Protocol::RadiantStart>     pending;  // friends' runs to start or compare here, in the order they came
 		std::set<std::uint32_t>                stopped;  // shared runs' quests seen stopped at the last poll: ended at this one
+		std::uint64_t                          session = 0;  // the session welcomed into last (0: none since another server)
+		// The runs shared in the world a save loaded (its record), or when the session ended: shared again as they were on the
+		// welcome of their session (Adopt), forgotten in another.
+		std::optional<RadiantRules::Saved> held;
+		std::mutex                         loadLock;  // a load's record comes on its thread
+		std::optional<RadiantRules::Saved> loaded;
 
 		std::uint32_t begun = 0;     // runs of ours shared
 		std::uint32_t joined = 0;    // friends' runs shared here
 		std::uint32_t declined = 0;  // friends' runs left each player's own here
 		std::uint32_t sent = 0;      // stages reported under runs
 		std::uint32_t taken = 0;     // friends' stages queued here
+		std::uint32_t restored = 0;  // runs shared again as they were (a save's record, or after a reconnect)
 
 		// ---- How the game fills an alias ----------------------------------------------------------------
 
@@ -363,6 +372,7 @@ namespace RadiantSync
 			Clock::time_point          since{};
 			bool                       stopping = false;  // this game's own run of it (not given to the player) stopping first
 			bool                       uncount = false;   // ... whose offer stays counted at the Railroad's HQ: counted off once stopped
+			bool                       replaced = false;  // this game's own run of it was stopped for it: started again if theirs isn't (RestartOwn)
 		};
 		std::optional<Starting> starting;
 
@@ -461,12 +471,74 @@ namespace RadiantSync
 					Restore(a_saved);
 					return false;
 				}
-				// The friend's pick is taken even when another quest of this game holds it (a reference one reserves): which quests
-				// run is each game's own.
-				const auto reserved = force.form != 0 ? RadiantRules::ALIAS_ALLOW_RESERVED : 0u;
-				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>((Flags(alias) & ~RadiantRules::ALIAS_BY_OTHERS) | reserved);
+				// A lifted pick is taken even when another quest of this game reserves it (the settlement this game owns): see
+				// RadiantRules::ForcedFlags.
+				alias->flags = static_cast<RE::BGSBaseAlias::FLAGS>(RadiantRules::ForcedFlags(Flags(alias), lift));
 			}
 			return true;
+		}
+
+		// Whether Force could force every alias of the plan, without forcing any: asked before this game's own run is stopped
+		// for a friend's, so a start that can't be made leaves ours running.
+		bool CanForce(RE::TESQuest* a_quest, const RadiantRules::Plan& a_plan)
+		{
+			for (const auto& force : a_plan.forces) {
+				const auto it = std::ranges::find_if(a_quest->aliases, [&](const RE::BGSBaseAlias* a_alias) { return a_alias && a_alias->aliasID == force.alias; });
+				if (it == a_quest->aliases.end()) {
+					return false;
+				}
+				if (AsRef(*it) && force.kind == Kind::kRef) {
+					if (force.form != 0 && RefWord(force.form) == 0) {
+						return false;
+					}
+				} else if (AsLoc(*it) && force.kind == Kind::kLoc) {
+					if (force.form != 0 && !RE::TESForm::GetFormByID<RE::BGSLocation>(force.form)) {
+						return false;
+					}
+				} else {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// This game's own run, stopped for a friend's that then didn't start here: started again, once it has stopped, with
+		// its own fills (nothing of it was the player's yet, and the giver hands it out as before).
+		struct Restart
+		{
+			std::uint32_t     quest = 0;
+			Clock::time_point since{};
+		};
+		std::optional<Restart> restart;
+		std::uint32_t          restarted = 0;
+
+		void RestartOwn(std::uint32_t a_quest)
+		{
+			restart = Restart{ a_quest, Clock::now() };
+		}
+
+		void RestartFrame()
+		{
+			if (!restart) {
+				return;
+			}
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(restart->quest);
+			if (!quest) {
+				restart.reset();
+				return;
+			}
+			if (quest->data.flags & QUEST_RUNNING) {
+				// Still stopping (a stopquest of theirs a moment ago), or already started again by its own scripts.
+				if (Clock::now() - restart->since >= START_TIMEOUT) {
+					restart.reset();
+				}
+				return;
+			}
+			const auto id = restart->quest;
+			restart.reset();
+			RE::Console::ExecuteCommand(std::format("startquest {:08X}", id).c_str());
+			++restarted;
+			REX::INFO("RadiantSync: {:08X} '{}': the friend's run didn't start here, so this game's own run was started again", id, QuestName(quest));
 		}
 
 		// A friend's stages of a run shared here: each set once (Book::Accept), in order, by QuestSync's queue.
@@ -492,11 +564,22 @@ namespace RadiantSync
 			REX::INFO("RadiantSync: player {}'s run {} of {:08X} '{}' isn't shared here, each player's own: {}", a_run.origin, a_run.serial, a_quest, QuestName(quest), a_why);
 		}
 
-		void Share(std::uint32_t a_quest, const Run& a_run, std::vector<std::uint16_t> a_stages, std::string_view a_how)
+		void Share(std::uint32_t a_quest, const Run& a_run, std::vector<std::uint16_t> a_stages, std::string_view a_how, std::span<const Protocol::RadiantFill> a_fills)
 		{
-			book.Join(a_quest, a_run);
+			const bool again = book.Join(a_quest, a_run, a_fills);
 			++joined;
 			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_quest);
+			if (again && quest) {
+				// Shared here already under another run: the same one shared again under a new number (its game loaded a save
+				// from inside it). The stages done here that its start lacks go to it under the new number, or its game falls
+				// behind (they were reported here under the old one, and are never reported again).
+				for (const auto stage : QuestStageLayout::Done(quest)) {
+					if (std::ranges::find(a_stages, stage) == a_stages.end()) {
+						outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, a_quest, a_run.origin, a_run.serial, stage }, Protocol::MessageType::kReportRadiantStage));
+						++sent;
+					}
+				}
+			}
 			REX::INFO("RadiantSync: sharing player {}'s run {} of {:08X} '{}' ({}), {} stage(s) of theirs to set", a_run.origin, a_run.serial, a_quest, QuestName(quest), a_how,
 				a_stages.size());
 			Take(a_quest, a_run, std::move(a_stages), a_run.origin, false);
@@ -514,6 +597,9 @@ namespace RadiantSync
 			}
 			if (a_timedOut) {
 				Decline(start.quest, start.run, "the game didn't start it with their fills");
+				if (start.replaced) {
+					RestartOwn(start.quest);
+				}
 				return;
 			}
 			const auto aliases = AliasesOf(quest);
@@ -526,11 +612,14 @@ namespace RadiantSync
 			if (!RadiantRules::SameTargets(mismatches)) {
 				RE::Console::ExecuteCommand(std::format("stopquest {:08X}", start.quest).c_str());
 				Decline(start.quest, start.run, std::format("started here, it picked other targets ({}), so it was stopped again", FirstDecisive(mismatches)));
+				if (start.replaced) {
+					RestartOwn(start.quest);
+				}
 				return;
 			}
 			auto stages = start.start.stages;
 			stages.insert(stages.end(), start.stages.begin(), start.stages.end());
-			Share(start.quest, start.run, std::move(stages), "started here with their fills");
+			Share(start.quest, start.run, std::move(stages), "started here with their fills", start.start.fills);
 		}
 
 		bool Paused()
@@ -539,30 +628,56 @@ namespace RadiantSync
 			return !ui || ui->menuMode != 0;
 		}
 
-		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
-		// game's own run of it stopped.
-		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages)
+		// Why a friend's run can't be started here with its fills (empty: it can be tried), asked before StartHere stops
+		// anything.
+		std::string CannotStart(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start)
 		{
 			if (!Calibrated()) {
-				Decline(a_start.quest, a_run, "this game's aliases can't be read");
+				return "this game's aliases can't be read";
+			}
+			const auto aliases = AliasesOf(a_quest);
+			const auto rules = Rules(aliases);
+			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
+			if (!plan.Ok()) {
+				return plan.fallback;
+			}
+			if (!CanForce(a_quest, plan)) {
+				return "an alias of theirs couldn't be forced here";
+			}
+			return {};
+		}
+
+		// Starts a friend's run here with its fills (the quest not running here), a_stages: theirs that came while this
+		// game's own run of it stopped (a_replaced: that run is started again if theirs isn't).
+		void StartHere(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::vector<std::uint16_t> a_stages, bool a_replaced = false)
+		{
+			const auto decline = [&](std::string_view a_why) {
+				Decline(a_start.quest, a_run, a_why);
+				if (a_replaced) {
+					RestartOwn(a_start.quest);
+				}
+			};
+			if (!Calibrated()) {
+				decline("this game's aliases can't be read");
 				return;
 			}
 			const auto aliases = AliasesOf(a_quest);
 			const auto rules = Rules(aliases);
 			const auto plan = RadiantRules::MakePlan(rules, a_start.fills, Resolve);
 			if (!plan.Ok()) {
-				Decline(a_start.quest, a_run, plan.fallback);
+				decline(plan.fallback);
 				return;
 			}
 			Starting next{ a_start.quest, a_run, a_start };
 			next.stages = std::move(a_stages);
 			next.unforced = plan.unforced;
+			next.replaced = a_replaced;
 			if (!Force(a_quest, plan, next.saved)) {
-				Decline(a_start.quest, a_run, "an alias of theirs couldn't be forced here");
+				decline("an alias of theirs couldn't be forced here");
 				return;
 			}
 			next.since = Clock::now();
-			book.Starting(a_start.quest, a_run);
+			book.Starting(a_start.quest, a_run, a_start.fills);
 			REX::INFO("RadiantSync: starting player {}'s run {} of {:08X} '{}' here with their fills ({} forced)", a_run.origin, a_run.serial, a_start.quest, QuestName(a_quest),
 				plan.forces.size());
 			starting = std::move(next);
@@ -603,20 +718,26 @@ namespace RadiantSync
 				book.Refuse(start.quest, start.run);
 				return;
 			}
-			StartHere(quest, start.start, start.run, std::move(start.stages));
+			StartHere(quest, start.start, start.run, std::move(start.stages), true);
 		}
 
 		// A friend's run of a quest that runs here with other targets, its run here not given to this player: that run is
 		// stopped (nothing of it was the player's yet) and theirs started once it has.
 		void Replace(RE::TESQuest* a_quest, const Protocol::RadiantStart& a_start, const Run& a_run, std::string_view a_why)
 		{
+			// Theirs must be one this game can start with their fills before ours is stopped; one that still fails once ours
+			// has stopped (the game's start picks others, or none in time) starts ours again (RestartOwn).
+			if (const auto why = CannotStart(a_quest, a_start); !why.empty()) {
+				Decline(a_start.quest, a_run, std::format("it runs here already with other targets ({}), and theirs can't start here: {}", a_why, why));
+				return;
+			}
 			Starting next{ a_start.quest, a_run, a_start };
 			next.since = Clock::now();
 			next.stopping = true;
 			if (const auto offer = RadiantRules::OfferOf(a_start.quest)) {
 				next.uncount = RadiantRules::LeavesCounted(a_start.quest, QuestStageLayout::Done(a_quest), GlobalValue(offer->global));
 			}
-			book.Starting(a_start.quest, a_run);
+			book.Starting(a_start.quest, a_run, a_start.fills);
 			REX::INFO("RadiantSync: {:08X} '{}' runs here with other targets ({}) and this player hasn't been given it: stopping it for player {}'s run {}", a_start.quest,
 				QuestName(a_quest), a_why, a_run.origin, a_run.serial);
 			starting = std::move(next);
@@ -636,15 +757,25 @@ namespace RadiantSync
 				return;
 			}
 			const bool running = (quest->data.flags & QUEST_RUNNING) != 0;
-			switch (book.OnStart(a_start.quest, run, running)) {
+			switch (book.OnStart(a_start.quest, run, running, a_start.fills, Clock::now())) {
 			case Answer::kIgnore:
+				return;
+			case Answer::kTake:
+				// Shared here already (taken back from our save, or kept through a reconnect) and sent again by its game: its stages,
+				// and those that came with it, are what that game did since. Each is set once (Book::Accept).
+				Take(a_start.quest, run, a_start.stages, run.origin, false);
+				return;
+			case Answer::kDone:
+				// Their game shares again a run finished here (it loaded a save from inside it, or came back): started here
+				// again, its reward would be paid twice.
+				Decline(a_start.quest, run, "a run with its targets is finished here already");
 				return;
 			case Answer::kCompare:
 				{
 					const auto aliases = AliasesOf(quest);  // the mismatches name its aliases: kept while they are
 					const auto mismatches = CompareHere(quest, aliases, a_start.fills);
 					if (RadiantRules::SameTargets(mismatches)) {
-						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets");
+						Share(a_start.quest, run, a_start.stages, "it runs here with the same targets", a_start.fills);
 					} else if (RadiantRules::Replaces(a_start.quest, book.Knows(a_start.quest), QuestSync::PlayerStarted(quest), (quest->data.flags & QUEST_RUN_ONCE) != 0)) {
 						Replace(quest, a_start, run, FirstDecisive(mismatches));
 					} else {
@@ -666,8 +797,9 @@ namespace RadiantSync
 			if (done.size() > Protocol::MAX_RADIANT_STAGES) {
 				done.erase(done.begin(), done.end() - Protocol::MAX_RADIANT_STAGES);
 			}
-			const auto run = book.Begin(id, self, done);
-			Protocol::RadiantStart start{ 0, id, run.serial, FillsOf(a_quest), done };
+			auto       fills = FillsOf(a_quest);
+			const auto run = book.Begin(id, self, done, fills);
+			Protocol::RadiantStart start{ 0, id, run.serial, std::move(fills), done };
 			outgoing.push_back(Protocol::Encode(start, Protocol::MessageType::kReportRadiantStart));
 			++begun;
 			REX::INFO("RadiantSync: sharing our run {} of {:08X} '{}' ({} fills, {} stage(s) done)", run.serial, id, QuestName(a_quest), start.fills.size(), done.size());
@@ -686,14 +818,75 @@ namespace RadiantSync
 			outgoing.push_back(Protocol::Encode(Protocol::RadiantStart{ 0, a_quest, a_run.serial, FillsOf(quest), done }, Protocol::MessageType::kReportRadiantStart));
 		}
 
+		// For friends whose games don't know our runs going (they joined, or loaded a save), or know a run shared here only
+		// as it was (this game loaded a save inside it, or came back): our runs' starts again, and the stages done here
+		// under each run shared here. A start of a run a game knows is ignored there, and each stage is set there once
+		// (Book::Accept), so this pays nothing twice.
+		void Resend()
+		{
+			for (const auto& [quest, run] : book.Ours(self)) {
+				SendAgain(quest, run);
+			}
+			for (const auto& [id, run] : book.Shared()) {
+				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(id);
+				if (!quest || !(quest->data.flags & QUEST_RUNNING)) {
+					continue;
+				}
+				for (const auto stage : QuestStageLayout::Done(quest)) {
+					outgoing.push_back(Protocol::Encode(Protocol::RadiantStage{ 0, id, run.origin, run.serial, stage }, Protocol::MessageType::kReportRadiantStage));
+					++sent;
+				}
+			}
+		}
+
+		// A radiant running here, for Book::Restore (nothing if it doesn't run, or isn't one shared by its run).
+		std::optional<RadiantRules::QuestHere> QuestHereOf(std::uint32_t a_id)
+		{
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(a_id);
+			if (!quest || !Official::IsOfficialForm(quest) || !(quest->data.flags & QUEST_RUNNING) || RadiantRules::ShareOf(a_id) != RadiantRules::Share::kShared) {
+				return std::nullopt;
+			}
+			return RadiantRules::QuestHere{ QuestStageLayout::Done(quest), FillsOf(quest) };
+		}
+
+		// The held record taken in, in a session and with the world loaded: its runs shared again as they were if it is this
+		// session's (and the session shares radiants), where their quests still run here with their targets, under their
+		// own runs, which a friend who finished one knows (a new number would be a new run there, its reward paid again).
+		// Its runs whose quests stopped here since, or run for another run now, are finished in their session (the player
+		// finished one alone after leaving it, and a friend still on it shares it again when they come back).
+		void Adopt()
+		{
+			if (!held) {
+				return;
+			}
+			const auto record = std::move(*held);
+			held.reset();
+			std::vector<RadiantRules::Saved::Quest> kept;  // running still, of another session (or radiants not shared here)
+			const auto shared = book.Restore(record, QuestHereOf, Enabled(), Clock::now(), &kept);
+			if (!kept.empty()) {
+				held = RadiantRules::Saved{ record.session, std::move(kept), {} };  // finished in their session once over (Frame)
+			}
+			restored += static_cast<std::uint32_t>(shared);
+			if (!record.shared.empty()) {
+				REX::INFO("RadiantSync: {} of {} run(s) this world shared shared again as they were; {} of other sessions kept until over", shared, record.shared.size(),
+					held ? held->shared.size() : 0);
+			}
+			if (shared != 0) {
+				Resend();
+			}
+		}
+
 		void AbortStart()
 		{
 			if (starting) {
 				Restore(starting->saved);
-				if (starting->stopping && starting->uncount) {
+				if (starting->stopping || starting->replaced) {
 					const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(starting->quest);
 					if (quest && !(quest->data.flags & QUEST_RUNNING)) {
-						CountOff(starting->quest);  // ours stopped; theirs won't start now
+						if (starting->stopping && starting->uncount) {
+							CountOff(starting->quest);  // ours stopped; theirs won't start now
+						}
+						RestartOwn(starting->quest);  // so ours starts again
 					}
 				}
 				starting.reset();
@@ -710,6 +903,15 @@ namespace RadiantSync
 	void SetLocalPlayer(std::uint32_t a_id)
 	{
 		self = a_id;
+	}
+
+	void OnWelcome(std::uint64_t a_session)
+	{
+		session = a_session;
+		book.Bind(a_session);
+		if (WorldSync::InWorld()) {
+			Adopt();  // otherwise once it is (Frame), or the load to come brings its own
+		}
 	}
 
 	void OnStart(const Protocol::RadiantStart& a_start)
@@ -754,9 +956,18 @@ namespace RadiantSync
 		if (!Enabled() || self == 0) {
 			return;
 		}
-		for (const auto& [quest, run] : book.Ours(self)) {
-			SendAgain(quest, run);
+		Resend();
+	}
+
+	void OnPlayerReloaded(std::uint32_t a_playerId)
+	{
+		if (!Enabled() || self == 0 || a_playerId == self) {
+			return;
 		}
+		if (const auto shared = book.Shared(); !shared.empty()) {
+			REX::INFO("RadiantSync: player {} loaded a save; our runs going and the stages done here of the {} run(s) shared are sent again", a_playerId, shared.size());
+		}
+		Resend();
 	}
 
 	bool Shares(std::uint32_t a_quest)
@@ -784,6 +995,31 @@ namespace RadiantSync
 		const auto now = Clock::now();  // QuestSync polls twice a second
 		if (!WorldSync::InWorld()) {
 			return;
+		}
+		RestartFrame();
+		if (held && a_inSession && self != 0 && Enabled() && std::ranges::contains(held->shared, session, &RadiantRules::Saved::Quest::session)) {
+			Adopt();  // welcomed before the world was loaded
+		}
+		// A run held for its session (out of it, or in another) whose quest stops here (or runs for another run) is over
+		// here, as in one (Book::Ended): finished in its session, so a friend still on it never starts it here again when the
+		// player is back.
+		if (held) {
+			RadiantRules::Saved over{ held->session, {}, {} };
+			std::erase_if(held->shared, [&](const RadiantRules::Saved::Quest& a_quest) {
+				const auto here = QuestHereOf(a_quest.quest);
+				if (here && RadiantRules::TargetsOf(here->fills) == a_quest.targets) {
+					return false;
+				}
+				over.shared.push_back(a_quest);
+				return true;
+			});
+			if (!over.shared.empty()) {
+				book.Restore(over, QuestHereOf, false, now);
+				REX::INFO("RadiantSync: {} run(s) kept for the session are over here; finished", over.shared.size());
+			}
+			if (held->shared.empty()) {
+				held.reset();
+			}
 		}
 
 		// A friend's run being started here: done once it runs (or not, in time). One that replaces this game's own run:
@@ -819,7 +1055,7 @@ namespace RadiantSync
 				continue;
 			}
 			stopped.erase(id);
-			book.Ended(id);
+			book.Ended(id, now);
 			REX::INFO("RadiantSync: {:08X} '{}' stopped here; its shared run is over", id, QuestName(quest));
 		}
 
@@ -862,6 +1098,14 @@ namespace RadiantSync
 	{
 		AbortStart();
 		pending.clear();
+		if (session != 0) {
+			// Shared again as they were if the player comes back to this session (Adopt), with any kept from another.
+			auto ending = book.Save(session);
+			if (held) {
+				ending.shared.insert(ending.shared.end(), held->shared.begin(), held->shared.end());
+			}
+			held = std::move(ending);
+		}
 		book.EndSession();
 		stopped.clear();
 		inSession = false;
@@ -874,15 +1118,27 @@ namespace RadiantSync
 		book.Clear();
 		stopped.clear();
 		outgoing.clear();
+		session = 0;
 	}
 
 	void Rebaseline()
 	{
 		AbortStart();
+		restart.reset();  // the loaded world has its own runs
 		pending.clear();
-		book.Clear();
+		book.Reloaded();
 		stopped.clear();
 		outgoing.clear();
+		{
+			std::scoped_lock l{ loadLock };
+			held = std::exchange(loaded, std::nullopt);  // the loaded world's record (none: it shared no run)
+		}
+		if (held) {
+			book.Remember(*held);  // its runs finished, in whichever session
+		}
+		if (self != 0) {
+			Adopt();
+		}
 	}
 
 	std::string DumpAliases(const RE::TESQuest* a_constQuest)
@@ -916,7 +1172,38 @@ namespace RadiantSync
 
 	std::string Describe()
 	{
-		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(),
-			starting ? " starting" : "");
+		return std::format("radiants: runs={} begun={} joined={} declined={} sent={} taken={} pending={} restarted={} restored={} finished={}{}", book.Size(), begun, joined, declined, sent, taken, pending.size(),
+			restarted, restored, book.Finished(), starting ? " starting" : "");
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		// The runs finished here, by session; the runs shared, each with its session: the book's, and those held (a load's
+		// record not taken in yet, the ones kept at the session's end, or another session's still running here).
+		auto out = book.Save(session);
+		if (held) {
+			for (const auto& quest : held->shared) {
+				if (out.shared.size() < RadiantRules::MAX_SAVED_QUESTS) {
+					out.shared.push_back(quest);
+				}
+			}
+		}
+		return out.shared.empty() && out.finished.empty() ? std::vector<std::uint8_t>{} : RadiantRules::Encode(out);
+	}
+
+	void LoadRecord(std::span<const std::uint8_t> a_bytes)
+	{
+		auto saved = RadiantRules::Decode(a_bytes);
+		if (!saved) {
+			REX::WARN("RadiantSync: ignoring an unreadable record of radiant runs");
+		}
+		std::scoped_lock l{ loadLock };
+		loaded = std::move(saved);
+	}
+
+	void RevertRecord()
+	{
+		std::scoped_lock l{ loadLock };
+		loaded.reset();
 	}
 }

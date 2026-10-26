@@ -4,6 +4,7 @@
 #include "game/Equipment.h"
 #include "game/Downed.h"
 #include "game/Drops.h"
+#include "game/RadiantSync.h"
 #include "game/ExitMusic.h"
 #include "game/Face.h"
 #include "game/FastLoad.h"
@@ -20,6 +21,7 @@
 #include "game/MenuWatch.h"
 #include "game/OpenMenus.h"
 #include "game/RealTime.h"
+#include "game/RemotePlayers.h"
 #include "HangWatch.h"
 #include "Background.h"
 #include "Log.h"
@@ -29,6 +31,7 @@
 #include "game/SaveGuard.h"
 #include "game/SaveLoadHold.h"
 #include "game/HavokGuard.h"
+#include "game/InertShots.h"
 #include "game/TextureWait.h"
 #include "game/WorkshopSync.h"
 #include "net/Session.h"
@@ -214,12 +217,20 @@ namespace
 	constexpr std::uint32_t DROP_VERSION = 1;
 	constexpr std::uint32_t DROP_MAX_LENGTH = 1u << 20;
 
+	constexpr std::uint32_t RADIANT_RECORD = 'RADI';
+	constexpr std::uint32_t RADIANT_VERSION = 1;
+	constexpr std::uint32_t RADIANT_MAX_LENGTH = 1u << 18;  // RadiantRules::Encode writes at most about 80 KB
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
 		WorldSync::SaveResyncPoint(a_intfc);
 		// What our world holds of the items given between players (Drops): read back with the save.
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
 			a_intfc->WriteRecordData(drops.data(), static_cast<std::uint32_t>(drops.size()));
+		}
+		// The radiant runs our world shared in its session and those finished here (RadiantSync): read back with the save.
+		if (const auto radiants = RadiantSync::SaveRecord(); !radiants.empty() && a_intfc->OpenRecord(RADIANT_RECORD, RADIANT_VERSION)) {
+			a_intfc->WriteRecordData(radiants.data(), static_cast<std::uint32_t>(radiants.size()));
 		}
 	}
 
@@ -236,6 +247,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
 				}
+			} else if (type == RADIANT_RECORD && version == RADIANT_VERSION && length <= RADIANT_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					RadiantSync::LoadRecord(bytes);
+				}
 			}
 		}
 	}
@@ -244,6 +260,7 @@ namespace
 	{
 		WorldSync::RevertResyncPoint();
 		Drops::RevertRecord();
+		RadiantSync::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -312,7 +329,8 @@ namespace
 			return;
 		}
 		const bool enabled = setting->GetBinary();
-		const bool front = !enabled || Hotkeys::GameInFront();
+		// Off, the window matters only while the gate is closed (see InputGate::Gate::Frame).
+		const bool front = (enabled || inputGate.Now() != InputGate::Gate::State::kOpen) ? Hotkeys::GameInFront() : true;
 		const auto step = inputGate.Frame(enabled, front, front && enabled && MouseButtonDown());
 		if (step.polling) {
 			input->pollingEnabled = *step.polling;
@@ -364,6 +382,9 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
+					InertShots::BeforeLoad();  // after DespawnAll: every inert shot in flight is handed to the load, which frees it
+					SaveGuard::BeforeLoad();  // after DespawnAll (OnBeforeSaveOrLoad): what of ours is on its way out as the load comes
+					RemotePlayers::BeforeLoad();  // after DespawnAll too: who was being sent out of a friend's frame copy is forgotten
 				},
 				"load");
 			break;
@@ -377,6 +398,7 @@ namespace
 					Session::OnBeforeSaveOrLoad();
 					WeaponFire::HideGhostsFromSave();  // after the shields end there: a ghost against a friend's explosion is never saved
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
+					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save
 					SaveGuard::BeforeSave();
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},
@@ -508,6 +530,7 @@ namespace
 				PERF_SCOPE("HavokGuard");
 				HavokGuard::Frame();
 			}
+			InertShots::Frame();  // inert shots that are stale or in a cell no longer attached are ended
 			PERF_SCOPE("Menu");
 			Menu::Frame();  // after Session: a button's action sees this frame's connection state
 		}
@@ -875,9 +898,10 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
 	// Before F4SE::Init opens (and empties) the log: the last launches' logs are kept.
 	const auto notKept = Log::RotateBeforeInit(a_f4se->GetSaveFolderName());
-	// 168 of 256 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
-	// Equipment::InstallFrameUse's two) and HavokGuard::Install's two detours (2 x 56).
-	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 256 });
+	// 192 of 320 bytes used: four 14-byte call stubs (TextureWait::Install's one call, Face::Install's six share one,
+	// Equipment::InstallFrameUse's two), HavokGuard::Install's two detours (2 x 56), and InertShots::Install's jump (a
+	// 14-byte branch stub and a 10-byte continuation).
+	F4SE::Init(a_f4se, { .trampoline = true, .trampolineSize = 320 });
 	Log::InstallScrubber();
 	mainThread = std::this_thread::get_id();
 	if (notKept) {
@@ -902,9 +926,12 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 	F4SE::GetTaskInterface()->AddTaskPermanent(OnFrame);
 	TextureWait::Install();  // before every move, the texture requests the walk owes are handed over (TextureFlush.h)
 	HavokGuard::Install();   // Havok's angle loop ends on a NaN instead of spinning for ever (HavokNan.h)
+	InertShots::Install();   // a friend's or a copy's missile flies here with no blast of its own (InertShot.h)
 	WeaponFire::SetHandThrowables(Config::Get().grenadeInHand);  // a friend's grenade in their stand-in's hand (HandThrowable.h)
 	Face::Install();         // friends' stand-ins get their own head, built the way the player's is (FaceHeads.h)
 	Equipment::InstallFrameUse();  // what turns our player away from a power armor frame is mended first (FrameUse.h)
+	Equipment::SetFrameGate(&RemotePlayers::KeepOutOfFrame);  // a copy of a friend's frame is theirs (FriendFrame.h)
+	Equipment::InstallFrameGate();  // and its Transfer
 
 	if (const auto serialization = F4SE::GetSerializationInterface()) {
 		serialization->SetUniqueID(SERIALIZATION_ID);

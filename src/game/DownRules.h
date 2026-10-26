@@ -134,6 +134,7 @@ namespace DownRules
 		bool dead = false;       // dead or dying
 		bool paused = false;     // a menu has the game stopped (the pause menu, the Pip-Boy)
 		bool inCombat = false;   // the player is in a fight (revives per fight)
+		bool console = false;    // the console is open, or was a moment ago (Downed.cpp): a stand-up then is the player's command
 	};
 
 	// What to do about it this frame.
@@ -152,6 +153,7 @@ namespace DownRules
 		bool                putDown = false;       // put them down again (the engine's own essential down)
 		bool                backDown = false;      // down again after that
 		bool                stayedUp = false;      // the game kept them up through PUT_DOWN_GIVE_UP of that: up it is
+		bool                upByCommand = false;   // stood up while the console was open (player.resurrect and the like): up it is
 	};
 
 	// The player's own down state. Up; down and waiting for help; helped and getting up; or bled out (essential
@@ -172,14 +174,29 @@ namespace DownRules
 			kBledOut,
 		};
 
-		// The session's rules; a new session starts the count over.
+		// The session's rules, and a new count.
 		void SetRules(const Rules& a_rules)
 		{
 			rules = a_rules;
+			countedFor = 0;
 			helpedUpAt.clear();
 			fightRevives = 0;
 			upAt.reset();
 			outOfRevives = false;
+		}
+
+		// The session's rules as a welcome brings them (a_session: the server's session ID; 0, out of a session). The revive
+		// count, its window and the cooldown are the session's: they start over in another session, and carry on through a
+		// welcome back into the same one (a dropped link, a quit to the menu and a join again), so a rejoin gives no revive
+		// the host's limit doesn't. Out of a session they are kept for a return.
+		void SetRules(const Rules& a_rules, std::uint64_t a_session)
+		{
+			if (a_session == 0 || a_session == countedFor) {
+				rules = a_rules;
+				return;
+			}
+			SetRules(a_rules);
+			countedFor = a_session;
 		}
 
 		[[nodiscard]] const Rules& GetRules() const { return rules; }
@@ -367,12 +384,21 @@ namespace DownRules
 		// 2026-10-19: downed in a pile of clutter, the host was stood up and their revive state lost). They are put
 		// down again, the engine's own way, every PUT_DOWN_RETRY, the bleed-out time running on, until they are down
 		// or PUT_DOWN_GIVE_UP has gone by. Not when the session is over (up is right then), and not while they are
-		// dying or dead: that is waited out (a hit the game is still turning into a down, or a real death).
+		// dying or dead: that is waited out (a hit the game is still turning into a down, or a real death). Nor when the
+		// console was open: the player stood themselves up (player.resurrect, a heal), and up it is at once.
 		void StoodUp(const Facts& a_facts, Step& a_step, Clock::time_point a_now)
 		{
 			if (!a_facts.enabled) {
 				phase = Phase::kUp;
 				a_step.stayDown = false;
+				standingSince.reset();
+				lastPutDown.reset();
+				return;
+			}
+			if (a_facts.console && !a_facts.dead) {
+				phase = Phase::kUp;
+				a_step.stayDown = false;
+				a_step.upByCommand = true;
 				standingSince.reset();
 				lastPutDown.reset();
 				return;
@@ -428,6 +454,7 @@ namespace DownRules
 		Clock::time_point                lastFight{};
 		std::optional<Clock::time_point> upAt;  // stood up after the last help-up (the cooldown)
 		bool                             outOfRevives = false;
+		std::uint64_t                    countedFor = 0;  // the session the count is for (0: none named)
 
 		Phase             phase = Phase::kUp;
 		bool              giveUp = false;

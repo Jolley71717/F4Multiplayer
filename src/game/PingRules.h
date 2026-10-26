@@ -20,9 +20,11 @@ namespace PingRules
 
 	// How long a ping's compass marker stays up. A player's next ping replaces their last one.
 	inline constexpr auto LIFETIME = 15s;
-	// The least time between two of a player's pings: the server's own limit (Server.cpp, handlePing), so a ping our
-	// player sees on their own compass is one the server passes on too.
+	// The least time between two of a player's pings, pressed. More than the server's limit by arrival
+	// (Protocol::PING_SERVER_GAP, Server.cpp's handlePing) by more than the network's jitter, so a ping our player sees on
+	// their own compass is one the server passes on too.
 	inline constexpr auto MIN_GAP = 1s;
+	static_assert(MIN_GAP - Protocol::PING_SERVER_GAP >= 200ms, "the server must pass on every ping a game sends");
 	// How far the crosshair reaches (about 140 m). Past that, or at the sky, the ping is where the player stands.
 	inline constexpr float REACH = 10000.0f;
 	// Something nearer the camera than this is the player's own body or weapon, not a target.

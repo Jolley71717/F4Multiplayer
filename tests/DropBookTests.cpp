@@ -293,3 +293,188 @@ TEST("drop book: an item with no reference named is looked for only when it can 
 	CHECK(!DropBook::MayScan(5u, 6u, 1, false));
 	CHECK(!DropBook::MayScan(5u, 5u, 0, false));
 }
+
+TEST("drop book: our copy is scrapped only when the workshop's event names it; gone otherwise it is lost or still standing")
+{
+	using DropBook::CopyGone;
+	// (resolves, named)
+	CHECK(DropBook::JudgeCopy(true, true) == CopyGone::kScrapped);    // the workshop's event named it
+	CHECK(DropBook::JudgeCopy(false, true) == CopyGone::kScrapped);   // and the game took the reference already
+	CHECK(DropBook::JudgeCopy(false, false) == CopyGone::kLost);      // gone with no event (its cell went, in workshop mode too): placed again
+	CHECK(DropBook::JudgeCopy(true, false) == CopyGone::kStanding);   // switched off or hidden: no scrap of ours
+}
+
+TEST("drop book: a scrap is claimed once, ours if the server grants it to us, else lost to whoever had it first")
+{
+	using Outcome = DropBook::Scraps::Outcome;
+	DropBook::Scraps scraps;
+	CHECK(scraps.Scrapped(7));
+	CHECK(!scraps.Scrapped(7));  // the event and the frame's look both saw it: one claim
+	CHECK(!scraps.Scrapped(0));
+	CHECK(scraps.Waiting(7));
+	CHECK((scraps.Unanswered() == std::vector<std::uint32_t>{ 7 }));
+	CHECK(scraps.Answered(9, 2, 2) == Outcome::kNotScrapped);  // the answer to something else
+	CHECK(scraps.Answered(7, 2, 2) == Outcome::kOurs);
+	CHECK(!scraps.Waiting(7));
+	CHECK(scraps.Answered(7, 2, 2) == Outcome::kNotScrapped);  // answered already: a later word is another matter
+
+	CHECK(scraps.Scrapped(8));
+	CHECK(scraps.Answered(8, 3, 2) == Outcome::kLost);  // player 3 took it a moment before
+	CHECK(scraps.Scrapped(10));
+	CHECK(scraps.Answered(10, 0, 2) == Outcome::kLost);  // back with its owner: not ours either
+
+	// Never refused for want of room: unclaimed, the item would lie on for the others while our player had its components.
+	for (std::uint32_t id = 100; id < 300; ++id) {
+		CHECK(scraps.Scrapped(id));
+	}
+	CHECK(scraps.Waiting(299));
+	CHECK(scraps.Size() == 200u);
+	scraps.Clear();
+	CHECK(scraps.Size() == 0u);
+}
+
+TEST("drop book: a scrap is recorded as taken at once, and taken back out of the record if it was lost")
+{
+	DropBook::Record record;
+	record.Bind(0xA);
+	record.Took(5);
+	record.Took(6);
+	record.Untook(5);
+	CHECK(!record.HasTaken(5));
+	CHECK(record.HasTaken(6));
+	CHECK((record.ForServer().taken == std::vector<std::uint32_t>{ 6 }));
+	record.Untook(42);  // never taken: nothing changes
+	CHECK((record.ForServer().taken == std::vector<std::uint32_t>{ 6 }));
+}
+
+TEST("drop book: what a copy's scrap put in its workbench is known, apart from other scraps' and other benches'")
+{
+	using namespace std::chrono_literals;
+	using Yields = DropBook::ScrapYields;
+	using Item = Yields::Item;
+	constexpr std::uint32_t BENCH = 0x0001F0A0;
+	constexpr std::uint32_t OTHER_BENCH = 0x0001F0A1;
+	constexpr std::uint32_t STEEL = 0x000731A4;
+	constexpr std::uint32_t SCREW = 0x00069086;
+	constexpr std::uint32_t WOOD = 0x000731A3;
+	const auto t = DropBook::Clock::time_point{} + 100s;
+
+	Yields yields;
+	// The components came in just before the event, and a little after it.
+	yields.Added(BENCH, STEEL, 3, t - 10ms);
+	yields.Destroyed(7, BENCH, t);
+	yields.Added(BENCH, SCREW, 1, t + 5ms);
+	yields.Added(BENCH, STEEL, 2, t + 20ms);
+	yields.Added(OTHER_BENCH, STEEL, 9, t + 5ms);  // another settlement's
+	// Our player's own scrap a moment later, of the same bench: its wood is its own.
+	yields.Destroyed(0, BENCH, t + 300ms);
+	yields.Added(BENCH, WOOD, 4, t + 310ms);
+	// Much later, nothing to do with either.
+	yields.Added(BENCH, WOOD, 1, t + 2s);
+
+	CHECK(yields.Due(t + Yields::WINDOW).empty());  // not known yet: more may come
+	const auto due = yields.Due(t + Yields::WINDOW * 2);
+	REQUIRE(due.size() == 1u);
+	CHECK(due[0].dropId == 7);
+	CHECK(due[0].bench == BENCH);
+	CHECK((due[0].items == std::vector<Item>{ { STEEL, 5 }, { SCREW, 1 } }));
+	// Our own scrap's yield is let go with it, and the wood never becomes the copy's.
+	CHECK(yields.Due(t + 10s).empty());
+	CHECK(yields.Waiting() == 0u);
+
+	// A scrap with nothing seen coming in: known, and empty.
+	yields.Destroyed(8, BENCH, t + 20s);
+	const auto empty = yields.Due(t + 21s);
+	REQUIRE(empty.size() == 1u);
+	CHECK(empty[0].items.empty());
+
+	// Nothing came from nowhere for no bench, of nothing, or none of it.
+	yields.Added(0, STEEL, 1, t + 30s);
+	yields.Added(BENCH, 0, 1, t + 30s);
+	yields.Added(BENCH, STEEL, 0, t + 30s);
+	yields.Destroyed(9, BENCH, t + 30s);
+	yields.Destroyed(10, 0, t + 30s);  // no workbench named: not noted
+	const auto none = yields.Due(t + 31s);
+	REQUIRE(none.size() == 1u);
+	CHECK(none[0].dropId == 9);
+	CHECK(none[0].items.empty());
+
+	// Bounded: the newest scraps are kept.
+	for (std::uint32_t id = 1; id <= Yields::MAX_SCRAPS + 5; ++id) {
+		yields.Destroyed(id, BENCH, t + 40s);
+	}
+	CHECK(yields.Waiting() == Yields::MAX_SCRAPS);
+	yields.Clear();
+	CHECK(yields.Waiting() == 0u);
+}
+
+TEST("drop book: a lost scrap takes back by base only what has no instance of its own; an item stored whole comes out as itself")
+{
+	using Yields = DropBook::ScrapYields;
+	using Item = Yields::Item;
+	constexpr std::uint32_t BENCH = 0x0001F0A0;
+	constexpr std::uint32_t STEEL = 0x000731A4;
+	constexpr std::uint32_t SCREW = 0x00069086;
+	constexpr std::uint32_t PISTOL = 0x0004822;  // a 10mm pistol, stored whole: our player may have their own legendary one there
+	constexpr std::uint32_t VEST = 0x0001EED7;
+	const auto fungible = [](std::uint32_t a_base) { return a_base == STEEL || a_base == SCREW; };
+
+	// Scrapped: components alone, all taken back by base.
+	const auto scrapped = Yields::PlanTakeBack({ 7, BENCH, { { STEEL, 5 }, { SCREW, 1 } } }, fungible);
+	CHECK((scrapped.out == std::vector<Item>{ { STEEL, 5 }, { SCREW, 1 } }));
+	CHECK(scrapped.whole.empty());
+	// Stored whole: never by base; it comes out as its own stack (PickStack).
+	const auto stored = Yields::PlanTakeBack({ 8, BENCH, { { PISTOL, 1 } } }, fungible);
+	CHECK(stored.out.empty());
+	CHECK((stored.whole == std::vector<Item>{ { PISTOL, 1 } }));
+	// Both in one moment: the components by base, the vest as itself.
+	const auto both = Yields::PlanTakeBack({ 9, BENCH, { { VEST, 1 }, { STEEL, 2 } } }, fungible);
+	CHECK((both.out == std::vector<Item>{ { STEEL, 2 } }));
+	CHECK((both.whole == std::vector<Item>{ { VEST, 1 } }));
+	// Nothing, or nothing of anything: no take.
+	const auto none = Yields::PlanTakeBack({ 10, BENCH, { { 0, 3 }, { STEEL, 0 } } }, fungible);
+	CHECK(none.out.empty());
+	CHECK(none.whole.empty());
+}
+
+TEST("drop book: an item stored whole comes out of the workbench as its own stack, never our player's own of the same base")
+{
+	using DropBook::PickStack;
+	using DropBook::StackInfo;
+	using Kind = DropBook::StackPick::Kind;
+	Protocol::DroppedItem rifle;
+	rifle.base = 0x0004822;
+	rifle.count = 1;
+	rifle.mods = { { 0x200, 0 }, { 0x100, 0 } };
+	rifle.name = "Furious Rifle";
+	const StackInfo ours{ .count = 1, .instanced = true, .mods = { 0x100, 0x300 }, .name = "Our Rifle" };  // our player's own, modded
+	const StackInfo theirs{ .count = 1, .instanced = true, .mods = { 0x100, 0x200 }, .name = "Furious Rifle" };
+	// The friend's rifle beside ours: that stack, whichever comes first.
+	CHECK((PickStack({ ours, theirs }, rifle, 1) == DropBook::StackPick{ Kind::kStack, 1 }));
+	CHECK((PickStack({ theirs, ours }, rifle, 1) == DropBook::StackPick{ Kind::kStack, 0 }));
+	// Only ours there (moved out since, or another of the same base): nothing taken.
+	CHECK((PickStack({ ours }, rifle, 1) == DropBook::StackPick{}));
+	// The same mods under another name: not it.
+	StackInfo renamed = theirs;
+	renamed.name = "Our Rifle";
+	CHECK((PickStack({ renamed }, rifle, 1) == DropBook::StackPick{}));
+	// A drop named nothing of its own takes the stack with its mods, whatever it is called.
+	Protocol::DroppedItem plainName = rifle;
+	plainName.name.clear();
+	CHECK((PickStack({ ours, renamed }, plainName, 1) == DropBook::StackPick{ Kind::kStack, 1 }));
+	// A plain item (a key, a holotape): all of its base are the same thing; by base, if there are enough.
+	Protocol::DroppedItem key;
+	key.base = 0x000A1B2C;
+	key.count = 1;
+	const StackInfo keys{ .count = 2 };
+	CHECK((PickStack({ keys }, key, 1).kind == Kind::kStack));
+	CHECK((PickStack({ StackInfo{ .count = 1 }, StackInfo{ .count = 1 } }, key, 2) == DropBook::StackPick{ Kind::kAny, 0 }));
+	CHECK((PickStack({ StackInfo{ .count = 1 } }, key, 2) == DropBook::StackPick{}));
+	// A plain drop never takes a modded one of its base.
+	Protocol::DroppedItem plainRifle;
+	plainRifle.base = rifle.base;
+	plainRifle.count = 1;
+	CHECK((PickStack({ ours }, plainRifle, 1) == DropBook::StackPick{}));
+	CHECK((PickStack({}, rifle, 1) == DropBook::StackPick{}));
+	CHECK((PickStack({ theirs }, rifle, 0) == DropBook::StackPick{}));
+}

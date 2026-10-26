@@ -9,8 +9,9 @@
 // Main thread only.
 namespace Downed
 {
-	// The session's rules (HostRules): out of a session, the defaults.
-	void SetRules(const Protocol::SessionRules& a_rules);
+	// The session's rules (HostRules): out of a session (a_session 0), the defaults. The revive count is the session's: kept
+	// through a welcome back into the same one (DownRules::Self::SetRules).
+	void SetRules(const Protocol::SessionRules& a_rules, std::uint64_t a_session);
 
 	// Call every frame. a_withFriends: in a session with at least one other player.
 	void Frame(bool a_withFriends);

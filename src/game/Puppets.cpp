@@ -2,6 +2,7 @@
 
 #include "game/AimPoint.h"
 #include "game/CreatureGait.h"
+#include "game/DrawMatch.h"
 #include "game/FrameClock.h"
 #include "game/Gait.h"
 #include "game/IdleRelease.h"
@@ -43,6 +44,7 @@ namespace Puppets
 			std::chrono::steady_clock::time_point nextIdleRefresh{};
 			std::chrono::steady_clock::time_point nextDrawAttempt{};
 			bool                                  redraw = false;  // holster (if drawn) and draw again
+			DrawMatch::Track                      draw;            // asks to match its friend's weapon drawn or not (MatchWeaponDrawn)
 			IdleRelease::Gate                     idleRelease;     // a mirrored NPC held by an idle (see ReleaseIdle)
 			std::uint32_t                         idleStops = 0;   // stops sent, and taken by the graph (dev: mirror)
 			std::uint32_t                         idleStopsTaken = 0;
@@ -287,23 +289,39 @@ namespace Puppets
 			}
 		}
 
-		// Draws or holsters the weapon to match the remote player. Retried at most once a second,
-		// since drawing takes a moment and fails while the puppet's equipment is being changed.
+		std::atomic<std::uint32_t> drawAsks{ 0 };     // draws and holsters asked of puppets (dev status line)
+		std::atomic<std::uint32_t> drawGiveUps{ 0 };  // states a puppet never took in DrawMatch::MAX_TRIES asks
+
+		// Draws or holsters the weapon to match the remote player: each ask plays the weapon's sound, so a few
+		// asks a second apart, then it is let be (DrawMatch).
 		void MatchWeaponDrawn(RE::Actor* a_actor, const Puppet& a_puppet)
 		{
 			const bool wantDrawn = (a_puppet.target.flags & Protocol::kWeaponDrawn) != 0;
 			const bool drawn = a_actor->GetWeaponMagicDrawn();
 			const auto now = std::chrono::steady_clock::now();
-			// A redraw holsters first; the next attempt draws.
-			const bool holster = a_puppet.redraw && drawn;
-			if (now < a_puppet.nextDrawAttempt || (wantDrawn == drawn && !holster)) {
-				return;
+			DrawMatch::Do what = DrawMatch::Do::kNothing;
+			{
+				std::scoped_lock l{ lock };
+				const auto entry = Find(a_actor);
+				if (!entry) {
+					return;
+				}
+				const auto giveUps = entry->draw.giveUps;
+				what = DrawMatch::Next(entry->draw, wantDrawn, drawn, entry->redraw, entry->nextDrawAttempt, now);
+				if (entry->draw.giveUps != giveUps) {
+					drawGiveUps.fetch_add(1, std::memory_order_relaxed);
+					if (MoveSync::Loggable(drawGiveUps.load(std::memory_order_relaxed))) {
+						REX::INFO("Puppets: {:08X} did not take {} in {} asks; let be until its friend's weapon or its gear changes", a_actor->GetFormID(), wantDrawn ? "a draw" : "a holster",
+							DrawMatch::MAX_TRIES);
+					}
+				}
+				if (what != DrawMatch::Do::kNothing) {
+					entry->redraw = false;
+				}
 			}
-			a_actor->DrawWeaponMagicHands(wantDrawn && !holster);
-			std::scoped_lock l{ lock };
-			if (const auto entry = Find(a_actor)) {
-				entry->nextDrawAttempt = now + 1s;
-				entry->redraw = false;
+			if (what != DrawMatch::Do::kNothing) {
+				drawAsks.fetch_add(1, std::memory_order_relaxed);
+				a_actor->DrawWeaponMagicHands(what == DrawMatch::Do::kDraw);
 			}
 		}
 
@@ -770,6 +788,22 @@ namespace Puppets
 		return Find(a_actor) != nullptr;
 	}
 
+	bool InFurniture(const RE::Actor* a_actor)
+	{
+		return a_actor && OccupiedFurniture(a_actor) != nullptr;
+	}
+
+	std::optional<OwnerAim> AimOf(const RE::Actor* a_actor)
+	{
+		std::scoped_lock l{ lock };
+		const auto it = puppets.find(a_actor);
+		if (it == puppets.end() || it->second.formId != a_actor->GetFormID()) {
+			return std::nullopt;
+		}
+		const auto& target = it->second.target;
+		return OwnerAim{ .heading = target.heading, .pitch = it->second.kind == Kind::kPlayer ? target.pitch : target.ownerAim.value_or(0.0f) };
+	}
+
 	void ReleaseNpc(RE::Actor* a_actor)
 	{
 		if (!a_actor || a_actor->IsDeleted()) {
@@ -1165,6 +1199,9 @@ namespace Puppets
 		}
 		if (setUp != 0) {
 			out += std::format("{}graphsSetUp={}", out.empty() ? "" : " ", setUp);
+		}
+		if (const auto asks = drawAsks.load(std::memory_order_relaxed); asks != 0) {
+			out += std::format("{}draws={}/{}", out.empty() ? "" : " ", asks, drawGiveUps.load(std::memory_order_relaxed));
 		}
 		return out;
 	}
