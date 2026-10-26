@@ -927,6 +927,7 @@ namespace NpcSync
 			ours.copy = SaveGuard::Placed(a_frame) || Spawns::CopyIdOf(a_frame->GetFormID()) != 0;
 			ours.at = SpotOf(a_frame);
 			ours.heading = a_frame->data.angle.z;
+			ours.upright = FrameShare::Upright(a_frame->data.angle.x, a_frame->data.angle.y);
 			return ours;
 		}
 
@@ -1133,6 +1134,9 @@ namespace NpcSync
 					if (distance > 10.0f) {
 						REX::INFO("NpcSync: frame {:08X} is moved {:.0f} units to ({:.0f},{:.0f},{:.0f}), where player {}'s game has it", id, distance, theirs.x, theirs.y, theirs.z, a_owner);
 					}
+					if (!ours.upright) {
+						REX::INFO("NpcSync: frame {:08X} leans here (angle x {:.2f} y {:.2f}); stood up, as player {}'s game has it", id, a_frame->data.angle.x, a_frame->data.angle.y, a_owner);
+					}
 					a_frame->data.location = { theirs.x, theirs.y, theirs.z };
 					a_frame->data.angle = { 0.0f, 0.0f, a_state.heading };
 					a_frame->Update3DPosition(true);
@@ -1156,8 +1160,11 @@ namespace NpcSync
 					RE::Console::ExecuteCommand(std::format("{:08X}.setpos x {:.0f}", id, theirs.x).c_str());
 					RE::Console::ExecuteCommand(std::format("{:08X}.setpos y {:.0f}", id, theirs.y).c_str());
 					RE::Console::ExecuteCommand(std::format("{:08X}.setpos z {:.0f}", id, theirs.z).c_str());
+					// moveto turns it as our player is, their look up or down too: stood up again, as the owner's is.
+					RE::Console::ExecuteCommand(std::format("{:08X}.setangle x 0", id).c_str());
+					RE::Console::ExecuteCommand(std::format("{:08X}.setangle y 0", id).c_str());
 					RE::Console::ExecuteCommand(std::format("{:08X}.setangle z {:.1f}", id, a_state.heading * 180.0f / std::numbers::pi_v<float>).c_str());
-					meter.Count(5);
+					meter.Count(7);
 					++framesBrought;
 					frameChoices[id] = static_cast<int>(move);
 				}
