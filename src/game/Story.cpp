@@ -10,10 +10,13 @@ namespace Story
 		constexpr std::uint32_t PREWAR_WORLDSPACE = 0x000A7FF4;  // SanctuaryHillsWorld (before the bombs)
 		constexpr std::array<std::uint32_t, 2> VAULT_111_LOCATIONS{ 0x0001F3FE, 0x000CA853 };
 
+		constexpr std::uint16_t QUEST_RUNNING = 0x0001;
 		constexpr std::uint16_t QUEST_COMPLETED = 0x0002;
 
-		bool shared = false;
-		bool opening = false;
+		bool    shared = false;
+		Opening opening = Opening::kNone;
+		bool    vaultStart = false;
+		bool    vaultPlaces = false;
 
 		bool PastTheVault()
 		{
@@ -47,6 +50,17 @@ namespace Story
 			const auto player = RE::PlayerCharacter::GetSingleton();
 			return player && player->GetParentCell() && !PastTheVault() && InOpeningPlace(player);
 		}
+
+		// The game's own start, not just its places: an alternate start never runs Out of Time, so PastTheVault stays false
+		// and a walk into Vault 111 is in those places too. Only Out of Time running says so, not the pre-war world: some
+		// alternate starts make the character at its mirror and move the player on unnamed, and the pre-war world counted
+		// would end their unnamed hold for good. An unnamed vanilla start is held there as unnamed instead, until the cryo
+		// pod.
+		bool InVanillaStart()
+		{
+			const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(OUT_OF_TIME);
+			return quest && (quest->data.flags & QUEST_RUNNING);
+		}
 	}
 
 	void SetShared(bool a_shared)
@@ -66,20 +80,43 @@ namespace Story
 
 	bool InOpening()
 	{
+		return opening != Opening::kNone;
+	}
+
+	Opening Why()
+	{
 		return opening;
 	}
 
-	void Frame()
+	bool InVaultStart()
 	{
-		const bool inOpening = Compute();
-		if (inOpening != opening) {
-			REX::INFO("Story: {} the opening", inOpening ? "in" : "out of");
-			opening = inOpening;
+		return vaultStart;
+	}
+
+	bool InVaultPlaces()
+	{
+		return vaultPlaces;
+	}
+
+	void Frame(bool a_unnamed)
+	{
+		const bool vault = Compute();
+		vaultPlaces = vault;
+		const auto hold = Decide(vault, vault && InVanillaStart(), a_unnamed);
+		vaultStart = hold.vaultStart;
+		const auto now = hold.opening;
+		if (now != opening) {
+			if (now == Opening::kNone || opening == Opening::kNone) {
+				REX::INFO("Story: {} the opening{}", now != Opening::kNone ? "in" : "out of", now == Opening::kUnnamed ? " (a new character with no name yet)" : "");
+			} else if (now == Opening::kUnnamed) {
+				REX::INFO("Story: still in the opening (a new character with no name yet)");
+			}
+			opening = now;
 		}
 	}
 
 	std::string Describe()
 	{
-		return std::format("story: {} opening={}", shared ? "shared" : "own", opening);
+		return std::format("story: {} opening={}{}", shared ? "shared" : "own", InOpening(), opening == Opening::kUnnamed ? " (unnamed)" : "");
 	}
 }

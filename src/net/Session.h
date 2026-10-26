@@ -17,6 +17,9 @@ namespace Session
 	// Before a save is written or another save is loaded.
 	void OnBeforeSaveOrLoad();
 
+	// A load begins (before OnBeforeSaveOrLoad): from here on the character's ID is the save's (CharacterBinding).
+	void OnBeforeLoad();
+
 	// The game is quitting (its shutdown stage, on the main thread, before the world is deleted): the hosted
 	// server writes the session file and stops, and the connections close while Steam and the network are
 	// still there. Nothing else runs after it.

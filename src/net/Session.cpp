@@ -112,6 +112,11 @@ namespace Session
 		bool                              leaveAfterPoll = false;  // let back into another session than the one we joined
 		std::unordered_set<std::uint64_t> legacyTold;              // characters told about the old shared session file
 		std::uint64_t                     rulesToldFor = 0;        // the session whose rules for being down the HUD has told
+		// A new character with no name yet outside Vault 111 (an alternate start): told once per new game that the session
+		// waits for the name, if it takes this long.
+		constexpr auto                    UNNAMED_NOTICE_AFTER = 2min;
+		std::optional<Clock::time_point>  unnamedSince;
+		bool                              unnamedTold = false;
 
 		RE::NiPoint3      lastPosition;
 		Clock::time_point lastPositionTime{};
@@ -996,8 +1001,10 @@ namespace Session
 		}
 		// The opening's world isn't the session's: nothing is shared from it (see Story::InOpening).
 		if (Story::InOpening()) {
-			REX::INFO("Session: can't host: {}", Text::GetEnglish("host.err_opening"));
-			return Text::Get("host.err_opening");
+			// A new character with no name yet still has the last character's ID: hosting would open that one's session.
+			const auto key = Story::Why() == Story::Opening::kUnnamed ? "host.err_opening_unnamed" : "host.err_opening";
+			REX::INFO("Session: can't host: {}", Text::GetEnglish(key));
+			return Text::Get(key);
 		}
 		const auto& settings = Config::Get();
 		hostedServer = std::make_unique<Server>([](std::string_view a_line) {
@@ -1166,7 +1173,19 @@ namespace Session
 		Perf::Stretches perf;
 		PERF_NEXT(perf, "Story");
 		WeaponFire::Install();  // no-op once hooked; the player may not exist at startup
-		Story::Frame();  // first: the rest of the session checks it
+		// First: the rest of the session checks it. A new character with no name yet is held wherever it is, but on the dev
+		// channel: the rig's coc character never gets a name, and its files are its own.
+		Story::Frame(!Config::Get().devChannel && InGame() && binding.Unnamed(CurrentCharacter()));
+		if (Story::InVaultStart()) {
+			binding.OnVaultOpening();  // a Vault 111 start is held as it always was, and no longer (not a walk into the vault)
+		}
+		if (Story::Why() != Story::Opening::kUnnamed || Story::InVaultPlaces()) {
+			unnamedSince.reset();  // nor in the vault's places: a vanilla start is unnamed there until the Vault-Tec form
+		} else if (!unnamedSince) {
+			unnamedSince = now;
+		} else if (now - *unnamedSince >= UNNAMED_NOTICE_AFTER && (Config::Get().host || !serverAddress.empty()) && !std::exchange(unnamedTold, true)) {
+			Notify("session.unnamed_waits");  // a start that never asks for a name: the session would wait for good
+		}
 
 		PERF_NEXT(perf, "Steam");
 		if (steamMode) {
@@ -1230,7 +1249,12 @@ namespace Session
 					SendOut(Protocol::Encode(Protocol::Rename{ 0, sentName }, Protocol::MessageType::kRename), true);
 				}
 			}
-			switch (binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() })) {
+			const auto unnamed = binding.UnnamedId();
+			const auto step = binding.Check(LinkNow(), { CurrentCharacter(), InGame(), Story::InOpening() });
+			if (unnamed && !binding.UnnamedId()) {
+				REX::INFO("Session: the new character is named: {:016X} -> {:016X} (in the opening: {})", *unnamed, CurrentCharacter(), Story::Why() == Story::Opening::kVault);
+			}
+			switch (step) {
 			case CharacterBinding::Step::kStopHosting:
 				StopHosting();
 				Notify("session.character_changed_host");
@@ -1490,6 +1514,11 @@ namespace Session
 		Puppets::Tick();
 	}
 
+	void OnBeforeLoad()
+	{
+		binding.OnLoadStarting();
+	}
+
 	void OnBeforeSaveOrLoad()
 	{
 		// The player's last moves, and what the last frame left to send, go out now, while their world
@@ -1554,6 +1583,9 @@ namespace Session
 		Drops::OnGameLoaded();
 		Traps::OnGameLoaded();
 		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
+		if (a_newGame) {
+			unnamedTold = false;  // its own notice if it isn't named (Frame)
+		}
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
 		// host stops hosting (Frame starts it again with that character's session, out of the opening), and a friend
 		// leaves. (After the above: leaving removes stand-ins and copies, and their handles from before the load are let
