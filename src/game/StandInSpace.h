@@ -27,8 +27,8 @@ namespace StandInSpace
 	constexpr float CLEAR_ARMOR = 56.0f;  // when either of us is in power armor, which is wider
 	// Feet further apart than this up or down are on another floor (or a ledge above): no body is in the way.
 	constexpr float TALL = 120.0f;
-	// Closer than this on the ground is our very spot, with no way out from us to go by: they go a step ahead of
-	// themselves (along their own heading, which holds still while they stand), not toward wherever we turn.
+	// Closer than this on the ground is our very spot, with no way out from us to go by: they go a step to our side (see
+	// Place), not toward wherever we turn.
 	constexpr float SAME = 1.0f;
 
 	// a_at: where the friend stands, a_heading: which way they face (radians, 0 along +y, a quarter turn along +x, as
@@ -53,23 +53,35 @@ namespace StandInSpace
 		return { a_us.x + outX * a_clear, a_us.y + outY * a_clear, a_at.z };
 	}
 
-	// The heading a friend had as they came onto our very spot, kept while they stay on it. Most look about once there
-	// (after a moveto), and a stand-in put a step along the heading they have now would go round and round us.
+	// Where a friend's stand-in was put as they came onto our very spot, kept while they stay on it. Most look about once
+	// there (after a moveto), and a stand-in put by the heading they have now would go round and round us. It is kept on
+	// the ground, not measured from our feet again each frame: one kept a step from us went along as we stepped, and
+	// when we had both come to one marker facing one way it stood a step ahead of us, so walking on pushed into it
+	// frame after frame and we could not move off the spot (hidq).
 	struct Away
 	{
-		std::optional<float> heading;
+		std::optional<Point> spot;
 	};
 
-	// Clear, for a friend seen each frame: on our very spot, the stand-in stays a step along the heading they came onto
-	// it with (Away), whichever way they turn after.
-	inline Point Place(Away& a_away, const Point& a_at, float a_heading, const Point& a_us, float a_clear = CLEAR)
+	// Clear, for a friend seen each frame (a_ourHeading: which way we face, as a_heading). On our very spot the stand-in
+	// goes a step to our right, out of the way we walk and out of the view behind us, and stays there (Away) whichever
+	// way either of us turns or steps, until one of us is off the spot.
+	inline Point Place(Away& a_away, const Point& a_at, float a_heading, const Point& a_us, float a_ourHeading, float a_clear = CLEAR)
 	{
 		const bool same = std::hypot(a_at.x - a_us.x, a_at.y - a_us.y) < SAME && std::abs(a_at.z - a_us.z) < TALL;
 		if (!same) {
-			a_away.heading.reset();
-		} else if (!a_away.heading && std::isfinite(a_heading)) {
-			a_away.heading = a_heading;
+			a_away.spot.reset();
+			return Clear(a_at, a_heading, a_us, a_clear);
 		}
-		return Clear(a_at, same ? a_away.heading.value_or(a_heading) : a_heading, a_us, a_clear);
+		// Kept only while it is still a_clear from them: not one kept at another place (we both left there unseen, and
+		// came onto one spot again here), nor one put before either of us got into power armor or out of it.
+		if (a_away.spot && !(std::abs(std::hypot(a_away.spot->x - a_at.x, a_away.spot->y - a_at.y) - a_clear) <= 2.0f * SAME)) {
+			a_away.spot.reset();
+		}
+		if (!a_away.spot) {
+			const float side = std::isfinite(a_ourHeading) ? a_ourHeading + 1.5707964f : a_heading;
+			a_away.spot = Clear(a_at, side, a_at, a_clear);  // from their spot, which is ours to within SAME
+		}
+		return { a_away.spot->x, a_away.spot->y, a_at.z };
 	}
 }
