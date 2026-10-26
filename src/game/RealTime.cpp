@@ -2,6 +2,7 @@
 
 #include "Background.h"
 #include "Config.h"
+#include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/OpenMenus.h"
 #include "game/RealTimeVats.h"
@@ -91,10 +92,14 @@ namespace RealTime
 		}
 		text += std::format(" vatsMenu={} slowdownBefore={:.3f} resets={}", OpenMenus::Open(OpenMenus::Menu::kVats), vatsClock.SlowdownBeforeVats(), vatsResets);
 		if (ui) {
-			text += std::format(" | menuMode={} freezeFramePause={} freezeFrameBG={}", ui->menuMode, ui->freezeFramePause, ui->freezeFrameMenuBG);
+			text += std::format(" | menuMode={} freezeFramePause={} freezeFrameBG={} uiTimer: delta={:.5f} disabled={}", GameStop::MenuMode().value_or(0), ui->freezeFramePause,
+				ui->freezeFrameMenuBG, ui->uiTimer.delta, ui->uiTimer.disableCounter);
 		}
 		if (main) {
 			text += std::format(" freezeTime={} gameActive={}", main->freezeTime, main->gameActive);
+		}
+		if (const auto calendar = RE::Calendar::GetSingleton(); calendar && calendar->gameHour) {
+			text += std::format(" hour={:.5f}", calendar->gameHour->value);
 		}
 		if (const auto setting = ShowTutorials()) {
 			text += std::format(" | showTutorials={}", setting->GetBinary());

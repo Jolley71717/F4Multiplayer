@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <optional>
 
 // Whether our game is stopped: a menu that pauses it is up (the pause menu, the Pip-Boy, a container, a terminal, a
@@ -41,4 +42,9 @@ namespace GameStop
 
 	// Whether a menu has our game stopped now (UI::menuMode), or the game has no UI yet (nothing of ours runs then).
 	[[nodiscard]] bool Now();
+
+	// The UI's menu count, for logs and dev commands; none without the UI. GameStop.cpp is the plugin's one reader of
+	// it (a test checks the source): once a menu runs in real time, a count above 0 no longer means a stopped game
+	// (F4Multiplayer-tnl5).
+	[[nodiscard]] std::optional<std::uint32_t> MenuMode();
 }

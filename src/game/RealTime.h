@@ -10,6 +10,6 @@ namespace RealTime
 	// Every frame. a_session: hosting, or joined to someone's.
 	void Frame(bool a_session);
 
-	// Dev: the game's time multiplier, its timer, VATS and the menus' pause count.
+	// Dev: the game's time multiplier, its timer, VATS, the menus' pause count, the UI's timer and the game hour.
 	[[nodiscard]] std::string Describe();
 }
