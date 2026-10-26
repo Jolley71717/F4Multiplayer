@@ -924,7 +924,8 @@ power armor frames, and nothing in workshop mode (WorkshopSync's).
   the last 3 s: TESHitEvent), 8 at once and 3 a second at most, whether or not a friend is near (the session keeps it,
   below). What a friend's move put somewhere is quiet for 4 s (our physics settling it is not ours to report).
 - Later (`ObjectMovers::Places`): the server keeps where each object came to rest last (a kRest it relayed; up to 2048,
-  the one moved longest ago forgotten first; a pickup ends it), saves it with the session (layout 36, as kObjectRested
+  the one moved longest ago forgotten first; a pickup ends it; a joiner's game may add 512 new objects a run,
+  `maxObjectPlacesPerPlayer`, so made-up ones can't push out the host's), saves it with the session (layout 36, as kObjectRested
   packets) and sends it with the world state after a join or a load, as `kObjectRested` naming nobody (playerId 0). A
   game puts each where it says once the object is loaded in that space and the place is within 8000 units of its player
   (WorldSync's retry, as references load and as the player changes cell), however far from where its save had it, but

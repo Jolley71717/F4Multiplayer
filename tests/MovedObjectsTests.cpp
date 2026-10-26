@@ -1096,6 +1096,59 @@ TEST("moved objects server: where an object came to rest is told to a player who
 	}
 }
 
+TEST("moved objects server: a joiner's game gives places to so many objects a run, so their made-up ones can't push out the host's; past it theirs still go round, unkept")
+{
+	constexpr std::uint64_t HOST_IDENTITY = 0x4057;
+	constexpr std::uint32_t MADE_UP = 0x7F000001;  // a plugin index nobody loads
+	Server::Options         options;
+	options.hostIdentity = HOST_IDENTITY;
+	options.maxObjectPlacesPerPlayer = 3;
+	Fixture f{ options };
+	f.fake->SetLocal(1);
+	JoinAs(f, 1, "Host", HOST_IDENTITY);
+	const auto mallory = JoinAs(f, 2, "Mallory");
+	JoinAs(f, 3, "Bob");
+	Clear(f, { 1, 2, 3 });
+
+	// The host's game has no share: the tire and four more are kept.
+	f.fake->Deliver(1, RestPacket(Rest(TIRE, Protocol::ObjectRestKind::kRest, 0, { -50, 20, 4 })));
+	for (std::uint32_t i = 0; i < 4; ++i) {
+		f.fake->Deliver(1, RestPacket(Rest(0x0001B001 + i, Protocol::ObjectRestKind::kRest)));
+	}
+	// Mallory's ten made-up ones all go to the others live; three are kept.
+	Clear(f, { 3 });
+	for (std::uint32_t i = 0; i < 10; ++i) {
+		f.fake->Deliver(2, RestPacket(Rest(MADE_UP + i, Protocol::ObjectRestKind::kRest)));
+	}
+	CHECK(Resteds(Received(f, 3)).size() == 10);
+	CHECK(f.LogLines(std::format("player {} has added 3 moved object place entries this run", mallory)).size() == 1);
+	// A new rest of one already kept takes nothing from her share.
+	f.fake->Deliver(2, RestPacket(Rest(MADE_UP, Protocol::ObjectRestKind::kRest, 0, { 7, 8, 9 })));
+	Clear(f, { 1, 2, 3 });
+
+	JoinAs(f, 4, "Carol");
+	std::set<std::uint32_t> kept;
+	for (const auto& place : Resteds(Received(f, 4))) {
+		kept.insert(place.refId);
+		if (place.refId == MADE_UP) {
+			CHECK(Near(place.position, { 7, 8, 9 }));
+		}
+		if (place.refId == TIRE) {
+			CHECK(Near(place.position, { -50, 20, 4 }));
+		}
+	}
+	CHECK(kept.size() == 8);
+	CHECK(kept.contains(TIRE));
+	CHECK(kept.contains(0x0001B004));
+	CHECK(kept.contains(MADE_UP + 2));
+	CHECK(!kept.contains(MADE_UP + 3));
+}
+
+TEST("moved objects server: a joiner's share of places is well under what the session keeps")
+{
+	CHECK(Server::Options{}.maxObjectPlacesPerPlayer * 2 <= ObjectMovers::MAX_PLACES);
+}
+
 TEST("moved objects server: the places are saved with the session, and a joiner after a restart gets them")
 {
 	const TempSessionFile file;

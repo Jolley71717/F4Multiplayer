@@ -157,11 +157,13 @@ namespace
 		kWorkshop,
 		kTraps,
 		kDestructions,
+		kObjectPlaces,
 		kTables
 	};
 	// For log lines: "the session's {} table", "{} sharing".
-	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object" };
-	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction" };
+	constexpr std::array<std::string_view, kTables> TABLE_NAMES{ "dead NPC", "picked-up item", "door and lock", "quest stage", "container change", "built object", "world trap", "destroyed object",
+		"moved object place" };
+	constexpr std::array<std::string_view, kTables> SHARING_NAMES{ "kill", "pickup", "door", "quest", "loot", "building", "trap", "destruction", "moved object" };
 
 	// Whose budget: the transport's own name for the peer (a Steam ID, which a client can't choose), else
 	// the identity their game says hello with, else the connection itself.
@@ -800,9 +802,10 @@ void Server::Run()
 		if (a_player.local) {
 			return true;
 		}
-		const auto share = a_table == kContainers ? options.maxContainerChangesPerPlayer :
-		                   a_table == kWorkshop   ? options.maxWorkshopItemsPerPlayer :
-		                                            options.maxWorldEntriesPerPlayer;
+		const auto share = a_table == kContainers   ? options.maxContainerChangesPerPlayer :
+		                   a_table == kWorkshop     ? options.maxWorkshopItemsPerPlayer :
+		                   a_table == kObjectPlaces ? options.maxObjectPlacesPerPlayer :
+		                                              options.maxWorldEntriesPerPlayer;
 		if (budget.added[a_table] < share) {
 			return true;
 		}
@@ -2192,7 +2195,9 @@ void Server::Run()
 
 	// An object the player let go of, or that came to rest after they moved it: to the others, unless another player
 	// moves it now (ObjectMovers). A joiner's budget (kept across rejoining) bounds a flood of made-up ones. Where it came
-	// to rest is kept (objectPlaces), for a game that loads it later.
+	// to rest is kept (objectPlaces), for a game that loads it later. An object the session has no place for yet takes one
+	// from the player's share: a full Places forgets the one moved longest ago, so past it a joiner's made-up objects
+	// would push out the host's. Theirs past it still go to the others, as a door's state does.
 	const auto handleObjectRest = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
 		if (!allowEvent(a_player)) {
 			return;
@@ -2205,10 +2210,17 @@ void Server::Run()
 		rest->playerId = a_player.id;
 		if (objectMovers.Rest(*rest, a_player.id, now) == ObjectMovers::Verdict::kRelay) {
 			broadcast(Protocol::Encode(*rest, Protocol::MessageType::kObjectRested), true, a_player.key);
-			if (rest->kind == Protocol::ObjectRestKind::kRest && !pickedUp.contains(rest->refId)) {
-				objectPlaces.Rested(*rest);
-				touched();
+			if (rest->kind != Protocol::ObjectRestKind::kRest || pickedUp.contains(rest->refId)) {
+				return;
 			}
+			if (!objectPlaces.Find(rest->refId)) {
+				if (!withinShare(a_player, kObjectPlaces)) {
+					return;
+				}
+				++budgetOf(a_player).added[kObjectPlaces];
+			}
+			objectPlaces.Rested(*rest);
+			touched();
 		}
 	};
 

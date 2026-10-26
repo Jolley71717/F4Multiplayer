@@ -115,7 +115,7 @@ int main(int argc, char* argv[])
 		} else if (arg == "--max-world-entries" && hasValue && ParseNumber(argv[i + 1], options.maxWorldEntries)) {
 			++i;
 		} else if (std::size_t share = 0; arg == "--max-share" && hasValue && ParseNumber(argv[i + 1], share)) {
-			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = share;
+			options.maxWorldEntriesPerPlayer = options.maxContainerChangesPerPlayer = options.maxWorkshopItemsPerPlayer = options.maxObjectPlacesPerPlayer = share;
 			++i;
 		} else {
 			std::cerr << "usage: F4MPServer [--port N] [--max-players N] [--password X] [--friendly-fire] [--own-story] [--session-file PATH] [--ban-file PATH] [--loopback-only] [--max-world-entries N] [--max-share N]\n"
