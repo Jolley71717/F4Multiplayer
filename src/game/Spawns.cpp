@@ -621,6 +621,7 @@ namespace Spawns
 			if (const auto it = placed.find(id); it != placed.end()) {
 				if (const auto ref = it->second.handle.get(); ref && RemotePlayers::SomeoneSentOutOf(ref.get())) {
 					REX::INFO("Spawns: our copy {:08X} of player {}'s frame is kept through the save or load; someone is being sent out of it", ref->GetFormID(), copy->spawn.playerId);
+					RemotePlayers::NoteKeptThroughSave(ref.get());
 					continue;
 				}
 			}

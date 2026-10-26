@@ -2330,6 +2330,14 @@ namespace RemotePlayers
 		std::vector<WaitingCopy> waitingOut;
 		std::uint32_t            copiesWaited = 0;  // let go of while someone was being sent out of them
 
+		// A copy kept through a save, with the companion being sent out of it saved wearing it (Spawns::DiscardCopies,
+		// DespawnAll): noted as it is kept, written into that save's co-save (SaveRecord), and read back only with it
+		// (LoadRecord): its companion wears the copy still, so it is waited on again (see OnGameLoaded). keptNow is what the
+		// save or load coming now keeps; the save's is kept as keptAtSave (BeforeSave).
+		std::vector<FriendFrame::KeptCopy> keptNow;
+		std::vector<FriendFrame::KeptCopy> keptAtSave;
+		std::vector<FriendFrame::KeptCopy> keptLoaded;  // what the save being loaded says; used (and let go of) by OnGameLoaded
+
 		std::uint32_t WaitingFor(RE::TESObjectREFR* a_frame)
 		{
 			const auto it = std::ranges::find_if(waitingOut, [&](const WaitingCopy& a_waiting) { return a_waiting.handle.get().get() == a_frame; });
@@ -2683,11 +2691,46 @@ namespace RemotePlayers
 		return a_frame && LeaveOf(a_frame) == FriendFrame::Leave::kWait;
 	}
 
+	void NoteKeptThroughSave(RE::TESObjectREFR* a_frame)
+	{
+		const auto base = a_frame ? a_frame->GetObjectReference() : nullptr;
+		if (base) {
+			keptNow.push_back({ a_frame->GetFormID(), base->GetFormID(), FriendOf(a_frame).owner });
+		}
+	}
+
+	void BeforeSave()
+	{
+		// The copies waited on are saved with their wearers too (DespawnAll buried the ones with nobody in them).
+		for (const auto& waiting : waitingOut) {
+			if (const auto ref = waiting.handle.get(); ref && ref->GetObjectReference()) {
+				keptNow.push_back({ waiting.id, ref->GetObjectReference()->GetFormID(), waiting.owner });
+			}
+		}
+		keptAtSave = std::exchange(keptNow, {});
+	}
+
+	std::vector<std::uint8_t> SaveRecord()
+	{
+		return FriendFrame::Encode(keptAtSave);
+	}
+
+	void LoadRecord(const std::vector<std::uint8_t>& a_bytes)
+	{
+		keptLoaded = FriendFrame::Decode(a_bytes);
+	}
+
+	void RevertRecord()
+	{
+		keptLoaded.clear();  // a load or a new game: only what its own save says is read back
+	}
+
 	void BeforeLoad()
 	{
 		++loadsSeen;
 		sendingOut.clear();
 		settling.clear();
+		keptNow.clear();  // kept for the world about to go, not for the save loaded
 	}
 
 	std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id)
@@ -2739,6 +2782,21 @@ namespace RemotePlayers
 		sendingOut.clear();
 		settling.clear();
 		waitingOut.clear();
+		// The save loaded may be the one that kept a copy with a companion in it: they wear it still, as an ordinary frame
+		// unless it is waited on again (our player kept out of it, the companion sent out, the copy buried once they are out).
+		// Only what that save's co-save says, and only when the id still names that frame.
+		for (const auto& kept : std::exchange(keptLoaded, {})) {
+			const auto ref = RE::TESForm::GetFormByID<RE::TESObjectREFR>(kept.id);
+			const auto base = ref ? ref->GetObjectReference() : nullptr;
+			if (!ref || !players.contains(kept.owner) || !FriendFrame::SameCopy(kept.base, base ? base->GetFormID() : 0, ref->IsCreated(), ref->IsDeleted()) ||
+				!Equipment::IsPowerArmorFrame(base)) {
+				continue;
+			}
+			SaveGuard::Track(ref);
+			waitingOut.push_back({ ref->GetHandle(), kept.id, kept.owner, Clock::now() });
+			++copiesWaited;
+			REX::INFO("RemotePlayers: frame copy {:08X} (player {}'s) was kept through the save loaded; it stays until the one in it is sent out", kept.id, kept.owner);
+		}
 		Equipment::SetTransfersKeptOut({});
 		ourHead = {};  // the head the loaded save gives our player is its own
 		for (auto& [id, player] : players) {

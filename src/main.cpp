@@ -221,8 +221,16 @@ namespace
 	constexpr std::uint32_t RADIANT_VERSION = 1;
 	constexpr std::uint32_t RADIANT_MAX_LENGTH = 1u << 18;  // RadiantRules::Encode writes at most about 80 KB
 
+	constexpr std::uint32_t KEPT_RECORD = 'KEPT';
+	constexpr std::uint32_t KEPT_VERSION = 1;
+	constexpr std::uint32_t KEPT_MAX_LENGTH = 1u << 10;  // FriendFrame::Encode writes at most 768 bytes
+
 	void OnGameSaved(const F4SE::SerializationInterface* a_intfc)
 	{
+		// The frame copies this save keeps with the companions in them (RemotePlayers::BeforeSave): waited on again after loading it.
+		if (const auto kept = RemotePlayers::SaveRecord(); !kept.empty() && a_intfc->OpenRecord(KEPT_RECORD, KEPT_VERSION)) {
+			a_intfc->WriteRecordData(kept.data(), static_cast<std::uint32_t>(kept.size()));
+		}
 		WorldSync::SaveResyncPoint(a_intfc);
 		// What our world holds of the items given between players (Drops): read back with the save.
 		if (const auto drops = Drops::SaveRecord(); !drops.empty() && a_intfc->OpenRecord(DROP_RECORD, DROP_VERSION)) {
@@ -247,6 +255,11 @@ namespace
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
 					Drops::LoadRecord(bytes);
 				}
+			} else if (type == KEPT_RECORD && version == KEPT_VERSION && length <= KEPT_MAX_LENGTH) {
+				std::vector<std::uint8_t> bytes(length);
+				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
+					RemotePlayers::LoadRecord(bytes);
+				}
 			} else if (type == RADIANT_RECORD && version == RADIANT_VERSION && length <= RADIANT_MAX_LENGTH) {
 				std::vector<std::uint8_t> bytes(length);
 				if (a_intfc->ReadRecordData(bytes.data(), length) == length) {
@@ -261,6 +274,7 @@ namespace
 		WorldSync::RevertResyncPoint();
 		Drops::RevertRecord();
 		RadiantSync::RevertRecord();
+		RemotePlayers::RevertRecord();
 	}
 
 	// bRunInBackground: while a session runs, the game runs on while its window is not focused (its own bAlwaysActive),
@@ -401,6 +415,7 @@ namespace
 					HavokGuard::BeforeSaveOrLoad();  // a reference reset a moment ago is saved on, as it was
 					InertShots::BeforeSave();  // no inert shot, whose base exists at runtime only, is written into the save
 					SaveGuard::BeforeSave();
+					RemotePlayers::BeforeSave();  // after DespawnAll: the copies kept with their wearers are what a load of this save waits on
 					WorkshopSync::BeforeSave();  // no power grid saved names a friend's piece
 				},
 				"save");

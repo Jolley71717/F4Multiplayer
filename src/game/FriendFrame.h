@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 // Whether our player (or a companion of theirs) is kept out of a power armor frame: one that stands in our game only
 // because the session placed a copy of a friend's frame here. Getting into such a copy made it ours ("it is theirs now")
@@ -105,5 +107,58 @@ namespace FriendFrame
 			return Leave::kWait;
 		}
 		return a_holders.inUse ? Leave::kRelease : Leave::kBury;
+	}
+
+	// A copy kept through a save (a companion being sent out of it), noted in that save's co-save: read back only with that
+	// save, so no other load (an older save, a new game) can name a frame of its own world by the same runtime id.
+	struct KeptCopy
+	{
+		std::uint32_t id = 0;     // its form ID
+		std::uint32_t base = 0;   // the frame's base
+		std::uint32_t owner = 0;  // the friend whose copy it was
+		bool operator==(const KeptCopy&) const = default;
+	};
+
+	constexpr std::size_t MAX_KEPT_COPIES = 64;
+
+	inline std::vector<std::uint8_t> Encode(const std::vector<KeptCopy>& a_copies)
+	{
+		std::vector<std::uint8_t> out;
+		for (std::size_t i = 0; i < a_copies.size() && i < MAX_KEPT_COPIES; ++i) {
+			for (const auto value : { a_copies[i].id, a_copies[i].base, a_copies[i].owner }) {
+				for (int shift = 0; shift < 32; shift += 8) {
+					out.push_back(static_cast<std::uint8_t>(value >> shift));
+				}
+			}
+		}
+		return out;
+	}
+
+	// Nothing at all for bytes that are not whole entries.
+	inline std::vector<KeptCopy> Decode(const std::vector<std::uint8_t>& a_bytes)
+	{
+		constexpr std::size_t SIZE = 12;
+		std::vector<KeptCopy> out;
+		if (a_bytes.size() % SIZE != 0 || a_bytes.size() / SIZE > MAX_KEPT_COPIES) {
+			return out;
+		}
+		const auto word = [&](std::size_t a_at) {
+			std::uint32_t value = 0;
+			for (std::size_t i = 0; i < 4; ++i) {
+				value |= static_cast<std::uint32_t>(a_bytes[a_at + i]) << (8 * i);
+			}
+			return value;
+		};
+		for (std::size_t at = 0; at < a_bytes.size(); at += SIZE) {
+			out.push_back({ word(at), word(at + 4), word(at + 8) });
+		}
+		return out;
+	}
+
+	// A copy kept through a save is waited on again once that save is loaded, when the form under its id is still the same
+	// frame: made at runtime, not deleted, and of the base noted at the save.
+	constexpr bool SameCopy(std::uint32_t a_notedBase, std::uint32_t a_base, bool a_created, bool a_deleted)
+	{
+		return a_notedBase != 0 && a_base == a_notedBase && a_created && !a_deleted;
 	}
 }
