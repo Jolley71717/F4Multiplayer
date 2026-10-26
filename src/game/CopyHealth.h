@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -158,16 +159,47 @@ namespace CopyHealth
 		return hitter == Hitter::kOurPlayer || (hitter == Hitter::kOurs && a_cause.ourCompanion);
 	}
 
+	// A drop with a hit of ours around it is ours. But the thrower's own copy is no ghost for their throw (BlastShield
+	// shields copies from friends' explosions only), so their shot in the same second as their Molotov's blast, or while its
+	// fire burns, took the whole drop for theirs: blast and burn were sent as their damage to the NPC's game, which had dealt
+	// them itself, and the NPC took them twice. So with a blow left to the owner (OwnersBlow) around the drop, only what our
+	// hits said they took (their HitData figure) is ours; the rest is the owner's, given back. Without one, or with hits of
+	// ours none of whose events had a figure, the whole drop is ours as before (a figure short of what a hit took must not lose it).
 	class Book
 	{
 	public:
-		// A hit of ours (Judge) on the copy now.
-		void OurHit(std::uint32_t a_id, Clock::time_point a_now)
+		// A hit of ours (Judge) on the copy now, that took a_damage as its event says (none: the event had no figure).
+		void OurHit(std::uint32_t a_id, Clock::time_point a_now, std::optional<float> a_damage = std::nullopt)
+		{
+			auto it = entries.find(a_id);
+			if (it == entries.end()) {
+				if (entries.size() >= MAX_COPIES) {
+					return;
+				}
+				it = entries.emplace(a_id, Entry{}).first;
+			}
+			auto& entry = it->second;
+			if (!entry.ourHit || *entry.ourHit + OURS_GRACE < a_now) {
+				entry.dealt = 0.0f;
+				entry.unknown = false;
+				entry.figured = false;
+			}
+			entry.ourHit = a_now;
+			if (a_damage) {
+				entry.dealt += *a_damage;
+				entry.figured = true;
+			} else {
+				entry.unknown = true;
+			}
+		}
+
+		// A blow of ours on the copy now that the NPC's own game deals itself (OwnersToDeal): a throw's blast, its fire.
+		void OwnersBlow(std::uint32_t a_id, Clock::time_point a_now)
 		{
 			if (auto it = entries.find(a_id); it != entries.end()) {
-				it->second.ourHit = a_now;
+				it->second.ownersBlow = a_now;
 			} else if (entries.size() < MAX_COPIES) {
-				entries[a_id] = Entry{ .health = std::nullopt, .ourHit = a_now };
+				entries[a_id] = Entry{ .ownersBlow = a_now };
 			}
 		}
 
@@ -201,10 +233,27 @@ namespace CopyHealth
 			}
 			// A hit of ours around the drop: the copy is ours to hurt, and what it took goes to the NPC's game (TakeOurs).
 			if (entry.ourHit && *entry.ourHit + OURS_GRACE >= *entry.dropSince) {
-				entry.ours += *entry.health - a_health;
-				entry.health = a_health;
-				entry.dropSince.reset();
-				return 0.0f;
+				const float drop = *entry.health - a_health;
+				const float take = Unknown(entry) ? drop : (std::min)(drop, entry.dealt);
+				entry.dealt = Unknown(entry) ? 0.0f : entry.dealt - take;
+				entry.ours += take;
+				*entry.health -= take;
+				if (drop - take <= SLACK) {
+					entry.health = a_health;
+					entry.dropSince.reset();
+					return 0.0f;
+				}
+				// More went than our hits said they took. The owner's blow's event can come a frame after its damage, as ours
+				// can: judged once it has stood, given back if one landed around it, else ours all the same.
+				if (a_now - *entry.dropSince < JUDGE_AFTER) {
+					return 0.0f;
+				}
+				if (!OwnersAround(entry)) {
+					entry.ours += *entry.health - a_health;
+					entry.health = a_health;
+					entry.dropSince.reset();
+					return 0.0f;
+				}
 			}
 			if (a_now - *entry.dropSince < JUDGE_AFTER) {
 				return 0.0f;
@@ -220,7 +269,11 @@ namespace CopyHealth
 			if (auto it = entries.find(a_id); it != entries.end()) {
 				auto& entry = it->second;
 				if (entry.health && entry.ourHit && a_before < *entry.health - SLACK && *entry.ourHit + OURS_GRACE >= a_now) {
-					entry.ours += *entry.health - a_before;
+					const float drop = *entry.health - a_before;
+					const bool  owners = entry.ownersBlow && *entry.ownersBlow + OURS_GRACE >= a_now;
+					const float take = Unknown(entry) || !owners ? drop : (std::min)(drop, entry.dealt);
+					entry.dealt = Unknown(entry) ? 0.0f : (std::max)(entry.dealt - take, 0.0f);
+					entry.ours += take;
 				}
 			}
 			Set(a_id, a_health);
@@ -260,7 +313,19 @@ namespace CopyHealth
 			std::optional<Clock::time_point> ourHit;
 			std::optional<Clock::time_point> dropSince;
 			float                            ours = 0.0f;  // taken by hits of ours, not yet sent (TakeOurs)
+			std::optional<Clock::time_point> ownersBlow;   // the last blow of ours left to the NPC's own game
+			float                            dealt = 0.0f;     // what our hits since ourHit's grace began said they took, not yet booked
+			bool                             unknown = false;  // ... and one of them said nothing
+			bool                             figured = false;  // ... and one of them said what it took
 		};
+
+		// Our hits around the drop said nothing of what they took: all of it is ours. Not when one of them did: a hit event
+		// with no figure beside one with (a legendary's effect riding along with the shot, a blocked blow) adds nothing, so
+		// one of those in a burst no longer takes every burn tick near the player's shots for theirs.
+		static bool Unknown(const Entry& a_entry) { return a_entry.unknown && !a_entry.figured; }
+
+		// A blow left to the owner landed around the drop being judged (from OURS_GRACE before it on).
+		static bool OwnersAround(const Entry& a_entry) { return a_entry.ownersBlow && a_entry.dropSince && *a_entry.ownersBlow + OURS_GRACE >= *a_entry.dropSince; }
 
 		std::unordered_map<std::uint32_t, Entry> entries;
 	};

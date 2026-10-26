@@ -350,9 +350,10 @@ namespace CopyWatch
 			if (left) {
 				hitter = CopyHealth::Hitter::kNotOurs;
 				++leftToOwner;
+				book.OwnersBlow(wire, hit.at);
 			}
 			if (hitter != CopyHealth::Hitter::kNotOurs) {
-				book.OurHit(wire, hit.at);
+				book.OurHit(wire, hit.at, hit.usesHitData && hit.damage > 0.0f ? std::optional{ hit.damage } : std::nullopt);
 			}
 			if (owner == 0) {
 				continue;
