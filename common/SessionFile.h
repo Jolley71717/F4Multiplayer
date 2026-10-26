@@ -39,7 +39,8 @@ namespace SessionFile
 	// damaged in it (Snapshot::destructions, as kDestructions packets). The traps' own test builds wrote 34 with the traps
 	// alone, which reads as one without destructions; the destructibles' own test builds wrote 35, which no build reads.
 	// 36 adds to 34 where the loose objects players moved came to rest (Snapshot::objectPlaces, as kObjectRested packets).
-	// 37 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets).
+	// 37 adds to 36 whose game keeps each shared storage container (Snapshot::storageOwners, as kStorageOwners packets). A
+	// session with none is written as 36.
 	inline constexpr std::uint16_t FORMAT = 37;
 	inline constexpr std::uint16_t OBJECT_PLACES = 36;
 	inline constexpr std::uint16_t TRAPS_AND_DESTRUCTIONS = 34;
@@ -130,7 +131,8 @@ namespace SessionFile
 			out.insert(out.end(), a_packet.begin(), a_packet.end());
 		};
 		put(MAGIC);
-		put(FORMAT);
+		// The layout that holds it: a session with no shared storage is still one an older build reads.
+		put(a_snapshot.storageOwners.empty() ? OBJECT_PLACES : FORMAT);
 		put(a_snapshot.contentHash);
 		put(a_snapshot.sessionId);
 		put(a_snapshot.nextId);

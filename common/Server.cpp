@@ -116,6 +116,15 @@ namespace
 	constexpr std::size_t MAX_SPAWNS = 128;
 	constexpr double      SPAWN_BURST = 32.0;
 	constexpr double      SPAWNS_PER_SECOND = 2.0;
+	// Shared storage (StorageBook.h). A friend's moves at storage another game keeps have their own budget, ahead of
+	// anything the book is asked or answers: a burst of a Take All and a Store All of the fullest container (each move
+	// dropped would be refused, and undone in their game), then the event budget's rate. Its refusals have one of the same
+	// size (past it a move gets no answer: their game undoes it after StorageView::ANSWER_WITHIN). The contents a view is
+	// sent (up to ~8 KB) go a few a second at most; one past that is answered closed.
+	constexpr double      STORAGE_MOVE_BURST = static_cast<double>(Protocol::MAX_STORAGE_MOVES_UNANSWERED);
+	constexpr double      STORAGE_MOVES_PER_SECOND = 500.0;
+	constexpr double      STORAGE_VIEW_BURST = 16.0;
+	constexpr double      STORAGE_VIEWS_PER_SECOND = 8.0;
 
 	// A connection: which transport, and that transport's peer ID.
 	using ConnectionKey = std::uint64_t;
@@ -211,6 +220,9 @@ namespace
 		std::size_t       deathsDropped = 0;
 		TokenBucket       spawns{ SPAWN_BURST, SPAWNS_PER_SECOND };  // runtime NPCs shared (the host's own game too)
 		TokenBucket       objectRests{ ObjectMovers::REST_BURST, ObjectMovers::RESTS_PER_SECOND };  // objects let go of or come to rest
+		TokenBucket       storageMoves{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };      // moves at storage another game keeps
+		TokenBucket       storageRefusals{ STORAGE_MOVE_BURST, STORAGE_MOVES_PER_SECOND };   // those answered refused
+		TokenBucket       storageViews{ STORAGE_VIEW_BURST, STORAGE_VIEWS_PER_SECOND };     // contents sent to a view
 		Clock::time_point spawnsLogged{};
 		std::size_t       spawnsRefused = 0;
 		std::array<std::size_t, kTables> added{};  // entries their games added to each table this run (built objects: those still kept)
@@ -253,6 +265,9 @@ namespace
 		std::optional<std::string> pendingName;   // cleaned; waits for RENAME_INTERVAL to pass (flushRename)
 		bool                       local = false;  // the host's own game (Options::hostIdentity)
 		std::vector<std::string>   plugins;        // their game's plugins, from their hello: whether it can hold an item put in storage it keeps
+		// Their plugins against the session's table (sessionTableVersion), made once for storage they keep (handleContainer).
+		std::optional<FormIds::Mapper> storageMapper;
+		std::uint64_t              storageMapperFor = 0;
 		// Who they are, for a ban (BanList): the transport's name for them (a Steam ID; 0 over UDP), and the identity
 		// their game said hello with.
 		std::uint64_t              transportId = 0;
@@ -365,6 +380,7 @@ void Server::Run()
 	// The plugins that number every form ID the session holds and relays (Protocol::PluginTable, common/FormIds.h): the
 	// saved session's, or the first player's load order, with every later joiner's other plugins added after it.
 	std::vector<std::string>                  sessionTable;
+	std::uint64_t                             sessionTableVersion = 0;  // moves on with every change to it
 	std::uint64_t                             sessionId = NewSessionId();
 	// The password as clients can send it (the wire format caps its length). The host can change it (HostCommand).
 	auto password = options.password.substr(0, Protocol::MAX_PASSWORD_LENGTH);
@@ -442,6 +458,7 @@ void Server::Run()
 	// (common/StorageBook.h). The owners are saved with the session; what they hold is listed again by the host's game.
 	StorageBook::Book                                     storage;
 	std::size_t                                           storageRefused = 0;  // friends' moves at storage refused this run (for the log)
+	std::size_t                                           storageUnanswered = 0;  // of those, past the refusals' budget: not answered (their game undoes them in time)
 	bool                                                  aheadLogged = false;  // a player counting more container changes than we have
 	std::vector<Protocol::QuestStage>                     questStages;  // in order, no repeats
 	std::unordered_set<std::uint64_t>                     questStageKeys;
@@ -504,6 +521,7 @@ void Server::Run()
 		if (const auto saved = SessionFile::Recover(sessionPath, [&](const std::string& a_line) { log("server: " + a_line); })) {
 			sessionContentHash = saved->contentHash;
 			sessionTable = saved->plugins;
+			++sessionTableVersion;
 			sessionId = saved->sessionId;
 			nextId = (std::max)(nextId, saved->nextId);
 			for (const auto& [identity, id] : saved->identities) {
@@ -655,6 +673,7 @@ void Server::Run()
 		}
 		sessionId = NewSessionId();
 		sessionTable.clear();  // the next arrival's load order numbers the new session
+		++sessionTableVersion;
 		touched();
 	};
 
@@ -1203,6 +1222,7 @@ void Server::Run()
 		// numbered by it. Then the newcomer's, before the welcome. Their hello's one form ID, sent before they knew
 		// the table, is translated here.
 		if (const auto added = FormIds::Extend(sessionTable, hello->plugins); added != 0) {
+			++sessionTableVersion;
 			touched();
 			log(std::format("server: the session's plugin table has {} plugins ({} new)", FormIds::Table::Of(sessionTable).Size(), added));
 			if (welcomedCount() != 0) {
@@ -1537,27 +1557,52 @@ void Server::Run()
 	// Container changes are numbered and echoed to their sender too, so every player knows exactly
 	// which of them its world contains (see Protocol::WorldRequest).
 	const auto handleContainer = [&](Player& a_player, std::span<const std::uint8_t> a_data) {
-		const bool allowed = allowEvent(a_player);
 		const auto change = a_player.welcomed ? Protocol::DecodeContainerChange(a_data) : std::nullopt;
+		const auto keeper = change && Protocol::IsValid(*change) ? storage.KeeperOf(change->container) : std::nullopt;
+		const bool atFriends = keeper && *keeper != a_player.id;
+		// The budget first, before the book is asked or anything answered: a friend's moves at storage another game keeps
+		// have their own (STORAGE_MOVE_BURST), everything else the event budget.
+		const auto now = Clock::now();
+		const bool allowed = atFriends ? budgetOf(a_player).storageMoves.Take(now) : allowEvent(a_player);
 		if (!change || !Protocol::IsValid(*change)) {
 			return;
 		}
 		// A friend's move at storage another game keeps (common/StorageBook.h) goes through only if the book can check it.
 		// Whatever doesn't go through is refused to their game, which undoes it: their item left their inventory (or came
-		// into it) already, and a move dropped without a word would lose it, or dupe it.
-		const auto verdict = storage.Check(a_player.id, *change, [&](std::uint32_t a_keeper, std::uint32_t a_item) {
-			if ((a_item >> 24) == 0xFF) {
-				return false;  // made in their game alone: no other has it
-			}
-			const auto keeper = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == a_keeper; });
-			return keeper == players.end() || keeper->second.plugins.empty() || sessionTable.empty() ||
-			       FormIds::Mapper(keeper->second.plugins, sessionTable).ToLocal(a_item).has_value();
-		});
-		const bool checked = verdict == StorageBook::Verdict::kAccept;
+		// into it) already, and a move dropped without a word would lose it, or dupe it. Past the refusals' own budget a
+		// move gets no answer at all, and their game undoes it once it has waited long enough (StorageView::ANSWER_WITHIN).
 		const auto refuse = [&](Protocol::StorageReason a_reason) {
+			if (!budgetOf(a_player).storageRefusals.Take(now)) {
+				++storageUnanswered;
+				return;
+			}
 			++storageRefused;
 			send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ change->container, change->item, change->count, Protocol::STORAGE_NOT_NUMBERED, a_reason }), true);
 		};
+		if (!allowed) {
+			if (atFriends) {
+				refuse(Protocol::StorageReason::kCantHold);
+			}
+			return;
+		}
+		const auto verdict = !atFriends ? (keeper ? StorageBook::Verdict::kKeeper : StorageBook::Verdict::kNotStorage) :
+		                                  storage.Check(a_player.id, *change, [&](std::uint32_t a_keeper, std::uint32_t a_item) {
+			if ((a_item >> 24) == 0xFF) {
+				return false;  // made in their game alone: no other has it
+			}
+			const auto holder = std::ranges::find_if(players, [&](const auto& a_entry) { return a_entry.second.welcomed && a_entry.second.id == a_keeper; });
+			if (holder == players.end() || holder->second.plugins.empty() || sessionTable.empty()) {
+				return true;
+			}
+			// Their game's numbering against the session's, made once (it changes only as the session's table grows).
+			auto& player = holder->second;
+			if (!player.storageMapper || player.storageMapperFor != sessionTableVersion) {
+				player.storageMapper.emplace(player.plugins, sessionTable);
+				player.storageMapperFor = sessionTableVersion;
+			}
+			return player.storageMapper->ToLocal(a_item).has_value();
+		});
+		const bool checked = verdict == StorageBook::Verdict::kAccept;
 		switch (verdict) {
 		case StorageBook::Verdict::kClosed:
 			refuse(Protocol::StorageReason::kClosed);
@@ -1668,6 +1713,15 @@ void Server::Run()
 		}
 		if (!view->open) {
 			storage.Close(a_player.id, view->container);
+			return;
+		}
+		// Contents are up to ~8 KB: a few a second at most (their game asks again only once an answer has come). One past
+		// that is answered closed, as their game can't be left waiting with its menu open.
+		if (!budgetOf(a_player).storageViews.Take(Clock::now())) {
+			storage.Close(a_player.id, view->container);
+			if (budgetOf(a_player).storageRefusals.Take(Clock::now())) {
+				send(a_player.key, Protocol::Encode(Protocol::StorageRefusal{ view->container, 0, 0, Protocol::STORAGE_NOT_NUMBERED, Protocol::StorageReason::kClosed }), true);
+			}
 			return;
 		}
 		const auto shown = storage.Open(a_player.id, view->container, static_cast<std::uint32_t>(containerChanges.size()));

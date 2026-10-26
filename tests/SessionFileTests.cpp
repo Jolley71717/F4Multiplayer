@@ -148,6 +148,11 @@ TEST("session file: the header carries the file's own version, not the protocol'
 	const auto bytes = SessionFile::Encode(MakeSnapshot());
 	std::uint16_t version = 0;
 	std::memcpy(&version, bytes.data() + 4, sizeof(version));
+	CHECK(version == SessionFile::OBJECT_PLACES);  // no shared storage: the layout an older build reads too
+	auto withOwners = MakeSnapshot();
+	withOwners.storageOwners = { { 0x00020000, 1 } };
+	const auto ownerBytes = SessionFile::Encode(withOwners);
+	std::memcpy(&version, ownerBytes.data() + 4, sizeof(version));
 	CHECK(version == SessionFile::FORMAT);
 	CHECK(SessionFile::Readable(SessionFile::FORMAT));
 	// The layout before 29, under the protocol versions that wrote it before the file had its own version (28: the

@@ -586,6 +586,10 @@ namespace Protocol
 	inline constexpr std::size_t   MAX_STORAGE_STACKS = 1024;          // stacks of one container's listing
 	inline constexpr std::size_t   MAX_STORAGE_OWNERS_PER_PACKET = 1024;
 	inline constexpr std::uint32_t STORAGE_NOT_NUMBERED = 0xFFFFFFFF;  // StorageRefusal::index of a move the server never numbered
+	// A friend's moves at storage another game keeps that may be on their way at once: a Take All and a Store All of the
+	// fullest container (MAX_STORAGE_STACKS stacks each), and more. Their game sends no more unanswered (it undoes the
+	// rest), and the server takes a burst of this many before its per-second budget.
+	inline constexpr std::size_t   MAX_STORAGE_MOVES_UNANSWERED = 2 * MAX_STORAGE_STACKS + 256;
 
 	struct StorageStack
 	{

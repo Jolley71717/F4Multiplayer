@@ -10,7 +10,7 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
-#include <unordered_set>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -371,6 +371,6 @@ namespace StorageBook
 
 		std::size_t                             maxContainers;
 		std::map<std::uint32_t, Entry>          entries;
-		std::unordered_set<std::uint32_t>       shorts;  // numbered changes a shortfall was answered for
+		std::set<std::uint32_t>                 shorts;  // numbered changes a shortfall was answered for (the oldest forgotten first)
 	};
 }
