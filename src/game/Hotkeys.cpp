@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "Platform.h"
+#include "game/GameStop.h"
 #include "game/KeyWatch.h"
 #include "game/OpenMenus.h"
 #include "net/ModDiff.h"
@@ -99,8 +100,7 @@ namespace Hotkeys
 
 		bool MenuOpen()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || OpenMenus::Open(OpenMenus::Menu::kConsole);
+			return GameStop::Now() || OpenMenus::Open(OpenMenus::Menu::kConsole);
 		}
 
 		bool IsDown(std::uint32_t a_vk)

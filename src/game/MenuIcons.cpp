@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "game/Equipment.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MenuIconPlace.h"
 #include "game/OpenMenus.h"
@@ -70,8 +71,7 @@ namespace MenuIcons
 		bool OurMenuOpen()
 		{
 			using enum OpenMenus::Menu;
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0 || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
+			return GameStop::Now() || OpenMenus::AnyOpen({ kDialogue, kPipboy, kWorkshop, kLooks, kPowerArmorMod });
 		}
 
 		std::uint32_t HudColor()

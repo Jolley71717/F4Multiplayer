@@ -8,6 +8,7 @@
 #include "game/Equipment.h"
 #include "game/FloraShare.h"
 #include "game/FoundDead.h"
+#include "game/GameStop.h"
 #include "game/HealthShare.h"
 #include "game/Hud.h"
 #include "game/LinkedRefs.h"
@@ -1764,8 +1765,7 @@ namespace WorldSync
 			if (a_hosting && !std::exchange(scriptDoorsReported, true)) {
 				scriptDoors.ReportOpen();
 			}
-			const auto ui = RE::UI::GetSingleton();
-			const bool canApply = CanApply() && ui && ui->menuMode == 0;  // a menu pauses scripts
+			const bool canApply = CanApply() && !GameStop::Now();  // a menu pauses scripts
 			for (std::size_t i = 0; i < scriptDoorQuests.size(); ++i) {
 				const auto quest = RE::TESForm::GetFormByID<RE::TESQuest>(scriptDoorQuests[i]);
 				if (!quest) {

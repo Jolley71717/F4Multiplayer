@@ -23,6 +23,7 @@
 #include "game/Face.h"
 #include "game/FrameClock.h"
 #include "game/Gait.h"
+#include "game/GameStop.h"
 #include "game/HostRules.h"
 #include "game/Hud.h"
 #include "game/LooksMenu.h"
@@ -223,8 +224,7 @@ namespace Session
 		// Menus that stop the game (pause menu, Pip-Boy, ...): no damage lands while it's stopped.
 		bool GamePaused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return ui && ui->menuMode > 0;
+			return GameStop::Now();
 		}
 
 		// Something hit our stand-in in another player's world.

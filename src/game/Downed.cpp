@@ -2,6 +2,7 @@
 
 #include "Config.h"
 #include "game/DownRules.h"
+#include "game/GameStop.h"
 #include "game/Hotkeys.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
@@ -52,8 +53,7 @@ namespace Downed
 		// A menu has the game stopped (the pause menu, the Pip-Boy): it stands nobody up meanwhile.
 		bool GamePaused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return ui && ui->menuMode > 0;
+			return GameStop::Now();
 		}
 
 		// Dead, or on the way there.

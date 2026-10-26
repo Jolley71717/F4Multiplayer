@@ -4,6 +4,7 @@
 #include "Config.h"
 #include "game/Achievements.h"
 #include "game/FadeWatch.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/OpenMenus.h"
 #include "game/Party.h"
@@ -230,8 +231,7 @@ namespace QuestSync
 		// The game is paused (the Pip-Boy, the pause menu, a container, a terminal): scripts don't run.
 		bool Paused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return !ui || ui->menuMode != 0;
+			return GameStop::Now();
 		}
 
 		// Whether this friend (the one who did a stage) is close by. Not any friend: with three players,

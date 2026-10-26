@@ -7,12 +7,14 @@
 #include "game/Equipment.h"
 #include "game/FrameShare.h"
 #include "game/Gait.h"
+#include "game/GameStop.h"
 #include "game/Hud.h"
 #include "game/MirrorGait.h"
 #include "game/NpcClaims.h"
 #include "game/NpcHold.h"
 #include "game/NpcPlace.h"
 #include "game/OpenMenus.h"
+#include "game/PauseHandOff.h"
 #include "game/Prediction.h"
 #include "game/Puppets.h"
 #include "game/RemoteEdits.h"
@@ -118,6 +120,11 @@ namespace NpcSync
 		CommandMeter::Meter                                  meter;  // console commands a frame, and copies taken over a frame
 		std::unordered_map<std::uint32_t, Clock::time_point> handedOffAt;
 		std::uint32_t                                        handOffs = 0;
+		// Our game stopped by a menu (GameStop), and for how long as of this frame: past PauseHandOff::AFTER, Scan offers
+		// to run nothing new and hands ours to friends near them.
+		GameStop::Clock                                      stop;
+		Clock::duration                                      stoppedFor{};
+		std::uint32_t                                        pauseHandOffs = 0;
 		std::uint32_t                                        stateTick = 0;
 		std::uint32_t                                        fastNpcs = 0;  // owned NPCs sent at 20 Hz on the last tick
 		// Gear: each game rolls NPC gear on its own, so owners report what their NPCs wear and the
@@ -332,9 +339,37 @@ namespace NpcSync
 			return false;
 		}
 
+		// An NPC we run as PauseHandOff::Decide takes it.
+		PauseHandOff::Npc PauseFactsOf(RE::Actor* a_actor, std::uint32_t a_id, Clock::time_point a_now)
+		{
+			const auto [cell, worldspace] = SpaceOf(a_actor);
+			const auto& pos = a_actor->data.location;
+			const auto  last = handedOffAt.find(a_id);
+			return {
+				.id = a_id,
+				.at = { cell, worldspace, pos.x, pos.y, pos.z },
+				.companion = IsOurCompanion(a_actor),
+				.talkingToUs = a_id == talkingTo,
+				.holdsUs = Dialogue::Holds(a_actor),
+				.commanded = std::ranges::any_of(commanding, [&](const SettlerCommand::Judged& a_settler) { return a_settler.id == a_id; }),
+				.fought = hold.FoughtLately(a_id, a_now),
+				.handedOffLately = last != handedOffAt.end() && a_now - last->second < HANDOFF_RETRY,
+			};
+		}
+
 		void Scan(Clock::time_point a_now)
 		{
 			std::vector<std::uint32_t> handOff;
+			std::vector<std::uint32_t> pausedOff;  // ours, handed to friends while our game is stopped (PauseHandOff)
+			const bool                 offers = PauseHandOff::Offers(stoppedFor);
+			std::vector<PauseHandOff::Friend> friends;
+			if (!offers) {
+				for (const auto& info : RemotePlayers::List()) {
+					if (info.state) {
+						friends.push_back({ RemoteEdits::SpotOf(*info.state), info.menu });
+					}
+				}
+			}
 			std::unordered_set<std::uint32_t> loaded;
 			std::vector<Protocol::ActorClaim> claims;
 			holding.clear();
@@ -402,11 +437,17 @@ namespace NpcSync
 					if (owner == localId) {
 						if (ShouldHandOff(actor, id, a_now)) {
 							handOff.push_back(id);
+						} else if (!offers && PauseHandOff::Decide(stoppedFor, PauseFactsOf(actor, id, a_now), friends) == PauseHandOff::Why::kRelease) {
+							pausedOff.push_back(id);
 						}
 						continue;
 					}
 					// Just handed to a nearer friend: give their game time to claim it.
 					if (const auto handed = handedOffAt.find(id); owner == 0 && handed != handedOffAt.end() && a_now - handed->second < HANDOFF_HOLD) {
+						continue;
+					}
+					// Our game stopped a while: nothing new to run, it would only stand still (PauseHandOff::Offers).
+					if (!offers) {
 						continue;
 					}
 					// Companions follow their own player, so that player's game must run them. Nothing the session has dead,
@@ -432,17 +473,29 @@ namespace NpcSync
 			// death ends it (NpcHold): released as it fell, a friend's game where it still lived took it
 			// over, and our kill was not believed. What we said they wear is forgotten with them, as the
 			// server forgets it: when we run one again we report it afresh.
+			// Ours that a friend's game takes on while ours is stopped go the same way (PauseHandOff).
 			std::vector<std::uint32_t> released;
+			const auto                 handOver = [&](std::uint32_t a_id) {
+				owners.erase(a_id);
+				owned.erase(a_id);
+				sentGear.erase(a_id);
+				sentRolls.Forget(a_id);
+				hold.Forget(a_id);
+				handedOffAt[a_id] = a_now;
+				released.push_back(a_id);
+			};
 			for (const auto id : handOff) {
-				owners.erase(id);
-				owned.erase(id);
-				sentGear.erase(id);
-				sentRolls.Forget(id);
-				hold.Forget(id);
-				handedOffAt[id] = a_now;
-				released.push_back(id);
+				handOver(id);
 				++handOffs;
 				REX::INFO("NpcSync: handing {:08X} to a nearer player", id);
+			}
+			for (const auto id : pausedOff) {
+				handOver(id);
+				++pauseHandOffs;
+			}
+			if (!pausedOff.empty()) {
+				REX::INFO("NpcSync: our game stopped for {} s; handing {} NPCs to friends near them (the first {:08X})",
+					std::chrono::duration_cast<std::chrono::seconds>(stoppedFor).count(), pausedOff.size(), pausedOff.front());
 			}
 			for (auto it = owned.begin(); it != owned.end();) {
 				if (!loaded.contains(it->first)) {
@@ -470,8 +523,7 @@ namespace NpcSync
 		// too, and the others' copies run their own AI rather than freezing with ours.
 		bool GamePaused()
 		{
-			const auto ui = RE::UI::GetSingleton();
-			return ui && ui->menuMode > 0;
+			return GameStop::Now();
 		}
 
 		// Fighting, or near enough to a player to be watched closely.
@@ -1028,7 +1080,7 @@ namespace NpcSync
 				}
 				a_loaded.insert(id);
 				const auto owner = OwnerOf(id);
-				if (owner == localId || !FrameShare::Offers(share, hosting, usedFrames.contains(id))) {
+				if (owner == localId || !FrameShare::Offers(share, hosting, usedFrames.contains(id)) || !PauseHandOff::Offers(stoppedFor)) {
 					continue;
 				}
 				if (const auto reason = claimBook.Offer(id, owner, localId, false, WorldSync::MayClaim(id), a_now)) {
@@ -1490,9 +1542,18 @@ namespace NpcSync
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
 		if (!player || !player->GetParentCell()) {
+			stop.Reset();
+			stoppedFor = {};
 			return;
 		}
 		const auto now = Clock::now();
+		// A loading screen is no stop of ours: a load starts afresh.
+		if (Hud::LoadingScreenUp()) {
+			stop.Reset();
+			stoppedFor = {};
+		} else {
+			stoppedFor = stop.Advance(now, GameStop::Now());
+		}
 		if (lastFrame != Clock::time_point{} && now - lastFrame < 500ms) {  // a load or a pause is not the frame rate
 			frameMs = frameMs * 0.95f + std::chrono::duration<float, std::milli>(now - lastFrame).count() * 0.05f;
 		}
@@ -1643,6 +1704,8 @@ namespace NpcSync
 		hold.Clear();
 		lastTakeover.clear();
 		handedOffAt.clear();
+		stop.Reset();
+		stoppedFor = {};
 		talkingTo = 0;
 		holding.clear();
 		commanding.clear();
@@ -1742,8 +1805,8 @@ namespace NpcSync
 		const auto maxDelay = mirrors.empty() ? 0 : std::ranges::max(delays);
 		const auto ownedFrames = std::ranges::count_if(owned, [](const auto& a_entry) { return FrameRef(a_entry.first) != nullptr; });
 		const auto sharedMade = std::ranges::count_if(owned, [](const auto& a_entry) { return Protocol::IsSpawnRef(a_entry.first) && MadeFrameRef(Spawns::LocalOf(a_entry.first)) != nullptr; });
-		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
-			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
+		return std::format("npcs: owned={} fast={} mirrored={} puppeted={} known={} talkingTo={:08X} conversations={} fallbacks={} brought={}/{} switchedOn={} handOffs={} pauseHandOffs={} pausedFor={:.1f} delayMs={}-{} gear={}/{} rolls={}/{}/{}/{}/{} refusals={} gaveUp={}/{} cmds={}/{} busy={} rereg={} released={} keptOffStory={} notBroughtOwnerFar={} notBroughtOverOwnerFar={} frames={}/{} framesMade={}/{}/{} frameStates={} framesMoved={}/{} frameGaveUp={} commandBench={:08X} commanding={} settlerTakeovers={}", owned.size(),
+			fastNpcs, mirrors.size(), puppeted, owners.size(), talkingTo, conversations, localFallbacks, broughtOver, broughtIn, switchedOn, handOffs, pauseHandOffs, std::chrono::duration<float>(stoppedFor).count(), minDelay, maxDelay, gearSent, gearApplied, rollsSent, rolls.Size(), rollsWritten, rollsKept, factionsSet, claimBook.Refusals(), switchOns.GaveUp(), bringIns.GaveUp(), meter.Last(), meter.Most(), meter.BusyFrames(), meter.Registrations(), meter.Releases(),
 			keptOffStory, notBroughtOwnerFar, notBroughtOverOwnerFar, ownedFrames, standingFrames.size(), sharedMade, standingMade.size(), usedMade.size(), frameStates, framesNudged, framesBrought, frameBrings.GaveUp(), commandBench, commanding.size(), settlerTakeovers);
 	}
 }
