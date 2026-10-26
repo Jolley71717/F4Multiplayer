@@ -1130,7 +1130,9 @@ game, and a friend who arrives later sees the hulk too (`destruct near` reads de
   counted in `unplaceable`, or `ownRefused` for a frame of the world). Such a copy is told from a suit of the player's
   own: every workshop copy carries the keyword that keeps workshop mode off it (`BlockInteraction`, since 0.9.0, saved
   with it), and nothing else gives a frame that. So the report of one still finds what stands at its spot, and a frame
-  carrying the keyword goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it is left alone.
+  carrying the keyword and holding nothing goes (`WorkshopApply::Placeable::kFrame`, `framesCleared`); one without it,
+  or one holding pieces (fitted out by a player, or their own suit an earlier session took over: deleting it would
+  lose them), is left alone.
   Why they stayed (read from disk, 1.11.240): a load frees only what has a record of changes
   (`BGSSaveLoadGame::RevertAllChanges` walks the records and lets go of each created form it finds there), and DespawnAll
   drops the record of everything of ours on its way out, so none of it was freed (deleting a created reference drops it

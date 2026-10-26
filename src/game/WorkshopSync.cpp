@@ -1227,11 +1227,13 @@ namespace WorkshopSync
 				return existing ? std::optional<Copy>{ Copy{ existing->GetHandle(), Clock::now() } } : std::nullopt;
 			}
 
-			// Keep gave it the keyword (since 0.9.0); nothing else of ours, nor the game, gives a frame that one.
+			// Keep gave it the keyword (since 0.9.0); nothing else of ours, nor the game, gives a frame that one. Not a
+			// frame that holds anything: Delete hands back only a container's, and a player may have fitted that one out
+			// (or it is their own suit an earlier session took over), so it stays, pieces and all.
 			bool MadeByUs(const Copy& a_copy)
 			{
 				const auto ref = a_copy.ref.get();
-				return ref && Blocked(*ref);
+				return ref && Blocked(*ref) && !HoldsItems(ref.get());
 			}
 
 			bool OursAt(const Protocol::WorkshopItem& a_item) { return WorkshopSync::OursAt(a_item); }

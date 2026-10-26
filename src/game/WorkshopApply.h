@@ -27,7 +27,8 @@
 //   Placeable CanPlace(item)
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot (never a piece of ours)
 //   bool MadeByUs(const Copy&)                           a copy of this kind made it (it carries the keyword that keeps
-//                                                        workshop mode off our copies, saved with it), not the player's own
+//                                                        workshop mode off our copies, saved with it) and holds nothing, not
+//                                                        the player's own
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
