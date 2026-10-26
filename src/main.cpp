@@ -379,6 +379,7 @@ namespace
 			BeginSaveOrLoad(HangWatch::Phase::kLoad);  // the HUD holds from here too: it is torn down before the loading screen's event comes
 			RunBeforeSaveOrLoad(
 				[] {
+					WeaponFire::BeforeLoad();  // first: the shields Session ends below would send setghost 0 into the load
 					Session::OnBeforeSaveOrLoad();
 					HavokGuard::BeforeSaveOrLoad();  // a reset under way is ended (enabled) before the load
 					Face::ForgetCopies();  // the load sets runtime form IDs back: a mark could name another NPC
@@ -407,9 +408,9 @@ namespace
 		case F4SE::MessagingInterface::kPostSaveGame:
 			if (gameDataReady) {
 				// A downed player's flags, cleared for the save, go back on before the engine's next update can stand them up.
+				// (WeaponFire::AfterSave waits for the next frame: no console command is sent from the save's own message.)
 				if (OnMainThread()) {
 					Downed::OnAfterSave();
-					WeaponFire::AfterSave();
 				} else {
 					MainThread::Post([] { Downed::OnAfterSave(); });
 				}

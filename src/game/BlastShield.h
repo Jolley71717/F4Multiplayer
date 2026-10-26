@@ -65,6 +65,31 @@ namespace BlastShield
 		return a_actor.id != 0 && !a_actor.dead && Shields(a_actor.owner, a_local);
 	}
 
+	// A save written while a ghost of ours was still on (its setghost 0 lands a frame late; 0.8.10 and 0.8.11 saved it
+	// so mid-fight) loads it a ghost, and as one already it was never ours to clear: the player's shots passed through
+	// it for good, and every later save wrote it again. So for a while after a load, once in a session, WeaponFire takes
+	// the ghost off a loaded copy that looks like one of ours: one Shields would make a ghost (shared, alive, run by
+	// another game: never an NPC our game runs, whose ghost is our own story's, the host's for everyone), its flag on
+	// though its base is no ghost, not one we made since, and hostile to our player (a story's ghost is more often a
+	// friend in a scene).
+	struct Loaded
+	{
+		Reached actor;
+		bool    ghost = false;      // its ghost flag reads on (the extra data the save wrote)
+		bool    baseGhost = false;  // its base record makes it a ghost: its story's own
+		bool    shielded = false;   // a ghost of ours against an explosion since the load (Book), or one whose setghost has yet to land
+		bool    hostile = false;    // hostile to our player
+	};
+
+	constexpr bool RepairsOnLoad(const Loaded& a_copy, std::uint32_t a_local)
+	{
+		return Shields(a_copy.actor, a_local) && a_copy.ghost && !a_copy.baseGhost && !a_copy.shielded && a_copy.hostile;
+	}
+
+	// How long after a load (frames in a session) the copies are looked at for that, and how often.
+	constexpr std::uint32_t REPAIR_FRAMES = 1800;
+	constexpr std::uint32_t REPAIR_EVERY = 15;
+
 	class Book
 	{
 	public:

@@ -112,9 +112,16 @@ namespace WeaponFire
 	// Before a save, after EndAllShields: the console's setghost 0 lands a frame after it is sent, so the ghosts it is
 	// still to take off have their flag turned off for the save itself (a ghost saved stayed one for good in the game
 	// that loaded it). AfterSave, once the save is written, turns it back on and sends setghost 0 again, which the
-	// console leaves alone on a flag that reads off already. Main thread.
+	// console leaves alone on a flag that reads off already: from the next frame, not the save's own message. Main thread.
 	void HideGhostsFromSave();
 	void AfterSave();
+
+	// Before a load, ahead of Session::OnBeforeSaveOrLoad: the shields end with no console command (the load replaces the
+	// copies), and what was known of them is forgotten.
+	void BeforeLoad();
+	// After a load: for a while, once in a session, a loaded copy that looks like a ghost of ours the save brought
+	// (BlastShield::RepairsOnLoad) has it taken off.
+	void OnGameLoaded();
 
 	// The grenade is shown in the hand of a stand-in replaying a friend's throw, from its wind-up to its release
 	// (HandThrowable.h): set from bGrenadeInHand at load, and by the dev's handthrowable on|off|model (a_modelFallback:

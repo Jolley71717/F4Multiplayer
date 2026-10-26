@@ -1544,6 +1544,7 @@ namespace Session
 		WorkshopSync::OnGameLoaded();
 		Drops::OnGameLoaded();
 		Traps::OnGameLoaded();
+		WeaponFire::OnGameLoaded();  // a ghost of ours a save brought comes off, once in a session
 		// Then whether the loaded world is the session's at all: another character's (or a new game's opening) isn't. The
 		// host stops hosting (Frame starts it again with that character's session, out of the opening), and a friend
 		// leaves. (After the above: leaving removes stand-ins and copies, and their handles from before the load are let
