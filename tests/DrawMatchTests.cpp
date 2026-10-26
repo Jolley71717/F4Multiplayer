@@ -85,6 +85,33 @@ TEST("DrawMatch: no ask before the caller's wait is over (an equip or a get-up p
 	CHECK(Next(track, true, false, true, START + 1s, START + 1s) == Do::kDraw);
 }
 
+TEST("DrawMatch: a holster the stand-in never takes is still asked now and then, a draw is not")
+{
+	Track track;
+	auto  now = START;
+	int   holsters = 0;
+	for (int i = 0; i < 5; ++i, now += 1s) {
+		holsters += Next(track, false, true, false, NONE, now) == Do::kHolster;
+	}
+	CHECK(holsters == DrawMatch::MAX_TRIES);
+	CHECK(track.gaveUp);
+	// A minute of frames: one ask every SLOW_HOLSTER, not one a second.
+	holsters = 0;
+	for (int ms = 0; ms < 60000; ms += 16) {
+		holsters += Next(track, false, true, false, NONE, now + std::chrono::milliseconds(ms)) == Do::kHolster;
+	}
+	CHECK(holsters >= 5 && holsters <= 7);
+	// A draw it never takes stays let be.
+	Track draw;
+	for (int i = 0; i < 10; ++i, now += 1s) {
+		(void)Next(draw, true, false, false, NONE, now);
+	}
+	CHECK(draw.gaveUp);
+	for (int i = 0; i < 100; ++i, now += 1s) {
+		CHECK(Next(draw, true, false, false, NONE, now) == Do::kNothing);
+	}
+}
+
 TEST("DrawMatch: a state that held a while gives the next mismatch its asks back")
 {
 	Track track;
