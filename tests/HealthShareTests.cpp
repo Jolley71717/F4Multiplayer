@@ -505,9 +505,15 @@ TEST("copy health: a report heard between our shot and the next frame books only
 	book.Check(RAIDER, 100.0f, t0);
 	book.OurHit(RAIDER, t1, 10.0f);
 	book.OwnersBlow(RAIDER, t1);
-	book.Heard(RAIDER, 60.0f, 65.0f, t1);  // the owner's report: its own blast, and a burn
+	// The owner's report: its own blast, and a burn, not yet our shot. A raise just after our hit: it does not heal the
+	// shot back (held, Heard).
+	CHECK(Near(book.Heard(RAIDER, 60.0f, 65.0f, t1), 60.0f, 0.01f));
 	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
-	CHECK(book.Health(RAIDER) == 65.0f);
+	CHECK(book.Holds(RAIDER));
+	// Its next report, our shot taken off: set as it comes.
+	CHECK(Near(book.Heard(RAIDER, 60.0f, 55.0f, t1 + FRAME), 55.0f, 0.01f));
+	CHECK(!book.Holds(RAIDER));
+	CHECK(book.TakeOurs(RAIDER) == 0.0f);
 }
 
 TEST("copy health: a throw's blow on a copy (its explosion, the throwable's own hit, the burn its fire leaves) is the NPC's own game's to deal: no report, a claim only for a kill")
@@ -768,6 +774,87 @@ TEST("copy health: a raise beyond what our hits took is a heal in the owner's ga
 	hit(runs);
 	CHECK(Near(runs.Heard(RAIDER, 50.0f, 95.0f, t0 + 2 * FRAME, false), 95.0f, 0.01f));
 	CHECK(!runs.Holds(RAIDER));
+}
+
+TEST("copy health: through a burst of our hits a raise holds back no more than what is still on its way, so a heal in the owner's game mid-burst is set")
+{
+	CopyHealth::Book book;
+	auto             now = CopyHealth::Clock::time_point{};
+	float            health = 100.0f;
+	book.Check(RAIDER, health, now);
+	// Our 10 a round, the owner's report a round behind them: each would raise the copy by the 10 on its way.
+	for (int round = 1; round <= 5; ++round) {
+		now += FRAME;
+		book.OurHit(RAIDER, now, 10.0f);
+		health -= 10.0f;
+		CHECK(book.Check(RAIDER, health, now) == 0.0f);
+		now += FRAME;
+		health = book.Heard(RAIDER, health, 100.0f - 10.0f * static_cast<float>(round - 1), now);
+		CHECK(Near(health, 100.0f - 10.0f * static_cast<float>(round), 0.01f));
+		CHECK(book.Holds(RAIDER));
+	}
+	// The NPC heals to full in the owner's game (a legendary's mutation) as our sixth shot is on its way: the copy gets the
+	// heal less what is on its way (and the round before's, which it cannot tell from it). Before, all 60 the burst took
+	// was held off the report: the copy stayed at 40, and our hits could kill it while the NPC stood healthy.
+	now += FRAME;
+	book.OurHit(RAIDER, now, 10.0f);
+	health -= 10.0f;
+	CHECK(book.Check(RAIDER, health, now) == 0.0f);
+	now += FRAME;
+	CHECK(Near(book.Heard(RAIDER, health, 100.0f, now), 80.0f, 0.01f));
+}
+
+TEST("health share: a heal in the host's game while Bob keeps shooting the raider reaches his copy, and his takeover keeps it")
+{
+	Fight f;
+	// Bob shoots twice a round; the host's game reports each round before that round's shots reach it, so each report
+	// would raise his copy.
+	const auto round = [&] {
+		f.bobGame.Strike(5.0f, GUN);
+		f.bobGame.Strike(5.0f, GUN);
+		f.hostGame.Wait(HealthShare::THROTTLE);
+		f.Deliver();
+	};
+	for (int i = 0; i < 3; ++i) {
+		round();
+	}
+	f.hostGame.health = 100.0f;  // the raider mutates in the host's game: back to full
+	round();
+	// Before, the whole burst so far (40) was held off the host's report of 100: Bob's copy stayed at 60.
+	CHECK(f.bobGame.health > 75.0f);
+	round();
+	round();
+	std::this_thread::sleep_for(std::chrono::milliseconds{ 5100 });  // the server's TAKEOVER_COOLDOWN
+	f.bobGame.Strike(5.0f, GUN);  // takes the raider over; the host's game drops the shot's damage
+	f.Deliver();
+	REQUIRE(f.bob.OwnerOf(RAIDER) == f.bob.Id());
+	const float stood = f.hostGame.health - 5.0f;  // where the raider stood in the host's game, less Bob's last shot
+	f.Pass();
+	// Bob's game runs the raider at his copy's health and tells the host: short of where it stood by no more than one
+	// report's lag (10). Before, the heal was lost (35).
+	CHECK(f.hostGame.health > stood - 10.0f - 0.6f);
+	CHECK(f.hostGame.health < stood + 0.6f);
+	CHECK(Near(f.bobGame.health, f.hostGame.health, 0.01f));
+}
+
+TEST("copy health: a report held while our hits landed waits for a drop beside our last hit to be judged before it stands")
+{
+	CopyHealth::Book                    book;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          t1 = t0 + FRAME;
+	book.Check(RAIDER, 100.0f, t0);
+	book.OurHit(RAIDER, t1, 10.0f);
+	CHECK(book.Check(RAIDER, 90.0f, t1) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(book.Heard(RAIDER, 90.0f, 100.0f, t1 + FRAME), 90.0f, 0.01f));
+	// A drop beside our hit as its second runs out, more than its figure said, no blow of the owner's around: ours, once
+	// it has stood. Had the held report stood first, it was given back and never sent.
+	const auto t2 = t1 + CopyHealth::OURS_GRACE - FRAME;
+	CHECK(book.Check(RAIDER, 85.0f, t2) == 0.0f);
+	CHECK(book.Check(RAIDER, 85.0f, t2 + CopyHealth::JUDGE_AFTER) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 5.0f, 0.01f));
+	CHECK(Near(book.Check(RAIDER, 85.0f, t2 + CopyHealth::JUDGE_AFTER + FRAME), 15.0f, 0.01f));
+	CHECK(!book.Holds(RAIDER));
 }
 
 TEST("health share: after a host's reload brings the raider back at its save's health, Bob's copy is told, and his next shot comes off that")

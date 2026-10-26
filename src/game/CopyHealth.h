@@ -224,8 +224,9 @@ namespace CopyHealth
 			}
 			auto& entry = it->second;
 			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
-			// have said otherwise, had our hits reached its game.
-			if (entry.held && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
+			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged: that
+			// may be ours to send yet.
+			if (entry.held && !entry.dropSince && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
 				const float held = *std::exchange(entry.held, std::nullopt);
 				entry.unacked = 0.0f;
 				if (held > a_health + SLACK) {
@@ -280,8 +281,8 @@ namespace CopyHealth
 		// On a copy (a_copy) a report that would raise it within OURS_GRACE of a hit of ours may be one the owner's game sent
 		// before our hits reached it: one the server passed on just before our hit's claim took the NPC over, which that game
 		// then never takes our damage off (no longer its to deal). Set, it healed our hit back, and our game, running the NPC
-		// from then on, told everyone the healed health. So such a raise is set only for what it has beyond all our hits took
-		// since the last report that did not raise the copy (more than that is a real heal in the owner's game); the rest is
+		// from then on, told everyone the healed health. So such a raise is set only for what it has beyond what our hits took
+		// that may still be on its way (more than that is a real heal in the owner's game); the rest is
 		// held, and the copy goes to the report once our hits are over (Check) unless a newer report comes first, as the
 		// owner's does once it took our damage off. A report that lowers the copy is set at once.
 		float Heard(std::uint32_t a_id, float a_before, float a_health, Clock::time_point a_now, bool a_copy = true)
@@ -311,6 +312,9 @@ namespace CopyHealth
 				if (health < a_health - SLACK) {
 					entry.held = a_health;
 				}
+				// Unless it healed, no more of ours than the raise is still on its way: the rest the owner's game took. Else,
+				// under a sustained burst every report raises the copy, and what is held grows to the whole burst's damage.
+				entry.unacked = (std::min)(entry.unacked, a_health - a_before);
 			} else {
 				entry.unacked = 0.0f;
 			}
@@ -364,7 +368,7 @@ namespace CopyHealth
 			float                            dealt = 0.0f;     // what our hits since ourHit's grace began said they took, not yet booked
 			bool                             unknown = false;  // ... and one of them said nothing
 			bool                             figured = false;  // ... and one of them said what it took
-			float                            unacked = 0.0f;  // taken by hits of ours since a report that did not raise the copy
+			float                            unacked = 0.0f;  // taken by hits of ours that the owner's reports may not have yet
 			std::optional<float>             held;  // a report's health not set yet (Heard)
 		};
 
