@@ -18,7 +18,7 @@
 // drive. A World gives:
 //
 //   using Copy = ...;                                    a copy as we keep it (a handle)
-//   bool Loaded(const Protocol::WorkshopItem&)           its settlement is loaded here
+//   bool Loaded(const Protocol::WorkshopItem&)           the cell it stands in is loaded here (what stands at its spot is seen)
 //   WorkshopCells::Where WhereOf(item), WhereScrapped(item)   where it waits until it is
 //   bool InReach(item)                                   it stands within its workbench's reach
 //   std::optional<Standing> StandingOf(const Copy&)      none if the copy is gone
@@ -27,6 +27,7 @@
 //   Placeable CanPlace(item)
 //   std::optional<Copy> FindExisting(item)               a copy an earlier session left at the spot (never a piece of ours)
 //   bool OursAt(item)                                    a piece of ours, the same object, stands at the spot
+//   std::optional<Copy> LeftoverAt(item)                 a copy of it no session knows, at the spot, beside the one kept (or a piece of ours)
 //   std::optional<Copy> Create(item)
 //   void Empty(const Copy&)                              takes out what a container's base came with (Placeable::kStocked)
 //   bool ScrapWorldRef(item)                             false until the reference is loaded here
@@ -47,7 +48,26 @@ namespace WorkshopApply
 		std::uint32_t movedOwn = 0;      // pieces of the world itself another player moved: ours moved
 		std::uint32_t ownRefused = 0;    // ... but not one a friend may move (see OwnPiece)
 		std::uint32_t oursThere = 0;     // no copy made: a piece of ours, the same object, stands at the spot
+		std::uint32_t leftovers = 0;     // copies a save held twice at one spot, or over a piece of ours: gone
 	};
+
+	inline constexpr int MAX_LEFTOVERS = 8;  // removed at one spot in one go: a guard, should one not go at once
+
+	// A save may hold copies that doubled what stood at the spot: an older version placed a piece once its workbench was
+	// in our worldspace, its own cell loaded or not, and so over what stood there unseen (the save's copy,
+	// after a load away from the settlement, or a piece of ours). Two at one spot flicker. All but the one kept go.
+	template <class World>
+	void DiscardLeftovers(World& a_world, const Protocol::WorkshopItem& a_item, Counts& a_counts)
+	{
+		for (int i = 0; i < MAX_LEFTOVERS; ++i) {
+			const auto leftover = a_world.LeftoverAt(a_item);
+			if (!leftover) {
+				return;
+			}
+			a_world.Discard(*leftover);
+			++a_counts.leftovers;
+		}
+	}
 
 	// Where a copy stands here, for following its piece.
 	struct Standing
@@ -157,6 +177,7 @@ namespace WorkshopApply
 			// too, linked to our workbench, with its settler's job. A copy over it would double it, and taking it over would
 			// make it a copy: out of workshop mode's reach, off our workbench, and deleted when the session ends.
 			++a_counts.oursThere;
+			DiscardLeftovers(a_world, a_item, a_counts);
 			return true;
 		}
 		if (placeable == Placeable::kStocked) {
@@ -171,6 +192,7 @@ namespace WorkshopApply
 				a_copies.emplace(a_key, *existing);
 				a_world.Keep(*existing);
 				++a_counts.adopted;
+				DiscardLeftovers(a_world, a_item, a_counts);
 				return true;
 			}
 			a_world.Discard(*existing);  // at the spot, but a cell apart (on its edge): made again, below
@@ -184,6 +206,7 @@ namespace WorkshopApply
 			a_copies.emplace(a_key, *made);
 			a_world.Keep(*made);
 			++a_counts.placed;
+			DiscardLeftovers(a_world, a_item, a_counts);
 		}
 		return true;
 	}
