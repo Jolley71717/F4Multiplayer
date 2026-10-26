@@ -1146,6 +1146,9 @@ namespace Party
 		for (const auto& [id, entry] : known) {
 			out += std::format(" [{} hp={} lvl={} loc={:08X} cell={:08X}{}]", id, entry.status.health, entry.status.level, entry.status.location, entry.status.cell, entry.status.downed ? " downed" : "");
 		}
+		for (const auto& info : RemotePlayers::List()) {
+			out += info.unreachable ? std::format(" [friend {} unreachable]", info.id) : info.state ? std::format(" [friend {} cell={:08X} ws={:08X}]", info.id, info.state->cell, info.state->worldspace) : std::format(" [friend {} no state]", info.id);
+		}
 		out += std::format(" pings: sent={} received={} tooSoon={}", pingsSent, pingsReceived, pingLimit.Refused());
 		for (const auto& [pinger, mark] : pings.Marks()) {
 			const auto ref = LocalTarget(mark.ping);
