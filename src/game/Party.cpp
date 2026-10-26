@@ -420,7 +420,9 @@ namespace Party
 					out += " - " + place;
 				}
 			}
-			if (a_player.state) {
+			if (a_player.unreachable) {
+				out += ", " + Text::Get("player.unreachable");  // not "loading" and not where they last were
+			} else if (a_player.state) {
 				if (auto distance = DistanceTo(a_player.state->cell, a_player.state->worldspace, a_player.state->x, a_player.state->y); !distance.empty()) {
 					out += ", " + distance;
 				}
@@ -433,6 +435,9 @@ namespace Party
 		// How far and which way a friend is ("30 m NE"), or where they are when that is elsewhere, or that they are loading.
 		std::string WhereIs(const RemotePlayers::Info& a_player)
 		{
+			if (a_player.unreachable) {
+				return Text::Get("player.unreachable");
+			}
 			if (!a_player.state) {
 				return Text::Get("player.loading");
 			}
@@ -999,6 +1004,12 @@ namespace Party
 		if (const auto reason = TeleportBlocked(player); !reason.empty()) {
 			REX::INFO("Party: can't teleport to player {}: {}", target->id, Text::GetEnglish(reason));
 			Hud::Notify(Text::Get(reason));
+			return;
+		}
+		// In a DLC or mod our game does not have: their last state is where they were, not where they are.
+		if (target->unreachable) {
+			REX::INFO("Party: can't teleport to player {}: they are in a place our game does not have", target->id);
+			Hud::Notify(Text::Format("party.cant_teleport_unreachable", { { "player", target->name } }));
 			return;
 		}
 		if (!target->state) {

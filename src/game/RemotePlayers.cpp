@@ -6,6 +6,7 @@
 #include "game/EngineRefs.h"
 #include "game/FriendFrame.h"
 #include "game/FriendLight.h"
+#include "game/FriendPlace.h"
 #include "game/GraphInfo.h"
 #include "game/HeldCopy.h"
 #include "game/Hud.h"
@@ -87,6 +88,7 @@ namespace RemotePlayers
 			FaceWatch::StandIn   faceWatch;             // the stand-in's head, while it has their own
 			StandInGear::Gear    gear;  // what they wear and hold, and what the stand-in was dressed in
 			StateBuffer::Buffer  states;  // what they sent lately, and how far in the past it is drawn
+			FriendPlace::Track   place;   // their latest state named a place our game lacks: `states` is where they were, not where they are
 			RE::ObjectRefHandle  actor;
 			// The pointer registered with Puppets. Kept separately so it can be unregistered even
 			// if the game deletes the actor behind our back (its handle then no longer resolves).
@@ -2012,6 +2014,10 @@ namespace RemotePlayers
 			if (!it->second.states.Push(a_state, Clock::now())) {
 				return;
 			}
+			if (it->second.place.beyond) {
+				REX::INFO("RemotePlayers: player {} is in a place our game has again", a_id);
+			}
+			it->second.place.Placed();  // a place we have: back from wherever our game lacked, all at once
 			if (it->second.wornAtWanted) {
 				TakeWornAt(it->second, a_state);  // they got into a pre-placed frame before we had a recent state of theirs
 			}
@@ -2033,6 +2039,18 @@ namespace RemotePlayers
 			return;
 		}
 		TakeState(a_id, a_state);
+	}
+
+	void NoteUnplaced(std::uint32_t a_id)
+	{
+		const auto it = players.find(a_id);
+		if (it == players.end()) {
+			return;
+		}
+		if (!it->second.place.beyond) {
+			REX::INFO("RemotePlayers: player {} is in a place our game does not have (a DLC or mod we lack); their stand-in, marker and teleport wait for them to come back", a_id);
+		}
+		it->second.place.Unplaced();
 	}
 
 	void SetNetSim(const NetSim::Settings& a_settings)
@@ -2083,8 +2101,10 @@ namespace RemotePlayers
 		for (const auto& [id, remote] : players) {
 			Info info{ id, remote.name, std::nullopt, GetActor(remote), remote.menu };
 			if (!remote.states.snapshots.empty()) {
-				info.state = remote.states.snapshots.back().state;
+				// Not while they are somewhere our game lacks: that state is where they were.
+				info.state = remote.place.Where(std::optional{ remote.states.snapshots.back().state });
 			}
+			info.unreachable = remote.place.beyond;
 			out.push_back(std::move(info));
 		}
 		return out;
@@ -2676,13 +2696,13 @@ namespace RemotePlayers
 		if (it == players.end() || it->second.states.snapshots.empty()) {
 			return std::nullopt;
 		}
-		return it->second.states.snapshots.back().state;
+		return it->second.place.Where(std::optional{ it->second.states.snapshots.back().state });
 	}
 
 	std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id)
 	{
 		const auto it = players.find(a_id);
-		if (it == players.end() || it->second.states.snapshots.empty()) {
+		if (it == players.end() || it->second.states.snapshots.empty() || it->second.place.beyond) {
 			return std::nullopt;
 		}
 		const auto player = RE::PlayerCharacter::GetSingleton();
@@ -2931,7 +2951,8 @@ namespace RemotePlayers
 			// The newest state's own speed, as for movingFrames: Sample stops a long hold's speed, and those are the holds to count.
 			heldFrames += sampled && sampled->held && snaps.back().state.speed > 0.0f && now - remote.states.arrived < 1s;
 			aheadFrames += sampled && sampled->ahead && now - remote.states.arrived < 1s;
-			const auto state = sampled ? std::optional{ sampled->state } : std::nullopt;
+			// Nowhere we can draw them while they are somewhere our game lacks (their stand-in goes as for a friend elsewhere).
+			const auto state = sampled && !remote.place.beyond ? std::optional{ sampled->state } : std::nullopt;
 
 			// A frame copy the engine unloaded with its cell (we walked or travelled off): back under its id with the cell, it
 			// is held again; gone, it is forgotten and its record dropped, so the cell never brings it back beside a new one.

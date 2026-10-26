@@ -19,6 +19,11 @@ namespace RemotePlayers
 
 	// Feeds a state received from the server.
 	void PushState(std::uint32_t a_id, const Protocol::PlayerState& a_state);
+	// The server sent their state, but it names a cell or worldspace our game does not have (a DLC or mod we lack), so it
+	// could not be read (FormTranslate::Result::placeless). They are somewhere we cannot reach: their last state is no
+	// longer where they are, so the list, the compass, the teleport and their stand-in stop using it, until a state we can
+	// read comes (PushState). Not for states that stop coming (a lagging or a lost friend: handled by the connection).
+	void NoteUnplaced(std::uint32_t a_id);
 	// Dev: friends' states from now on come as over a worse connection (NetSim.h); off lets in what waits.
 	void SetNetSim(const NetSim::Settings& a_settings);
 	[[nodiscard]] std::string DescribeNetSim();
@@ -58,9 +63,10 @@ namespace RemotePlayers
 	{
 		std::uint32_t                        id = 0;
 		std::string                          name;
-		std::optional<Protocol::PlayerState> state;  // latest received
+		std::optional<Protocol::PlayerState> state;  // latest received; none while they are somewhere our game lacks (unreachable)
 		RE::Actor*                           actor = nullptr;  // their stand-in, if spawned
 		std::uint8_t                         menu = 0;         // the menu they are in (Protocol::MenuKind), from their status
+		bool                                 unreachable = false;  // their latest state names a place our game does not have (NoteUnplaced)
 	};
 
 	[[nodiscard]] std::vector<Info> List();
@@ -70,7 +76,7 @@ namespace RemotePlayers
 	// Where a player last said they were, if they are in our cell or worldspace; nothing otherwise.
 	[[nodiscard]] std::optional<RE::NiPoint3> PositionOf(std::uint32_t a_id);
 
-	// The last state a player sent, wherever they are (nothing if none yet, or they are gone).
+	// The last state a player sent, wherever they are (nothing if none yet, they are gone, or they are somewhere our game lacks).
 	[[nodiscard]] std::optional<Protocol::PlayerState> LastStateOf(std::uint32_t a_id);
 
 	// The player's name, or "" if unknown.
