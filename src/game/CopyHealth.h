@@ -224,9 +224,9 @@ namespace CopyHealth
 			}
 			auto& entry = it->second;
 			// A report held while our hits landed (Heard) stands once they are over: by then the owner's next report would
-			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged: that
-			// may be ours to send yet.
-			if (entry.held && !entry.dropSince && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
+			// have said otherwise, had our hits reached its game. Not while a drop beside our last hit is being judged, nor on
+			// a fresh drop: either may be ours to send yet (a hit's event can come a frame after its damage).
+			if (entry.held && !entry.dropSince && a_health >= *entry.health - SLACK && !(entry.ourHit && *entry.ourHit + OURS_GRACE >= a_now)) {
 				const float held = *std::exchange(entry.held, std::nullopt);
 				entry.unacked = 0.0f;
 				if (held > a_health + SLACK) {

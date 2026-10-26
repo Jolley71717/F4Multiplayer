@@ -857,6 +857,28 @@ TEST("copy health: a report held while our hits landed waits for a drop beside o
 	CHECK(!book.Holds(RAIDER));
 }
 
+TEST("copy health: a report held past our hit's grace does not stand on a fresh drop whose hit event comes a frame later")
+{
+	CopyHealth::Book                    book;
+	const CopyHealth::Clock::time_point t0{};
+	const auto                          t1 = t0 + FRAME;
+	book.Check(RAIDER, 100.0f, t0);
+	book.OurHit(RAIDER, t1, 10.0f);
+	CHECK(book.Check(RAIDER, 90.0f, t1) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+	CHECK(Near(book.Heard(RAIDER, 90.0f, 100.0f, t1 + FRAME), 90.0f, 0.01f));
+	CHECK(book.Holds(RAIDER));
+	// Our next shot, a second later as a semi-auto fires: its damage lands as the last one's grace runs out, its event
+	// a frame later. The held report must not stand on that frame: it would heal the shot back, and the copy, set to
+	// it, would show no drop when the event came.
+	const auto t2 = t1 + CopyHealth::OURS_GRACE + FRAME;
+	CHECK(book.Check(RAIDER, 80.0f, t2) == 0.0f);
+	book.OurHit(RAIDER, t2 + FRAME, 10.0f);
+	CHECK(book.Check(RAIDER, 80.0f, t2 + FRAME) == 0.0f);
+	CHECK(book.Check(RAIDER, 80.0f, t2 + CopyHealth::JUDGE_AFTER + FRAME) == 0.0f);
+	CHECK(Near(book.TakeOurs(RAIDER), 10.0f, 0.01f));
+}
+
 TEST("health share: after a host's reload brings the raider back at its save's health, Bob's copy is told, and his next shot comes off that")
 {
 	Fight f;
