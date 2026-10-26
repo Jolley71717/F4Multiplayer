@@ -188,3 +188,20 @@ TEST("own gear: an item given by dropping it: only this game's own copy, lying l
 	CHECK(OwnGear::Judge(Change::kDropCopy, Player()) == Verdict::kOurPlayer);
 	CHECK(OwnGear::Name(Change::kDropCopy) == "dropCopy");
 }
+
+TEST("own gear: a refused move at a friend's shared storage is put right on our player, and on nothing else")
+{
+	CHECK(OwnGear::Judge(Change::kStorageUndo, Player()) == Verdict::kGo);
+	CHECK(OwnGear::Judge(Change::kStorageUndo, Target{}) == Verdict::kWrongActor);  // a container, an NPC: never by this change
+	CHECK(OwnGear::Judge(Change::kStorageUndo, StandIn()) == Verdict::kWrongActor);
+	CHECK(OwnGear::Judge(Change::kStorageUndo, Mirrored()) == Verdict::kWrongActor);
+	Target gone;
+	gone.exists = false;
+	gone.player = true;
+	CHECK(OwnGear::Judge(Change::kStorageUndo, gone) == Verdict::kGone);
+	CHECK(OwnGear::Name(Change::kStorageUndo) == "storageUndo");
+	// Every other change still never touches our player.
+	for (const auto change : ALL) {
+		CHECK(OwnGear::Judge(change, Player()) == Verdict::kOurPlayer);
+	}
+}

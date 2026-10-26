@@ -66,6 +66,8 @@ namespace ContainerLedger
 		[[nodiscard]] std::uint32_t Next() const { return next; }
 		// Changes waiting for an earlier one.
 		[[nodiscard]] std::size_t   Waiting() const { return ahead.size(); }
+		// We asked the server for changes (a hello's, a load's, a gap's) and no answer has come yet.
+		[[nodiscard]] bool          Asking() const { return requested.has_value(); }
 		[[nodiscard]] const Counts& Stats() const { return counts; }
 
 		// Our world has every change before a_next and nothing after (a new session, a save's record).

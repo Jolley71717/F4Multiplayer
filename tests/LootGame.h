@@ -11,6 +11,7 @@
 #include "ServerFixture.h"
 
 #include "game/LootSync.h"
+#include "game/StorageView.h"
 
 #include <map>
 #include <set>
@@ -52,6 +53,11 @@ namespace LootTest
 		std::vector<LootSync::Move>           moves;  // since the last frame (WorldSync's inbox)
 		std::uint32_t                         applied = 0;   // other players' changes put into this world
 		std::uint32_t                         requests = 0;  // world requests sent (after Hello)
+		// Shared storage (StorageView.h), as Storage.cpp runs it: our game is the host's (its server's own game: the test sets the
+		// server's hostIdentity to ours and marks our peer local).
+		bool                                  host = false;
+		StorageView::Side                     storage;
+		std::int64_t                          givenBackShort = 0;  // a refused take our player no longer had all of (used up)
 
 		struct Save
 		{
@@ -75,6 +81,7 @@ namespace LootTest
 			sessionId = welcome->sessionId;
 			localId = welcome->playerId;
 			loot.OnWelcome(sessionId, localId);
+			storage.OnWelcome(welcome->rules.sharedStorage, host);
 			return localId;
 		}
 
@@ -124,17 +131,33 @@ namespace LootTest
 			for (const auto& packet : a_packets) {
 				if (IsType(packet, MT::kContainerChanged)) {
 					if (const auto msg = Protocol::DecodeIndexedContainerChange(packet)) {
+						OwnNumbered(*msg);
 						loot.Live(*msg, now, *this);
 					}
 				} else if (IsType(packet, MT::kWorldState)) {
 					// WorldSync::ApplyWorldState: the deaths, then the container changes.
 					if (const auto msg = Protocol::DecodeWorldState(packet)) {
 						dead.insert(msg->deadActors.begin(), msg->deadActors.end());
+						for (const auto& change : msg->containerChanges) {
+							OwnNumbered(change);
+						}
 						loot.CatchUp(msg->containerFirstIndex, msg->containerChanges, now, *this);
 					}
 				} else if (IsType(packet, MT::kActorDied)) {
 					if (const auto msg = Protocol::DecodeActorDeath(packet)) {
 						dead.insert(msg->refId);
+					}
+				} else if (IsType(packet, MT::kStorageOwners)) {
+					if (const auto msg = Protocol::DecodeStorageOwners(packet)) {
+						storage.Owners(*msg);
+					}
+				} else if (IsType(packet, MT::kStorageContents)) {
+					if (const auto msg = Protocol::DecodeStorageListing(packet)) {
+						ShowContents(*msg);
+					}
+				} else if (IsType(packet, MT::kStorageRefused)) {
+					if (const auto msg = Protocol::DecodeStorageRefusal(packet)) {
+						Refused(*msg);
 					}
 				}
 			}
@@ -156,8 +179,144 @@ namespace LootTest
 			if (const auto request = loot.Due(now, *this)) {
 				a_f.fake->Deliver(peer, Protocol::Encode(*request));
 				++requests;
+				storage.UnlistAll();  // the server holds our listings stale from the request on
 			}
 			loot.Retry(*this, APPLY_INTERVAL);
+			ListStorage();
+			Send(a_f, std::exchange(storageOut, {}));
+		}
+
+		// ---- shared storage (Storage.cpp) ----------------------------------------------------------------------
+
+		Packets storageOut;  // what Storage queued, sent with the frame's
+
+		// The host's game lists the storage it has loaded that it hasn't listed since its world last loaded (Storage's scan).
+		void ListStorage()
+		{
+			if (!host || !storage.Rule()) {
+				return;
+			}
+			for (const auto& [holder, facts] : holderFacts) {
+				if (!facts.storage || facts.workshop || away.contains(holder) || storage.Listed(holder)) {
+					continue;
+				}
+				if (const auto listing = loot.Listing(holder, *this)) {
+					storageOut.push_back(Protocol::Encode(*listing, MT::kReportStorage));
+					storage.MarkListed(holder);
+				}
+			}
+		}
+
+		// What our copy of a container holds of what the session shares.
+		std::map<std::uint32_t, std::int64_t> SharedIn(std::uint32_t a_holder)
+		{
+			std::map<std::uint32_t, std::int64_t> out;
+			const auto                            holder = Holder(a_holder);
+			for (const auto& stack : Stacks(a_holder)) {
+				auto item = Item(stack.item);
+				item.questAlias = stack.questAlias;
+				if (LootScope::Of(holder, item, LootScope::Direction::kTake) == LootScope::Scope::kShared) {
+					out[stack.item] += stack.count;
+				}
+			}
+			return out;
+		}
+
+		// The player opens the menu on a container (the activation, or the menu's show): a friend's storage moves the shared
+		// things our copy held to our player, and asks the server for the true copy.
+		void OpenMenu(Fixture& a_f, std::uint32_t a_holder)
+		{
+			Frame(a_f);  // the moves before it go first
+			if (Keeper(a_holder) != StorageView::Keeper::kFriend) {
+				return;
+			}
+			if (storage.Viewing() && *storage.Viewing() != a_holder) {
+				CloseStorage();
+			}
+			if (!storage.Open(a_holder)) {
+				return;
+			}
+			for (const auto& [item, count] : SharedIn(a_holder)) {
+				holders[a_holder][item] -= count;
+				carried[item] += count;
+			}
+			storageOut.push_back(Protocol::Encode(Protocol::StorageView{ a_holder, true }));
+			Send(a_f, std::exchange(storageOut, {}));
+		}
+
+		// The menu closes: the moves made in it go first, then the session's things leave our copy.
+		void CloseMenu(Fixture& a_f)
+		{
+			Frame(a_f);
+			CloseStorage();
+			Send(a_f, std::exchange(storageOut, {}));
+		}
+
+		void CloseStorage()
+		{
+			if (const auto container = storage.Close()) {
+				for (const auto& [item, count] : SharedIn(*container)) {
+					holders[*container][item] -= count;
+				}
+				storageOut.push_back(Protocol::Encode(Protocol::StorageView{ *container, false }));
+			}
+		}
+
+		void ShowContents(const Protocol::StorageListing& a_contents)
+		{
+			if (const auto want = storage.Contents(a_contents)) {
+				for (const auto& adjust : StorageView::Reconcile(*want, SharedIn(a_contents.container))) {
+					holders[a_contents.container][adjust.item] += adjust.count;
+				}
+			}
+		}
+
+		void OwnNumbered(const Protocol::IndexedContainerChange& a_change)
+		{
+			if (loot.Ours(a_change.playerId)) {
+				storage.OwnNumbered(a_change);
+			}
+		}
+
+		void Refused(const Protocol::StorageRefusal& a_refusal)
+		{
+			const auto undo = storage.Refused(a_refusal);
+			if (undo.closeView) {
+				CloseStorage();
+				return;
+			}
+			if (!undo.matched) {
+				return;
+			}
+			auto& have = carried[undo.item];
+			if (undo.player < 0 && have < -undo.player) {
+				givenBackShort += -undo.player - have;  // used up meanwhile: what is left goes
+				have = 0;
+			} else {
+				have += undo.player;
+			}
+			holders[undo.container][undo.item] += undo.copy;
+			if (undo.refresh && storage.Refresh(undo.container)) {
+				storageOut.push_back(Protocol::Encode(Protocol::StorageView{ undo.container, true }));
+			}
+		}
+
+		// ---- LootSync::World: storage ------------------------------------------------------------------------
+
+		StorageView::Keeper Keeper(std::uint32_t a_holder) override
+		{
+			return storage.KeeperOf(a_holder, Holder(a_holder).storage, [&](std::uint32_t a_id) { return loot.Ours(a_id); });
+		}
+
+		std::optional<std::uint32_t> ViewFrom(std::uint32_t a_holder) override { return storage.ViewFrom(a_holder); }
+
+		void Reporting(const Protocol::ContainerChange& a_change) override { storage.Reported(a_change); }
+
+		void Short(std::uint32_t a_index, const Protocol::ContainerChange& a_change, std::int32_t a_missing) override
+		{
+			storageOut.push_back(Protocol::Encode(Protocol::StorageShort{ a_index, a_missing }));
+			storage.Unlist(a_change.container);  // listed again, as it is now
+			storage.NoteShort();
 		}
 
 		// Time passes in the game, one frame every APPLY_INTERVAL. Returns whether a request went out.
@@ -301,6 +460,8 @@ namespace LootTest
 		{
 			Send(a_f, loot.Report(moves, *this));  // WorldSync::FlushLoot
 			moves.clear();
+			CloseStorage();  // Storage::BeforeSaveOrLoad: no save holds the session's things in a friend's copy
+			Send(a_f, std::exchange(storageOut, {}));
 		}
 
 		void Restore(const Save& a_save)
@@ -310,6 +471,7 @@ namespace LootTest
 			dead.clear();  // WorldSync::Reset
 			loot.LoadRecord(0, 0, {});
 			loot.LoadRecord(a_save.point.sessionId, a_save.point.containerFrom, a_save.waiting);
+			storage.OnLoad();
 		}
 	};
 }

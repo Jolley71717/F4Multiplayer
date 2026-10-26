@@ -11,7 +11,8 @@
 // takes off, gives or takes away. Every change the session makes to an inventory or what an actor wears is judged here
 // at the point it is made, whatever the code that asked for it already checked (a Nexus report had a host lose their
 // Pip-Boy and weapons as a friend joined; that was a story mod's quest stage replayed, see Official.h, and nothing of
-// the session may ever do the same).
+// the session may ever do the same). The one exception is the player's own act put right: a take or put of theirs at a
+// friend's shared storage that the server refused is undone (Change::kStorageUndo, never on anything but our player).
 // Kept free of the game so it can be tested; Equipment and WorldSync read the facts from the engine.
 namespace OwnGear
 {
@@ -27,6 +28,10 @@ namespace OwnGear
 		// someone takes it, and the dropper's own item swapped for one. Only ever a reference this game made, loose in the
 		// world: the local player's take of one is their own (they pressed Take), granted by the server first.
 		kDropCopy,
+		// Shared storage (StorageView.h): our player's own move at a friend's storage, undone because the server refused it
+		// (a take given back, a put returned), or the shared things our copy of it held moved to our player as their menu
+		// opens on it. The one change made to the local player, and only ever to them: what they did themselves, put right.
+		kStorageUndo,
 		kCount,
 	};
 
@@ -64,7 +69,7 @@ namespace OwnGear
 			return Verdict::kGone;
 		}
 		if (a_target.player) {
-			return Verdict::kOurPlayer;
+			return a_change == Change::kStorageUndo ? Verdict::kGo : Verdict::kOurPlayer;
 		}
 		switch (a_change) {
 		case Change::kDressStandIn:
@@ -94,6 +99,8 @@ namespace OwnGear
 				return a_target.heldHere ? Verdict::kInInventory : Verdict::kNotPlaced;
 			}
 			return a_target.madeHere ? Verdict::kGo : Verdict::kNotCopy;
+		case Change::kStorageUndo:
+			return Verdict::kWrongActor;  // only ever our player
 		case Change::kCount:
 			break;
 		}
@@ -115,6 +122,8 @@ namespace OwnGear
 			return "container";
 		case Change::kDropCopy:
 			return "dropCopy";
+		case Change::kStorageUndo:
+			return "storageUndo";
 		case Change::kCount:
 			break;
 		}

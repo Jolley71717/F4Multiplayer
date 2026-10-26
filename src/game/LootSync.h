@@ -3,11 +3,13 @@
 #include "Protocol.h"
 #include "game/ContainerLedger.h"
 #include "game/LootScope.h"
+#include "game/StorageView.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -61,6 +63,15 @@ namespace LootSync
 		virtual bool                   QuestAlias(std::uint32_t a_holder, std::uint32_t a_item) = 0;
 		// Puts another player's change into the world (removeitem takes what is there).
 		virtual void                   Apply(const Protocol::ContainerChange& a_change) = 0;
+
+		// Shared storage (StorageView.h): who keeps the holder's true copy. Nobody, by default (no rule).
+		virtual StorageView::Keeper           Keeper(std::uint32_t) { return StorageView::Keeper::kNone; }
+		// While our menu is open on our copy of a friend's storage: the first numbered change its contents lack.
+		virtual std::optional<std::uint32_t> ViewFrom(std::uint32_t) { return std::nullopt; }
+		// Our move at a friend's storage goes to the server (it may come back refused).
+		virtual void                         Reporting(const Protocol::ContainerChange&) {}
+		// A friend's numbered take (a_index) our storage held a_missing fewer of than taken.
+		virtual void                         Short(std::uint32_t, const Protocol::ContainerChange&, std::int32_t) {}
 	};
 
 	// A change that waits to go into our world. Kept in the save (not aliveFor or alive).
@@ -93,6 +104,8 @@ namespace LootSync
 			std::uint32_t emptiedApplied = 0;  // other players' emptied holders emptied here
 			std::uint32_t emptiedStacks = 0;   // stacks those took out of our world
 			std::uint32_t emptiedKept = 0;     // items those left: the session put them in and nobody took them out since
+			std::uint32_t storageKept = 0;     // the player's moves at storage another game keeps, made with no view of it (their copy's own), or nobody keeps yet
+			std::uint32_t storageSkipped = 0;  // other players' changes to storage another game keeps, not shown here (no view of it), or nobody keeps yet
 		};
 
 		// ---- the player's own moves --------------------------------------------------------------------
@@ -109,6 +122,13 @@ namespace LootSync
 			Restocked(a_moves, a_world);
 			for (const auto& move : a_moves) {
 				const auto direction = move.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
+				// Storage another game keeps, with our menu not open on it (StorageView: our copy's own things then), or
+				// storage nobody keeps yet: the player's own.
+				const auto keeper = a_world.Keeper(move.holder);
+				if (keeper == StorageView::Keeper::kLocal || (keeper == StorageView::Keeper::kFriend && !a_world.ViewFrom(move.holder))) {
+					++counts.storageKept;
+					continue;
+				}
 				// Here a living NPC is pickpocketing or a companion's trade: never the session's.
 				const auto holder = a_world.Holder(move.holder);
 				const auto scope = LootScope::Of(holder, a_world.Item(move.item), direction);
@@ -128,6 +148,10 @@ namespace LootSync
 				receiver.Reported(change);
 				packets.push_back(Protocol::Encode(change, Protocol::MessageType::kReportContainer));
 				++counts.sent;
+				if (keeper == StorageView::Keeper::kFriend) {
+					a_world.Reporting(change);  // checked by the server against the true copy: it may come back refused
+					continue;
+				}
 				Track(change, CountOf(move.holder, move.item, a_world) - move.count);  // ours is made: what it held before
 				toldBare.erase(move.holder);  // it holds something shared again (a put), or is about to be asked
 				if (direction == LootScope::Direction::kTake && std::ranges::find(takenFrom, move.holder) == takenFrom.end()) {
@@ -136,8 +160,8 @@ namespace LootSync
 			}
 			for (const auto holder : takenFrom) {
 				// A container that keeps what is put in it (a home's, a settlement's) may hold a friend's stash in their copy:
-				// only the takes go out, and take what was taken.
-				if (!LootScope::Rolled(a_world.Holder(holder)) || HoldsShared(holder, a_world)) {
+				// only the takes go out, and take what was taken. So may storage one game keeps for everyone.
+				if (!LootScope::Rolled(a_world.Holder(holder)) || a_world.Keeper(holder) != StorageView::Keeper::kNone || HoldsShared(holder, a_world)) {
 					continue;
 				}
 				const Protocol::ContainerChange change{ holder, Protocol::CONTAINER_EMPTIED, -1 };
@@ -245,7 +269,7 @@ namespace LootSync
 					}
 					return false;
 				}
-				switch (TryApply(a_pending.change, a_world)) {
+				switch (TryApply(a_pending.index, a_pending.change, a_world)) {
 				case Applied::kDone:
 					return true;
 				case Applied::kNotYetDead:
@@ -284,7 +308,7 @@ namespace LootSync
 					a_pending.alive = a_pending.alive || alive;
 					return false;
 				}
-				switch (TryApply(a_pending.change, a_world)) {
+				switch (TryApply(a_pending.index, a_pending.change, a_world)) {
 				case Applied::kDone:
 					++applied;
 					return true;
@@ -325,6 +349,45 @@ namespace LootSync
 				return std::nullopt;
 			}
 			return receiver.Request(a_now);
+		}
+
+		// ---- shared storage (StorageView) ------------------------------------------------------------
+
+		// What our storage container holds of what the session shares, for the server's book (the host's game lists it, and
+		// so claims it): its shared stacks, with the changes still waiting to go into it, as of the first numbered change our
+		// world lacks (the server counts the friends' changes from there in). Nothing while our world still waits for an
+		// answer from the server (a hello's, a load's, a gap's): listed once it has come.
+		std::optional<Protocol::StorageListing> Listing(std::uint32_t a_container, World& a_world)
+		{
+			if (receiver.Numbers().Asking()) {
+				return std::nullopt;
+			}
+			const auto holder = a_world.Holder(a_container);
+			const auto shared = [&](std::uint32_t a_item, bool a_questAlias, LootScope::Direction a_direction) {
+				auto item = a_world.Item(a_item);
+				item.questAlias = a_questAlias;
+				return LootScope::Of(holder, item, a_direction) == LootScope::Scope::kShared;
+			};
+			std::map<std::uint32_t, std::int64_t> held;
+			for (const auto& stack : a_world.Stacks(a_container)) {
+				if (stack.count > 0 && shared(stack.item, stack.questAlias, LootScope::Direction::kTake)) {
+					held[stack.item] += stack.count;
+				}
+			}
+			for (const auto& entry : pending) {
+				const auto& change = entry.change;
+				if (change.container == a_container && change.item != Protocol::CONTAINER_EMPTIED &&
+					shared(change.item, false, change.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut)) {
+					held[change.item] += change.count;
+				}
+			}
+			Protocol::StorageListing listing{ a_container, receiver.Numbers().Next(), {} };
+			for (const auto& [item, count] : held) {
+				if (count > 0 && listing.stacks.size() < Protocol::MAX_STORAGE_STACKS) {
+					listing.stacks.push_back({ item, static_cast<std::int32_t>((std::min<std::int64_t>)(count, Protocol::MAX_ITEM_COUNT)) });
+				}
+			}
+			return listing;
 		}
 
 		// ---- what is known ---------------------------------------------------------------------------
@@ -473,12 +536,37 @@ namespace LootSync
 			}
 		}
 
-		Applied TryApply(const Protocol::ContainerChange& a_change, World& a_world)
+		// Storage another game keeps, or nobody keeps yet (StorageView): a change goes into our copy only while our menu
+		// shows it, from the first change its contents lack; never later (our copy holds our player's own things between
+		// views). True when the change is left out.
+		bool SkipStorage(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
 		{
+			const auto keeper = a_world.Keeper(a_change.container);
+			if (keeper == StorageView::Keeper::kNone || keeper == StorageView::Keeper::kUs) {
+				return false;
+			}
+			const auto from = keeper == StorageView::Keeper::kFriend ? a_world.ViewFrom(a_change.container) : std::nullopt;
+			if (from && a_index >= *from && *from != StorageView::NOT_YET && a_change.item != Protocol::CONTAINER_EMPTIED && a_world.Loaded(a_change.container)) {
+				return false;
+			}
+			++counts.storageSkipped;
+			return true;
+		}
+
+		Applied TryApply(std::uint32_t a_index, const Protocol::ContainerChange& a_change, World& a_world)
+		{
+			if (SkipStorage(a_index, a_change, a_world)) {
+				return Applied::kDone;
+			}
 			if (!a_world.Loaded(a_change.container)) {
 				return Applied::kNotLoaded;
 			}
+			const auto keeper = a_world.Keeper(a_change.container);
 			if (a_change.item == Protocol::CONTAINER_EMPTIED) {
+				if (keeper != StorageView::Keeper::kNone) {
+					++counts.storageSkipped;  // one game's storage is never emptied by another's word
+					return Applied::kDone;
+				}
 				return TryEmpty(a_change, a_world);
 			}
 			const auto direction = a_change.count < 0 ? LootScope::Direction::kTake : LootScope::Direction::kPut;
@@ -491,9 +579,22 @@ namespace LootSync
 			}
 			if (scope != LootScope::Scope::kShared) {
 				++counts.keptApplied[static_cast<std::size_t>(scope)];
+				// A friend's take from our storage that our game doesn't share (another build's rule, or another mod's form):
+				// the server counted it taken, our container keeps it, so the taker gives it back.
+				if (keeper == StorageView::Keeper::kUs && direction == LootScope::Direction::kTake) {
+					a_world.Short(a_index, a_change, -a_change.count);
+				}
 				return Applied::kDone;
 			}
-			Track(a_change, CountOf(a_change.container, a_change.item, a_world));
+			const auto before = CountOf(a_change.container, a_change.item, a_world);
+			if (keeper == StorageView::Keeper::kUs && direction == LootScope::Direction::kTake && before < -static_cast<std::int64_t>(a_change.count)) {
+				// Our storage is the true copy: a friend took more than it holds (our world was reloaded since we listed it).
+				// What it had goes; the rest the taker gives back.
+				a_world.Short(a_index, a_change, static_cast<std::int32_t>(-static_cast<std::int64_t>(a_change.count) - before));
+			}
+			if (keeper == StorageView::Keeper::kNone) {
+				Track(a_change, before);
+			}
 			a_world.Apply(a_change);
 			return Applied::kDone;
 		}
@@ -503,12 +604,15 @@ namespace LootSync
 		void ApplyInOrder(const Protocol::IndexedContainerChange& a_change, World& a_world)
 		{
 			const auto& change = a_change.change;
+			if (SkipStorage(a_change.index, change, a_world)) {
+				return;  // never held: it goes into our copy only while we view it
+			}
 			const auto  first = std::ranges::find(pending, change.container, [](const Pending& a_pending) { return a_pending.change.container; });
 			if (first != pending.end()) {
 				Hold({ .index = a_change.index, .change = change, .alive = first->alive });  // waits for the same NPC
 				return;
 			}
-			switch (TryApply(change, a_world)) {
+			switch (TryApply(a_change.index, change, a_world)) {
 			case Applied::kDone:
 				return;
 			case Applied::kNotLoaded:
